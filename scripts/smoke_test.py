@@ -1,21 +1,35 @@
+import argparse
 import asyncio
-import httpx
 import pathlib
 import wave
+
+import httpx
 import websockets
 
 GATEWAY = "http://localhost:8000"
 
 
 async def main() -> None:
+    parser = argparse.ArgumentParser(description="Smoke test for TTS pipeline")
+    parser.add_argument(
+        "--model",
+        choices=["kokoro-gpu", "kokoro-cpu"],
+        default="kokoro-gpu",
+        help="Model to test (default: kokoro-gpu)",
+    )
+    args = parser.parse_args()
+
     # 1. enqueue a job
-    print("before enqueue")
     async with httpx.AsyncClient() as client:
+        model_key = "kokoro" if args.model == "kokoro-gpu" else "kokoro-cpu"
         resp = await client.post(
             f"{GATEWAY}/v1/tts",
-            json={"text": "Hello world, this is Yapit speaking."},
+            json={
+                "model": "kokoro-cpu",
+                "text": f"Hello world, this is {model_key} speaking..",
+            },
         )
-    print("after enqueue")
+
     resp.raise_for_status()
     ws_url = f"{GATEWAY.replace('http', 'ws')}{resp.json()['ws_url']}"
 

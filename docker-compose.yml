@@ -36,7 +36,9 @@ services:
 
   # Kokoro worker on GPU --------------------------------------------------------
   kokoro-gpu-worker:
-    build: ./workers/kokoro_gpu
+    build:
+      context: .
+      dockerfile: workers/kokoro_gpu/Dockerfile
     environment:
       REDIS_URL: redis://redis:6379/0
       MODEL_QUEUE: tts:kokoro_gpu
@@ -49,6 +51,18 @@ services:
           devices:
             - driver: nvidia
               capabilities: [gpu]
+
+  # Kokoro worker on CPU --------------------------------------------------------
+  kokoro-cpu-worker:
+    build:
+      context: .
+      dockerfile: workers/kokoro_cpu/Dockerfile
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      MODEL_QUEUE: tts:kokoro_cpu
+      DEVICE: cpu
+      WORKER_CONCURRENCY: 2
+    depends_on: [ redis ]
 
 volumes:
   pgdata:

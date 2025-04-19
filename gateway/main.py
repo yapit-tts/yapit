@@ -12,8 +12,11 @@ from pydantic import BaseModel, Field
 
 # ─── config ─────────────────────────────────────────────────────────────────────
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
-MODEL_QUEUES = {"kokoro": os.getenv("MODEL_QUEUE_KOKORO", "tts:kokoro_gpu")}
-DEFAULT_VOICE = {"kokoro": "af_heart"}
+MODEL_QUEUES = {"kokoro": os.getenv("MODEL_QUEUE_KOKORO", "tts:kokoro_gpu"), "kokoro-cpu": "tts:kokoro_cpu"}
+DEFAULT_VOICE = {
+    "kokoro": "af_heart",
+    "kokoro-cpu": "af_heart",
+}
 
 
 # ─── pydantic shapes ────────────────────────────────────────────────────────────

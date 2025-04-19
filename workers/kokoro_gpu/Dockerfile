@@ -13,19 +13,8 @@ COPY . .
 
 RUN python3.10 -m venv /opt/venv && \
     /opt/venv/bin/pip install --upgrade pip wheel && \
-    /opt/venv/bin/pip install -r requirements.txt
+    /opt/venv/bin/pip install -r workers/kokoro_gpu/requirements.txt
 
-RUN useradd -m -u 1000 appuser && \
-    mkdir -p /app/.cache && \
-    chown -R appuser:appuser /app && \
-    chmod -R 755 /app
-
-ENV PATH="/opt/venv/bin:$PATH" \
-    HF_HOME=/app/.cache \
-    OMP_THREADS=4
-
-USER appuser
-
+ENV PATH="/opt/venv/bin:$PATH" HF_HOME=/app/.cache OMP_THREADS=4
 ENTRYPOINT ["/usr/bin/tini","--"]
-CMD ["python","worker.py"]
-
+CMD ["python","kokoro_worker.py"]
