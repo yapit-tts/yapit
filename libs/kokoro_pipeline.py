@@ -7,7 +7,7 @@ from typing import AsyncGenerator
 
 from kokoro import KPipeline
 
-from libs.audio import pcm_to_opus
+# from libs.audio import pcm_to_opus
 
 torch.set_num_threads(int(os.getenv("OMP_THREADS", "4")))
 
@@ -38,7 +38,8 @@ class TtsPipeline:
                 if audio is None:
                     continue
                 if codec == "opus":
-                    audio_bytes = pcm_to_opus(audio.numpy(), sr=24_000)  # 24kHz fixed sr for kokoro
+                    raise NotImplementedError
+                    # audio_bytes = pcm_to_opus(audio.numpy(), sr=24_000)  # 24kHz fixed sr for kokoro
                 else:  # int16 PCM
                     audio_int16 = (audio.numpy() * 32767).astype("int16")
                     audio_bytes = audio_int16.tobytes()
