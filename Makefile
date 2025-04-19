@@ -13,7 +13,8 @@ help:
 	@echo "make down            – stop & remove containers"
 	@echo "make logs            – live logs (all)"
 	@echo "make logs-gpu        – gpu worker log"
-	@echo "make test            – enqueue quick_test.py"
+	@echo "make test-cpu        - generate sample wav with cpu worker"
+	@echo "make test-gpu        - generate sample wav with gpu worker"
 
 # -------- build -----------
 build:
@@ -47,4 +48,3 @@ test-cpu: up-cpu
 
 test-gpu: up
 	python scripts/smoke_test.py --model kokoro-gpu
-
