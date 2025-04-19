@@ -2,7 +2,7 @@ import asyncio
 import os
 import torch
 from kokoro import KPipeline
-from typing import Optional, Generator, Tuple
+from typing import AsyncGenerator, Optional, Generator, Tuple
 
 # Set number of threads for OpenMP operations
 torch.set_num_threads(int(os.getenv("OMP_THREADS", "4")))
@@ -35,7 +35,7 @@ class TtsPipeline:
 
     async def stream(
         self, text: str, voice: str, speed: float, codec: str = "pcm"
-    ) -> Generator[Tuple[str, str, bytes], None, None]:
+    ) -> AsyncGenerator[tuple[str, str, bytes], None, None]:
         """
         Stream audio from text using the specified voice and speed.
 
