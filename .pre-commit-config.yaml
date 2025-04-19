@@ -1,0 +1,12 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.11.6
+    hooks:
+      # lint
+      - id: ruff
+        types_or: [ python ]
+        language: python
+        args: [ --fix ]
+      # format
+      - id: ruff-format
+        types_or: [ python ]

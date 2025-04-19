@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-import os, uuid, orjson
+import os
+import uuid
+import orjson
 from typing import Literal
 from contextlib import asynccontextmanager
 
@@ -13,6 +15,7 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
 MODEL_QUEUES = {"kokoro": os.getenv("MODEL_QUEUE_KOKORO", "tts:kokoro_gpu")}
 DEFAULT_VOICE = {"kokoro": "af_heart"}
 
+
 # ─── pydantic shapes ────────────────────────────────────────────────────────────
 class TTSRequest(BaseModel):
     model: str = "kokoro"
@@ -21,19 +24,23 @@ class TTSRequest(BaseModel):
     speed: float = Field(1.0, ge=0.5, le=2.0)
     codec: Literal["pcm", "opus"] = "pcm"
 
+
 # ─── lifespan ───────────────────────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     redis = await aioredis.from_url(REDIS_URL, decode_responses=False)
-    app.state.redis = redis            # shared handle
+    app.state.redis = redis  # shared handle
     yield
     await redis.close()
 
+
 app = FastAPI(title="Yapit Gateway", lifespan=lifespan)
+
 
 # ─── helpers ────────────────────────────────────────────────────────────────────
 def redis_handle(request_or_ws) -> aioredis.Redis:
     return request_or_ws.app.state.redis
+
 
 # ─── routes ─────────────────────────────────────────────────────────────────────
 @app.post("/v1/tts")

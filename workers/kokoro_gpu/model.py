@@ -2,7 +2,7 @@ import asyncio
 import os
 import torch
 from kokoro import KPipeline
-from typing import AsyncGenerator, Optional, Generator, Tuple
+from typing import AsyncGenerator
 
 # Set number of threads for OpenMP operations
 torch.set_num_threads(int(os.getenv("OMP_THREADS", "4")))
