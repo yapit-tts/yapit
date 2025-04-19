@@ -1,0 +1,56 @@
+services:
+  # queues / cache --------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports: ["6379:6379"]
+
+  # persistence -----------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: yapit
+      POSTGRES_USER: yapit
+      POSTGRES_PASSWORD: yapit
+    volumes: [pgdata:/var/lib/postgresql/data]
+
+  # object storage for PDFs -----------------------------------------------------
+  minio:
+    image: minio/minio:latest                   # use a tag that always exists
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: minio123
+    ports: ["9000:9000", "9001:9001"]
+    volumes: [miniodata:/data]
+
+  # API gateway -----------------------------------------------------------------
+  gateway:
+    build: ./gateway
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: postgres://yapit:yapit@postgres:5432/yapit
+      MODEL_QUEUE_KOKORO: tts:kokoro_gpu
+    ports: ["8000:8000"]
+    depends_on: [redis, postgres]
+
+  # Kokoro worker on GPU --------------------------------------------------------
+  kokoro-gpu-worker:
+    build: ./workers/kokoro_gpu
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      MODEL_QUEUE: tts:kokoro_gpu
+      DEVICE: cuda
+      WORKER_CONCURRENCY: 1
+    depends_on: [redis]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
+
+volumes:
+  pgdata:
+  miniodata:
+
