@@ -1,5 +1,5 @@
-import {Button} from "@/components/ui/button.tsx";
-import {Settings} from "lucide-react";
+import { Button } from "@/components/ui/button.tsx";
+import { Settings } from "lucide-react";
 
 function Navbar() {
   return (
