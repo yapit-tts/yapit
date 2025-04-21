@@ -1,20 +1,25 @@
 name: CI
 
-x-ignore-patterns: &ignore-patterns
-  - 'notes/**'
-  - 'docs/**'
-  - '**/*.md'
-  - '**/*.rst'
-  - '**/*.txt'
-  - '**/*.ipynb'
-  - '**/*.{png,jpg,svg}'
-
 on:
   push:
     branches: [ main ]
-    paths-ignore: *ignore-patterns
+    paths-ignore:
+      - 'notes/**'
+      - 'docs/**'
+      - '**/*.md'
+      - '**/*.rst'
+      - '**/*.txt'
+      - '**/*.ipynb'
+      - '**/*.{png,jpg,svg}'
   pull_request:
-    paths-ignore: *ignore-patterns
+    paths-ignore:
+      - 'notes/**'
+      - 'docs/**'
+      - '**/*.md'
+      - '**/*.rst'
+      - '**/*.txt'
+      - '**/*.ipynb'
+      - '**/*.{png,jpg,svg}'
 
 jobs:
   build:
