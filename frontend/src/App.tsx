@@ -1,15 +1,15 @@
-import './App.css'
-import { Button } from "@/components/ui/button"
-import { Header } from "@/components/header"
+import './App.css';
+import { Header } from "@/components/header";
+import { Navbar } from "@/components/navbar";
+import { DocumentUpload } from "@/components/documentUpload";
 
 function App() {
 
   return (
     <>
+			<Navbar />
       <Header />
-      <h2>Listen to anything, anywhere</h2>
-      <h3>Transform text, websites, and documents into natural-sounding speech</h3>
-      <Button>Button</Button>
+			<DocumentUpload />
     </>
   )
 }
