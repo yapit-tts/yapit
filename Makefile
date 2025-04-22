@@ -43,8 +43,19 @@ logs-gpu:
 	$(COMPOSE) logs -f kokoro-gpu-worker
 
 # -------- smoke test ------
+
 test-cpu: up-cpu
-	python scripts/smoke_test.py --model kokoro-cpu
+	curl -X POST localhost:8000/v1/tts \
+     -H 'Content-Type: application/json' \
+     -d '{"model":"kokoro-cpu","text":"CPU"}'
 
 test-gpu: up
+	curl -X POST localhost:8000/v1/tts \
+	 -H 'Content-Type: application/json' \
+	 -d '{"model":"kokoro","text":" GPU"}'
+
+test-cpu-wav: up-cpu
+	python scripts/smoke_test.py --model kokoro-cpu
+
+test-gpu-wav: up
 	python scripts/smoke_test.py --model kokoro-gpu
