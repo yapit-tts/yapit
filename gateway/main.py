@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import os
 import uuid
-import orjson
-from typing import Literal
 from contextlib import asynccontextmanager
+from typing import Literal
 
 import aioredis
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request
+import orjson
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 # ─── config ─────────────────────────────────────────────────────────────────────
@@ -38,6 +39,13 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Yapit Gateway", lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],  # temporary for local testing
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 # ─── helpers ────────────────────────────────────────────────────────────────────
