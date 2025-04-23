@@ -8,7 +8,7 @@
 ## 💡Philosophy  
 *(core ideas that guide every decision)*
 - **OSS‑First Core**–Gateway, frontend and model adapters are MIT/Apache‑2.0; no closed glue.
-- **Modular Adapters**–Every TTS engine (Kokoro, nari-labs/Dia-1.6B, browser WebGPU, (ElevenLabs?)) lives behind the same protocol.
+- **Modular Adapters**–Every TTS engine (Kokoro, nari-labs/Dia-1.6B, browser WebGPU, (ElevenLabs? - too expensive upfront for now)) lives behind the same protocol.
 - **Minimal Ops Overhead**–`docker compose up` gives a full dev stack; prod runs on a single VPS + optional GPUs or serverless workers.
 - **Zero Overhead for Paying Users; Freedom for OSS Tinkerers**–Self‑host build works without S3, Stripe, or GPUs.
 - **Pay‑for‑What‑You‑Use**–1 credit ≈ 1s audio (or 1 char?), per‑model multipliers.
@@ -43,31 +43,31 @@ flowchart LR
 ## 🌐Public API(v1)
 
 ### Catalogue
-| method | path | notes |
-|---|---|---|
-| `GET` | `/v1/models` | List models with `price_sec`, `default_voice`. |
-| `GET` | `/v1/models/{model_id}/voices` | Voices for the given model. |
+| method | path                           | notes                                          |
+|--------|--------------------------------|------------------------------------------------|
+| `GET`  | `/v1/models`                   | List models with `price_sec`, `default_voice`. |
+| `GET`  | `/v1/models/{model_id}/voices` | Voices for the given model.                    |
 
 ### Synthesis
-| method | path | body / notes |
-|---|---|---|
-| `POST` | `/v1/models/{model_id}/tts` | `{text, voice, speed, codec}` → `201 {job_id, ws_url, est_sec}` |
-| `WS` | `/v1/ws/{job_id}` | Streams Opus/PCM blocks + control frames. |
-| `GET` | `/v1/jobs/{job_id}` | `{state, seconds_done, seconds_total}` progress. |
-| `DELETE` | `/v1/jobs/{job_id}` | Cancel running job. |
-| `GET` | `/v1/audio/{sha256}` | Block download, Range‑enabled. |
+| method   | path                        | body / notes                                                    |
+|----------|-----------------------------|-----------------------------------------------------------------|
+| `POST`   | `/v1/models/{model_id}/tts` | `{text, voice, speed, codec}` → `201 {job_id, ws_url, est_sec}` |
+| `WS`     | `/v1/ws/{job_id}`           | Streams Opus/PCM blocks + control frames.                       |
+| `GET`    | `/v1/jobs/{job_id}`         | `{state, seconds_done, seconds_total}` progress.                |
+| `DELETE` | `/v1/jobs/{job_id}`         | Cancel running job.                                             |
+| `GET`    | `/v1/audio/{sha256}`        | Block download, Range‑enabled.                                  |
 
 ### Billing & Credits _(provider‑agnostic)_
-| method | path | purpose |
-|---|---|---|
-| `POST` | `/v1/billing/checkout` | Create payment session `{plan, provider}` → checkout URL. |
-| `POST` | `/v1/billing/webhook/{provider}` | Provider webhook → credit events. |
-| `GET` | `/v1/users/me/credits` | Remaining credits & usage. |
+| method | path                             | purpose                                                   |
+|--------|----------------------------------|-----------------------------------------------------------|
+| `POST` | `/v1/billing/checkout`           | Create payment session `{plan, provider}` → checkout URL. |
+| `POST` | `/v1/billing/webhook/{provider}` | Provider webhook → credit events.                         |
+| `GET`  | `/v1/users/me/credits`           | Remaining credits & usage.                                |
 
 ### Auth & Profile
-| method | path | purpose |
-|---|---|---|
-| `GET` | `/v1/users/me` | Basic profile details. |
+| method | path           | purpose                |
+|--------|----------------|------------------------|
+| `GET`  | `/v1/users/me` | Basic profile details. |
 
 
 ## 🗄️Domain Data Model (SQLAlchemy2)
@@ -84,6 +84,78 @@ payment_session(id PK, user_id FK, provider_id FK,
                 external_id, plan, state, created)
 ```
 
+```mermaid
+erDiagram
+    USER {
+        string id PK
+        string email
+        string tier
+        datetime created
+    }
+    CREDIT_EVENT {
+        string id PK
+        string user_id FK
+        float delta
+        string reason
+        datetime ts
+    }
+    MODEL {
+        string id PK
+        string description
+        float price_sec
+    }
+    VOICE {
+        string id PK
+        string model_id FK
+        string name
+        string lang
+        string gender
+    }
+    JOB {
+        string id PK
+        string user_id FK
+        string model_id FK
+        string voice_id FK
+        string text_sha256
+        float speed
+        string codec
+        float est_sec
+        string state
+        datetime created
+        datetime finished
+    }
+    BLOCK {
+        string id PK
+        string job_id FK
+        int idx
+        string sha256
+        float duration_sec
+        boolean cached
+    }
+    PAYMENT_PROVIDER {
+        string id PK
+        string name
+        string secret
+    }
+    PAYMENT_SESSION {
+        string id PK
+        string user_id FK
+        string provider_id FK
+        string external_id
+        string plan
+        string state
+        datetime created
+    }
+    USER ||--o{ CREDIT_EVENT : "has"
+    USER ||--o{ JOB : "creates"
+    USER ||--o{ PAYMENT_SESSION : "has"
+    MODEL ||--o{ VOICE : "provides"
+    MODEL ||--o{ JOB : "used in"
+    VOICE ||--o{ JOB : "used in"
+    JOB ||--o{ BLOCK : "contains"
+    PAYMENT_PROVIDER ||--o{ PAYMENT_SESSION : "handles"
+```
+
 ## 🗂️ Cache Strategy
 * **Key**–`sha256(model|voice|speed|text_block)`.
 * **Backends**
@@ -95,96 +167,41 @@ payment_session(id PK, user_id FK, provider_id FK,
 * **Authentik** – single container OIDC/JWT, MFA, Google, GitHub, email+pwd.
 * Gateway verifies JWT once per request with `python‑jose`.
 
-
 ## 💸 Billing
-* **Pluggable payment adapters** (`stripe`, `paypal`, `paddle`, …)
-* **TBD** – Decide default provider (Stripe easiest; PayPal considered for EU users).   
+* **Pluggable payment adapters** (`stripe`, `paypal`, …)
 
-Adapter swap requires no gateway changes.
-
-## 📋 Feature Backlog
+## 📋 Feature Backlog (loosely ordered, but can mostly be worked on in parallel)
 1. **Gateway / Backend**
-   1. ORM + Alembic migration `0001_initial`  *(WIP)*
-   2. Progress endpoint with online metering.
-   3. Cache backend drivers + metrics.
+   1. API
+   2. ORM + Alembic migration `0001_initial`  *(WIP)*
+   3. Progress endpoint with online metering.
+   4. Cache backend drivers + metrics.
 2. **Auth & Billing**
    1. Authentik deployment script.
    2. Stripe adapter prototype _(open: evaluate PayPal fees & API)_.
 3. **Frontend MVP**
    1. Model / voice selector, play/pause, block‑seek progress bar.
-   2. WebGPU fallback (transformers.js) for free tier.
+   2. WebGPU/WASM fallback (transformers.js) for free tier.
 4. **Persistence & Tracking**
    1. Redis hash for offsets, periodic flush to Postgres.
    2. Credit debits on `block` completion.
-5. **Additional Models** – integrate ElevenLabs API adapter.
-6. **Document Parsing** – OCR + VLLM summariser.
+5. **Additional Models** – integrate nari-labs/Dia-1.6B.
+6. **Document Parsing** – OCR (VLLM), regex filters, natural language filters.
 7. **Monitoring & QA** – Prometheus, Grafana, e2e tests.
-8. **Optimisations** – Opus encoding server‑side streaming, SIMD improvements.
+8. **Optimisations** – Opus encoding, ...
 9. **Documentation & Community** – README, Discord, blog post.
 
-
-## 🛣️ Roadmap (next 90 days)
-| week | milestone |
-|------|-----------|
-| 1‑2 | Alembic migration, cache drivers, progress endpoint. |
-| 3‑4 | Authentik live, Stripe sandbox, basic React player. |
-| 5‑6 | Metrics → Grafana, Opus streaming, serverless worker PoC. |
-| 7‑8 | ElevenLabs adapter, paid tier launch, blog post. |
-| 9‑12 | PDF/OCR pipeline, PayPal adapter decision, public beta. |
-
-
 ## 📜 Style & Tooling
-* **Python** 3.12, Ruff for lint+format, mypy strict.
-* **CI** – GitHub Actions builds gateway + workers, runs lint.
+* **Python** 3.12, Ruff for lint+format. Typehinted code.
 * **Conventional Commits** for changelog.
-
+* **CI**
 
 ## ❓ Open Questions / TBD
-* Which payment provider ships first (Stripe vs PayPal)?
-* Final cache \(LRU vs S3 Intel‑Tier) once real metrics arrive.
+* Payment provider(s)
+* Cache strategies (LRU / expire / hybrid).
 * Pricing multipliers per premium model.
-* Long‑term user‑storage (MinIO vs cloud S3).
+* Long‑term user‑storage (S3).
 
-
-## 🔧 Current State (needs heavy refactoring & adaptations)
-- ✅ Docker‑Compose skeleton (redis, postgres, minio, gateway, CPU/GPU workers).  
-- ✅ Kokoro pipeline shared library, CPU & GPU images working.  
-- ✅ Quick‑test script (`scripts/smoke_test.py`) writes `sample.wav`.  
-- ✅ CI: GitHub Action builds all images on push.
+## 🔧 Current State
+- ✅ Docker‑Compose skeleton (redis, postgres, minio, gateway, lightweight kokoro CPU/GPU workers).  
 - (in progress) React frontend scaffold [basic communication functionality]
-
-## 🛠️ TODOs / Featurelist (loosely ordered, but can mostly be worked on in parallel)
-1. **Gaetway / Backend**
-   - ORM? If yes, SQLAlchemy+Alembic? 
-   - Full API
-2. **Auth & Billing**  
-   - find a leaner / less bloated alternative to Zitadel; OIDC → JWT validation. Login with Google, Github.
-3. **Frontend MVP**  
-   - Voice/lang selector, play/pause, highlight.
-   - Support for WebGPU models via transformers.js.
-4. **Progress Persistence**  
-   - Redis hash for offsets, periodic flush to Postgres.
-   - Creidt / usage tracking.
-5. **Additional Models**  
-   - UI: Model selector 
-6. **OCR, LLM & traditional parsing / filtering**
-   - Support common document formats; VLLM-backed.
-   - Support for web pages
-7. **Payment Processing**  
-   - Stripe integration for credit purchases.
-   - Monthly subscription plans.
-8. **Webhosting & Serverless Deployment**  
-   - Deploy main app on dedicated VPS (e.g. Hetzner).
-   - Serverless model inference (e.g. via runpod.io).
-   - Persistent storage for user data (e.g. S3, Postgres).
-9. **Testing & QA**  
-   - Write unit tests for the core components? (at least for billing&auth)
-   - Set up a staging environment for testing new features?
-   - Implement monitoring and alerting for production systems.
-10. ** Optimizations**
-   - Opus encoding for audio streaming.
-12. **Documentation & Community**  
-    - Write a README for the repo (how to run it, how to self-host different models)
-    - Create a Discord server for community support?
-    - Write a blog post about the project.
-13. **Ship it**
