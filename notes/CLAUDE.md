@@ -9,16 +9,9 @@
 - **OSS‑First Core**–Gateway, frontend and model adapters are MIT/Apache‑2.0; no closed glue.
 - **Modular Adapters**–Every TTS engine (Kokoro, nari-labs/Dia-1.6B, browser WebGPU, (ElevenLabs? - too expensive upfront for now)) lives behind the same protocol.
 - **Minimal Ops Overhead**–`docker compose up` gives a full dev stack; prod runs on a single VPS + optional GPUs or serverless workers.
-- **Zero Overhead for Paying Users; Freedom for OSS Tinkerers**–Self‑host build works without S3, Stripe, or GPUs.
-- **Pay‑for‑What‑You‑Use**–1 credit ≈ 1s audio (or 1 char?), per‑model multipliers.
-- **Metric‑Driven Iteration**– Ship simple, measure, replace when pain shows.
-
-## 💡 Philosophy
-- **OSS‑First Core:** Frontend, gateway, model‑adapters MIT/Apache‑2.0 (or GPL?).
-- **Modular Adapters:** Hide each TTS engine (Kokoro, nari-labs/Dia-1.6B, ElevenLabsAPI?) behind a uniform API.  
-- **Minimal Ops Overhead for Devs:** “Just docker-compose up” on CPU or GPU.
-- **Zero overhead for paying users; Freedom for OSS tinkerers:** Options for self-hosted models, browser, cloud, or hybrid.
-- **Pay‑for‑What‑You‑Use:** 1 credit 1 sec (or 1 char?, multiplier for more expensive models).
+- **Zero Overhead for Paying Users; Freedom for OSS Tinkerers**–Self‑host build works without S3, Stripe, optionally GPUs.
+- **Pay‑for‑What‑You‑Use**–1 credit ~ 1s audio (or 1 char?), per‑model multipliers.
+- **Metric‑Driven Iteration**–Ship simple, measure, replace when pain shows.
 
 ## 🏗️ High‑level Architecture
 
