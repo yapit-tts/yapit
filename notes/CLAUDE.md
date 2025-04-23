@@ -62,7 +62,7 @@ flowchart LR
 | `GET`  | `/v1/users/me` | Basic profile details. |
 
 
-## 🗄️Domain Data Model (SQLAlchemy2)
+## 🗄️Domain Data Model
 
 ```text
 user(id PK, email, tier, created)
@@ -204,6 +204,8 @@ erDiagram
     PAYMENT_PROVIDER ||--o{ PAYMENT_SESSION : handles
     DOCUMENT ||--o{ DOCUMENT_TEXT : "parses to"
 ```
+
+Stack: SQLAlchemy + SQLModel + Alembic
 
 ## 🗂️ Cache Strategy
 * **Key**–`sha256(model|voice|speed|text_block)`.

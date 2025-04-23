@@ -3,3 +3,6 @@ uvicorn[standard]
 aioredis
 orjson
 pydantic
+pydantic-settings
+sqlalchemy
+sqlmodel
