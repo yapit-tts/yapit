@@ -6,7 +6,6 @@
 * **How**–Pluggable models behind a uniform API, OSS‑first.
 
 ## 💡Philosophy  
-*(core ideas that guide every decision)*
 - **OSS‑First Core**–Gateway, frontend and model adapters are MIT/Apache‑2.0; no closed glue.
 - **Modular Adapters**–Every TTS engine (Kokoro, nari-labs/Dia-1.6B, browser WebGPU, (ElevenLabs? - too expensive upfront for now)) lives behind the same protocol.
 - **Minimal Ops Overhead**–`docker compose up` gives a full dev stack; prod runs on a single VPS + optional GPUs or serverless workers.
