@@ -71,17 +71,38 @@ flowchart LR
 
 
 ## 🗄️Domain Data Model (SQLAlchemy2)
+
 ```text
 user(id PK, email, tier, created)
+
 credit_event(id PK, user_id FK, delta, reason, ts)
+
 model(id PK, description, price_sec)
 voice(id PK, model_id FK, name, lang, gender)
+
 job(id PK, user_id FK, model_id FK, voice_id FK,
-    text_sha256, speed, codec, est_sec, state, created, finished)
-block(id PK, job_id FK, idx, sha256, duration_sec, cached BOOL)
+    text_sha256, speed, codec, est_sec,
+    state, created, finished,
+    deleted_at TIMESTAMP NULL)
+
+block(id PK, job_id FK, idx, sha256,
+      duration_sec, cached BOOL,
+      deleted_at TIMESTAMP NULL)
+
 payment_provider(id PK, name, secret)
 payment_session(id PK, user_id FK, provider_id FK,
                 external_id, plan, state, created)
+
+document(                 -- optional: only if you persist uploads
+    id PK, user_id FK, title,
+    source_type, source_ref, sha256, page_count,
+    created, deleted_at TIMESTAMP NULL)
+
+document_text(            -- store parsed plaintext / glyph-map
+    id PK, document_id FK, page INT, text TEXT,
+    /* char-bbox JSON could live in S3; TBD later */,
+    deleted_at TIMESTAMP NULL)
+
 ```
 
 ```mermaid
@@ -92,18 +113,21 @@ erDiagram
         string tier
         datetime created
     }
+
     CREDIT_EVENT {
         string id PK
         string user_id FK
-        float delta
+        float  delta
         string reason
         datetime ts
     }
+
     MODEL {
         string id PK
         string description
-        float price_sec
+        float  price_sec
     }
+
     VOICE {
         string id PK
         string model_id FK
@@ -111,32 +135,38 @@ erDiagram
         string lang
         string gender
     }
+
     JOB {
         string id PK
         string user_id FK
         string model_id FK
         string voice_id FK
         string text_sha256
-        float speed
+        float  speed
         string codec
-        float est_sec
+        float  est_sec
         string state
         datetime created
         datetime finished
+        datetime deleted_at
     }
+
     BLOCK {
         string id PK
         string job_id FK
-        int idx
+        int    idx
         string sha256
-        float duration_sec
+        float  duration_sec
         boolean cached
+        datetime deleted_at
     }
+
     PAYMENT_PROVIDER {
         string id PK
         string name
         string secret
     }
+
     PAYMENT_SESSION {
         string id PK
         string user_id FK
@@ -146,14 +176,41 @@ erDiagram
         string state
         datetime created
     }
-    USER ||--o{ CREDIT_EVENT : "has"
-    USER ||--o{ JOB : "creates"
-    USER ||--o{ PAYMENT_SESSION : "has"
-    MODEL ||--o{ VOICE : "provides"
-    MODEL ||--o{ JOB : "used in"
-    VOICE ||--o{ JOB : "used in"
-    JOB ||--o{ BLOCK : "contains"
-    PAYMENT_PROVIDER ||--o{ PAYMENT_SESSION : "handles"
+
+    DOCUMENT {
+        string id PK
+        string user_id FK
+        string title
+        string source_type
+        string source_ref
+        string sha256
+        int    page_count
+        datetime created
+        datetime deleted_at
+    }
+
+    DOCUMENT_TEXT {
+        string id PK
+        string document_id FK
+        int    page
+        text   text
+        datetime deleted_at
+    }
+
+    USER ||--o{ CREDIT_EVENT    : has
+    USER ||--o{ JOB             : creates
+    USER ||--o{ PAYMENT_SESSION : owns
+    USER ||--o{ DOCUMENT        : uploads
+
+    MODEL ||--o{ VOICE : provides
+    MODEL ||--o{ JOB   : used_in
+    VOICE ||--o{ JOB   : spoken_with
+
+    JOB   ||--o{ BLOCK : contains
+    JOB   ||--|| DOCUMENT : refers_to
+
+    PAYMENT_PROVIDER ||--o{ PAYMENT_SESSION : handles
+    DOCUMENT ||--o{ DOCUMENT_TEXT : "parses to"
 ```
 
 ## 🗂️ Cache Strategy
@@ -197,6 +254,7 @@ erDiagram
 * **CI**
 
 ## ❓ Open Questions / TBD
+* 10 vs 20s audio blocks? (considerations: gpu util, queue time, pbar jumping)
 * Payment provider(s)
 * Cache strategies (LRU / expire / hybrid).
 * Pricing multipliers per premium model.
