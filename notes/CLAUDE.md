@@ -1,9 +1,18 @@
 # Yapit
 
-## 🚀 Mission & Goals
-- **What:** A pluggable TTS service + UI (web + TUI) that reads text, web pages, PDFs with real‑time highlighting.
-- **Why:** Enable seamless, accessible “read‑aloud” workflows for anyone (forever free tier of in-browser models), wanting to read website, pdfs, or any text.
-- **Revenue:** Cheap monthly plans which unlock bigger/better models (with credit cap) and a persistent (cloud) library. Prepaid credits for GPU/CPU inference seconds to scale beyond that for enthusiasts
+## 🚀Mission & Goals
+* **What**–A modular Text‑to‑Speech service & UI that reads documents, web pages and arbitrary text with real‑time highlighting.
+* **Why**–Make long‑form reading accessible (eyes‑free, inclusive, multitasking). Free‑tier runs fully in‑browser – costs us **zero**.
+* **How**–Pluggable models behind a uniform API, OSS‑first.
+
+## 💡Philosophy  
+*(core ideas that guide every decision)*
+- **OSS‑First Core**–Gateway, frontend and model adapters are MIT/Apache‑2.0; no closed glue.
+- **Modular Adapters**–Every TTS engine (Kokoro, nari-labs/Dia-1.6B, browser WebGPU, (ElevenLabs?)) lives behind the same protocol.
+- **Minimal Ops Overhead**–`docker compose up` gives a full dev stack; prod runs on a single VPS + optional GPUs or serverless workers.
+- **Zero Overhead for Paying Users; Freedom for OSS Tinkerers**–Self‑host build works without S3, Stripe, or GPUs.
+- **Pay‑for‑What‑You‑Use**–1 credit ≈ 1s audio (or 1 char?), per‑model multipliers.
+- **Metric‑Driven Iteration**– Ship simple, measure, replace when pain shows.
 
 ## 💡 Philosophy
 - **OSS‑First Core:** Frontend, gateway, model‑adapters MIT/Apache‑2.0 (or GPL?).
@@ -12,40 +21,130 @@
 - **Zero overhead for paying users; Freedom for OSS tinkerers:** Options for self-hosted models, browser, cloud, or hybrid.
 - **Pay‑for‑What‑You‑Use:** 1 credit 1 sec (or 1 char?, multiplier for more expensive models).
 
-## 🏗️ Architecture
+## 🏗️ High‑level Architecture
 
+```mermaid
+flowchart LR
+  FE["React SPA / TUI"] -- "REST + WS" --> GW["FastAPI Gateway"]
+  FE -- "WebGPU (free tier)" --> WE["Browser TTS Engine"]
+  GW -- "queue / pub sub" --> R["Redis"]
+  subgraph Workers
+    W1["Worker #1 (model = Kokoro)"]
+    W2["Worker #N (model = …)"]
+  end
+  Workers --- R
+  GW -- "SQLAlchemy" --> PG[(Postgres)]
+  GW -- "CacheBackend" --> S3[(S3 / MinIO)]
+  GW -- "verify JWT" --> AK["Authentik IdP"]
+  class FE,WE client;
+```
+*Workers can run on dedicated GPU/CPU hosts, pods or serverless runners (RunPod, Modal, Lambda) – only Redis connectivity is required.*
+
+## 🌐Public API(v1)
+
+### Catalogue
+| method | path | notes |
+|---|---|---|
+| `GET` | `/v1/models` | List models with `price_sec`, `default_voice`. |
+| `GET` | `/v1/models/{model_id}/voices` | Voices for the given model. |
+
+### Synthesis
+| method | path | body / notes |
+|---|---|---|
+| `POST` | `/v1/models/{model_id}/tts` | `{text, voice, speed, codec}` → `201 {job_id, ws_url, est_sec}` |
+| `WS` | `/v1/ws/{job_id}` | Streams Opus/PCM blocks + control frames. |
+| `GET` | `/v1/jobs/{job_id}` | `{state, seconds_done, seconds_total}` progress. |
+| `DELETE` | `/v1/jobs/{job_id}` | Cancel running job. |
+| `GET` | `/v1/audio/{sha256}` | Block download, Range‑enabled. |
+
+### Billing & Credits _(provider‑agnostic)_
+| method | path | purpose |
+|---|---|---|
+| `POST` | `/v1/billing/checkout` | Create payment session `{plan, provider}` → checkout URL. |
+| `POST` | `/v1/billing/webhook/{provider}` | Provider webhook → credit events. |
+| `GET` | `/v1/users/me/credits` | Remaining credits & usage. |
+
+### Auth & Profile
+| method | path | purpose |
+|---|---|---|
+| `GET` | `/v1/users/me` | Basic profile details. |
+
+
+## 🗄️Domain Data Model (SQLAlchemy2)
 ```text
-[ React Web / TUI ]
-        │        ▲
-   REST & WS      │ ws: audio bytes + highlight events
-        ▼        │
-    [ FastAPI Gateway ]
-        │        ▲
-    Redis Lists  │ Redis Pub/Sub
-        ▼        │
-┌───────────────┐ ┌───────────────┐
-│ OCR, VLLM     │ │ kokoro/dia    │  ← Docker images per core model | Serverless model inference
-│ preprocessing │ │gpu|cpu workers│
-└───────────────┘ └───────────────┘
-        │            ← Main app on dedicated VPS
-       Postgres      ← users, credits, jobs, voices
-       MinIO/S3      ← PDF/website/text storage
+user(id PK, email, tier, created)
+credit_event(id PK, user_id FK, delta, reason, ts)
+model(id PK, description, price_sec)
+voice(id PK, model_id FK, name, lang, gender)
+job(id PK, user_id FK, model_id FK, voice_id FK,
+    text_sha256, speed, codec, est_sec, state, created, finished)
+block(id PK, job_id FK, idx, sha256, duration_sec, cached BOOL)
+payment_provider(id PK, name, secret)
+payment_session(id PK, user_id FK, provider_id FK,
+                external_id, plan, state, created)
 ```
 
-(early draft)
-- **Gateway**  
-  - Stateless, uses FastAPI lifespan to open one Redis pool.  
-  - Endpoints:  
-    - `POST /v1/tts` → enqueue job + return `/ws/{id}`.  
-    - `WS /ws/{id}` → stream binary frames.  
-    - `GET /v1/voices` → voice metadata.  
-    - `GET /healthz`.
-- **Workers**  
-  - `kokoro_worker.py` + `libs/kokoro_pipeline.py` which handle cpu/gpu workers.
-- **Storage**  
-  - **Redis:** queue + pub/sub + ephemeral offsets.  
-  - **Postgres:** relational state, atomic credit debits.  
-  - **MinIO (S3):** PDF blobs, etc. local in dev.
+## 🗂️ Cache Strategy
+* **Key**–`sha256(model|voice|speed|text_block)`.
+* **Backends**
+  * `s3`→S3/MinIO, life‑cycle rule: expire *N* days after last access (start simple; upgrade to Redis‑driven LRU when metrics demand).
+  * `fs`→local directory (dev / on‑prem).
+  * `noop`→no server‑side storage; browser persists blocks in `indexedDB`.
+
+## 🔐 Auth
+* **Authentik** – single container OIDC/JWT, MFA, Google, GitHub, email+pwd.
+* Gateway verifies JWT once per request with `python‑jose`.
+
+
+## 💸 Billing
+* **Pluggable payment adapters** (`stripe`, `paypal`, `paddle`, …)
+* **TBD** – Decide default provider (Stripe easiest; PayPal considered for EU users).   
+
+Adapter swap requires no gateway changes.
+
+## 📋 Feature Backlog
+1. **Gateway / Backend**
+   1. ORM + Alembic migration `0001_initial`  *(WIP)*
+   2. Progress endpoint with online metering.
+   3. Cache backend drivers + metrics.
+2. **Auth & Billing**
+   1. Authentik deployment script.
+   2. Stripe adapter prototype _(open: evaluate PayPal fees & API)_.
+3. **Frontend MVP**
+   1. Model / voice selector, play/pause, block‑seek progress bar.
+   2. WebGPU fallback (transformers.js) for free tier.
+4. **Persistence & Tracking**
+   1. Redis hash for offsets, periodic flush to Postgres.
+   2. Credit debits on `block` completion.
+5. **Additional Models** – integrate ElevenLabs API adapter.
+6. **Document Parsing** – OCR + VLLM summariser.
+7. **Monitoring & QA** – Prometheus, Grafana, e2e tests.
+8. **Optimisations** – Opus encoding server‑side streaming, SIMD improvements.
+9. **Documentation & Community** – README, Discord, blog post.
+
+
+## 🛣️ Roadmap (next 90 days)
+| week | milestone |
+|------|-----------|
+| 1‑2 | Alembic migration, cache drivers, progress endpoint. |
+| 3‑4 | Authentik live, Stripe sandbox, basic React player. |
+| 5‑6 | Metrics → Grafana, Opus streaming, serverless worker PoC. |
+| 7‑8 | ElevenLabs adapter, paid tier launch, blog post. |
+| 9‑12 | PDF/OCR pipeline, PayPal adapter decision, public beta. |
+
+
+## 📜 Style & Tooling
+* **Python** 3.12, Ruff for lint+format, mypy strict.
+* **CI** – GitHub Actions builds gateway + workers, runs lint.
+* **Conventional Commits** for changelog.
+
+
+## ❓ Open Questions / TBD
+* Which payment provider ships first (Stripe vs PayPal)?
+* Final cache \(LRU vs S3 Intel‑Tier) once real metrics arrive.
+* Pricing multipliers per premium model.
+* Long‑term user‑storage (MinIO vs cloud S3).
+
 
 ## 🔧 Current State (needs heavy refactoring & adaptations)
 - ✅ Docker‑Compose skeleton (redis, postgres, minio, gateway, CPU/GPU workers).  

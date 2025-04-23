@@ -59,3 +59,11 @@ test-cpu-wav: up-cpu
 
 test-gpu-wav: up
 	python scripts/smoke_test.py --model kokoro-gpu
+
+# -------- repomix -------
+
+repomix:
+	repomix -i ".gitignore"
+
+repomix-backend:
+	repomix -i "frontend,.gitignore"
