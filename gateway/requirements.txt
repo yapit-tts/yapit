@@ -1,8 +1,9 @@
 fastapi
 uvicorn[standard]
-aioredis
+redis
 orjson
 pydantic
 pydantic-settings
 sqlalchemy
 sqlmodel
+alembic
