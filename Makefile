@@ -1,67 +1,50 @@
-# ───────── variables ──────────────────────────────────────────
-COMPOSE = docker compose
-PWD     := $(shell pwd)
 
-# ───────── targets ────────────────────────────────────────────
-.PHONY: help up up-prod
-help:
-	@echo "make build           – build all images"
-	@echo "make build-cpu       – build only cpu images"
-	@echo "make build-gpu       – build only gpu images"
-	@echo "make up              – up everything"
-	@echo "make up-cpu          – up w/o gpu services"
-	@echo "make down            – stop & remove containers"
-	@echo "make logs            – live logs (all)"
-	@echo "make logs-gpu        – gpu worker log"
-	@echo "make test-cpu        - generate sample wav with cpu worker"
-	@echo "make test-gpu        - generate sample wav with gpu worker"
-
-# -------- build -----------
+# -------- build ------
 build:
-	$(COMPOSE) build --parallel
+	docker compose build --parallel
 
 build-cpu:
-	$(COMPOSE) build gateway kokoro-cpu-worker
+	docker compose build gateway kokoro-cpu --parallel
 
 build-gpu:
-	$(COMPOSE) build kokoro-gpu-worker
+	docker compose build kokoro-gpu --parallel
 
-# -------- runtime ---------
-# TODO...
-up:        ## dev stack (uses .env.dev and override file)
-	docker compose --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml up -d
+# -------- runtime ------
 
-up-prod:   ## prod stack (uses .env.prod, no override)
-	docker compose --env-file .env.prod  -f docker-compose.yml up -d
+up-dev-cpu:
+	docker compose --profile local-tts up -d kokoro-cpu gateway redis postgres
 
-up-cpu:
-	$(COMPOSE) up -d redis postgres minio gateway kokoro-cpu-worker
+up-dev-gpu:
+	docker compose --profile local-tts up -d kokoro-gpu gateway redis postgres
+
+up:
+	docker compose up -d gateway redis postgres # remote workers
 
 down:
-	$(COMPOSE) down -v --remove-orphans
+	docker compose down -v --remove-orphans
 
 logs:
-	$(COMPOSE) logs -f
+	docker compose logs -f
 
 logs-gpu:
-	$(COMPOSE) logs -f kokoro-gpu-worker
+	docker compose logs -f kokoro-gpu-worker
 
-# -------- smoke test ------
+# -------- test ------
 
-test-cpu: up-cpu
+test-cpu: up-dev-cpu
 	curl -X POST localhost:8000/v1/tts \
      -H 'Content-Type: application/json' \
      -d '{"model":"kokoro-cpu","text":"CPU"}'
 
-test-gpu: up
+test-gpu: up-dev-gpu
 	curl -X POST localhost:8000/v1/tts \
 	 -H 'Content-Type: application/json' \
 	 -d '{"model":"kokoro","text":" GPU"}'
 
-test-cpu-wav: up-cpu
+test-cpu-wav: up-dev-cpu
 	python scripts/smoke_test.py --model kokoro-cpu
 
-test-gpu-wav: up
+test-gpu-wav: up-dev-gpu
 	python scripts/smoke_test.py --model kokoro-gpu
 
 # -------- repomix -------

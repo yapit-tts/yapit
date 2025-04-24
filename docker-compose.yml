@@ -1,5 +1,3 @@
-version: "3.9"
-
 volumes:
   pgdata:
 
@@ -57,7 +55,7 @@ services:
       MODEL_QUEUE:  tts:kokoro
       DEVICE:       cuda
       WORKER_CONCURRENCY: 1
-    deploy:                                # GPU only if host actually has one
+    deploy:
       resources:
         reservations:
           devices:
