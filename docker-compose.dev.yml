@@ -1,0 +1,10 @@
+services:
+  gateway:
+    ports: ["8000:8000"]                # bind for local browser tests
+    environment:
+      DB_AUTO_CREATE: "1"
+      SQLALCHEMY_ECHO: "1"
+
+  kokoro-cpu:
+    build:
+      target: dev          # optional extra tools layers

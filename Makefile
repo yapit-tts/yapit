@@ -3,7 +3,7 @@ COMPOSE = docker compose
 PWD     := $(shell pwd)
 
 # ───────── targets ────────────────────────────────────────────
-.PHONY: help
+.PHONY: help up up-prod
 help:
 	@echo "make build           – build all images"
 	@echo "make build-cpu       – build only cpu images"
@@ -27,8 +27,12 @@ build-gpu:
 	$(COMPOSE) build kokoro-gpu-worker
 
 # -------- runtime ---------
-up:
-	$(COMPOSE) up -d
+# TODO...
+up:        ## dev stack (uses .env.dev and override file)
+	docker compose --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml up -d
+
+up-prod:   ## prod stack (uses .env.prod, no override)
+	docker compose --env-file .env.prod  -f docker-compose.yml up -d
 
 up-cpu:
 	$(COMPOSE) up -d redis postgres minio gateway kokoro-cpu-worker
