@@ -1,9 +1,6 @@
-fastapi
-uvicorn[standard]
-redis
+fastapi[standard]>=0.115.12
+redis>=5.2.1
+alembic>=1.15.2
+sqlmodel>=0.0.24
 orjson
-pydantic
-pydantic-settings
-sqlalchemy
-sqlmodel
-alembic
+pydantic-settings>=2.9.1
