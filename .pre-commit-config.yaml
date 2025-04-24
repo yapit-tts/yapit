@@ -6,7 +6,6 @@ repos:
       - id: ruff
         types_or: [ python ]
         language: python
-        args: [ --fix ]
       # format
       - id: ruff-format
         types_or: [ python ]
