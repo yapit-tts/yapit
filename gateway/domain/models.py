@@ -39,7 +39,7 @@ class Voice(SQLModel, table=True):
     """Concrete voice belonging to a model."""
 
     id: str | None = Field(default=None, primary_key=True)
-    model_id: str | None = Field(foreign_key="model.id")
+    model_id: str = Field(foreign_key="model.id")
 
     name: str
     lang: str
@@ -62,9 +62,9 @@ class Job(SQLModel, table=True):
 
     id: str | None = Field(default=None, primary_key=True)
 
-    user_id: str | None = Field(foreign_key="user.id", default=None)
-    model_id: str | None = Field(foreign_key="model.id")
-    voice_id: str | None = Field(foreign_key="voice.id")
+    user_id: str = Field(foreign_key="user.id", default=None)
+    model_id: str = Field(foreign_key="model.id")
+    voice_id: str = Field(foreign_key="voice.id")
 
     text_sha256: str
     speed: float
@@ -75,7 +75,7 @@ class Job(SQLModel, table=True):
     created: datetime = Field(default_factory=datetime.utcnow)
     finished: datetime | None = None
 
-    user: Mapped[User | None] = Relationship(back_populates="jobs")
+    user: Mapped[User] = Relationship(back_populates="jobs")
     model: Mapped[Model] = Relationship(back_populates="jobs")
     voice: Mapped[Voice] = Relationship(back_populates="jobs")
     blocks: Mapped[list[Block]] = Relationship(
@@ -87,7 +87,7 @@ class Block(SQLModel, table=True):
     """One audio chunk (≈10–20 s)."""
 
     id: str | None = Field(default=None, primary_key=True)
-    job_id: str | None = Field(foreign_key="job.id")
+    job_id: str = Field(foreign_key="job.id")
 
     idx: int  # zero-based position in job
     sha256: str  # audio cache key
