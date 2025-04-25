@@ -3,44 +3,50 @@ from __future__ import annotations
 from datetime import datetime
 from enum import StrEnum, auto
 
-from sqlalchemy import Column, Enum
+from sqlalchemy.orm import Mapped
 from sqlmodel import Field, Relationship, SQLModel
 
 
 class User(SQLModel, table=True):
     """Platform user."""
 
-    id: str = Field(primary_key=True)
+    id: str | None = Field(default=None, primary_key=True)
     email: str
-    tier: str = Field(default="free")
+    tier: str = Field(default="free")  # todo why field?
     created: datetime = Field(default_factory=datetime.utcnow)
 
-    jobs: list[Job] = Relationship(back_populates="user", sa_relationship_kwargs={"cascade": "all, delete-orphan"})
+    jobs: Mapped[list[Job]] = Relationship(
+        back_populates="user",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"},
+    )
 
 
 class Model(SQLModel, table=True):
     """A TTS model type."""
 
-    id: str = Field(primary_key=True)
+    id: str | None = Field(default=None, primary_key=True)
     description: str
-    price_sec: float = Field(default=0.0)
+    price_sec: float = 0.0
 
-    voices: list[Voice] = Relationship(back_populates="model", sa_relationship_kwargs={"cascade": "all, delete-orphan"})
-    jobs: list[Job] = Relationship(back_populates="model")
+    voices: Mapped[list[Voice]] = Relationship(
+        back_populates="model",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"},
+    )
+    jobs: Mapped[list[Job]] = Relationship(back_populates="model")
 
 
 class Voice(SQLModel, table=True):
     """Concrete voice belonging to a model."""
 
-    id: str = Field(primary_key=True)
-    model_id: str = Field(foreign_key="model.id")
+    id: str | None = Field(default=None, primary_key=True)
+    model_id: str | None = Field(foreign_key="model.id")
 
     name: str
     lang: str
     # xxx description / properties?
 
-    model: Model = Relationship(back_populates="voices")
-    jobs: list[Job] = Relationship(back_populates="voice")
+    model: Mapped[Model] = Relationship(back_populates="voices")
+    jobs: Mapped[list[Job]] = Relationship(back_populates="voice")
 
 
 class JobState(StrEnum):
@@ -54,39 +60,34 @@ class JobState(StrEnum):
 class Job(SQLModel, table=True):
     """High-level synthesis task covering N audio blocks."""
 
-    id: str = Field(primary_key=True)
+    id: str | None = Field(default=None, primary_key=True)
 
-    user_id: str | None = Field(foreign_key="user.id")
-    model_id: str = Field(foreign_key="model.id")
-    voice_id: str = Field(foreign_key="voice.id")
+    user_id: str | None = Field(foreign_key="user.id", default=None)
+    model_id: str | None = Field(foreign_key="model.id")
+    voice_id: str | None = Field(foreign_key="voice.id")
 
     text_sha256: str
     speed: float
     codec: str
     est_sec: float
 
-    state: JobState = Field(
-        sa_column=Column(Enum(JobState)),
-        default=JobState.queued,
-    )
-
+    state: JobState = JobState.queued
     created: datetime = Field(default_factory=datetime.utcnow)
     finished: datetime | None = None
 
-    user: User | None = Relationship(back_populates="jobs")
-    model: Model = Relationship(back_populates="jobs")
-    voice: Voice = Relationship(back_populates="jobs")
-    blocks: list[Block] = Relationship(
-        back_populates="job",
-        sa_relationship_kwargs={"cascade": "all, delete-orphan"},
+    user: Mapped[User | None] = Relationship(back_populates="jobs")
+    model: Mapped[Model] = Relationship(back_populates="jobs")
+    voice: Mapped[Voice] = Relationship(back_populates="jobs")
+    blocks: Mapped[list[Block]] = Relationship(
+        back_populates="job", sa_relationship_kwargs={"cascade": "all, delete-orphan"}
     )
 
 
 class Block(SQLModel, table=True):
     """One audio chunk (≈10–20 s)."""
 
-    id: str = Field(primary_key=True)
-    job_id: str = Field(foreign_key="job.id")
+    id: str | None = Field(default=None, primary_key=True)
+    job_id: str | None = Field(foreign_key="job.id")
 
     idx: int  # zero-based position in job
     sha256: str  # audio cache key
@@ -95,5 +96,4 @@ class Block(SQLModel, table=True):
 
     deleted_at: datetime = None
 
-    # Relationship
-    job: Job = Relationship(back_populates="blocks")
+    job: Mapped[Job] = Relationship(back_populates="blocks")
