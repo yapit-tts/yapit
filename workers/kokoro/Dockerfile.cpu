@@ -6,10 +6,11 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
+
 COPY workers/kokoro/requirements.cpu.txt .
 RUN pip install --no-cache-dir -r requirements.cpu.txt
 
-COPY workers/ .
+COPY workers/ /app/workers
 
 ENV PYTHONUNBUFFERED=1
 ENTRYPOINT ["tini","--"]

@@ -2,7 +2,7 @@ volumes:
   pgdata:
 
 services:
-  # ---------------------------------------------------------------- database
+  # -------- database
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
@@ -12,24 +12,35 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD", "pg_isready", "-U", "postgres" ]
+      interval: 3s
+      timeout: 3s
+      retries: 10
 
-  # ---------------------------------------------------------------- cache / queue
+  # -------- cache / queue
   redis:
     image: redis:7-alpine
     restart: unless-stopped
 
-  # ---------------------------------------------------------------- api-gateway
+  # -------- api-gateway
   gateway:
-    build: ./gateway
+    build:
+      context: .
+      dockerfile: gateway/Dockerfile
     env_file:
-      - ./.env                        # override with --env-file
+      - ./.env
     environment:
       MODEL_QUEUE_KOKORO: tts:kokoro
-    depends_on: [redis, postgres]
+    depends_on:
+      redis:
+        condition: service_started
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
     expose: ["8000"]
 
-  # ---------------------------------------------------------------- kokoro workers
+  # -------- kokoro workers for local model serving
   kokoro-cpu:
     profiles:
       - self-host

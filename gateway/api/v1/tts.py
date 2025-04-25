@@ -19,7 +19,7 @@ from gateway.domain.models import (
 from gateway.domain.models import (
     Model as TtsModel,
 )
-from gateway.redis import get_redis
+from gateway.redis_client import get_redis
 
 router = APIRouter(prefix="/v1", tags=["synthesis"])
 

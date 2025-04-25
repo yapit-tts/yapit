@@ -7,7 +7,7 @@ from fastapi.responses import ORJSONResponse
 from gateway.api.v1 import routers as v1_routers  # __all__ inside collects them
 from gateway.config import get_settings
 from gateway.db import close_db, prepare_database
-from gateway.redis import close_redis
+from gateway.redis_client import close_redis
 
 
 @asynccontextmanager

@@ -5,6 +5,7 @@ torch OMP_NUM_THREADS: If you see CPU utilization ≫ #cores, reduce threads; if
 Too high → context‑switch overhead.
 Rule of thumb: cores / 2
 
+Separate copy command for requirements.txt in Dockerfile to avoid cache busting -> can edit pythong file without needing to re-install all dependencies.
 
 Generate first alembic revision:
 ```

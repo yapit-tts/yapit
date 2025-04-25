@@ -1,0 +1,3 @@
+services:
+  gateway:
+    ports: ["8000:8000"] # todo maybe the other approach works again ..?

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import asyncio
 import logging
 import os
@@ -25,7 +23,7 @@ class KokoroAdapter(SynthAdapter):
         if self.device == "cuda" and not torch.cuda.is_available():
             log.warning("CUDA requested but unavailable, falling back to CPU")
             self.device = "cpu"
-        self.pipe = KPipeline(lang_code="a", device=self.device)
+        self.pipe = KPipeline(repo_id="hexgrad/Kokoro-82M", lang_code="a", device=self.device)
         self.pipe.load_voice("af_heart")
 
     async def stream(self, text: str, *, voice: str, speed: float, codec: str):
