@@ -62,7 +62,7 @@ class Job(SQLModel, table=True):
 
     id: str | None = Field(default=None, primary_key=True)
 
-    user_id: str = Field(foreign_key="user.id", default=None)
+    user_id: str = Field(foreign_key="user.id")
     model_id: str = Field(foreign_key="model.id")
     voice_id: str = Field(foreign_key="voice.id")
 
@@ -94,6 +94,6 @@ class Block(SQLModel, table=True):
     duration_sec: float
     cached: bool = Field(default=False)
 
-    deleted_at: datetime = None
+    deleted_at: datetime | None = None
 
     job: Mapped[Job] = Relationship(back_populates="blocks")
