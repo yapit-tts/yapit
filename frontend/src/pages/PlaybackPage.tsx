@@ -3,7 +3,7 @@ import { DocumentCard } from '../components/documentCard';
 
 const PlaybackPage = () => {
 	return (
-		<div>
+		<div className="w-full">
 			<DocumentCard />
 			<SoundControl />
 		</div>
