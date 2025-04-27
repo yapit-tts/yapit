@@ -1,7 +1,16 @@
-from typing import Protocol
+import abc
+import logging
+
+from gateway.config import CacheConfig, get_settings
+
+log = logging.getLogger(__name__)
 
 
-class Cache(Protocol):
+class Cache(abc.ABC):
+    def __init__(self, config: CacheConfig) -> None:
+        self.config = config
+
+    @abc.abstractmethod
     async def store(self, key: str, data: bytes) -> str | None:
         """Stores data bytes under the given key.
 
@@ -14,6 +23,7 @@ class Cache(Protocol):
             This reference is stored in BlockVariant.cache_ref.
         """
 
+    @abc.abstractmethod
     async def retrieve(self, key: str) -> bytes | None:
         """Retrieves data bytes for the given key.
 
@@ -24,6 +34,7 @@ class Cache(Protocol):
             The cached data bytes, or None if not found or on error.
         """
 
+    @abc.abstractmethod
     async def exists(self, key: str) -> bool:
         """Checks if data for a key exists in the cache.
 
@@ -34,6 +45,7 @@ class Cache(Protocol):
             True if the key exists, False otherwise.
         """
 
+    @abc.abstractmethod
     async def delete(self, key: str) -> bool:
         """Deletes data associated with the key.
 
@@ -62,3 +74,19 @@ class NoOpCache(Cache):
     async def delete(self, key: str) -> bool:
         """Pretends to delete data, always returns True."""
         return True
+
+
+CACHE_BACKENDS: dict[str, type[Cache]] = {
+    "noop": NoOpCache,
+    # "filesystem": FileSystemCache,
+    # "s3": S3Cache,
+}
+
+
+def get_cache_backend() -> Cache:
+    settings = get_settings()
+    cache_type = settings.cache_type.lower()
+    backend = CACHE_BACKENDS.get(cache_type)
+    if backend:
+        return backend(settings.cache_config)
+    raise ValueError(f"Invalid cache backend type '{cache_type}'. Supported types: {', '.join(CACHE_BACKENDS.keys())}.")

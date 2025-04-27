@@ -10,6 +10,7 @@ ignore = [
     "D105", # missing docstring in undocumented-magic-method
     "D106", # missing docstring in public-nested-class
     "D107", # missing docstring in __init__ method
+    "D205", # 1 blank line required between summary line and description
     "D417", # don't require documentation for every function param
 ]
 

@@ -1,13 +1,6 @@
 import abc
 
-from pydantic import BaseModel  # Alias to avoid clash
-from pydantic import Field as PydanticField
-
-
-class TextSplitterConfig(BaseModel):
-    """Configuration settings for text splitters."""
-
-    max_chars_per_block: int = PydanticField(1000, gt=0)
+from gateway.config import TextSplitterConfig, get_settings
 
 
 class TextSplitter(abc.ABC):
@@ -42,3 +35,17 @@ class DummySplitter(TextSplitter):
                 blocks.append(chunk)
             current_pos = end_pos
         return blocks
+
+
+TEXT_SPLITTERS: dict[str, type[TextSplitter]] = {
+    "dummy": DummySplitter,
+}
+
+
+def get_text_splitter() -> TextSplitter:
+    settings = get_settings()
+    splitter_type = settings.splitter_type.lower()
+    splitter = TEXT_SPLITTERS.get(splitter_type)
+    if splitter:
+        return splitter(settings.splitter_config)
+    raise ValueError(f"Unknown text splitter type: {splitter_type}")
