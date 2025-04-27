@@ -5,6 +5,7 @@ import uuid
 from datetime import datetime
 from enum import StrEnum, auto
 from functools import partial
+from typing import Literal
 
 from sqlmodel import TEXT, Column, Field, Relationship, SQLModel
 
@@ -56,7 +57,7 @@ class Document(SQLModel, table=True):
     user_id: str = Field(foreign_key="user.id")
 
     source_ref: str | None = Field(default=None)
-    source_type: str | None = Field(default=None)  # e.g., 'url', 'upload', 'paste'
+    source_type: Literal["url", "upload", "paste"] | None = Field(default=None)
 
     title: str | None = Field(default=None)
 
