@@ -3,9 +3,12 @@ from collections.abc import AsyncIterator
 
 from alembic import command, config
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlmodel import SQLModel
+from sqlmodel import SQLModel, select
 
-from gateway.config import get_settings
+from gateway.config import ANON_USER, get_settings
+from gateway.domain.models import User
+
+# TODO collect all env vars centrally in Settings and use settings here
 
 settings = get_settings()
 engine = create_async_engine(
@@ -33,7 +36,16 @@ async def prepare_database() -> None:
     else:
         alembic_cfg = config.Config("alembic.ini")
         command.upgrade(alembic_cfg, "head")
+    if os.getenv("DB_SEED") == "1":
+        await _seed_db()
 
 
 async def close_db() -> None:
     await engine.dispose()
+
+
+async def _seed_db() -> None:
+    async with SessionLocal() as db:
+        if not (await db.execute(select(User).where(User.id == ANON_USER.id))).first():
+            db.add(ANON_USER)
+            await db.commit()

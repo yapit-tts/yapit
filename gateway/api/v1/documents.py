@@ -1,20 +1,28 @@
 import math
-from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, HttpUrl
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from gateway.config import ANON_USER
 from gateway.db import get_db
-from gateway.domain.models import Block, Document
+from gateway.domain.models import Block, Document, SourceType
 from gateway.text_splitter import TextSplitter, get_text_splitter
 
 router = APIRouter(prefix="/v1/documents", tags=["Documents"])
 
 
 class DocumentCreateRequest(BaseModel):
-    source_type: Literal["paste", "url", "upload"]
+    """Payload for creating a document.
+
+    Attributes:
+        source_type: Where the text comes from
+        text_content: Raw text when source_type == "paste".
+        source_ref: URL or filename (for url and upload types).
+    """
+
+    source_type: SourceType
     text_content: str | None = None
     source_ref: HttpUrl | str | None = None
 
@@ -23,9 +31,6 @@ class DocumentCreateResponse(BaseModel):
     document_id: UUID
     num_blocks: int
     est_duration_ms: float
-
-
-ANON_USER_ID = "anonymous_user"  # Seeded once during migrations / tests # TODO move to config?
 
 
 @router.post(
@@ -62,7 +67,7 @@ async def create_document(
 
     # --- Persist Document
     doc = Document(
-        user_id=ANON_USER_ID,  # TODO replace with actual user ID
+        user_id=ANON_USER.id,  # TODO replace with actual user ID
         source_type=req.source_type,
         source_ref=req.source_ref,
     )

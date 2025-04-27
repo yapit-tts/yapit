@@ -5,6 +5,10 @@ from pydantic import BaseModel
 from pydantic import Field as PydanticField
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from gateway.domain.models import User
+
+ANON_USER = User(id="anonymous_user", email="anon@example.com", tier="free")  # TODO move this to the db seed func
+
 
 class TextSplitterConfig(BaseModel):
     max_chars_per_block: int = PydanticField(default=1000, gt=0)

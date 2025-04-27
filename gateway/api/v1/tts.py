@@ -12,12 +12,10 @@ from typing_extensions import Literal, cast
 
 from gateway.db import get_db
 from gateway.domain.models import (
-    Job,
-    JobState,
-    Voice,
+    Model as TtsModel,
 )
 from gateway.domain.models import (
-    Model as TtsModel,
+    Voice,
 )
 from gateway.redis_client import get_redis
 
@@ -46,59 +44,61 @@ async def enqueue_tts(
     db: SQLModelAsyncSession = Depends(get_db),
     redis: Redis = Depends(get_redis),
 ) -> TTSOut:
-    """Queue a synthesis job and return the WebSocket URL."""
-    # validate model
-    model_obj = await db.get(TtsModel, model_id)
-    if model_obj is None:
-        raise HTTPException(status_code=404, detail=f"model '{model_id}' not found")
-
-    # validate / choose voice
-    if body.voice:
-        stmt = select(Voice).where(Voice.id == body.voice, Voice.model_id == model_id)
-        stmt = cast(Select[Voice], stmt)
-        voice_obj = (await db.exec(stmt)).first()
-        if voice_obj is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"voice '{body.voice}' not found for model '{model_id}'",
-            )
-    else:
-        if not model_obj.voices:
-            raise HTTPException(status_code=500, detail=f"model '{model_id}' has no voices configured")
-        voice_obj = model_obj.voices[0]
-
-    # persist Job row
-    job_id = uuid.uuid4().hex
-    channel = f"tts:{job_id}"
-    text_sha256 = hashlib.sha256(body.text.encode()).hexdigest()
-    est_sec = len(body.text) / 15.0 / body.speed  # heuristic, 15 chars ≈ 1 s # XXX measure & evaluate
-    job = Job(
-        id=job_id,
-        user_id=None,
-        model_id=model_id,
-        voice_id=voice_obj.id,
-        text_sha256=text_sha256,
-        speed=body.speed,
-        codec=body.codec,
-        est_sec=est_sec,
-        state=JobState.queued,
-    )
-    db.add(job)
-    await db.commit()
-
-    # enqueue work on Redis
-    payload = {
-        "job_id": job_id,
-        "channel": channel,
-        "model": model_id,
-        "voice": voice_obj.id,
-        "text": body.text,
-        "speed": body.speed,
-        "codec": body.codec,
-    }
-    await redis.lpush(f"tts:{model_id}", orjson.dumps(payload))
-
-    return TTSOut(job_id=job_id, ws_url=f"/v1/ws/{job_id}", est_sec=est_sec)
+    pass
+    # """Queue a synthesis job and return the WebSocket URL."""
+    # # validate model
+    # model_obj = await db.get(TtsModel, model_id)
+    # if model_obj is None:
+    #     raise HTTPException(status_code=404, detail=f"model '{model_id}' not found")
+    #
+    # # validate / choose voice
+    # if body.voice:
+    #     stmt = select(Voice).where(Voice.id == body.voice, Voice.model_id == model_id)
+    #     stmt = cast(Select[Voice], stmt)
+    #     voice_obj = (await db.exec(stmt)).first()
+    #     if voice_obj is None:
+    #         raise HTTPException(
+    #             status_code=404,
+    #             detail=f"voice '{body.voice}' not found for model '{model_id}'",
+    #         )
+    # else:
+    #     if not model_obj.voices:
+    #         raise HTTPException(status_code=500, detail=f"model '{model_id}' has no voices configured")
+    #     voice_obj = model_obj.voices[0]
+    #
+    # # persist Job row
+    # job_id = uuid.uuid4().hex
+    # channel = f"tts:{job_id}"
+    # text_sha256 = hashlib.sha256(body.text.encode()).hexdigest()
+    # est_sec = len(body.text) / 15.0 / body.speed  # heuristic, 15 chars ≈ 1 s # XXX measure & evaluate
+    # job = Job(
+    #     id=job_id,
+    #     user_id=None,
+    #     model_id=model_id,
+    #     voice_id=voice_obj.id,
+    #     text_sha256=text_sha256,
+    #     speed=body.speed,
+    #     codec=body.codec,
+    #     est_sec=est_sec,
+    #     state=JobState.queued,
+    # )
+    # db.add(job)
+    # await db.commit()
+    #
+    # # enqueue work on Redis
+    # payload = {
+    #     "job_id": job_id,
+    #     "channel": channel,
+    #     "model": model_id,
+    #     "voice": voice_obj.id,
+    #     "text": body.text,
+    #     "speed": body.speed,
+    #     "codec": body.codec,
+    # }
+    # await redis.lpush(f"tts:{model_id}", orjson.dumps(payload))
+    #
+    # return TTSOut(job_id=job_id, ws_url=f"/v1/ws/{job_id}", est_sec=est_sec)
+    #
 
 
 @router.websocket("/ws/{job_id}")

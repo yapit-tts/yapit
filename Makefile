@@ -12,15 +12,15 @@ build-gpu:
 
 # -------- runtime ------
 
-up-dev-cpu:
+dev-cpu:
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml \
 	--profile self-host \
-	up -d kokoro-cpu gateway redis postgres
+	up -d kokoro-cpu gateway redis postgres --build
 
-up-dev-gpu:
+dev-gpu:
 	docker compose  -f docker-compose.yml -f docker-compose.dev.yml \
 	--profile self-host \
-	up -d kokoro-gpu gateway redis postgres
+	up -d kokoro-gpu gateway redis postgres --build
 
 up:
 	docker compose up -d gateway redis postgres # remote workers
@@ -41,10 +41,10 @@ test-ws-curl:
 		 -H 'Content-Type: application/json' \
 		 -d '{"text":"Hello world!"}'
 
-test-cpu-wav: up-dev-cpu
+test-cpu-wav: dev-cpu
 	python scripts/smoke_test.py --model kokoro-cpu
 
-test-gpu-wav: up-dev-gpu
+test-gpu-wav: dev-gpu
 	python scripts/smoke_test.py --model kokoro-gpu
 
 # -------- repomix -------
