@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import datetime as dt
+import uuid
 from datetime import datetime
 from enum import StrEnum, auto
+from functools import partial
 
-from sqlalchemy.orm import Mapped
-from sqlmodel import Field, Relationship, SQLModel
+from sqlmodel import TEXT, Column, Field, Relationship, SQLModel
 
 
 class User(SQLModel, table=True):
@@ -12,10 +14,10 @@ class User(SQLModel, table=True):
 
     id: str | None = Field(default=None, primary_key=True)
     email: str
-    tier: str = Field(default="free")  # todo why field?
-    created: datetime = Field(default_factory=datetime.utcnow)
+    tier: str = Field(default="free")
+    created: datetime = Field(default_factory=partial(datetime.now, tz=dt.UTC))
 
-    jobs: Mapped[list[Job]] = Relationship(
+    documents: list[Document] = Relationship(
         back_populates="user",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"},
     )
@@ -28,11 +30,11 @@ class Model(SQLModel, table=True):
     description: str
     price_sec: float = 0.0
 
-    voices: Mapped[list[Voice]] = Relationship(
+    voices: list[Voice] = Relationship(
         back_populates="model",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"},
     )
-    jobs: Mapped[list[Job]] = Relationship(back_populates="model")
+    block_variants: list[BlockVariant] = Relationship(back_populates="model")
 
 
 class Voice(SQLModel, table=True):
@@ -45,55 +47,67 @@ class Voice(SQLModel, table=True):
     lang: str
     # xxx description / properties?
 
-    model: Mapped[Model] = Relationship(back_populates="voices")
-    jobs: Mapped[list[Job]] = Relationship(back_populates="voice")
+    model: Model = Relationship(back_populates="voices")
+    block_variants: list[BlockVariant] = Relationship(back_populates="voice")
 
 
-class JobState(StrEnum):
-    queued = auto()
-    running = auto()
-    finished = auto()
-    cancelled = auto()
-    failed = auto()
-
-
-class Job(SQLModel, table=True):
-    """High-level synthesis task covering N audio blocks."""
-
-    id: str | None = Field(default=None, primary_key=True)
-
+class Document(SQLModel, table=True):
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     user_id: str = Field(foreign_key="user.id")
-    model_id: str = Field(foreign_key="model.id")
-    voice_id: str = Field(foreign_key="voice.id")
 
-    text_sha256: str
-    speed: float
-    codec: str
-    est_sec: float
+    source_ref: str | None = Field(default=None)
+    source_type: str | None = Field(default=None)  # e.g., 'url', 'upload', 'paste'
 
-    state: JobState = JobState.queued
-    created: datetime = Field(default_factory=datetime.utcnow)
-    finished: datetime | None = None
+    title: str | None = Field(default=None)
 
-    user: Mapped[User] = Relationship(back_populates="jobs")
-    model: Mapped[Model] = Relationship(back_populates="jobs")
-    voice: Mapped[Voice] = Relationship(back_populates="jobs")
-    blocks: Mapped[list[Block]] = Relationship(
-        back_populates="job", sa_relationship_kwargs={"cascade": "all, delete-orphan"}
+    created: datetime = Field(default_factory=partial(datetime.now, tz=dt.UTC))
+
+    user: User = Relationship(back_populates="documents")
+    blocks: list[Block] = Relationship(
+        back_populates="document", sa_relationship_kwargs={"cascade": "all, delete-orphan"}
     )
 
 
 class Block(SQLModel, table=True):
-    """One audio chunk (≈10–20 s)."""
+    """A text block within a document, about 10-20 seconds of audio."""
 
     id: str | None = Field(default=None, primary_key=True)
-    job_id: str = Field(foreign_key="job.id")
+    document_id: uuid.UUID = Field(foreign_key="document.id")
 
-    idx: int  # zero-based position in job
-    sha256: str  # audio cache key
-    duration_sec: float
-    cached: bool = Field(default=False)
+    idx: int  # zero-based position in document
+    text: str = Field(sa_column=Column(TEXT))
+    est_duration_sec: float | None = Field(default=None)  # 1x speed estimate based on text length
 
-    deleted_at: datetime | None = None
+    document: Document = Relationship(back_populates="blocks")
+    variants: list[BlockVariant] = Relationship(
+        back_populates="block", sa_relationship_kwargs={"cascade": "all, delete-orphan"}
+    )
 
-    job: Mapped[Job] = Relationship(back_populates="blocks")
+
+class BlockVariantState(StrEnum):
+    pending = auto()  # task created, not yet synthesized or synthesis failed previously
+    synthesizing = auto()  # worker currently processing
+    cached = auto()  # synthesis successful, audio stored
+    failed = auto()  # synthesis attempted but failed
+
+
+class BlockVariant(SQLModel, table=True):
+    """A synthesized audio variant of a text block."""
+
+    audio_hash: str = Field(primary_key=True)  # Hash(block.text, model_id, voice_id, speed, codec)
+
+    block_id: str = Field(foreign_key="block.id")
+    model_id: str = Field(foreign_key="model.id")
+    voice_id: str = Field(foreign_key="voice.id")
+    speed: float
+    codec: str
+
+    state: BlockVariantState = Field(default=BlockVariantState.pending)
+    duration_sec: float | None = Field(default=None)  # real duration of synthesized audio
+    cache_ref: str | None = Field(default=None)  # FS path or S3 key
+
+    created: datetime = Field(default_factory=partial(datetime.now, tz=dt.UTC))
+
+    block: Block = Relationship(back_populates="variants")
+    model: Model = Relationship(back_populates="block_variants")
+    voice: Voice = Relationship(back_populates="block_variants")
