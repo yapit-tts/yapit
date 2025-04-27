@@ -76,7 +76,7 @@ class Block(SQLModel, table=True):
 
     idx: int  # zero-based position in document
     text: str = Field(sa_column=Column(TEXT))
-    est_duration_sec: float | None = Field(default=None)  # 1x speed estimate based on text length
+    est_duration_ms: int | None = Field(default=None)  # 1x speed estimate based on text length
 
     document: Document = Relationship(back_populates="blocks")
     variants: list[BlockVariant] = Relationship(
@@ -103,7 +103,7 @@ class BlockVariant(SQLModel, table=True):
     codec: str
 
     state: BlockVariantState = Field(default=BlockVariantState.pending)
-    duration_sec: float | None = Field(default=None)  # real duration of synthesized audio
+    duration_ms: int | None = Field(default=None)  # real duration of synthesized audio
     cache_ref: str | None = Field(default=None)  # FS path or S3 key
 
     created: datetime = Field(default_factory=partial(datetime.now, tz=dt.UTC))
