@@ -7,7 +7,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from gateway.domain.models import User
 
-ANON_USER = User(id="anonymous_user", email="anon@example.com", tier="free")  # TODO move this to the db seed func
+ANON_USER = User(id="anonymous_user", email="anon@example.com", tier="free")
 
 
 class TextSplitterConfig(BaseModel):
@@ -19,6 +19,10 @@ class CacheConfig(BaseModel):
 
 
 class Settings(BaseSettings):
+    sqlalchemy_echo: bool = False
+    db_auto_create: bool = False
+    db_seed: bool = False
+
     database_url: str = "postgresql+asyncpg://yapit:yapit@postgres:5432/yapit"
     redis_url: str = "redis://redis:6379/0"
     cors_origins: list[str] = ["http://localhost:5173"]

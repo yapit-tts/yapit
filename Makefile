@@ -12,12 +12,12 @@ build-gpu:
 
 # -------- runtime ------
 
-dev-cpu:
+dev-cpu: down
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml \
 	--profile self-host \
 	up -d kokoro-cpu gateway redis postgres --build
 
-dev-gpu:
+dev-gpu: down
 	docker compose  -f docker-compose.yml -f docker-compose.dev.yml \
 	--profile self-host \
 	up -d kokoro-gpu gateway redis postgres --build

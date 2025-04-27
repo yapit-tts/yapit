@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, HttpUrl
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from gateway.config import ANON_USER
+from gateway.auth import get_current_user_id
 from gateway.db import get_db
 from gateway.domain.models import Block, Document, SourceType
 from gateway.text_splitter import TextSplitter, get_text_splitter
@@ -40,6 +40,7 @@ class DocumentCreateResponse(BaseModel):
 )
 async def create_document(
     req: DocumentCreateRequest,
+    user_id: str = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
     splitter: TextSplitter = Depends(get_text_splitter),
 ) -> DocumentCreateResponse:
@@ -67,7 +68,7 @@ async def create_document(
 
     # --- Persist Document
     doc = Document(
-        user_id=ANON_USER.id,  # TODO replace with actual user ID
+        user_id=user_id,
         source_type=req.source_type,
         source_ref=req.source_ref,
     )
