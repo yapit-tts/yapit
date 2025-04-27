@@ -32,7 +32,7 @@ const TextInputForm = () => {
       });
       console.log(response.data);
 
-			navigate("/playback", { state: { apiResponse: response.data } });
+			navigate("/playback", { state: { apiResponse: response.data, inputText: data.text } });
     } catch (error) {
       console.error("Error posting prompt: ", error);
     }
@@ -53,7 +53,7 @@ const TextInputForm = () => {
                 </FormItem>
               )}
             />
-            <Button type="submit">
+            <Button type="submit" variant="secondary">
               <Play />
               &nbsp;Start&nbsp;Listening
             </Button>

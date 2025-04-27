@@ -1,5 +1,4 @@
 import { Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarGroupAction, } from "@/components/ui/sidebar"
-
 import { FileText, Plus } from "lucide-react"
 
 const documents = [
