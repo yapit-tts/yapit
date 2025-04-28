@@ -37,8 +37,11 @@ jobs:
       - name: Install Python
         run: uv python install 3.12
 
+      - name: Create uv venv
+        run: uv venv
+
       - name: Install test dependencies
-        run: uv pip install pytest websocket-client requests --system
+        run: uv pip install pytest websocket-client requests redis
 
       - name: Run tests
         run: uv run pytest tests
