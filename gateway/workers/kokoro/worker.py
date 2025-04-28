@@ -6,7 +6,7 @@ import numpy as np
 import torch
 from kokoro import KPipeline
 
-from workers.base_worker import SynthAdapter, worker_loop
+from gateway.workers.base import SynthAdapter, worker_loop
 
 log = logging.getLogger("adapter.kokoro")
 
