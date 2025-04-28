@@ -3,17 +3,24 @@ import time
 import pytest
 import requests
 
-GATEWAY = "http://localhost:8000"
-WS = GATEWAY.replace("http", "ws")
+
+@pytest.fixture(scope="session")
+def gateway_url() -> str:
+    return "http://localhost:8000"
+
+
+@pytest.fixture(scope="session")
+def ws_url(gateway_url: str) -> str:
+    return gateway_url.replace("http", "ws")
 
 
 @pytest.fixture(scope="session", autouse=True)
-def wait_until_gateway(timeout: int = 60) -> None:
+def wait_until_gateway(gateway_url: str, timeout: int = 60) -> None:
     """Block until GET /docs returns 200 or *timeout* seconds passed."""
     t0 = time.time()
     while time.time() - t0 < timeout:
         try:
-            if requests.get(f"{GATEWAY}/docs").status_code == 200:
+            if requests.get(f"{gateway_url}/docs").status_code == 200:
                 return
         except requests.exceptions.ConnectionError:
             pass

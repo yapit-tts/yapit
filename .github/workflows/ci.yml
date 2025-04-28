@@ -1,16 +1,6 @@
 name: CI
 
 on:
-  push:
-    branches: [ main ]
-    paths-ignore:
-      - 'notes/**'
-      - 'docs/**'
-      - '**/*.md'
-      - '**/*.rst'
-      - '**/*.txt'
-      - '**/*.ipynb'
-      - '**/*.{png,jpg,svg}'
   pull_request:
     paths-ignore:
       - 'notes/**'
@@ -19,10 +9,9 @@ on:
       - '**/*.rst'
       - '**/*.txt'
       - '**/*.ipynb'
-      - '**/*.{png,jpg,svg}'
 
 jobs:
-  build:
+  ci:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -36,15 +25,19 @@ jobs:
       - name: Build cpu image, gateway
         run: docker compose build --parallel kokoro-cpu gateway
 
-      - name: Copy example env
-        run: cp .env.dev.example .env
-
       - name: Start stack
         run: |
-          docker compose -f docker-compose.yml -f docker-compose.dev.yml \
-            up -d gateway redis postgres
+          cp .env.dev.example .env && \
+          docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d gateway redis postgres
 
-      - run: pip install pytest requests websocket-client
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
 
-      - name: Run smoke tests
-        run: pytest -q gateway/tests
+      - name: Install Python
+        run: uv python install 3.12
+
+      - name: Install test dependencies
+        run: uv pip install pytest websocket-client requests --system
+
+      - name: Run tests
+        run: uv run pytest tests
