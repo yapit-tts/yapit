@@ -1,70 +1,76 @@
+volumes:
+  pgdata:
+
 services:
-  # queues / cache --------------------------------------------------------------
+  # -------- database
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       ${POSTGRES_DB}
+      POSTGRES_USER:     ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD", "pg_isready", "-U", "postgres" ]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  # -------- cache / queue
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    ports: ["6379:6379"]
 
-  # persistence -----------------------------------------------------------------
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_DB: yapit
-      POSTGRES_USER: yapit
-      POSTGRES_PASSWORD: yapit
-    volumes: [pgdata:/var/lib/postgresql/data]
-
-  # object storage for PDFs -----------------------------------------------------
-  minio:
-    image: minio/minio:latest                   # use a tag that always exists
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: minio
-      MINIO_ROOT_PASSWORD: minio123
-    ports: ["9000:9000", "9001:9001"]
-    volumes: [miniodata:/data]
-
-  # API gateway -----------------------------------------------------------------
+  # -------- api-gateway
   gateway:
-    build: ./gateway
-    environment:
-      REDIS_URL: redis://redis:6379/0
-      DATABASE_URL: postgres://yapit:yapit@postgres:5432/yapit
-      MODEL_QUEUE_KOKORO: tts:kokoro_gpu
-    ports: ["8000:8000"]
-    depends_on: [redis, postgres]
-
-  # Kokoro worker on GPU --------------------------------------------------------
-  kokoro-gpu-worker:
     build:
       context: .
-      dockerfile: workers/kokoro_gpu/Dockerfile
+      dockerfile: gateway/Dockerfile
+    env_file:
+      - ./.env
     environment:
-      REDIS_URL: redis://redis:6379/0
-      MODEL_QUEUE: tts:kokoro_gpu
-      DEVICE: cuda
-      WORKER_CONCURRENCY: 1
+      MODEL_QUEUE_KOKORO: tts:kokoro
+    depends_on:
+      redis:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    expose: ["8000"]
+
+  # -------- kokoro workers for local model serving
+  kokoro-cpu:
+    profiles:
+      - self-host
+    build:
+      context: .
+      dockerfile: gateway/workers/kokoro/Dockerfile.cpu
+    env_file: ./.env
+    environment:
+      MODEL_QUEUE:  tts:kokoro
+      DEVICE:       cpu
+      WORKER_CONCURRENCY: 2
     depends_on: [redis]
+    restart: unless-stopped
+
+  kokoro-gpu:
+    profiles:
+      - self-host
+    build:
+      context: .
+      dockerfile: gateway/workers/kokoro/Dockerfile.gpu
+    env_file: ./.env
+    environment:
+      MODEL_QUEUE:  tts:kokoro
+      DEVICE:       cuda
+      WORKER_CONCURRENCY: 1
     deploy:
       resources:
         reservations:
           devices:
             - driver: nvidia
               capabilities: [gpu]
-
-  # Kokoro worker on CPU --------------------------------------------------------
-  kokoro-cpu-worker:
-    build:
-      context: .
-      dockerfile: workers/kokoro_cpu/Dockerfile
-    environment:
-      REDIS_URL: redis://redis:6379/0
-      MODEL_QUEUE: tts:kokoro_cpu
-      DEVICE: cpu
-      WORKER_CONCURRENCY: 2
-    depends_on: [ redis ]
-
-volumes:
-  pgdata:
-  miniodata:
-
+    depends_on: [redis]
+    restart: unless-stopped
