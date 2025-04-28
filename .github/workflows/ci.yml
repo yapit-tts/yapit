@@ -34,4 +34,17 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Build cpu image, gateway
-        run: docker compose build --parallel kokoro-cpu-worker gateway
+        run: docker compose build --parallel kokoro-cpu gateway
+
+      - name: Copy example env
+        run: cp .env.dev.example .env
+
+      - name: Start stack
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.dev.yml \
+            up -d gateway redis postgres
+
+      - run: pip install pytest requests websocket-client
+
+      - name: Run smoke tests
+        run: pytest -q gateway/tests
