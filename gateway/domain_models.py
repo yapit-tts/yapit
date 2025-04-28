@@ -3,8 +3,7 @@ import uuid
 from datetime import datetime
 from enum import StrEnum, auto
 
-from sqlalchemy import DateTime
-from sqlmodel import TEXT, Column, Field, Relationship, SQLModel
+from sqlmodel import TEXT, Column, DateTime, Field, Relationship, SQLModel
 
 # NOTE: Forward annotations do not work with SQLModel
 
@@ -33,7 +32,7 @@ class Model(SQLModel, table=True):
 
     slug: str = Field(unique=True, index=True)
     name: str
-    description: str
+    description: str | None = Field(default=None)
     price_sec: float = 0.0
 
     voices: list["Voice"] = Relationship(

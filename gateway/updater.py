@@ -2,10 +2,10 @@ import json
 import logging
 
 from redis.asyncio import Redis
-from sqlalchemy import select
+from sqlmodel import select
 
 from gateway import SessionLocal
-from gateway.domain.models import BlockVariant, BlockVariantState
+from gateway.domain_models import BlockVariant, BlockVariantState
 
 log = logging.getLogger("updater")
 

@@ -1,11 +1,12 @@
 from collections.abc import AsyncIterator
 
 from alembic import command, config
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlmodel import SQLModel, select
+from sqlmodel.ext.asyncio.session import AsyncSession
 
 from gateway.config import ANON_USER, get_settings
-from gateway.domain.models import User
+from gateway.domain_models import Model, User, Voice
 
 settings = get_settings()
 engine = create_async_engine(
@@ -13,7 +14,11 @@ engine = create_async_engine(
     echo=settings.sqlalchemy_echo,
     pool_pre_ping=True,
 )
-SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
+SessionLocal = async_sessionmaker(
+    engine,
+    expire_on_commit=False,
+    class_=AsyncSession,
+)
 
 
 async def get_db() -> AsyncIterator[AsyncSession]:
@@ -43,8 +48,11 @@ async def close_db() -> None:
 
 async def _seed_db() -> None:
     async with SessionLocal() as db:
-        # anonymous user
         if not (await db.execute(select(User).where(User.id == ANON_USER.id))).first():
             db.add(ANON_USER)
-            await db.commit()
-        # TODO seed kokoro model & voice entry
+        voice_exists = await db.execute(select(Model.id).where(Model.slug == "kokoro"))
+        if not voice_exists.first():
+            model = Model(slug="kokoro", name="Kokoro", price_sec=0.0)
+            voice = Voice(model=model, slug="af_heart", name="af_heart", lang="af")
+            db.add_all([model, voice])
+        await db.commit()

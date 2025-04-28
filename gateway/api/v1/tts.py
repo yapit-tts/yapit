@@ -11,10 +11,10 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from gateway.auth import get_current_user_id
 from gateway.db import get_db
-from gateway.domain.models import Block, BlockVariant, BlockVariantState, Model, Voice
+from gateway.domain_models import Block, BlockVariant, BlockVariantState, Model, Voice
+from gateway.hashing import calculate_audio_hash
 from gateway.jobs import SynthesisJob, queue_name
 from gateway.redis_client import get_redis
-from gateway.utils.hashing import calculate_audio_hash
 
 router = APIRouter(prefix="/v1", tags=["synthesis"])
 

@@ -7,10 +7,10 @@ RUN apt-get update && \
 
 WORKDIR /app
 
-COPY workers/kokoro/requirements.cpu.txt .
+COPY gateway/workers/kokoro/requirements.cpu.txt .
 RUN pip install --no-cache-dir -r requirements.cpu.txt
 
-COPY workers/ /app/workers
+COPY gateway/ /app/gateway
 
 ENV PYTHONUNBUFFERED=1
 ENTRYPOINT ["tini","--"]

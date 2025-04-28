@@ -1,16 +1,21 @@
 import math
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, HttpUrl
+from sqlmodel import func, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from gateway.auth import get_current_user_id
 from gateway.db import get_db
-from gateway.domain.models import Block, Document, SourceType
+from gateway.domain_models import Block, Document, SourceType
 from gateway.text_splitter import TextSplitter, get_text_splitter
 
 router = APIRouter(prefix="/v1/documents", tags=["Documents"])
+
+# how many blocks to embed in create-doc response
+_PREVIEW_LIMIT = 20
 
 
 class DocumentCreateRequest(BaseModel):
@@ -27,10 +32,24 @@ class DocumentCreateRequest(BaseModel):
     source_ref: HttpUrl | str | None = None
 
 
+class BlockRead(BaseModel):
+    id: int
+    idx: int
+    text: str
+    est_duration_ms: int | None = None
+
+
 class DocumentCreateResponse(BaseModel):
     document_id: UUID
     num_blocks: int
-    est_duration_ms: float
+    est_duration_ms: int
+    blocks: list[BlockRead]
+
+
+class BlockPage(BaseModel):
+    total: int
+    items: list[BlockRead]
+    next_offset: int | None
 
 
 @router.post(
@@ -85,7 +104,7 @@ async def create_document(
             detail=f"Text splitting failed: {exc}",
         ) from exc
 
-    est_total = 0.0
+    est_total_ms = 0.0
     blocks: list[Block] = []
     chars_per_second = 15.0  # TODO measure & evaluate
 
@@ -93,18 +112,45 @@ async def create_document(
         if not piece:
             continue
         dur = math.ceil(len(piece) / chars_per_second * 1000)  # ms
-        est_total += dur
+        est_total_ms += dur
         blocks.append(Block(document_id=doc.id, idx=idx, text=piece, est_duration_ms=dur))
 
     if blocks:
         db.add_all(blocks)
         await db.commit()
 
+    preview = [
+        BlockRead(id=b.id, idx=b.idx, text=b.text, est_duration_ms=b.est_duration_ms) for b in blocks[:_PREVIEW_LIMIT]
+    ]
+
     return DocumentCreateResponse(
         document_id=doc.id,
         num_blocks=len(blocks),
-        est_duration_ms=est_total,
+        est_duration_ms=est_total_ms,
+        blocks=preview,
     )
+
+
+@router.get("/{document_id}/blocks", response_model=BlockPage)
+async def list_blocks(
+    document_id: UUID,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=100)] = 100,
+    db: AsyncSession = Depends(get_db),
+) -> BlockPage:
+    if not await db.get(Document, document_id):
+        raise HTTPException(status_code=404, detail="document not found")
+
+    # nit: fix type err
+    total = (await db.exec(select(func.count()).select_from(Block).where(Block.document_id == document_id))).one()
+    # nit: fix type err
+    rows = await db.exec(
+        select(Block).where(Block.document_id == document_id).order_by(Block.idx).offset(offset).limit(limit)
+    )
+    items = [BlockRead(id=b.id, idx=b.idx, text=b.text, est_duration_ms=b.est_duration_ms) for b in rows.all()]
+
+    next_offset = offset + limit if offset + limit < total else None
+    return BlockPage(total=total, items=items, next_offset=next_offset)
 
 
 # --- Helpers (future work)

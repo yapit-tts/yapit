@@ -46,7 +46,7 @@ services:
       - self-host
     build:
       context: .
-      dockerfile: workers/kokoro/Dockerfile.cpu
+      dockerfile: gateway/workers/kokoro/Dockerfile.cpu
     env_file: ./.env
     environment:
       MODEL_QUEUE:  tts:kokoro
@@ -60,7 +60,7 @@ services:
       - self-host
     build:
       context: .
-      dockerfile: workers/kokoro/Dockerfile.gpu
+      dockerfile: gateway/workers/kokoro/Dockerfile.gpu
     env_file: ./.env
     environment:
       MODEL_QUEUE:  tts:kokoro
