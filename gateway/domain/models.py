@@ -101,8 +101,9 @@ class Block(SQLModel, table=True):
 
 
 class BlockVariantState(StrEnum):
-    pending = auto()  # task created, not yet synthesized or synthesis failed previously
-    synthesizing = auto()  # worker currently processing
+    pending = auto()  # synthesis job not yet queued
+    queued = auto()  # synthesis job queued
+    processing = auto()  # synthesis job started
     cached = auto()  # synthesis successful, audio stored
     failed = auto()  # synthesis attempted but failed
 

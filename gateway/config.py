@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="",
         env_file=".env",
-        extra="forbid",
+        extra="ignore",
         env_nested_delimiter="__",
     )
 
