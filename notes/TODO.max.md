@@ -1,8 +1,9 @@
 
 ### Feats
 
-- make voices configurable for kokoro worker (add interface @ adapter)
-- write endpoints (needs: AUTH)
+- **make voices configurable for kokoro worker (add interface @ adapter)**
+- write endpoints (needs: AUTH) / dymic model/worker register
+
 
 ### Refactor
 
