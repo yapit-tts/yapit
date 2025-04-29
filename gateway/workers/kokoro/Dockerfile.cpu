@@ -14,4 +14,4 @@ COPY gateway/ /app/gateway
 
 ENV PYTHONUNBUFFERED=1
 ENTRYPOINT ["tini","--"]
-CMD ["python", "-m", "workers.kokoro.worker"]
+CMD ["python", "-m", "gateway.workers.kokoro.worker"]

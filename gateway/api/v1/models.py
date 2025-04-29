@@ -32,12 +32,7 @@ async def list_models(
     db: AsyncSession = Depends(get_db),
 ) -> List[ModelRead]:
     """Get all available TTS models with their voices."""
-    # Using SQLModel's exec() instead of execute()
-    # This returns proper Model objects directly
-    results = await db.exec(select(Model))
-    models = results.all()
-
-    # Convert to response model with explicit typing
+    models = (await db.exec(select(Model))).all()
     return [
         ModelRead(
             id=model.id,
@@ -65,8 +60,7 @@ async def get_model(
     db: AsyncSession = Depends(get_db),
 ) -> ModelRead:
     """Get a specific TTS model by slug."""
-    result = await db.exec(select(Model).where(Model.slug == model_slug))
-    model = result.first()
+    model = await db.exec(select(Model).where(Model.slug == model_slug)).first()
 
     if not model:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Model not found")
@@ -95,8 +89,7 @@ async def list_voices(
     db: AsyncSession = Depends(get_db),
 ) -> List[VoiceRead]:
     """Get all voices available for a specific model."""
-    result = await db.exec(select(Model).where(Model.slug == model_slug))
-    model = result.first()
+    model = await db.exec(select(Model).where(Model.slug == model_slug)).first()
 
     if not model:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Model not found")
