@@ -4,6 +4,7 @@ volumes:
 services:
   # -------- database
   postgres:
+    init: true
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
@@ -20,14 +21,16 @@ services:
 
   # -------- cache / queue
   redis:
+    init: true
     image: redis:7-alpine
     restart: unless-stopped
 
   # -------- api-gateway
   gateway:
+    init: true
     build:
       context: .
-      dockerfile: gateway/Dockerfile
+      dockerfile: yapit/gateway/Dockerfile
     env_file:
       - ./.env
     environment:
@@ -42,11 +45,12 @@ services:
 
   # -------- kokoro workers for local model serving
   kokoro-cpu:
+    init: true
     profiles:
       - self-host
     build:
       context: .
-      dockerfile: gateway/workers/kokoro/Dockerfile.cpu
+      dockerfile: yapit/workers/kokoro/Dockerfile.cpu
     env_file: ./.env
     environment:
       MODEL_QUEUE:  tts:kokoro
@@ -56,11 +60,12 @@ services:
     restart: unless-stopped
 
   kokoro-gpu:
+    init: true
     profiles:
       - self-host
     build:
       context: .
-      dockerfile: gateway/workers/kokoro/Dockerfile.gpu
+      dockerfile: yapit/workers/kokoro/Dockerfile.gpu
     env_file: ./.env
     environment:
       MODEL_QUEUE:  tts:kokoro

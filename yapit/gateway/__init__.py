@@ -6,11 +6,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import ORJSONResponse
 
-from gateway.api.v1 import routers as v1_routers
-from gateway.config import get_settings
-from gateway.db import SessionLocal, close_db, get_db, prepare_database
-from gateway.redis_client import close_redis, get_redis
-from gateway.updater import run_updater
+from yapit.gateway.api.v1 import routers as v1_routers
+from yapit.gateway.config import get_settings
+from yapit.gateway.db import SessionLocal, close_db, get_db, prepare_database
+from yapit.gateway.redis_client import close_redis, get_redis
+from yapit.gateway.updater import run_updater
 
 
 @asynccontextmanager

@@ -31,17 +31,14 @@ jobs:
       - name: Start stack
         run: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d gateway redis postgres
 
-      - name: Install uv
+      - name: Install uv & Python
         uses: astral-sh/setup-uv@v5
+        with:
+          python-version-file: ".python-version"
+          enable-cache: true
 
-      - name: Install Python
-        run: uv python install 3.12
-
-      - name: Create uv venv
-        run: uv venv
-
-      - name: Install test dependencies
-        run: uv pip install pytest websocket-client requests redis
+      - name: Install test deps
+        run: uv sync --locked --extras test
 
       - name: Run tests
         run: uv run pytest tests

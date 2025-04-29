@@ -5,8 +5,8 @@ from pydantic import BaseModel
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from gateway.db import get_db
-from gateway.domain_models import Model
+from yapit.gateway.db import get_db
+from yapit.gateway.domain_models import Model
 
 router = APIRouter(prefix="/v1/models", tags=["Models"])
 
@@ -60,7 +60,7 @@ async def get_model(
     db: AsyncSession = Depends(get_db),
 ) -> ModelRead:
     """Get a specific TTS model by slug."""
-    model = await db.exec(select(Model).where(Model.slug == model_slug)).first()
+    model = (await db.exec(select(Model).where(Model.slug == model_slug))).first()
 
     if not model:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Model not found")
@@ -89,7 +89,7 @@ async def list_voices(
     db: AsyncSession = Depends(get_db),
 ) -> List[VoiceRead]:
     """Get all voices available for a specific model."""
-    model = await db.exec(select(Model).where(Model.slug == model_slug)).first()
+    model = (await db.exec(select(Model).where(Model.slug == model_slug))).first()
 
     if not model:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Model not found")
