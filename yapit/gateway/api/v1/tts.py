@@ -9,7 +9,7 @@ from redis.asyncio import Redis
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from yapit.contracts.synthesis import queue_name
+from yapit.contracts.synthesis import SynthesisJob, queue_name
 from yapit.gateway.auth import get_current_user_id
 from yapit.gateway.db import get_db
 from yapit.gateway.domain_models import Block, BlockVariant, BlockVariantState, Model, Voice
