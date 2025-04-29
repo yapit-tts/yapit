@@ -1,7 +1,7 @@
 from fastapi import Security
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from gateway.config import ANON_USER
+from yapit.gateway.config import ANON_USER
 
 # TODO implement JWT auth
 bearer = HTTPBearer(auto_error=False)

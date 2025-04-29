@@ -4,8 +4,8 @@ import logging
 from redis.asyncio import Redis
 from sqlmodel import select
 
-from gateway import SessionLocal
-from gateway.domain_models import BlockVariant, BlockVariantState
+from yapit.gateway import SessionLocal
+from yapit.gateway.domain_models import BlockVariant, BlockVariantState
 
 log = logging.getLogger("updater")
 

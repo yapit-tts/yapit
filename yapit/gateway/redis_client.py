@@ -1,7 +1,7 @@
 import redis.asyncio as redis
 from redis.asyncio import Redis
 
-from gateway.config import get_settings
+from yapit.gateway.config import get_settings
 
 settings = get_settings()
 _redis: Redis | None = None

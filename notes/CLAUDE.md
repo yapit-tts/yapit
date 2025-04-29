@@ -83,7 +83,7 @@ Stack: SQLAlchemy + SQLModel + Alembic
 9. **Documentation & Community** – README, Discord, blog post.
 
 ## 📜 Style & Tooling
-* **Python** 3.12, Ruff for lint+format. Typehinted code.
+* **Python** 3.13, Ruff for lint+format. Typehinted code.
 * **Conventional Commits** for changelog.
 * **CI**
 

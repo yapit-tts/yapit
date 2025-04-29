@@ -9,7 +9,7 @@ from collections.abc import AsyncGenerator
 import redis.asyncio as redis
 from redis.asyncio import Redis
 
-from gateway.jobs import SynthesisJob
+from yapit.contracts.synthesis import SynthesisJob
 
 QUEUE = os.getenv("MODEL_QUEUE", "tts:kokoro")
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")

@@ -7,10 +7,10 @@ from pydantic import BaseModel, HttpUrl
 from sqlmodel import func, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from gateway.auth import get_current_user_id
-from gateway.db import get_db
-from gateway.domain_models import Block, Document, SourceType
-from gateway.text_splitter import TextSplitter, get_text_splitter
+from yapit.gateway.auth import get_current_user_id
+from yapit.gateway.db import get_db
+from yapit.gateway.domain_models import Block, Document, SourceType
+from yapit.gateway.text_splitter import TextSplitter, get_text_splitter
 
 router = APIRouter(prefix="/v1/documents", tags=["Documents"])
 
