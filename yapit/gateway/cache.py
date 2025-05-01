@@ -1,7 +1,7 @@
 import abc
 import logging
 
-from gateway.config import CacheConfig, get_settings
+from yapit.gateway.config import CacheConfig, get_settings
 
 log = logging.getLogger(__name__)
 

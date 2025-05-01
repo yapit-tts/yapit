@@ -14,34 +14,38 @@ jobs:
   ci:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Run Ruff linter
+      - name: Lint
         uses: astral-sh/ruff-action@v3
 
-      - name: Prepare .env for docker compose
+      - name: Prepare .env
         run: cp .env.dev.example .env
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build cpu image, gateway
+      - name: Build cpu worker image, gateway
         run: docker compose build --parallel kokoro-cpu gateway
 
-      - name: Start stack
+      - name: Start services
         run: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d gateway redis postgres
 
-      - name: Install uv
+      - name: Install uv & Python
         uses: astral-sh/setup-uv@v5
+        with:
+          python-version-file: ".python-version"
+          enable-cache: true
 
-      - name: Install Python
-        run: uv python install 3.12
+#      - name: Install Python
+#        run: uv python install 3.12
 
       - name: Create uv venv
         run: uv venv
 
       - name: Install test dependencies
-        run: uv pip install pytest websocket-client requests redis
+        run: uv pip install ".[test]"
 
       - name: Run tests
         run: uv run pytest tests

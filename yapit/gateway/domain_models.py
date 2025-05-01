@@ -37,7 +37,10 @@ class Model(SQLModel, table=True):
 
     voices: list["Voice"] = Relationship(
         back_populates="model",
-        sa_relationship_kwargs={"cascade": "all, delete-orphan"},
+        sa_relationship_kwargs={
+            "cascade": "all, delete-orphan",
+            "lazy": "selectin",
+        },
     )
     block_variants: list["BlockVariant"] = Relationship(back_populates="model")
 

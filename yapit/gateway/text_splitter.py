@@ -1,6 +1,6 @@
 import abc
 
-from gateway.config import TextSplitterConfig, get_settings
+from yapit.gateway.config import TextSplitterConfig, get_settings
 
 
 class TextSplitter(abc.ABC):

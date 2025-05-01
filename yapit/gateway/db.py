@@ -5,8 +5,8 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlmodel import SQLModel, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from gateway.config import ANON_USER, get_settings
-from gateway.domain_models import Model, User, Voice
+from yapit.gateway.config import ANON_USER, get_settings
+from yapit.gateway.domain_models import Model, User, Voice
 
 settings = get_settings()
 engine = create_async_engine(

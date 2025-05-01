@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from pydantic import Field as PydanticField
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from gateway.domain_models import User
+from yapit.gateway.domain_models import User
 
 ANON_USER = User(id="anonymous_user", email="anon@example.com", tier="free")
 
