@@ -26,9 +26,9 @@ const TextInputForm = () => {
 
   const onSubmit = async (data: FormData) => {
     try {
-      const response = await api.post("/v1/tts", {
-        model: "kokoro-cpu",
-        text: data.text, 
+      const response = await api.post("/v1/documents", {
+        source_type: "paste",
+        text_content: data.text, 
       });
       console.log(response.data);
 
