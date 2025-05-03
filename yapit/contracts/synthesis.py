@@ -1,12 +1,14 @@
 import uuid
-from typing import Literal
+from typing import Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+_JOB_QUEUE_PREFIX: Final[str] = "tts:jobs"
 
-def queue_name(model_slug: str, prefix: str = "tts:") -> str:
-    """Return the Redis LIST name a job for *model_slug* must be pushed to."""
-    return f"{prefix}{model_slug}"
+
+def get_job_queue_name(model_slug: str) -> str:
+    """Per-backend list queue."""
+    return f"{_JOB_QUEUE_PREFIX}:{model_slug}"
 
 
 class SynthesisJob(BaseModel):
@@ -14,7 +16,7 @@ class SynthesisJob(BaseModel):
 
     # routing / identity
     job_id: uuid.UUID = Field(default_factory=uuid.uuid4)
-    variant_id: str  # text + audio meta hash
+    variant_hash: str
     channel: str  # pubsub channel (tts:<variant_id>)
 
     # synthesis parameters

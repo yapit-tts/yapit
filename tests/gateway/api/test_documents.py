@@ -13,7 +13,7 @@ def test_create_document_and_paging(wait_until_gateway, gateway_url: str):
     )
     assert r.status_code == 201
     body = r.json()
-    doc_id = uuid.UUID(body["document_id"])  # validates UUID
+    doc_id = uuid.UUID(body["doc_id"])  # validates UUID
     assert body["num_blocks"] == 1
 
     page = requests.get(f"{gateway_url}/v1/documents/{doc_id}/blocks").json()

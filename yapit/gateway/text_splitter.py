@@ -1,6 +1,10 @@
 import abc
 
-from yapit.gateway.config import TextSplitterConfig, get_settings
+from pydantic import BaseModel, Field
+
+
+class TextSplitterConfig(BaseModel):
+    max_chars_per_block: int = Field(default=1000, gt=0)
 
 
 class TextSplitter(abc.ABC):
@@ -43,6 +47,8 @@ TEXT_SPLITTERS: dict[str, type[TextSplitter]] = {
 
 
 def get_text_splitter() -> TextSplitter:
+    from yapit.gateway.config import get_settings
+
     settings = get_settings()
     splitter_type = settings.splitter_type.lower()
     splitter = TEXT_SPLITTERS.get(splitter_type)

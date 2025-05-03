@@ -1,21 +1,13 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import BaseModel
-from pydantic import Field as PydanticField
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from yapit.gateway.cache import CacheConfig
 from yapit.gateway.domain_models import User
+from yapit.gateway.text_splitter import TextSplitterConfig
 
 ANON_USER = User(id="anonymous_user", email="anon@example.com", tier="free")
-
-
-class TextSplitterConfig(BaseModel):
-    max_chars_per_block: int = PydanticField(default=1000, gt=0)
-
-
-class CacheConfig(BaseModel):
-    dir: str = "/cache"  # used only if cache_type is filesystem
 
 
 class Settings(BaseSettings):

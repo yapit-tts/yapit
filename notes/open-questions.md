@@ -3,6 +3,7 @@
 
 ## Open
 
+- Iis this accurate? `await r.publish(chan_done, json.dumps({"duration_ms": len(pcm) // 32,"codec": job.codec}))  # crude 16-bit-pcm estimate ` 
 
 ## Answered
 

@@ -1,126 +1,158 @@
 from __future__ import annotations
 
-import math
-from typing import Literal, cast
+from typing import Literal
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 from redis.asyncio import Redis
+from sqlalchemy import exists
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from yapit.contracts.synthesis import SynthesisJob, queue_name
-from yapit.gateway.auth import get_current_user_id
+from yapit.contracts.redis_keys import DONE_CH, STREAM_CH
+from yapit.contracts.synthesis import SynthesisJob, get_job_queue_name
+from yapit.gateway.cache import Cache, get_cache_backend
 from yapit.gateway.db import get_db
-from yapit.gateway.domain_models import Block, BlockVariant, BlockVariantState, Model, Voice
-from yapit.gateway.hashing import calculate_audio_hash
+from yapit.gateway.domain_models import Block, BlockVariant, Voice
+from yapit.gateway.domain_models import Model as TTSModel
 from yapit.gateway.redis_client import get_redis
+from yapit.gateway.utils import calculate_audio_hash, estimate_duration_ms
 
 router = APIRouter(prefix="/v1", tags=["synthesis"])
+
+# TODO put this in global config
+CHUNK_SIZE = 4096
 
 
 class SynthRequest(BaseModel):
     """Client payload for /blocks/{id}/synthesize."""
 
     model_slug: str
-    voice_slug: str | None = None
-    speed: float = Field(1.0, ge=0.25, le=3.0)
+    voice_slug: str
+    speed: float = Field(1.0, gt=0)
+    # TODO should this be configurable from the frontend? Or can we leave it out / just configure it on startup by backend?
     codec: Literal["pcm", "opus"] = "pcm"
 
 
 class SynthEnqueued(BaseModel):
-    variant_id: str
+    variant_hash: str
     ws_url: str
     est_ms: float
 
 
-@router.post("/blocks/{block_id}/synthesize", response_model=SynthEnqueued, status_code=201)
+@router.post("/documents/{doc_id}/blocks/{block_id}/synthesize", response_model=SynthEnqueued, status_code=201)
 async def enqueue_synthesis(
+    doc_id: UUID,
     block_id: int,
     body: SynthRequest,
     # user_id: str = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
     redis: Redis = Depends(get_redis),
+    cache: Cache = Depends(get_cache_backend),
 ) -> SynthEnqueued:
     """Return cached audio or queue a new synthesis job."""
     block = await db.get(Block, block_id)
-    if block is None:
-        raise HTTPException(status_code=404, detail="block not found")
+    if not block or block.document_id != doc_id:
+        raise HTTPException(404, "block not found")
+    model = (await db.exec(select(TTSModel).where(TTSModel.slug == body.model_slug))).first()
+    if not model:
+        raise HTTPException(404, f"model {body.model_slug} not found")
+    voice = (await db.exec(select(Voice).where(Voice.slug == body.voice_slug, Voice.model_id == model.id))).first()
+    if not voice:
+        raise HTTPException(404, f"voice {body.voice_slug} not configured")
 
-    model = (await db.exec(select(Model).where(Model.slug == body.model_slug))).first()
-    if model is None:
-        raise HTTPException(status_code=404, detail="model slug not found")
+    audio_hash = calculate_audio_hash(block.text, model.slug, body.voice_slug, body.speed, body.codec)
 
-    if body.voice_slug:
-        voice_obj = (
-            await db.exec(
-                select(Voice).where(
-                    Voice.slug == body.voice_slug,
-                    Voice.model_id == model.id,
-                )
-            )
-        ).first()
-        if voice_obj is None:
-            raise HTTPException(status_code=404, detail="voice slug not found for model")
-    else:
-        if not model.voices:
-            raise HTTPException(status_code=500, detail="model has no voices configured")
-        voice_obj = cast(Voice, model.voices[0])
-
-    audio_hash = calculate_audio_hash(block.text, model.slug, voice_obj.slug, body.speed, body.codec)
-
-    variant = await db.get(BlockVariant, audio_hash)
-    if variant and variant.state == BlockVariantState.cached:
-        est = variant.duration_ms / 1_000 if variant.duration_ms else 0
-        return SynthEnqueued(variant_id=audio_hash, ws_url=f"/v1/variants/{audio_hash}/stream", est_ms=est)
-
+    variant: BlockVariant | None = (
+        await db.exec(select(BlockVariant).where(BlockVariant.audio_hash == audio_hash))
+    ).first()
     if variant is None:
         variant = BlockVariant(
             audio_hash=audio_hash,
             block_id=block.id,
             model_id=model.id,
-            voice_id=voice_obj.id,
+            voice_id=voice.id,
             speed=body.speed,
             codec=body.codec,
-            state=BlockVariantState.queued,
         )
         db.add(variant)
         await db.commit()
 
-    est_ms = math.ceil(len(block.text) / 15 / body.speed) * 1_000
+    if await cache.exists(audio_hash):
+        return SynthEnqueued(
+            variant_hash=variant.id,
+            est_ms=variant.duration_ms,
+            ws_url=f"/v1/documents/{doc_id}/blocks/{block_id}/variants/{variant.id}/stream",
+        )
+
+    est_ms = estimate_duration_ms(text=block.text, speed=body.speed)
     job = SynthesisJob(
-        variant_id=audio_hash,
+        variant_hash=audio_hash,
         channel=f"tts:{audio_hash}",
-        model_slug=model.slug,
-        voice_slug=voice_obj.slug,
+        model_slug=body.model_slug,
+        voice_slug=body.voice_slug,
         text=block.text,
         speed=body.speed,
         codec=body.codec,
     )
-    await redis.lpush(queue_name(model.slug), job.model_dump_json())
+    await redis.lpush(get_job_queue_name(model.slug), job.model_dump_json())
+    return SynthEnqueued(
+        variant_hash=audio_hash,
+        ws_url=f"/v1/documents/{doc_id}/blocks/{block_id}/variants/{audio_hash}/stream",
+        est_ms=est_ms,
+    )
 
-    return SynthEnqueued(variant_id=audio_hash, ws_url=f"/v1/variants/{audio_hash}/stream", est_ms=est_ms)
 
-
-@router.websocket("/variants/{variant_id}/stream")
+@router.websocket("/documents/{doc_id}/blocks/{block_id}/variants/{variant_hash}/stream")
 async def stream_audio(
-    variant_id: str,
     ws: WebSocket,
+    doc_id: UUID,
+    block_id: int,
+    variant_hash: str,
+    db: AsyncSession = Depends(get_db),
+    cache: Cache = Depends(get_cache_backend),
     redis: Redis = Depends(get_redis),
 ) -> None:
     """Proxy worker-published chunks Redis → WebSocket."""
     await ws.accept()
-    channel = f"tts:{variant_id}"
-    pubsub = redis.pubsub()
-    await pubsub.subscribe(channel)
 
+    is_valid: bool = await db.scalar(
+        select(
+            exists().where(
+                BlockVariant.audio_hash == variant_hash,
+                BlockVariant.block_id == block_id,
+                Block.document_id == doc_id,
+            )
+        )
+    )
+    if not is_valid:
+        await ws.close(code=1008, reason="variant does not belong to document/block")
+        return
+
+    # cached? send it
+    data = await cache.retrieve_data(variant_hash)
+    if data is not None:
+        for i in range(0, len(data), CHUNK_SIZE):
+            await ws.send_bytes(data[i : i + CHUNK_SIZE])
+        await ws.close()
+        return
+    # not cached, subscribe to Redis
+    pubsub = redis.pubsub()
+    await pubsub.subscribe(
+        STREAM_CH.format(hash=variant_hash),
+        DONE_CH.format(hash=variant_hash),
+    )
     try:
-        while True:
-            msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=30)
-            if msg and msg["type"] == "message":
+        async for msg in pubsub.listen():
+            if msg["type"] != "message":
+                continue
+            if msg["channel"].decode().endswith(":stream"):
                 await ws.send_bytes(msg["data"])
+            else:  # :done
+                await ws.close()
+                break
     except WebSocketDisconnect:
         pass
     finally:
-        await pubsub.unsubscribe(channel)
         await pubsub.close()

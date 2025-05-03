@@ -16,6 +16,7 @@ class VoiceRead(BaseModel):
     slug: str
     name: str
     lang: str
+    description: str | None
 
 
 class ModelRead(BaseModel):
@@ -46,6 +47,7 @@ async def list_models(
                     slug=voice.slug,
                     name=voice.name,
                     lang=voice.lang,
+                    description=voice.description,
                 )
                 for voice in model.voices
             ],
@@ -77,6 +79,7 @@ async def get_model(
                 slug=voice.slug,
                 name=voice.name,
                 lang=voice.lang,
+                description=voice.description,
             )
             for voice in model.voices
         ],
@@ -100,6 +103,7 @@ async def list_voices(
             slug=voice.slug,
             name=voice.name,
             lang=voice.lang,
+            description=voice.description,
         )
         for voice in model.voices
     ]

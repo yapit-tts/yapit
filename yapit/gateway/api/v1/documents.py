@@ -11,6 +11,7 @@ from yapit.gateway.auth import get_current_user_id
 from yapit.gateway.db import get_db
 from yapit.gateway.domain_models import Block, Document, SourceType
 from yapit.gateway.text_splitter import TextSplitter, get_text_splitter
+from yapit.gateway.utils import estimate_duration_ms
 
 router = APIRouter(prefix="/v1/documents", tags=["Documents"])
 
@@ -40,7 +41,7 @@ class BlockRead(BaseModel):
 
 
 class DocumentCreateResponse(BaseModel):
-    document_id: UUID
+    doc_id: UUID
     num_blocks: int
     est_duration_ms: int
     blocks: list[BlockRead]
@@ -97,7 +98,7 @@ async def create_document(
 
     # --- Split into blocks
     try:
-        pieces = splitter.split(text)
+        text_blocks = splitter.split(text)
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -106,14 +107,10 @@ async def create_document(
 
     est_total_ms = 0.0
     blocks: list[Block] = []
-    chars_per_second = 15.0  # TODO measure & evaluate
-
-    for idx, piece in enumerate(pieces):
-        if not piece:
-            continue
-        dur = math.ceil(len(piece) / chars_per_second * 1000)  # ms
+    for idx, text_block in enumerate(text_blocks):
+        dur = estimate_duration_ms(text_block)
         est_total_ms += dur
-        blocks.append(Block(document_id=doc.id, idx=idx, text=piece, est_duration_ms=dur))
+        blocks.append(Block(document_id=doc.id, idx=idx, text=text_block, est_duration_ms=dur))
 
     if blocks:
         db.add_all(blocks)
@@ -124,7 +121,7 @@ async def create_document(
     ]
 
     return DocumentCreateResponse(
-        document_id=doc.id,
+        doc_id=doc.id,
         num_blocks=len(blocks),
         est_duration_ms=est_total_ms,
         blocks=preview,

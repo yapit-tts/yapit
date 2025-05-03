@@ -54,7 +54,7 @@ class Voice(SQLModel, table=True):
     slug: str = Field(unique=True)
     name: str
     lang: str
-    # xxx description / properties?
+    description: str | None = Field(default=None)
 
     model: Model = Relationship(back_populates="voices")
     block_variants: list["BlockVariant"] = Relationship(back_populates="voice")
@@ -102,14 +102,6 @@ class Block(SQLModel, table=True):
     )
 
 
-class BlockVariantState(StrEnum):
-    pending = auto()  # synthesis job not yet queued
-    queued = auto()  # synthesis job queued
-    processing = auto()  # synthesis job started
-    cached = auto()  # synthesis successful, audio stored
-    failed = auto()  # synthesis attempted but failed
-
-
 class BlockVariant(SQLModel, table=True):
     """A synthesized audio variant of a text block."""
 
@@ -121,7 +113,6 @@ class BlockVariant(SQLModel, table=True):
     speed: float
     codec: str
 
-    state: BlockVariantState = Field(default=BlockVariantState.pending)
     duration_ms: int | None = Field(default=None)  # real duration of synthesized audio
     cache_ref: str | None = Field(default=None)  # FS path or S3 key
 
