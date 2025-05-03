@@ -1,7 +1,9 @@
 import uuid
-from typing import Final, Literal
+from typing import Final
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
+
+from yapit.contracts.redis_keys import DONE_CH, STREAM_CH
 
 _JOB_QUEUE_PREFIX: Final[str] = "tts:jobs"
 
@@ -17,13 +19,23 @@ class SynthesisJob(BaseModel):
     # routing / identity
     job_id: uuid.UUID = Field(default_factory=uuid.uuid4)
     variant_hash: str
-    channel: str  # pubsub channel (tts:<variant_id>)
 
     # synthesis parameters
     model_slug: str
     voice_slug: str
     text: str
     speed: float
-    codec: Literal["pcm", "opus"] = "pcm"
+    # codec the worker must produce / translate to
+    codec: str
 
     model_config = ConfigDict(frozen=True)
+
+    @computed_field
+    @property
+    def stream_channel(self) -> str:
+        return STREAM_CH.format(hash=self.variant_hash)
+
+    @computed_field
+    @property
+    def done_channel(self) -> str:
+        return DONE_CH.format(hash=self.variant_hash)

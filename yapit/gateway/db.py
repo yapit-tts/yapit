@@ -1,12 +1,14 @@
+import json
 from collections.abc import AsyncIterator
+from pathlib import Path
 
 from alembic import command, config
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlmodel import SQLModel, select
+from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from yapit.gateway.config import ANON_USER, get_settings
-from yapit.gateway.domain_models import Model, User, Voice
+from yapit.gateway.domain_models import Model, Voice
 
 settings = get_settings()
 engine = create_async_engine(
@@ -47,12 +49,42 @@ async def close_db() -> None:
 
 
 async def _seed_db() -> None:
+    # dev db seed - populate empty db
     async with SessionLocal() as db:
-        if not (await db.execute(select(User).where(User.id == ANON_USER.id))).first():
-            db.add(ANON_USER)
-        voice_exists = await db.execute(select(Model.id).where(Model.slug == "kokoro"))
-        if not voice_exists.first():
-            model = Model(slug="kokoro", name="Kokoro", price_sec=0.0)
-            voice = Voice(model=model, slug="af_heart", name="af_heart", lang="af")
-            db.add_all([model, voice])
+        db.add(ANON_USER)
+        kokoro = Model(
+            slug="kokoro",
+            name="Kokoro",
+            price_sec=0.0,
+            native_codec="pcm",
+            sample_rate=24_000,
+            channels=1,
+            sample_width=2,
+        )
+        voices_json = Path(__file__).parent.parent / "workers/kokoro/voices.json"
+        for v in json.loads(voices_json.read_text()):
+            kokoro.voices.append(
+                Voice(
+                    slug=v["index"],
+                    name=v["name"],
+                    lang=v["language"],
+                    description=f"Quality grade {v['overallGrade']}",
+                )
+            )
+        # dia = Model(
+        #     slug="dia",
+        #     name="Dia-1.6B",
+        #     price_sec=0.0,
+        #     native_codec="pcm",
+        #     sample_rate=44_100,
+        #     channels=1,
+        #     sample_width=2,
+        # )
+        # dia.voices.append(Voice(slug="default", name="Dia", lang="en")
+        db.add_all(
+            [
+                kokoro,
+                # dia
+            ]
+        )
         await db.commit()

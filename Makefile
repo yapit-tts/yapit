@@ -31,22 +31,6 @@ down:
 logs:
 	docker compose logs -f
 
-logs-gpu:
-	docker compose logs -f kokoro-gpu
-
-# -------- test ------
-
-test-ws-curl:
-	curl -X POST localhost:8000/v1/models/kokoro/tts \
-		 -H 'Content-Type: application/json' \
-		 -d '{"text":"Hello world!"}'
-
-test-cpu-wav: dev-cpu
-	python scripts/smoke_test.py --model kokoro-cpu
-
-test-gpu-wav: dev-gpu
-	python scripts/smoke_test.py --model kokoro-gpu
-
 # -------- repomix -------
 
 repomix:

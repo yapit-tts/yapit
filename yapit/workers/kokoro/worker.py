@@ -1,6 +1,8 @@
 import asyncio
+import json
 import logging
 import os
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -12,9 +14,15 @@ log = logging.getLogger("adapter.kokoro")
 
 
 class KokoroAdapter(SynthAdapter):
+    sample_rate = 24_000
+    channels = 1
+    sample_width = 2
+    native_codec = "pcm"
+
     def __init__(self):
         self.device = os.getenv("DEVICE", "cpu")
         self.pipe: KPipeline | None = None
+        self.voices: list[str] = []
         self.lock = asyncio.Lock()
 
     async def warm_up(self) -> None:
@@ -24,16 +32,21 @@ class KokoroAdapter(SynthAdapter):
             log.warning("CUDA requested but unavailable, falling back to CPU")
             self.device = "cpu"
         self.pipe = KPipeline(repo_id="hexgrad/Kokoro-82M", lang_code="a", device=self.device)
-        self.pipe.load_voice("af_heart")
 
-    async def stream(self, text: str, *, voice: str, speed: float, codec: str):
+        voices_json = Path(__file__).with_name("voices.json")
+        self.voices = [v["index"] for v in json.load(open(voices_json))]
+        for v in self.voices:
+            self.pipe.load_voice(v)
+
+    async def stream(self, text: str, *, voice: str, speed: float):
         await self.warm_up()
-        assert self.pipe is not None
+        if voice not in self.voices:
+            raise ValueError(f"Voice {voice} not found in available voices: {self.voices}")
         async with self.lock:  # model not thread-safe
             for _, _, audio in self.pipe(text, voice=voice, speed=speed):
                 if audio is None:
                     continue
-                pcm = (audio.numpy() * 32767).astype(np.int16).tobytes()
+                pcm = (audio.numpy() * 32767).astype(np.int16).tobytes()  # scale [-1, 1] f32 tensor to int16 range
                 yield pcm
 
 

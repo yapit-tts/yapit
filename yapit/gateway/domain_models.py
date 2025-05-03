@@ -3,6 +3,7 @@ import uuid
 from datetime import datetime
 from enum import StrEnum, auto
 
+from sqlalchemy import ARRAY, Text
 from sqlmodel import TEXT, Column, DateTime, Field, Relationship, SQLModel
 
 # NOTE: Forward annotations do not work with SQLModel
@@ -34,6 +35,11 @@ class Model(SQLModel, table=True):
     name: str
     description: str | None = Field(default=None)
     price_sec: float = 0.0
+
+    sample_rate: int
+    channels: int
+    sample_width: int
+    native_codec: str
 
     voices: list["Voice"] = Relationship(
         back_populates="model",

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal
+from functools import partial
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
@@ -31,14 +31,17 @@ class SynthRequest(BaseModel):
     model_slug: str
     voice_slug: str
     speed: float = Field(1.0, gt=0)
-    # TODO should this be configurable from the frontend? Or can we leave it out / just configure it on startup by backend?
-    codec: Literal["pcm", "opus"] = "pcm"
 
 
 class SynthEnqueued(BaseModel):
     variant_hash: str
     ws_url: str
-    est_ms: float
+    codec: str
+    sample_rate: int
+    channels: int
+    sample_width: int
+    est_ms: int | None = Field(default=None, description="Estimated duration in ms")
+    duration_ms: int | None = Field(default=None, description="Actual duration in ms")
 
 
 @router.post("/documents/{doc_id}/blocks/{block_id}/synthesize", response_model=SynthEnqueued, status_code=201)
@@ -62,7 +65,14 @@ async def enqueue_synthesis(
     if not voice:
         raise HTTPException(404, f"voice {body.voice_slug} not configured")
 
-    audio_hash = calculate_audio_hash(block.text, model.slug, body.voice_slug, body.speed, body.codec)
+    served_codec = model.native_codec  # TODO change to "opus" once workers transcode
+    audio_hash = calculate_audio_hash(
+        text=block.text,
+        model_id=model.slug,
+        voice_id=body.voice_slug,
+        speed=body.speed,
+        codec=served_codec,
+    )
 
     variant: BlockVariant | None = (
         await db.exec(select(BlockVariant).where(BlockVariant.audio_hash == audio_hash))
@@ -74,34 +84,35 @@ async def enqueue_synthesis(
             model_id=model.id,
             voice_id=voice.id,
             speed=body.speed,
-            codec=body.codec,
+            codec=served_codec,
         )
         db.add(variant)
         await db.commit()
 
+    response = partial(
+        SynthEnqueued,
+        variant_hash=variant.audio_hash,
+        ws_url=f"/v1/documents/{doc_id}/blocks/{block_id}/variants/{variant.audio_hash}/stream",
+        duration_ms=variant.duration_ms,  # None if not cached
+        codec=served_codec,
+        sample_rate=model.sample_rate,
+        channels=model.channels,
+        sample_width=model.sample_width,
+    )
     if await cache.exists(audio_hash):
-        return SynthEnqueued(
-            variant_hash=variant.id,
-            est_ms=variant.duration_ms,
-            ws_url=f"/v1/documents/{doc_id}/blocks/{block_id}/variants/{variant.id}/stream",
-        )
+        return response()
 
     est_ms = estimate_duration_ms(text=block.text, speed=body.speed)
     job = SynthesisJob(
         variant_hash=audio_hash,
-        channel=f"tts:{audio_hash}",
         model_slug=body.model_slug,
         voice_slug=body.voice_slug,
         text=block.text,
         speed=body.speed,
-        codec=body.codec,
+        codec=served_codec,
     )
     await redis.lpush(get_job_queue_name(model.slug), job.model_dump_json())
-    return SynthEnqueued(
-        variant_hash=audio_hash,
-        ws_url=f"/v1/documents/{doc_id}/blocks/{block_id}/variants/{audio_hash}/stream",
-        est_ms=est_ms,
-    )
+    return response(est_ms=est_ms)
 
 
 @router.websocket("/documents/{doc_id}/blocks/{block_id}/variants/{variant_hash}/stream")

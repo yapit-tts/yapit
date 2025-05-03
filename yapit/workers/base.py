@@ -1,14 +1,14 @@
-import abc
 import asyncio
 import json
 import logging
 import os
+from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator
 
 import redis.asyncio as redis
 from redis.asyncio import Redis
 
-from yapit.contracts.redis_keys import AUDIO_KEY, DONE_CH, STREAM_CH
+from yapit.contracts.redis_keys import AUDIO_KEY
 from yapit.contracts.synthesis import SynthesisJob, get_job_queue_name
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
@@ -19,39 +19,44 @@ queues = [get_job_queue_name(s) for s in os.getenv("TTS_BACKENDS", "kokoro").spl
 log = logging.getLogger("worker")
 
 
-class SynthAdapter(abc.ABC):
-    @abc.abstractmethod
+class SynthAdapter(ABC):
+    @property
+    @abstractmethod
+    def sample_rate(self) -> int: ...
+
+    @property
+    @abstractmethod
+    def channels(self) -> int: ...
+
+    @property
+    @abstractmethod
+    def sample_width(self) -> int: ...
+
+    @property
+    @abstractmethod
+    def native_codec(self) -> str: ...
+
+    @abstractmethod
     async def warm_up(self) -> None: ...
 
-    @abc.abstractmethod
-    def stream(self, text: str, *, voice: str, speed: float, codec: str) -> AsyncGenerator[bytes, None]: ...
+    @abstractmethod
+    def stream(self, text: str, *, voice: str, speed: float) -> AsyncGenerator[bytes, None]: ...
 
-
-async def process(raw: bytes, r: Redis, adapter: SynthAdapter) -> None:
-    job = SynthesisJob.model_validate_json(raw)
-    chan_stream = STREAM_CH.format(hash=job.variant_hash)
-    chan_done = DONE_CH.format(hash=job.variant_hash)
-
-    pcm = bytearray()
-    async for chunk in adapter.stream(
-        job.text,
-        voice=job.voice_slug,
-        speed=job.speed,
-        codec=job.codec,
-    ):
-        pcm.extend(chunk)
-        await r.publish(chan_stream, chunk)
-    await r.set(AUDIO_KEY.format(hash=job.variant_hash), bytes(pcm), ex=3600)
-    await r.publish(
-        chan_done,
-        json.dumps(
-            {
-                "duration_ms": len(pcm) // 32,  # crude 16-bit-pcm estimate # TODO make backend agnostic
-                "codec": job.codec,
-                # TODO add sr and other necessary metadata
-            }
-        ),
-    )
+    async def process(self, raw: bytes, r: Redis) -> None:
+        job = SynthesisJob.model_validate_json(raw)
+        if job.codec != self.native_codec:
+            raise NotImplementedError(f"Transcoding {self.native_codec} to {job.codec} not implemented yet.")
+        pcm = bytearray()
+        async for chunk in self.stream(
+            job.text,
+            voice=job.voice_slug,
+            speed=job.speed,
+        ):
+            pcm.extend(chunk)
+            await r.publish(job.stream_channel, chunk)
+        await r.set(AUDIO_KEY.format(hash=job.variant_hash), bytes(pcm), ex=3600)
+        dur_ms = int(len(pcm) / (self.sample_rate * self.channels * self.sample_width) * 1000)
+        await r.publish(job.done_channel, json.dumps({"duration_ms": dur_ms}))
 
 
 async def worker_loop(adapter: SynthAdapter) -> None:
@@ -60,7 +65,7 @@ async def worker_loop(adapter: SynthAdapter) -> None:
 
     async def spawn(raw: bytes) -> None:
         async with sem:
-            await process(raw, r, adapter)
+            await adapter.process(raw, r)
 
     while True:
         try:

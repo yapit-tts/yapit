@@ -37,9 +37,7 @@ async def run_cache_listener(redis: Redis, cache: Cache, db: AsyncSession) -> No
             .where(BlockVariant.audio_hash == audio_hash)
             .values(
                 duration_ms=int(meta["duration_ms"]),
-                codec=meta["codec"],
                 cache_ref=cache_ref,
-                # TODO add sr and other necessary metadata
             )
         )
         await db.commit()
