@@ -1,0 +1,40 @@
+
+# -------- build ------
+
+build:
+	docker compose build --parallel
+
+build-cpu:
+	docker compose build gateway kokoro-cpu --parallel
+
+build-gpu:
+	docker compose build kokoro-gpu --parallel
+
+# -------- runtime ------
+
+dev-cpu: down
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml \
+	--profile self-host \
+	up -d kokoro-cpu gateway redis postgres --build
+
+dev-gpu: down
+	docker compose  -f docker-compose.yml -f docker-compose.dev.yml \
+	--profile self-host \
+	up -d kokoro-gpu gateway redis postgres --build
+
+up:
+	docker compose up -d gateway redis postgres # remote workers
+
+down:
+	docker compose down -v --remove-orphans
+
+logs:
+	docker compose logs -f
+
+# -------- repomix -------
+
+repomix:
+	repomix -i ".gitignore"
+
+repomix-backend:
+	repomix -i "frontend,.gitignore"

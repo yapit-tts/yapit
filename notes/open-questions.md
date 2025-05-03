@@ -1,0 +1,17 @@
+
+# Open Questions
+
+## Open
+
+- Iis this accurate? `await r.publish(chan_done, json.dumps({"duration_ms": len(pcm) // 32,"codec": job.codec}))  # crude 16-bit-pcm estimate ` 
+
+## Answered
+
+- How can we calculate (do we need to approximate) the lenght of generated audio? (e.g. for large texts/docs)
+  - -> approximate by number of tokens x average token length
+- How will we make the progressbar be able to jump through the audio? Index by blocks?
+  - -> yes, index by blocks. pbar: smooth progress animation between blocks 
+- How to play/pause? Can the backend do it? Or does frontend just resubmit stuff? Caching? Caching specific text blocks?
+  - -> play/pause: frontend just resubmits stuff, cache blocks
+- How to split text into blocks? (per 10s or 20s)
+    - paragraph -> spaCy sentence boundaries -> if still too big, hard split at nearest whitespace within +-5 % of of MAX_CHARS, else force-split.

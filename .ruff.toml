@@ -1,0 +1,24 @@
+line-length = 120
+target-version = "py312"
+fix = true
+ignore = [
+    "D100", # missing docstring in public module
+    "D101", # missing docstring in public class
+    "D102", # missing docstring in public method
+    "D103", # missing docstring in public function
+    "D104", # missing docstring in public package
+    "D105", # missing docstring in undocumented-magic-method
+    "D106", # missing docstring in public-nested-class
+    "D107", # missing docstring in __init__ method
+    "D205", # 1 blank line required between summary line and description
+    "D417", # don't require documentation for every function param
+]
+
+[lint]
+select = [
+    "I", # import sorting
+    "D", # enable pydocstyle rules, adhering to google convention (see below)
+]
+
+[lint.pydocstyle]
+convention = "google"
