@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     cors_origins: list[str] = ["http://localhost:5173"]
 
     cache_type: Caches = Caches.SQLITE
-    splitter_type: TextSplitters = TextSplitters.SIMPLE
+    splitter_type: TextSplitters = TextSplitters.HIERARCHICAL
 
     splitter_config: TextSplitterConfig = TextSplitterConfig()
     cache_config: CacheConfig = CacheConfig(path=Path(__file__).parent / "cache")

@@ -44,7 +44,7 @@ class DummySplitter(TextSplitter):
         return blocks
 
 
-class SimpleSplitter(TextSplitter):
+class HierarchicalSplitter(TextSplitter):
     """Language-agnostic splitter using paragraphs -> sentences -> commas -> words."""
 
     _DELIMS = [
@@ -105,7 +105,7 @@ class SimpleSplitter(TextSplitter):
 
 class TextSplitters(StrEnum):
     DUMMY = auto()
-    SIMPLE = auto()
+    HIERARCHICAL = auto()
 
 
 @lru_cache
@@ -116,7 +116,7 @@ def get_text_splitter() -> TextSplitter:
     splitter_type = settings.splitter_type.lower()
     splitter = {
         TextSplitters.DUMMY: DummySplitter,
-        TextSplitters.SIMPLE: SimpleSplitter,
+        TextSplitters.HIERARCHICAL: HierarchicalSplitter,
     }.get(splitter_type)
     if splitter:
         return splitter(settings.splitter_config)
