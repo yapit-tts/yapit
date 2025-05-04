@@ -1,7 +1,7 @@
 services:
   gateway:
     ports:
-      - "8000:8000" # todo maybe the other approach (without extra compose.dev) works again ..?
+      - "8000:8000"
   redis:
     ports:
       - "6379:6379"

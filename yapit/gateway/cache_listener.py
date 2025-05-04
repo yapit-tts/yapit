@@ -3,16 +3,16 @@ import logging
 
 from redis.asyncio import Redis
 from sqlmodel import update
-from sqlmodel.ext.asyncio.session import AsyncSession
 
 from yapit.contracts.redis_keys import AUDIO_KEY, DONE_CH
 from yapit.gateway.cache import Cache
+from yapit.gateway.deps import get_db_session
 from yapit.gateway.domain_models import BlockVariant
 
 log = logging.getLogger("cache_listener")
 
 
-async def run_cache_listener(redis: Redis, cache: Cache, db: AsyncSession) -> None:
+async def run_cache_listener(redis: Redis, cache: Cache) -> None:
     pubsub = redis.pubsub()
     await pubsub.psubscribe(DONE_CH.format(hash="*"))
 
@@ -32,12 +32,14 @@ async def run_cache_listener(redis: Redis, cache: Cache, db: AsyncSession) -> No
             log.error("cache write failed for %s", audio_hash)
             continue
 
-        await db.exec(
-            update(BlockVariant)
-            .where(BlockVariant.audio_hash == audio_hash)
-            .values(
-                duration_ms=int(meta["duration_ms"]),
-                cache_ref=cache_ref,
+        async for db in get_db_session():
+            db.exec(
+                update(BlockVariant)
+                .where(BlockVariant.audio_hash == audio_hash)
+                .values(
+                    duration_ms=int(meta["duration_ms"]),
+                    cache_ref=cache_ref,
+                )
             )
-        )
-        await db.commit()
+            await db.commit()
+            break

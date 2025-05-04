@@ -2,6 +2,7 @@ import abc
 import logging
 import sqlite3
 import time
+from functools import lru_cache
 from pathlib import Path
 
 from pydantic import BaseModel
@@ -114,6 +115,7 @@ CACHE_BACKENDS: dict[str, type[Cache]] = {
 }
 
 
+@lru_cache
 def get_cache_backend() -> Cache:
     from yapit.gateway.config import get_settings
 

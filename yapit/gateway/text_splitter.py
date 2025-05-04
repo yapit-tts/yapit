@@ -1,4 +1,5 @@
 import abc
+from functools import lru_cache
 
 from pydantic import BaseModel, Field
 
@@ -46,6 +47,7 @@ TEXT_SPLITTERS: dict[str, type[TextSplitter]] = {
 }
 
 
+@lru_cache
 def get_text_splitter() -> TextSplitter:
     from yapit.gateway.config import get_settings
 

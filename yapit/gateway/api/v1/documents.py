@@ -6,9 +6,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, HttpUrl
 from sqlmodel import func, select
 from sqlmodel.ext.asyncio.session import AsyncSession
+from starlette.concurrency import run_in_threadpool
 
 from yapit.gateway.auth import get_current_user_id
-from yapit.gateway.db import get_db
+from yapit.gateway.deps import get_db_session
 from yapit.gateway.domain_models import Block, Document, SourceType
 from yapit.gateway.text_splitter import TextSplitter, get_text_splitter
 from yapit.gateway.utils import estimate_duration_ms
@@ -61,7 +62,7 @@ class BlockPage(BaseModel):
 async def create_document(
     req: DocumentCreateRequest,
     user_id: str = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_session),
     splitter: TextSplitter = Depends(get_text_splitter),
 ) -> DocumentCreateResponse:
     """Create a new Document from pasted text.
@@ -98,7 +99,7 @@ async def create_document(
 
     # --- Split into blocks
     try:
-        text_blocks = splitter.split(text)
+        text_blocks = await run_in_threadpool(splitter.split, text=text)
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -133,14 +134,12 @@ async def list_blocks(
     document_id: UUID,
     offset: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=100)] = 100,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_session),
 ) -> BlockPage:
     if not await db.get(Document, document_id):
         raise HTTPException(status_code=404, detail="document not found")
 
-    # nit: fix type err
     total = (await db.exec(select(func.count()).select_from(Block).where(Block.document_id == document_id))).one()
-    # nit: fix type err
     rows = await db.exec(
         select(Block).where(Block.document_id == document_id).order_by(Block.idx).offset(offset).limit(limit)
     )
@@ -148,12 +147,3 @@ async def list_blocks(
 
     next_offset = offset + limit if offset + limit < total else None
     return BlockPage(total=total, items=items, next_offset=next_offset)
-
-
-# --- Helpers (future work)
-async def extract_text_from_url(url: HttpUrl) -> str:
-    raise NotImplementedError("URL text extraction not yet implemented")
-
-
-async def extract_text_from_upload(file: bytes) -> str:
-    raise NotImplementedError("File upload text extraction not yet implemented")

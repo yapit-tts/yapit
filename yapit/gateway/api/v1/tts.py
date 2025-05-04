@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from functools import partial
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 from redis.asyncio import Redis
 from sqlalchemy import exists
@@ -13,7 +12,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from yapit.contracts.redis_keys import DONE_CH, STREAM_CH
 from yapit.contracts.synthesis import SynthesisJob, get_job_queue_name
 from yapit.gateway.cache import Cache, get_cache_backend
-from yapit.gateway.db import get_db
+from yapit.gateway.deps import get_block, get_db_session, get_model, get_voice
 from yapit.gateway.domain_models import Block, BlockVariant, Voice
 from yapit.gateway.domain_models import Model as TTSModel
 from yapit.gateway.redis_client import get_redis
@@ -50,21 +49,14 @@ async def enqueue_synthesis(
     block_id: int,
     body: SynthRequest,
     # user_id: str = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db),
+    block: Block = Depends(get_block),
+    model: TTSModel = Depends(get_model),
+    voice: Voice = Depends(get_voice),
+    db: AsyncSession = Depends(get_db_session),
     redis: Redis = Depends(get_redis),
     cache: Cache = Depends(get_cache_backend),
 ) -> SynthEnqueued:
     """Return cached audio or queue a new synthesis job."""
-    block = await db.get(Block, block_id)
-    if not block or block.document_id != doc_id:
-        raise HTTPException(404, "block not found")
-    model = (await db.exec(select(TTSModel).where(TTSModel.slug == body.model_slug))).first()
-    if not model:
-        raise HTTPException(404, f"model {body.model_slug} not found")
-    voice = (await db.exec(select(Voice).where(Voice.slug == body.voice_slug, Voice.model_id == model.id))).first()
-    if not voice:
-        raise HTTPException(404, f"voice {body.voice_slug} not configured")
-
     served_codec = model.native_codec  # TODO change to "opus" once workers transcode
     audio_hash = calculate_audio_hash(
         text=block.text,
@@ -89,8 +81,7 @@ async def enqueue_synthesis(
         db.add(variant)
         await db.commit()
 
-    response = partial(
-        SynthEnqueued,
+    base_payload = dict(
         variant_hash=variant.audio_hash,
         ws_url=f"/v1/documents/{doc_id}/blocks/{block_id}/variants/{variant.audio_hash}/stream",
         duration_ms=variant.duration_ms,  # None if not cached
@@ -100,7 +91,7 @@ async def enqueue_synthesis(
         sample_width=model.sample_width,
     )
     if await cache.exists(audio_hash):
-        return response()
+        return SynthEnqueued(**base_payload)
 
     est_ms = estimate_duration_ms(text=block.text, speed=body.speed)
     job = SynthesisJob(
@@ -112,7 +103,7 @@ async def enqueue_synthesis(
         codec=served_codec,
     )
     await redis.lpush(get_job_queue_name(model.slug), job.model_dump_json())
-    return response(est_ms=est_ms)
+    return SynthEnqueued(**base_payload, est_ms=est_ms)
 
 
 @router.websocket("/documents/{doc_id}/blocks/{block_id}/variants/{variant_hash}/stream")
@@ -121,7 +112,7 @@ async def stream_audio(
     doc_id: UUID,
     block_id: int,
     variant_hash: str,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_session),
     cache: Cache = Depends(get_cache_backend),
     redis: Redis = Depends(get_redis),
 ) -> None:

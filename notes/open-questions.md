@@ -4,6 +4,7 @@
 ## Open
 
 - Iis this accurate? `await r.publish(chan_done, json.dumps({"duration_ms": len(pcm) // 32,"codec": job.codec}))  # crude 16-bit-pcm estimate ` 
+- 10 vs 20s audio blocks? (considerations: gpu util, queue time, pbar jumping) (dia puts sweetspot regarding quality at [[5s, 20s]](https://github.com/nari-labs/dia?tab=readme-ov-file#generation-guidelines))
 
 ## Answered
 
