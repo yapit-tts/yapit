@@ -9,7 +9,7 @@ from sqlalchemy import exists
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from yapit.contracts.redis_keys import DONE_CH, STREAM_CH
+from yapit.contracts.redis_keys import DONE_CH, INFLIGHT_KEY, STREAM_CH
 from yapit.contracts.synthesis import SynthesisJob, get_job_queue_name
 from yapit.gateway.cache import Cache, get_cache_backend
 from yapit.gateway.deps import get_block, get_db_session, get_model, get_voice
@@ -81,19 +81,20 @@ async def enqueue_synthesis(
         db.add(variant)
         await db.commit()
 
-    base_payload = dict(
+    response = SynthEnqueued(
         variant_hash=variant.audio_hash,
         ws_url=f"/v1/documents/{doc_id}/blocks/{block_id}/variants/{variant.audio_hash}/stream",
         duration_ms=variant.duration_ms,  # None if not cached
+        est_ms=estimate_duration_ms(text=block.text, speed=body.speed),
         codec=served_codec,
         sample_rate=model.sample_rate,
         channels=model.channels,
         sample_width=model.sample_width,
     )
-    if await cache.exists(audio_hash):
-        return SynthEnqueued(**base_payload)
+    if await cache.exists(audio_hash) or await redis.exists(INFLIGHT_KEY.format(hash=audio_hash)):
+        return response  # cached or in progress
 
-    est_ms = estimate_duration_ms(text=block.text, speed=body.speed)
+    await redis.set(INFLIGHT_KEY.format(hash=audio_hash), 1, ex=300, nx=True)  # 5min lock
     job = SynthesisJob(
         variant_hash=audio_hash,
         model_slug=body.model_slug,
@@ -103,7 +104,7 @@ async def enqueue_synthesis(
         codec=served_codec,
     )
     await redis.lpush(get_job_queue_name(model.slug), job.model_dump_json())
-    return SynthEnqueued(**base_payload, est_ms=est_ms)
+    return response
 
 
 @router.websocket("/documents/{doc_id}/blocks/{block_id}/variants/{variant_hash}/stream")

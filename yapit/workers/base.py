@@ -8,7 +8,7 @@ from collections.abc import AsyncGenerator
 import redis.asyncio as redis
 from redis.asyncio import Redis
 
-from yapit.contracts.redis_keys import AUDIO_KEY
+from yapit.contracts.redis_keys import AUDIO_KEY, INFLIGHT_KEY
 from yapit.contracts.synthesis import SynthesisJob, get_job_queue_name
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
@@ -57,6 +57,7 @@ class SynthAdapter(ABC):
         await r.set(AUDIO_KEY.format(hash=job.variant_hash), bytes(pcm), ex=3600)
         dur_ms = int(len(pcm) / (self.sample_rate * self.channels * self.sample_width) * 1000)
         await r.publish(job.done_channel, json.dumps({"duration_ms": dur_ms}))
+        await r.delete(INFLIGHT_KEY.format(hash=job.variant_hash))  # clear "in progress" flag
 
 
 async def worker_loop(adapter: SynthAdapter) -> None:

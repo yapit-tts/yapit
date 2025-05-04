@@ -33,7 +33,7 @@ async def run_cache_listener(redis: Redis, cache: Cache) -> None:
             continue
 
         async for db in get_db_session():
-            db.exec(
+            await db.exec(
                 update(BlockVariant)
                 .where(BlockVariant.audio_hash == audio_hash)
                 .values(
