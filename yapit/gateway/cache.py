@@ -2,6 +2,7 @@ import abc
 import logging
 import sqlite3
 import time
+from enum import StrEnum, auto
 from functools import lru_cache
 from pathlib import Path
 
@@ -11,7 +12,7 @@ log = logging.getLogger(__name__)
 
 
 class CacheConfig(BaseModel):
-    dir: str | None = None  # only used if cache_type is fs or sqlite
+    path: Path | str | None = None  # only used if cache_type is fs or sqlite
 
 
 class Cache(abc.ABC):
@@ -57,9 +58,9 @@ class NoOpCache(Cache):
 
 
 class SqliteCache(Cache):
-    def __init__(self, db_path: str, config: CacheConfig):
+    def __init__(self, config: CacheConfig):
         super().__init__(config)
-        self.db_path = Path(db_path) / "cache.db"
+        self.db_path = Path(config.path) / "cache.db"
         self._init_db()
 
     def _init_db(self) -> None:
@@ -107,12 +108,9 @@ class SqliteCache(Cache):
             db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
 
 
-CACHE_BACKENDS: dict[str, type[Cache]] = {
-    "noop": NoOpCache,
-    "sqlite": SqliteCache,
-    # "filesystem": FileSystemCache,
-    # "s3": S3Cache,
-}
+class Caches(StrEnum):
+    NOOP = auto()
+    SQLITE = auto()
 
 
 @lru_cache
@@ -121,7 +119,12 @@ def get_cache_backend() -> Cache:
 
     settings = get_settings()
     cache_type = settings.cache_type.lower()
-    backend = CACHE_BACKENDS.get(cache_type)
-    if backend:
-        return backend(settings.cache_config)
-    raise ValueError(f"Invalid cache backend type '{cache_type}'. Supported types: {', '.join(CACHE_BACKENDS.keys())}.")
+    chache = {
+        Caches.NOOP: NoOpCache,
+        Caches.SQLITE: SqliteCache,
+    }.get(cache_type)
+    if chache:
+        return chache(settings.cache_config)
+    raise ValueError(
+        f"Invalid cache backend type '{cache_type}'. Supported types: {' ,'.join([c.name for c in Caches])}."
+    )
