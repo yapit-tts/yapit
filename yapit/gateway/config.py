@@ -32,6 +32,11 @@ class Settings(BaseSettings):
         env_nested_delimiter="__",
     )
 
+    # TODO(lukas): all below are required
+    stack_auth_host: str = ""
+    stack_auth_project_id: str = ""
+    stack_auth_server_key: str = ""
+
 
 @lru_cache  # singleton factory
 def get_settings() -> Settings:  # di-friendly wrapper
