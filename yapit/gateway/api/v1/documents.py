@@ -1,4 +1,3 @@
-import math
 from typing import Annotated
 from uuid import UUID
 
@@ -60,10 +59,10 @@ class BlockPage(BaseModel):
     status_code=status.HTTP_201_CREATED,
 )
 async def create_document(
-    req: DocumentCreateRequest,
-    user_id: str = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db_session),
-    splitter: TextSplitter = Depends(get_text_splitter),
+        req: DocumentCreateRequest,
+        user_id: str = Depends(get_current_user_id),
+        db: AsyncSession = Depends(get_db_session),
+        splitter: TextSplitter = Depends(get_text_splitter),
 ) -> DocumentCreateResponse:
     """Create a new Document from pasted text.
 
@@ -74,7 +73,7 @@ async def create_document(
     """
     # --- obtain raw text
     if req.source_type == "paste":
-        if not (req.text_content and req.text_content.strip()):
+        if not req.text_content.strip():
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="text_content must be provided and non‑empty for paste uploads",
@@ -113,28 +112,24 @@ async def create_document(
         est_total_ms += dur
         blocks.append(Block(document_id=doc.id, idx=idx, text=text_block, est_duration_ms=dur))
 
-    if blocks:
-        db.add_all(blocks)
-        await db.commit()
-
-    preview = [
-        BlockRead(id=b.id, idx=b.idx, text=b.text, est_duration_ms=b.est_duration_ms) for b in blocks[:_PREVIEW_LIMIT]
-    ]
+    assert blocks
+    db.add_all(blocks)
+    await db.commit()
 
     return DocumentCreateResponse(
         doc_id=doc.id,
         num_blocks=len(blocks),
         est_duration_ms=est_total_ms,
-        blocks=preview,
+        blocks=[BlockRead(id=b.id, idx=b.idx, text=b.text, est_duration_ms=b.est_duration_ms) for b in blocks[:_PREVIEW_LIMIT]],
     )
 
 
 @router.get("/{document_id}/blocks", response_model=BlockPage)
 async def list_blocks(
-    document_id: UUID,
-    offset: Annotated[int, Query(ge=0)] = 0,
-    limit: Annotated[int, Query(ge=1, le=100)] = 100,
-    db: AsyncSession = Depends(get_db_session),
+        document_id: UUID,
+        offset: Annotated[int, Query(ge=0)] = 0,
+        limit: Annotated[int, Query(ge=1, le=100)] = 100,
+        db: AsyncSession = Depends(get_db_session),
 ) -> BlockPage:
     if not await db.get(Document, document_id):
         raise HTTPException(status_code=404, detail="document not found")

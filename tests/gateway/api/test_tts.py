@@ -25,7 +25,7 @@ def test_synthesize_route_only(wait_until_gateway, gateway_url: str, ws_url: str
     # API contract only: 201, JSON keys present
     assert synth.status_code == 201
     j = synth.json()
-    assert {"variant_hash", "ws_url", "est_ms"} <= j.keys()
+    assert {"variant_hash", "ws_url", "est_duration_ms"} <= j.keys()
 
     # 3. ensure WS endpoint accepts the handshake (no audio expected)
     ws = websocket.create_connection(f"{ws_url}{j['ws_url']}", timeout=5)

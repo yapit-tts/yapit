@@ -39,7 +39,7 @@ class SynthEnqueued(BaseModel):
     sample_rate: int
     channels: int
     sample_width: int
-    est_ms: int | None = Field(default=None, description="Estimated duration in ms")
+    est_duration_ms: int | None = Field(default=None, description="Estimated duration in ms")
     duration_ms: int | None = Field(default=None, description="Actual duration in ms")
 
 
@@ -85,7 +85,7 @@ async def enqueue_synthesis(
         variant_hash=variant.audio_hash,
         ws_url=f"/v1/documents/{doc_id}/blocks/{block_id}/variants/{variant.audio_hash}/stream",
         duration_ms=variant.duration_ms,  # None if not cached
-        est_ms=estimate_duration_ms(text=block.text, speed=body.speed),
+        est_duration_ms=estimate_duration_ms(text=block.text, speed=body.speed),
         codec=served_codec,
         sample_rate=model.sample_rate,
         channels=model.channels,
