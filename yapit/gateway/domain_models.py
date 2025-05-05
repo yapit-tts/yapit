@@ -3,7 +3,8 @@ import uuid
 from datetime import datetime
 from enum import StrEnum, auto
 
-from sqlalchemy import JSON, Text
+from sqlalchemy import JSON
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import TEXT, Column, DateTime, Field, Relationship, SQLModel
 
 # NOTE: Forward annotations do not work with SQLModel
@@ -83,10 +84,7 @@ class Document(SQLModel, table=True):
 
     original_text: str = Field(sa_column=Column(TEXT))
     filtered_text: str | None = Field(default=None, sa_column=Column(TEXT, nullable=True))
-    last_applied_filter_config: dict | None = Field(
-        default=None,
-        sa_column=Column(JSON, nullable=True), # TODO: JSONB?
-    )
+    last_applied_filter_config: dict | None = Field(default=None, sa_column=Column(JSONB, nullable=True))
 
     created: datetime = Field(
         default_factory=lambda: datetime.now(tz=dt.UTC),
@@ -140,14 +138,14 @@ class BlockVariant(SQLModel, table=True):
 
 
 class FilterPreset(SQLModel, table=True):
-    """User or system defined reusable filter configuration."""
+    """User or system defined reusable text filter configuration."""
 
     id: int | None = Field(default=None, primary_key=True)
-    user_id: str | None = Field(default=None, foreign_key="user.id", index=True)
+    user_id: str | None = Field(default=None, foreign_key="user.id", index=True)  # if null, system preset (a
 
     name: str = Field(index=True)
     description: str | None = Field(default=None)
-    config: dict = Field(sa_column=Column(JSON)) # TODO JSONB?
+    config: dict = Field(sa_column=Column(JSONB))
 
     created: datetime = Field(
         default_factory=lambda: datetime.now(tz=dt.UTC),

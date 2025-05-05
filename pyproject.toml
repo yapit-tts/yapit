@@ -20,7 +20,7 @@ dependencies = ["pydantic>=2.11.3"]
 gateway = [
   "fastapi[standard]>=0.115.12",
   "sqlmodel>=0.0.24",
-  "redis>=5.2.1",
+  "redis>=6.0.0",
   "alembic>=1.15.2",
   "asyncpg>=0.30.0",
   "orjson>=3.10.16",

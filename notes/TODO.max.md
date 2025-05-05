@@ -4,16 +4,16 @@
 
 ### Feats
 
-- write endpoints (needs: AUTH) / dymic model/worker register
+- (admin) write endpoints (needs: AUTH) / dymic model/worker register
 
 
 ### Refactor
 
 Follow fastapi best practices (https://github.com/zhanymkanov/fastapi-best-practices/blob/master/README.md):
-- make better use of dependencies
-- make sure async is used properly
 - [use asnyc for insteadd of while True syntax](https://github.com/Kludex/fastapi-tips?tab=readme-ov-file#3-use-async-for-instead-of-while-true-on-websocket)
 - NOTE: fastapi sync dependencies run in threadpool
+
+- If I'm already changing document_id to doc_id, at least pull through with it and also change in db to be consistent.
 
 ### Chore
 

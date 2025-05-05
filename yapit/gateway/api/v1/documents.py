@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Annotated
 from uuid import UUID
 
@@ -8,7 +9,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
 from yapit.gateway.auth import get_current_user_id
-from yapit.gateway.deps import get_db_session
+from yapit.gateway.deps import get_db_session, get_doc
 from yapit.gateway.domain_models import Block, Document, SourceType
 from yapit.gateway.text_splitter import TextSplitter, get_text_splitter
 from yapit.gateway.utils import estimate_duration_ms
@@ -59,10 +60,10 @@ class BlockPage(BaseModel):
     status_code=status.HTTP_201_CREATED,
 )
 async def create_document(
-        req: DocumentCreateRequest,
-        user_id: str = Depends(get_current_user_id),
-        db: AsyncSession = Depends(get_db_session),
-        splitter: TextSplitter = Depends(get_text_splitter),
+    req: DocumentCreateRequest,
+    user_id: str = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db_session),
+    splitter: TextSplitter = Depends(get_text_splitter),
 ) -> DocumentCreateResponse:
     """Create a new Document from pasted text.
 
@@ -71,9 +72,9 @@ async def create_document(
     Returns:
         Metadata about the created document (ID, block count, est. duration).
     """
-    # --- obtain raw text
+    # obtain raw text
     if req.source_type == "paste":
-        if not req.text_content.strip():
+        if not req.text_content or not req.text_content.strip():
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="text_content must be provided and non‑empty for paste uploads",
@@ -85,34 +86,32 @@ async def create_document(
         raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="File uploads not implemented yet")
     else:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid source_type")
+    assert text
 
-    # --- Persist Document
+    # persist Document
     doc = Document(
         user_id=user_id,
         source_type=req.source_type,
         source_ref=req.source_ref,
+        original_text=text,
     )
     db.add(doc)
     await db.commit()
     await db.refresh(doc)
 
-    # --- Split into blocks
+    # split into Blocks
     try:
         text_blocks = await run_in_threadpool(splitter.split, text=text)
     except Exception as exc:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Text splitting failed: {exc}",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Text splitting failed: {exc}"
         ) from exc
-
     est_total_ms = 0.0
     blocks: list[Block] = []
     for idx, text_block in enumerate(text_blocks):
         dur = estimate_duration_ms(text_block)
         est_total_ms += dur
         blocks.append(Block(document_id=doc.id, idx=idx, text=text_block, est_duration_ms=dur))
-
-    assert blocks
     db.add_all(blocks)
     await db.commit()
 
@@ -120,25 +119,45 @@ async def create_document(
         doc_id=doc.id,
         num_blocks=len(blocks),
         est_duration_ms=est_total_ms,
-        blocks=[BlockRead(id=b.id, idx=b.idx, text=b.text, est_duration_ms=b.est_duration_ms) for b in blocks[:_PREVIEW_LIMIT]],
+        blocks=[
+            BlockRead(id=b.id, idx=b.idx, text=b.text, est_duration_ms=b.est_duration_ms)
+            for b in blocks[:_PREVIEW_LIMIT]
+        ],
     )
 
 
-@router.get("/{document_id}/blocks", response_model=BlockPage)
+@router.get("/{doc_id}/blocks", response_model=BlockPage)
 async def list_blocks(
-        document_id: UUID,
-        offset: Annotated[int, Query(ge=0)] = 0,
-        limit: Annotated[int, Query(ge=1, le=100)] = 100,
-        db: AsyncSession = Depends(get_db_session),
+    doc_id: UUID,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=100)] = 100,
+    db: AsyncSession = Depends(get_db_session),
 ) -> BlockPage:
-    if not await db.get(Document, document_id):
-        raise HTTPException(status_code=404, detail="document not found")
-
-    total = (await db.exec(select(func.count()).select_from(Block).where(Block.document_id == document_id))).one()
+    total = (await db.exec(select(func.count()).select_from(Block).where(Block.document_id == doc_id))).one()
     rows = await db.exec(
-        select(Block).where(Block.document_id == document_id).order_by(Block.idx).offset(offset).limit(limit)
+        select(Block).where(Block.document_id == doc_id).order_by(Block.idx).offset(offset).limit(limit)
     )
     items = [BlockRead(id=b.id, idx=b.idx, text=b.text, est_duration_ms=b.est_duration_ms) for b in rows.all()]
 
     next_offset = offset + limit if offset + limit < total else None
     return BlockPage(total=total, items=items, next_offset=next_offset)
+
+
+class DocumentMeta(BaseModel):
+    doc_id: UUID
+    created: datetime
+    has_filtered: bool
+    last_applied_filter_config: dict | None
+
+
+@router.get("/{doc_id}", response_model=DocumentMeta)
+async def read_document_meta(
+    doc_id: UUID,
+    doc: Document = Depends(get_doc),
+) -> DocumentMeta:
+    return DocumentMeta(
+        doc_id=doc.id,
+        created=doc.created,
+        has_filtered=doc.filtered_text is not None,
+        last_applied_filter_config=doc.last_applied_filter_config,
+    )

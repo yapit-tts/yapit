@@ -1,0 +1,200 @@
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+from typing import Any
+from uuid import UUID
+
+import re2 as re  # FIXME find an alternative!
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from pydantic import BaseModel
+from redis.asyncio import Redis
+from sqlmodel import delete, select
+from sqlmodel.ext.asyncio.session import AsyncSession
+from starlette.concurrency import run_in_threadpool
+
+from yapit.contracts.redis_keys import (
+    FILTER_CANCEL,
+    FILTER_INFLIGHT,
+    FILTER_STATUS,
+)
+from yapit.gateway import SessionLocal
+from yapit.gateway.deps import get_db_session, get_doc
+from yapit.gateway.domain_models import Block, Document, FilterPreset
+from yapit.gateway.redis_client import get_redis
+from yapit.gateway.text_splitter import TextSplitter, get_text_splitter
+from yapit.gateway.utils import estimate_duration_ms
+
+# TODO admin-only endpoint to change preset filter rules
+
+log = logging.getLogger("filters")
+router = APIRouter(prefix="/v1", tags=["Filters"])
+
+FILTER_LOCK_TTL = 300  # seconds – NX lock
+FILTER_STATUS_TTL = 900  # seconds – queued/running
+FILTER_DONE_TTL = 86_400  # keep "done/error" 24h for debugging
+TRANSFORM_TIMEOUT_S = 120  # hard timeout for regex + LLM pass
+
+
+class FilterJobRequest(BaseModel):
+    preset_id: int | None = None
+    custom_config: dict[str, Any] | None = None
+
+
+class SimpleMessage(BaseModel):
+    message: str
+
+
+class FilterPresetRead(BaseModel):
+    id: int
+    name: str
+    description: str | None
+    config: dict[str, Any]
+
+
+@router.post("/filters/validate", response_model=SimpleMessage)
+def validate_regex(body: FilterJobRequest) -> SimpleMessage:
+    for rule in (body.custom_config or {}).get("regex_rules", []):
+        try:
+            re.compile(rule["pattern"])
+        except re.error as exc:
+            raise HTTPException(422, f"Invalid regex: {exc}") from exc
+    return SimpleMessage(message="ok")
+
+
+@router.get("/filter_presets", response_model=list[FilterPresetRead])
+async def list_filter_presets(db: AsyncSession = Depends(get_db_session)) -> list[FilterPresetRead]:
+    # TODO restrict to user_id + system
+    presets = (await db.exec(select(FilterPreset))).all()
+    return [FilterPresetRead(id=p.id, name=p.name, description=p.description, config=p.config) for p in presets]
+
+
+@router.get(
+    "/documents/{doc_id}/filter_status",
+    response_model=SimpleMessage,
+    status_code=200,
+)
+async def filter_status(
+    doc_id: UUID,
+    redis: Redis = Depends(get_redis),
+) -> SimpleMessage:
+    """Return current filter-pipeline state for `doc_id`.
+
+    * primary source: Redis key  (while job is in flight or for 24 h after)
+    * fallback     : DB row      (lets us answer after Redis TTL expired)
+    """
+    key = FILTER_STATUS.format(doc_id=doc_id)
+    val: bytes | None = await redis.get(key)
+    if val is not None:
+        return SimpleMessage(message=val.decode())
+    doc: Document = await get_doc(doc_id)
+    return SimpleMessage(message="done" if doc.filtered_text is not None else "none")
+
+
+@router.post(
+    "/documents/{doc_id}/apply_filters",
+    response_model=SimpleMessage,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def apply_filters(
+    doc_id: UUID,
+    body: FilterJobRequest,
+    bg: BackgroundTasks,
+    _: Document = Depends(get_doc),
+    db: AsyncSession = Depends(get_db_session),
+    redis: Redis = Depends(get_redis),
+    splitter: TextSplitter = Depends(get_text_splitter),
+) -> SimpleMessage:
+    """Kick off (re-)filtering job for a document."""
+    if not await redis.set(FILTER_INFLIGHT.format(doc_id=doc_id), 1, nx=True, ex=FILTER_LOCK_TTL):
+        raise HTTPException(409, "Filter job already in progress for this document.")
+
+    config: dict[str, Any] = {}
+    if body.preset_id is not None:
+        preset: FilterPreset | None = await db.get(FilterPreset, body.preset_id)
+        if not preset:
+            raise HTTPException(404, "Preset not found.")
+        config = json.loads(json.dumps(preset.config))  # deepcopy to avoid mutating DB object
+    if body.custom_config:
+        config.update(body.custom_config)
+    if not config:
+        raise HTTPException(422, "No filter rules supplied.")
+
+    await redis.set(FILTER_STATUS.format(doc_id=doc_id), "pending", ex=FILTER_STATUS_TTL)
+    bg.add_task(_run_filter_job, doc_id=doc_id, config=config, splitter=splitter, redis=redis)
+    return SimpleMessage(message="Filtering job started.")
+
+
+@router.post(
+    "/documents/{doc_id}/clear_filters",
+    response_model=SimpleMessage,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def clear_filters(doc_id: UUID, redis: Redis = Depends(get_redis)) -> SimpleMessage:
+    """Cancel any in-progress filtering job and clear status."""
+    await redis.set(FILTER_CANCEL.format(doc_id=doc_id), 1, ex=FILTER_LOCK_TTL)
+    return SimpleMessage(message="Cancellation flag set.")
+
+
+async def _run_filter_job(
+    doc_id: UUID,
+    config: dict[str, Any],
+    splitter: TextSplitter,
+    redis: Redis,
+) -> None:
+    status_key = FILTER_STATUS.format(doc_id=doc_id)
+    cancel_key = FILTER_CANCEL.format(doc_id=doc_id)
+    inflight_key = FILTER_INFLIGHT.format(doc_id=doc_id)
+
+    async with SessionLocal() as db:
+        try:
+            await redis.set(status_key, "running", ex=FILTER_STATUS_TTL)
+
+            doc = await get_doc(doc_id, db)
+            text = doc.original_text
+
+            if await redis.exists(cancel_key):
+                await redis.set(status_key, "cancelled", ex=600)
+                return
+
+            async def _transform(txt: str) -> str:
+                for rule in config.get("regex_rules", []):
+                    txt = re.compile(rule["pattern"]).sub(rule.get("replacement", ""), txt)
+                if config.get("llm_enabled"):
+                    # TODO build LLM prompt from config + OpenAI API request
+                    # TODO periodically check this (if parsing long docs in chunks (... stream progress?)
+                    if await redis.exists(cancel_key):
+                        await redis.set(status_key, "cancelled", ex=FILTER_STATUS_TTL)
+                        raise asyncio.CancelledError
+                    log.warning("LLM filter requested but not implemented – skipping")
+                return txt
+
+            try:
+                text = await asyncio.wait_for(_transform(text), timeout=TRANSFORM_TIMEOUT_S)
+            except asyncio.TimeoutError:
+                raise RuntimeError(f"transform exceeded {TRANSFORM_TIMEOUT_S}s")
+
+            # threadpool worth the overhead for hierarchical splitter or more complex
+            blocks_text: list[str] = await run_in_threadpool(splitter.split, text=text)
+
+            async with db.begin():
+                await db.exec(delete(Block).where(Block.document_id == doc_id))  # replace old blocks
+                db.add_all(
+                    [
+                        Block(document_id=doc_id, idx=i, text=blk, est_duration_ms=estimate_duration_ms(blk))
+                        for i, blk in enumerate(blocks_text)
+                    ]
+                )
+
+                doc.filtered_text = text
+                doc.last_applied_filter_config = config
+                await db.commit()
+
+            await redis.set(status_key, "done", ex=FILTER_DONE_TTL)
+        except Exception as exc:
+            log.exception(f"Error while filtering document {doc_id}: {exc}")
+            await redis.set(status_key, f"error:{exc}", ex=FILTER_DONE_TTL)
+        finally:
+            await redis.delete(inflight_key)
+            await redis.delete(cancel_key)

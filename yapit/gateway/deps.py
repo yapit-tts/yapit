@@ -6,7 +6,7 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from yapit.gateway.db import SessionLocal
-from yapit.gateway.domain_models import Block, Model, Voice
+from yapit.gateway.domain_models import Block, Document, Model, Voice
 
 
 async def get_db_session() -> AsyncIterator[AsyncSession]:
@@ -14,8 +14,18 @@ async def get_db_session() -> AsyncIterator[AsyncSession]:
         yield session
 
 
+async def get_doc(
+    doc_id: UUID,
+    db: AsyncSession = Depends(get_db_session),
+) -> Document:
+    doc: Document | None = await db.get(Document, doc_id)
+    if not doc:
+        raise HTTPException(404, f"Document {doc_id!r} not found")
+    return doc
+
+
 def _get_param_extractor(name: str) -> Callable:
-    """Return a FastAPI dependency that fetches `name` from path/query or JSON."""
+    """Helper to return a FastAPI dependency that fetches `name` from path/query or JSON."""
 
     async def extract(
         value: str | None = None,  # path or ?name=

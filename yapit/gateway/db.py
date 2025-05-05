@@ -82,7 +82,6 @@ async def _seed_db() -> None:
         # dia.voices.append(Voice(slug="default", name="Dia", lang="en")
         # db.add(dia)
 
-        # -------- default filter presets -------------------------------------
         presets_json = Path(__file__).parent.parent / "data/default_filter_presets.json"
         defaults = json.loads(presets_json.read_text())
         for p in defaults:
