@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 from enum import StrEnum, auto
 
-from sqlalchemy import ARRAY, Text
+from sqlalchemy import JSON, Text
 from sqlmodel import TEXT, Column, DateTime, Field, Relationship, SQLModel
 
 # NOTE: Forward annotations do not work with SQLModel
@@ -81,12 +81,19 @@ class Document(SQLModel, table=True):
 
     title: str | None = Field(default=None)
 
+    original_text: str = Field(sa_column=Column(TEXT))
+    filtered_text: str | None = Field(default=None, sa_column=Column(TEXT, nullable=True))
+    last_applied_filter_config: dict | None = Field(
+        default=None,
+        sa_column=Column(JSON, nullable=True), # TODO: JSONB?
+    )
+
     created: datetime = Field(
         default_factory=lambda: datetime.now(tz=dt.UTC),
         sa_column=Column(DateTime(timezone=True)),
     )
 
-    user: User = Relationship(back_populates="documents")
+    user: "User" = Relationship(back_populates="documents")
     blocks: list["Block"] = Relationship(
         back_populates="document", sa_relationship_kwargs={"cascade": "all, delete-orphan"}
     )
@@ -111,7 +118,7 @@ class Block(SQLModel, table=True):
 class BlockVariant(SQLModel, table=True):
     """A synthesized audio variant of a text block."""
 
-    audio_hash: str = Field(primary_key=True)  # Hash(block.text, model_id, voice_id, speed, codec)
+    audio_hash: str = Field(primary_key=True)  # Hash(block.text, model, voice, speed, codec)
 
     block_id: int = Field(foreign_key="block.id")
     model_id: int = Field(foreign_key="model.id")
@@ -130,3 +137,25 @@ class BlockVariant(SQLModel, table=True):
     block: Block = Relationship(back_populates="variants")
     model: Model = Relationship(back_populates="block_variants")
     voice: Voice = Relationship(back_populates="block_variants")
+
+
+class FilterPreset(SQLModel, table=True):
+    """User or system defined reusable filter configuration."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    user_id: str | None = Field(default=None, foreign_key="user.id", index=True)
+
+    name: str = Field(index=True)
+    description: str | None = Field(default=None)
+    config: dict = Field(sa_column=Column(JSON)) # TODO JSONB?
+
+    created: datetime = Field(
+        default_factory=lambda: datetime.now(tz=dt.UTC),
+        sa_column=Column(DateTime(timezone=True)),
+    )
+    updated: datetime = Field(
+        default_factory=lambda: datetime.now(tz=dt.UTC),
+        sa_column=Column(DateTime(timezone=True)),
+    )
+
+    user: "User" = Relationship(sa_relationship_kwargs={"lazy": "selectin"})

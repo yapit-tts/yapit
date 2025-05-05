@@ -9,7 +9,7 @@ from sqlalchemy import exists
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from yapit.contracts.redis_keys import DONE_CH, INFLIGHT_KEY, STREAM_CH
+from yapit.contracts.redis_keys import TTS_DONE, TTS_INFLIGHT, TTS_STREAM
 from yapit.contracts.synthesis import SynthesisJob, get_job_queue_name
 from yapit.gateway.cache import Cache, get_cache_backend
 from yapit.gateway.deps import get_block, get_db_session, get_model, get_voice
@@ -91,10 +91,10 @@ async def enqueue_synthesis(
         channels=model.channels,
         sample_width=model.sample_width,
     )
-    if await cache.exists(audio_hash) or await redis.exists(INFLIGHT_KEY.format(hash=audio_hash)):
+    if await cache.exists(audio_hash) or await redis.exists(TTS_INFLIGHT.format(hash=audio_hash)):
         return response  # cached or in progress
 
-    await redis.set(INFLIGHT_KEY.format(hash=audio_hash), 1, ex=300, nx=True)  # 5min lock
+    await redis.set(TTS_INFLIGHT.format(hash=audio_hash), 1, ex=300, nx=True)  # 5min lock
     job = SynthesisJob(
         variant_hash=audio_hash,
         model_slug=body.model_slug,
@@ -143,8 +143,8 @@ async def stream_audio(
     # not cached, subscribe to Redis
     pubsub = redis.pubsub()
     await pubsub.subscribe(
-        STREAM_CH.format(hash=variant_hash),
-        DONE_CH.format(hash=variant_hash),
+        TTS_STREAM.format(hash=variant_hash),
+        TTS_DONE.format(hash=variant_hash),
     )
     try:
         async for msg in pubsub.listen():

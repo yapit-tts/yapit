@@ -3,11 +3,15 @@ from pathlib import Path
 
 from alembic import command, config
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlmodel import SQLModel
+from sqlmodel import SQLModel, delete
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from yapit.gateway.config import ANON_USER, get_settings
-from yapit.gateway.domain_models import Model, Voice
+from yapit.gateway.domain_models import (
+    FilterPreset,
+    Model,
+    Voice,
+)
 
 settings = get_settings()
 engine = create_async_engine(
@@ -43,7 +47,7 @@ async def close_db() -> None:
 
 
 async def _seed_db() -> None:
-    # dev db seed - populate empty db
+    """Development seed – only runs on an empty DB."""
     async with SessionLocal() as db:
         db.add(ANON_USER)
         kokoro = Model(
@@ -65,6 +69,7 @@ async def _seed_db() -> None:
                     description=f"Quality grade {v['overallGrade']}",
                 )
             )
+        db.add(kokoro)
         # dia = Model(
         #     slug="dia",
         #     name="Dia-1.6B",
@@ -75,10 +80,17 @@ async def _seed_db() -> None:
         #     sample_width=2,
         # )
         # dia.voices.append(Voice(slug="default", name="Dia", lang="en")
-        db.add_all(
-            [
-                kokoro,
-                # dia
-            ]
-        )
+        # db.add(dia)
+
+        # -------- default filter presets -------------------------------------
+        presets_json = Path(__file__).parent.parent / "data/default_filter_presets.json"
+        defaults = json.loads(presets_json.read_text())
+        for p in defaults:
+            db.add(
+                FilterPreset(
+                    name=p["name"],
+                    description=p.get("description"),
+                    config=p["config"],
+                )
+            )
         await db.commit()

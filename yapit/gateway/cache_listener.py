@@ -4,7 +4,7 @@ import logging
 from redis.asyncio import Redis
 from sqlmodel import update
 
-from yapit.contracts.redis_keys import AUDIO_KEY, DONE_CH
+from yapit.contracts.redis_keys import TTS_AUDIO, TTS_DONE
 from yapit.gateway.cache import Cache
 from yapit.gateway.deps import get_db_session
 from yapit.gateway.domain_models import BlockVariant
@@ -14,7 +14,7 @@ log = logging.getLogger("cache_listener")
 
 async def run_cache_listener(redis: Redis, cache: Cache) -> None:
     pubsub = redis.pubsub()
-    await pubsub.psubscribe(DONE_CH.format(hash="*"))
+    await pubsub.psubscribe(TTS_DONE.format(hash="*"))
 
     async for msg in pubsub.listen():
         if msg["type"] != "pmessage":
@@ -22,7 +22,7 @@ async def run_cache_listener(redis: Redis, cache: Cache) -> None:
         audio_hash = msg["channel"].decode().split(":")[1]  # [tts, <hash>, done][1]
         meta = json.loads(msg["data"])
 
-        raw = await redis.get(AUDIO_KEY.format(hash=audio_hash))
+        raw = await redis.get(TTS_AUDIO.format(hash=audio_hash))
         if raw is None:
             log.warning("missing bytes for %s", audio_hash)
             continue
