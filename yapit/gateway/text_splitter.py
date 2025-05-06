@@ -1,9 +1,13 @@
 import abc
 import re
 from enum import StrEnum, auto
-from functools import lru_cache
 
 from pydantic import BaseModel, Field
+
+
+class TextSplitters(StrEnum):
+    DUMMY = auto()
+    HIERARCHICAL = auto()
 
 
 class TextSplitterConfig(BaseModel):
@@ -101,25 +105,3 @@ class HierarchicalSplitter(TextSplitter):
             blocks.append(segment[start:cut].rstrip())
             start = cut
         return [b for b in blocks if b]
-
-
-class TextSplitters(StrEnum):
-    DUMMY = auto()
-    HIERARCHICAL = auto()
-
-
-@lru_cache
-def get_text_splitter() -> TextSplitter:
-    from yapit.gateway.config import get_settings
-
-    settings = get_settings()
-    splitter_type = settings.splitter_type.lower()
-    splitter = {
-        TextSplitters.DUMMY: DummySplitter,
-        TextSplitters.HIERARCHICAL: HierarchicalSplitter,
-    }.get(splitter_type)
-    if splitter:
-        return splitter(settings.splitter_config)
-    raise ValueError(
-        f"Unknown text splitter type: {splitter_type}. Supported types: {', '.join([s.name for s in TextSplitters])}."
-    )

@@ -3,6 +3,7 @@
 
 - Thinking about security / exploits: Limits on the number of docs, filters, etc. 
 - Should Block.id be a UUID too?
+- Is there a global setting for pydantic to forbid extra vals?
 
 ### Feats
 

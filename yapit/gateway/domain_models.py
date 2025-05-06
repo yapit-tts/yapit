@@ -30,7 +30,7 @@ class User(SQLModel, table=True):
     )
 
 
-class Model(SQLModel, table=True):
+class TTSModel(SQLModel, table=True):
     """A TTS model type."""
 
     id: int | None = Field(default=None, primary_key=True)
@@ -59,14 +59,14 @@ class Voice(SQLModel, table=True):
     """Concrete voice belonging to a model."""
 
     id: int | None = Field(default=None, primary_key=True)
-    model_id: int = Field(foreign_key="model.id")
+    model_id: int = Field(foreign_key="ttsmodel.id")
 
     slug: str = Field(unique=True)
     name: str
     lang: str
     description: str | None = Field(default=None)
 
-    model: Model = Relationship(back_populates="voices")
+    model: TTSModel = Relationship(back_populates="voices")
     block_variants: list["BlockVariant"] = Relationship(back_populates="voice")
 
 
@@ -122,7 +122,7 @@ class BlockVariant(SQLModel, table=True):
     hash: str = Field(primary_key=True)  # Hash(block.text, model, voice, speed, codec)
 
     block_id: int = Field(foreign_key="block.id")
-    model_id: int = Field(foreign_key="model.id")
+    model_id: int = Field(foreign_key="ttsmodel.id")
     voice_id: int = Field(foreign_key="voice.id")
     speed: float
     codec: str
@@ -136,7 +136,7 @@ class BlockVariant(SQLModel, table=True):
     )
 
     block: Block = Relationship(back_populates="variants")
-    model: Model = Relationship(back_populates="block_variants")
+    model: TTSModel = Relationship(back_populates="block_variants")
     voice: Voice = Relationship(back_populates="block_variants")
 
     @staticmethod

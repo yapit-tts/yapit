@@ -19,7 +19,7 @@ def test_synthesize_route_only(wait_until_gateway, gateway_url: str, ws_url: str
     # 2. enqueue synthesis
     synth = requests.post(
         f"{gateway_url}/v1/documents/{document_id}/blocks/{block_id}/synthesize",
-        json={"model_slug": "kokoro", "voice_slug": "af_heart", "speed": 1.0, "codec": "pcm"},
+        json={"model_slug": "kokoro", "voice_slug": "af_heart", "speed": 1.0},
         timeout=5,
     )
     # API contract only: 201, JSON keys present
@@ -43,7 +43,7 @@ def test_streaming_audio(wait_until_gateway, gateway_url: str, ws_url: str):
     block_id = doc["blocks"][0]["id"]
     synth = requests.post(
         f"{gateway_url}/v1/documents/{document_id}/blocks/{block_id}/synthesize",
-        json={"model_slug": "kokoro", "voice_slug": "af_heart", "speed": 1.0, "codec": "pcm"},
+        json={"model_slug": "kokoro", "voice_slug": "af_heart", "speed": 1.0},
         timeout=5,
     ).json()
 

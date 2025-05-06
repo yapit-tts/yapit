@@ -9,7 +9,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from yapit.gateway.config import ANON_USER, get_settings
 from yapit.gateway.domain_models import (
     Filter,
-    Model,
+    TTSModel,
     Voice,
 )
 
@@ -50,7 +50,7 @@ async def _seed_db() -> None:
     """Development seed – only runs on an empty DB."""
     async with SessionLocal() as db:
         db.add(ANON_USER)
-        kokoro = Model(
+        kokoro = TTSModel(
             slug="kokoro",
             name="Kokoro",
             price_sec=0.0,

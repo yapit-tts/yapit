@@ -5,13 +5,11 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, HttpUrl
 from sqlmodel import func, select
-from sqlmodel.ext.asyncio.session import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
 from yapit.gateway.auth import get_current_user_id
-from yapit.gateway.deps import get_db_session, get_doc
+from yapit.gateway.deps import CurrentDoc, DbSession, TextSplitterDep
 from yapit.gateway.domain_models import Block, Document, SourceType
-from yapit.gateway.text_splitter import TextSplitter, get_text_splitter
 from yapit.gateway.utils import estimate_duration_ms
 
 router = APIRouter(prefix="/v1/documents", tags=["Documents"])
@@ -61,9 +59,9 @@ class BlockPage(BaseModel):
 )
 async def create_document(
     req: DocumentCreateRequest,
+    db: DbSession,
+    splitter: TextSplitterDep,
     user_id: str = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db_session),
-    splitter: TextSplitter = Depends(get_text_splitter),
 ) -> DocumentCreateResponse:
     """Create a new Document from pasted text.
 
@@ -133,9 +131,9 @@ async def create_document(
 @router.get("/{document_id}/blocks", response_model=BlockPage)
 async def list_blocks(
     document_id: UUID,
+    db: DbSession,
     offset: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=100)] = 100,
-    db: AsyncSession = Depends(get_db_session),
 ) -> BlockPage:
     total = (await db.exec(select(func.count()).select_from(Block).where(Block.document_id == document_id))).one()
     rows = await db.exec(
@@ -157,7 +155,7 @@ class DocumentMeta(BaseModel):
 @router.get("/{document_id}", response_model=DocumentMeta)
 async def read_document_meta(
     document_id: UUID,
-    doc: Document = Depends(get_doc),
+    doc: CurrentDoc,
 ) -> DocumentMeta:
     return DocumentMeta(
         document_id=doc.id,

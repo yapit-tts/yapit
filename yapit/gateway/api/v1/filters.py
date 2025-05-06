@@ -1,17 +1,15 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from typing import Any
 from uuid import UUID
 
 import re2 as re
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, HTTPException, status
 from pydantic import BaseModel
 from redis.asyncio import Redis
 from sqlmodel import delete, select
-from sqlmodel.ext.asyncio.session import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
 from yapit.contracts.redis_keys import (
@@ -20,10 +18,9 @@ from yapit.contracts.redis_keys import (
     FILTER_STATUS,
 )
 from yapit.gateway.db import SessionLocal
-from yapit.gateway.deps import get_db_session, get_doc
+from yapit.gateway.deps import CurrentDoc, DbSession, RedisClient, TextSplitterDep, get_doc
 from yapit.gateway.domain_models import Block, Document, Filter
-from yapit.gateway.redis_client import get_redis
-from yapit.gateway.text_splitter import TextSplitter, get_text_splitter
+from yapit.gateway.text_splitter import TextSplitter
 from yapit.gateway.utils import estimate_duration_ms
 
 # TODO admin-only endpoint to change preset filter rules
@@ -65,7 +62,7 @@ def validate_regex(body: FilterJobRequest) -> SimpleMessage:
 
 
 @router.get("/filter_presets", response_model=list[FilterPresetRead])
-async def list_filter_presets(db: AsyncSession = Depends(get_db_session)) -> list[FilterPresetRead]:
+async def list_filter_presets(db: DbSession) -> list[FilterPresetRead]:
     # TODO restrict to user_id + system
     presets = (await db.exec(select(Filter))).all()
     return [FilterPresetRead(id=p.id, name=p.name, description=p.description, config=p.config) for p in presets]
@@ -78,8 +75,8 @@ async def list_filter_presets(db: AsyncSession = Depends(get_db_session)) -> lis
 )
 async def filter_status(
     document_id: UUID,
-    db: AsyncSession = Depends(get_db_session),
-    redis: Redis = Depends(get_redis),
+    db: DbSession,
+    redis: RedisClient,
 ) -> SimpleMessage:
     """Return current filter-pipeline state for `document_id` (none|pending|running|done|error).
 
@@ -103,9 +100,9 @@ async def apply_filters(
     document_id: UUID,
     body: FilterJobRequest,
     bg: BackgroundTasks,
-    _: Document = Depends(get_doc),
-    redis: Redis = Depends(get_redis),
-    splitter: TextSplitter = Depends(get_text_splitter),
+    _: CurrentDoc,
+    redis: RedisClient,
+    splitter: TextSplitterDep,
 ) -> SimpleMessage:
     """Kick off (re-)filtering job for a document."""
     if not await redis.set(FILTER_INFLIGHT.format(document_id=document_id), 1, nx=True, ex=FILTER_LOCK_TTL):
@@ -121,7 +118,7 @@ async def apply_filters(
     response_model=SimpleMessage,
     status_code=status.HTTP_202_ACCEPTED,
 )
-async def cancel_filter_job(document_id: UUID, redis: Redis = Depends(get_redis)) -> SimpleMessage:
+async def cancel_filter_job(document_id: UUID, redis: RedisClient) -> SimpleMessage:
     """Cancel any in-progress filtering job and clear status."""
     await redis.set(FILTER_CANCEL.format(document_id=document_id), 1, ex=FILTER_LOCK_TTL)
     return SimpleMessage(message="Cancellation flag set.")
