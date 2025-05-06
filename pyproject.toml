@@ -3,7 +3,7 @@ name = "yapit"
 version = "0.1.0"
 description = "Yapit TTS platform (contracts, gateway and workers)"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.10,<=3.12"
 authors = [
     {name = "Maximilian Wolf", email="max@mwolf.dev"},
 ]
@@ -24,7 +24,8 @@ gateway = [
   "alembic>=1.15.2",
   "asyncpg>=0.30.0",
   "orjson>=3.10.16",
-  "pydantic-settings>=2.9.1"
+  "pydantic-settings>=2.9.1",
+  "google-re2>=1.1.20240702"
 ]
 
 # for worker Dockerfile

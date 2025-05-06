@@ -6,7 +6,7 @@ import logging
 from typing import Any
 from uuid import UUID
 
-import re2 as re  # FIXME find an alternative!
+import re2 as re
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from pydantic import BaseModel
 from redis.asyncio import Redis
@@ -19,7 +19,7 @@ from yapit.contracts.redis_keys import (
     FILTER_INFLIGHT,
     FILTER_STATUS,
 )
-from yapit.gateway import SessionLocal
+from yapit.gateway.db import SessionLocal
 from yapit.gateway.deps import get_db_session, get_doc
 from yapit.gateway.domain_models import Block, Document, FilterPreset
 from yapit.gateway.redis_client import get_redis
@@ -77,9 +77,10 @@ async def list_filter_presets(db: AsyncSession = Depends(get_db_session)) -> lis
 )
 async def filter_status(
     doc_id: UUID,
+    db: AsyncSession = Depends(get_db_session),
     redis: Redis = Depends(get_redis),
 ) -> SimpleMessage:
-    """Return current filter-pipeline state for `doc_id`.
+    """Return current filter-pipeline state for `doc_id` (none|pending|running|done|error)
 
     * primary source: Redis key  (while job is in flight or for 24 h after)
     * fallback     : DB row      (lets us answer after Redis TTL expired)
@@ -88,7 +89,7 @@ async def filter_status(
     val: bytes | None = await redis.get(key)
     if val is not None:
         return SimpleMessage(message=val.decode())
-    doc: Document = await get_doc(doc_id)
+    doc: Document = await get_doc(doc_id, db=db)
     return SimpleMessage(message="done" if doc.filtered_text is not None else "none")
 
 
@@ -127,11 +128,11 @@ async def apply_filters(
 
 
 @router.post(
-    "/documents/{doc_id}/clear_filters",
+    "/documents/{doc_id}/cancel_filter_job",
     response_model=SimpleMessage,
     status_code=status.HTTP_202_ACCEPTED,
 )
-async def clear_filters(doc_id: UUID, redis: Redis = Depends(get_redis)) -> SimpleMessage:
+async def cancel_filter_job(doc_id: UUID, redis: Redis = Depends(get_redis)) -> SimpleMessage:
     """Cancel any in-progress filtering job and clear status."""
     await redis.set(FILTER_CANCEL.format(doc_id=doc_id), 1, ex=FILTER_LOCK_TTL)
     return SimpleMessage(message="Cancellation flag set.")
