@@ -42,7 +42,7 @@ class BlockRead(BaseModel):
 
 
 class DocumentCreateResponse(BaseModel):
-    doc_id: UUID
+    document_id: UUID
     num_blocks: int
     est_duration_ms: int
     blocks: list[BlockRead]
@@ -120,7 +120,7 @@ async def create_document(
     await db.commit()
 
     return DocumentCreateResponse(
-        doc_id=doc.id,
+        document_id=doc.id,
         num_blocks=len(blocks),
         est_duration_ms=est_total_ms,
         blocks=[
@@ -130,16 +130,16 @@ async def create_document(
     )
 
 
-@router.get("/{doc_id}/blocks", response_model=BlockPage)
+@router.get("/{document_id}/blocks", response_model=BlockPage)
 async def list_blocks(
-    doc_id: UUID,
+    document_id: UUID,
     offset: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=100)] = 100,
     db: AsyncSession = Depends(get_db_session),
 ) -> BlockPage:
-    total = (await db.exec(select(func.count()).select_from(Block).where(Block.document_id == doc_id))).one()
+    total = (await db.exec(select(func.count()).select_from(Block).where(Block.document_id == document_id))).one()
     rows = await db.exec(
-        select(Block).where(Block.document_id == doc_id).order_by(Block.idx).offset(offset).limit(limit)
+        select(Block).where(Block.document_id == document_id).order_by(Block.idx).offset(offset).limit(limit)
     )
     items = [BlockRead(id=b.id, idx=b.idx, text=b.text, est_duration_ms=b.est_duration_ms) for b in rows.all()]
 
@@ -148,19 +148,19 @@ async def list_blocks(
 
 
 class DocumentMeta(BaseModel):
-    doc_id: UUID
+    document_id: UUID
     created: datetime
     has_filtered: bool
     last_applied_filter_config: dict | None
 
 
-@router.get("/{doc_id}", response_model=DocumentMeta)
+@router.get("/{document_id}", response_model=DocumentMeta)
 async def read_document_meta(
-    doc_id: UUID,
+    document_id: UUID,
     doc: Document = Depends(get_doc),
 ) -> DocumentMeta:
     return DocumentMeta(
-        doc_id=doc.id,
+        document_id=doc.id,
         created=doc.created,
         has_filtered=doc.filtered_text is not None,
         last_applied_filter_config=doc.last_applied_filter_config,

@@ -15,12 +15,12 @@ async def get_db_session() -> AsyncIterator[AsyncSession]:
 
 
 async def get_doc(
-    doc_id: UUID,
+    document_id: UUID,
     db: AsyncSession = Depends(get_db_session),
 ) -> Document:
-    doc: Document | None = await db.get(Document, doc_id)
+    doc: Document | None = await db.get(Document, document_id)
     if not doc:
-        raise HTTPException(404, f"Document {doc_id!r} not found")
+        raise HTTPException(404, f"Document {document_id!r} not found")
     return doc
 
 
@@ -63,13 +63,13 @@ async def get_voice(
 
 
 async def get_block(
-    doc_id: UUID,
+    document_id: UUID,
     block_id: int,
     db: AsyncSession = Depends(get_db_session),
 ) -> Block:
     block: Block | None = await db.get(Block, block_id)
-    if not block or block.document_id != doc_id:
-        raise HTTPException(404, f"Block {block_id!r} not found in document {doc_id!r}")
+    if not block or block.document_id != document_id:
+        raise HTTPException(404, f"Block {block_id!r} not found in document {document_id!r}")
     return block
 
 

@@ -42,9 +42,9 @@ class SynthEnqueued(BaseModel):
     duration_ms: int | None = Field(default=None, description="Actual duration in ms")
 
 
-@router.post("/documents/{doc_id}/blocks/{block_id}/synthesize", response_model=SynthEnqueued, status_code=201)
+@router.post("/documents/{document_id}/blocks/{block_id}/synthesize", response_model=SynthEnqueued, status_code=201)
 async def enqueue_synthesis(
-    doc_id: UUID,
+    document_id: UUID,
     block_id: int,
     body: SynthRequest,
     # user_id: str = Depends(get_current_user_id),
@@ -82,7 +82,7 @@ async def enqueue_synthesis(
 
     response = SynthEnqueued(
         variant_hash=variant.hash,
-        ws_url=f"/v1/documents/{doc_id}/blocks/{block_id}/variants/{variant.hash}/stream",
+        ws_url=f"/v1/documents/{document_id}/blocks/{block_id}/variants/{variant.hash}/stream",
         duration_ms=variant.duration_ms,  # None if not cached
         est_duration_ms=estimate_duration_ms(text=block.text, speed=body.speed),
         codec=served_codec,
@@ -106,10 +106,10 @@ async def enqueue_synthesis(
     return response
 
 
-@router.websocket("/documents/{doc_id}/blocks/{block_id}/variants/{variant_hash}/stream")
+@router.websocket("/documents/{document_id}/blocks/{block_id}/variants/{variant_hash}/stream")
 async def stream_audio(
     ws: WebSocket,
-    doc_id: UUID,
+    document_id: UUID,
     block_id: int,
     variant_hash: str,
     _: Block = Depends(get_block),  # (auth check)
@@ -124,7 +124,7 @@ async def stream_audio(
     if variant.block_id != block_id:
         # Variant already exists for a DIFFERENT block (maybe in another doc).
         # Link it to this block so we don’t re-synthesise identical audio.
-        # SECURITY: caller is already authorised for doc_id/block_id. This still leaks the *existence* of the hash;
+        # SECURITY: caller is already authorised for document_id/block_id. This still leaks the *existence* of the hash;
         # -> partition the cache by tenant/user or include that scope in the hash if it becomes a concern
         await db.merge(
             BlockVariant(

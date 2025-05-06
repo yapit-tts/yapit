@@ -72,35 +72,35 @@ async def list_filter_presets(db: AsyncSession = Depends(get_db_session)) -> lis
 
 
 @router.get(
-    "/documents/{doc_id}/filter_status",
+    "/documents/{document_id}/filter_status",
     response_model=SimpleMessage,
     status_code=200,
 )
 async def filter_status(
-    doc_id: UUID,
+    document_id: UUID,
     db: AsyncSession = Depends(get_db_session),
     redis: Redis = Depends(get_redis),
 ) -> SimpleMessage:
-    """Return current filter-pipeline state for `doc_id` (none|pending|running|done|error).
+    """Return current filter-pipeline state for `document_id` (none|pending|running|done|error).
 
     * primary source: Redis key  (while job is in flight or for 24 h after)
     * fallback      : DB row     (lets us answer after Redis TTL expired)
     """
-    key = FILTER_STATUS.format(doc_id=doc_id)
+    key = FILTER_STATUS.format(document_id=document_id)
     val: bytes | None = await redis.get(key)
     if val is not None:
         return SimpleMessage(message=val.decode())
-    doc: Document = await get_doc(doc_id, db=db)
+    doc: Document = await get_doc(document_id, db=db)
     return SimpleMessage(message="done" if doc.filtered_text is not None else "none")
 
 
 @router.post(
-    "/documents/{doc_id}/apply_filters",
+    "/documents/{document_id}/apply_filters",
     response_model=SimpleMessage,
     status_code=status.HTTP_202_ACCEPTED,
 )
 async def apply_filters(
-    doc_id: UUID,
+    document_id: UUID,
     body: FilterJobRequest,
     bg: BackgroundTasks,
     _: Document = Depends(get_doc),
@@ -108,40 +108,40 @@ async def apply_filters(
     splitter: TextSplitter = Depends(get_text_splitter),
 ) -> SimpleMessage:
     """Kick off (re-)filtering job for a document."""
-    if not await redis.set(FILTER_INFLIGHT.format(doc_id=doc_id), 1, nx=True, ex=FILTER_LOCK_TTL):
+    if not await redis.set(FILTER_INFLIGHT.format(document_id=document_id), 1, nx=True, ex=FILTER_LOCK_TTL):
         raise HTTPException(409, "Filter job already in progress for this document.")
 
-    await redis.set(FILTER_STATUS.format(doc_id=doc_id), "pending", ex=FILTER_STATUS_TTL)
-    bg.add_task(_run_filter_job, doc_id=doc_id, config=body.filter_config, splitter=splitter, redis=redis)
+    await redis.set(FILTER_STATUS.format(document_id=document_id), "pending", ex=FILTER_STATUS_TTL)
+    bg.add_task(_run_filter_job, document_id=document_id, config=body.filter_config, splitter=splitter, redis=redis)
     return SimpleMessage(message="Filtering job started.")
 
 
 @router.post(
-    "/documents/{doc_id}/cancel_filter_job",
+    "/documents/{document_id}/cancel_filter_job",
     response_model=SimpleMessage,
     status_code=status.HTTP_202_ACCEPTED,
 )
-async def cancel_filter_job(doc_id: UUID, redis: Redis = Depends(get_redis)) -> SimpleMessage:
+async def cancel_filter_job(document_id: UUID, redis: Redis = Depends(get_redis)) -> SimpleMessage:
     """Cancel any in-progress filtering job and clear status."""
-    await redis.set(FILTER_CANCEL.format(doc_id=doc_id), 1, ex=FILTER_LOCK_TTL)
+    await redis.set(FILTER_CANCEL.format(document_id=document_id), 1, ex=FILTER_LOCK_TTL)
     return SimpleMessage(message="Cancellation flag set.")
 
 
 async def _run_filter_job(
-    doc_id: UUID,
+    document_id: UUID,
     config: dict[str, Any],
     splitter: TextSplitter,
     redis: Redis,
 ) -> None:
-    status_key = FILTER_STATUS.format(doc_id=doc_id)
-    cancel_key = FILTER_CANCEL.format(doc_id=doc_id)
-    inflight_key = FILTER_INFLIGHT.format(doc_id=doc_id)
+    status_key = FILTER_STATUS.format(document_id=document_id)
+    cancel_key = FILTER_CANCEL.format(document_id=document_id)
+    inflight_key = FILTER_INFLIGHT.format(document_id=document_id)
 
     async with SessionLocal() as db:
         try:
             await redis.set(status_key, "running", ex=FILTER_STATUS_TTL)
 
-            doc = await get_doc(doc_id, db)
+            doc = await get_doc(document_id, db)
             text = doc.original_text
 
             if await redis.exists(cancel_key):
@@ -168,10 +168,10 @@ async def _run_filter_job(
             # threadpool worth the overhead for hierarchical splitter or more complex
             text_blocks: list[str] = await run_in_threadpool(splitter.split, text=text)
 
-            await db.exec(delete(Block).where(Block.document_id == doc_id))  # replace old blocks
+            await db.exec(delete(Block).where(Block.document_id == document_id))  # replace old blocks
             db.add_all(
                 [
-                    Block(document_id=doc_id, idx=i, text=blk, est_duration_ms=estimate_duration_ms(blk))
+                    Block(document_id=document_id, idx=i, text=blk, est_duration_ms=estimate_duration_ms(blk))
                     for i, blk in enumerate(text_blocks)
                 ]
             )
@@ -182,7 +182,7 @@ async def _run_filter_job(
 
             await redis.set(status_key, "done", ex=FILTER_DONE_TTL)
         except Exception as exc:
-            log.exception(f"Error while filtering document {doc_id}: {exc}")
+            log.exception(f"Error while filtering document {document_id}: {exc}")
             await redis.set(status_key, f"error:{exc}", ex=FILTER_DONE_TTL)
         finally:
             await redis.delete(inflight_key)
