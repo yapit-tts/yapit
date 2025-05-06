@@ -46,7 +46,7 @@ def test_streaming_audio(wait_until_gateway, gateway_url: str, ws_url: str):
         json={"model_slug": "kokoro", "voice_slug": "af_heart", "speed": 1.0, "codec": "pcm"},
         timeout=5,
     ).json()
-    print("debug!", synth)
+
     variant = synth["variant_hash"]
     path = synth["ws_url"]
 

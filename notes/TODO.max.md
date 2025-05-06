@@ -1,6 +1,7 @@
 
 ### Fix
 
+- Thinking about security / exploits: Limits on the number of docs, filters, etc. 
 
 ### Feats
 

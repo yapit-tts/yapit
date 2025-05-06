@@ -35,11 +35,8 @@ jobs:
       - name: Install uv & Python
         uses: astral-sh/setup-uv@v5
         with:
-          python-version-file: ".python-version"
+          python-version-file: "pyproject.toml"
           enable-cache: true
-
-#      - name: Install Python
-#        run: uv python install 3.12
 
       - name: Create uv venv
         run: uv venv
@@ -48,4 +45,4 @@ jobs:
         run: uv pip install ".[test]"
 
       - name: Run tests
-        run: uv run pytest tests
+        run: uv run --no-sync pytest tests  # no-sync to prevent uv from trying to resolve all extra deps together

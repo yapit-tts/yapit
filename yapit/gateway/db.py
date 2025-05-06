@@ -3,7 +3,7 @@ from pathlib import Path
 
 from alembic import command, config
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlmodel import SQLModel, delete
+from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from yapit.gateway.config import ANON_USER, get_settings

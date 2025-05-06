@@ -38,8 +38,9 @@ TRANSFORM_TIMEOUT_S = 120  # hard timeout for regex + LLM pass
 
 
 class FilterJobRequest(BaseModel):
-    preset_id: int | None = None
-    custom_config: dict[str, Any] | None = None
+    """Requires at least one of filter_id/custom_config; if filter_id is set, drop custom_config."""
+
+    filter_config: dict[str, Any]
 
 
 class SimpleMessage(BaseModel):
@@ -55,7 +56,7 @@ class FilterPresetRead(BaseModel):
 
 @router.post("/filters/validate", response_model=SimpleMessage)
 def validate_regex(body: FilterJobRequest) -> SimpleMessage:
-    for rule in (body.custom_config or {}).get("regex_rules", []):
+    for rule in (body.filter_config or {}).get("regex_rules", []):
         try:
             re.compile(rule["pattern"])
         except re.error as exc:
@@ -80,10 +81,10 @@ async def filter_status(
     db: AsyncSession = Depends(get_db_session),
     redis: Redis = Depends(get_redis),
 ) -> SimpleMessage:
-    """Return current filter-pipeline state for `doc_id` (none|pending|running|done|error)
+    """Return current filter-pipeline state for `doc_id` (none|pending|running|done|error).
 
     * primary source: Redis key  (while job is in flight or for 24 h after)
-    * fallback     : DB row      (lets us answer after Redis TTL expired)
+    * fallback      : DB row     (lets us answer after Redis TTL expired)
     """
     key = FILTER_STATUS.format(doc_id=doc_id)
     val: bytes | None = await redis.get(key)
@@ -103,7 +104,6 @@ async def apply_filters(
     body: FilterJobRequest,
     bg: BackgroundTasks,
     _: Document = Depends(get_doc),
-    db: AsyncSession = Depends(get_db_session),
     redis: Redis = Depends(get_redis),
     splitter: TextSplitter = Depends(get_text_splitter),
 ) -> SimpleMessage:
@@ -111,19 +111,8 @@ async def apply_filters(
     if not await redis.set(FILTER_INFLIGHT.format(doc_id=doc_id), 1, nx=True, ex=FILTER_LOCK_TTL):
         raise HTTPException(409, "Filter job already in progress for this document.")
 
-    config: dict[str, Any] = {}
-    if body.preset_id is not None:
-        preset: FilterPreset | None = await db.get(FilterPreset, body.preset_id)
-        if not preset:
-            raise HTTPException(404, "Preset not found.")
-        config = json.loads(json.dumps(preset.config))  # deepcopy to avoid mutating DB object
-    if body.custom_config:
-        config.update(body.custom_config)
-    if not config:
-        raise HTTPException(422, "No filter rules supplied.")
-
     await redis.set(FILTER_STATUS.format(doc_id=doc_id), "pending", ex=FILTER_STATUS_TTL)
-    bg.add_task(_run_filter_job, doc_id=doc_id, config=config, splitter=splitter, redis=redis)
+    bg.add_task(_run_filter_job, doc_id=doc_id, config=body.filter_config, splitter=splitter, redis=redis)
     return SimpleMessage(message="Filtering job started.")
 
 
@@ -177,20 +166,19 @@ async def _run_filter_job(
                 raise RuntimeError(f"transform exceeded {TRANSFORM_TIMEOUT_S}s")
 
             # threadpool worth the overhead for hierarchical splitter or more complex
-            blocks_text: list[str] = await run_in_threadpool(splitter.split, text=text)
+            text_blocks: list[str] = await run_in_threadpool(splitter.split, text=text)
 
-            async with db.begin():
-                await db.exec(delete(Block).where(Block.document_id == doc_id))  # replace old blocks
-                db.add_all(
-                    [
-                        Block(document_id=doc_id, idx=i, text=blk, est_duration_ms=estimate_duration_ms(blk))
-                        for i, blk in enumerate(blocks_text)
-                    ]
-                )
+            await db.exec(delete(Block).where(Block.document_id == doc_id))  # replace old blocks
+            db.add_all(
+                [
+                    Block(document_id=doc_id, idx=i, text=blk, est_duration_ms=estimate_duration_ms(blk))
+                    for i, blk in enumerate(text_blocks)
+                ]
+            )
 
-                doc.filtered_text = text
-                doc.last_applied_filter_config = config
-                await db.commit()
+            doc.filtered_text = text
+            doc.last_applied_filter_config = config
+            await db.commit()
 
             await redis.set(status_key, "done", ex=FILTER_DONE_TTL)
         except Exception as exc:
