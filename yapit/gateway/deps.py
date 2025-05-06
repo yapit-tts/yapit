@@ -6,7 +6,7 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from yapit.gateway.db import SessionLocal
-from yapit.gateway.domain_models import Block, Model, Voice
+from yapit.gateway.domain_models import Block, BlockVariant, Document, Model, Voice
 
 
 async def get_db_session() -> AsyncIterator[AsyncSession]:
@@ -14,8 +14,18 @@ async def get_db_session() -> AsyncIterator[AsyncSession]:
         yield session
 
 
+async def get_doc(
+    document_id: UUID,
+    db: AsyncSession = Depends(get_db_session),
+) -> Document:
+    doc: Document | None = await db.get(Document, document_id)
+    if not doc:
+        raise HTTPException(404, f"Document {document_id!r} not found")
+    return doc
+
+
 def _get_param_extractor(name: str) -> Callable:
-    """Return a FastAPI dependency that fetches `name` from path/query or JSON."""
+    """Helper to return a FastAPI dependency that fetches `name` from path/query or JSON."""
 
     async def extract(
         value: str | None = None,  # path or ?name=
@@ -53,11 +63,21 @@ async def get_voice(
 
 
 async def get_block(
-    doc_id: UUID,
+    document_id: UUID,
     block_id: int,
     db: AsyncSession = Depends(get_db_session),
 ) -> Block:
     block: Block | None = await db.get(Block, block_id)
-    if not block or block.document_id != doc_id:
-        raise HTTPException(404, f"Block {block_id!r} not found in document {doc_id!r}")
+    if not block or block.document_id != document_id:
+        raise HTTPException(404, f"Block {block_id!r} not found in document {document_id!r}")
     return block
+
+
+async def get_block_variant(
+    variant_hash: str,
+    db: AsyncSession = Depends(get_db_session),
+) -> BlockVariant:
+    variant: BlockVariant | None = await db.get(BlockVariant, variant_hash)
+    if not variant:
+        raise HTTPException(404, f"BlockVariant {variant_hash!r} not found")
+    return variant

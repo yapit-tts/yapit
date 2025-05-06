@@ -13,7 +13,7 @@ interface Block {
 }
 
 interface ApiResponse {
-	doc_id: string;
+	document_id: string;
 	num_blocks: number;
 	est_duration_ms: number;
 	blocks: Block[];
@@ -33,7 +33,7 @@ interface SynthesizeBlockResponse {
 const PlaybackPage = () => {
   const { state } = useLocation();
   const apiResponse: ApiResponse | undefined = state?.apiResponse;
-	const documentId: string | undefined = apiResponse?.doc_id;
+	const documentId: string | undefined = apiResponse?.document_id;
   const documentBlocks: Block[] | undefined = apiResponse?.blocks;
   const inputText: string | undefined = state?.inputText;
 
