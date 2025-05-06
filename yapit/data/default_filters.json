@@ -9,7 +9,7 @@
           "replacement": ""
         }
       ],
-      "llm_enabled": false
+      "llm": {} 
     }
   },
   {
@@ -22,7 +22,7 @@
           "replacement": ""
         }
       ],
-      "llm_enabled": false
+      "llm": {}
     }
   },
   {
@@ -35,7 +35,7 @@
           "replacement": ""
         }
       ],
-      "llm_enabled": false
+      "llm": {}
     }
   },
   {
@@ -48,7 +48,7 @@
           "replacement": ""
         }
       ],
-      "llm_enabled": false
+      "llm": {}
     }
   }
 ]

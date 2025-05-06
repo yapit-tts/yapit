@@ -8,7 +8,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from yapit.gateway.config import ANON_USER, get_settings
 from yapit.gateway.domain_models import (
-    FilterPreset,
+    Filter,
     Model,
     Voice,
 )
@@ -82,11 +82,11 @@ async def _seed_db() -> None:
         # dia.voices.append(Voice(slug="default", name="Dia", lang="en")
         # db.add(dia)
 
-        presets_json = Path(__file__).parent.parent / "data/default_filter_presets.json"
+        presets_json = Path(__file__).parent.parent / "data/default_filters.json"
         defaults = json.loads(presets_json.read_text())
         for p in defaults:
             db.add(
-                FilterPreset(
+                Filter(
                     name=p["name"],
                     description=p.get("description"),
                     config=p["config"],

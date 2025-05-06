@@ -21,7 +21,7 @@ from yapit.contracts.redis_keys import (
 )
 from yapit.gateway.db import SessionLocal
 from yapit.gateway.deps import get_db_session, get_doc
-from yapit.gateway.domain_models import Block, Document, FilterPreset
+from yapit.gateway.domain_models import Block, Document, Filter
 from yapit.gateway.redis_client import get_redis
 from yapit.gateway.text_splitter import TextSplitter, get_text_splitter
 from yapit.gateway.utils import estimate_duration_ms
@@ -67,7 +67,7 @@ def validate_regex(body: FilterJobRequest) -> SimpleMessage:
 @router.get("/filter_presets", response_model=list[FilterPresetRead])
 async def list_filter_presets(db: AsyncSession = Depends(get_db_session)) -> list[FilterPresetRead]:
     # TODO restrict to user_id + system
-    presets = (await db.exec(select(FilterPreset))).all()
+    presets = (await db.exec(select(Filter))).all()
     return [FilterPresetRead(id=p.id, name=p.name, description=p.description, config=p.config) for p in presets]
 
 
@@ -151,7 +151,7 @@ async def _run_filter_job(
             async def _transform(txt: str) -> str:
                 for rule in config.get("regex_rules", []):
                     txt = re.compile(rule["pattern"]).sub(rule.get("replacement", ""), txt)
-                if config.get("llm_enabled"):
+                if config.get("llm"):
                     # TODO build LLM prompt from config + OpenAI API request
                     # TODO periodically check this (if parsing long docs in chunks (... stream progress?)
                     if await redis.exists(cancel_key):

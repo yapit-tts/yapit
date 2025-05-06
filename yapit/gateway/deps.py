@@ -6,7 +6,7 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from yapit.gateway.db import SessionLocal
-from yapit.gateway.domain_models import Block, Document, Model, Voice
+from yapit.gateway.domain_models import Block, BlockVariant, Document, Model, Voice
 
 
 async def get_db_session() -> AsyncIterator[AsyncSession]:
@@ -71,3 +71,13 @@ async def get_block(
     if not block or block.document_id != doc_id:
         raise HTTPException(404, f"Block {block_id!r} not found in document {doc_id!r}")
     return block
+
+
+async def get_block_variant(
+    variant_hash: str,
+    db: AsyncSession = Depends(get_db_session),
+) -> BlockVariant:
+    variant: BlockVariant | None = await db.get(BlockVariant, variant_hash)
+    if not variant:
+        raise HTTPException(404, f"BlockVariant {variant_hash!r} not found")
+    return variant

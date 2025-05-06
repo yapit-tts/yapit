@@ -5,18 +5,17 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 from redis.asyncio import Redis
-from sqlalchemy import exists
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from yapit.contracts.redis_keys import TTS_DONE, TTS_INFLIGHT, TTS_STREAM
 from yapit.contracts.synthesis import SynthesisJob, get_job_queue_name
 from yapit.gateway.cache import Cache, get_cache_backend
-from yapit.gateway.deps import get_block, get_db_session, get_model, get_voice
+from yapit.gateway.deps import get_block, get_block_variant, get_db_session, get_model, get_voice
 from yapit.gateway.domain_models import Block, BlockVariant, Voice
 from yapit.gateway.domain_models import Model as TTSModel
 from yapit.gateway.redis_client import get_redis
-from yapit.gateway.utils import calculate_audio_hash, estimate_duration_ms
+from yapit.gateway.utils import estimate_duration_ms
 
 router = APIRouter(prefix="/v1", tags=["synthesis"])
 
@@ -58,7 +57,7 @@ async def enqueue_synthesis(
 ) -> SynthEnqueued:
     """Return cached audio or queue a new synthesis job."""
     served_codec = model.native_codec  # TODO change to "opus" once workers transcode
-    audio_hash = calculate_audio_hash(
+    variant_hash = BlockVariant.get_hash(
         text=block.text,
         model_id=model.slug,
         voice_id=body.voice_slug,
@@ -67,11 +66,11 @@ async def enqueue_synthesis(
     )
 
     variant: BlockVariant | None = (
-        await db.exec(select(BlockVariant).where(BlockVariant.audio_hash == audio_hash))
+        await db.exec(select(BlockVariant).where(BlockVariant.hash == variant_hash))
     ).first()
     if variant is None:
         variant = BlockVariant(
-            audio_hash=audio_hash,
+            hash=variant_hash,
             block_id=block.id,
             model_id=model.id,
             voice_id=voice.id,
@@ -82,8 +81,8 @@ async def enqueue_synthesis(
         await db.commit()
 
     response = SynthEnqueued(
-        variant_hash=variant.audio_hash,
-        ws_url=f"/v1/documents/{doc_id}/blocks/{block_id}/variants/{variant.audio_hash}/stream",
+        variant_hash=variant.hash,
+        ws_url=f"/v1/documents/{doc_id}/blocks/{block_id}/variants/{variant.hash}/stream",
         duration_ms=variant.duration_ms,  # None if not cached
         est_duration_ms=estimate_duration_ms(text=block.text, speed=body.speed),
         codec=served_codec,
@@ -91,12 +90,12 @@ async def enqueue_synthesis(
         channels=model.channels,
         sample_width=model.sample_width,
     )
-    if await cache.exists(audio_hash) or await redis.exists(TTS_INFLIGHT.format(hash=audio_hash)):
+    if await cache.exists(variant_hash) or await redis.exists(TTS_INFLIGHT.format(hash=variant_hash)):
         return response  # cached or in progress
 
-    await redis.set(TTS_INFLIGHT.format(hash=audio_hash), 1, ex=300, nx=True)  # 5min lock
+    await redis.set(TTS_INFLIGHT.format(hash=variant_hash), 1, ex=300, nx=True)  # 5min lock
     job = SynthesisJob(
-        variant_hash=audio_hash,
+        variant_hash=variant_hash,
         model_slug=body.model_slug,
         voice_slug=body.voice_slug,
         text=block.text,
@@ -113,6 +112,8 @@ async def stream_audio(
     doc_id: UUID,
     block_id: int,
     variant_hash: str,
+    _: Block = Depends(get_block),  # (auth check)
+    variant: BlockVariant = Depends(get_block_variant),
     db: AsyncSession = Depends(get_db_session),
     cache: Cache = Depends(get_cache_backend),
     redis: Redis = Depends(get_redis),
@@ -120,18 +121,24 @@ async def stream_audio(
     """Proxy worker-published chunks Redis → WebSocket."""
     await ws.accept()
 
-    is_valid: bool = await db.scalar(
-        select(
-            exists().where(
-                BlockVariant.audio_hash == variant_hash,
-                BlockVariant.block_id == block_id,
-                Block.document_id == doc_id,
+    if variant.block_id != block_id:
+        # Variant already exists for a DIFFERENT block (maybe in another doc).
+        # Link it to this block so we don’t re-synthesise identical audio.
+        # SECURITY: caller is already authorised for doc_id/block_id. This still leaks the *existence* of the hash;
+        # -> partition the cache by tenant/user or include that scope in the hash if it becomes a concern
+        await db.merge(
+            BlockVariant(
+                hash=variant.hash,
+                block_id=block_id,
+                model_id=variant.model_id,
+                voice_id=variant.voice_id,
+                speed=variant.speed,
+                codec=variant.codec,
+                duration_ms=variant.duration_ms,
+                cache_ref=variant.cache_ref,
             )
         )
-    )
-    if not is_valid:
-        await ws.close(code=1008, reason="variant does not belong to document/block")
-        return
+        await db.commit()
 
     # cached? send it
     data = await cache.retrieve_data(variant_hash)
@@ -140,7 +147,7 @@ async def stream_audio(
             await ws.send_bytes(data[i : i + CHUNK_SIZE])
         await ws.close()
         return
-    # not cached, subscribe to Redis
+    # not cached, subscribe to redis
     pubsub = redis.pubsub()
     await pubsub.subscribe(
         TTS_STREAM.format(hash=variant_hash),
