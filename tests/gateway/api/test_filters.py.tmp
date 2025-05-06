@@ -1,0 +1,158 @@
+import time
+import uuid
+
+import pytest
+import requests
+
+
+def test_list_filter_presets(wait_until_gateway, gateway_url: str):
+    """Test retrieving available filter presets."""
+    r = requests.get(f"{gateway_url}/v1/filter_presets", timeout=5)
+    assert r.status_code == 200
+    
+    presets = r.json()
+    assert isinstance(presets, list)
+    assert len(presets) > 0
+    
+    # Check structure of a preset
+    preset = presets[0]
+    assert {"id", "name", "description", "config"}.issubset(preset.keys())
+    assert "regex_rules" in preset["config"]
+
+
+def test_validate_filter_regex(wait_until_gateway, gateway_url: str):
+    """Test validating regex patterns in filter configs."""
+    # Valid regex
+    r = requests.post(
+        f"{gateway_url}/v1/filters/validate",
+        json={"custom_config": {"regex_rules": [{"pattern": "\\b(https?://\\S+)", "replacement": ""}]}},
+        timeout=5,
+    )
+    assert r.status_code == 200
+    assert r.json()["message"] == "ok"
+    
+    # Invalid regex
+    r = requests.post(
+        f"{gateway_url}/v1/filters/validate",
+        json={"custom_config": {"regex_rules": [{"pattern": "\\b(http:[", "replacement": ""}]}},
+        timeout=5,
+    )
+    assert r.status_code == 422
+    assert "Invalid regex" in r.json()["detail"]
+
+
+def test_filter_document_workflow(wait_until_gateway, gateway_url: str):
+    """Test the complete document filtering workflow."""
+    # 1. Create a document
+    doc = requests.post(
+        f"{gateway_url}/v1/documents",
+        json={"source_type": "paste", "text_content": "Visit https://example.com for more information."},
+        timeout=5,
+    ).json()
+    doc_id = doc["doc_id"]
+    
+    # 2. Get initial filter status (should be "none")
+    status = requests.get(f"{gateway_url}/v1/documents/{doc_id}/filter_status", timeout=5).json()
+    assert status["message"] == "none"
+    
+    # 3. Apply a filter
+    r = requests.post(
+        f"{gateway_url}/v1/documents/{doc_id}/apply_filters",
+        json={"preset_id": 1},  # Using first preset (Skip URLs)
+        timeout=5,
+    )
+    assert r.status_code == 202
+    assert "started" in r.json()["message"].lower()
+    
+    # 4. Check filter status (should change to "pending" or "running")
+    status = requests.get(f"{gateway_url}/v1/documents/{doc_id}/filter_status", timeout=5).json()
+    assert status["message"] in ["pending", "running"]
+    
+    # 5. Wait for filter to complete - increased timeout to 30 seconds
+    max_wait = 30  # seconds
+    start_time = time.time()
+    while time.time() - start_time < max_wait:
+        status = requests.get(f"{gateway_url}/v1/documents/{doc_id}/filter_status", timeout=5).json()
+        if status["message"] == "done":
+            break
+        time.sleep(1)  # Increased sleep time to reduce API calls
+    else:
+        pytest.fail(f"Filter job did not complete in {max_wait} seconds")
+    
+    # 6. Verify filtered document content
+    doc_meta = requests.get(f"{gateway_url}/v1/documents/{doc_id}", timeout=5).json()
+    assert doc_meta["has_filtered"] is True
+    
+    blocks = requests.get(f"{gateway_url}/v1/documents/{doc_id}/blocks", timeout=5).json()
+    assert "https://example.com" not in blocks["items"][0]["text"]
+
+
+def test_apply_filters_with_custom_config(wait_until_gateway, gateway_url: str):
+    """Test applying custom filter config instead of a preset."""
+    # 1. Create a document
+    text = "This is [text inside brackets] that should be removed."
+    doc = requests.post(
+        f"{gateway_url}/v1/documents",
+        json={"source_type": "paste", "text_content": text},
+        timeout=5,
+    ).json()
+    doc_id = doc["doc_id"]
+    
+    # 2. Apply custom filter
+    custom_config = {
+        "regex_rules": [
+            {
+                "pattern": "\\[[^]]*\\]",
+                "replacement": ""
+            }
+        ],
+        "llm_enabled": False
+    }
+    
+    r = requests.post(
+        f"{gateway_url}/v1/documents/{doc_id}/apply_filters",
+        json={"custom_config": custom_config},
+        timeout=5,
+    )
+    assert r.status_code == 202
+    
+    # 3. Wait for completion - increased timeout
+    max_wait = 30  # seconds
+    start_time = time.time()
+    while time.time() - start_time < max_wait:
+        status = requests.get(f"{gateway_url}/v1/documents/{doc_id}/filter_status", timeout=5).json()
+        if status["message"] == "done":
+            break
+        time.sleep(1)
+    else:
+        pytest.fail(f"Filter job did not complete in {max_wait} seconds")
+    
+    # 4. Verify text was filtered
+    blocks = requests.get(f"{gateway_url}/v1/documents/{doc_id}/blocks", timeout=5).json()
+    filtered_text = blocks["items"][0]["text"]
+    assert "This is  that should be removed." == filtered_text
+
+
+def test_error_handling(wait_until_gateway, gateway_url: str):
+    """Test error handling in filter endpoints."""
+    non_existent_id = str(uuid.uuid4())
+    
+    # Test non-existent document
+    r = requests.get(f"{gateway_url}/v1/documents/{non_existent_id}/filter_status", timeout=5)
+    assert r.status_code == 404
+    
+    # Test missing filter rules
+    doc = requests.post(
+        f"{gateway_url}/v1/documents",
+        json={"source_type": "paste", "text_content": "Some text."},
+        timeout=5,
+    ).json()
+    doc_id = doc["doc_id"]
+    
+    r = requests.post(
+        f"{gateway_url}/v1/documents/{doc_id}/apply_filters",
+        json={},  # No preset_id or custom_config
+        timeout=5,
+    )
+    assert r.status_code == 422
+
