@@ -86,7 +86,11 @@ async def create_document(
         raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="File uploads not implemented yet")
     else:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid source_type")
-    assert text
+    if not text:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unexpected error: text is missing or invalid",
+        )
 
     # persist Document
     doc = Document(
