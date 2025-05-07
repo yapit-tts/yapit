@@ -82,7 +82,7 @@ def _get_param_extractor(name: str) -> Callable:
     """Helper to return a FastAPI dependency that fetches `name` from path/query or JSON."""
 
     async def extract(
-        value: str | None = Path(alias=name),  # from url path or query parameter
+        value: str | None = None, # from url path or query parameter
         body: dict | None = Body(None),  # from already-parsed JSON
     ) -> str:
         if value:
