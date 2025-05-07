@@ -3,12 +3,16 @@ import logging
 import sqlite3
 import time
 from enum import StrEnum, auto
-from functools import lru_cache
 from pathlib import Path
 
 from pydantic import BaseModel
 
 log = logging.getLogger(__name__)
+
+
+class Caches(StrEnum):
+    NOOP = auto()
+    SQLITE = auto()
 
 
 class CacheConfig(BaseModel):
@@ -106,25 +110,3 @@ class SqliteCache(Cache):
         with sqlite3.connect(self.db_path) as db:
             db.execute("VACUUM")
             db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-
-
-class Caches(StrEnum):
-    NOOP = auto()
-    SQLITE = auto()
-
-
-@lru_cache
-def get_cache_backend() -> Cache:
-    from yapit.gateway.config import get_settings
-
-    settings = get_settings()
-    cache_type = settings.cache_type.lower()
-    chache = {
-        Caches.NOOP: NoOpCache,
-        Caches.SQLITE: SqliteCache,
-    }.get(cache_type)
-    if chache:
-        return chache(settings.cache_config)
-    raise ValueError(
-        f"Invalid cache backend type '{cache_type}'. Supported types: {' ,'.join([c.name for c in Caches])}."
-    )

@@ -2,19 +2,22 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
-from redis.asyncio import Redis
 from sqlmodel import select
-from sqlmodel.ext.asyncio.session import AsyncSession
 
 from yapit.contracts.redis_keys import TTS_DONE, TTS_INFLIGHT, TTS_STREAM
 from yapit.contracts.synthesis import SynthesisJob, get_job_queue_name
-from yapit.gateway.cache import Cache, get_cache_backend
-from yapit.gateway.deps import get_block, get_block_variant, get_db_session, get_model, get_voice
-from yapit.gateway.domain_models import Block, BlockVariant, Voice
-from yapit.gateway.domain_models import Model as TTSModel
-from yapit.gateway.redis_client import get_redis
+from yapit.gateway.deps import (
+    AudioCache,
+    CurrentBlock,
+    CurrentBlockVariant,
+    CurrentTTSModel,
+    CurrentVoice,
+    DbSession,
+    RedisClient,
+)
+from yapit.gateway.domain_models import BlockVariant
 from yapit.gateway.utils import estimate_duration_ms
 
 router = APIRouter(prefix="/v1", tags=["synthesis"])
@@ -48,19 +51,19 @@ async def enqueue_synthesis(
     block_id: int,
     body: SynthRequest,
     # user_id: str = Depends(get_current_user_id),
-    block: Block = Depends(get_block),
-    model: TTSModel = Depends(get_model),
-    voice: Voice = Depends(get_voice),
-    db: AsyncSession = Depends(get_db_session),
-    redis: Redis = Depends(get_redis),
-    cache: Cache = Depends(get_cache_backend),
+    block: CurrentBlock,
+    model: CurrentTTSModel,
+    voice: CurrentVoice,
+    db: DbSession,
+    redis: RedisClient,
+    cache: AudioCache,
 ) -> SynthEnqueued:
     """Return cached audio or queue a new synthesis job."""
     served_codec = model.native_codec  # TODO change to "opus" once workers transcode
     variant_hash = BlockVariant.get_hash(
         text=block.text,
-        model_id=model.slug,
-        voice_id=body.voice_slug,
+        model_slug=model.slug,
+        voice_slug=body.voice_slug,
         speed=body.speed,
         codec=served_codec,
     )
@@ -108,15 +111,15 @@ async def enqueue_synthesis(
 
 @router.websocket("/documents/{document_id}/blocks/{block_id}/variants/{variant_hash}/stream")
 async def stream_audio(
-    ws: WebSocket,
     document_id: UUID,
     block_id: int,
     variant_hash: str,
-    _: Block = Depends(get_block),  # (auth check)
-    variant: BlockVariant = Depends(get_block_variant),
-    db: AsyncSession = Depends(get_db_session),
-    cache: Cache = Depends(get_cache_backend),
-    redis: Redis = Depends(get_redis),
+    ws: WebSocket,
+    db: DbSession,
+    _: CurrentBlock,  # (auth check)
+    variant: CurrentBlockVariant,
+    cache: AudioCache,
+    redis: RedisClient,
 ) -> None:
     """Proxy worker-published chunks Redis → WebSocket."""
     await ws.accept()

@@ -7,10 +7,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import ORJSONResponse
 
 from yapit.gateway.api.v1 import routers as v1_routers
-from yapit.gateway.cache import get_cache_backend
 from yapit.gateway.cache_listener import run_cache_listener
 from yapit.gateway.config import get_settings
 from yapit.gateway.db import SessionLocal, close_db, prepare_database
+from yapit.gateway.deps import get_audio_cache
 from yapit.gateway.redis_client import close_redis, get_redis
 
 
@@ -18,7 +18,7 @@ from yapit.gateway.redis_client import close_redis, get_redis
 async def lifespan(app: FastAPI):
     await prepare_database()
 
-    listener_task = asyncio.create_task(run_cache_listener(redis=await get_redis(), cache=get_cache_backend()))
+    listener_task = asyncio.create_task(run_cache_listener(redis=await get_redis(), cache=get_audio_cache()))
 
     yield
 
