@@ -62,8 +62,8 @@ async def enqueue_synthesis(
     served_codec = model.native_codec  # TODO change to "opus" once workers transcode
     variant_hash = BlockVariant.get_hash(
         text=block.text,
-        model_id=model.slug,
-        voice_id=body.voice_slug,
+        model_slug=model.slug,
+        voice_slug=body.voice_slug,
         speed=body.speed,
         codec=served_codec,
     )
