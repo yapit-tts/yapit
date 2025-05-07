@@ -9,13 +9,15 @@
 
 - (admin) write endpoints (needs: AUTH) / dymic model/worker register
 
-
 ### Refactor
 
-Follow fastapi best practices (https://github.com/zhanymkanov/fastapi-best-practices/blob/master/README.md):
-- [use asnyc for insteadd of while True syntax](https://github.com/Kludex/fastapi-tips?tab=readme-ov-file#3-use-async-for-instead-of-while-true-on-websocket)
-- NOTE: fastapi sync dependencies run in threadpool
 
 ### Chore
 
-- bump python version to 3.13 everywhere (toml, .pyversion, cpu dockerfile) once spacy supports https://github.com/explosion/spaCy/issues/13658
+- bump python version to 3.13 everywhere (toml, gateway/cpu dockerfile) once spacy, and google-re2 support https://github.com/explosion/spaCy/issues/13658
+
+
+### Notes
+
+- if adding custom voices index on (slug, model_id, user_id) @ voice
+  - think about indices @ document/user/block, filter/user  if perf is bad

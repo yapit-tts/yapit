@@ -7,6 +7,7 @@ from typing import Any
 
 from pydantic import BaseModel as PydanticModel
 from pydantic import Field as PydanticField
+from sqlalchemy import UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import TEXT, Column, DateTime, Field, Relationship, SQLModel
 
@@ -61,13 +62,17 @@ class Voice(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     model_id: int = Field(foreign_key="ttsmodel.id")
 
-    slug: str = Field(unique=True)
+    slug: str
     name: str
     lang: str
     description: str | None = Field(default=None)
 
     model: TTSModel = Relationship(back_populates="voices")
     block_variants: list["BlockVariant"] = Relationship(back_populates="voice")
+
+    __table_args__ = (
+        UniqueConstraint('slug', 'model_id', name='unique_voice_per_model'),
+    )
 
 
 class SourceType(StrEnum):
