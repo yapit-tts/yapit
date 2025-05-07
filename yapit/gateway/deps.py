@@ -94,10 +94,13 @@ def _get_param_extractor(name: str) -> Callable:
     extract.__name__ = f"extract_{name}"
     return extract
 
+ModelSlug = Annotated[str, Depends(_get_param_extractor("model_slug"))]
+VoiceSlug = Annotated[str, Depends(_get_param_extractor("voice_slug"))]
+
 
 async def get_model(
     db: DbSession,
-    slug: str = Depends(_get_param_extractor("model_slug")),
+    slug: ModelSlug,
 ) -> TTSModel:
     model: TTSModel | None = (await db.exec(select(TTSModel).where(TTSModel.slug == slug))).first()
     if not model:
@@ -110,12 +113,18 @@ CurrentTTSModel = Annotated[TTSModel, Depends(get_model)]
 
 async def get_voice(
     db: DbSession,
-    model: CurrentTTSModel,
-    slug: str = Depends(_get_param_extractor("voice_slug")),
+    model_slug: ModelSlug,
+    voice_slug: VoiceSlug,
 ) -> Voice:
-    voice: Voice | None = (await db.exec(select(Voice).where(Voice.slug == slug, Voice.model_id == model.id))).first()
+    voice: Voice | None = (
+        await db.exec(
+            select(Voice)
+            .join(TTSModel)
+            .where(Voice.slug == voice_slug, TTSModel.slug == model_slug)
+        )
+    ).first()
     if not voice:
-        raise HTTPException(404, f"Voice {slug!r} not configured for model {model.slug!r}")
+        raise HTTPException(404, f"Voice {voice_slug!r} not configured for model {model_slug!r}")
     return voice
 
 
