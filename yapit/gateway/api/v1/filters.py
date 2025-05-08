@@ -19,7 +19,7 @@ from yapit.contracts.redis_keys import (
 )
 from yapit.gateway.db import SessionLocal
 from yapit.gateway.deps import CurrentDoc, DbSession, RedisClient, TextSplitterDep, get_doc
-from yapit.gateway.domain_models import Block, Document, Filter
+from yapit.gateway.domain_models import Block, Document, Filter, FilterConfig
 from yapit.gateway.text_splitter import TextSplitter
 from yapit.gateway.utils import estimate_duration_ms
 
@@ -37,7 +37,7 @@ TRANSFORM_TIMEOUT_S = 120  # hard timeout for regex + LLM pass
 class FilterJobRequest(BaseModel):
     """Requires at least one of filter_id/custom_config; if filter_id is set, drop custom_config."""
 
-    filter_config: dict[str, Any]
+    filter_config: FilterConfig
 
 
 class SimpleMessage(BaseModel):
