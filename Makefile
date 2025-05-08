@@ -22,6 +22,11 @@ dev-gpu: down
 	--profile self-host \
 	up -d kokoro-gpu gateway redis postgres --build
 
+dev-mac: down
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.mac.yml \
+	--profile self-host \
+	up -d gateway redis postgres --build
+
 up:
 	docker compose up -d gateway redis postgres # remote workers
 

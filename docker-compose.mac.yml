@@ -1,0 +1,3 @@
+services:
+  kokoro-cpu:
+    platform: "linux/amd64"
