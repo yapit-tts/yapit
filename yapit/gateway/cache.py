@@ -2,6 +2,7 @@ import abc
 import logging
 import sqlite3
 import time
+from enum import StrEnum, auto
 from pathlib import Path
 
 from pydantic import BaseModel
@@ -9,8 +10,13 @@ from pydantic import BaseModel
 log = logging.getLogger(__name__)
 
 
+class Caches(StrEnum):
+    NOOP = auto()
+    SQLITE = auto()
+
+
 class CacheConfig(BaseModel):
-    dir: str | None = None  # only used if cache_type is fs or sqlite
+    path: Path | str | None = None  # only used if cache_type is fs or sqlite
 
 
 class Cache(abc.ABC):
@@ -56,9 +62,9 @@ class NoOpCache(Cache):
 
 
 class SqliteCache(Cache):
-    def __init__(self, db_path: str, config: CacheConfig):
+    def __init__(self, config: CacheConfig):
         super().__init__(config)
-        self.db_path = Path(db_path) / "cache.db"
+        self.db_path = Path(config.path) / "cache.db"
         self._init_db()
 
     def _init_db(self) -> None:
@@ -104,22 +110,3 @@ class SqliteCache(Cache):
         with sqlite3.connect(self.db_path) as db:
             db.execute("VACUUM")
             db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-
-
-CACHE_BACKENDS: dict[str, type[Cache]] = {
-    "noop": NoOpCache,
-    "sqlite": SqliteCache,
-    # "filesystem": FileSystemCache,
-    # "s3": S3Cache,
-}
-
-
-def get_cache_backend() -> Cache:
-    from yapit.gateway.config import get_settings
-
-    settings = get_settings()
-    cache_type = settings.cache_type.lower()
-    backend = CACHE_BACKENDS.get(cache_type)
-    if backend:
-        return backend(settings.cache_config)
-    raise ValueError(f"Invalid cache backend type '{cache_type}'. Supported types: {', '.join(CACHE_BACKENDS.keys())}.")

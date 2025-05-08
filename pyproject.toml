@@ -3,7 +3,7 @@ name = "yapit"
 version = "0.1.0"
 description = "Yapit TTS platform (contracts, gateway and workers)"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.10,<=3.12"
 authors = [
     {name = "Maximilian Wolf", email="max@mwolf.dev"},
 ]
@@ -12,27 +12,28 @@ authors = [
 #classifiers = []
 
 # pip install yapit | (worker) contracts
-dependencies = ["pydantic>=2.11.3"]
+dependencies = ["pydantic~=2.11.3"]
 
 [project.optional-dependencies]
 
 # pip install yapit[gateway] | core application / API
 gateway = [
-  "fastapi[standard]>=0.115.12",
-  "sqlmodel>=0.0.24",
-  "redis>=5.2.1",
-  "alembic>=1.15.2",
-  "asyncpg>=0.30.0",
-  "orjson>=3.10.16",
-  "pydantic-settings>=2.9.1"
+  "fastapi[standard]~=0.115.12",
+  "sqlmodel~=0.0.24",
+  "redis~=6.0.0",
+  "alembic~=1.15.2",
+  "asyncpg~=0.30.0",
+  "orjson~=3.10.16",
+  "pydantic-settings~=2.9.1",
+  "google-re2~=1.1.20240702"
 ]
 
 # for worker Dockerfile
 kokoro_cpu = [
   "torch~=2.7.0", # --extra-index-url https://download.pytorch.org/whl/cpu in Dockerfile
   "kokoro~=0.9.4",
-  "spacy>=3.8.5",
-  "redis~=5.2.1",
+  "spacy~=3.8.5",
+  "redis~=6.0.0",
   "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" # pre-install the spaCy model so the worker doesn't auto-download # TODO do we need to specify the exactl wheel?
 ]
 
@@ -40,15 +41,15 @@ kokoro_gpu = [
   "torch~=2.7.0",
   "kokoro~=0.9.4",
   "spacy~=3.8.5",
-  "redis~=5.2.1",
+  "redis~=6.0.0",
   "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl"
 ]
 
 test = [
-  "pytest>=8.3.5",
-  "requests>=2.32.3",
-  "websocket-client>=1.8.0",
-  "redis>=5.2.1",
+  "pytest~=8.3.5",
+  "requests~=2.32.3",
+  "websocket-client~=1.8.0",
+  "redis~=5.2.1",
 ]
 
 [build-system]

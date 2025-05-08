@@ -1,11 +1,11 @@
 from functools import lru_cache
-from typing import Literal
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from yapit.gateway.cache import CacheConfig
+from yapit.gateway.cache import CacheConfig, Caches
 from yapit.gateway.domain_models import User
-from yapit.gateway.text_splitter import TextSplitterConfig
+from yapit.gateway.text_splitter import TextSplitterConfig, TextSplitters
 
 ANON_USER = User(id="anonymous_user", email="anon@example.com", tier="free")
 
@@ -19,11 +19,11 @@ class Settings(BaseSettings):
     redis_url: str = "redis://redis:6379/0"
     cors_origins: list[str] = ["http://localhost:5173"]
 
-    cache_type: Literal["noop", "filesystem", "s3"] = "noop"
-    splitter_type: Literal["dummy", "spacy"] = "dummy"
+    cache_type: Caches = Caches.SQLITE
+    splitter_type: TextSplitters = TextSplitters.HIERARCHICAL
 
     splitter_config: TextSplitterConfig = TextSplitterConfig()
-    cache_config: CacheConfig = CacheConfig()
+    cache_config: CacheConfig = CacheConfig(path=Path(__file__).parent / "cache")
 
     model_config = SettingsConfigDict(
         env_prefix="",
