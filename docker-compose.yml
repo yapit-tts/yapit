@@ -77,3 +77,8 @@ services:
               capabilities: [gpu]
     depends_on: [redis]
     restart: unless-stopped
+
+  stack-auth:
+    image: stackauth/server:latest
+    restart: unless-stopped
+    env_file: ./.env
