@@ -31,117 +31,173 @@ interface SynthesizeBlockResponse {
 }
 
 const PlaybackPage = () => {
-// State variables
+  // State variables
   const { state } = useLocation();
   const apiResponse: ApiResponse | undefined = state?.apiResponse;
   const documentId: string | undefined = apiResponse?.document_id;
   const documentBlocks: Block[] | undefined = apiResponse?.blocks;
   const inputText: string | undefined = state?.inputText;
 
-// Env variables
+  // Env variables
   const wsBaseUrl: string = import.meta.env.VITE_WS_BASE_URL || "http://localhost:8000";
 
-// Api response variables
+  // Api response variables
   const sampleRate = useRef<number>(0);
   const channels = useRef<number>(0);
   const bitsPerSample = useRef<number>(0);
   const [wsUrl, setWsUrl] = useState<string>("");
 
-// Sound control variables
+  // Sound control variables
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
+  const [isReady, setIsReady] = useState<boolean>(false);
 
-// Setup variables
+  // Setup variables
   const audioContextRef = useRef<AudioContext | null>(null);
   const audioWorkletNodeRef = useRef<AudioWorkletNode | null>(null);
 
-// Websocket setup
-  const { sendMessage, lastMessage, readyState } = useWebSocket(
-    `${wsBaseUrl}${wsUrl}`
+  // Websocket setup - only connect when wsUrl is available
+  const { lastMessage, readyState } = useWebSocket(
+    wsUrl ? `${wsBaseUrl}${wsUrl}` : null,
+    {
+      onOpen: () => {
+        console.log('WebSocket connection established');
+      },
+      onError: (event) => {
+        console.error('WebSocket error:', event);
+        setIsPlaying(false);
+      },
+      onClose: () => {
+        console.log('WebSocket connection closed');
+      },
+    }
   );
 
+  // Initialize the AudioWorklet
   useEffect(() => {
     const initWorklet = async () => {
-			if (!audioContextRef.current) return;
+      if (!audioContextRef.current) {
+        audioContextRef.current = new AudioContext({ sampleRate: 24000 });
 
-			try {
-				await audioContextRef.current.audioWorklet.addModule('/pcm-processor.js');
-				const workletNode = new AudioWorkletNode(audioContextRef.current, 'pcm-player-processor');
-				workletNode.connect(audioContextRef.current.destination);
-				audioWorkletNodeRef.current = workletNode;
-			} catch (err) {
-				console.error("Failed to load AudioWorklet:", err);
+				try {
+					await audioContextRef.current.audioWorklet.addModule('/pcm-processor.js');
+					const workletNode = new AudioWorkletNode(audioContextRef.current, 'pcm-processor');
+					workletNode.connect(audioContextRef.current.destination);
+					audioWorkletNodeRef.current = workletNode;
+					setIsReady(true);
+					console.log("AudioWorklet initialized successfully");
+				} catch (err) {
+					console.error("Failed to load AudioWorklet:", err);
+				}
 			}
     };
 
-		initWorklet();
+    initWorklet();
+
+    return () => {
+      if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+        audioContextRef.current.close();
+      }
+    };
   }, []);
 
+  // Process incoming WebSocket messages
   useEffect(() => {
-    console.log(readyState);
-		console.log(lastMessage);
-  }, [readyState]);
+    if (!lastMessage || !audioWorkletNodeRef.current) return;
 
-  useEffect(() => {
-		if (!lastMessage || !audioWorkletNodeRef.current) return;
+    const processMessage = async () => {
+      try {
+        const arrayBuffer = lastMessage.data instanceof Blob
+          ? await lastMessage.data.arrayBuffer()
+          : lastMessage.data;
 
-		const processMessage = async () => {
-			const arrayBuffer = lastMessage.data instanceof Blob
-				? await lastMessage.data.arrayBuffer()
-				: lastMessage.data;
+        const int16 = new Int16Array(arrayBuffer);
+        const float32 = new Float32Array(int16.length);
+        for (let i = 0; i < int16.length; i++) {
+          float32[i] = int16[i] / 32768;
+        }
 
-			const int16 = new Int16Array(arrayBuffer);
-			const float32 = new Float32Array(int16.length);
-			for (let i = 0; i < int16.length; i++) {
-				float32[i] = int16[i] / 32768;
-			}
+        const channelCount = channels.current || 1;
+        const frameCount = float32.length / channelCount;
 
-			const channelCount = channels.current || 1;
-			const frameCount = float32.length / channelCount;
+        const deinterleaved = Array.from({ length: channelCount }, (_, c) => new Float32Array(frameCount));
+        for (let i = 0; i < frameCount; i++) {
+          for (let c = 0; c < channelCount; c++) {
+            deinterleaved[c][i] = float32[i * channelCount + c];
+          }
+        }
 
-			const deinterleaved = Array.from({ length: channelCount }, (_, c) => new Float32Array(frameCount));
-			for (let i = 0; i < frameCount; i++) {
-				for (let c = 0; c < channelCount; c++) {
-					deinterleaved[c][i] = float32[i * channelCount + c];
-				}
-			}
+				const rawBuffer = float32.buffer;
+        audioWorkletNodeRef.current!.port.postMessage(rawBuffer, [rawBuffer]);
+      } catch (err) {
+        console.error('Failed to process PCM audio:', err);
+      }
+    };
 
-			audioWorkletNodeRef.current!.port.postMessage({
-				type: 'push',
-				audioBuffer: deinterleaved,
-			});
-		};
-
-		processMessage().catch((err) => {
-			console.error('Failed to process PCM audio:', err);
-		});
-
+    processMessage();
   }, [lastMessage]);
 
+  // Handle play/pause state changes
+  useEffect(() => {
+    if (!audioContextRef.current) return;
+    
+    if (isPlaying) {
+      if (audioContextRef.current.state === 'suspended') {
+        audioContextRef.current.resume().catch(err => {
+          console.error('Failed to resume AudioContext:', err);
+          setIsPlaying(false);
+        });
+      }
+    } else {
+      if (audioContextRef.current.state === 'running') {
+        audioContextRef.current.suspend().catch(err => {
+          console.error('Failed to suspend AudioContext:', err);
+        });
+      }
+    }
+  }, [isPlaying]);
+
   const synthesizeBlock = async (blockId: number) => {
-		try {
-			const response = await api.post(`/v1/documents/${documentId}/blocks/${blockId}/synthesize`, {
-				"model_slug": "kokoro",
-				"voice_slug": "af_heart",
-				"speed": 1,
-			});
-			const data: SynthesizeBlockResponse = response.data;
+    try {
+      const response = await api.post(`/v1/documents/${documentId}/blocks/${blockId}/synthesize`, {
+        "model_slug": "kokoro",
+        "voice_slug": "af_heart",
+        "speed": 1,
+      });
+      const data: SynthesizeBlockResponse = response.data;
 
-			sampleRate.current = data.sample_rate;
-			channels.current = data.channels;
-			bitsPerSample.current = data.sample_width * 8; // convert number of bytes to bits
-			setWsUrl(data.ws_url);
+      sampleRate.current = data.sample_rate;
+      channels.current = data.channels;
+      bitsPerSample.current = data.sample_width * 8; // convert number of bytes to bits
+      
+      setWsUrl(data.ws_url);
 
-		} catch (error) {
-			console.error("Error synthesizing block: ", error);
-		}
-  }
+    } catch (error) {
+      console.error("Error synthesizing block: ", error);
+      setIsPlaying(false);
+    }
+  };
+
+  const handlePlay = async () => {
+    setIsPlaying(true);
+    await synthesizeBlock(documentBlocks[0].id);
+  };
+
+  const handlePause = () => {
+    setIsPlaying(false);
+    setWsUrl(""); 
+  };
 
   return (
     <div className="w-full">
-			<DocumentCard inputText={inputText} />
-			<SoundControl isPlaying={isPlaying} onPlay={() => { setIsPlaying(true); synthesizeBlock(documentBlocks![0].id); }} onPause={() => setIsPlaying(false) }/>
+      <DocumentCard inputText={inputText} />
+      <SoundControl 
+        isPlaying={isPlaying} 
+        onPlay={handlePlay} 
+        onPause={handlePause}
+      />
+      {!isReady && <div>Initializing audio system...</div>}
     </div>
-  )
-}
+  );
+};
 
 export default PlaybackPage;
