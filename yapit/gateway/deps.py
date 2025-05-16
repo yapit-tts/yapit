@@ -23,8 +23,8 @@ from yapit.gateway.text_splitter import (
 class CacheDependency:
     def __init__(self, cache_type: str | None = None, config: CacheConfig | None = None):
         settings = get_settings()
-        self.config = config or settings.cache_config
-        self.type = cache_type or settings.cache_type.lower()
+        self.config = config or settings.audio_cache_config
+        self.type = cache_type or settings.audio_cache_type.lower()
 
     def __call__(self) -> Cache:
         cache_class = {
@@ -82,7 +82,7 @@ def _get_param_extractor(name: str) -> Callable:
     """Helper to return a FastAPI dependency that fetches `name` from path/query or JSON."""
 
     async def extract(
-        value: str | None = None, # from url path or query parameter
+        value: str | None = None,  # from url path or query parameter
         body: dict | None = Body(None),  # from already-parsed JSON
     ) -> str:
         if value:
@@ -93,6 +93,7 @@ def _get_param_extractor(name: str) -> Callable:
 
     extract.__name__ = f"extract_{name}"
     return extract
+
 
 ModelSlug = Annotated[str, Depends(_get_param_extractor("model_slug"))]
 VoiceSlug = Annotated[str, Depends(_get_param_extractor("voice_slug"))]
@@ -117,11 +118,7 @@ async def get_voice(
     voice_slug: VoiceSlug,
 ) -> Voice:
     voice: Voice | None = (
-        await db.exec(
-            select(Voice)
-            .join(TTSModel)
-            .where(Voice.slug == voice_slug, TTSModel.slug == model_slug)
-        )
+        await db.exec(select(Voice).join(TTSModel).where(Voice.slug == voice_slug, TTSModel.slug == model_slug))
     ).first()
     if not voice:
         raise HTTPException(404, f"Voice {voice_slug!r} not configured for model {model_slug!r}")

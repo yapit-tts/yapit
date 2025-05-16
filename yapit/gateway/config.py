@@ -1,5 +1,4 @@
 from functools import lru_cache
-from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -19,8 +18,8 @@ class Settings(BaseSettings):
     splitter_type: TextSplitters
     splitter_config: TextSplitterConfig
 
-    cache_type: Caches
-    cache_config: CacheConfig
+    audio_cache_type: Caches
+    audio_cache_config: CacheConfig
 
     stack_auth_api_host: str
     stack_auth_project_id: str
@@ -36,4 +35,4 @@ class Settings(BaseSettings):
 
 @lru_cache  # singleton factory
 def get_settings() -> Settings:  # di-friendly wrapper
-    return Settings()
+    return Settings()  # type: ignore
