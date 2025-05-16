@@ -1,6 +1,5 @@
-from __future__ import annotations
-
 import datetime as dt
+import hashlib
 import uuid
 from datetime import datetime
 from enum import StrEnum, auto
@@ -29,14 +28,14 @@ class TTSModel(SQLModel, table=True):
     sample_width: int
     native_codec: str
 
-    voices: list[Voice] = Relationship(
+    voices: list["Voice"] = Relationship(
         back_populates="model",
         sa_relationship_kwargs={
             "cascade": "all, delete-orphan",
             "lazy": "selectin",
         },
     )
-    block_variants: list[BlockVariant] = Relationship(back_populates="model")
+    block_variants: list["BlockVariant"] = Relationship(back_populates="model")
 
 
 class Voice(SQLModel, table=True):
@@ -51,7 +50,7 @@ class Voice(SQLModel, table=True):
     description: str | None = Field(default=None)
 
     model: TTSModel = Relationship(back_populates="voices")
-    block_variants: list[BlockVariant] = Relationship(back_populates="voice")
+    block_variants: list["BlockVariant"] = Relationship(back_populates="voice")
 
     __table_args__ = (UniqueConstraint("slug", "model_id", name="unique_voice_per_model"),)
 
@@ -80,7 +79,7 @@ class Document(SQLModel, table=True):
         sa_column=Column(DateTime(timezone=True)),
     )
 
-    blocks: list[Block] = Relationship(
+    blocks: list["Block"] = Relationship(
         back_populates="document", sa_relationship_kwargs={"cascade": "all, delete-orphan"}
     )
 
@@ -96,7 +95,7 @@ class Block(SQLModel, table=True):
     est_duration_ms: int | None = Field(default=None)  # 1x speed estimate based on text length
 
     document: Document = Relationship(back_populates="blocks")
-    variants: list[BlockVariant] = Relationship(
+    variants: list["BlockVariant"] = Relationship(
         back_populates="block", sa_relationship_kwargs={"cascade": "all, delete-orphan"}
     )
 

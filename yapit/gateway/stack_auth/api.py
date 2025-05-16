@@ -2,7 +2,8 @@ import logging
 from typing import Any
 from yapit.gateway.config import get_settings
 
-AUTH_LOGGER = logging.getLogger("auth")
+STACK_AUTH_LOGGER = logging.getLogger("stack-auth")
+STACK_AUTH_LOGGER.setLevel(logging.DEBUG)
 
 
 def build_headers(access_token: str) -> dict[str, Any]:

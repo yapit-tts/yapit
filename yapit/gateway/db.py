@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from yapit.gateway.config import ANON_USER, get_settings
+from yapit.gateway.config import get_settings
 from yapit.gateway.domain_models import (
     Filter,
     TTSModel,
@@ -49,7 +49,6 @@ async def close_db() -> None:
 async def _seed_db() -> None:
     """Development seed – only runs on an empty DB."""
     async with SessionLocal() as db:
-        db.add(ANON_USER)
         kokoro = TTSModel(
             slug="kokoro",
             name="Kokoro",

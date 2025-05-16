@@ -42,26 +42,14 @@ class User(BaseModel):
 async def get_user(access_token: str, user_id: str) -> User | None:
     SETTINGS = get_settings()
 
-    url = f"{SETTINGS.stack_auth_host}/api/v1/users/{user_id}"
+    url = f"{SETTINGS.stack_auth_api_host}/api/v1/users/{user_id}"
     headers = build_headers(access_token=access_token)
 
-    try:
-        response = requests.get(url, headers=headers)
-        response.raise_for_status()
+    response = requests.get(url, headers=headers)
+    response.raise_for_status()
 
-        body = response.json()
-        return User.model_validate(obj=body)
-    except requests.exceptions.Timeout as ex:
-        logging.error("requesting stack-auth timed out", exc_info=ex)
-        return None
-    except requests.exceptions.HTTPError as ex:
-        logging.error("stack-auth http request failed", exc_info=ex)
-        return None
-    except requests.exceptions.RequestException:
-        return None
-    except Exception as ex:
-        logging.error("unexpected error in authenticate", exc_info=ex)
-        return None
+    body = response.json()
+    return User.model_validate(obj=body)
 
 
 async def get_me(access_token: str) -> User | None:
