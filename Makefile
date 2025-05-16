@@ -39,7 +39,7 @@ logs:
 # -------- repomix -------
 
 repomix:
-	repomix -i ".gitignore"
+	repomix -i "frontend/src/components/ui,.gitignore,**/*.data"
 
 repomix-backend:
-	repomix -i "frontend,.gitignore"
+	repomix -i "frontend,.gitignore,**/*.data"
