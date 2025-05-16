@@ -4,10 +4,7 @@ from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from yapit.gateway.cache import CacheConfig, Caches
-from yapit.gateway.domain_models import User
 from yapit.gateway.text_splitter import TextSplitterConfig, TextSplitters
-
-ANON_USER = User(id="anonymous_user", email="anon@example.com", tier="free")
 
 
 class Settings(BaseSettings):

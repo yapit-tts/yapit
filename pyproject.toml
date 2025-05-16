@@ -28,6 +28,7 @@ gateway = [
   "google-re2~=1.1.20240702"
   "requests==2.32.3"
   "svix==1.65.0"
+  "starlette",
 ]
 
 # for worker Dockerfile

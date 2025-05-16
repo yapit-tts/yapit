@@ -1,31 +1,78 @@
+from dataclasses import dataclass
+from functools import lru_cache
+import logging
+from typing import Literal
+from pydantic import BaseModel, Field
 import requests
 
-from fastapi import Security
+from fastapi import HTTPException, Security
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from starlette import status
 
-from yapit.gateway.config import ANON_USER, get_settings
+from yapit.gateway.config import get_settings
 
-# TODO(lukas): implement JWT auth
+logger = logging.getLogger("auth")
+
 bearer = HTTPBearer(auto_error=False)
 
 
-async def get_current_user_id(
+# visible to the client
+# editable by the client
+class ClientMetadata(BaseModel): ...
+
+
+# visible to the client
+# editable by the server
+class ClientReadOnlyMetadata(BaseModel):
+    tier: Literal["free", "pro"] | None = Field(default=None)
+
+
+# visible to the server
+# editable by the server
+class ServerMetadata(BaseModel): ...
+
+
+class User(BaseModel):
+    id: str
+    primary_email_verified: bool
+    primary_email_auth_enabled: bool
+    signed_up_at_millis: float
+    last_active_at_millis: float
+    is_anonymous: bool
+    primary_email: str | None = Field(default=None)
+    display_name: str | None = Field(default=None)
+    selected_team_id: str | None = Field(default=None)
+    profile_image_url: str | None = Field(default=None)
+    client_metadata: ClientMetadata | None = Field(default=None)
+    client_read_only_metadata: ClientReadOnlyMetadata | None = Field(default=None)
+    server_metadata: ServerMetadata | None = Field(default=None)
+
+
+async def get_current_user(
     creds: HTTPAuthorizationCredentials | None = Security(bearer),
-) -> str:
+) -> User:
     if creds is None:
-        # TODO(lukas): error if unauthenticated
-        assert ANON_USER.id is not None
-        return ANON_USER.id
-    raise NotImplementedError()
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    user = authenticate(creds.credentials)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="invalid or expired token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return user
 
 
-# TODO: cache tokens s.t. requests close in time are faster
-def authenticate(token: str) -> str | None:
+@lru_cache(maxsize=1024)
+def authenticate(token: str) -> User | None:
     # https://docs.stack-auth.com/next/concepts/backend-integration
 
     settings = get_settings()
 
-    # TODO(lukas): maybe cache this to prevent multiple allocs
     url = f"{settings.stack_auth_host}/api/v1/users/me"
     headers = {
         "x-stack-access-type": "server",
@@ -34,10 +81,18 @@ def authenticate(token: str) -> str | None:
         "x-stack-access-token": token,
     }
 
-    response = requests.get(url, headers=headers)
-    if response.status_code != 200:
-        # stack-auth returns non-ok code if code is invalid
-        return None
+    try:
+        response = requests.get(url, headers=headers, timeout=5)
+        response.raise_for_status()
 
-    body = response.json()
-    return body["id"]
+        body = response.json()
+        return User.model_validate(obj=body)
+    except requests.exceptions.Timeout:
+        return None
+    except requests.exceptions.HTTPError:
+        return None
+    except requests.exceptions.RequestException:
+        return None
+    except Exception as ex:
+        logging.error("unexpected error in authenticate", exc_info=ex)
+        return None
