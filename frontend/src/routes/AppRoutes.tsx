@@ -3,14 +3,18 @@ import MainLayout from "../layouts/MainLayout";
 import PlaybackPage from "../pages/PlaybackPage";
 import TextInputPage from "@/pages/TextInputPage";
 import { stackClientApp } from "@/auth";
-import { StackHandler } from "@stackframe/react";
+import { StackHandler, useUser } from "@stackframe/react";
 import { FC } from "react";
 
 const AuthRoutes: FC = () => {
 	const location = useLocation();
 
 	return (
-		<StackHandler app={stackClientApp} location={location.pathname} fullPage />
+		<StackHandler
+			app={stackClientApp}
+			location={location.pathname.replace("auth", "handler")}
+			fullPage
+		/>
 	);
 };
 
