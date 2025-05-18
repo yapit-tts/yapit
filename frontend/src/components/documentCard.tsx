@@ -1,13 +1,14 @@
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle, } from "@/components/ui/card";
+type Props = {
+	inputText: string | undefined;
+};
 
-
-const DocumentCard = ({ inputText }) => {
+const DocumentCard = ({ inputText }: Props) => {
 	return (
 		<div className="flex flex-col overflow-y-auto m-[10%] mt-[4%]">
 			<p className="mb-[4%] text-4xl font-bold">Lorem Ipsum</p>
-			<p>
+			<pre className="whitespace-pre-wrap break-words w-full">
 				{inputText}	
-			</p>
+			</pre>
 		</div>
 	)
 }
