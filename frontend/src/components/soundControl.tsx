@@ -8,11 +8,12 @@ type Props = {
   isPlaying: boolean;
   onPlay: () => void;
   onPause: () => void;
+	style: React.CSSProperties;
 };
 
-const SoundControl = ({ isPlaying, onPlay, onPause }: Props) => {
+const SoundControl = ({ isPlaying, onPlay, onPause, style }: Props) => { 
 	return (
-		<div className="flex flex-col fixed bottom-0 w-full p-4 border-t-2 border-t-black backdrop-blur-lg space-y-6 justify-center items-center">
+		<div className="flex flex-col fixed bottom-0 p-4 border-t-2 border-t-black backdrop-blur-lg space-y-6 justify-center items-center" style={style}>
 			<div className="flex flex-row w-full space-x-8 justify-center items-center">
 				<Button variant="outline" size="lg"><Rewind /></Button>
 				<Button variant="secondary" size="lg" onClick={isPlaying ? onPause : onPlay}>{isPlaying ? <Pause /> : <Play />}</Button>

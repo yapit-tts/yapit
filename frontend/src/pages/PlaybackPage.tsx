@@ -35,6 +35,7 @@ const PlaybackPage = () => {
   const { state } = useLocation();
   const apiResponse: ApiResponse | undefined = state?.apiResponse;
   const documentId: string | undefined = apiResponse?.document_id;
+	const numberOfBlocks: number | undefined = apiResponse?.num_blocks;
   const documentBlocks: Block[] | undefined = apiResponse?.blocks;
   const inputText: string | undefined = state?.inputText;
 
@@ -50,10 +51,13 @@ const PlaybackPage = () => {
   // Sound control variables
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [isReady, setIsReady] = useState<boolean>(false);
+	const parentWidth = useRef<HTMLElement>(null);
+	const [width, setWidth] = useState(0);
 
   // Setup variables
   const audioContextRef = useRef<AudioContext | null>(null);
   const audioWorkletNodeRef = useRef<AudioWorkletNode | null>(null);
+	const [currentBlock, setCurrentBlock] = useState<number>(0);
 
   // Websocket setup - only connect when wsUrl is available
   const { lastMessage, readyState } = useWebSocket(
@@ -72,7 +76,7 @@ const PlaybackPage = () => {
     }
   );
 
-  // Initialize the AudioWorklet
+  // Initialize the AudioReact.CSSPropertiest
   useEffect(() => {
     const initWorklet = async () => {
       if (!audioContextRef.current) {
@@ -98,6 +102,16 @@ const PlaybackPage = () => {
         audioContextRef.current.close();
       }
     };
+  }, []);
+
+	// Track page width to pass to playbar
+	useEffect(() => {
+    if (!parentWidth.current) return;
+    const observer = new ResizeObserver(() => {
+      setWidth(parentWidth.current?.offsetWidth || 0);
+    });
+    observer.observe(parentWidth.current);
+    return () => observer.disconnect();
   }, []);
 
   // Process incoming WebSocket messages
@@ -156,6 +170,11 @@ const PlaybackPage = () => {
     }
   }, [isPlaying]);
 
+	useEffect(() => {
+		if (readyState == 3) synthesizeBlock(documentBlocks[currentBlock + 1].id);
+		console.log(readyState);
+	}, [currentBlock, readyState])
+
   const synthesizeBlock = async (blockId: number) => {
     try {
       const response = await api.post(`/v1/documents/${documentId}/blocks/${blockId}/synthesize`, {
@@ -179,7 +198,9 @@ const PlaybackPage = () => {
 
   const handlePlay = async () => {
     setIsPlaying(true);
-    await synthesizeBlock(documentBlocks[0].id);
+		if (currentBlock == 0) {
+			await synthesizeBlock(documentBlocks[0].id);
+		}
   };
 
   const handlePause = () => {
@@ -188,12 +209,13 @@ const PlaybackPage = () => {
   };
 
   return (
-    <div className="w-full">
+    <div className="flex grow" ref={parentWidth}>
       <DocumentCard inputText={inputText} />
       <SoundControl 
         isPlaying={isPlaying} 
         onPlay={handlePlay} 
         onPause={handlePause}
+				style={{ width: `${width}px` }}
       />
       {!isReady && <div>Initializing audio system...</div>}
     </div>
