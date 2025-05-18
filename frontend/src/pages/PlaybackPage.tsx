@@ -38,6 +38,7 @@ const PlaybackPage = () => {
 	const numberOfBlocks: number | undefined = apiResponse?.num_blocks;
   const documentBlocks: Block[] | undefined = apiResponse?.blocks;
   const inputText: string | undefined = state?.inputText;
+	const estimated_ms: number | undefined = apiResponse?.est_duration_ms;
 
   // Env variables
   const wsBaseUrl: string = import.meta.env.VITE_WS_BASE_URL || "http://localhost:8000";
@@ -51,7 +52,7 @@ const PlaybackPage = () => {
   // Sound control variables
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [isReady, setIsReady] = useState<boolean>(false);
-	const parentWidth = useRef<HTMLElement>(null);
+	const parentWidth = useRef<HTMLDivElement | undefined>(undefined);
 	const [width, setWidth] = useState(0);
 
   // Setup variables
@@ -172,7 +173,6 @@ const PlaybackPage = () => {
 
 	useEffect(() => {
 		if (readyState == 3) synthesizeBlock(documentBlocks[currentBlock + 1].id);
-		console.log(readyState);
 	}, [currentBlock, readyState])
 
   const synthesizeBlock = async (blockId: number) => {
@@ -216,6 +216,7 @@ const PlaybackPage = () => {
         onPlay={handlePlay} 
         onPause={handlePause}
 				style={{ width: `${width}px` }}
+				progressBarValues={{estimated_ms: estimated_ms, numberOfBlocks: numberOfBlocks, currentBlock: currentBlock}}	
       />
       {!isReady && <div>Initializing audio system...</div>}
     </div>
