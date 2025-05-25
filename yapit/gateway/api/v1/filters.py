@@ -109,7 +109,7 @@ async def apply_filters(
     _: CurrentDoc,
     redis: RedisClient,
     splitter: TextSplitterDep,
-    _: AuthenticatedUser,
+    __: AuthenticatedUser,
 ) -> SimpleMessage:
     """Kick off (re-)filtering job for a document."""
     if not await redis.set(FILTER_INFLIGHT.format(document_id=document_id), 1, nx=True, ex=FILTER_LOCK_TTL):
