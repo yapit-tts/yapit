@@ -1,16 +1,20 @@
+from __future__ import annotations
+
 from typing import Annotated, AsyncIterator, Callable
 from uuid import UUID
 
-from fastapi import Body, Depends, HTTPException, Path
+from fastapi import Body, Depends, HTTPException, Path, status
 from redis.asyncio import Redis
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from yapit.gateway.auth import authenticate
 from yapit.gateway.cache import Cache, CacheConfig, Caches, NoOpCache, SqliteCache
 from yapit.gateway.config import get_settings
 from yapit.gateway.db import SessionLocal
 from yapit.gateway.domain_models import Block, BlockVariant, Document, TTSModel, Voice
 from yapit.gateway.redis_client import get_redis
+from yapit.gateway.stack_auth.users import User
 from yapit.gateway.text_splitter import (
     DummySplitter,
     HierarchicalSplitter,
@@ -71,10 +75,18 @@ DbSession = Annotated[AsyncSession, Depends(get_db_session)]
 async def get_doc(
     document_id: UUID,
     db: DbSession,
+    user: AuthenticatedUser,
 ) -> Document:
     doc: Document | None = await db.get(Document, document_id)
     if not doc:
         raise HTTPException(404, f"Document {document_id!r} not found")
+
+    if doc.user_id != user.id:
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED,
+            "cannot access document of another user",
+        )
+
     return doc
 
 
@@ -129,20 +141,39 @@ async def get_block(
     document_id: UUID,
     block_id: int,
     db: DbSession,
+    user: AuthenticatedUser,
 ) -> Block:
     block: Block | None = await db.get(Block, block_id)
     if not block or block.document_id != document_id:
         raise HTTPException(404, f"Block {block_id!r} not found in document {document_id!r}")
+
+    if block.document.user_id != user.id:
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED,
+            "cannot access block in another user's document",
+        )
+
     return block
 
 
 async def get_block_variant(
     variant_hash: str,
     db: DbSession,
+    user: AuthenticatedUser,
 ) -> BlockVariant:
     variant: BlockVariant | None = await db.get(BlockVariant, variant_hash)
     if not variant:
-        raise HTTPException(404, f"BlockVariant {variant_hash!r} not found")
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            f"BlockVariant {variant_hash!r} not found",
+        )
+
+    if variant.block.document.user_id != user.id:
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED,
+            "cannot access block variant in another user's document",
+        )
+
     return variant
 
 
@@ -153,3 +184,4 @@ CurrentDoc = Annotated[Document, Depends(get_doc)]
 CurrentVoice = Annotated[Voice, Depends(get_voice)]
 CurrentBlock = Annotated[Block, Depends(get_block)]
 CurrentBlockVariant = Annotated[BlockVariant, Depends(get_block_variant)]
+AuthenticatedUser = Annotated[User, Depends(authenticate)]

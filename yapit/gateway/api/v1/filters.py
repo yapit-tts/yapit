@@ -18,7 +18,7 @@ from yapit.contracts.redis_keys import (
     FILTER_STATUS,
 )
 from yapit.gateway.db import SessionLocal
-from yapit.gateway.deps import CurrentDoc, DbSession, RedisClient, TextSplitterDep, get_doc
+from yapit.gateway.deps import AuthenticatedUser, CurrentDoc, DbSession, RedisClient, TextSplitterDep, get_doc
 from yapit.gateway.domain_models import Block, Document, Filter, FilterConfig
 from yapit.gateway.text_splitter import TextSplitter
 from yapit.gateway.utils import estimate_duration_ms
@@ -52,7 +52,10 @@ class FilterPresetRead(BaseModel):
 
 
 @router.post("/filters/validate", response_model=SimpleMessage)
-def validate_regex(body: FilterJobRequest) -> SimpleMessage:
+def validate_regex(
+    body: FilterJobRequest,
+    _: AuthenticatedUser,
+) -> SimpleMessage:
     for rule in (body.filter_config or {}).get("regex_rules", []):
         try:
             re.compile(rule["pattern"])
@@ -62,9 +65,11 @@ def validate_regex(body: FilterJobRequest) -> SimpleMessage:
 
 
 @router.get("/filter_presets", response_model=list[FilterPresetRead])
-async def list_filter_presets(db: DbSession) -> list[FilterPresetRead]:
-    # TODO restrict to user_id + system
-    presets = (await db.exec(select(Filter))).all()
+async def list_filter_presets(
+    db: DbSession,
+    user: AuthenticatedUser,
+) -> list[FilterPresetRead]:
+    presets = (await db.exec(select(Filter).where(Filter.user_id == user.id or Filter.user_id is None))).all()
     return [FilterPresetRead(id=p.id, name=p.name, description=p.description, config=p.config) for p in presets]
 
 
@@ -77,6 +82,7 @@ async def filter_status(
     document_id: UUID,
     db: DbSession,
     redis: RedisClient,
+    _: AuthenticatedUser,
 ) -> SimpleMessage:
     """Return current filter-pipeline state for `document_id` (none|pending|running|done|error).
 
@@ -103,6 +109,7 @@ async def apply_filters(
     _: CurrentDoc,
     redis: RedisClient,
     splitter: TextSplitterDep,
+    _: AuthenticatedUser,
 ) -> SimpleMessage:
     """Kick off (re-)filtering job for a document."""
     if not await redis.set(FILTER_INFLIGHT.format(document_id=document_id), 1, nx=True, ex=FILTER_LOCK_TTL):
@@ -118,9 +125,13 @@ async def apply_filters(
     response_model=SimpleMessage,
     status_code=status.HTTP_202_ACCEPTED,
 )
-async def cancel_filter_job(document_id: UUID, redis: RedisClient) -> SimpleMessage:
+async def cancel_filter_job(
+    redis: RedisClient,
+    document: CurrentDoc,
+    _: AuthenticatedUser,
+) -> SimpleMessage:
     """Cancel any in-progress filtering job and clear status."""
-    await redis.set(FILTER_CANCEL.format(document_id=document_id), 1, ex=FILTER_LOCK_TTL)
+    await redis.set(FILTER_CANCEL.format(document_id=document.id), 1, ex=FILTER_LOCK_TTL)
     return SimpleMessage(message="Cancellation flag set.")
 
 

@@ -3,11 +3,12 @@ from redis.asyncio import Redis
 
 from yapit.gateway.config import get_settings
 
-settings = get_settings()
 _redis: Redis | None = None
 
 
 async def get_redis() -> Redis:
+    settings = get_settings()
+
     global _redis
     if _redis is None:
         _redis = await redis.from_url(settings.redis_url, decode_responses=False)

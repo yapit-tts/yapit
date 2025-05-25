@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, status
 from pydantic import BaseModel, Field
 from sqlmodel import select
 
@@ -10,6 +10,7 @@ from yapit.contracts.redis_keys import TTS_DONE, TTS_INFLIGHT, TTS_STREAM
 from yapit.contracts.synthesis import SynthesisJob, get_job_queue_name
 from yapit.gateway.deps import (
     AudioCache,
+    AuthenticatedUser,
     CurrentBlock,
     CurrentBlockVariant,
     CurrentTTSModel,
@@ -50,13 +51,13 @@ async def enqueue_synthesis(
     document_id: UUID,
     block_id: int,
     body: SynthRequest,
-    # user_id: str = Depends(get_current_user_id),
     block: CurrentBlock,
     model: CurrentTTSModel,
     voice: CurrentVoice,
     db: DbSession,
     redis: RedisClient,
     cache: AudioCache,
+    _: AuthenticatedUser,
 ) -> SynthEnqueued:
     """Return cached audio or queue a new synthesis job."""
     served_codec = model.native_codec  # TODO change to "opus" once workers transcode
@@ -111,20 +112,19 @@ async def enqueue_synthesis(
 
 @router.websocket("/documents/{document_id}/blocks/{block_id}/variants/{variant_hash}/stream")
 async def stream_audio(
-    document_id: UUID,
-    block_id: int,
     variant_hash: str,
     ws: WebSocket,
     db: DbSession,
-    _: CurrentBlock,  # (auth check)
+    block: CurrentBlock,
     variant: CurrentBlockVariant,
     cache: AudioCache,
     redis: RedisClient,
+    __: AuthenticatedUser,
 ) -> None:
     """Proxy worker-published chunks Redis → WebSocket."""
     await ws.accept()
 
-    if variant.block_id != block_id:
+    if variant.block_id != block.id:
         # Variant already exists for a DIFFERENT block (maybe in another doc).
         # Link it to this block so we don’t re-synthesise identical audio.
         # SECURITY: caller is already authorised for document_id/block_id. This still leaks the *existence* of the hash;
@@ -132,7 +132,7 @@ async def stream_audio(
         await db.merge(
             BlockVariant(
                 hash=variant.hash,
-                block_id=block_id,
+                block_id=block.id,
                 model_id=variant.model_id,
                 voice_id=variant.voice_id,
                 speed=variant.speed,

@@ -28,7 +28,6 @@ gateway = [
   "google-re2~=1.1.20240702",
   "requests==2.32.3",
   "svix==1.65.0",
-  "starlette",
 ]
 
 # for worker Dockerfile
@@ -52,7 +51,7 @@ test = [
   "pytest~=8.3.5",
   "requests~=2.32.3",
   "websocket-client~=1.8.0",
-  "redis~=5.2.1",
+  "redis~=6.0.0",
 ]
 
 [build-system]
@@ -69,3 +68,6 @@ include = ["yapit*"]
 Repository = "https://github.com/yapit-tts/yapit/"
 Issues = "https://github.com/yapit-tts/yapit/issues"
 #Changelog = ""
+
+[tool.pyright]
+stubPath = "yapit/stubs"

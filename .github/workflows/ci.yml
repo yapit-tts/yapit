@@ -29,9 +29,6 @@ jobs:
       - name: Build cpu worker image, gateway
         run: docker compose build --parallel kokoro-cpu gateway
 
-      - name: Start services
-        run: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d gateway redis postgres
-
       - name: Install uv & Python
         uses: astral-sh/setup-uv@v5
         with:

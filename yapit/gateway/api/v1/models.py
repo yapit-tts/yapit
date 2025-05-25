@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 from sqlmodel import select
 
-from yapit.gateway.deps import CurrentTTSModel, DbSession
+from yapit.gateway.deps import AuthenticatedUser, CurrentTTSModel, DbSession
 from yapit.gateway.domain_models import TTSModel
 
 router = APIRouter(prefix="/v1/models", tags=["Models"])
@@ -30,6 +30,7 @@ class ModelRead(BaseModel):
 @router.get("", response_model=List[ModelRead])
 async def list_models(
     db: DbSession,
+    _: AuthenticatedUser,
 ) -> List[ModelRead]:
     """Get all available TTS models with their voices."""
     models = (await db.exec(select(TTSModel))).all()
@@ -58,6 +59,7 @@ async def list_models(
 @router.get("/{model_slug}", response_model=ModelRead)
 async def read_model(
     model: CurrentTTSModel,
+    _: AuthenticatedUser,
 ) -> ModelRead:
     """Get a specific TTS model by slug."""
     return ModelRead(

@@ -1,7 +1,7 @@
 import logging
-from fastapi import HTTPException, Security
+import time
+from fastapi import HTTPException, Security, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from starlette import status
 
 from yapit.gateway.stack_auth import User, get_me
 
@@ -9,6 +9,15 @@ bearer = HTTPBearer(auto_error=False)
 
 LOGGER = logging.getLogger("auth")
 LOGGER.setLevel(logging.DEBUG)
+
+ANON_USER = User(
+    id="",
+    primary_email_verified=True,
+    primary_email_auth_enabled=True,
+    signed_up_at_millis=time.time(),
+    last_active_at_millis=time.time(),
+    is_anonymous=False,
+)
 
 
 async def authenticate(

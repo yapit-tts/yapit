@@ -8,10 +8,9 @@ from fastapi.responses import ORJSONResponse
 
 from yapit.gateway.api.v1 import routers as v1_routers
 from yapit.gateway.cache_listener import run_cache_listener
-from yapit.gateway.config import get_settings
-from yapit.gateway.db import SessionLocal, close_db, prepare_database
 from yapit.gateway.deps import get_audio_cache
 from yapit.gateway.redis_client import close_redis, get_redis
+from yapit.gateway.db import close_db, prepare_database
 
 
 @asynccontextmanager
@@ -30,7 +29,6 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
-    settings = get_settings()
     app = FastAPI(
         title="Yapit Gateway",
         version="0.1.0",
