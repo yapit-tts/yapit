@@ -3,8 +3,9 @@ import MainLayout from "../layouts/MainLayout";
 import PlaybackPage from "../pages/PlaybackPage";
 import TextInputPage from "@/pages/TextInputPage";
 import { stackClientApp } from "@/auth";
-import { StackHandler, useUser } from "@stackframe/react";
+import { StackHandler } from "@stackframe/react";
 import { FC } from "react";
+import { AuthTest } from "@/pages/AuthTest";
 
 const AuthRoutes: FC = () => {
 	const location = useLocation();
@@ -21,6 +22,7 @@ const AuthRoutes: FC = () => {
 const AppRoutes = () => (
 	<Routes>
 		<Route path="/auth/*" element={<AuthRoutes />} />
+		<Route path="/authtest" element={<AuthTest />} />
 		<Route
 			path="/input"
 			element={
