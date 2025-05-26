@@ -43,3 +43,6 @@ repomix:
 
 repomix-backend:
 	repomix -i "frontend,.gitignore,**/*.data"
+
+access-token:
+	uv run --env-file=.env -m scripts.access_token

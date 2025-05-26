@@ -83,7 +83,7 @@ services:
     restart: unless-stopped
     env_file: ./.env
 
-  svix:
-    image: svix/svix-server
-    restart: unless-stopped
-    env_file: ./.env
+  # svix:
+  #   image: svix/svix-server
+  #   restart: unless-stopped
+  #   env_file: ./.env
