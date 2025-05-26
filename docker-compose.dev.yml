@@ -9,6 +9,6 @@ services:
     ports:
       - "8101:8101"
       - "8102:8102"
-  svix:
-    ports:
-       - "8071:8071"
+  postgres:
+    volumes:
+      - "./dev/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql"

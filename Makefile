@@ -5,7 +5,7 @@ build:
 	docker compose build --parallel
 
 build-cpu:
-	docker compose build gateway kokoro-cpu stack-auth svix --parallel
+	docker compose build gateway kokoro-cpu stack-auth -parallel
 
 build-gpu:
 	docker compose build kokoro-gpu --parallel
@@ -15,12 +15,12 @@ build-gpu:
 dev-cpu: down
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml \
 	--profile self-host \
-	up -d kokoro-cpu gateway redis postgres stack-auth svix --build
+	up -d kokoro-cpu gateway redis postgres stack-auth --build
 
 dev-gpu: down
 	docker compose  -f docker-compose.yml -f docker-compose.dev.yml \
 	--profile self-host \
-	up -d kokoro-gpu gateway redis postgres stack-auth svix --build
+	up -d kokoro-gpu gateway redis postgres stack-auth --build
 
 dev-mac: down
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.mac.yml \
@@ -28,7 +28,7 @@ dev-mac: down
 	up -d gateway redis postgres --build
 
 up:
-	docker compose up -d gateway redis postgres stack-auth svix # remote workers
+	docker compose up -d gateway redis postgres stack-auth # remote workers
 
 down:
 	docker compose down -v --remove-orphans
