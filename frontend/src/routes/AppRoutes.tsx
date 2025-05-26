@@ -11,17 +11,13 @@ const AuthRoutes: FC = () => {
 	const location = useLocation();
 
 	return (
-		<StackHandler
-			app={stackClientApp}
-			location={location.pathname.replace("auth", "handler")}
-			fullPage
-		/>
+		<StackHandler app={stackClientApp} location={location.pathname} fullPage />
 	);
 };
 
 const AppRoutes = () => (
 	<Routes>
-		<Route path="/auth/*" element={<AuthRoutes />} />
+		<Route path="/handler/*" element={<AuthRoutes />} />
 		<Route path="/authtest" element={<AuthTest />} />
 		<Route
 			path="/input"
