@@ -5,7 +5,7 @@ build:
 	docker compose build --parallel
 
 build-cpu:
-	docker compose build gateway kokoro-cpu stack-auth -parallel
+	docker compose build gateway kokoro-cpu stack-auth --parallel
 
 build-gpu:
 	docker compose build kokoro-gpu --parallel
