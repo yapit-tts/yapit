@@ -4,7 +4,7 @@
 
 ### Stack-Auth
 
-The following admin users is created on startup:
+The following admin user is created on startup:
 
 ```
 username: dev@yap.it
