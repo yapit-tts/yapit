@@ -2,12 +2,12 @@ import time
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+import pytest
 import redis as _redis
-import requests
-import websocket
 
 
-def test_synthesize_route_only(app: FastAPI):
+@pytest.mark.asyncio
+async def test_synthesize_route_only(app: FastAPI) -> None:
     client = TestClient(app=app)
 
     # 1. create doc
@@ -32,30 +32,33 @@ def test_synthesize_route_only(app: FastAPI):
     assert {"variant_hash", "ws_url", "est_duration_ms"} <= j.keys()
 
     # 3. ensure WS endpoint accepts the handshake (no audio expected)
-    ws = client.websocket_connect(j["ws_url"], timeout=5)
+    ws = client.websocket_connect(j["ws_url"])
     ws.close()
 
 
-def test_streaming_audio(wait_until_gateway, gateway_url: str, ws_url: str):
+@pytest.mark.asyncio
+async def test_streaming_audio(app: FastAPI) -> None:
+    client = TestClient(app=app)
+
     # 1. create doc & enqueue synthesis
-    doc = requests.post(
-        f"{gateway_url}/v1/documents",
+    doc = client.post(
+        f"/v1/documents",
         json={"source_type": "paste", "text_content": "Ping Pong"},
-        timeout=5,
     ).json()
     document_id = doc["document_id"]
     block_id = doc["blocks"][0]["id"]
-    synth = requests.post(
-        f"{gateway_url}/v1/documents/{document_id}/blocks/{block_id}/synthesize",
+    synth = client.post(
+        f"/v1/documents/{document_id}/blocks/{block_id}/synthesize",
         json={"model_slug": "kokoro", "voice_slug": "af_heart", "speed": 1.0},
-        timeout=5,
     ).json()
+
+    print("SYNTH", synth)
 
     variant = synth["variant_hash"]
     path = synth["ws_url"]
 
     # 2. open WebSocket
-    ws = websocket.create_connection(f"{ws_url}{path}", timeout=5)
+    ws = client.websocket_connect(path)
 
     # 3. publish two chunks into Redis (stream channel)
     r = _redis.Redis(host="localhost", port=6379)
@@ -66,6 +69,6 @@ def test_streaming_audio(wait_until_gateway, gateway_url: str, ws_url: str):
         r.publish(f"tts:{variant}:stream", c)
 
     # 4. receive and verify
-    received = [ws.recv() for _ in chunks]
+    received = [ws.receive() for _ in chunks]
     ws.close()
     assert received == chunks

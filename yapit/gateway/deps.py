@@ -5,6 +5,7 @@ from uuid import UUID
 
 from fastapi import Body, Depends, HTTPException, status
 from redis.asyncio import Redis
+from sqlalchemy.orm import selectinload
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -124,7 +125,11 @@ async def get_block(
     db: DbSession,
     user: AuthenticatedUser,
 ) -> Block:
-    block: Block | None = await db.get(Block, block_id)
+    block: Block | None = await db.get(
+        Block,
+        block_id,
+        options=[selectinload("*")],
+    )
     if not block or block.document_id != document_id:
         raise HTTPException(404, f"Block {block_id!r} not found in document {document_id!r}")
 

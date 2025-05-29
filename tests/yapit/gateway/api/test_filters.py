@@ -24,7 +24,7 @@ async def test_validate_regex_ok(app: FastAPI):
 
 
 @pytest.mark.asyncio
-def test_validate_regex_invalid(app: FastAPI):
+async def test_validate_regex_invalid(app: FastAPI):
     client = TestClient(app=app)
 
     body = {"filter_config": {"regex_rules": [{"pattern": "(", "replacement": ""}]}}
@@ -36,7 +36,7 @@ def test_validate_regex_invalid(app: FastAPI):
 
 
 @pytest.mark.asyncio
-def test_apply_filters_and_blocks(app: FastAPI):
+async def test_apply_filters_and_blocks(app: FastAPI):
     client = TestClient(app=app)
 
     # 1. create document with URL + parentheses noise
