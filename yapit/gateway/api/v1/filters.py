@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+from typing import Annotated, Any
 from uuid import UUID
 
 import re2 as re
-from fastapi import APIRouter, BackgroundTasks, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from pydantic import BaseModel
 from redis.asyncio import Redis
 from sqlmodel import delete, select
@@ -17,6 +17,8 @@ from yapit.contracts.redis_keys import (
     FILTER_INFLIGHT,
     FILTER_STATUS,
 )
+from yapit.gateway.config import Settings, get_settings
+from yapit.gateway.db import create_session
 from yapit.gateway.deps import AuthenticatedUser, CurrentDoc, DbSession, RedisClient, TextSplitterDep, get_doc
 from yapit.gateway.domain_models import Block, Document, Filter, FilterConfig
 from yapit.gateway.text_splitter import TextSplitter
@@ -139,14 +141,16 @@ async def cancel_filter_job(
 
 async def _run_filter_job(
     document_id: UUID,
-    config: dict[str, Any],
+    config: FilterConfig,
     splitter: TextSplitter,
     redis: Redis,
-    db: DbSession,
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> None:
     status_key = FILTER_STATUS.format(document_id=document_id)
     cancel_key = FILTER_CANCEL.format(document_id=document_id)
     inflight_key = FILTER_INFLIGHT.format(document_id=document_id)
+
+    db = await anext(create_session(settings))
 
     try:
         await redis.set(status_key, "running", ex=FILTER_STATUS_TTL)
@@ -159,9 +163,9 @@ async def _run_filter_job(
             return
 
         async def _transform(txt: str) -> str:
-            for rule in config.get("regex_rules", []):
-                txt = re.compile(rule["pattern"]).sub(rule.get("replacement", ""), txt)
-            if config.get("llm"):
+            for rule in config.regex_rules:
+                txt = re.compile(rule.pattern).sub(rule.replacement, txt)
+            if config.llm:
                 # TODO build LLM prompt from config + OpenAI API request
                 # TODO periodically check this (if parsing long docs in chunks (... stream progress?)
                 if await redis.exists(cancel_key):

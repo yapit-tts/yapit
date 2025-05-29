@@ -18,7 +18,7 @@ from yapit.gateway.deps import (
     DbSession,
     RedisClient,
 )
-from yapit.gateway.domain_models import BlockVariant
+from yapit.gateway.domain_models import BlockVariant, TTSModel, Voice
 from yapit.gateway.utils import estimate_duration_ms
 
 router = APIRouter(prefix="/v1", tags=["synthesis"])
@@ -52,14 +52,24 @@ async def enqueue_synthesis(
     block_id: int,
     body: SynthRequest,
     block: CurrentBlock,
-    model: CurrentTTSModel,
-    voice: CurrentVoice,
     db: DbSession,
     redis: RedisClient,
     cache: AudioCache,
     _: AuthenticatedUser,
 ) -> SynthEnqueued:
     """Return cached audio or queue a new synthesis job."""
+    model: TTSModel | None = (await db.exec(select(TTSModel).where(TTSModel.slug == body.model_slug))).first()
+    if not model:
+        raise HTTPException(404, f"Model {body.model_slug!r} not found")
+
+    voice: Voice | None = (
+        await db.exec(
+            select(Voice).join(TTSModel).where(Voice.slug == body.voice_slug, TTSModel.slug == body.model_slug),
+        )
+    ).first()
+    if not voice:
+        raise HTTPException(404, f"Voice {body.voice_slug!r} not configured for model {body.model_slug!r}")
+
     served_codec = model.native_codec  # TODO change to "opus" once workers transcode
     variant_hash = BlockVariant.get_hash(
         text=block.text,

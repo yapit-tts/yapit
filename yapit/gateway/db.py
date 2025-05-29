@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from yapit.gateway.config import Settings, get_settings
+from yapit.gateway.config import Settings
 from yapit.gateway.domain_models import (
     Filter,
     TTSModel,
@@ -101,7 +101,6 @@ async def _seed_db(settings: Settings) -> None:
     presets_json = Path(__file__).parent.parent / "data/default_filters.json"
     defaults = json.loads(presets_json.read_text())
     for p in defaults:
-        print(f"{p}")
         db.add(
             Filter(
                 name=p["name"],
