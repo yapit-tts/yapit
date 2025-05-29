@@ -1,4 +1,3 @@
-from functools import lru_cache
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from yapit.gateway.cache import CacheConfig, Caches
@@ -32,6 +31,4 @@ class Settings(BaseSettings):
     )
 
 
-@lru_cache()  # singleton factory
-def get_settings() -> Settings:  # di-friendly wrapper
-    return Settings()  # type: ignore
+def get_settings() -> Settings: ...

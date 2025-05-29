@@ -3,15 +3,15 @@ from __future__ import annotations
 from typing import Annotated, AsyncIterator, Callable
 from uuid import UUID
 
-from fastapi import Body, Depends, HTTPException, Path, status
+from fastapi import Body, Depends, HTTPException, status
 from redis.asyncio import Redis
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from yapit.gateway.auth import authenticate
 from yapit.gateway.cache import Cache, CacheConfig, Caches, NoOpCache, SqliteCache
-from yapit.gateway.config import get_settings
-from yapit.gateway.db import SessionLocal
+from yapit.gateway.config import Settings, get_settings
+from yapit.gateway.db import create_session
 from yapit.gateway.domain_models import Block, BlockVariant, Document, TTSModel, Voice
 from yapit.gateway.redis_client import get_redis
 from yapit.gateway.stack_auth.users import User
@@ -19,53 +19,34 @@ from yapit.gateway.text_splitter import (
     DummySplitter,
     HierarchicalSplitter,
     TextSplitter,
-    TextSplitterConfig,
     TextSplitters,
 )
 
 
-class CacheDependency:
-    def __init__(self, cache_type: str | None = None, config: CacheConfig | None = None):
-        settings = get_settings()
-        self.config = config or settings.audio_cache_config
-        self.type = cache_type or settings.audio_cache_type.lower()
-
-    def __call__(self) -> Cache:
-        cache_class = {
-            Caches.NOOP: NoOpCache,
-            Caches.SQLITE: SqliteCache,
-        }.get(self.type)
-        if cache_class:
-            return cache_class(self.config)
-        raise ValueError(f"Invalid cache type: {self.type} - available: {', '.join([c.name for c in Caches])}.")
+def get_audio_cache(settings: Annotated[Settings, Depends(get_settings)]) -> Cache:
+    audio_cache_type = settings.audio_cache_type.lower()
+    if audio_cache_type == Caches.NOOP.name.lower():
+        return NoOpCache(settings.audio_cache_config)
+    elif audio_cache_type == Caches.SQLITE.name.lower():
+        return SqliteCache(settings.audio_cache_config)
+    else:
+        raise ValueError(f"Invalid audio cache type '{settings.audio_cache_type}' (noop, sqlite)")
 
 
-get_audio_cache = CacheDependency()
+def get_text_splitter(settings: Annotated[Settings, Depends(get_settings)]) -> TextSplitter:
+    splitter_type = settings.splitter_type.lower()
+    if splitter_type == TextSplitters.DUMMY.name.lower():
+        return DummySplitter(settings.splitter_config)
+    elif splitter_type == TextSplitters.HIERARCHICAL.name.lower():
+        return HierarchicalSplitter(settings.splitter_config)
+    else:
+        raise ValueError(f"Invalid TextSplitter type '{settings.splitter_type}' (dummy, hierarchical)")
 
 
-class TextSplitterDependency:
-    def __init__(self, splitter_type: str | None = None, config: TextSplitterConfig | None = None):
-        settings = get_settings()
-        self.config = config or settings.splitter_config
-        self.type = splitter_type or settings.splitter_type.lower()
-
-    def __call__(self) -> TextSplitter:
-        splitter_class = {
-            TextSplitters.DUMMY: DummySplitter,
-            TextSplitters.HIERARCHICAL: HierarchicalSplitter,
-        }.get(self.type)
-        if splitter_class:
-            return splitter_class(self.config)
-        raise ValueError(
-            f"Invalid TextSplitter type: {self.type} - available : {', '.join([s.name for s in TextSplitters])}."
-        )
-
-
-get_text_splitter = TextSplitterDependency()
-
-
-async def get_db_session() -> AsyncIterator[AsyncSession]:
-    async with SessionLocal() as session:
+async def get_db_session(
+    settings: Settings = Depends(get_settings),
+) -> AsyncIterator[AsyncSession]:
+    async for session in create_session(settings):
         yield session
 
 

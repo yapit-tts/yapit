@@ -17,7 +17,6 @@ from yapit.contracts.redis_keys import (
     FILTER_INFLIGHT,
     FILTER_STATUS,
 )
-from yapit.gateway.db import SessionLocal
 from yapit.gateway.deps import AuthenticatedUser, CurrentDoc, DbSession, RedisClient, TextSplitterDep, get_doc
 from yapit.gateway.domain_models import Block, Document, Filter, FilterConfig
 from yapit.gateway.text_splitter import TextSplitter
@@ -140,58 +139,58 @@ async def _run_filter_job(
     config: dict[str, Any],
     splitter: TextSplitter,
     redis: Redis,
+    db: DbSession,
 ) -> None:
     status_key = FILTER_STATUS.format(document_id=document_id)
     cancel_key = FILTER_CANCEL.format(document_id=document_id)
     inflight_key = FILTER_INFLIGHT.format(document_id=document_id)
 
-    async with SessionLocal() as db:
+    try:
+        await redis.set(status_key, "running", ex=FILTER_STATUS_TTL)
+
+        doc = await get_doc(document_id, db)
+        text = doc.original_text
+
+        if await redis.exists(cancel_key):
+            await redis.set(status_key, "cancelled", ex=600)
+            return
+
+        async def _transform(txt: str) -> str:
+            for rule in config.get("regex_rules", []):
+                txt = re.compile(rule["pattern"]).sub(rule.get("replacement", ""), txt)
+            if config.get("llm"):
+                # TODO build LLM prompt from config + OpenAI API request
+                # TODO periodically check this (if parsing long docs in chunks (... stream progress?)
+                if await redis.exists(cancel_key):
+                    await redis.set(status_key, "cancelled", ex=FILTER_STATUS_TTL)
+                    raise asyncio.CancelledError
+                log.warning("LLM filter requested but not implemented – skipping")
+            return txt
+
         try:
-            await redis.set(status_key, "running", ex=FILTER_STATUS_TTL)
+            text = await asyncio.wait_for(_transform(text), timeout=TRANSFORM_TIMEOUT_S)
+        except asyncio.TimeoutError:
+            raise RuntimeError(f"transform exceeded {TRANSFORM_TIMEOUT_S}s")
 
-            doc = await get_doc(document_id, db)
-            text = doc.original_text
+        # threadpool worth the overhead for hierarchical splitter or more complex
+        text_blocks: list[str] = await run_in_threadpool(splitter.split, text=text)
 
-            if await redis.exists(cancel_key):
-                await redis.set(status_key, "cancelled", ex=600)
-                return
+        await db.exec(delete(Block).where(Block.document_id == document_id))  # replace old blocks
+        db.add_all(
+            [
+                Block(document_id=document_id, idx=i, text=blk, est_duration_ms=estimate_duration_ms(blk))
+                for i, blk in enumerate(text_blocks)
+            ]
+        )
 
-            async def _transform(txt: str) -> str:
-                for rule in config.get("regex_rules", []):
-                    txt = re.compile(rule["pattern"]).sub(rule.get("replacement", ""), txt)
-                if config.get("llm"):
-                    # TODO build LLM prompt from config + OpenAI API request
-                    # TODO periodically check this (if parsing long docs in chunks (... stream progress?)
-                    if await redis.exists(cancel_key):
-                        await redis.set(status_key, "cancelled", ex=FILTER_STATUS_TTL)
-                        raise asyncio.CancelledError
-                    log.warning("LLM filter requested but not implemented – skipping")
-                return txt
+        doc.filtered_text = text
+        doc.last_applied_filter_config = config
+        await db.commit()
 
-            try:
-                text = await asyncio.wait_for(_transform(text), timeout=TRANSFORM_TIMEOUT_S)
-            except asyncio.TimeoutError:
-                raise RuntimeError(f"transform exceeded {TRANSFORM_TIMEOUT_S}s")
-
-            # threadpool worth the overhead for hierarchical splitter or more complex
-            text_blocks: list[str] = await run_in_threadpool(splitter.split, text=text)
-
-            await db.exec(delete(Block).where(Block.document_id == document_id))  # replace old blocks
-            db.add_all(
-                [
-                    Block(document_id=document_id, idx=i, text=blk, est_duration_ms=estimate_duration_ms(blk))
-                    for i, blk in enumerate(text_blocks)
-                ]
-            )
-
-            doc.filtered_text = text
-            doc.last_applied_filter_config = config
-            await db.commit()
-
-            await redis.set(status_key, "done", ex=FILTER_DONE_TTL)
-        except Exception as exc:
-            log.exception(f"Error while filtering document {document_id}: {exc}")
-            await redis.set(status_key, f"error:{exc}", ex=FILTER_DONE_TTL)
-        finally:
-            await redis.delete(inflight_key)
-            await redis.delete(cancel_key)
+        await redis.set(status_key, "done", ex=FILTER_DONE_TTL)
+    except Exception as exc:
+        log.exception(f"Error while filtering document {document_id}: {exc}")
+        await redis.set(status_key, f"error:{exc}", ex=FILTER_DONE_TTL)
+    finally:
+        await redis.delete(inflight_key)
+        await redis.delete(cancel_key)

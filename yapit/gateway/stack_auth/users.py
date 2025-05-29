@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 import requests
 
 from yapit.gateway.stack_auth.api import build_headers
-from yapit.gateway.config import get_settings
+from yapit.gateway.config import Settings, get_settings
 
 
 # visible to the client
@@ -39,11 +39,9 @@ class User(BaseModel):
     server_metadata: UserServerMetadata | None = Field(default=None)
 
 
-async def get_user(access_token: str, user_id: str) -> User | None:
-    SETTINGS = get_settings()
-
-    url = f"{SETTINGS.stack_auth_api_host}/api/v1/users/{user_id}"
-    headers = build_headers(access_token=access_token)
+async def get_user(settings: Settings, access_token: str, user_id: str) -> User | None:
+    url = f"{settings.stack_auth_api_host}/api/v1/users/{user_id}"
+    headers = build_headers(settings, access_token=access_token)
 
     response = requests.get(url, headers=headers)
     response.raise_for_status()
@@ -52,5 +50,5 @@ async def get_user(access_token: str, user_id: str) -> User | None:
     return User.model_validate(obj=body)
 
 
-async def get_me(access_token: str) -> User | None:
-    return await get_user(access_token=access_token, user_id="me")
+async def get_me(settings: Settings, access_token: str) -> User | None:
+    return await get_user(settings, access_token=access_token, user_id="me")

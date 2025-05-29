@@ -36,6 +36,8 @@ services:
         condition: service_started
       postgres:
         condition: service_healthy
+      stack-auth:
+        condition: service_started
     restart: unless-stopped
     expose: ["8000"]
 
@@ -77,9 +79,15 @@ services:
     restart: unless-stopped
 
   stack-auth:
-    image: stackauth/server:latest
+    build:
+      dockerfile: ./docker/Dockerfile.stackauth
     restart: unless-stopped
     env_file: ./.env
+    # healthcheck:
+    #   test: ["CMD", "curl -f http://localhost:8101/health || exit 1 && curl -f http://localhost:8102/health || exit 1"]
+    #   interval: 3s
+    #   timeout: 3s
+    #   retries: 10
 
   # svix:
   #   image: svix/svix-server

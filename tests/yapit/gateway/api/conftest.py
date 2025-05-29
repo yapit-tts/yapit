@@ -1,28 +1,51 @@
-import time
-
+from fastapi import FastAPI
 import pytest
-import requests
+
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlmodel import SQLModel, StaticPool
+
+from yapit.gateway import create_app
+from yapit.gateway.auth import ANON_USER, authenticate
+from yapit.gateway.cache import CacheConfig, Caches
+from yapit.gateway.config import Settings, get_settings
+from yapit.gateway.deps import get_db_session
+from yapit.gateway.text_splitter import TextSplitterConfig, TextSplitters
 
 
-@pytest.fixture(scope="session")
-def gateway_url() -> str:
-    return "http://localhost:8000"
+@pytest.fixture
+async def app() -> FastAPI:
+    engine = create_async_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    async with engine.begin() as conn:
+        await conn.run_sync(SQLModel.metadata.create_all)
+    SessionLocal = async_sessionmaker(
+        engine,
+        expire_on_commit=False,
+        class_=AsyncSession,
+    )
 
+    async with SessionLocal() as session:
+        app = create_app()
+        app.dependency_overrides[authenticate] = lambda: ANON_USER
+        app.dependency_overrides[get_db_session] = lambda: session
 
-@pytest.fixture(scope="session")
-def ws_url(gateway_url: str) -> str:
-    return gateway_url.replace("http", "ws")
+        app.dependency_overrides[get_settings] = lambda: Settings(
+            sqlalchemy_echo=True,
+            db_auto_create=True,
+            db_seed=True,
+            database_url="sqlite://",
+            redis_url="",
+            cors_origins=["*"],
+            splitter_type=TextSplitters.HIERARCHICAL,
+            splitter_config=TextSplitterConfig(max_chars=1000),
+            audio_cache_type=Caches.NOOP,
+            audio_cache_config=CacheConfig(),
+            stack_auth_api_host="",
+            stack_auth_project_id="",
+            stack_auth_server_key="",
+        )
 
-
-@pytest.fixture(scope="session", autouse=True)
-def wait_until_gateway(gateway_url: str, timeout: int = 60) -> None:
-    """Block until GET /docs returns 200 or *timeout* seconds passed."""
-    t0 = time.time()
-    while time.time() - t0 < timeout:
-        try:
-            if requests.get(f"{gateway_url}/docs").status_code == 200:
-                return
-        except requests.exceptions.ConnectionError:
-            pass
-        time.sleep(1)
-    raise RuntimeError("Gateway did not come up in time")
+        return app

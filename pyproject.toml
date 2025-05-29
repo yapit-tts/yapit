@@ -71,3 +71,6 @@ Issues = "https://github.com/yapit-tts/yapit/issues"
 
 [tool.pyright]
 stubPath = "yapit/stubs"
+
+# [pytest]
+# asyncio_mode = "auto"

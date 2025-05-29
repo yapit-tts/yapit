@@ -1,8 +1,10 @@
 import logging
 import time
-from fastapi import HTTPException, Security, status
+from typing import Annotated
+from fastapi import Depends, HTTPException, Security, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from yapit.gateway.config import Settings, get_settings
 from yapit.gateway.stack_auth import User, get_me
 
 bearer = HTTPBearer(auto_error=False)
@@ -21,6 +23,7 @@ ANON_USER = User(
 
 
 async def authenticate(
+    settings: Annotated[Settings, Depends(get_settings)],
     creds: HTTPAuthorizationCredentials | None = Security(bearer),
 ) -> User:
     if creds is None:
@@ -30,7 +33,7 @@ async def authenticate(
             detail="not authenticated",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    user = await get_me(access_token=creds.credentials)
+    user = await get_me(settings, access_token=creds.credentials)
     if user is None:
         LOGGER.debug("no user returned")
         raise HTTPException(

@@ -7,8 +7,9 @@ from typing import Any
 
 from pydantic import BaseModel as PydanticModel, Field as PydanticField
 from sqlalchemy import UniqueConstraint
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlmodel import TEXT, Column, DateTime, Field, Relationship, SQLModel
+from sqlmodel import JSON, TEXT, Column, DateTime, Field, Relationship, SQLModel
 
 # NOTE: Forward annotations do not work with SQLModel
 
@@ -72,7 +73,13 @@ class Document(SQLModel, table=True):
 
     original_text: str = Field(sa_column=Column(TEXT))
     filtered_text: str | None = Field(default=None, sa_column=Column(TEXT, nullable=True))
-    last_applied_filter_config: dict | None = Field(default=None, sa_column=Column(JSONB, nullable=True))
+    last_applied_filter_config: dict | None = Field(
+        default=None,
+        sa_column=Column(
+            JSON().with_variant(postgresql.JSONB(), "postgresql"),
+            nullable=True,
+        ),
+    )
 
     created: datetime = Field(
         default_factory=lambda: datetime.now(tz=dt.UTC),
@@ -153,7 +160,12 @@ class Filter(SQLModel, table=True):
 
     name: str = Field(index=True)
     description: str | None = Field(default=None)
-    config: FilterConfig = Field(sa_column=Column(JSONB), default_factory=FilterConfig)
+    config: FilterConfig = Field(
+        sa_column=Column(
+            JSON().with_variant(postgresql.JSONB(), "postgresql"),
+        ),
+        default_factory=FilterConfig,
+    )
 
     created: datetime = Field(
         default_factory=lambda: datetime.now(tz=dt.UTC),

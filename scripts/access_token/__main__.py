@@ -3,14 +3,14 @@ import os
 
 from .stack_auth_cli_template import prompt_cli_login
 
-api_host = os.getenv("STACK_AUTH_API_HOST")
+api_host = os.getenv("SCRIPT_STACK_AUTH_API_HOST")
 if api_host is None:
-    print("Please specify STACK_AUTH_API_HOST")
+    print("Please specify SCRIPTSTACK_AUTH_API_HOST")
     os._exit(1)
 
-app_host = os.getenv("STACK_AUTH_APP_HOST")
+app_host = os.getenv("SCRIPT_STACK_AUTH_APP_HOST")
 if app_host is None:
-    print("Please specify STACK_AUTH_APP_HOST")
+    print("Please specify SCRIPT_STACK_AUTH_APP_HOST")
     os._exit(1)
 
 project_id = os.getenv("STACK_AUTH_PROJECT_ID")
