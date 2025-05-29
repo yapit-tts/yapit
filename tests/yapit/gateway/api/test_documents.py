@@ -6,10 +6,11 @@ from fastapi.testclient import TestClient
 import pytest
 
 
+@pytest.mark.asyncio
 async def test_create_document_and_paging(app: FastAPI):
-    text = "Sentence one. Sentence two."
-
     client = TestClient(app=app)
+
+    text = "Sentence one. Sentence two."
 
     r = client.post(
         "/v1/documents",

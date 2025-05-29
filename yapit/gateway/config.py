@@ -31,4 +31,9 @@ class Settings(BaseSettings):
     )
 
 
-def get_settings() -> Settings: ...
+def get_settings() -> Settings:
+    """This is only used for dependency references, see __init__.py:
+
+    app.dependency_overrides[get_settings] = lambda: Settings()  # type: ignore
+    """
+    ...

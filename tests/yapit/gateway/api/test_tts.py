@@ -1,14 +1,18 @@
 import time
 
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 import redis as _redis
 import requests
 import websocket
 
 
-def test_synthesize_route_only(wait_until_gateway, gateway_url: str, ws_url: str):
+def test_synthesize_route_only(app: FastAPI):
+    client = TestClient(app=app)
+
     # 1. create doc
-    doc = requests.post(
-        f"{gateway_url}/v1/documents",
+    doc = client.post(
+        f"/v1/documents",
         json={"source_type": "paste", "text_content": "Hello Yapit"},
         timeout=5,
     ).json()
@@ -17,8 +21,8 @@ def test_synthesize_route_only(wait_until_gateway, gateway_url: str, ws_url: str
     block_id = doc["blocks"][0]["id"]
 
     # 2. enqueue synthesis
-    synth = requests.post(
-        f"{gateway_url}/v1/documents/{document_id}/blocks/{block_id}/synthesize",
+    synth = client.post(
+        f"/v1/documents/{document_id}/blocks/{block_id}/synthesize",
         json={"model_slug": "kokoro", "voice_slug": "af_heart", "speed": 1.0},
         timeout=5,
     )
@@ -28,7 +32,7 @@ def test_synthesize_route_only(wait_until_gateway, gateway_url: str, ws_url: str
     assert {"variant_hash", "ws_url", "est_duration_ms"} <= j.keys()
 
     # 3. ensure WS endpoint accepts the handshake (no audio expected)
-    ws = websocket.create_connection(f"{ws_url}{j['ws_url']}", timeout=5)
+    ws = client.websocket_connect(j["ws_url"], timeout=5)
     ws.close()
 
 

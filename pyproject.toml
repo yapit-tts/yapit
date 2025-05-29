@@ -49,6 +49,7 @@ kokoro_gpu = [
 
 test = [
   "pytest~=8.3.5",
+  "pytest-asyncio==1.0.0",
   "requests~=2.32.3",
   "websocket-client~=1.8.0",
   "redis~=6.0.0",
@@ -72,5 +73,5 @@ Issues = "https://github.com/yapit-tts/yapit/issues"
 [tool.pyright]
 stubPath = "yapit/stubs"
 
-# [pytest]
-# asyncio_mode = "auto"
+[pytest]
+asyncio_mode = "auto"

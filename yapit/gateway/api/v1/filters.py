@@ -55,9 +55,9 @@ def validate_regex(
     body: FilterJobRequest,
     _: AuthenticatedUser,
 ) -> SimpleMessage:
-    for rule in (body.filter_config or {}).get("regex_rules", []):
+    for rule in (body.filter_config or FilterConfig()).regex_rules:
         try:
-            re.compile(rule["pattern"])
+            re.compile(rule.pattern)
         except re.error as exc:
             raise HTTPException(422, f"Invalid regex: {exc}") from exc
     return SimpleMessage(message="ok")
@@ -112,7 +112,10 @@ async def apply_filters(
 ) -> SimpleMessage:
     """Kick off (re-)filtering job for a document."""
     if not await redis.set(FILTER_INFLIGHT.format(document_id=document_id), 1, nx=True, ex=FILTER_LOCK_TTL):
-        raise HTTPException(409, "Filter job already in progress for this document.")
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Filter job already in progress for this document.",
+        )
 
     await redis.set(FILTER_STATUS.format(document_id=document_id), "pending", ex=FILTER_STATUS_TTL)
     bg.add_task(_run_filter_job, document_id=document_id, config=body.filter_config, splitter=splitter, redis=redis)

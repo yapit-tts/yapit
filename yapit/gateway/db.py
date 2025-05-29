@@ -101,6 +101,7 @@ async def _seed_db(settings: Settings) -> None:
     presets_json = Path(__file__).parent.parent / "data/default_filters.json"
     defaults = json.loads(presets_json.read_text())
     for p in defaults:
+        print(f"{p}")
         db.add(
             Filter(
                 name=p["name"],
