@@ -13,46 +13,6 @@
 - **Pay‑for‑What‑You‑Use**–1 credit ~ 1s audio (or 1 char?), per‑model multipliers.
 - **Metric‑Driven Iteration**–Short iteration cycle. Ship simple (but complex enough), measure, replace when pain shows.
 
-## 🏗️ High‑level Architecture
-
-```mermaid
-flowchart LR
-  FE["React SPA / TUI"] -- "REST + WS" --> GW["FastAPI Gateway"]
-  FE -- "WebGPU (free tier)" --> WE["Browser TTS Engine"]
-  GW -- "queue / pub sub" --> R["Redis"]
-  subgraph Workers
-    W1["Worker #1 (model = Kokoro)"]
-    W2["Worker #N (model = …)"]
-  end
-  Workers --- R
-  GW -- "SQLAlchemy" --> PG[(Postgres)]
-  GW -- "CacheBackend" --> S3[(S3 / MinIO)]
-  GW -- "verify JWT" --> AK["Authentik IdP"]
-  class FE,WE client;
-```
-*Workers can run on dedicated GPU/CPU hosts, pods or serverless runners (RunPod, Modal, Lambda) – only Redis connectivity is required.*
-
-## 🌐Public API(v1)
-
-See [OpenAPI](http://localhost:8000/docs) for details.
-
-## 🗄️Domain Data Model
-
-
-## 🗂️ Cache Strategy
-* **Key**–`sha256(model|voice|speed|text_block)`.
-* **Backends**
-  * `s3`→S3/MinIO, life‑cycle rule: expire *N* days after last access (start simple; upgrade to Redis‑driven LRU when metrics demand).
-  * `fs`→local directory (dev / on‑prem).
-  * `noop`→no server‑side storage; browser persists blocks in `indexedDB`.
-
-## 🔐 Auth
-* **Authentik** – single container OIDC/JWT, MFA, Google, GitHub, email+pwd.
-* Gateway verifies JWT once per request with `python‑jose`.
-
-## 💸 Billing
-* **Pluggable payment adapters** (`stripe`, `paypal`, …)
-
 ## 📋 High-level Roadmap
 1. **Gateway / Backend**
    1. API (wip)

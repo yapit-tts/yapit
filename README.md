@@ -12,3 +12,11 @@ password: yapit123
 ```
 
 > **The admin user can only be used to access the stack-auth dashboard. It's not an application user**
+
+### Access token
+
+```bash 
+source .venv/bin/activate
+make access-token
+```
+
