@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import AsyncGenerator, AsyncIterator
+from typing import AsyncIterator
 
 from alembic import command, config
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine

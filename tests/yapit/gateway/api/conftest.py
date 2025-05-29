@@ -1,7 +1,9 @@
 from fastapi import FastAPI
 import pytest
+import pytest_asyncio
 
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlmodel import SQLModel, StaticPool
 
 from yapit.gateway import create_app
@@ -12,10 +14,10 @@ from yapit.gateway.deps import get_db_session
 from yapit.gateway.text_splitter import TextSplitterConfig, TextSplitters
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def app() -> FastAPI:
     engine = create_async_engine(
-        "sqlite://",
+        "sqlite+aiosqlite://",
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
