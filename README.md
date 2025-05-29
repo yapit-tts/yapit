@@ -17,6 +17,7 @@ password: yapit123
 
 ```bash 
 source .venv/bin/activate
+pip install -e ".[gateway]"
 make access-token
 ```
 
