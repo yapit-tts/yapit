@@ -1,37 +1,53 @@
 import json
 from pathlib import Path
+from typing import AsyncIterator
 
 from alembic import command, config
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from yapit.gateway.config import ANON_USER, get_settings
+from yapit.gateway.config import Settings
 from yapit.gateway.domain_models import (
     Filter,
     TTSModel,
     Voice,
 )
 
-settings = get_settings()
-engine = create_async_engine(
-    settings.database_url,
-    echo=settings.sqlalchemy_echo,
-    pool_pre_ping=True,
-)
-SessionLocal = async_sessionmaker(
-    engine,
-    expire_on_commit=False,
-    class_=AsyncSession,
-)
+_engine: AsyncEngine | None = None
 
 
-async def prepare_database() -> None:
+def _get_engine(settings: Settings) -> AsyncEngine:
+    global _engine
+    if _engine is not None:
+        return _engine
+    _engine = create_async_engine(
+        settings.database_url,
+        echo=settings.sqlalchemy_echo,
+        pool_pre_ping=True,
+    )
+    return _engine
+
+
+async def create_session(settings: Settings) -> AsyncIterator[AsyncSession]:
+    engine = _get_engine(settings)
+
+    SessionLocal = async_sessionmaker(
+        engine,
+        expire_on_commit=False,
+        class_=AsyncSession,
+    )
+    async with SessionLocal() as session:
+        yield session
+
+
+async def prepare_database(settings: Settings) -> None:
     """Bring the schema to the requested state.
 
     - DEV (DB_AUTO_CREATE=1):   create missing tables on the fly
     - PROD (default):           run Alembic `upgrade head`
     """
+    engine = _get_engine(settings)
     if settings.db_auto_create:
         async with engine.begin() as conn:
             await conn.run_sync(SQLModel.metadata.create_all)
@@ -39,17 +55,19 @@ async def prepare_database() -> None:
         alembic_cfg = config.Config("alembic.ini")
         command.upgrade(alembic_cfg, "head")
     if settings.db_seed:
-        await _seed_db()
+        await _seed_db(settings)
 
 
 async def close_db() -> None:
-    await engine.dispose()
+    global _engine
+    if _engine is not None:
+        await _engine.dispose()
+        _engine = None
 
 
-async def _seed_db() -> None:
+async def _seed_db(settings: Settings) -> None:
     """Development seed – only runs on an empty DB."""
-    async with SessionLocal() as db:
-        db.add(ANON_USER)
+    async for db in create_session(settings):
         kokoro = TTSModel(
             slug="kokoro",
             name="Kokoro",
@@ -90,6 +108,8 @@ async def _seed_db() -> None:
                     name=p["name"],
                     description=p.get("description"),
                     config=p["config"],
+                    user_id=None,  # system filters
                 )
             )
         await db.commit()
+        break  # only iterate once

@@ -1,29 +1,27 @@
-from functools import lru_cache
-from pathlib import Path
-
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from yapit.gateway.cache import CacheConfig, Caches
-from yapit.gateway.domain_models import User
 from yapit.gateway.text_splitter import TextSplitterConfig, TextSplitters
-
-ANON_USER = User(id="anonymous_user", email="anon@example.com", tier="free")
 
 
 class Settings(BaseSettings):
-    sqlalchemy_echo: bool = False
-    db_auto_create: bool = False
-    db_seed: bool = False
+    sqlalchemy_echo: bool
+    db_auto_create: bool
+    db_seed: bool
 
-    database_url: str = "postgresql+asyncpg://yapit:yapit@postgres:5432/yapit"
-    redis_url: str = "redis://redis:6379/0"
-    cors_origins: list[str] = ["http://localhost:5173"]
+    database_url: str
+    redis_url: str
+    cors_origins: list[str]
 
-    cache_type: Caches = Caches.SQLITE
-    splitter_type: TextSplitters = TextSplitters.HIERARCHICAL
+    splitter_type: TextSplitters
+    splitter_config: TextSplitterConfig
 
-    splitter_config: TextSplitterConfig = TextSplitterConfig()
-    cache_config: CacheConfig = CacheConfig(path=Path(__file__).parent / "cache")
+    audio_cache_type: Caches
+    audio_cache_config: CacheConfig
+
+    stack_auth_api_host: str
+    stack_auth_project_id: str
+    stack_auth_server_key: str
 
     model_config = SettingsConfigDict(
         env_prefix="",
@@ -33,6 +31,9 @@ class Settings(BaseSettings):
     )
 
 
-@lru_cache  # singleton factory
-def get_settings() -> Settings:  # di-friendly wrapper
-    return Settings()
+def get_settings() -> Settings:
+    """This is only used for dependency references, see __init__.py:
+
+    app.dependency_overrides[get_settings] = lambda: Settings()  # type: ignore
+    """
+    ...

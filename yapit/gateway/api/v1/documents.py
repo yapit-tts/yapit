@@ -7,8 +7,8 @@ from pydantic import BaseModel, HttpUrl
 from sqlmodel import func, select
 from starlette.concurrency import run_in_threadpool
 
-from yapit.gateway.auth import get_current_user_id
-from yapit.gateway.deps import CurrentDoc, DbSession, TextSplitterDep
+from yapit.gateway.auth import User, authenticate
+from yapit.gateway.deps import AuthenticatedUser, CurrentDoc, DbSession, TextSplitterDep, get_doc
 from yapit.gateway.domain_models import Block, Document, SourceType
 from yapit.gateway.utils import estimate_duration_ms
 
@@ -61,7 +61,7 @@ async def create_document(
     req: DocumentCreateRequest,
     db: DbSession,
     splitter: TextSplitterDep,
-    user_id: str = Depends(get_current_user_id),
+    user: AuthenticatedUser,
 ) -> DocumentCreateResponse:
     """Create a new Document from pasted text.
 
@@ -92,7 +92,7 @@ async def create_document(
 
     # persist Document
     doc = Document(
-        user_id=user_id,
+        user_id=user.id,
         source_type=req.source_type,
         source_ref=req.source_ref,
         original_text=text,
@@ -128,7 +128,7 @@ async def create_document(
     )
 
 
-@router.get("/{document_id}/blocks", response_model=BlockPage)
+@router.get("/{document_id}/blocks", response_model=BlockPage, dependencies=[Depends(get_doc)])
 async def list_blocks(
     document_id: UUID,
     db: DbSession,
@@ -153,10 +153,7 @@ class DocumentMeta(BaseModel):
 
 
 @router.get("/{document_id}", response_model=DocumentMeta)
-async def read_document_meta(
-    document_id: UUID,
-    doc: CurrentDoc,
-) -> DocumentMeta:
+async def read_document_meta(doc: CurrentDoc) -> DocumentMeta:
     return DocumentMeta(
         document_id=doc.id,
         created=doc.created,

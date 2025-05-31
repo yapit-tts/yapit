@@ -25,14 +25,17 @@ gateway = [
   "asyncpg~=0.30.0",
   "orjson~=3.10.16",
   "pydantic-settings~=2.9.1",
-  "google-re2~=1.1.20240702"
+  "google-re2~=1.1.20240702",
+  "requests==2.32.3",
+  "svix==1.65.0",
+  "psycopg2-binary==2.9.10",
 ]
 
 # for worker Dockerfile
 kokoro_cpu = [
   "torch~=2.7.0", # --extra-index-url https://download.pytorch.org/whl/cpu in Dockerfile
   "kokoro~=0.9.4",
-  "spacy~=3.8.5",
+  "spacy~=3.8.4",
   "redis~=6.0.0",
   "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" # pre-install the spaCy model so the worker doesn't auto-download # TODO do we need to specify the exactl wheel?
 ]
@@ -40,16 +43,19 @@ kokoro_cpu = [
 kokoro_gpu = [
   "torch~=2.7.0",
   "kokoro~=0.9.4",
-  "spacy~=3.8.5",
+  "spacy~=3.8.4",
   "redis~=6.0.0",
   "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl"
 ]
 
 test = [
   "pytest~=8.3.5",
+  "pytest-asyncio==1.0.0",
   "requests~=2.32.3",
   "websocket-client~=1.8.0",
-  "redis~=5.2.1",
+  "redis~=6.0.0",
+  "aiosqlite==0.21.0",
+  "testcontainers==4.10.0"
 ]
 
 [build-system]
@@ -66,3 +72,10 @@ include = ["yapit*"]
 Repository = "https://github.com/yapit-tts/yapit/"
 Issues = "https://github.com/yapit-tts/yapit/issues"
 #Changelog = ""
+
+[tool.pyright]
+stubPath = "yapit/stubs"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"

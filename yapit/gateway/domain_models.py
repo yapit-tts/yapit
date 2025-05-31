@@ -5,30 +5,13 @@ from datetime import datetime
 from enum import StrEnum, auto
 from typing import Any
 
-from pydantic import BaseModel as PydanticModel
-from pydantic import Field as PydanticField
+from pydantic import BaseModel as PydanticModel, Field as PydanticField
 from sqlalchemy import UniqueConstraint
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlmodel import TEXT, Column, DateTime, Field, Relationship, SQLModel
+from sqlmodel import JSON, TEXT, Column, DateTime, Field, Relationship, SQLModel
 
 # NOTE: Forward annotations do not work with SQLModel
-
-
-class User(SQLModel, table=True):
-    """Platform user."""
-
-    id: str | None = Field(default=None, primary_key=True)
-    email: str
-    tier: str = Field(default="free")
-    created: datetime = Field(
-        default_factory=lambda: datetime.now(tz=dt.UTC),
-        sa_column=Column(DateTime(timezone=True)),
-    )
-
-    documents: list["Document"] = Relationship(
-        back_populates="user",
-        sa_relationship_kwargs={"cascade": "all, delete-orphan"},
-    )
 
 
 class TTSModel(SQLModel, table=True):
@@ -70,9 +53,7 @@ class Voice(SQLModel, table=True):
     model: TTSModel = Relationship(back_populates="voices")
     block_variants: list["BlockVariant"] = Relationship(back_populates="voice")
 
-    __table_args__ = (
-        UniqueConstraint('slug', 'model_id', name='unique_voice_per_model'),
-    )
+    __table_args__ = (UniqueConstraint("slug", "model_id", name="unique_voice_per_model"),)
 
 
 class SourceType(StrEnum):
@@ -83,7 +64,7 @@ class SourceType(StrEnum):
 
 class Document(SQLModel, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    user_id: str = Field(foreign_key="user.id")
+    user_id: str = Field()
 
     source_ref: str | None = Field(default=None)
     source_type: SourceType | None = Field(default=None)
@@ -92,14 +73,19 @@ class Document(SQLModel, table=True):
 
     original_text: str = Field(sa_column=Column(TEXT))
     filtered_text: str | None = Field(default=None, sa_column=Column(TEXT, nullable=True))
-    last_applied_filter_config: dict | None = Field(default=None, sa_column=Column(JSONB, nullable=True))
+    last_applied_filter_config: dict | None = Field(
+        default=None,
+        sa_column=Column(
+            JSON().with_variant(postgresql.JSONB(), "postgresql"),
+            nullable=True,
+        ),
+    )
 
     created: datetime = Field(
         default_factory=lambda: datetime.now(tz=dt.UTC),
         sa_column=Column(DateTime(timezone=True)),
     )
 
-    user: "User" = Relationship(back_populates="documents")
     blocks: list["Block"] = Relationship(
         back_populates="document", sa_relationship_kwargs={"cascade": "all, delete-orphan"}
     )
@@ -170,11 +156,16 @@ class Filter(SQLModel, table=True):
     """User or system defined reusable text filter configuration."""
 
     id: int | None = Field(default=None, primary_key=True)
-    user_id: str | None = Field(default=None, foreign_key="user.id", index=True)  # if null, readonly for non-admins
+    user_id: str | None = Field(default=None, index=True)  # if null, readonly for non-admins
 
     name: str = Field(index=True)
     description: str | None = Field(default=None)
-    config: FilterConfig = Field(sa_column=Column(JSONB), default_factory=FilterConfig)
+    config: FilterConfig = Field(
+        sa_column=Column(
+            JSON().with_variant(postgresql.JSONB(), "postgresql"),
+        ),
+        default_factory=FilterConfig,
+    )
 
     created: datetime = Field(
         default_factory=lambda: datetime.now(tz=dt.UTC),
@@ -184,5 +175,3 @@ class Filter(SQLModel, table=True):
         default_factory=lambda: datetime.now(tz=dt.UTC),
         sa_column=Column(DateTime(timezone=True)),
     )
-
-    user: "User" = Relationship(sa_relationship_kwargs={"lazy": "selectin"})

@@ -11,8 +11,6 @@ services:
       POSTGRES_DB:       ${POSTGRES_DB}
       POSTGRES_USER:     ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-    volumes:
-      - pgdata:/var/lib/postgresql/data
     healthcheck:
       test: [ "CMD", "pg_isready", "-U", "${POSTGRES_USER}" ]
       interval: 3s
@@ -38,6 +36,8 @@ services:
         condition: service_started
       postgres:
         condition: service_healthy
+      stack-auth:
+        condition: service_started
     restart: unless-stopped
     expose: ["8000"]
 
@@ -77,3 +77,19 @@ services:
               capabilities: [gpu]
     depends_on: [redis]
     restart: unless-stopped
+
+  stack-auth:
+    build:
+      dockerfile: ./docker/Dockerfile.stackauth
+    restart: unless-stopped
+    env_file: ./.env
+    # healthcheck:
+    #   test: ["CMD", "curl -f http://localhost:8101/health || exit 1 && curl -f http://localhost:8102/health || exit 1"]
+    #   interval: 3s
+    #   timeout: 3s
+    #   retries: 10
+
+  # svix:
+  #   image: svix/svix-server
+  #   restart: unless-stopped
+  #   env_file: ./.env

@@ -2,23 +2,31 @@ import asyncio
 import contextlib
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import ORJSONResponse
 
 from yapit.gateway.api.v1 import routers as v1_routers
 from yapit.gateway.cache_listener import run_cache_listener
-from yapit.gateway.config import get_settings
-from yapit.gateway.db import SessionLocal, close_db, prepare_database
+from yapit.gateway.config import Settings, get_settings
 from yapit.gateway.deps import get_audio_cache
 from yapit.gateway.redis_client import close_redis, get_redis
+from yapit.gateway.db import close_db, prepare_database
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await prepare_database()
+    settings = app.dependency_overrides[get_settings]()
+    assert isinstance(settings, Settings)
 
-    listener_task = asyncio.create_task(run_cache_listener(redis=await get_redis(), cache=get_audio_cache()))
+    await prepare_database(settings)
+
+    listener_task = asyncio.create_task(
+        run_cache_listener(
+            redis=await get_redis(settings),
+            cache=get_audio_cache(settings),
+        )
+    )
 
     yield
 
@@ -29,14 +37,18 @@ async def lifespan(app: FastAPI):
     await close_redis()
 
 
-def create_app() -> FastAPI:
-    settings = get_settings()
+def create_app(
+    settings: Settings = Settings(),  # type: ignore
+) -> FastAPI:
     app = FastAPI(
         title="Yapit Gateway",
         version="0.1.0",
         default_response_class=ORJSONResponse,
         lifespan=lifespan,
     )
+
+    app.dependency_overrides[get_settings] = lambda: settings
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,

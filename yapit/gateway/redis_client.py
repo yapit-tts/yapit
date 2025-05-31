@@ -1,13 +1,15 @@
+from typing import Annotated
+
 import redis.asyncio as redis
 from redis.asyncio import Redis
+from fastapi import Depends
 
-from yapit.gateway.config import get_settings
+from yapit.gateway.config import Settings, get_settings
 
-settings = get_settings()
 _redis: Redis | None = None
 
 
-async def get_redis() -> Redis:
+async def get_redis(settings: Annotated[Settings, Depends(get_settings)]) -> Redis:
     global _redis
     if _redis is None:
         _redis = await redis.from_url(settings.redis_url, decode_responses=False)
