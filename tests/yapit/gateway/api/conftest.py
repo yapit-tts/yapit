@@ -11,7 +11,7 @@ from yapit.gateway.cache import CacheConfig, Caches
 from yapit.gateway.config import Settings, get_settings
 from yapit.gateway.text_splitter import TextSplitterConfig, TextSplitters
 
-postgres = PostgresContainer("postgres:16-alpine")
+postgres = PostgresContainer("postgres:16-alpine", driver="asyncpg")
 redis = RedisContainer("redis:7-alpine")
 
 
@@ -25,6 +25,8 @@ async def app(request: FixtureRequest) -> FastAPI:
 
     app = create_app()
     app.dependency_overrides[authenticate] = lambda: ANON_USER
+
+    postgres.driver
 
     app.dependency_overrides[get_settings] = lambda: Settings(
         sqlalchemy_echo=True,
