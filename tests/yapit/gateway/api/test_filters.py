@@ -1,7 +1,7 @@
 import time
 
 from fastapi import FastAPI
-from fastapi.testclient import TestClient
+from httpx import AsyncClient, ASGITransport
 import pytest
 import requests
 
@@ -11,25 +11,23 @@ import requests
 
 @pytest.mark.asyncio
 async def test_validate_regex_ok(app: FastAPI):
-    client = TestClient(app=app)
-
-    body = {
-        "filter_config": {
-            "regex_rules": [{"pattern": r"foo", "replacement": ""}],
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        body = {
+            "filter_config": {
+                "regex_rules": [{"pattern": r"foo", "replacement": ""}],
+            }
         }
-    }
-    r = client.post(f"/v1/filters/validate", json=body, timeout=5)
-    assert r.status_code == 200, r.json()
-    assert r.json()["message"] == "ok"
+        r = await client.post(f"/v1/filters/validate", json=body)
+        assert r.status_code == 200, r.json()
+        assert r.json()["message"] == "ok"
 
 
 @pytest.mark.asyncio
 async def test_validate_regex_invalid(app: FastAPI):
-    client = TestClient(app=app)
-
-    body = {"filter_config": {"regex_rules": [{"pattern": "(", "replacement": ""}]}}
-    r = client.post(f"/v1/filters/validate", json=body, timeout=5)
-    assert r.status_code == 422, r.json()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        body = {"filter_config": {"regex_rules": [{"pattern": "(", "replacement": ""}]}}
+        r = await client.post(f"/v1/filters/validate", json=body)
+        assert r.status_code == 422, r.json()
 
 
 # end-to-end filter flow
@@ -69,7 +67,7 @@ async def test_validate_regex_invalid(app: FastAPI):
 #     assert "http" not in clean_text and "(" not in clean_text
 
 
-def _poll_status(client: TestClient, document_id: str, expect: str, timeout: float = 15.0) -> None:
+def _poll_status(client: AsyncClient, document_id: str, expect: str, timeout: float = 15.0) -> None:
     t0 = time.time()
     while time.time() - t0 < timeout:
         msg = client.get(f"/v1/documents/{document_id}/filter_status").json()["message"]
