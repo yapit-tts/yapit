@@ -38,6 +38,9 @@ jobs:
       - name: Create uv venv
         run: uv venv
 
+      - name: Install gateway dependencies
+        run: uv pip install ".[gateway]"
+
       - name: Install test dependencies
         run: uv pip install ".[test]"
 
