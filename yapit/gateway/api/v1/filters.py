@@ -1,4 +1,3 @@
-# gateway/api/v1/filters.py
 from __future__ import annotations
 
 import asyncio
