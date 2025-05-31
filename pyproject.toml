@@ -53,7 +53,8 @@ test = [
   "requests~=2.32.3",
   "websocket-client~=1.8.0",
   "redis~=6.0.0",
-  "aiosqlite==0.21.0"
+  "aiosqlite==0.21.0",
+  "testcontainers==4.10.0"
 ]
 
 [build-system]
