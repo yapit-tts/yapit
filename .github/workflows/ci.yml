@@ -38,11 +38,8 @@ jobs:
       - name: Create uv venv
         run: uv venv
 
-      - name: Install gateway dependencies
-        run: uv pip install ".[gateway]"
-
-      - name: Install test dependencies
-        run: uv pip install ".[test]"
+      - name: Install dependencies
+        run: uv pip install ".[gateway,test]"
 
       - name: Run tests
         run: uv run --no-sync pytest tests  # no-sync to prevent uv from trying to resolve all extra deps together
