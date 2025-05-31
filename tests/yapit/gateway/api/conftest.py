@@ -30,9 +30,6 @@ def redis_container():
 async def app(postgres_container, redis_container) -> FastAPI:
     # Clean up any existing database state
     await close_db()
-    
-    app = create_app()
-    app.dependency_overrides[authenticate] = lambda: ANON_USER
 
     settings = Settings(
         sqlalchemy_echo=True,
@@ -49,23 +46,25 @@ async def app(postgres_container, redis_container) -> FastAPI:
         stack_auth_project_id="",
         stack_auth_server_key="",
     )
-    
-    app.dependency_overrides[get_settings] = lambda: settings
-    
+
+    app = create_app(settings)
+    app.dependency_overrides[authenticate] = lambda: ANON_USER
+
     # Drop and recreate all tables to ensure clean state
     from yapit.gateway.db import _get_engine
     from sqlmodel import SQLModel
-    
+
     engine = _get_engine(settings)
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.drop_all)
         await conn.run_sync(SQLModel.metadata.create_all)
-    
+
     # Seed the database
     from yapit.gateway.db import _seed_db
+
     await _seed_db(settings)
 
     yield app
-    
+
     # Clean up
     await close_db()
