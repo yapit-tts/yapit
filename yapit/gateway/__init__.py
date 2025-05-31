@@ -37,18 +37,21 @@ async def lifespan(app: FastAPI):
     await close_redis()
 
 
-def create_app() -> FastAPI:
+def create_app(
+    settings: Settings = Settings(),  # type: ignore
+) -> FastAPI:
     app = FastAPI(
         title="Yapit Gateway",
         version="0.1.0",
         default_response_class=ORJSONResponse,
         lifespan=lifespan,
     )
-    app.dependency_overrides[get_settings] = lambda: Settings()  # type: ignore
+
+    app.dependency_overrides[get_settings] = lambda: settings
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:5173"],
+        allow_origins=settings.cors_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
