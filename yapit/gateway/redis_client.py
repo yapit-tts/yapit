@@ -1,7 +1,8 @@
+from typing import Annotated
+
 import redis.asyncio as redis
 from redis.asyncio import Redis
-from typing import Annotated  # Add this
-from fastapi import Depends  # Add this
+from fastapi import Depends
 
 from yapit.gateway.config import Settings, get_settings
 

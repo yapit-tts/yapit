@@ -23,8 +23,10 @@ from yapit.gateway.text_splitter import (
     TextSplitters,
 )
 
+SettingsDep = Annotated[Settings, Depends(get_settings)]
 
-def get_audio_cache(settings: Annotated[Settings, Depends(get_settings)]) -> Cache:
+
+def get_audio_cache(settings: SettingsDep) -> Cache:
     audio_cache_type = settings.audio_cache_type.lower()
     if audio_cache_type == Caches.NOOP.name.lower():
         return NoOpCache(settings.audio_cache_config)
@@ -34,7 +36,7 @@ def get_audio_cache(settings: Annotated[Settings, Depends(get_settings)]) -> Cac
         raise ValueError(f"Invalid audio cache type '{settings.audio_cache_type}' (noop, sqlite)")
 
 
-def get_text_splitter(settings: Annotated[Settings, Depends(get_settings)]) -> TextSplitter:
+def get_text_splitter(settings: SettingsDep) -> TextSplitter:
     splitter_type = settings.splitter_type.lower()
     if splitter_type == TextSplitters.DUMMY.name.lower():
         return DummySplitter(settings.splitter_config)

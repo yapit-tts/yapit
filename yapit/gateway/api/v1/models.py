@@ -1,9 +1,10 @@
 from typing import List
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlmodel import select
 
+from yapit.gateway.auth import authenticate
 from yapit.gateway.deps import AuthenticatedUser, CurrentTTSModel, DbSession
 from yapit.gateway.domain_models import TTSModel
 
@@ -27,10 +28,9 @@ class ModelRead(BaseModel):
     voices: list[VoiceRead] = []
 
 
-@router.get("", response_model=List[ModelRead])
+@router.get("", response_model=List[ModelRead], dependencies=[Depends(authenticate)])
 async def list_models(
     db: DbSession,
-    _: AuthenticatedUser,
 ) -> List[ModelRead]:
     """Get all available TTS models with their voices."""
     models = (await db.exec(select(TTSModel))).all()
@@ -56,10 +56,9 @@ async def list_models(
     ]
 
 
-@router.get("/{model_slug}", response_model=ModelRead)
+@router.get("/{model_slug}", response_model=ModelRead, dependencies=[Depends(authenticate)])
 async def read_model(
     model: CurrentTTSModel,
-    _: AuthenticatedUser,
 ) -> ModelRead:
     """Get a specific TTS model by slug."""
     return ModelRead(

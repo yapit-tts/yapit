@@ -18,9 +18,10 @@ from yapit.contracts.redis_keys import (
     FILTER_INFLIGHT,
     FILTER_STATUS,
 )
+from yapit.gateway.auth import authenticate
 from yapit.gateway.config import Settings, get_settings
 from yapit.gateway.db import create_session
-from yapit.gateway.deps import AuthenticatedUser, CurrentDoc, DbSession, RedisClient, TextSplitterDep
+from yapit.gateway.deps import AuthenticatedUser, CurrentDoc, DbSession, RedisClient, SettingsDep, TextSplitterDep
 from yapit.gateway.domain_models import Block, Document, Filter, FilterConfig
 from yapit.gateway.text_splitter import TextSplitter
 from yapit.gateway.utils import estimate_duration_ms
@@ -49,10 +50,9 @@ class FilterPresetRead(BaseModel):
     config: dict[str, Any]
 
 
-@router.post("/filters/validate", response_model=SimpleMessage)
+@router.post("/filters/validate", response_model=SimpleMessage, dependencies=[Depends(authenticate)])
 def validate_regex(
     body: FilterJobRequest,
-    _: AuthenticatedUser,
 ) -> SimpleMessage:
     for rule in (body.filter_config or FilterConfig()).regex_rules:
         try:
@@ -113,7 +113,7 @@ async def apply_filters(
     redis: RedisClient,
     splitter: TextSplitterDep,
     user: AuthenticatedUser,
-    resolved_settings_for_task: Annotated[Settings, Depends(get_settings)],
+    resolved_settings_for_task: SettingsDep,
 ) -> SimpleMessage:
     if not await redis.set(FILTER_INFLIGHT.format(document_id=document_id), 1, nx=True, ex=FILTER_LOCK_TTL):
         raise HTTPException(

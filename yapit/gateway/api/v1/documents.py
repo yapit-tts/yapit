@@ -8,7 +8,7 @@ from sqlmodel import func, select
 from starlette.concurrency import run_in_threadpool
 
 from yapit.gateway.auth import User, authenticate
-from yapit.gateway.deps import AuthenticatedUser, CurrentDoc, DbSession, TextSplitterDep
+from yapit.gateway.deps import AuthenticatedUser, CurrentDoc, DbSession, TextSplitterDep, get_doc
 from yapit.gateway.domain_models import Block, Document, SourceType
 from yapit.gateway.utils import estimate_duration_ms
 
@@ -128,10 +128,9 @@ async def create_document(
     )
 
 
-@router.get("/{document_id}/blocks", response_model=BlockPage)
+@router.get("/{document_id}/blocks", response_model=BlockPage, dependencies=[Depends(get_doc)])
 async def list_blocks(
     document_id: UUID,
-    __: CurrentDoc,
     db: DbSession,
     offset: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=100)] = 100,
