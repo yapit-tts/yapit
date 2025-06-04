@@ -1,3 +1,5 @@
+import os
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from yapit.gateway.cache import CacheConfig, Caches
@@ -25,7 +27,7 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(
         env_prefix="",
-        env_file=".env",
+        env_file=os.getenv("ENV_FILE", ".env"),
         extra="ignore",
         env_nested_delimiter="__",
     )

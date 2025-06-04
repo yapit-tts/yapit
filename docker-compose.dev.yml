@@ -1,6 +1,8 @@
 services:
   gateway:
     env_file: ./.env.dev
+    environment:
+      ENV_FILE: .env.dev
     ports:
       - "8000:8000"
   

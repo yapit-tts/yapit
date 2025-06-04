@@ -38,7 +38,7 @@ logs:
 test: test-unit test-integration
 
 test-unit:
-	uv run pytest tests --ignore=tests/integration
+	uv run --env-file=.env.dev pytest tests --ignore=tests/integration
 
 test-integration: dev-cpu
 	uv run --env-file=.env.dev pytest tests/integration -v
