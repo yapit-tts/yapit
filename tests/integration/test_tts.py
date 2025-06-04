@@ -2,24 +2,54 @@
 
 import asyncio
 import os
-import pytest
+
 import httpx
+import pytest
+import requests
+
+
+def get_dev_token():
+    """Get access token for dev user."""
+    api_host = "http://localhost:8102"
+    project_id = os.getenv("STACK_AUTH_PROJECT_ID")
+    client_key = os.getenv("STACK_AUTH_CLIENT_KEY")
+
+    if not project_id or not client_key:
+        raise RuntimeError("Missing STACK_AUTH_PROJECT_ID or STACK_AUTH_CLIENT_KEY")
+
+    # Sign in as dev user
+    headers = {
+        "X-Stack-Access-Type": "client",
+        "X-Stack-Project-Id": project_id,
+        "X-Stack-Publishable-Client-Key": client_key,
+    }
+
+    r = requests.post(
+        f"{api_host}/api/v1/auth/password/sign-in",
+        headers=headers,
+        json={
+            "email": "dev@example.com",
+            "password": "dev-password-123"
+        }
+    )
+
+    if r.status_code not in [200, 201]:
+        raise RuntimeError(f"Failed to sign in: {r.status_code} {r.text}")
+
+    return r.json()["access_token"]
 
 
 @pytest.mark.asyncio
-async def test_tts_generation_end_to_end():
+async def test_tts_integration():
     """Test complete TTS flow from document creation to audio retrieval.
-    
+
     Requires: gateway, postgres, redis, and kokoro worker running.
     """
-    # Use test token if available, otherwise no auth
-    headers = {}
-    test_token = os.getenv("TEST_AUTH_TOKEN")
-    if test_token:
-        headers["Authorization"] = f"Bearer {test_token}"
-    
+    # Get auth token
+    token = get_dev_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
     async with httpx.AsyncClient(base_url="http://localhost:8000", timeout=30.0, headers=headers) as client:
-        
         # Step 1: Create document
         doc_response = await client.post(
             "/v1/documents",
@@ -32,7 +62,7 @@ async def test_tts_generation_end_to_end():
         doc_data = doc_response.json()
         document_id = doc_data["document_id"]
         block_id = doc_data["blocks"][0]["id"]
-        
+
         # Step 2: Request synthesis
         synth_response = await client.post(
             f"/v1/documents/{document_id}/blocks/{block_id}/synthesize",
@@ -44,9 +74,8 @@ async def test_tts_generation_end_to_end():
         )
         assert synth_response.status_code == 201
         synth_data = synth_response.json()
-        variant_hash = synth_data["variant_hash"]
         audio_url = synth_data["audio_url"]
-        
+
         # Step 3: Get audio - retry a few times as synthesis takes time
         audio_response = None
         for attempt in range(10):
@@ -54,11 +83,10 @@ async def test_tts_generation_end_to_end():
             if audio_response.status_code == 200:
                 break
             await asyncio.sleep(1)
-        
+
         # Should get actual audio data
         assert audio_response.status_code == 200
         assert audio_response.headers["content-type"] == "audio/pcm"
         assert len(audio_response.content) > 0
-        
-        # Verify it's valid PCM data (not empty/all zeros)
+
         assert any(b != 0 for b in audio_response.content)

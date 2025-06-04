@@ -13,7 +13,7 @@ dev-cpu: down
 	--profile self-host \
 	up -d kokoro-cpu gateway redis postgres stack-auth --build --wait
 	@echo "Creating dev user..."
-	@bash -c "set -a && source .env.dev && set +a && uv run python scripts/create_dev_user.py"
+	uv run --env-file=.env.dev python scripts/create_dev_user.py
 
 dev-gpu: down
 	docker compose  -f docker-compose.yml -f docker-compose.dev.yml \
@@ -35,24 +35,13 @@ down:
 logs:
 	docker compose logs -f
 
-access-token:
-	@bash -c "set -a && source .env.dev && set +a && uv run python scripts/create_dev_user.py --print-token 2>/dev/null"
-
 test: test-unit test-integration
 
 test-unit:
 	uv run pytest tests --ignore=tests/integration
 
 test-integration: dev-cpu
-	@echo "Getting access token..."
-	@TOKEN=$(cd $(shell pwd) && bash -c "set -a && source .env.dev && set +a && uv run python scripts/create_dev_user.py --print-token 2>&1 | grep -E '^[a-zA-Z0-9_.-]+$' | tail -n 1") && \
-	if [ -z "$TOKEN" ]; then \
-		echo "Failed to get access token" >&2; \
-		exit 1; \
-	fi && \
-	echo "Token obtained (length: ${#TOKEN}), running tests..." && \
-	export TEST_AUTH_TOKEN="$TOKEN" && \
-	uv run pytest tests/integration -v
+	uv run --env-file=.env.dev pytest tests/integration -v
 
 lint:
 	uv run ruff check .

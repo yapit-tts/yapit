@@ -39,11 +39,10 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build cpu worker image, gateway
-        run: docker compose build --parallel kokoro-cpu gateway
+      - name: Build
+        run: make dev-cpu
 
       - name: Run integration tests
         run: |
           cp dev/init-db.sql docker/
           make test-integration
-
