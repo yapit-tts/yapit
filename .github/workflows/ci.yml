@@ -44,5 +44,5 @@ jobs:
 
       - name: Run integration tests
         run: |
-          cp dev/init-db.sql docker/
           make test-integration
+
