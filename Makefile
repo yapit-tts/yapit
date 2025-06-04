@@ -1,6 +1,4 @@
 
-# -------- build ------
-
 build:
 	docker compose build --parallel
 
@@ -9,8 +7,6 @@ build-cpu:
 
 build-gpu:
 	docker compose build kokoro-gpu --parallel
-
-# -------- runtime ------
 
 dev-cpu: down
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml \
@@ -36,27 +32,20 @@ down:
 logs:
 	docker compose logs -f
 
-# -------- repomix -------
+access-token:
+	uv run --env-file=.env scripts/acces_token.py
+
+test:
+	uv run pytest
+
+lint:
+	uv run ruff check .
+
+format:
+	uv run ruff format .
 
 repomix:
 	repomix -i "frontend/src/components/ui,.gitignore,**/*.data,**/*sql"
 
 repomix-backend:
 	repomix -i "frontend,.gitignore,**/*.data,**/*sql"
-
-access-token:
-	uv run --env-file=.env -m scripts.access_token
-
-# -------- development -------
-
-.PHONY: test
-test:
-	uv run pytest
-
-.PHONY: lint
-lint:
-	uv run ruff check .
-
-.PHONY: format
-format:
-	uv run ruff format .

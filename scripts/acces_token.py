@@ -1,3 +1,4 @@
+import os
 import time
 import urllib.parse
 import webbrowser
@@ -6,11 +7,11 @@ import requests
 
 
 def prompt_cli_login(
-    *,
-    base_url: str,
-    app_url: str,
-    project_id: str,
-    publishable_client_key: str,
+        *,
+        base_url: str,
+        app_url: str,
+        project_id: str,
+        publishable_client_key: str,
 ):
     if not app_url:
         raise Exception("app_url is required and must be set to the URL of the app you're authenticating with")
@@ -62,3 +63,40 @@ def prompt_cli_login(
         if status.json()["status"] == "success":
             return status.json()["refresh_token"]
         time.sleep(2)
+
+
+def get_access_token() -> str:
+    def get_env(name: str) -> str:
+        if (value := os.getenv(name)) is None:
+            raise ValueError(f"Please specify {name}")
+        print(f"{name}: '{value}'")
+        return value
+
+    api_host = get_env("SCRIPT_STACK_AUTH_API_HOST")
+    app_host = get_env("SCRIPT_STACK_AUTH_APP_HOST")
+    project_id = get_env("STACK_AUTH_PROJECT_ID")
+    publishable_client_key = get_env("STACK_AUTH_CLIENT_KEY")
+
+    refresh_token = prompt_cli_login(
+        base_url=api_host,
+        app_url=app_host,
+        project_id=project_id,
+        publishable_client_key=publishable_client_key,
+    )
+
+    if refresh_token is None:
+        raise RuntimeError("User cancelled the login process")
+
+    return requests.post(
+        f"{api_host}/api/v1/auth/sessions/current/refresh",
+        headers={
+            "x-stack-refresh-token": refresh_token,
+            "x-stack-project-id": project_id,
+            "x-stack-access-type": "client",
+            "x-stack-publishable-client-key": publishable_client_key,
+        },
+    ).json()["access_token"]
+
+
+if __name__ == '__main__':
+    print(f"ACCESS TOKEN: {get_access_token()}")
