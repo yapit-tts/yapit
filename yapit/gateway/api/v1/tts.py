@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, Field
 from sqlmodel import select
 
-from yapit.contracts.redis_keys import TTS_DONE, TTS_INFLIGHT, TTS_STREAM
+from yapit.contracts.redis_keys import TTS_AUDIO, TTS_DONE, TTS_INFLIGHT
 from yapit.contracts.synthesis import SynthesisJob, get_job_queue_name
 from yapit.gateway.auth import authenticate
 from yapit.gateway.deps import (
@@ -40,7 +41,7 @@ class SynthRequest(BaseModel):
 
 class SynthEnqueued(BaseModel):
     variant_hash: str
-    ws_url: str
+    audio_url: str
     codec: str
     sample_rate: int
     channels: int
@@ -49,7 +50,12 @@ class SynthEnqueued(BaseModel):
     duration_ms: int | None = Field(default=None, description="Actual duration in ms")
 
 
-@router.post("/documents/{document_id}/blocks/{block_id}/synthesize", response_model=SynthEnqueued, status_code=201, dependencies=[Depends(authenticate)])
+@router.post(
+    "/documents/{document_id}/blocks/{block_id}/synthesize",
+    response_model=SynthEnqueued,
+    status_code=201,
+    dependencies=[Depends(authenticate)],
+)
 async def enqueue_synthesis(
     document_id: UUID,
     block_id: int,
@@ -62,7 +68,6 @@ async def enqueue_synthesis(
     cache: AudioCache,
 ) -> SynthEnqueued:
     """Return cached audio or queue a new synthesis job."""
-
     served_codec = model.native_codec  # TODO change to "opus" once workers transcode
     variant_hash = BlockVariant.get_hash(
         text=block.text,
@@ -89,7 +94,7 @@ async def enqueue_synthesis(
 
     response = SynthEnqueued(
         variant_hash=variant.hash,
-        ws_url=f"/v1/documents/{document_id}/blocks/{block_id}/variants/{variant.hash}/stream",
+        audio_url=f"/v1/documents/{document_id}/blocks/{block_id}/variants/{variant.hash}/audio",
         duration_ms=variant.duration_ms,  # None if not cached
         est_duration_ms=estimate_duration_ms(text=block.text, speed=body.speed),
         codec=served_codec,
@@ -113,22 +118,21 @@ async def enqueue_synthesis(
     return response
 
 
-@router.websocket("/documents/{document_id}/blocks/{block_id}/variants/{variant_hash}/stream", dependencies=[Depends(authenticate)])
-async def stream_audio(
+@router.get(
+    "/documents/{document_id}/blocks/{block_id}/variants/{variant_hash}/audio", dependencies=[Depends(authenticate)]
+)
+async def get_audio(
     variant_hash: str,
-    ws: WebSocket,
-    db: DbSession,
     block: CurrentBlock,
     variant: CurrentBlockVariant,
     cache: AudioCache,
     redis: RedisClient,
-) -> None:
-    """Proxy worker-published chunks Redis → WebSocket."""
-    await ws.accept()
-
+    db: DbSession,
+) -> Response:
+    """Return synthesized audio data via HTTP."""
     if variant.block_id != block.id:
         # Variant already exists for a DIFFERENT block (maybe in another doc).
-        # Link it to this block so we don’t re-synthesise identical audio.
+        # Link it to this block so we don't re-synthesise identical audio.
         # SECURITY: caller is already authorised for document_id/block_id. This still leaks the *existence* of the hash;
         # -> partition the cache by tenant/user or include that scope in the hash if it becomes a concern
         await db.merge(
@@ -145,29 +149,38 @@ async def stream_audio(
         )
         await db.commit()
 
-    # cached? send it
+    # Check cache first
     data = await cache.retrieve_data(variant_hash)
     if data is not None:
-        for i in range(0, len(data), CHUNK_SIZE):
-            await ws.send_bytes(data[i : i + CHUNK_SIZE])
-        await ws.close()
-        return
-    # not cached, subscribe to redis
-    pubsub = redis.pubsub()
-    await pubsub.subscribe(
-        TTS_STREAM.format(hash=variant_hash),
-        TTS_DONE.format(hash=variant_hash),
+        return Response(content=data, media_type=f"audio/{variant.codec}")
+
+    # Check Redis for cached audio
+    data = await redis.get(TTS_AUDIO.format(hash=variant_hash))
+    if data is not None:
+        return Response(content=data, media_type=f"audio/{variant.codec}")
+
+    # Wait for synthesis to complete
+    max_wait_time = 60  # seconds
+    poll_interval = 0.5
+    elapsed = 0
+
+    while elapsed < max_wait_time:
+        # Check if synthesis is complete
+        if not await redis.exists(TTS_INFLIGHT.format(hash=variant_hash)):
+            # Try to get the audio again
+            data = await redis.get(TTS_AUDIO.format(hash=variant_hash))
+            if data is not None:
+                return Response(content=data, media_type=f"audio/{variant.codec}")
+
+            # Also check cache in case it was stored there
+            data = await cache.retrieve_data(variant_hash)
+            if data is not None:
+                return Response(content=data, media_type=f"audio/{variant.codec}")
+
+        await asyncio.sleep(poll_interval)
+        elapsed += poll_interval
+
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="Audio synthesis is taking too long. Please try again later.",
     )
-    try:
-        async for msg in pubsub.listen():
-            if msg["type"] != "message":
-                continue
-            if msg["channel"].decode().endswith(":stream"):
-                await ws.send_bytes(msg["data"])
-            else:  # :done
-                await ws.close()
-                break
-    except WebSocketDisconnect:
-        pass
-    finally:
-        await pubsub.close()

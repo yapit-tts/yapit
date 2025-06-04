@@ -2,7 +2,6 @@ from typing import Final
 
 TTS_AUDIO: Final[str] = "tts:audio:{hash}"  # raw PCM/Opus bytes for a fully rendered block
 TTS_DONE: Final[str] = "tts:{hash}:done"  # pubsub stream for completion notification
-TTS_STREAM: Final[str] = "tts:{hash}:stream"  # pubsub channel for streaming audio
 TTS_INFLIGHT: Final[str] = "tts:inflight:{hash}"  # redis NX lock
 
 # one filter-job per document -- keyed by document_id.

@@ -5,7 +5,8 @@ from datetime import datetime
 from enum import StrEnum, auto
 from typing import Any
 
-from pydantic import BaseModel as PydanticModel, Field as PydanticField
+from pydantic import BaseModel as PydanticModel
+from pydantic import Field as PydanticField
 from sqlalchemy import UniqueConstraint
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.dialects.postgresql import JSONB

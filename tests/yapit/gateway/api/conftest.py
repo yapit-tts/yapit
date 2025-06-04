@@ -1,8 +1,6 @@
-from fastapi import FastAPI
-from pytest import FixtureRequest
 import pytest
 import pytest_asyncio
-
+from fastapi import FastAPI
 from testcontainers.postgres import PostgresContainer
 from testcontainers.redis import RedisContainer
 
@@ -10,8 +8,9 @@ from yapit.gateway import create_app
 from yapit.gateway.auth import ANON_USER, authenticate
 from yapit.gateway.cache import CacheConfig, Caches
 from yapit.gateway.config import Settings, get_settings
+from yapit.gateway.db import close_db
+from yapit.gateway.redis_client import create_redis_client
 from yapit.gateway.text_splitter import TextSplitterConfig, TextSplitters
-from yapit.gateway.db import prepare_database, close_db
 
 
 @pytest.fixture(scope="session")
@@ -50,31 +49,18 @@ async def app(postgres_container, redis_container) -> FastAPI:
     app = create_app(settings)
     app.dependency_overrides[authenticate] = lambda: ANON_USER
 
-    # Drop and recreate all tables to ensure clean state
-    from yapit.gateway.db import _get_engine
-    from sqlmodel import SQLModel
+    async with app.router.lifespan_context(app) as lifespan_state:
+        yield app
 
-    engine = _get_engine(settings)
-    async with engine.begin() as conn:
-        await conn.run_sync(SQLModel.metadata.drop_all)
-        await conn.run_sync(SQLModel.metadata.create_all)
-
-    # Seed the database
-    from yapit.gateway.db import _seed_db
-
-    await _seed_db(settings)
-
-    yield app
-
-    # Clean up
     await close_db()
 
 
 @pytest_asyncio.fixture
 async def redis_client(app: FastAPI):
-    """Get a Redis client for tests."""
-    from redis.asyncio import Redis
+    """Get a SEPARATE Redis client for tests to interact with Redis directly."""
     settings = app.dependency_overrides[get_settings]()
-    redis = Redis.from_url(settings.redis_url)
-    yield redis
-    await redis.close()
+    test_redis = await create_redis_client(settings)
+    try:
+        yield test_redis
+    finally:
+        await test_redis.aclose()

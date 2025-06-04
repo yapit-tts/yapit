@@ -6,7 +6,7 @@ from yapit.gateway.text_splitter import TextSplitterConfig, TextSplitters
 
 class Settings(BaseSettings):
     sqlalchemy_echo: bool
-    db_auto_create: bool
+    db_auto_create: bool  # If True: drops all tables and recreates (dev mode). TODO: rename to db_drop_and_recreate
     db_seed: bool
 
     database_url: str

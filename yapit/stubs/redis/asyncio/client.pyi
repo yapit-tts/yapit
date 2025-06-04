@@ -1,4 +1,5 @@
 from typing import Awaitable
+
 from redis.client import AbstractRedis
 from redis.commands.core import AsyncCoreCommands
 from redis.commands.redismodules import AsyncRedisModuleCommands

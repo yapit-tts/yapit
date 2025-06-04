@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Annotated, AsyncIterator, Callable
 from uuid import UUID
 
-from fastapi import Body, Depends, HTTPException, status
+from fastapi import Body, Depends, HTTPException, Request, status
 from redis.asyncio import Redis
 from sqlalchemy.orm import selectinload
 from sqlmodel import select
@@ -14,7 +14,7 @@ from yapit.gateway.cache import Cache, CacheConfig, Caches, NoOpCache, SqliteCac
 from yapit.gateway.config import Settings, get_settings
 from yapit.gateway.db import create_session
 from yapit.gateway.domain_models import Block, BlockVariant, Document, TTSModel, Voice
-from yapit.gateway.redis_client import get_redis
+from yapit.gateway.redis_client import get_app_redis_client, get_redis
 from yapit.gateway.stack_auth.users import User
 from yapit.gateway.text_splitter import (
     DummySplitter,
@@ -165,7 +165,7 @@ async def get_block_variant(
     return variant
 
 
-RedisClient = Annotated[Redis, Depends(get_redis)]
+RedisClient = Annotated[Redis, Depends(get_app_redis_client)]
 AudioCache = Annotated[Cache, Depends(get_audio_cache)]
 TextSplitterDep = Annotated[TextSplitter, Depends(get_text_splitter)]
 CurrentDoc = Annotated[Document, Depends(get_doc)]

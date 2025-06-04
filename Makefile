@@ -39,10 +39,24 @@ logs:
 # -------- repomix -------
 
 repomix:
-	repomix -i "frontend/src/components/ui,.gitignore,**/*.data"
+	repomix -i "frontend/src/components/ui,.gitignore,**/*.data,**/*sql"
 
 repomix-backend:
-	repomix -i "frontend,.gitignore,**/*.data"
+	repomix -i "frontend,.gitignore,**/*.data,**/*sql"
 
 access-token:
 	uv run --env-file=.env -m scripts.access_token
+
+# -------- development -------
+
+.PHONY: test
+test:
+	uv run pytest
+
+.PHONY: lint
+lint:
+	uv run ruff check .
+
+.PHONY: format
+format:
+	uv run ruff format .

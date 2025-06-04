@@ -1,5 +1,6 @@
-import requests
 import os
+
+import requests
 
 from .stack_auth_cli_template import prompt_cli_login
 

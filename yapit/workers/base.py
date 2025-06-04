@@ -53,7 +53,6 @@ class SynthAdapter(ABC):
             speed=job.speed,
         ):
             pcm.extend(chunk)
-            await r.publish(job.stream_channel, chunk)
         await r.set(TTS_AUDIO.format(hash=job.variant_hash), bytes(pcm), ex=3600)
         dur_ms = int(len(pcm) / (self.sample_rate * self.channels * self.sample_width) * 1000)
         await r.publish(job.done_channel, json.dumps({"duration_ms": dur_ms}))

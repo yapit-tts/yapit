@@ -1,7 +1,8 @@
 import time
-import requests
-import webbrowser
 import urllib.parse
+import webbrowser
+
+import requests
 
 
 def prompt_cli_login(
