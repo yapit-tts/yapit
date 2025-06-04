@@ -99,4 +99,4 @@ def get_access_token() -> str:
 
 
 if __name__ == '__main__':
-    print(f"ACCESS TOKEN: {get_access_token()}")
+    print(f"ACCESS TOKEN: {get_access_token().replace("\n", "")}")

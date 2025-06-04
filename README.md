@@ -15,9 +15,12 @@ password: yapit123
 
 ### Access token
 
-```bash 
-source .venv/bin/activate
-pip install -e ".[gateway]"
-make access-token
+First:
+```bash
+cd frontend && npm install && npm run dev
 ```
 
+Then:
+```bash 
+make access-token
+```
