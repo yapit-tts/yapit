@@ -27,10 +27,7 @@ def get_dev_token():
     r = requests.post(
         f"{api_host}/api/v1/auth/password/sign-in",
         headers=headers,
-        json={
-            "email": "dev@example.com",
-            "password": "dev-password-123"
-        }
+        json={"email": "dev@example.com", "password": "dev-password-123"},
     )
 
     if r.status_code not in [200, 201]:
@@ -52,11 +49,7 @@ async def test_tts_integration():
     async with httpx.AsyncClient(base_url="http://localhost:8000", timeout=30.0, headers=headers) as client:
         # Step 1: Create document
         doc_response = await client.post(
-            "/v1/documents",
-            json={
-                "source_type": "paste",
-                "text_content": "Hello integration test!"
-            }
+            "/v1/documents", json={"source_type": "paste", "text_content": "Hello integration test!"}
         )
         assert doc_response.status_code == 201
         doc_data = doc_response.json()
@@ -66,11 +59,7 @@ async def test_tts_integration():
         # Step 2: Request synthesis
         synth_response = await client.post(
             f"/v1/documents/{document_id}/blocks/{block_id}/synthesize",
-            json={
-                "model_slug": "kokoro",
-                "voice_slug": "af_heart",
-                "speed": 1.0
-            }
+            json={"model_slug": "kokoro", "voice_slug": "af_heart", "speed": 1.0},
         )
         assert synth_response.status_code == 201
         synth_data = synth_response.json()

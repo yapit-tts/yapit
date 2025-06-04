@@ -4,6 +4,7 @@
 import os
 import sys
 import time
+
 import requests
 
 
@@ -61,7 +62,7 @@ def create_dev_user():
             "primary_email_verified": True,
             "primary_email_auth_enabled": True,
             "display_name": "Dev User",
-        }
+        },
     )
 
     if r.status_code in [200, 201]:

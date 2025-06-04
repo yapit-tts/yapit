@@ -47,7 +47,7 @@ def get_text_splitter(settings: SettingsDep) -> TextSplitter:
 
 
 async def get_db_session(
-        settings: Settings = Depends(get_settings),
+    settings: Settings = Depends(get_settings),
 ) -> AsyncIterator[AsyncSession]:
     async for session in create_session(settings):
         yield session
@@ -57,9 +57,9 @@ DbSession = Annotated[AsyncSession, Depends(get_db_session)]
 
 
 async def get_doc(
-        document_id: UUID,
-        db: DbSession,
-        user: AuthenticatedUser,
+    document_id: UUID,
+    db: DbSession,
+    user: AuthenticatedUser,
 ) -> Document:
     doc: Document | None = await db.get(Document, document_id)
     if not doc:
@@ -78,8 +78,8 @@ def _get_param_extractor(name: str) -> Callable:
     """Helper to return a FastAPI dependency that fetches `name` from path/query or JSON."""
 
     async def extract(
-            value: str | None = None,  # from url path or query parameter
-            body: dict | None = Body(None),  # from already-parsed JSON
+        value: str | None = None,  # from url path or query parameter
+        body: dict | None = Body(None),  # from already-parsed JSON
     ) -> str:
         if value:
             return value
@@ -96,8 +96,8 @@ VoiceSlug = Annotated[str, Depends(_get_param_extractor("voice_slug"))]
 
 
 async def get_model(
-        db: DbSession,
-        slug: ModelSlug,
+    db: DbSession,
+    slug: ModelSlug,
 ) -> TTSModel:
     model: TTSModel | None = (await db.exec(select(TTSModel).where(TTSModel.slug == slug))).first()
     if not model:
@@ -109,9 +109,9 @@ CurrentTTSModel = Annotated[TTSModel, Depends(get_model)]
 
 
 async def get_voice(
-        db: DbSession,
-        model_slug: ModelSlug,
-        voice_slug: VoiceSlug,
+    db: DbSession,
+    model_slug: ModelSlug,
+    voice_slug: VoiceSlug,
 ) -> Voice:
     voice: Voice | None = (
         await db.exec(select(Voice).join(TTSModel).where(Voice.slug == voice_slug, TTSModel.slug == model_slug))
@@ -122,10 +122,10 @@ async def get_voice(
 
 
 async def get_block(
-        document_id: UUID,
-        block_id: int,
-        db: DbSession,
-        user: AuthenticatedUser,
+    document_id: UUID,
+    block_id: int,
+    db: DbSession,
+    user: AuthenticatedUser,
 ) -> Block:
     block: Block | None = await db.get(
         Block,
@@ -145,16 +145,14 @@ async def get_block(
 
 
 async def get_block_variant(
-        variant_hash: str,
-        db: DbSession,
-        user: AuthenticatedUser,
+    variant_hash: str,
+    db: DbSession,
+    user: AuthenticatedUser,
 ) -> BlockVariant:
     variant: BlockVariant | None = await db.get(
         BlockVariant,
         variant_hash,
-        options=[
-            selectinload(BlockVariant.block).selectinload(Block.document)
-        ],
+        options=[selectinload(BlockVariant.block).selectinload(Block.document)],
     )
     if not variant:
         raise HTTPException(

@@ -46,7 +46,7 @@ async def lifespan(app: FastAPI):
 
 
 def create_app(
-        settings: Settings = Settings(),  # type: ignore
+    settings: Settings = Settings(),  # type: ignore
 ) -> FastAPI:
     app = FastAPI(
         title="Yapit Gateway",
