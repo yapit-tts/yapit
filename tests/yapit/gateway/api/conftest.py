@@ -68,3 +68,13 @@ async def app(postgres_container, redis_container) -> FastAPI:
 
     # Clean up
     await close_db()
+
+
+@pytest_asyncio.fixture
+async def redis_client(app: FastAPI):
+    """Get a Redis client for tests."""
+    from redis.asyncio import Redis
+    settings = app.dependency_overrides[get_settings]()
+    redis = Redis.from_url(settings.redis_url)
+    yield redis
+    await redis.close()
