@@ -1,3 +1,4 @@
+.env.prod
 *repomix*.xml
 *.wav
 *.mp3
