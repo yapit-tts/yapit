@@ -2,7 +2,7 @@ import asyncio
 import contextlib
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import ORJSONResponse
 
@@ -46,7 +46,7 @@ async def lifespan(app: FastAPI):
 
 
 def create_app(
-    settings: Settings = Settings(),  # type: ignore
+        settings: Settings = Settings(),  # type: ignore
 ) -> FastAPI:
     app = FastAPI(
         title="Yapit Gateway",
@@ -66,6 +66,11 @@ def create_app(
     )
     for r in v1_routers:
         app.include_router(r)
+
+    @app.get("/health")
+    async def health():
+        return {"status": "ok"}
+
     return app
 
 

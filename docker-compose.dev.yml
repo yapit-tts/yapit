@@ -1,14 +1,25 @@
 services:
   gateway:
+    env_file: ./.env.dev
     ports:
       - "8000:8000"
-  redis:
-    ports:
-      - "6379:6379"
+  
+  kokoro-cpu:
+    env_file: ./.env.dev
+  
+  kokoro-gpu:
+    env_file: ./.env.dev
+    
   stack-auth:
+    env_file: ./.env.dev
     ports:
       - "8101:8101"
       - "8102:8102"
+      
+  redis:
+    ports:
+      - "6379:6379"
+      
   postgres:
     volumes:
       - "./dev/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql"

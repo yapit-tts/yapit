@@ -7,22 +7,19 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, Field
 from sqlmodel import select
 
-from yapit.contracts.redis_keys import TTS_AUDIO, TTS_DONE, TTS_INFLIGHT
+from yapit.contracts.redis_keys import TTS_AUDIO, TTS_INFLIGHT
 from yapit.contracts.synthesis import SynthesisJob, get_job_queue_name
 from yapit.gateway.auth import authenticate
 from yapit.gateway.deps import (
     AudioCache,
-    AuthenticatedUser,
     CurrentBlock,
     CurrentBlockVariant,
     CurrentTTSModel,
     CurrentVoice,
     DbSession,
     RedisClient,
-    get_model,
-    get_voice,
 )
-from yapit.gateway.domain_models import BlockVariant, TTSModel, Voice
+from yapit.gateway.domain_models import BlockVariant
 from yapit.gateway.utils import estimate_duration_ms
 
 router = APIRouter(prefix="/v1", tags=["synthesis"])

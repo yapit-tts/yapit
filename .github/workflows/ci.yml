@@ -20,14 +20,6 @@ jobs:
       - name: Lint
         uses: astral-sh/ruff-action@v3
 
-      - name: Prepare .env
-        run: cp .env.dev.example .env
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      # - name: Build cpu worker image, gateway
-      #   run: docker compose build --parallel kokoro-cpu gateway
 
       - name: Install uv & Python
         uses: astral-sh/setup-uv@v5
@@ -41,5 +33,17 @@ jobs:
       - name: Install dependencies
         run: uv pip install ".[gateway,test]"
 
-      - name: Run tests
-        run: uv run --no-sync pytest tests  # no-sync to prevent uv from trying to resolve all extra deps together
+      - name: Run unit tests
+        run: uv run --no-sync pytest tests --ignore=tests/integration  # no-sync to prevent uv from trying to resolve all extra deps together
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build cpu worker image, gateway
+        run: docker compose build --parallel kokoro-cpu gateway
+
+      - name: Run integration tests
+        run: |
+          cp dev/init-db.sql docker/
+          make test-integration
+

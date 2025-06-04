@@ -30,7 +30,7 @@ services:
       context: .
       dockerfile: yapit/gateway/Dockerfile
     env_file:
-      - ./.env
+      - ./.env.prod
     depends_on:
       redis:
         condition: service_started
@@ -40,6 +40,11 @@ services:
         condition: service_started
     restart: unless-stopped
     expose: ["8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
 
   # -------- kokoro workers for local model serving
   kokoro-cpu:
@@ -49,7 +54,7 @@ services:
     build:
       context: .
       dockerfile: yapit/workers/kokoro/Dockerfile.cpu
-    env_file: ./.env
+    env_file: ./.env.prod
     environment:
       TTS_BACKENDS: kokoro
       DEVICE:       cpu
@@ -64,7 +69,7 @@ services:
     build:
       context: .
       dockerfile: yapit/workers/kokoro/Dockerfile.gpu
-    env_file: ./.env
+    env_file: ./.env.prod
     environment:
       TTS_BACKENDS: kokoro
       DEVICE:       cuda
@@ -82,14 +87,16 @@ services:
     build:
       dockerfile: ./docker/Dockerfile.stackauth
     restart: unless-stopped
-    env_file: ./.env
-    # healthcheck:
-    #   test: ["CMD", "curl -f http://localhost:8101/health || exit 1 && curl -f http://localhost:8102/health || exit 1"]
-    #   interval: 3s
-    #   timeout: 3s
-    #   retries: 10
+    env_file: ./.env.prod
+    healthcheck:
+       test: ["CMD-SHELL",
+         "curl -fs http://localhost:8101/health && \
+          curl -fs http://localhost:8102/health"]
+       interval: 3s
+       timeout: 3s
+       retries: 10
 
   # svix:
   #   image: svix/svix-server
   #   restart: unless-stopped
-  #   env_file: ./.env
+  #   env_file: ./.env.prod
