@@ -39,6 +39,9 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Create empty .env.prod for Docker Compose
+        run: touch .env.prod
+
       - name: Build
         run: make dev-cpu
 
