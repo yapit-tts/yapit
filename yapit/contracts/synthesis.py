@@ -3,7 +3,7 @@ from typing import Final
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field
 
-from yapit.contracts.redis_keys import TTS_DONE, TTS_STREAM
+from yapit.contracts.redis_keys import TTS_DONE
 
 _JOB_QUEUE_PREFIX: Final[str] = "tts:jobs"
 
@@ -29,11 +29,6 @@ class SynthesisJob(BaseModel):
     codec: str
 
     model_config = ConfigDict(frozen=True)
-
-    @computed_field
-    @property
-    def stream_channel(self) -> str:
-        return TTS_STREAM.format(hash=self.variant_hash)
 
     @computed_field
     @property

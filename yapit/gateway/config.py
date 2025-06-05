@@ -1,12 +1,15 @@
+import os
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from yapit.gateway.cache import CacheConfig, Caches
 from yapit.gateway.text_splitter import TextSplitterConfig, TextSplitters
 
 
+# TODO rename file to settings.py
 class Settings(BaseSettings):
     sqlalchemy_echo: bool
-    db_auto_create: bool
+    db_drop_and_recreate: bool  # If True: drops all tables and recreates (dev mode)
     db_seed: bool
 
     database_url: str
@@ -25,7 +28,7 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(
         env_prefix="",
-        env_file=".env",
+        env_file=os.getenv("ENV_FILE", ".env"),
         extra="ignore",
         env_nested_delimiter="__",
     )

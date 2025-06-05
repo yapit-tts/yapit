@@ -10,11 +10,11 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from yapit.gateway.auth import authenticate
-from yapit.gateway.cache import Cache, CacheConfig, Caches, NoOpCache, SqliteCache
+from yapit.gateway.cache import Cache, Caches, SqliteCache
 from yapit.gateway.config import Settings, get_settings
 from yapit.gateway.db import create_session
 from yapit.gateway.domain_models import Block, BlockVariant, Document, TTSModel, Voice
-from yapit.gateway.redis_client import get_redis
+from yapit.gateway.redis_client import get_redis_client
 from yapit.gateway.stack_auth.users import User
 from yapit.gateway.text_splitter import (
     DummySplitter,
@@ -28,12 +28,10 @@ SettingsDep = Annotated[Settings, Depends(get_settings)]
 
 def get_audio_cache(settings: SettingsDep) -> Cache:
     audio_cache_type = settings.audio_cache_type.lower()
-    if audio_cache_type == Caches.NOOP.name.lower():
-        return NoOpCache(settings.audio_cache_config)
-    elif audio_cache_type == Caches.SQLITE.name.lower():
+    if audio_cache_type == Caches.SQLITE.name.lower():
         return SqliteCache(settings.audio_cache_config)
     else:
-        raise ValueError(f"Invalid audio cache type '{settings.audio_cache_type}' (noop, sqlite)")
+        raise ValueError(f"Invalid audio cache type '{settings.audio_cache_type}'")
 
 
 def get_text_splitter(settings: SettingsDep) -> TextSplitter:
@@ -149,7 +147,11 @@ async def get_block_variant(
     db: DbSession,
     user: AuthenticatedUser,
 ) -> BlockVariant:
-    variant: BlockVariant | None = await db.get(BlockVariant, variant_hash)
+    variant: BlockVariant | None = await db.get(
+        BlockVariant,
+        variant_hash,
+        options=[selectinload(BlockVariant.block).selectinload(Block.document)],
+    )
     if not variant:
         raise HTTPException(
             status.HTTP_404_NOT_FOUND,
@@ -165,7 +167,7 @@ async def get_block_variant(
     return variant
 
 
-RedisClient = Annotated[Redis, Depends(get_redis)]
+RedisClient = Annotated[Redis, Depends(get_redis_client)]
 AudioCache = Annotated[Cache, Depends(get_audio_cache)]
 TextSplitterDep = Annotated[TextSplitter, Depends(get_text_splitter)]
 CurrentDoc = Annotated[Document, Depends(get_doc)]

@@ -11,7 +11,6 @@ log = logging.getLogger(__name__)
 
 
 class Caches(StrEnum):
-    NOOP = auto()
     SQLITE = auto()
 
 
@@ -42,23 +41,6 @@ class Cache(abc.ABC):
     @abc.abstractmethod
     async def delete(self, key: str) -> bool:
         """Delete `key`. Return True if deleted or not present, False on error."""
-
-
-class NoOpCache(Cache):
-    async def store(self, key: str, data: bytes) -> str | None:
-        return key
-
-    async def exists(self, key: str) -> bool:
-        return False
-
-    async def retrieve_ref(self, key: str) -> str | None:
-        return None
-
-    async def retrieve_data(self, key: str) -> bytes | None:
-        return None
-
-    async def delete(self, key: str) -> bool:
-        return True
 
 
 class SqliteCache(Cache):

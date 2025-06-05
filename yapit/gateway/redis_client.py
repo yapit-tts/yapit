@@ -1,21 +1,15 @@
-from typing import Annotated
-
 import redis.asyncio as redis
+from fastapi import Request
 from redis.asyncio import Redis
-from fastapi import Depends
 
-from yapit.gateway.config import Settings, get_settings
-
-_redis: Redis | None = None
+from yapit.gateway.config import Settings
 
 
-async def get_redis(settings: Annotated[Settings, Depends(get_settings)]) -> Redis:
-    global _redis
-    if _redis is None:
-        _redis = await redis.from_url(settings.redis_url, decode_responses=False)
-    return _redis
+async def create_redis_client(settings: Settings) -> Redis:
+    """Create a new Redis client instance."""
+    return await redis.from_url(settings.redis_url, decode_responses=False)
 
 
-async def close_redis() -> None:
-    if _redis is not None:
-        await _redis.close()
+async def get_redis_client(request: Request) -> Redis:
+    """Get the Redis client from app state."""
+    return request.app.state.redis_client

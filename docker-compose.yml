@@ -7,13 +7,11 @@ services:
     init: true
     image: postgres:16-alpine
     restart: unless-stopped
-    environment:
-      POSTGRES_DB:       ${POSTGRES_DB}
-      POSTGRES_USER:     ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     healthcheck:
-      test: [ "CMD", "pg_isready", "-U", "${POSTGRES_USER}" ]
-      interval: 3s
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-yapit}"]
+      start_period: 30s
+      start_interval: 1s
+      interval: 30s
       timeout: 3s
       retries: 10
 
@@ -30,7 +28,9 @@ services:
       context: .
       dockerfile: yapit/gateway/Dockerfile
     env_file:
-      - ./.env
+      - ./.env.prod
+    environment:
+      ENV_FILE: .env.prod
     depends_on:
       redis:
         condition: service_started
@@ -40,8 +40,36 @@ services:
         condition: service_started
     restart: unless-stopped
     expose: ["8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()"]
+      start_period: 60s
+      start_interval: 1s
+      interval: 30s
+      timeout: 5s
+      retries: 10
 
-  # -------- kokoro workers for local model serving
+  # -------- auth
+  stack-auth:
+    build:
+      dockerfile: ./docker/Dockerfile.stackauth
+    restart: unless-stopped
+    env_file: ./.env.prod
+    healthcheck:
+       test: ["CMD-SHELL",
+         "curl -fs http://localhost:8101/health && \
+          curl -fs http://localhost:8102/health"]
+       start_period: 60s
+       start_interval: 1s
+       interval: 30s
+       timeout: 5s
+       retries: 10
+
+  # svix:
+  #   image: svix/svix-server
+  #   restart: unless-stopped
+  #   env_file: ./.env.prod
+
+  # -------- workers for local model serving / serving on gateway server
   kokoro-cpu:
     init: true
     profiles:
@@ -49,7 +77,7 @@ services:
     build:
       context: .
       dockerfile: yapit/workers/kokoro/Dockerfile.cpu
-    env_file: ./.env
+    env_file: ./.env.prod
     environment:
       TTS_BACKENDS: kokoro
       DEVICE:       cpu
@@ -64,7 +92,7 @@ services:
     build:
       context: .
       dockerfile: yapit/workers/kokoro/Dockerfile.gpu
-    env_file: ./.env
+    env_file: ./.env.prod
     environment:
       TTS_BACKENDS: kokoro
       DEVICE:       cuda
@@ -78,18 +106,3 @@ services:
     depends_on: [redis]
     restart: unless-stopped
 
-  stack-auth:
-    build:
-      dockerfile: ./docker/Dockerfile.stackauth
-    restart: unless-stopped
-    env_file: ./.env
-    # healthcheck:
-    #   test: ["CMD", "curl -f http://localhost:8101/health || exit 1 && curl -f http://localhost:8102/health || exit 1"]
-    #   interval: 3s
-    #   timeout: 3s
-    #   retries: 10
-
-  # svix:
-  #   image: svix/svix-server
-  #   restart: unless-stopped
-  #   env_file: ./.env

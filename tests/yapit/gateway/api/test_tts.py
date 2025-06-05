@@ -1,74 +1,41 @@
-# import time
-#
-# from fastapi import FastAPI
-# from fastapi.testclient import TestClient
-# import pytest
-# import redis as _redis
-#
-#
-# @pytest.mark.asyncio
-# async def test_synthesize_route_only(app: FastAPI) -> None:
-#     client = TestClient(app=app)
-#
-#     # 1. create doc
-#     doc = client.post(
-#         f"/v1/documents",
-#         json={"source_type": "paste", "text_content": "Hello Yapit"},
-#         timeout=5,
-#     ).json()
-#     # extract document and block IDs
-#     document_id = doc["document_id"]
-#     block_id = doc["blocks"][0]["id"]
-#
-#     # 2. enqueue synthesis
-#     synth = client.post(
-#         f"/v1/documents/{document_id}/blocks/{block_id}/synthesize",
-#         json={"model_slug": "kokoro", "voice_slug": "af_heart", "speed": 1.0},
-#         timeout=5,
-#     )
-#     # API contract only: 201, JSON keys present
-#     assert synth.status_code == 201
-#     j = synth.json()
-#     assert {"variant_hash", "ws_url", "est_duration_ms"} <= j.keys()
-#
-#     # 3. ensure WS endpoint accepts the handshake (no audio expected)
-#     ws = client.websocket_connect(j["ws_url"])
-#     ws.close()
-#
-#
-# @pytest.mark.asyncio
-# async def test_streaming_audio(app: FastAPI) -> None:
-#     client = TestClient(app=app)
-#
-#     # 1. create doc & enqueue synthesis
-#     doc = client.post(
-#         f"/v1/documents",
-#         json={"source_type": "paste", "text_content": "Ping Pong"},
-#     ).json()
-#     document_id = doc["document_id"]
-#     block_id = doc["blocks"][0]["id"]
-#     synth = client.post(
-#         f"/v1/documents/{document_id}/blocks/{block_id}/synthesize",
-#         json={"model_slug": "kokoro", "voice_slug": "af_heart", "speed": 1.0},
-#     ).json()
-#
-#     print("SYNTH", synth)
-#
-#     variant = synth["variant_hash"]
-#     path = synth["ws_url"]
-#
-#     # 2. open WebSocket
-#     ws = client.websocket_connect(path)
-#
-#     # 3. publish two chunks into Redis (stream channel)
-#     r = _redis.Redis(host="localhost", port=6379)
-#     chunks = [b"chunk1", b"chunk2"]
-#     # small pause to ensure server subscription is set up
-#     time.sleep(0.1)
-#     for c in chunks:
-#         r.publish(f"tts:{variant}:stream", c)
-#
-#     # 4. receive and verify
-#     received = [ws.receive() for _ in chunks]
-#     ws.close()
-#     assert received == chunks
+import asyncio
+from unittest.mock import AsyncMock
+
+import pytest
+from fastapi import FastAPI
+from httpx import ASGITransport, AsyncClient
+
+from yapit.contracts.redis_keys import TTS_INFLIGHT
+from yapit.gateway.cache import Cache
+from yapit.gateway.deps import get_audio_cache
+
+
+@pytest.mark.asyncio
+async def test_synthesize_returns_cached_audio_immediately(app: FastAPI):
+    """Test that synthesize returns cached audio immediately without queueing."""
+    test_audio = b"CACHED_PCM_AUDIO_DATA"
+    mock_cache = AsyncMock(spec=Cache)
+    mock_cache.retrieve_data.return_value = test_audio
+    mock_cache.exists.return_value = True
+    app.dependency_overrides[get_audio_cache] = lambda: mock_cache
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", timeout=70.0) as client:
+        # Create document
+        r = await client.post("/v1/documents", json={"source_type": "paste", "text_content": "Test cached audio."})
+        doc = r.json()
+        document_id = doc["document_id"]
+        block_id = doc["blocks"][0]["id"]
+
+        # Synthesize - should return audio immediately from cache
+        r = await client.post(
+            f"/v1/documents/{document_id}/blocks/{block_id}/synthesize",
+            json={"model_slug": "kokoro", "voice_slug": "af_heart", "speed": 1.0},
+        )
+        assert r.status_code == 200
+        assert r.content == test_audio
+        assert "audio/" in r.headers["content-type"]
+        assert "X-Audio-Codec" in r.headers
+        assert "X-Sample-Rate" in r.headers
+        assert "X-Channels" in r.headers
+        assert "X-Sample-Width" in r.headers
+        assert "X-Duration-Ms" in r.headers

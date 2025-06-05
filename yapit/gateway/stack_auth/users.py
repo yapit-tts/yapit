@@ -1,10 +1,11 @@
 import logging
 from typing import Literal
-from pydantic import BaseModel, Field
-import requests
 
-from yapit.gateway.stack_auth.api import build_headers
+import requests
+from pydantic import BaseModel, Field
+
 from yapit.gateway.config import Settings, get_settings
+from yapit.gateway.stack_auth.api import build_headers
 
 
 # visible to the client

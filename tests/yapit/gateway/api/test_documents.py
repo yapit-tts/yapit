@@ -1,8 +1,8 @@
 import uuid
 
-from fastapi import FastAPI
-from httpx import AsyncClient, ASGITransport
 import pytest
+from fastapi import FastAPI
+from httpx import ASGITransport, AsyncClient
 
 
 @pytest.mark.asyncio

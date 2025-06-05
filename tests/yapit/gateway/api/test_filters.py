@@ -1,10 +1,9 @@
 import time
 
-from fastapi import FastAPI
-from httpx import AsyncClient, ASGITransport
 import pytest
 import requests
-
+from fastapi import FastAPI
+from httpx import ASGITransport, AsyncClient
 
 # /filters/validate
 
@@ -38,10 +37,12 @@ async def test_apply_filters_and_blocks(app: FastAPI):
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         # 1. create document with URL + parentheses noise
         raw_text = "Hello (delete me) https://example.com world."
-        doc = (await client.post(
-            f"/v1/documents",
-            json={"source_type": "paste", "text_content": raw_text},
-        )).json()
+        doc = (
+            await client.post(
+                f"/v1/documents",
+                json={"source_type": "paste", "text_content": raw_text},
+            )
+        ).json()
         document_id = doc["document_id"]
 
         rules = [
@@ -66,6 +67,7 @@ async def test_apply_filters_and_blocks(app: FastAPI):
 
 async def _poll_status(client: AsyncClient, document_id: str, expect: str, timeout: float = 15.0) -> None:
     import asyncio
+
     t0 = time.time()
     while time.time() - t0 < timeout:
         msg = (await client.get(f"/v1/documents/{document_id}/filter_status")).json()["message"]
