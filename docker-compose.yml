@@ -58,7 +58,7 @@ services:
        test: ["CMD-SHELL",
          "curl -fs http://localhost:8101/health && \
           curl -fs http://localhost:8102/health"]
-       start_period: 30s
+       start_period: 40s
        start_interval: 1s
        interval: 30s
        timeout: 5s
