@@ -40,6 +40,7 @@ class BlockRead(BaseModel):
 
 class DocumentCreateResponse(BaseModel):
     document_id: UUID
+    title: str
     num_blocks: int
     est_duration_ms: int
     blocks: list[BlockRead]
@@ -70,6 +71,7 @@ async def create_document(
         Metadata about the created document (ID, block count, est. duration).
     """
     # obtain raw text
+    title = "Untitled"
     if req.source_type == "paste":
         if not req.text_content or not req.text_content.strip():
             raise HTTPException(
@@ -91,7 +93,8 @@ async def create_document(
 
     # persist Document
     doc = Document(
-        user_id=user.id,
+        user_id=user_id,
+        title=title,
         source_type=req.source_type,
         source_ref=req.source_ref,
         original_text=text,
@@ -118,6 +121,7 @@ async def create_document(
 
     return DocumentCreateResponse(
         document_id=doc.id,
+        title=title,
         num_blocks=len(blocks),
         est_duration_ms=est_total_ms,
         blocks=[
