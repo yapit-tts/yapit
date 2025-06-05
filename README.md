@@ -20,8 +20,8 @@ make test-integration
 Before committing, make sure pre-commit is installed:
 ```bash
 uv venv .venv
-pip install ".[gateway,test]"
-pip install pre-commit
+uv pip install ".[gateway,test]"
+uv pip install pre-commit
 pre-commit install
 ```
 

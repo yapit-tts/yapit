@@ -9,7 +9,6 @@ from yapit.gateway.auth import ANON_USER, authenticate
 from yapit.gateway.cache import CacheConfig, Caches
 from yapit.gateway.config import Settings, get_settings
 from yapit.gateway.db import close_db
-from yapit.gateway.redis_client import create_redis_client
 from yapit.gateway.text_splitter import TextSplitterConfig, TextSplitters
 
 
@@ -53,14 +52,3 @@ async def app(postgres_container, redis_container) -> FastAPI:
         yield app
 
     await close_db()
-
-
-@pytest_asyncio.fixture
-async def redis_client(app: FastAPI):
-    """Get a SEPARATE Redis client for tests to interact with Redis directly."""
-    settings = app.dependency_overrides[get_settings]()
-    test_redis = await create_redis_client(settings)
-    try:
-        yield test_redis
-    finally:
-        await test_redis.aclose()

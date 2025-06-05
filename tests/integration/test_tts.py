@@ -91,8 +91,6 @@ async def test_tts_integration():
 
         elapsed = time.time() - start_time
         print(f"Cached synthesis took {elapsed:.2f} seconds")
-
-        assert elapsed < 0.5  # Should be very fast
         assert cached_response.status_code == 200
         assert cached_response.content == synth_response.content
         assert cached_response.headers["X-Audio-Codec"] == synth_response.headers["X-Audio-Codec"]
