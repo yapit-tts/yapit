@@ -23,5 +23,6 @@ services:
       - "6379:6379"
       
   postgres:
+    env_file: ./.env.dev
     volumes:
       - "./dev/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql"

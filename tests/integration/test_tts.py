@@ -65,24 +65,30 @@ async def test_tts_integration():
         synth_data = synth_response.json()
         audio_url = synth_data["audio_url"]
 
-        # Step 3: Get audio - retry a few times as synthesis takes time
-        audio_response = None
-        for attempt in range(15):  # Increased retries
-            # audio_url is relative, so it will use the client's base_url
-            audio_response = await client.get(audio_url)
-            if audio_response.status_code == 200:
-                break
-            elif audio_response.status_code == 202:
-                # Still processing
+        # Step 3: Get audio - should initially return 202 while processing
+        audio_response = await client.get(audio_url)
+        
+        # Verify we get 202 initially (unless synthesis was super fast)
+        if audio_response.status_code == 202:
+            print("Got expected 202 - synthesis in progress")
+            
+            # Poll until we get the audio
+            for attempt in range(15):  # Max 15 seconds
                 await asyncio.sleep(1)
-            else:
-                # Unexpected status
-                print(f"Attempt {attempt + 1}: Status {audio_response.status_code}")
-                await asyncio.sleep(1)
-
+                audio_response = await client.get(audio_url)
+                
+                if audio_response.status_code == 200:
+                    print(f"Got 200 after {attempt + 1} seconds")
+                    break
+                elif audio_response.status_code == 202:
+                    continue  # Still processing
+                else:
+                    # Unexpected status
+                    print(f"Unexpected status: {audio_response.status_code}")
+                    assert False, f"Unexpected status code: {audio_response.status_code}"
+        
         # Should get actual audio data
         assert audio_response.status_code == 200
         assert audio_response.headers["content-type"] == "audio/pcm"
         assert len(audio_response.content) > 0
-
         assert any(b != 0 for b in audio_response.content)

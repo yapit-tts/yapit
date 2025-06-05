@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import asyncio
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, Field
 from sqlmodel import select
 
-from yapit.contracts.redis_keys import TTS_AUDIO, TTS_INFLIGHT
+from yapit.contracts.redis_keys import TTS_INFLIGHT
 from yapit.contracts.synthesis import SynthesisJob, get_job_queue_name
 from yapit.gateway.auth import authenticate
 from yapit.gateway.deps import (
@@ -23,9 +22,6 @@ from yapit.gateway.domain_models import BlockVariant
 from yapit.gateway.utils import estimate_duration_ms
 
 router = APIRouter(prefix="/v1", tags=["synthesis"])
-
-# TODO put this in global config
-CHUNK_SIZE = 4096
 
 
 class SynthRequest(BaseModel):
@@ -115,7 +111,6 @@ async def enqueue_synthesis(
     return response
 
 
-# TODO, just check the cache here, else 202 if still processing, let the client poll
 @router.get(
     "/documents/{document_id}/blocks/{block_id}/variants/{variant_hash}/audio", dependencies=[Depends(authenticate)]
 )
@@ -127,7 +122,7 @@ async def get_audio(
     redis: RedisClient,
     db: DbSession,
 ) -> Response:
-    """Return synthesized audio data via HTTP."""
+    """Return synthesized audio data or 202 if still processing."""
     if variant.block_id != block.id:
         # Variant already exists for a DIFFERENT block (maybe in another doc).
         # Link it to this block so we don't re-synthesise identical audio.
@@ -147,38 +142,15 @@ async def get_audio(
         )
         await db.commit()
 
-    # Check cache first
     data = await cache.retrieve_data(variant_hash)
     if data is not None:
         return Response(content=data, media_type=f"audio/{variant.codec}")
 
-    # Check Redis for cached audio
-    data = await redis.get(TTS_AUDIO.format(hash=variant_hash))
-    if data is not None:
-        return Response(content=data, media_type=f"audio/{variant.codec}")
-
-    # Wait for synthesis to complete
-    max_wait_time = 60  # seconds
-    poll_interval = 0.5
-    elapsed = 0
-
-    while elapsed < max_wait_time:
-        # Check if synthesis is complete
-        if not await redis.exists(TTS_INFLIGHT.format(hash=variant_hash)):
-            # Try to get the audio again
-            data = await redis.get(TTS_AUDIO.format(hash=variant_hash))
-            if data is not None:
-                return Response(content=data, media_type=f"audio/{variant.codec}")
-
-            # Also check cache in case it was stored there
-            data = await cache.retrieve_data(variant_hash)
-            if data is not None:
-                return Response(content=data, media_type=f"audio/{variant.codec}")
-
-        await asyncio.sleep(poll_interval)
-        elapsed += poll_interval
+    if await redis.exists(TTS_INFLIGHT.format(hash=variant_hash)):
+        return Response(status_code=status.HTTP_202_ACCEPTED)
 
     raise HTTPException(
-        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-        detail="Audio synthesis is taking too long. Please try again later.",
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail="Audio not found. Synthesis may have failed.",
     )
+

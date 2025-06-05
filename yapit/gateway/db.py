@@ -44,11 +44,11 @@ async def create_session(settings: Settings) -> AsyncIterator[AsyncSession]:
 async def prepare_database(settings: Settings) -> None:
     """Bring the schema to the requested state.
 
-    - DEV (DB_AUTO_CREATE=1):   drop all tables and recreate from scratch
-    - PROD (default):           run Alembic `upgrade head`
+    - DEV (DB_DROP_AND_RECREATE=1):   drop all tables and recreate from scratch
+    - PROD (default):                 run Alembic `upgrade head`
     """
     engine = _get_engine(settings)
-    if settings.db_auto_create:
+    if settings.db_drop_and_recreate:
         async with engine.begin() as conn:
             await conn.run_sync(SQLModel.metadata.drop_all)
             await conn.run_sync(SQLModel.metadata.create_all)

@@ -10,7 +10,7 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from yapit.gateway.auth import authenticate
-from yapit.gateway.cache import Cache, Caches, NoOpCache, SqliteCache
+from yapit.gateway.cache import Cache, Caches, SqliteCache
 from yapit.gateway.config import Settings, get_settings
 from yapit.gateway.db import create_session
 from yapit.gateway.domain_models import Block, BlockVariant, Document, TTSModel, Voice
@@ -28,12 +28,10 @@ SettingsDep = Annotated[Settings, Depends(get_settings)]
 
 def get_audio_cache(settings: SettingsDep) -> Cache:
     audio_cache_type = settings.audio_cache_type.lower()
-    if audio_cache_type == Caches.NOOP.name.lower():
-        return NoOpCache(settings.audio_cache_config)
-    elif audio_cache_type == Caches.SQLITE.name.lower():
+    if audio_cache_type == Caches.SQLITE.name.lower():
         return SqliteCache(settings.audio_cache_config)
     else:
-        raise ValueError(f"Invalid audio cache type '{settings.audio_cache_type}' (noop, sqlite)")
+        raise ValueError(f"Invalid audio cache type '{settings.audio_cache_type}'")
 
 
 def get_text_splitter(settings: SettingsDep) -> TextSplitter:

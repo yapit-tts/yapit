@@ -32,15 +32,15 @@ async def app(postgres_container, redis_container) -> FastAPI:
 
     settings = Settings(
         sqlalchemy_echo=True,
-        db_auto_create=True,
+        db_drop_and_recreate=True,
         db_seed=True,
         database_url=postgres_container.get_connection_url(),
         redis_url=f"redis://{redis_container.get_container_host_ip()}:{redis_container.get_exposed_port(6379)}",
         cors_origins=["*"],
         splitter_type=TextSplitters.HIERARCHICAL,
         splitter_config=TextSplitterConfig(max_chars=1000),
-        audio_cache_type=Caches.NOOP,
-        audio_cache_config=CacheConfig(),
+        audio_cache_type=Caches.SQLITE,
+        audio_cache_config=CacheConfig(path="test_audio_cache"),
         stack_auth_api_host="",
         stack_auth_project_id="",
         stack_auth_server_key="",
