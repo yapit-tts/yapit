@@ -27,8 +27,6 @@ dev-mac: down
 	--profile self-host \
 	up -d gateway redis postgres --build
 
-up: dev-cpu
-
 down:
 	docker compose --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml --profile self-host down -v --remove-orphans
 
@@ -46,7 +44,7 @@ test: test-unit test-integration
 test-unit:
 	uv run --env-file=.env.dev pytest tests --ignore=tests/integration
 
-test-integration: dev-cpu
+test-integration:
 	uv run --env-file=.env.dev pytest tests/integration -v
 
 lint:
