@@ -9,9 +9,10 @@ services:
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-yapit}"]
-      interval: 3s
+      start_interval: 1s
+      interval: 30s
       timeout: 3s
-      retries: 20
+      retries: 10
 
   # -------- cache / queue
   redis:
@@ -40,8 +41,9 @@ services:
     expose: ["8000"]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()"]
-      interval: 3s
-      timeout: 3s
+      start_interval: 2s
+      interval: 30s
+      timeout: 5s
       retries: 10
 
   # -------- auth
@@ -54,9 +56,10 @@ services:
        test: ["CMD-SHELL",
          "curl -fs http://localhost:8101/health && \
           curl -fs http://localhost:8102/health"]
-       interval: 3s
-       timeout: 3s
-       retries: 20
+       start_interval: 2s
+       interval: 30s
+       timeout: 5s
+       retries: 10
 
   # svix:
   #   image: svix/svix-server
