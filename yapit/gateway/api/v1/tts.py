@@ -153,4 +153,3 @@ async def get_audio(
         status_code=status.HTTP_404_NOT_FOUND,
         detail="Audio not found. Synthesis may have failed.",
     )
-

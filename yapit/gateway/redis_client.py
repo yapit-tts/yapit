@@ -13,4 +13,3 @@ async def create_redis_client(settings: Settings) -> Redis:
 async def get_redis_client(request: Request) -> Redis:
     """Get the Redis client from app state."""
     return request.app.state.redis_client
-

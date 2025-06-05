@@ -18,7 +18,7 @@ async def test_get_audio_returns_synthesized_data(app: FastAPI, redis_client):
     mock_cache.retrieve_data.return_value = None  # First call returns None (not cached yet)
     mock_cache.exists.return_value = False  # Not cached
     app.dependency_overrides[get_audio_cache] = lambda: mock_cache
-    
+
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         # Create document and synthesize
         r = await client.post("/v1/documents", json={"source_type": "paste", "text_content": "Test audio."})

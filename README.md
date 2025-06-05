@@ -17,6 +17,14 @@ cp .env.prod.example .env.prod
 make test-integration
 ```
 
+Before committing, make sure pre-commit is installed:
+```bash
+uv venv .venv
+pip install ".[gateway,test]"
+pip install pre-commit
+pre-commit install
+```
+
 ### Stack-Auth
 
 The following admin user is created on startup:

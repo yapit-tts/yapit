@@ -5,6 +5,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from yapit.gateway.cache import CacheConfig, Caches
 from yapit.gateway.text_splitter import TextSplitterConfig, TextSplitters
 
+
 # TODO rename file to settings.py
 class Settings(BaseSettings):
     sqlalchemy_echo: bool
