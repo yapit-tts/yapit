@@ -2181,15 +2181,6 @@ wheels = [
 ]
 
 [[package]]
-name = "websocket-client"
-version = "1.8.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/e6/30/fba0d96b4b5fbf5948ed3f4681f7da2f9f64512e1d303f94b4cc174c24a5/websocket_client-1.8.0.tar.gz", hash = "sha256:3239df9f44da632f96012472805d40a23281a991027ce11d2f45a6f24ac4c3da", size = 54648 }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/5a/84/44687a29792a70e111c5c477230a72c4b957d88d16141199bf9acb7537a3/websocket_client-1.8.0-py3-none-any.whl", hash = "sha256:17b44cc997f5c498e809b22cdf2d9c7a9e71c02c8cc2b6c56e7c2d1239bfa526", size = 58826 },
-]
-
-[[package]]
 name = "websockets"
 version = "15.0.1"
 source = { registry = "https://pypi.org/simple" }
@@ -2298,12 +2289,12 @@ kokoro-gpu = [
 ]
 test = [
     { name = "aiosqlite" },
+    { name = "httpx" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "redis" },
     { name = "requests" },
     { name = "testcontainers" },
-    { name = "websocket-client" },
 ]
 
 [package.metadata]
@@ -2315,10 +2306,11 @@ requires-dist = [
     { name = "en-core-web-sm", marker = "extra == 'kokoro-gpu'", url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" },
     { name = "fastapi", extras = ["standard"], marker = "extra == 'gateway'", specifier = "~=0.115.12" },
     { name = "google-re2", marker = "extra == 'gateway'", specifier = "~=1.1.20240702" },
+    { name = "httpx", marker = "extra == 'test'", specifier = "~=0.28.1" },
     { name = "kokoro", marker = "extra == 'kokoro-cpu'", specifier = "~=0.9.4" },
     { name = "kokoro", marker = "extra == 'kokoro-gpu'", specifier = "~=0.9.4" },
     { name = "orjson", marker = "extra == 'gateway'", specifier = "~=3.10.16" },
-    { name = "psycopg2-binary", marker = "extra == 'gateway'", specifier = "==2.9.10" },
+    { name = "psycopg2-binary", marker = "extra == 'gateway'", specifier = "~=2.9.10" },
     { name = "pydantic", specifier = "~=2.11.3" },
     { name = "pydantic-settings", marker = "extra == 'gateway'", specifier = "~=2.9.1" },
     { name = "pytest", marker = "extra == 'test'", specifier = "~=8.3.5" },
@@ -2327,15 +2319,14 @@ requires-dist = [
     { name = "redis", marker = "extra == 'kokoro-cpu'", specifier = "~=6.0.0" },
     { name = "redis", marker = "extra == 'kokoro-gpu'", specifier = "~=6.0.0" },
     { name = "redis", marker = "extra == 'test'", specifier = "~=6.0.0" },
-    { name = "requests", marker = "extra == 'gateway'", specifier = "==2.32.3" },
+    { name = "requests", marker = "extra == 'gateway'", specifier = "~=2.32.3" },
     { name = "requests", marker = "extra == 'test'", specifier = "~=2.32.3" },
     { name = "spacy", marker = "extra == 'kokoro-cpu'", specifier = "~=3.8.4" },
     { name = "spacy", marker = "extra == 'kokoro-gpu'", specifier = "~=3.8.4" },
     { name = "sqlmodel", marker = "extra == 'gateway'", specifier = "~=0.0.24" },
-    { name = "svix", marker = "extra == 'gateway'", specifier = "==1.65.0" },
+    { name = "svix", marker = "extra == 'gateway'", specifier = "~=1.65.0" },
     { name = "testcontainers", marker = "extra == 'test'", specifier = "==4.10.0" },
     { name = "torch", marker = "extra == 'kokoro-cpu'", specifier = "~=2.7.0" },
     { name = "torch", marker = "extra == 'kokoro-gpu'", specifier = "~=2.7.0" },
-    { name = "websocket-client", marker = "extra == 'test'", specifier = "~=1.8.0" },
 ]
 provides-extras = ["gateway", "kokoro-cpu", "kokoro-gpu", "test"]
