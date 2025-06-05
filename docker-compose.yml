@@ -48,7 +48,26 @@ services:
       timeout: 3s
       retries: 10
 
-  # -------- kokoro workers for local model serving
+  # -------- auth
+  stack-auth:
+    build:
+      dockerfile: ./docker/Dockerfile.stackauth
+    restart: unless-stopped
+    env_file: ./.env.prod
+    healthcheck:
+       test: ["CMD-SHELL",
+         "curl -fs http://localhost:8101/health && \
+          curl -fs http://localhost:8102/health"]
+       interval: 3s
+       timeout: 3s
+       retries: 20
+
+  # svix:
+  #   image: svix/svix-server
+  #   restart: unless-stopped
+  #   env_file: ./.env.prod
+
+  # -------- workers for local model serving / serving on gateway server
   kokoro-cpu:
     init: true
     profiles:
@@ -85,20 +104,3 @@ services:
     depends_on: [redis]
     restart: unless-stopped
 
-  stack-auth:
-    build:
-      dockerfile: ./docker/Dockerfile.stackauth
-    restart: unless-stopped
-    env_file: ./.env.prod
-    healthcheck:
-       test: ["CMD-SHELL",
-         "curl -fs http://localhost:8101/health && \
-          curl -fs http://localhost:8102/health"]
-       interval: 3s
-       timeout: 3s
-       retries: 10
-
-  # svix:
-  #   image: svix/svix-server
-  #   restart: unless-stopped
-  #   env_file: ./.env.prod
