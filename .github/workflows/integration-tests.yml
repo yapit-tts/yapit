@@ -17,8 +17,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install uv
+      - name: Install uv & Python
         uses: astral-sh/setup-uv@v5
+        with:
+          python-version-file: "pyproject.toml"
+          enable-cache: true
+
+      - name: Create uv venv
+        run: uv venv
+
+      - name: Install test dependencies
+        run: uv pip install ".[test]"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
