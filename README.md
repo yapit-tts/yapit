@@ -2,6 +2,15 @@
 
 ## Development
 
+To start the backend services:
+```bash
+make dev-cpu  # make dev-mac if you are on mac
+```
+Login to the frontend with the test user credentials from `dev-cpu`, after starting it:
+```bash
+cd frontend && npm run dev
+```
+
 ### Stack-Auth
 
 The following admin user is created on startup:
@@ -13,14 +22,3 @@ password: yapit123
 
 > **The admin user can only be used to access the stack-auth dashboard. It's not an application user**
 
-### Access token
-
-First:
-```bash
-cd frontend && npm install && npm run dev
-```
-
-Then:
-```bash 
-make access-token
-```
