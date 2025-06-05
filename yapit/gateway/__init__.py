@@ -21,7 +21,6 @@ async def lifespan(app: FastAPI):
 
     await prepare_database(settings)
 
-    # Create app-specific Redis client
     app.state.redis_client = await create_redis_client(settings)
 
     listener_task = asyncio.create_task(
@@ -38,18 +37,14 @@ async def lifespan(app: FastAPI):
         await listener_task
 
     await close_db()
-
-    # Close app-specific Redis client
-    if hasattr(app.state, "redis_client") and app.state.redis_client:
-        await app.state.redis_client.aclose()
-        app.state.redis_client = None
+    await app.state.redis_client.aclose()
 
 
 def create_app(
     settings: Settings | None = None,
 ) -> FastAPI:
     if settings is None:
-        settings = Settings()
+        settings = Settings()  # type: ignore
 
     app = FastAPI(
         title="Yapit Gateway",

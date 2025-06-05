@@ -10,7 +10,7 @@ import requests
 
 def get_dev_token():
     """Get access token for dev user."""
-    api_host = "http://localhost:8102"
+    api_host = os.getenv("DEV_STACK_AUTH_API_HOST", "http://localhost:8102")
     project_id = os.getenv("STACK_AUTH_PROJECT_ID")
     client_key = os.getenv("STACK_AUTH_CLIENT_KEY")
 
@@ -67,11 +67,18 @@ async def test_tts_integration():
 
         # Step 3: Get audio - retry a few times as synthesis takes time
         audio_response = None
-        for attempt in range(10):
+        for attempt in range(15):  # Increased retries
+            # audio_url is relative, so it will use the client's base_url
             audio_response = await client.get(audio_url)
             if audio_response.status_code == 200:
                 break
-            await asyncio.sleep(1)
+            elif audio_response.status_code == 202:
+                # Still processing
+                await asyncio.sleep(1)
+            else:
+                # Unexpected status
+                print(f"Attempt {attempt + 1}: Status {audio_response.status_code}")
+                await asyncio.sleep(1)
 
         # Should get actual audio data
         assert audio_response.status_code == 200

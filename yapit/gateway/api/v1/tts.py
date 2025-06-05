@@ -115,6 +115,7 @@ async def enqueue_synthesis(
     return response
 
 
+# TODO, just check the cache here, else 202 if still processing, let the client poll
 @router.get(
     "/documents/{document_id}/blocks/{block_id}/variants/{variant_hash}/audio", dependencies=[Depends(authenticate)]
 )

@@ -26,7 +26,7 @@ def wait_for_stack_auth(api_host: str, max_attempts: int = 30):
 
 def create_dev_user():
     """Create a test user for development."""
-    api_host = os.getenv("SCRIPT_STACK_AUTH_API_HOST", "http://localhost:8102")
+    api_host = os.getenv("DEV_STACK_AUTH_API_HOST", "http://localhost:8102")
     project_id = os.getenv("STACK_AUTH_PROJECT_ID")
     server_key = os.getenv("STACK_AUTH_SERVER_KEY")
 

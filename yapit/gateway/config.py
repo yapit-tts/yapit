@@ -5,7 +5,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from yapit.gateway.cache import CacheConfig, Caches
 from yapit.gateway.text_splitter import TextSplitterConfig, TextSplitters
 
-
+# TODO rename file to settings.py
 class Settings(BaseSettings):
     sqlalchemy_echo: bool
     db_auto_create: bool  # If True: drops all tables and recreates (dev mode). TODO: rename to db_drop_and_recreate

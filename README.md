@@ -11,6 +11,12 @@ Login to the frontend with the test user credentials from `dev-cpu`, after start
 cd frontend && npm run dev
 ```
 
+To run integration tests, .env.prod must exist, even if it's not used.
+```bash
+cp .env.prod.example .env.prod
+make test-integration
+```
+
 ### Stack-Auth
 
 The following admin user is created on startup:
