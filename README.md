@@ -2,27 +2,29 @@
 
 ## Development
 
-To start the backend services:
+Set up the backend dev env:
+```bash
+uv venv .venv
+source .vent/bin/activate
+uv pip install ".[gateway,test]"
+uv pip install pre-commit
+pre-commit install
+cp .env.prod.example .env.prod # .env.prod must exist, even if it's not used in dev
+```
+
+Start the backend services:
 ```bash
 make dev-cpu  # make dev-mac if you are on mac
 ```
-Login to the frontend with the test user credentials from `dev-cpu`, after starting it:
+
+Start the frontend and login with the test user credentials printed by `dev-cpu`:
 ```bash
 cd frontend && npm run dev
 ```
 
-To run integration tests, .env.prod must exist, even if it's not used.
+Test if everything works:
 ```bash
-cp .env.prod.example .env.prod
-make test-integration
-```
-
-Before committing, make sure pre-commit is installed:
-```bash
-uv venv .venv
-uv pip install ".[gateway,test]"
-uv pip install pre-commit
-pre-commit install
+make test
 ```
 
 ### Stack-Auth
