@@ -17,12 +17,12 @@ Start the backend services:
 make dev-cpu  # make dev-mac if you are on mac
 ```
 
-Start the frontend and login with the test user credentials printed by `dev-cpu`:
+Start the frontend and login at `http://localhost/auth/signin` with the test user credentials printed by `dev-cpu`:
 ```bash
 cd frontend && npm run dev
 ```
 
-Test if everything works:
+Check if everything works:
 ```bash
 make test
 ```
