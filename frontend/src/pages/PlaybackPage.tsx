@@ -83,7 +83,6 @@ const PlaybackPage = () => {
       }
       initialTotalEstimateRef.current = totalEstimate;
       setActualTotalDuration(totalEstimate);
-      console.log('Initial total duration estimate:', totalEstimate, 'ms');
     } else if (estimated_ms) {
       // Fallback to document-level estimate if blocks not available
       initialTotalEstimateRef.current = estimated_ms;
@@ -152,16 +151,8 @@ const PlaybackPage = () => {
       const codec = response.headers['x-audio-codec'] || 'pcm';
       const durationMs = parseInt(response.headers['x-duration-ms'] || '0');
       
-      console.log(`API response headers for block ${blockId}:`, {
-        sampleRate,
-        channels,
-        codec,
-        durationMs,
-        allHeaders: response.headers
-      });
       
       if (!audioContextRef.current) {
-        console.error("AudioContext not initialized");
         return null;
       }
       
@@ -205,16 +196,6 @@ const PlaybackPage = () => {
           const actualDuration = actualDurationMs || 0;
           const correction = actualDuration - estimatedDuration;
           
-          console.log(`Block ${blockId} synthesis:`, {
-            estimated: estimatedDuration,
-            actual: actualDuration,
-            correction: correction,
-            durationFromHeader: durationMs,
-            bufferDuration: audioBuffer.duration * 1000,
-            usedDuration: actualDurationMs,
-            initialTotal: initialTotalEstimateRef.current,
-            correctionsMapSize: durationCorrectionsRef.current.size
-          });
           
           durationCorrectionsRef.current.set(blockId, correction);
           
@@ -224,15 +205,11 @@ const PlaybackPage = () => {
             const newTotal = initialTotalEstimateRef.current + totalCorrection;
             setActualTotalDuration(newTotal);
             
-            console.log(`Updated total duration: ${newTotal}ms (initial: ${initialTotalEstimateRef.current}ms, total correction: ${totalCorrection}ms)`);
           } else {
-            console.warn('Initial total estimate not set yet!');
           }
         } else {
-          console.error(`Block ${blockId} not found in documentBlocks!`);
         }
       } else {
-        console.error('documentBlocks is empty or undefined!');
       }
       
       return audioBufferData;
@@ -261,7 +238,6 @@ const PlaybackPage = () => {
     
     // Track timing for progress calculation
     audioStartTimeRef.current = audioContextRef.current.currentTime;
-    console.log('Starting audio playback at time:', audioStartTimeRef.current, 'for block:', currentBlock);
     
     source.onended = () => {
       currentSourceRef.current = null;
@@ -271,7 +247,6 @@ const PlaybackPage = () => {
         const blockElapsed = (audioContextRef.current.currentTime - audioStartTimeRef.current) * 1000;
         blockStartTimeRef.current += blockElapsed;
         pausedAtRef.current = 0; // Reset pause position when block completes
-        console.log(`Block ${currentBlock} completed. Elapsed: ${blockElapsed}ms, Total: ${blockStartTimeRef.current}ms`);
       }
       
       // Check if we should move to next block or end playback
@@ -357,16 +332,6 @@ const PlaybackPage = () => {
 					const totalProgress = elapsed + blockStartTimeRef.current + pausedAtRef.current;
 					setAudioProgress(totalProgress);
 					
-					// Log occasionally to debug
-					if (Math.random() < 0.05) {
-						console.log('Progress:', {
-							currentBlock,
-							elapsedInCurrentBlock: elapsed,
-							previousBlocksTime: blockStartTimeRef.current,
-							totalProgress,
-							formattedTime: `${Math.floor(totalProgress/60000)}:${Math.floor((totalProgress%60000)/1000).toString().padStart(2, '0')}`
-						});
-					}
 				}
 			}, 100);
 		} else if (isPaused) {
