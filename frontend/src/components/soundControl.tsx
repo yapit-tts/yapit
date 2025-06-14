@@ -1,5 +1,4 @@
 import { Button } from "@/components/ui/button";
-import { Progress } from "@/components/ui/progress";
 import { Slider } from "@/components/ui/slider";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Play, Pause, Volume2, Rewind, FastForward } from "lucide-react";
@@ -8,7 +7,9 @@ import { useRef, useState, useEffect } from "react";
 interface ProgressBarValues {
 	estimated_ms: number | undefined;
 	numberOfBlocks: number | undefined;
-	currentBlock: number;
+	currentBlock: number | undefined;
+	setCurrentBlock: (value: number) => void;
+	audioProgress: number;
 };
 
 interface Props {
@@ -21,7 +22,8 @@ interface Props {
 
 const SoundControl = ({ isPlaying, onPlay, onPause, style, progressBarValues }: Props) => {
 	const estimatedAudioLengthMs = useRef<number>(progressBarValues.estimated_ms ?? 0);
-	const [audioProgressBlock, setAudioProgressBlock] = useState<number>(progressBarValues.currentBlock);
+	const [audioProgressBlock, setAudioProgressBlock] = useState<number>(progressBarValues.currentBlock ?? 0);
+	const numBlocks = progressBarValues.numberOfBlocks;
 	const [estimatedAudioLength, setEstimatedAudioLength] = useState<string>("00:00");
 	const [audioProgress, setAudioProgress] = useState<string>("00:00");
 
@@ -30,23 +32,39 @@ const SoundControl = ({ isPlaying, onPlay, onPause, style, progressBarValues }: 
 		setEstimatedAudioLength(msToTime(estimatedAudioLengthMs.current));
 	}, []);
 
-	// Start/Pause increasing audio progress
+	// Update audio progress display
 	useEffect(() => {
-		
-	}, [isPlaying]);
+		if (progressBarValues.audioProgress > 0) {
+			setAudioProgress(msToTime(progressBarValues.audioProgress));
+		} else {
+			setAudioProgress("00:00");
+		}
+	}, [progressBarValues.audioProgress]);
+
+	useEffect(() => {
+		const newValue = progressBarValues.currentBlock ?? 0;
+		setAudioProgressBlock(newValue);
+	}, [progressBarValues.currentBlock]);
 
 	function msToTime(duration: number | undefined) {
 		if (duration == undefined) duration = 0;
 
-		let seconds: number = Math.floor((duration / 1000) % 60),
+		const seconds: number = Math.floor((duration / 1000) % 60),
 			minutes: number = Math.floor((duration / (1000 * 60)) % 60),
 			hours: number = Math.floor((duration / (1000 * 60 * 60)) % 24);
 
-		let hoursStr: string = (hours < 10) ? "0" + hours : hours.toString(),
+		const hoursStr: string = (hours < 10) ? "0" + hours : hours.toString(),
 		minutesStr: string = (minutes < 10) ? "0" + minutes : minutes.toString(),
 		secondsStr:string = (seconds < 10) ? "0" + seconds : seconds.toString();
 
 		return (hours == 0) ? minutesStr + ":" + secondsStr : hoursStr + ":" + minutesStr + ":" + secondsStr;
+	}
+
+	const handleSliderChange = (newValue: Array<number>) => {
+		const newBlock = newValue[0];
+		if (newBlock !== progressBarValues.currentBlock) {
+			progressBarValues.setCurrentBlock(newBlock);
+		}
 	}
 
 	return (
@@ -68,8 +86,8 @@ const SoundControl = ({ isPlaying, onPlay, onPause, style, progressBarValues }: 
 					</DropdownMenuContent>
 				</DropdownMenu>
 				<div className="flex flex-row w-[60%] items-center space-x-2">
-					<Slider defaultValue={[0]} max={100} step={100 / 3} value={[progressBarValues.currentBlock]} />
-					<p className="text-nowrap">{ audioProgress } / { estimatedAudioLength }</p>
+					<Slider defaultValue={[0]} max={(numBlocks === undefined) ? 100 : numBlocks - 1} step={1} value={[audioProgressBlock ?? 0]} onValueChange={handleSliderChange} />
+					<p className="text-nowrap">{ audioProgress } / { estimatedAudioLength } (Block {(audioProgressBlock ?? 0) + 1} of {numBlocks ?? 0})</p>
 				</div>
 				<div className="flex flex-row w-[12%] items-center space-x-2">
 					<Volume2 />
