@@ -93,7 +93,7 @@ async def create_document(
 
     # persist Document
     doc = Document(
-        user_id=user_id,
+        user_id=user.id,
         title=title,
         source_type=req.source_type,
         source_ref=req.source_ref,
