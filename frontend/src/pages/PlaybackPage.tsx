@@ -41,10 +41,12 @@ const PlaybackPage = () => {
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
 	const parentWidth = useRef<HTMLDivElement | null>(null);
 	const [width, setWidth] = useState(0);
+	const [volume, setVolume] = useState<number>(50); // Volume state (0-100)
 
   // Setup variables
 	const { api } = useApi();
   const audioContextRef = useRef<AudioContext | null>(null);
+	const gainNodeRef = useRef<GainNode | null>(null);
 	const [currentBlock, setCurrentBlock] = useState<number>(-1);
 	const audioBuffersRef = useRef<Map<number, AudioBufferData>>(new Map());
 	const currentSourceRef = useRef<AudioBufferSourceNode | null>(null);
@@ -63,6 +65,11 @@ const PlaybackPage = () => {
     const initWorklet = async () => {
       if (!audioContextRef.current) {
         audioContextRef.current = new AudioContext({ sampleRate: 24000 });
+        // Create and connect gain node for volume control
+        gainNodeRef.current = audioContextRef.current.createGain();
+        gainNodeRef.current.connect(audioContextRef.current.destination);
+        // Set initial volume
+        gainNodeRef.current.gain.value = volume / 100;
 			}
     };
 
@@ -89,6 +96,13 @@ const PlaybackPage = () => {
       }
     };
   }, [documentBlocks, estimated_ms]);
+
+  // Update gain node value when volume changes
+  useEffect(() => {
+    if (gainNodeRef.current) {
+      gainNodeRef.current.gain.value = volume / 100;
+    }
+  }, [volume]);
 
 	// Track page width to pass to playbar
 	useEffect(() => {
@@ -234,7 +248,14 @@ const PlaybackPage = () => {
     
     const source = audioContextRef.current.createBufferSource();
     source.buffer = audioBufferData.buffer;
-    source.connect(audioContextRef.current.destination);
+    
+    // Connect through gain node for volume control
+    if (gainNodeRef.current) {
+      source.connect(gainNodeRef.current);
+    } else {
+      // Fallback if gain node not initialized
+      source.connect(audioContextRef.current.destination);
+    }
     
     currentSourceRef.current = source;
     
@@ -468,6 +489,14 @@ const PlaybackPage = () => {
     isSeekingRef.current = false;
   };
 
+  // Handle volume changes
+  const handleVolumeChange = (newVolume: number) => {
+    setVolume(newVolume);
+    if (gainNodeRef.current) {
+      gainNodeRef.current.gain.value = newVolume / 100;
+    }
+  };
+
   return (
     <div className="flex grow" ref={parentWidth}>
       <DocumentCard title={documentTitle} inputText={inputText} />
@@ -476,7 +505,9 @@ const PlaybackPage = () => {
         onPlay={handlePlay} 
         onPause={handlePause}
 				style={{ width: `${width}px` }}
-				progressBarValues={{estimated_ms: actualTotalDuration > 0 ? actualTotalDuration : estimated_ms, numberOfBlocks: numberOfBlocks, currentBlock: currentBlock >= 0 ? currentBlock : 0, setCurrentBlock: handleSeekToBlock, audioProgress: audioProgress}}	
+				progressBarValues={{estimated_ms: actualTotalDuration > 0 ? actualTotalDuration : estimated_ms, numberOfBlocks: numberOfBlocks, currentBlock: currentBlock >= 0 ? currentBlock : 0, setCurrentBlock: handleSeekToBlock, audioProgress: audioProgress}}
+				volume={volume}
+				onVolumeChange={handleVolumeChange}
       />
     </div>
   );

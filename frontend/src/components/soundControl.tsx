@@ -18,9 +18,11 @@ interface Props {
   onPause: () => void;
 	style: React.CSSProperties;
 	progressBarValues: ProgressBarValues;
+	volume: number;
+	onVolumeChange: (value: number) => void;
 };
 
-const SoundControl = ({ isPlaying, onPlay, onPause, style, progressBarValues }: Props) => {
+const SoundControl = ({ isPlaying, onPlay, onPause, style, progressBarValues, volume, onVolumeChange }: Props) => {
 	const estimatedAudioLengthMs = useRef<number>(progressBarValues.estimated_ms ?? 0);
 	const [audioProgressBlock, setAudioProgressBlock] = useState<number>(progressBarValues.currentBlock ?? 0);
 	const numBlocks = progressBarValues.numberOfBlocks;
@@ -92,7 +94,7 @@ const SoundControl = ({ isPlaying, onPlay, onPause, style, progressBarValues }: 
 				</div>
 				<div className="flex flex-row w-[12%] items-center space-x-2">
 					<Volume2 />
-					<Slider defaultValue={[33]} max={100} step={1} />
+					<Slider value={[volume]} max={100} step={1} onValueChange={(values) => onVolumeChange(values[0])} />
 				</div>
 				<DropdownMenu>
 					<DropdownMenuTrigger>1.0x</DropdownMenuTrigger>
