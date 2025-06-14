@@ -29,8 +29,9 @@ const SoundControl = ({ isPlaying, onPlay, onPause, style, progressBarValues }: 
 
 	// Calculate estimated audio length
 	useEffect(() => {
+		estimatedAudioLengthMs.current = progressBarValues.estimated_ms ?? 0;
 		setEstimatedAudioLength(msToTime(estimatedAudioLengthMs.current));
-	}, []);
+	}, [progressBarValues.estimated_ms]);
 
 	// Update audio progress display
 	useEffect(() => {

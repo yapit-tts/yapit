@@ -54,8 +54,11 @@ const PlaybackPage = () => {
 	const pausedAtRef = useRef<number>(0);
 	const [isPaused, setIsPaused] = useState<boolean>(false);
 	const isSeekingRef = useRef<boolean>(false); // Prevent audio overlap during seeking
+	const [actualTotalDuration, setActualTotalDuration] = useState<number>(0); // Track actual total duration
+	const durationCorrectionsRef = useRef<Map<number, number>>(new Map()); // Track duration corrections per block
+	const initialTotalEstimateRef = useRef<number>(0); // Store initial estimate
 
-  // Initialize the AudioWorklet
+  // Initialize the AudioWorklet and set initial total duration
   useEffect(() => {
     const initWorklet = async () => {
       if (!audioContextRef.current) {
@@ -64,13 +67,28 @@ const PlaybackPage = () => {
     };
 
     initWorklet();
+    
+    // Calculate initial total duration from block estimates
+    if (documentBlocks && documentBlocks.length > 0) {
+      let totalEstimate = 0;
+      for (const block of documentBlocks) {
+        totalEstimate += block.est_duration_ms || 0;
+      }
+      initialTotalEstimateRef.current = totalEstimate;
+      setActualTotalDuration(totalEstimate);
+      console.log('Initial total duration estimate:', totalEstimate, 'ms');
+    } else if (estimated_ms) {
+      // Fallback to document-level estimate if blocks not available
+      initialTotalEstimateRef.current = estimated_ms;
+      setActualTotalDuration(estimated_ms);
+    }
 
     return () => {
       if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
         audioContextRef.current.close();
       }
     };
-  }, []);
+  }, [documentBlocks, estimated_ms]);
 
 	// Track page width to pass to playbar
 	useEffect(() => {
@@ -120,6 +138,14 @@ const PlaybackPage = () => {
       const codec = response.headers['x-audio-codec'] || 'pcm';
       const durationMs = parseInt(response.headers['x-duration-ms'] || '0');
       
+      console.log(`API response headers for block ${blockId}:`, {
+        sampleRate,
+        channels,
+        codec,
+        durationMs,
+        allHeaders: response.headers
+      });
+      
       if (!audioContextRef.current) {
         console.error("AudioContext not initialized");
         return null;
@@ -146,13 +172,54 @@ const PlaybackPage = () => {
         // Handle encoded audio formats (WAV, MP3, OGG, etc.)
         audioBuffer = await audioContextRef.current.decodeAudioData(arrayBuffer);
       }
+      // Use actual buffer duration if header duration is missing or zero
+      const actualDurationMs = durationMs > 0 ? durationMs : Math.round(audioBuffer.duration * 1000);
+      
       const audioBufferData: AudioBufferData = {
         buffer: audioBuffer,
-        duration_ms: durationMs
+        duration_ms: actualDurationMs
       };
       
       // Store in buffer map
       audioBuffersRef.current.set(blockId, audioBufferData);
+      
+      // Calculate and store duration correction
+      if (documentBlocks && documentBlocks.length > 0) {
+        const block = documentBlocks.find(b => b.id === blockId);
+        if (block) {
+          const estimatedDuration = block.est_duration_ms || 0;
+          const actualDuration = actualDurationMs || 0;
+          const correction = actualDuration - estimatedDuration;
+          
+          console.log(`Block ${blockId} synthesis:`, {
+            estimated: estimatedDuration,
+            actual: actualDuration,
+            correction: correction,
+            durationFromHeader: durationMs,
+            bufferDuration: audioBuffer.duration * 1000,
+            usedDuration: actualDurationMs,
+            initialTotal: initialTotalEstimateRef.current,
+            correctionsMapSize: durationCorrectionsRef.current.size
+          });
+          
+          durationCorrectionsRef.current.set(blockId, correction);
+          
+          // Recalculate total if we have initial estimate
+          if (initialTotalEstimateRef.current > 0) {
+            const totalCorrection = Array.from(durationCorrectionsRef.current.values()).reduce((sum, corr) => sum + corr, 0);
+            const newTotal = initialTotalEstimateRef.current + totalCorrection;
+            setActualTotalDuration(newTotal);
+            
+            console.log(`Updated total duration: ${newTotal}ms (initial: ${initialTotalEstimateRef.current}ms, total correction: ${totalCorrection}ms)`);
+          } else {
+            console.warn('Initial total estimate not set yet!');
+          }
+        } else {
+          console.error(`Block ${blockId} not found in documentBlocks!`);
+        }
+      } else {
+        console.error('documentBlocks is empty or undefined!');
+      }
       
       return audioBufferData;
     } catch (error) {
@@ -160,7 +227,7 @@ const PlaybackPage = () => {
       setIsPlaying(false);
       return null;
     }
-  }, [api, documentId]);
+  }, [api, documentId, documentBlocks]);
 
   const playAudioBuffer = useCallback((audioBufferData: AudioBufferData, offset: number = 0) => {
     if (!audioContextRef.current) return;
@@ -183,6 +250,7 @@ const PlaybackPage = () => {
         const blockElapsed = (audioContextRef.current.currentTime - audioStartTimeRef.current) * 1000;
         blockStartTimeRef.current += blockElapsed;
         pausedAtRef.current = 0; // Reset pause position when block completes
+        console.log(`Block ${currentBlock} completed. Elapsed: ${blockElapsed}ms, Total: ${blockStartTimeRef.current}ms`);
       }
       
       // Check if we should move to next block or end playback
@@ -227,18 +295,7 @@ const PlaybackPage = () => {
 				currentSourceRef.current = null;
 			}
 			
-			// Calculate progress up to this block
-			let progressUpToBlock = 0;
-			for (let i = 0; i < currentBlock && i < documentBlocks.length; i++) {
-				const block = documentBlocks[i];
-				if (block && block.id) {
-					const blockData = audioBuffersRef.current.get(block.id);
-					if (blockData && blockData.duration_ms > 0) {
-						progressUpToBlock += blockData.duration_ms;
-					}
-				}
-			}
-			blockStartTimeRef.current = progressUpToBlock;
+			// Don't recalculate progress - it's already accumulated in onended callback
 			pausedAtRef.current = 0; // Reset pause position for new block
 			
 			// Block change handled by effect below
@@ -283,10 +340,10 @@ const PlaybackPage = () => {
 					if (Math.random() < 0.05) {
 						console.log('Progress:', {
 							currentBlock,
-							audioStartTime: audioStartTimeRef.current,
-							currentTime,
-							elapsed,
-							totalProgress
+							elapsedInCurrentBlock: elapsed,
+							previousBlocksTime: blockStartTimeRef.current,
+							totalProgress,
+							formattedTime: `${Math.floor(totalProgress/60000)}:${Math.floor((totalProgress%60000)/1000).toString().padStart(2, '0')}`
 						});
 					}
 				}
@@ -419,7 +476,7 @@ const PlaybackPage = () => {
         onPlay={handlePlay} 
         onPause={handlePause}
 				style={{ width: `${width}px` }}
-				progressBarValues={{estimated_ms: estimated_ms, numberOfBlocks: numberOfBlocks, currentBlock: currentBlock >= 0 ? currentBlock : 0, setCurrentBlock: handleSeekToBlock, audioProgress: audioProgress}}	
+				progressBarValues={{estimated_ms: actualTotalDuration > 0 ? actualTotalDuration : estimated_ms, numberOfBlocks: numberOfBlocks, currentBlock: currentBlock >= 0 ? currentBlock : 0, setCurrentBlock: handleSeekToBlock, audioProgress: audioProgress}}	
       />
     </div>
   );
