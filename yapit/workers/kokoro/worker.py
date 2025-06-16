@@ -8,7 +8,7 @@ import numpy as np
 import torch
 from kokoro import KPipeline
 
-from yapit.workers.base import SynthAdapter, worker_loop
+from yapit.workers.synth_adapter import SynthAdapter
 
 log = logging.getLogger("adapter.kokoro")
 
@@ -25,7 +25,7 @@ class KokoroAdapter(SynthAdapter):
         self.voices: list[str] = []
         self.lock = asyncio.Lock()
 
-    async def warm_up(self) -> None:
+    async def initialize(self) -> None:
         if self.pipe is not None:
             return
         if self.device == "cuda" and not torch.cuda.is_available():
@@ -36,19 +36,19 @@ class KokoroAdapter(SynthAdapter):
         voices_json = Path(__file__).with_name("voices.json")
         self.voices = [v["index"] for v in json.load(open(voices_json))]
         for v in self.voices:
-            self.pipe.load_voice(v)
+            self.pipe.load_voice(v)  # TODO fix the  "unknown attribute of None" type error
 
-    async def stream(self, text: str, *, voice: str, speed: float):
-        await self.warm_up()
+    async def synthesize(self, text: str, *, voice: str, speed: float) -> bytes:
+        await self.initialize()
         if voice not in self.voices:
             raise ValueError(f"Voice {voice} not found in available voices: {self.voices}")
+
+        pcm_chunks = []
         async with self.lock:  # model not thread-safe
-            for _, _, audio in self.pipe(text, voice=voice, speed=speed):
+            for _, _, audio in self.pipe(text, voice=voice, speed=speed):  # TODO fix the None cant be called type error
                 if audio is None:
                     continue
                 pcm = (audio.numpy() * 32767).astype(np.int16).tobytes()  # scale [-1, 1] f32 tensor to int16 range
-                yield pcm
+                pcm_chunks.append(pcm)
 
-
-if __name__ == "__main__":
-    asyncio.run(worker_loop(KokoroAdapter()))
+        return b"".join(pcm_chunks)

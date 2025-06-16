@@ -5,12 +5,6 @@ services:
       ENV_FILE: .env.dev
     ports:
       - "8000:8000"
-  
-  kokoro-cpu:
-    env_file: ./.env.dev
-  
-  kokoro-gpu:
-    env_file: ./.env.dev
     
   stack-auth:
     env_file: ./.env.dev

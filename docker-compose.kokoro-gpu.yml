@@ -1,0 +1,19 @@
+services:
+  kokoro-gpu:
+    init: true
+    build:
+      context: .
+      dockerfile: yapit/workers/kokoro/Dockerfile.gpu
+    environment:
+      WORKER_MODEL: kokoro-gpu
+      DEVICE: cuda
+      WORKER_CONCURRENCY: 1
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
+    depends_on:
+      - redis
+    restart: unless-stopped

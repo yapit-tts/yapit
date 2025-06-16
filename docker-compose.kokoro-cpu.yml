@@ -1,0 +1,13 @@
+services:
+  kokoro-cpu:
+    init: true
+    build:
+      context: .
+      dockerfile: yapit/workers/kokoro/Dockerfile.cpu
+    environment:
+      WORKER_MODEL: kokoro-cpu
+      DEVICE: cpu
+      WORKER_CONCURRENCY: 2
+    depends_on:
+      - redis
+    restart: unless-stopped
