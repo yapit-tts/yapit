@@ -69,9 +69,9 @@ async def close_db() -> None:
 async def _seed_db(settings: Settings) -> None:
     """Development seed – only runs on an empty DB."""
     async for db in create_session(settings):
-        kokoro = TTSModel(
-            slug="kokoro",
-            name="Kokoro",
+        kokoro_cpu = TTSModel(
+            slug="kokoro-cpu",
+            name="Kokoro (CPU)",
             price_sec=0.0,
             native_codec="pcm",
             sample_rate=24_000,
@@ -80,7 +80,7 @@ async def _seed_db(settings: Settings) -> None:
         )
         voices_json = Path(__file__).parent.parent / "workers/kokoro/voices.json"
         for v in json.loads(voices_json.read_text()):
-            kokoro.voices.append(
+            kokoro_cpu.voices.append(
                 Voice(
                     slug=v["index"],
                     name=v["name"],
@@ -88,7 +88,7 @@ async def _seed_db(settings: Settings) -> None:
                     description=f"Quality grade {v['overallGrade']}",
                 )
             )
-        db.add(kokoro)
+        db.add(kokoro_cpu)
         # dia = Model(
         #     slug="dia",
         #     name="Dia-1.6B",
