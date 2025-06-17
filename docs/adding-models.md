@@ -38,12 +38,12 @@ Create `yapit/workers/yourmodel/__main__.py`:
 ```python
 import asyncio
 from yapit.workers.yourmodel.worker import YourModelAdapter
-from yapit.workers.local_runner import LocalWorkerRunner
+from yapit.workers.local_runner import LocalProcessor
 
 if __name__ == "__main__":
     adapter = YourModelAdapter()
-    runner = LocalWorkerRunner(adapter)
-    asyncio.run(runner.run())
+    processor = LocalProcessor(adapter)
+    asyncio.run(processor.run())
 ```
 
 ### 3. Create Dockerfile
@@ -79,9 +79,9 @@ services:
       context: .
       dockerfile: yapit/workers/yourmodel/Dockerfile
     environment:
-      WORKER_MODEL: yourmodel  # Must match TTSModel slug in DB
-      DEVICE: cpu             # or cuda for GPU
-      WORKER_CONCURRENCY: 2   # Number of parallel jobs
+      WORKER_ID: local/yourmodel/cpu  # Format: deployment/model/device
+      DEVICE: cpu                     # or cuda for GPU
+      WORKER_CONCURRENCY: 2           # Number of parallel jobs
     depends_on:
       - redis
     restart: unless-stopped
@@ -105,6 +105,7 @@ adapter_map = {
     "kokoro": "yapit.workers.kokoro.worker.KokoroAdapter",
     "yourmodel": "yapit.workers.yourmodel.worker.YourModelAdapter",  # Add this
 }
+# The model name is extracted from WORKER_ID environment variable
 ```
 
 ### 2. Build and Push Docker Image
@@ -153,7 +154,7 @@ docker-compose -f docker-compose.yml -f docker-compose.runpod.yml up
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `WORKER_MODEL` | Model slug (must match DB) | `kokoro-cpu` |
+| `WORKER_ID` | Worker identifier | `local/kokoro/cpu` |
 | `DEVICE` | Device to use | `cpu` or `cuda` |
 | `WORKER_CONCURRENCY` | Parallel jobs | `2` |
 | `REDIS_URL` | Redis connection | `redis://redis:6379/0` (default) |
@@ -167,21 +168,21 @@ docker-compose -f docker-compose.yml -f docker-compose.runpod.yml up
 
 ## How It Works
 
-1. **Queue Naming**: Model slug determines Redis queue
-   - `kokoro-cpu` → `tts:jobs:kokoro-cpu`
-   - `kokoro-runpod` → `tts:jobs:kokoro-runpod`
+1. **Queue Naming**: Worker ID determines Redis queue
+   - `local/kokoro/cpu` → `yapit:queue:local/kokoro/cpu`
+   - `runpod/kokoro/gpu` → `yapit:queue:runpod/kokoro/gpu`
 
-2. **Local Workers**: Listen to their specific queue based on `WORKER_MODEL`
+2. **Local Workers**: Listen to their specific queue based on `WORKER_ID`
 
-3. **RunPod Bridge**: 
-   - Monitors queues ending with `-runpod`
-   - Maps model names to endpoint IDs
+3. **RunPod Processor**: 
+   - Each processor monitors a specific queue for its model
+   - Maps model names to endpoint IDs via environment variables
    - Forwards jobs to RunPod and returns results
 
 ## Best Practices
 
-1. Use descriptive model slugs: `modelname-infrastructure`
-   - `kokoro-cpu`, `kokoro-gpu`, `kokoro-runpod`
+1. Use consistent worker ID format: `deployment/model/device`
+   - `local/kokoro/cpu`, `local/kokoro/gpu`, `runpod/kokoro/gpu`
 
 2. Keep adapters pure - only synthesis logic, no infrastructure concerns
 

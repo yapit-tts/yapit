@@ -7,7 +7,8 @@ from pydantic import BaseModel, Field
 from sqlmodel import select
 
 from yapit.contracts.redis_keys import TTS_INFLIGHT
-from yapit.contracts.synthesis import SynthesisJob, get_job_queue_name
+from yapit.contracts.synthesis import SynthesisJob
+from yapit.contracts.worker_id import WorkerId
 from yapit.gateway.auth import authenticate
 from yapit.gateway.deps import (
     AudioCache,
@@ -122,7 +123,8 @@ async def synthesize(
             speed=body.speed,
             codec=served_codec,
         )
-        await redis.lpush(get_job_queue_name(model.slug), job.model_dump_json())
+        worker_id = WorkerId.from_slug(model.slug)
+        await redis.lpush(worker_id.to_queue_name(), job.model_dump_json())
 
     # Long-polling: wait for audio to appear in cache
     timeout = 60.0

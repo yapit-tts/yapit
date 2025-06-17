@@ -6,21 +6,25 @@ from functools import partial
 
 import runpod
 
+from yapit.contracts.worker_id import WorkerId
 from yapit.workers.synth_adapter import SynthAdapter
 
 
 def get_adapter() -> SynthAdapter:
-    """Dynamically import and instantiate the appropriate adapter based on MODEL_TYPE env var."""
-    model_type = os.getenv("MODEL_TYPE")
-    if not model_type:
-        raise ValueError("MODEL_TYPE environment variable must be set")
+    """Dynamically import and instantiate the appropriate adapter based on WORKER_ID env var."""
+    worker_id_str = os.getenv("WORKER_ID")
+    if not worker_id_str:
+        raise ValueError("WORKER_ID environment variable must be set")
+
+    worker_id = WorkerId.from_string(worker_id_str)
+    model_type = worker_id.model
 
     adapter_map = {
         "kokoro": "yapit.workers.kokoro.worker.KokoroAdapter",
     }
 
     if model_type not in adapter_map:
-        raise ValueError(f"Unknown model type: {model_type}")
+        raise ValueError(f"Unknown model type: {model_type} (from WORKER_ID={worker_id_str})")
 
     module_path, class_name = adapter_map[model_type].rsplit(".", 1)
     module = importlib.import_module(module_path)

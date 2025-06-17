@@ -5,7 +5,7 @@ services:
       context: .
       dockerfile: yapit/workers/kokoro/Dockerfile.cpu
     environment:
-      WORKER_MODEL: kokoro-cpu
+      WORKER_ID: local/kokoro/cpu
       DEVICE: cpu
       WORKER_CONCURRENCY: 2
     depends_on:

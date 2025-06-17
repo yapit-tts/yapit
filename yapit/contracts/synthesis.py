@@ -1,16 +1,8 @@
 import uuid
-from typing import Final
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 from yapit.contracts.redis_keys import TTS_DONE
-
-_JOB_QUEUE_PREFIX: Final[str] = "tts:jobs"
-
-
-def get_job_queue_name(model_slug: str) -> str:
-    """Per-backend list queue."""
-    return f"{_JOB_QUEUE_PREFIX}:{model_slug}"
 
 
 class SynthesisJob(BaseModel):
