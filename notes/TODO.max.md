@@ -1,6 +1,5 @@
 ### Fix
 
-- Worker images: Include pre-downloaded weights in the image!
 - Thinking about security / exploits: Limits on the number of docs, filters, etc.
 - Should Block.id be a UUID too?
 - Is there a global setting for pydantic to forbid extra vals?
@@ -11,6 +10,8 @@
   - depending on the intensity / scaling requirements, prlly best to do this in the gateway to save worker time?
 
 ### Refactor
+
+- better / more consistent naming @ workers
 
 ### Chore
 
