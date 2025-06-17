@@ -1,0 +1,6 @@
+[
+  {
+    "model": "kokoro-gpu",
+    "endpoint_id": "your-runpod-endpoint-id-here"
+  }
+]

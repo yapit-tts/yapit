@@ -5,8 +5,7 @@ services:
       context: .
       dockerfile: yapit/workers/kokoro/Dockerfile.gpu
     environment:
-      WORKER_ID: local/kokoro/gpu
-      DEVICE: cuda
+      MODEL_SLUG: kokoro-gpu
       WORKER_CONCURRENCY: 1
     deploy:
       resources:

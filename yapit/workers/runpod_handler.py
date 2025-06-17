@@ -6,25 +6,24 @@ from functools import partial
 
 import runpod
 
-from yapit.contracts.worker_id import WorkerId
-from yapit.workers.synth_adapter import SynthAdapter
+from yapit.workers.adapters.base import SynthAdapter
 
 
-def get_adapter() -> SynthAdapter:
-    """Dynamically import and instantiate the appropriate adapter based on WORKER_ID env var."""
-    worker_id_str = os.getenv("WORKER_ID")
-    if not worker_id_str:
-        raise ValueError("WORKER_ID environment variable must be set")
+def _get_adapter() -> SynthAdapter:
+    """Dynamically import and instantiate the appropriate adapter based on MODEL_SLUG env var."""
+    model_slug = os.getenv("MODEL_SLUG")
+    if not model_slug:
+        raise ValueError("MODEL_SLUG environment variable must be set")
 
-    worker_id = WorkerId.from_string(worker_id_str)
-    model_type = worker_id.model
+    # Extract base model name from slug (e.g., "kokoro-gpu" -> "kokoro")
+    model_type = model_slug.split("-")[0]
 
     adapter_map = {
-        "kokoro": "yapit.workers.kokoro.worker.KokoroAdapter",
+        "kokoro": "yapit.workers.adapters.kokoro.KokoroAdapter",
     }
 
     if model_type not in adapter_map:
-        raise ValueError(f"Unknown model type: {model_type} (from WORKER_ID={worker_id_str})")
+        raise ValueError(f"Unknown model type: {model_type} (from MODEL_SLUG={model_slug})")
 
     module_path, class_name = adapter_map[model_type].rsplit(".", 1)
     module = importlib.import_module(module_path)
@@ -61,13 +60,12 @@ def handler(job, adapter: SynthAdapter):
     return asyncio.run(async_handler(job, adapter))
 
 
-async def init_adapter() -> SynthAdapter:
-    adapter = get_adapter()
-    await adapter.initialize()
+def main() -> None:
+    adapter = _get_adapter()
+    asyncio.run(adapter.initialize())
     print(f"Initialized {adapter.__class__.__name__} adapter")
-    return adapter
+    runpod.serverless.start({"handler": partial(handler, adapter=adapter)})
 
 
 if __name__ == "__main__":
-    adapter = asyncio.run(init_adapter())
-    runpod.serverless.start({"handler": partial(handler, adapter=adapter)})
+    main()

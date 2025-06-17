@@ -70,7 +70,7 @@ async def _seed_db(settings: Settings) -> None:
     """Development seed – only runs on an empty DB."""
     async for db in create_session(settings):
         kokoro_cpu = TTSModel(
-            slug="local-kokoro-cpu",
+            slug="kokoro-cpu",
             name="Kokoro (CPU)",
             price_sec=0.0,
             native_codec="pcm",

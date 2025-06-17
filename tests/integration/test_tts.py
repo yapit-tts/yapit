@@ -63,7 +63,7 @@ async def test_tts_integration():
 
         synth_response = await client.post(
             f"/v1/documents/{document_id}/blocks/{block_id}/synthesize",
-            json={"model_slug": "local-kokoro-cpu", "voice_slug": "af_heart", "speed": 1.0},
+            json={"model_slug": "kokoro-cpu", "voice_slug": "af_heart", "speed": 1.0},
         )
 
         elapsed = time.time() - start_time
@@ -85,7 +85,7 @@ async def test_tts_integration():
 
         cached_response = await client.post(
             f"/v1/documents/{document_id}/blocks/{block_id}/synthesize",
-            json={"model_slug": "local-kokoro-cpu", "voice_slug": "af_heart", "speed": 1.0},
+            json={"model_slug": "kokoro-cpu", "voice_slug": "af_heart", "speed": 1.0},
         )
 
         elapsed = time.time() - start_time

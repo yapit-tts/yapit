@@ -12,11 +12,7 @@ from redis.asyncio import Redis
 from sqlmodel import delete, select
 from starlette.concurrency import run_in_threadpool
 
-from yapit.contracts.redis_keys import (
-    FILTER_CANCEL,
-    FILTER_INFLIGHT,
-    FILTER_STATUS,
-)
+from yapit.contracts import FILTER_CANCEL, FILTER_INFLIGHT, FILTER_STATUS
 from yapit.gateway.auth import authenticate
 from yapit.gateway.config import Settings, get_settings
 from yapit.gateway.db import create_session

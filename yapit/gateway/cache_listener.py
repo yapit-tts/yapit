@@ -4,7 +4,7 @@ import logging
 from redis.asyncio import Redis
 from sqlmodel import update
 
-from yapit.contracts.redis_keys import TTS_AUDIO, TTS_DONE
+from yapit.contracts import TTS_AUDIO, TTS_DONE
 from yapit.gateway.cache import Cache
 from yapit.gateway.deps import get_db_session
 from yapit.gateway.domain_models import BlockVariant

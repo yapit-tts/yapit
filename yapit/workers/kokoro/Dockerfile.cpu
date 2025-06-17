@@ -24,4 +24,5 @@ RUN uv pip install runpod --no-cache-dir --system
 RUN cp /app/yapit/workers/runpod_handler.py /handler.py
 
 ENV PYTHONUNBUFFERED=1
+ENV DEVICE=cpu
 CMD ["python", "-m", "yapit.workers.kokoro"]

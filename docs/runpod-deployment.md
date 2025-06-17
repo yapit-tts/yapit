@@ -47,11 +47,11 @@ RunPod's GitHub integration allows you to:
 After creating the endpoint, configure these environment variables in RunPod:
 
 ```bash
-WORKER_ID=runpod/kokoro/gpu     # For GPU workers
+MODEL_SLUG=kokoro-gpu     # For GPU workers
 # or
-WORKER_ID=runpod/kokoro/cpu     # For CPU workers
+MODEL_SLUG=kokoro-cpu     # For CPU workers
 
-DEVICE=cuda                     # or 'cpu' to match above
+DEVICE=cuda               # or 'cpu' to match above
 ```
 
 Also set the Container Start Command to:
@@ -63,14 +63,25 @@ python /handler.py
 
 In your yapit deployment, add the RunPod endpoint configuration:
 
+#### Create runpod-endpoints.json:
+```json
+[
+  {
+    "model": "kokoro-gpu",
+    "endpoint_id": "<your-endpoint-id>"
+  }
+]
+```
+
 #### For docker-compose.runpod.yml:
 ```yaml
 services:
-  runpod-bridge:
+  runpod-processor:
     environment:
       - RUNPOD_API_KEY=${RUNPOD_API_KEY}
-      - RUNPOD_ENDPOINT_KOKORO_GPU=<your-endpoint-id>
-      # Add more endpoints as needed
+      - RUNPOD_ENDPOINTS_FILE=./runpod-endpoints.json
+    volumes:
+      - ./runpod-endpoints.json:/app/runpod-endpoints.json:ro
 ```
 
 #### In your .env file:

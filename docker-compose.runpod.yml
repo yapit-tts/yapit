@@ -1,15 +1,13 @@
 services:
-  runpod-bridge:
+  runpod-processor:
     init: true
     build:
       context: .
-      dockerfile: yapit/gateway/Dockerfile  # Uses same image as gateway
-    command: python -m yapit.workers.runpod_bridge
+      dockerfile: yapit/workers/processors/Dockerfile
+    command: python -m yapit.workers.processors.runpod
     env_file: ./.env.prod
-    environment:
-      RUNPOD_API_KEY: ${RUNPOD_API_KEY}
-      # Map model names to RunPod endpoint IDs
-      # Example: RUNPOD_ENDPOINT_KOKORO=your-endpoint-id
+    volumes:
+      - ./runpod-endpoints.json:/app/runpod-endpoints.json:ro
     depends_on:
       - redis
     restart: unless-stopped
