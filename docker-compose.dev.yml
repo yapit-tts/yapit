@@ -5,6 +5,8 @@ services:
       ENV_FILE: .env.dev
     ports:
       - "8000:8000"
+    volumes:
+      - "./endpoints.dev.json:/app/endpoints.dev.json"
     
   stack-auth:
     env_file: ./.env.dev

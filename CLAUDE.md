@@ -1,0 +1,1 @@
+- no default values in the settings, only defaults in the .env* files

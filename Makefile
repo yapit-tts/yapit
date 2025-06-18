@@ -37,9 +37,6 @@ prod-up-cpu:
 prod-up-gpu:
 	docker compose -f docker-compose.yml -f docker-compose.kokoro-gpu.yml up -d
 
-prod-up-runpod:
-	docker compose -f docker-compose.yml -f docker-compose.runpod.yml up -d
-
 prod-down:
 	docker compose down -v --remove-orphans
 

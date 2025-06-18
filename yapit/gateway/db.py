@@ -1,5 +1,3 @@
-import json
-from pathlib import Path
 from typing import AsyncIterator
 
 from alembic import command, config
@@ -8,11 +6,7 @@ from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from yapit.gateway.config import Settings
-from yapit.gateway.domain_models import (
-    Filter,
-    TTSModel,
-    Voice,
-)
+from yapit.gateway.domain_models import Filter, TTSModel
 
 _engine: AsyncEngine | None = None
 
@@ -68,49 +62,8 @@ async def close_db() -> None:
 
 async def _seed_db(settings: Settings) -> None:
     """Development seed – only runs on an empty DB."""
-    async for db in create_session(settings):
-        kokoro_cpu = TTSModel(
-            slug="kokoro-cpu",
-            name="Kokoro (CPU)",
-            price_sec=0.0,
-            native_codec="pcm",
-            sample_rate=24_000,
-            channels=1,
-            sample_width=2,
-        )
-        voices_json = Path(__file__).parent.parent / "workers/kokoro/voices.json"
-        for v in json.loads(voices_json.read_text()):
-            kokoro_cpu.voices.append(
-                Voice(
-                    slug=v["index"],
-                    name=v["name"],
-                    lang=v["language"],
-                    description=f"Quality grade {v['overallGrade']}",
-                )
-            )
-        db.add(kokoro_cpu)
-        # dia = Model(
-        #     slug="dia",
-        #     name="Dia-1.6B",
-        #     price_sec=0.0,
-        #     native_codec="pcm",
-        #     sample_rate=44_100,
-        #     channels=1,
-        #     sample_width=2,
-        # )
-        # dia.voices.append(Voice(slug="default", name="Dia", lang="en")
-        # db.add(dia)
+    from yapit.gateway.dev_seed import seed_dev_database
 
-        presets_json = Path(__file__).parent.parent / "data/default_filters.json"
-        defaults = json.loads(presets_json.read_text())
-        for p in defaults:
-            db.add(
-                Filter(
-                    name=p["name"],
-                    description=p.get("description"),
-                    config=p["config"],
-                    user_id=None,  # system filters
-                )
-            )
-        await db.commit()
+    async for db in create_session(settings):
+        await seed_dev_database(db)
         break  # only iterate once

@@ -4,9 +4,9 @@ services:
     build:
       context: .
       dockerfile: yapit/workers/kokoro/Dockerfile.cpu
+    command: python -m yapit.workers.kokoro
     environment:
-      MODEL_SLUG: kokoro-cpu
-      WORKER_CONCURRENCY: 2
-    depends_on:
-      - redis
+      ADAPTER_CLASS: yapit.workers.adapters.kokoro.KokoroAdapter
+    ports:
+      - "8001:8000"
     restart: unless-stopped

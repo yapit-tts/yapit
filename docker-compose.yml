@@ -31,6 +31,8 @@ services:
       - ./.env.prod
     environment:
       ENV_FILE: .env.prod
+    volumes:
+      - ./endpoints.json:/app/endpoints.json:ro
     depends_on:
       redis:
         condition: service_started

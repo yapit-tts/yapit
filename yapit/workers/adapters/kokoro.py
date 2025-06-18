@@ -12,31 +12,33 @@ from yapit.workers.adapters.base import SynthAdapter
 
 log = logging.getLogger("adapter.kokoro")
 
+DEVICE: str = os.getenv("DEVICE", "")
+
 
 class KokoroAdapter(SynthAdapter):
-    sample_rate = 24_000
-    channels = 1
-    sample_width = 2
-    native_codec = "pcm"
-
     def __init__(self):
-        self._device = os.getenv("DEVICE", "cpu")
+        if not DEVICE:
+            raise ValueError("DEVICE environment variable must be set to 'cpu' or 'cuda'")
+        if DEVICE == "cuda" and not torch.cuda.is_available():
+            raise RuntimeError("CUDA requested but unavailable, please check your setup.")
         self._pipe: KPipeline | None = None
         self._voices: list[str] = []
         self._lock = asyncio.Lock()
 
+    @property
+    def pipe(self) -> KPipeline:
+        if self._pipe is None:
+            raise RuntimeError("Adapter not initialized. Call initialize() first.")
+        return self._pipe
+
     async def initialize(self) -> None:
         if self._pipe is not None:
             return
-        if self._device == "cuda" and not torch.cuda.is_available():
-            log.warning("CUDA requested but unavailable, falling back to CPU")
-            self._device = "cpu"
-        self._pipe = KPipeline(repo_id="hexgrad/Kokoro-82M", lang_code="a", device=self._device)
-
+        self._pipe = KPipeline(repo_id="hexgrad/Kokoro-82M", lang_code="a", device=DEVICE)
         voices_json = Path(__file__).parent.parent / "kokoro" / "voices.json"
         self._voices = [v["index"] for v in json.load(open(voices_json))]
         for v in self._voices:
-            self._pipe.load_voice(v)  # TODO fix the  "unknown attribute of None" type error
+            self.pipe.load_voice(v)
 
     async def synthesize(self, text: str, *, voice: str, speed: float) -> bytes:
         await self.initialize()
@@ -45,12 +47,15 @@ class KokoroAdapter(SynthAdapter):
 
         pcm_chunks = []
         async with self._lock:  # model not thread-safe
-            for _, _, audio in self._pipe(
-                text, voice=voice, speed=speed
-            ):  # TODO fix the None cant be called type error
+            for _, _, audio in self.pipe(text, voice=voice, speed=speed):
                 if audio is None:
                     continue
                 pcm = (audio.numpy() * 32767).astype(np.int16).tobytes()  # scale [-1, 1] f32 tensor to int16 range
                 pcm_chunks.append(pcm)
 
         return b"".join(pcm_chunks)
+
+    def calculate_duration_ms(self, audio_bytes: bytes) -> int:
+        """Calculate audio duration for Kokoro's 24kHz mono 16-bit PCM format."""
+        # Kokoro outputs: 24000 Hz, 1 channel, 2 bytes per sample (16-bit)
+        return int(len(audio_bytes) / (24_000 * 1 * 2) * 1000)

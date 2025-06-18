@@ -7,8 +7,8 @@ RUN apt-get update && \
 
 WORKDIR /app
 
-COPY pyproject.toml README.md ./
-RUN pip install uv --no-cache-dir  && uv pip install ".[kokoro_cpu]" --no-cache-dir --system --extra-index-url https://download.pytorch.org/whl/cpu
+COPY yapit/workers/kokoro/pyproject.cpu.toml ./pyproject.toml
+RUN pip install uv --no-cache-dir  && uv pip install . --no-cache-dir --system
 
 COPY yapit/ /app/yapit
 
@@ -19,9 +19,6 @@ RUN python -c "import json; from huggingface_hub import hf_hub_download; \
     voices = json.load(open('/app/yapit/workers/kokoro/voices.json')); \
     [hf_hub_download('hexgrad/Kokoro-82M', f'voices/{v[\"index\"]}.pt') for v in voices]"
 ENV HF_HUB_OFFLINE=1
-
-RUN uv pip install runpod --no-cache-dir --system
-RUN cp /app/yapit/workers/runpod_handler.py /handler.py
 
 ENV PYTHONUNBUFFERED=1
 ENV DEVICE=cpu

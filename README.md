@@ -4,11 +4,7 @@
 
 Set up the backend dev env:
 ```bash
-uv venv .venv
-source .vent/bin/activate
-uv pip install ".[gateway,test]"
-uv pip install pre-commit
-pre-commit install
+uv sync --all-extras
 cp .env.prod.example .env.prod # .env.prod must exist, even if it's not used in dev
 ```
 

@@ -1,5 +1,4 @@
 .env.prod
-runpod-endpoints.json
 *repomix*.xml
 *.wav
 *.mp3

@@ -1,5 +1,3 @@
-"""End-to-end integration test for TTS generation."""
-
 import os
 
 import httpx
@@ -36,12 +34,18 @@ def get_dev_token():
 
 
 @pytest.mark.asyncio
-async def test_tts_integration():
+@pytest.mark.parametrize(
+    "model_slug",
+    [
+        "kokoro-cpu",
+        pytest.param("kokoro-cpu-runpod", marks=pytest.mark.runpod),
+    ],
+)
+async def test_tts_integration(model_slug):
     """Test complete TTS flow from document creation to audio retrieval.
 
     Requires: gateway, postgres, redis, and kokoro worker running.
     """
-    # Get auth token
     token = get_dev_token()
     headers = {"Authorization": f"Bearer {token}"}
 
@@ -63,7 +67,7 @@ async def test_tts_integration():
 
         synth_response = await client.post(
             f"/v1/documents/{document_id}/blocks/{block_id}/synthesize",
-            json={"model_slug": "kokoro-cpu", "voice_slug": "af_heart", "speed": 1.0},
+            json={"model_slug": model_slug, "voice_slug": "af_heart", "speed": 1.0},
         )
 
         elapsed = time.time() - start_time
@@ -85,7 +89,7 @@ async def test_tts_integration():
 
         cached_response = await client.post(
             f"/v1/documents/{document_id}/blocks/{block_id}/synthesize",
-            json={"model_slug": "kokoro-cpu", "voice_slug": "af_heart", "speed": 1.0},
+            json={"model_slug": model_slug, "voice_slug": "af_heart", "speed": 1.0},
         )
 
         elapsed = time.time() - start_time

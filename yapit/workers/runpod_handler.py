@@ -10,28 +10,18 @@ from yapit.workers.adapters.base import SynthAdapter
 
 
 def _get_adapter() -> SynthAdapter:
-    """Dynamically import and instantiate the appropriate adapter based on MODEL_SLUG env var."""
-    model_slug = os.getenv("MODEL_SLUG")
-    if not model_slug:
-        raise ValueError("MODEL_SLUG environment variable must be set")
+    """Dynamically import and instantiate the adapter based on ADAPTER_CLASS env var."""
+    adapter_class_path = os.getenv("ADAPTER_CLASS")
+    if not adapter_class_path:
+        raise ValueError("ADAPTER_CLASS environment variable must be set")
 
-    # Extract base model name from slug (e.g., "kokoro-gpu" -> "kokoro")
-    model_type = model_slug.split("-")[0]
-
-    adapter_map = {
-        "kokoro": "yapit.workers.adapters.kokoro.KokoroAdapter",
-    }
-
-    if model_type not in adapter_map:
-        raise ValueError(f"Unknown model type: {model_type} (from MODEL_SLUG={model_slug})")
-
-    module_path, class_name = adapter_map[model_type].rsplit(".", 1)
+    module_path, class_name = adapter_class_path.rsplit(".", 1)
     module = importlib.import_module(module_path)
     adapter_class = getattr(module, class_name)
     return adapter_class()
 
 
-async def async_handler(job, adapter: SynthAdapter):
+async def handler(job, adapter: SynthAdapter):
     """RunPod handler for any TTS model."""
     job_input = job["input"]
 
@@ -46,18 +36,9 @@ async def async_handler(job, adapter: SynthAdapter):
         return {
             "audio_base64": base64.b64encode(audio_bytes).decode("utf-8"),
             "duration_ms": duration_ms,
-            "sample_rate": adapter.sample_rate,
-            "channels": adapter.channels,
-            "sample_width": adapter.sample_width,
-            "codec": adapter.native_codec,
         }
     except Exception as e:
         return {"error": str(e)}
-
-
-def handler(job, adapter: SynthAdapter):
-    """Synchronous wrapper for RunPod."""
-    return asyncio.run(async_handler(job, adapter))
 
 
 def main() -> None:

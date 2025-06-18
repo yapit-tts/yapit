@@ -4,15 +4,15 @@ services:
     build:
       context: .
       dockerfile: yapit/workers/kokoro/Dockerfile.gpu
+    command: python -m yapit.workers.kokoro
     environment:
-      MODEL_SLUG: kokoro-gpu
-      WORKER_CONCURRENCY: 1
+      ADAPTER_CLASS: yapit.workers.adapters.kokoro.KokoroAdapter
+    ports:
+      - "8002:8000"
     deploy:
       resources:
         reservations:
           devices:
             - driver: nvidia
               capabilities: [gpu]
-    depends_on:
-      - redis
     restart: unless-stopped

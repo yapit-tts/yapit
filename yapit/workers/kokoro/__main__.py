@@ -1,9 +1,7 @@
-import asyncio
+import uvicorn
 
-from yapit.workers.adapters.kokoro import KokoroAdapter
-from yapit.workers.processors.local import LocalProcessor
+from yapit.workers.handlers.local import create_app
 
 if __name__ == "__main__":
-    adapter = KokoroAdapter()
-    processor = LocalProcessor(adapter)
-    asyncio.run(processor.run())
+    app = create_app("yapit.workers.adapters.kokoro.KokoroAdapter")
+    uvicorn.run(app, host="0.0.0.0", port=8000)

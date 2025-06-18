@@ -11,7 +11,8 @@
 
 ### Refactor
 
-- better / more consistent naming @ workers
+- can we improve dependency handling without creating separate docker images?
+  - see comments abt deps only some deployments need @ pyproject.toml
 
 ### Chore
 
