@@ -37,7 +37,7 @@ class YourModelAdapter(SynthAdapter):
         pass
 ```
 
-### 2. Create Worker Entry Point
+### 2. Create Worker Entry Point (Skip if only using RunPod -- see below)
 
 Create `yapit/workers/yourmodel/__main__.py`:
 
@@ -98,14 +98,14 @@ Create `docker-compose.yourmodel.yml`:
 
 ```yaml
 services:
-  yourmodel-cpu:
+  yourmodel:
     init: true
     build:
       context: .
       dockerfile: yapit/workers/yourmodel/Dockerfile
     environment:
       ADAPTER_CLASS: yapit.workers.adapters.yourmodel.YourModelAdapter
-      DEVICE: cpu  # Required if your adapter uses it
+      # DEVICE: cpu/cuda if needed
     ports:
       - "8001:8000"  # Use different port if running multiple workers
     restart: unless-stopped
@@ -117,64 +117,37 @@ Add to `endpoints.json`:
 
 ```json
 {
-  "model": "yourmodel-cpu",
+  "model": "yourmodel",
   "adapter": "yapit.workers.adapters.yourmodel.YourModelAdapter",
   "processor": "yapit.gateway.processors.local.LocalProcessor",
-  "worker_url": "http://yourmodel-cpu:8000",
+  "worker_url": "http://yourmodel:8000",
   "max_parallel": 2
 }
 ```
 
 ### 7. Add Database Entry
 
-The model slug in endpoints.json must match a database entry:
+Create a new model in the frontend with the right slug `yourmodel`.
 
-```sql
-INSERT INTO tts_model (slug, name, provider) 
-VALUES ('yourmodel-cpu', 'YourModel CPU', 'yourprovider');
-```
-
-### 8. Run
-
-```bash
-# Start gateway and your worker
-docker compose -f docker-compose.yml -f docker-compose.yourmodel.yml up
-```
+TODO: For now, see `yapit/gateway/dev_seed.py`.
 
 ## RunPod Deployment
 
 ### 1. Update Dependencies for RunPod
 
-Add runpod to your `pyproject.toml` dependencies:
+Add `runpod` to your worker's `pyproject.toml` dependencies.
 
-```toml
-dependencies = [
-    "pydantic~=2.11.3",
-    "fastapi[standard]~=0.115.12",
-    "numpy~=2.3.0",
-    "runpod~=1.7.12",  # Add this
-    # Your model's dependencies here
-]
-```
-
-### 2. Build and Push Image
-
-```bash
-docker build -f yapit/workers/yourmodel/Dockerfile -t your-registry/yapit-yourmodel:latest .
-docker push your-registry/yapit-yourmodel:latest
-```
-
-### 3. Create RunPod Endpoint
+### 2. Create RunPod Endpoint
 
 1. Go to [RunPod Serverless](https://www.runpod.io/console/serverless)
 2. Click "New Endpoint"
 3. Configure:
-   - Container Image: `your-registry/yapit-yourmodel:latest`
-   - Environment Variables:
-     - `ADAPTER_CLASS`: `yapit.workers.adapters.yourmodel.YourModelAdapter`
+   - Select Dockerfile via GitHub integration or from docker registry
+   - Public Environment Variables:
+     - `MODEL_SLUG`: `yourmodel`
      - `DEVICE`: `cuda` (if your adapter needs it)
-   - GPU Type: Select based on needs
-   - Workers: Min 0, Max as needed
+   - Docker Configuration:
+     - Container Start Command: `python -m yapit.workers.handlers.runpod` 
 
 ### 4. Configure RunPod Endpoint
 
@@ -182,32 +155,22 @@ Add to `endpoints.json`:
 
 ```json
 {
-  "model": "yourmodel-runpod",
+  "model": "yourmodel",
   "adapter": "yapit.workers.adapters.yourmodel.YourModelAdapter",
   "processor": "yapit.gateway.processors.runpod.RunPodProcessor",
   "runpod_endpoint_id": "your-endpoint-id-from-runpod"
 }
 ```
 
-Add database entry:
-
-```sql
-INSERT INTO tts_model (slug, name, provider) 
-VALUES ('yourmodel-runpod', 'YourModel RunPod', 'yourprovider');
-```
-
 ### 5. Set RunPod API Key
 
-In `.env` or `.env.local`:
-
-```bash
+In `.env.local` for development, or `.env.prod` for production, add:
+```
 RUNPOD_API_KEY=your-runpod-api-key
 ```
 
 ## Notes
 
-- Model weights should be downloaded at Docker build time, not runtime
-- Audio must be returned as raw PCM bytes (int16)
-- Implement `calculate_duration_ms()` based on your audio format (sample rate, channels, bit depth)
-- Each model variant (cpu/gpu/runpod) needs its own database entry
+- To simoultaneously serve the same model locally and on RunPod (or different runpod endpoints, different providers, ...), create  
+  separate database entries, and corresponding entries in `endpoints.json`.
 - Worker URLs in endpoints.json use Docker service names for local workers
