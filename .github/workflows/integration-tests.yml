@@ -32,8 +32,10 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Create empty local env files for Docker Compose
-        run: touch .env.prod .env.local
+      - name: Create env files for Docker Compose
+        run: |
+          touch .env.prod
+          echo "RUNPOD_API_KEY=${{ secrets.RUNPOD_API_KEY }}" > .env.local
 
       - name: Build
         run: make dev-cpu
