@@ -1,52 +1,73 @@
 # Adding Models to Yapit
 
-This guide explains how to add new TTS models to yapit, both for local deployment and RunPod.
+## Architecture Overview
 
-## Prerequisites
+Models in yapit are deployed as HTTP services that processors call:
+- **Adapter**: Implements TTS synthesis logic
+- **Worker**: HTTP server running the adapter
+- **Processor**: Gateway-side component that forwards jobs to workers
 
-1. Create a database entry for your model in the `TTSModel` table with a unique slug
-2. Implement a `SynthAdapter` for your model
-
-## Adding a Local Model
+## Adding a New Model
 
 ### 1. Create the Adapter
 
 Create `yapit/workers/adapters/yourmodel.py`:
 
 ```python
+import numpy as np
 from yapit.workers.adapters.base import SynthAdapter
 
 class YourModelAdapter(SynthAdapter):
-    sample_rate = 24_000  # Your model's sample rate
-    channels = 1          # Mono/stereo
-    sample_width = 2      # Bytes per sample (2 for int16)
-    native_codec = "pcm"  # Output format
-    
     async def initialize(self) -> None:
-        # Load your model here
+        """Load model weights here."""
+        # self.model = load_your_model()
         pass
     
     async def synthesize(self, text: str, *, voice: str, speed: float) -> bytes:
-        # Synthesize and return PCM audio bytes
+        """Convert text to PCM audio bytes (16-bit mono/stereo)."""
+        # audio = self.model.synthesize(text, voice=voice, speed=speed)
+        # Convert to int16 PCM:
+        # return (audio * 32767).astype(np.int16).tobytes()
+        pass
+    
+    def calculate_duration_ms(self, audio_bytes: bytes) -> int:
+        """Calculate duration from PCM bytes."""
+        # Example for 24kHz mono 16-bit:
+        # return int(len(audio_bytes) / (24_000 * 1 * 2) * 1000)
         pass
 ```
 
-### 2. Create Entry Point
+### 2. Create Worker Entry Point
 
 Create `yapit/workers/yourmodel/__main__.py`:
 
 ```python
-import asyncio
-from yapit.workers.adapters.yourmodel import YourModelAdapter
-from yapit.workers.processors.local import LocalProcessor
+import uvicorn
+from yapit.workers.handlers.local import create_app
 
 if __name__ == "__main__":
-    adapter = YourModelAdapter()
-    processor = LocalProcessor(adapter)
-    asyncio.run(processor.run())
+    app = create_app("yapit.workers.adapters.yourmodel.YourModelAdapter")
+    uvicorn.run(app, host="0.0.0.0", port=8000)
 ```
 
-### 3. Create Dockerfile
+### 3. Create Worker Dependencies
+
+Create `yapit/workers/yourmodel/pyproject.toml`:
+
+```toml
+[project]
+name = "yapit-yourmodel"
+version = "0.1.0"
+requires-python = ">=3.11,<=3.12"
+dependencies = [
+    "pydantic~=2.11.3",
+    "fastapi[standard]~=0.115.12",
+    "numpy~=2.3.0",
+    # Your model's dependencies here
+]
+```
+
+### 4. Create Dockerfile
 
 Create `yapit/workers/yourmodel/Dockerfile`:
 
@@ -56,65 +77,90 @@ FROM python:3.12-slim
 WORKDIR /app
 
 # Install dependencies
-COPY pyproject.toml README.md ./
+COPY yapit/workers/yourmodel/pyproject.toml ./
 RUN pip install uv --no-cache-dir && \
-    uv pip install ".[yourmodel]" --no-cache-dir --system
+    uv pip install . --no-cache-dir --system
 
-# Copy worker code
+# Copy code
 COPY yapit/ /app/yapit
 
+# Download model weights at build time
+# RUN python -c "import your_model; your_model.download_weights()"
+
 ENV PYTHONUNBUFFERED=1
+ENV ADAPTER_CLASS=yapit.workers.adapters.yourmodel.YourModelAdapter
 CMD ["python", "-m", "yapit.workers.yourmodel"]
 ```
 
-### 4. Create Docker Compose File
+### 5. Create Docker Compose Service
 
 Create `docker-compose.yourmodel.yml`:
 
 ```yaml
 services:
-  yourmodel:
+  yourmodel-cpu:
     init: true
     build:
       context: .
       dockerfile: yapit/workers/yourmodel/Dockerfile
     environment:
-      MODEL_SLUG: yourmodel-cpu  # Must match database entry
-      DEVICE: cpu                     # or cuda for GPU
-      WORKER_CONCURRENCY: 2           # Number of parallel jobs
-    depends_on:
-      - redis
+      ADAPTER_CLASS: yapit.workers.adapters.yourmodel.YourModelAdapter
+      DEVICE: cpu  # Required if your adapter uses it
+    ports:
+      - "8001:8000"  # Use different port if running multiple workers
     restart: unless-stopped
 ```
 
-### 5. Run Your Model
+### 6. Configure Endpoint
 
-```bash
-# Start with your model
-docker-compose -f docker-compose.yml -f docker-compose.yourmodel.yml up
-```
+Add to `endpoints.json`:
 
-## Adding a RunPod Model
-
-### 1. Update RunPod Handler
-
-Add your model to the adapter map in `yapit/workers/runpod_handler.py`:
-
-```python
-adapter_map = {
-    "kokoro": "yapit.workers.kokoro.worker.KokoroAdapter",
-    "yourmodel": "yapit.workers.yourmodel.worker.YourModelAdapter",  # Add this
+```json
+{
+  "model": "yourmodel-cpu",
+  "adapter": "yapit.workers.adapters.yourmodel.YourModelAdapter",
+  "processor": "yapit.gateway.processors.local.LocalProcessor",
+  "worker_url": "http://yourmodel-cpu:8000",
+  "max_parallel": 2
 }
-# The model name is extracted from WORKER_ID environment variable
 ```
 
-### 2. Build and Push Docker Image
+### 7. Add Database Entry
+
+The model slug in endpoints.json must match a database entry:
+
+```sql
+INSERT INTO tts_model (slug, name, provider) 
+VALUES ('yourmodel-cpu', 'YourModel CPU', 'yourprovider');
+```
+
+### 8. Run
 
 ```bash
-# Build image with RunPod support
-docker build -f yapit/workers/yourmodel/Dockerfile -t your-registry/yapit-yourmodel:latest .
+# Start gateway and your worker
+docker compose -f docker-compose.yml -f docker-compose.yourmodel.yml up
+```
 
-# Push to registry
+## RunPod Deployment
+
+### 1. Update Dependencies for RunPod
+
+Add runpod to your `pyproject.toml` dependencies:
+
+```toml
+dependencies = [
+    "pydantic~=2.11.3",
+    "fastapi[standard]~=0.115.12",
+    "numpy~=2.3.0",
+    "runpod~=1.7.12",  # Add this
+    # Your model's dependencies here
+]
+```
+
+### 2. Build and Push Image
+
+```bash
+docker build -f yapit/workers/yourmodel/Dockerfile -t your-registry/yapit-yourmodel:latest .
 docker push your-registry/yapit-yourmodel:latest
 ```
 
@@ -122,70 +168,46 @@ docker push your-registry/yapit-yourmodel:latest
 
 1. Go to [RunPod Serverless](https://www.runpod.io/console/serverless)
 2. Click "New Endpoint"
-3. Select your Docker image
-4. Set environment variable: `MODEL_TYPE=yourmodel`
-5. Configure GPU and scaling settings
-6. Deploy and note the endpoint ID
+3. Configure:
+   - Container Image: `your-registry/yapit-yourmodel:latest`
+   - Environment Variables:
+     - `ADAPTER_CLASS`: `yapit.workers.adapters.yourmodel.YourModelAdapter`
+     - `DEVICE`: `cuda` (if your adapter needs it)
+   - GPU Type: Select based on needs
+   - Workers: Min 0, Max as needed
 
-### 4. Configure RunPod Bridge
+### 4. Configure RunPod Endpoint
 
-Set environment variables for the bridge service:
+Add to `endpoints.json`:
 
-```bash
-# In .env.prod or docker-compose.runpod.yml
-RUNPOD_API_KEY=your-api-key
-RUNPOD_ENDPOINT_YOURMODEL=endpoint-id-from-step-3
+```json
+{
+  "model": "yourmodel-runpod",
+  "adapter": "yapit.workers.adapters.yourmodel.YourModelAdapter",
+  "processor": "yapit.gateway.processors.runpod.RunPodProcessor",
+  "runpod_endpoint_id": "your-endpoint-id-from-runpod"
+}
 ```
 
-### 5. Create Database Entry
+Add database entry:
 
-Create a TTSModel entry with slug `yourmodel-runpod`.
-
-### 6. Run with RunPod
-
-```bash
-# Start gateway with RunPod bridge
-docker-compose -f docker-compose.yml -f docker-compose.runpod.yml up
+```sql
+INSERT INTO tts_model (slug, name, provider) 
+VALUES ('yourmodel-runpod', 'YourModel RunPod', 'yourprovider');
 ```
 
-## Environment Variables Reference
+### 5. Set RunPod API Key
 
-### Local Workers
+In `.env` or `.env.local`:
 
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `MODEL_SLUG` | Model identifier | `kokoro-cpu` |
-| `DEVICE` | Device to use | `cpu` or `cuda` |
-| `WORKER_CONCURRENCY` | Parallel jobs | `2` |
-| `REDIS_URL` | Redis connection | `redis://redis:6379/0` (default) |
+```bash
+RUNPOD_API_KEY=your-runpod-api-key
+```
 
-### RunPod Processor
+## Notes
 
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `RUNPOD_API_KEY` | RunPod API key | `rp_xxx` |
-| `RUNPOD_ENDPOINTS_FILE` | Path to endpoints config | `runpod-endpoints.json` |
-
-## How It Works
-
-1. **Queue Naming**: Model slug determines Redis queue
-   - `kokoro-cpu` → `yapit:queue:kokoro-cpu`
-   - `kokoro-gpu` → `yapit:queue:kokoro-gpu`
-
-2. **Local Workers**: Listen to their specific queue based on `MODEL_SLUG`
-
-3. **RunPod Processor**: 
-   - Each processor monitors a specific queue for its model
-   - Maps model names to endpoint IDs via JSON config file
-   - Forwards jobs to RunPod and returns results
-
-## Best Practices
-
-1. Use consistent model slug format: `model-device`
-   - `kokoro-cpu`, `kokoro-gpu`, `whisper-gpu`
-
-2. Keep adapters pure - only synthesis logic, no infrastructure concerns
-
-3. Set appropriate concurrency based on model size and available resources
-
-4. For RunPod, ensure your Docker image includes all model weights to avoid download delays
+- Model weights should be downloaded at Docker build time, not runtime
+- Audio must be returned as raw PCM bytes (int16)
+- Implement `calculate_duration_ms()` based on your audio format (sample rate, channels, bit depth)
+- Each model variant (cpu/gpu/runpod) needs its own database entry
+- Worker URLs in endpoints.json use Docker service names for local workers
