@@ -10,7 +10,7 @@
     "model": "kokoro-cpu-runpod",
     "adapter": "yapit.workers.adapters.kokoro.KokoroAdapter",
     "processor": "yapit.gateway.processors.runpod.RunPodProcessor",
-    "runpod_endpoint_id": "your-runpod-endpoint-id-here"
+    "runpod_endpoint_id": "nc8eej7missbxb"
   }
 ]
 

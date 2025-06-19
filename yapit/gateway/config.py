@@ -32,7 +32,7 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(
         env_prefix="",
-        env_file=os.getenv("ENV_FILE", ".env"),
+        env_file=[os.getenv("ENV_FILE", ""), ".env.local"],
         extra="ignore",
         env_nested_delimiter="__",
     )

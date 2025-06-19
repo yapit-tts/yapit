@@ -1,6 +1,9 @@
 services:
   gateway:
-    env_file: ./.env.dev
+    env_file:
+      - ./.env.prod
+      - ./.env.dev
+      - ./.env.local
     environment:
       ENV_FILE: .env.dev
     ports:
