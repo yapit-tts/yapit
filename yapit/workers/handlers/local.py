@@ -2,6 +2,7 @@ import base64
 import importlib
 import logging
 import os
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -38,13 +39,13 @@ def create_app(adapter_class_path: str | None = None) -> FastAPI:
         raise ValueError("ADAPTER_CLASS environment variable must be set")
     adapter = _get_adapter(adapter_class_path)
 
-    app = FastAPI(title="Local TTS Worker")
-
-    @app.on_event("startup")
-    async def startup():
-        """Initialize adapter on startup."""
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
         await adapter.initialize()
         log.info(f"Initialized {adapter.__class__.__name__} adapter")
+        yield
+
+    app = FastAPI(title="Local TTS Worker", lifespan=lifespan)
 
     @app.get("/health")
     async def health():
