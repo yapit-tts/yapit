@@ -62,6 +62,7 @@ def create_dev_user():
             "primary_email_verified": True,
             "primary_email_auth_enabled": True,
             "display_name": "Dev User",
+            "server_metadata": {"is_admin": True},
         },
     )
 

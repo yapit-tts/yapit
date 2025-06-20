@@ -21,7 +21,8 @@ class UserClientReadOnlyMetadata(BaseModel):
 
 # visible to the server
 # editable by the server
-class UserServerMetadata(BaseModel): ...
+class UserServerMetadata(BaseModel):
+    is_admin: bool = Field(default=False)
 
 
 class User(BaseModel):

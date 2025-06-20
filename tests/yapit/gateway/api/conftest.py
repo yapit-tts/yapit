@@ -7,8 +7,9 @@ from testcontainers.redis import RedisContainer
 from yapit.gateway import create_app
 from yapit.gateway.auth import ANON_USER, authenticate
 from yapit.gateway.cache import CacheConfig, Caches
-from yapit.gateway.config import Settings, get_settings
+from yapit.gateway.config import Settings
 from yapit.gateway.db import close_db
+from yapit.gateway.stack_auth.users import User, UserServerMetadata
 from yapit.gateway.text_splitter import TextSplitterConfig, TextSplitters
 
 
@@ -55,3 +56,48 @@ async def app(postgres_container, redis_container) -> FastAPI:
         yield app
 
     await close_db()
+
+
+# Create test users
+TEST_USER = User(
+    id="test-user-123",
+    primary_email_verified=True,
+    primary_email_auth_enabled=True,
+    signed_up_at_millis=1234567890,
+    last_active_at_millis=1234567890,
+    is_anonymous=False,
+    primary_email="test@example.com",
+)
+
+ADMIN_USER = User(
+    id="admin-user-123",
+    primary_email_verified=True,
+    primary_email_auth_enabled=True,
+    signed_up_at_millis=1234567890,
+    last_active_at_millis=1234567890,
+    is_anonymous=False,
+    primary_email="admin@example.com",
+    server_metadata=UserServerMetadata(is_admin=True),
+)
+
+
+@pytest_asyncio.fixture
+async def client(app):
+    """Test client with auth overrides."""
+    import httpx
+    from httpx import AsyncClient
+
+    async with AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        yield client
+
+
+@pytest_asyncio.fixture
+async def session(app):
+    """Database session for tests."""
+    from yapit.gateway.config import get_settings
+    from yapit.gateway.db import create_session
+
+    settings = app.dependency_overrides[get_settings]()
+    async for session in create_session(settings):
+        yield session
+        break
