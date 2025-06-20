@@ -7,6 +7,4 @@ services:
     command: python -m yapit.workers.kokoro
     environment:
       ADAPTER_CLASS: yapit.workers.adapters.kokoro.KokoroAdapter
-    ports:
-      - "8001:8000"
     restart: unless-stopped
