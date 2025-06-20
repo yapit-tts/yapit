@@ -167,6 +167,16 @@ async def get_block_variant(
     return variant
 
 
+async def require_admin(user: Annotated[User, Depends(authenticate)]) -> User:
+    """Require the authenticated user to be an admin."""
+    if not user.server_metadata or not user.server_metadata.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required",
+        )
+    return user
+
+
 RedisClient = Annotated[Redis, Depends(get_redis_client)]
 AudioCache = Annotated[Cache, Depends(get_audio_cache)]
 TextSplitterDep = Annotated[TextSplitter, Depends(get_text_splitter)]
@@ -175,3 +185,4 @@ CurrentVoice = Annotated[Voice, Depends(get_voice)]
 CurrentBlock = Annotated[Block, Depends(get_block)]
 CurrentBlockVariant = Annotated[BlockVariant, Depends(get_block_variant)]
 AuthenticatedUser = Annotated[User, Depends(authenticate)]
+AdminUser = Annotated[User, Depends(require_admin)]

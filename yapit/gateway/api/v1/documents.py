@@ -7,7 +7,6 @@ from pydantic import BaseModel, HttpUrl
 from sqlmodel import func, select
 from starlette.concurrency import run_in_threadpool
 
-from yapit.gateway.auth import User, authenticate
 from yapit.gateway.deps import AuthenticatedUser, CurrentDoc, DbSession, TextSplitterDep, get_doc
 from yapit.gateway.domain_models import Block, Document, SourceType
 from yapit.gateway.utils import estimate_duration_ms

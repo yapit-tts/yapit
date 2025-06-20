@@ -16,7 +16,6 @@
 
 ### Chore
 
-- ci: add runpod ci
 - bump python version to 3.13 everywhere (toml, gateway/cpu dockerfile) once spacy, and google-re2 support https://github.com/explosion/spaCy/issues/13658
 
 ### Notes
