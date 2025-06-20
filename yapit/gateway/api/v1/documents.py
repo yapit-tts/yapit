@@ -108,7 +108,7 @@ async def create_document(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Text splitting failed: {exc}"
         ) from exc
-    est_total_ms = 0.0
+    est_total_ms = 0
     blocks: list[Block] = []
     for idx, text_block in enumerate(text_blocks):
         dur = estimate_duration_ms(text_block)

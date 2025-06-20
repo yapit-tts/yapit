@@ -26,9 +26,13 @@ class Settings(BaseSettings):
     stack_auth_project_id: str
     stack_auth_server_key: str
 
+    endpoints_file: str
+    runpod_api_key: str | None = None
+    runpod_request_timeout_seconds: int | None = None
+
     model_config = SettingsConfigDict(
         env_prefix="",
-        env_file=os.getenv("ENV_FILE", ".env"),
+        env_file=[os.getenv("ENV_FILE", ""), ".env.local"],
         extra="ignore",
         env_nested_delimiter="__",
     )

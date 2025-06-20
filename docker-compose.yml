@@ -31,6 +31,8 @@ services:
       - ./.env.prod
     environment:
       ENV_FILE: .env.prod
+    volumes:
+      - ./endpoints.json:/app/endpoints.json:ro
     depends_on:
       redis:
         condition: service_started
@@ -68,41 +70,4 @@ services:
   #   image: svix/svix-server
   #   restart: unless-stopped
   #   env_file: ./.env.prod
-
-  # -------- workers for local model serving / serving on gateway server
-  kokoro-cpu:
-    init: true
-    profiles:
-      - self-host
-    build:
-      context: .
-      dockerfile: yapit/workers/kokoro/Dockerfile.cpu
-    env_file: ./.env.prod
-    environment:
-      TTS_BACKENDS: kokoro
-      DEVICE:       cpu
-      WORKER_CONCURRENCY: 2
-    depends_on: [redis]
-    restart: unless-stopped
-
-  kokoro-gpu:
-    init: true
-    profiles:
-      - self-host
-    build:
-      context: .
-      dockerfile: yapit/workers/kokoro/Dockerfile.gpu
-    env_file: ./.env.prod
-    environment:
-      TTS_BACKENDS: kokoro
-      DEVICE:       cuda
-      WORKER_CONCURRENCY: 1
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              capabilities: [gpu]
-    depends_on: [redis]
-    restart: unless-stopped
 

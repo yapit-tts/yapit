@@ -1,0 +1,28 @@
+
+[project]
+
+name = "yapit-kokoro-cpu"
+version = "0.1.0"
+description = "Yapit Kokoro CPU worker"
+requires-python = ">=3.11,<=3.12"
+dependencies = [
+  "pydantic~=2.11.3",
+  "torch~=2.7.0",
+  "kokoro~=0.9.4",
+  "spacy~=3.8.4",
+  "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
+  "fastapi[standard]~=0.115.12", # only needed for LocalProcessor
+  "runpod~=1.7.12", # only needed for RunPodProcessor
+]
+
+[tool.uv.sources]
+
+torch = [
+    { index = "pytorch-cpu" },
+]
+
+[[tool.uv.index]]
+
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true

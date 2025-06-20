@@ -1,0 +1,16 @@
+[
+  {
+    "model": "kokoro-cpu",
+    "adapter": "yapit.workers.adapters.kokoro.KokoroAdapter",
+    "processor": "yapit.gateway.processors.local.LocalProcessor",
+    "worker_url": "http://kokoro-cpu:8000",
+    "max_parallel": 2
+  },
+  {
+    "model": "kokoro-cpu-runpod",
+    "adapter": "yapit.workers.adapters.kokoro.KokoroAdapter",
+    "processor": "yapit.gateway.processors.runpod.RunPodProcessor",
+    "runpod_endpoint_id": "nc8eej7missbxb"
+  }
+]
+

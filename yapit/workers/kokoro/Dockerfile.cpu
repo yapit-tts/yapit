@@ -7,10 +7,20 @@ RUN apt-get update && \
 
 WORKDIR /app
 
-COPY pyproject.toml README.md ./
-RUN pip install uv --no-cache-dir  && uv pip install ".[kokoro_cpu]" --no-cache-dir --system --extra-index-url https://download.pytorch.org/whl/cpu
+COPY yapit/workers/kokoro/pyproject.cpu.toml ./pyproject.toml
+RUN pip install uv --no-cache-dir  && uv pip install . --no-cache-dir --system
 
 COPY yapit/ /app/yapit
 
+ENV HF_HOME=/models
+RUN python -c "from huggingface_hub import snapshot_download; snapshot_download('hexgrad/Kokoro-82M');"
+# pre-download all voice files listed in voices.json
+RUN python -c "import json; from huggingface_hub import hf_hub_download; \
+    voices = json.load(open('/app/yapit/workers/kokoro/voices.json')); \
+    [hf_hub_download('hexgrad/Kokoro-82M', f'voices/{v[\"index\"]}.pt') for v in voices]"
+ENV HF_HUB_OFFLINE=1
+
 ENV PYTHONUNBUFFERED=1
-CMD ["python", "-m", "yapit.workers.kokoro.worker"]
+ENV DEVICE=cpu
+ENV ADAPTER_CLASS=yapit.workers.adapters.kokoro.KokoroAdapter
+CMD ["python", "-m", "yapit.workers.kokoro"]

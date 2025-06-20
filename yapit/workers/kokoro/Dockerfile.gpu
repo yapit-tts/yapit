@@ -1,7 +1,7 @@
 FROM nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
-# image does not come ship with python which is needed to install uv
+# image does not ship with python which is needed to install uv
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
       python3.10 python3.10-venv python3-pip python3-setuptools \
@@ -13,7 +13,17 @@ WORKDIR /app
 COPY pyproject.toml README.md ./
 RUN pip install uv --no-cache-dir && uv pip install ".[kokoro_gpu]" --no-cache-dir --system
 
-COPY workers/ /app/workers
+COPY yapit/ /app/yapit
+
+ENV HF_HOME=/models
+RUN python3 -c "from huggingface_hub import snapshot_download; snapshot_download('hexgrad/Kokoro-82M');"
+# pre-download all voice files listed in voices.json
+RUN python3 -c "import json; from huggingface_hub import hf_hub_download; \
+    voices = json.load(open('/app/yapit/workers/kokoro/voices.json')); \
+    [hf_hub_download('hexgrad/Kokoro-82M', f'voices/{v[\"index\"]}.pt') for v in voices]"
+ENV HF_HUB_OFFLINE=1
 
 ENV PYTHONUNBUFFERED=1
-CMD ["python", "-m", "yapit.workers.kokoro.worker"]
+ENV DEVICE=cuda
+ENV ADAPTER_CLASS=yapit.workers.adapters.kokoro.KokoroAdapter
+CMD ["python3", "-m", "yapit.workers.kokoro"]

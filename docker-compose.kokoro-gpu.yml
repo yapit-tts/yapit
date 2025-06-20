@@ -1,0 +1,16 @@
+services:
+  kokoro-gpu:
+    init: true
+    build:
+      context: .
+      dockerfile: yapit/workers/kokoro/Dockerfile.gpu
+    command: python -m yapit.workers.kokoro
+    environment:
+      ADAPTER_CLASS: yapit.workers.adapters.kokoro.KokoroAdapter
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
+    restart: unless-stopped

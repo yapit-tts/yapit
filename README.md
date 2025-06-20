@@ -4,13 +4,12 @@
 
 Set up the backend dev env:
 ```bash
-uv venv .venv
-source .vent/bin/activate
-uv pip install ".[gateway,test]"
-uv pip install pre-commit
-pre-commit install
+uv sync --all-extras
 cp .env.prod.example .env.prod # .env.prod must exist, even if it's not used in dev
+touch .env.local # put keys that you also want to use in dev but dont want to commit here
 ```
+
+If you want to also use runpod workers (or don't want to change the default dev endpoint config), put RUNPOD_API_KEY in `.env.local` (with any value, it just needs to exist).
 
 Start the backend services:
 ```bash
@@ -22,7 +21,7 @@ Start the frontend and login at `http://localhost/auth/signin` with the test use
 cd frontend && npm run dev
 ```
 
-Check if everything works:
+Check if everything works (needs runpod key):
 ```bash
 make test
 ```

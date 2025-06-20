@@ -7,10 +7,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import ORJSONResponse
 
 from yapit.gateway.api.v1 import routers as v1_routers
-from yapit.gateway.cache_listener import run_cache_listener
 from yapit.gateway.config import Settings, get_settings
 from yapit.gateway.db import close_db, prepare_database
 from yapit.gateway.deps import get_audio_cache
+from yapit.gateway.processors.manager import ProcessorManager
 from yapit.gateway.redis_client import create_redis_client
 
 
@@ -23,18 +23,18 @@ async def lifespan(app: FastAPI):
 
     app.state.redis_client = await create_redis_client(settings)
 
-    listener_task = asyncio.create_task(
-        run_cache_listener(
-            redis=app.state.redis_client,
-            cache=get_audio_cache(settings),
-        )
+    processor_manager = ProcessorManager(
+        redis=app.state.redis_client,
+        cache=get_audio_cache(settings),
+        settings=settings,
     )
+
+    await processor_manager.start_from_config(settings.endpoints_file)
 
     yield
 
-    listener_task.cancel()
-    with contextlib.suppress(asyncio.CancelledError):
-        await listener_task
+    # Stop processor manager
+    await processor_manager.stop()
 
     await close_db()
     await app.state.redis_client.aclose()

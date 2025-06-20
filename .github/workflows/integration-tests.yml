@@ -32,11 +32,21 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Create empty .env.prod for Docker Compose
-        run: touch .env.prod
+      - name: Create env files for Docker Compose
+        run: |
+          touch .env.prod
+          echo "RUNPOD_API_KEY=${{ secrets.RUNPOD_API_KEY }}" > .env.local
 
       - name: Build
         run: make dev-cpu
+
+      - name: Show container logs on failure
+        if: ${{ failure() }}
+        run: |
+          docker compose logs gateway
+          docker compose logs stack-auth
+          docker compose logs kokoro-cpu
+          docker compose ps -a
 
       - name: Run integration tests
         run: make test-integration

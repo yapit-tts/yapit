@@ -1,4 +1,4 @@
-.env.prod
+.env.local
 *repomix*.xml
 *.wav
 *.mp3

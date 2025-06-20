@@ -1,0 +1,97 @@
+"""Development database seeding."""
+
+import json
+from pathlib import Path
+
+from sqlmodel.ext.asyncio.session import AsyncSession
+
+from yapit.gateway.domain_models import Filter, TTSModel, Voice
+
+
+def create_dev_models() -> list[TTSModel]:
+    """Create development TTS models with voices."""
+    models = []
+
+    # Local CPU worker
+    kokoro_cpu = TTSModel(
+        slug="kokoro-cpu",
+        name="Kokoro (CPU)",
+        price_sec=0.0,
+        native_codec="pcm",
+        sample_rate=24_000,
+        channels=1,
+        sample_width=2,
+    )
+
+    # RunPod CPU worker (for testing)
+    kokoro_cpu_runpod = TTSModel(
+        slug="kokoro-cpu-runpod",
+        name="Kokoro (CPU on RunPod)",
+        price_sec=0.001,
+        native_codec="pcm",
+        sample_rate=24_000,
+        channels=1,
+        sample_width=2,
+    )
+
+    # Load voices for both models
+    voices_json = Path(__file__).parent.parent / "workers/kokoro/voices.json"
+    voices_data = json.loads(voices_json.read_text())
+
+    for v in voices_data:
+        voice_kwargs = {
+            "slug": v["index"],
+            "name": v["name"],
+            "lang": v["language"],
+            "description": f"Quality grade {v['overallGrade']}",
+        }
+        kokoro_cpu.voices.append(Voice(**voice_kwargs))
+        kokoro_cpu_runpod.voices.append(Voice(**voice_kwargs))
+
+    models.extend([kokoro_cpu, kokoro_cpu_runpod])
+
+    # Uncomment to add Dia model
+    # dia = TTSModel(
+    #     slug="dia",
+    #     name="Dia-1.6B",
+    #     price_sec=0.0,
+    #     native_codec="pcm",
+    #     sample_rate=44_100,
+    #     channels=1,
+    #     sample_width=2,
+    # )
+    # dia.voices.append(Voice(slug="default", name="Dia", lang="en"))
+    # models.append(dia)
+
+    return models
+
+
+def create_dev_filters() -> list[Filter]:
+    """Create default filter presets."""
+    presets_json = Path(__file__).parent.parent / "data/default_filters.json"
+    defaults = json.loads(presets_json.read_text())
+
+    filters = []
+    for p in defaults:
+        filters.append(
+            Filter(
+                name=p["name"],
+                description=p.get("description"),
+                config=p["config"],
+                user_id=None,  # system filters
+            )
+        )
+    return filters
+
+
+async def seed_dev_database(db: AsyncSession) -> None:
+    """Seed development database with models and filters."""
+    # Add all TTS models
+    for model in create_dev_models():
+        db.add(model)
+
+    # Add default filters
+    for filter_obj in create_dev_filters():
+        db.add(filter_obj)
+
+    await db.commit()

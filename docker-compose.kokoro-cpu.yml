@@ -1,0 +1,10 @@
+services:
+  kokoro-cpu:
+    init: true
+    build:
+      context: .
+      dockerfile: yapit/workers/kokoro/Dockerfile.cpu
+    command: python -m yapit.workers.kokoro
+    environment:
+      ADAPTER_CLASS: yapit.workers.adapters.kokoro.KokoroAdapter
+    restart: unless-stopped
