@@ -1,3 +1,5 @@
+from datetime import datetime
+from decimal import Decimal
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -5,7 +7,15 @@ from pydantic import BaseModel
 from sqlmodel import select
 
 from yapit.gateway.deps import DbSession, require_admin
-from yapit.gateway.domain_models import Filter, TTSModel, Voice
+from yapit.gateway.domain_models import (
+    CreditTransaction,
+    Filter,
+    TransactionStatus,
+    TransactionType,
+    TTSModel,
+    UserCredits,
+    Voice,
+)
 
 router = APIRouter(prefix="/v1/admin", tags=["Admin"], dependencies=[Depends(require_admin)])
 
@@ -15,7 +25,7 @@ class ModelCreateRequest(BaseModel):
 
     slug: str
     name: str
-    price_sec: float
+    credit_multiplier: Decimal
     native_codec: str
     sample_rate: int
     channels: int
@@ -26,7 +36,7 @@ class ModelUpdateRequest(BaseModel):
     """Request to update a TTS model."""
 
     name: str | None = None
-    price_sec: float | None = None
+    credit_multiplier: Decimal | None = None
     native_codec: str | None = None
     sample_rate: int | None = None
     channels: int | None = None
@@ -299,3 +309,105 @@ async def delete_system_filter(
 
     await db.delete(filter_obj)
     await db.commit()
+
+
+# Credit Management Endpoints
+
+
+class CreditAdjustmentRequest(BaseModel):
+    """Request to adjust user credits."""
+
+    amount: Decimal
+    description: str
+    type: TransactionType = TransactionType.credit_adjustment
+
+
+class UserCreditsResponse(BaseModel):
+    """Response with user credit information."""
+
+    user_id: str
+    balance: Decimal
+    total_purchased: Decimal
+    total_used: Decimal
+    created: datetime
+    updated: datetime
+
+
+@router.get("/users/{user_id}/credits", response_model=UserCreditsResponse)
+async def get_user_credits(
+    user_id: str,
+    db: DbSession,
+) -> UserCredits:
+    """Get user's credit balance and statistics."""
+    user_credits = await db.get(UserCredits, user_id)
+    if not user_credits:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No credit record found for user {user_id!r}",
+        )
+    return user_credits
+
+
+@router.post("/users/{user_id}/credits", response_model=UserCreditsResponse)
+async def adjust_user_credits(
+    user_id: str,
+    adjustment: CreditAdjustmentRequest,
+    db: DbSession,
+) -> UserCredits:
+    """Adjust user's credit balance (grant, deduct, or refund credits)."""
+    # Get or create user credits
+    user_credits = await db.get(UserCredits, user_id)
+    if not user_credits:
+        user_credits = UserCredits(
+            user_id=user_id,
+            balance=Decimal("0"),
+            total_purchased=Decimal("0"),
+            total_used=Decimal("0"),
+        )
+        db.add(user_credits)
+        await db.flush()
+
+    # Calculate new balance
+    balance_before = user_credits.balance
+    user_credits.balance += adjustment.amount
+
+    # Update totals based on transaction type
+    if adjustment.type in [TransactionType.credit_purchase, TransactionType.credit_bonus]:
+        user_credits.total_purchased += adjustment.amount
+    elif adjustment.type == TransactionType.usage_deduction and adjustment.amount < 0:
+        user_credits.total_used += abs(adjustment.amount)
+
+    # Create transaction record
+    transaction = CreditTransaction(
+        user_id=user_id,
+        type=adjustment.type,
+        status=TransactionStatus.completed,
+        amount=adjustment.amount,
+        balance_before=balance_before,
+        balance_after=user_credits.balance,
+        description=adjustment.description,
+        extra_data={"adjusted_by": "admin"},
+    )
+    db.add(transaction)
+
+    await db.commit()
+    await db.refresh(user_credits)
+    return user_credits
+
+
+@router.get("/users/{user_id}/credit-transactions")
+async def get_user_credit_transactions(
+    user_id: str,
+    db: DbSession,
+    limit: int = 50,
+    offset: int = 0,
+) -> list[CreditTransaction]:
+    """Get user's credit transaction history."""
+    result = await db.exec(
+        select(CreditTransaction)
+        .where(CreditTransaction.user_id == user_id)
+        .order_by(CreditTransaction.created.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    return result.all()

@@ -29,7 +29,7 @@ async def test_admin_can_create_model(client, app, session):
     model_data = {
         "slug": "test-model",
         "name": "Test Model",
-        "price_sec": 0.002,
+        "credit_multiplier": 2.0,
         "native_codec": "pcm",
         "sample_rate": 24000,
         "channels": 1,
@@ -46,7 +46,7 @@ async def test_admin_can_create_model(client, app, session):
     # Verify in database
     db_model = (await session.exec(select(TTSModel).where(TTSModel.slug == "test-model"))).first()
     assert db_model is not None
-    assert db_model.price_sec == 0.002
+    assert float(db_model.credit_multiplier) == 2.0
 
 
 @pytest.mark.asyncio
@@ -59,7 +59,7 @@ async def test_admin_can_update_model(client, app, session):
     model = TTSModel(
         slug="update-test",
         name="Original Name",
-        price_sec=0.001,
+        credit_multiplier=1.0,
         native_codec="pcm",
         sample_rate=24000,
         channels=1,
@@ -69,13 +69,13 @@ async def test_admin_can_update_model(client, app, session):
     await session.commit()
 
     # Update it
-    update_data = {"name": "Updated Name", "price_sec": 0.003}
+    update_data = {"name": "Updated Name", "credit_multiplier": 3.0}
     response = await client.put(f"/v1/admin/models/{model.slug}", json=update_data)
     assert response.status_code == status.HTTP_200_OK
 
     updated_model = response.json()
     assert updated_model["name"] == "Updated Name"
-    assert updated_model["price_sec"] == 0.003
+    assert float(updated_model["credit_multiplier"]) == 3.0
 
 
 @pytest.mark.asyncio
@@ -89,7 +89,7 @@ async def test_admin_can_manage_voices(client, app, session):
     model = TTSModel(
         slug="voice-test-model",
         name="Voice Test Model",
-        price_sec=0.001,
+        credit_multiplier=1.0,
         native_codec="pcm",
         sample_rate=24000,
         channels=1,
@@ -143,7 +143,7 @@ async def test_admin_voice_creation_duplicate_check(client, app, session):
     model = TTSModel(
         slug="duplicate-voice-test",
         name="Duplicate Voice Test",
-        price_sec=0.001,
+        credit_multiplier=1.0,
         native_codec="pcm",
         sample_rate=24000,
         channels=1,
@@ -179,7 +179,7 @@ async def test_admin_can_delete_model_with_voices(client, app, session):
     model = TTSModel(
         slug="delete-test",
         name="Delete Test",
-        price_sec=0.001,
+        credit_multiplier=1.0,
         native_codec="pcm",
         sample_rate=24000,
         channels=1,

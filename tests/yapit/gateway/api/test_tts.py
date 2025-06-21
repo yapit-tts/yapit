@@ -13,6 +13,12 @@ from yapit.gateway.deps import get_audio_cache
 @pytest.mark.asyncio
 async def test_synthesize_returns_cached_audio_immediately(app: FastAPI):
     """Test that synthesize returns cached audio immediately without queueing."""
+    from tests.yapit.gateway.api.conftest import ADMIN_USER
+    from yapit.gateway.auth import authenticate
+
+    # Use admin user to bypass credit check
+    app.dependency_overrides[authenticate] = lambda: ADMIN_USER
+
     test_audio = b"CACHED_PCM_AUDIO_DATA"
     mock_cache = AsyncMock(spec=Cache)
     mock_cache.retrieve_data.return_value = test_audio

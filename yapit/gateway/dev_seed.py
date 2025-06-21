@@ -1,11 +1,12 @@
 """Development database seeding."""
 
 import json
+from decimal import Decimal
 from pathlib import Path
 
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from yapit.gateway.domain_models import Filter, TTSModel, Voice
+from yapit.gateway.domain_models import CreditPackage, Filter, TTSModel, Voice
 
 
 def create_dev_models() -> list[TTSModel]:
@@ -16,7 +17,7 @@ def create_dev_models() -> list[TTSModel]:
     kokoro_cpu = TTSModel(
         slug="kokoro-cpu",
         name="Kokoro (CPU)",
-        price_sec=0.0,
+        credit_multiplier=Decimal("1.0"),
         native_codec="pcm",
         sample_rate=24_000,
         channels=1,
@@ -27,7 +28,7 @@ def create_dev_models() -> list[TTSModel]:
     kokoro_cpu_runpod = TTSModel(
         slug="kokoro-cpu-runpod",
         name="Kokoro (CPU on RunPod)",
-        price_sec=0.001,
+        credit_multiplier=Decimal("1.5"),
         native_codec="pcm",
         sample_rate=24_000,
         channels=1,
@@ -54,7 +55,7 @@ def create_dev_models() -> list[TTSModel]:
     # dia = TTSModel(
     #     slug="dia",
     #     name="Dia-1.6B",
-    #     price_sec=0.0,
+    #     credit_multiplier=Decimal("2.0"),
     #     native_codec="pcm",
     #     sample_rate=44_100,
     #     channels=1,
@@ -84,8 +85,43 @@ def create_dev_filters() -> list[Filter]:
     return filters
 
 
+def create_dev_credit_packages() -> list[CreditPackage]:
+    """Create default credit packages for purchase."""
+    packages = [
+        CreditPackage(
+            name="Starter",
+            description="Perfect for trying out the service",
+            credits=Decimal("100"),
+            price_usd=Decimal("5.00"),
+            sort_order=1,
+        ),
+        CreditPackage(
+            name="Basic",
+            description="Great for regular use",
+            credits=Decimal("500"),
+            price_usd=Decimal("20.00"),
+            sort_order=2,
+        ),
+        CreditPackage(
+            name="Pro",
+            description="Best value for power users",
+            credits=Decimal("1200"),
+            price_usd=Decimal("40.00"),
+            sort_order=3,
+        ),
+        CreditPackage(
+            name="Enterprise",
+            description="For heavy usage",
+            credits=Decimal("5000"),
+            price_usd=Decimal("150.00"),
+            sort_order=4,
+        ),
+    ]
+    return packages
+
+
 async def seed_dev_database(db: AsyncSession) -> None:
-    """Seed development database with models and filters."""
+    """Seed development database with models, filters, and credit packages."""
     # Add all TTS models
     for model in create_dev_models():
         db.add(model)
@@ -93,5 +129,9 @@ async def seed_dev_database(db: AsyncSession) -> None:
     # Add default filters
     for filter_obj in create_dev_filters():
         db.add(filter_obj)
+
+    # Add credit packages
+    for package in create_dev_credit_packages():
+        db.add(package)
 
     await db.commit()

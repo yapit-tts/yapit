@@ -2,12 +2,13 @@ import datetime as dt
 import hashlib
 import uuid
 from datetime import datetime
+from decimal import Decimal
 from enum import StrEnum, auto
-from typing import Any
+from typing import Any, Optional
 
 from pydantic import BaseModel as PydanticModel
 from pydantic import Field as PydanticField
-from sqlalchemy import UniqueConstraint
+from sqlalchemy import DECIMAL, Index, UniqueConstraint
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import JSON, TEXT, Column, DateTime, Field, Relationship, SQLModel
@@ -23,7 +24,7 @@ class TTSModel(SQLModel, table=True):
     slug: str = Field(unique=True, index=True)
     name: str
     description: str | None = Field(default=None)
-    price_sec: float = 0.0
+    credit_multiplier: Decimal = Field(sa_column=Column(DECIMAL(10, 4), nullable=False, default=1.0))
 
     sample_rate: int
     channels: int
@@ -167,6 +168,208 @@ class Filter(SQLModel, table=True):
         ),
         default_factory=FilterConfig,
     )
+
+    created: datetime = Field(
+        default_factory=lambda: datetime.now(tz=dt.UTC),
+        sa_column=Column(DateTime(timezone=True)),
+    )
+    updated: datetime = Field(
+        default_factory=lambda: datetime.now(tz=dt.UTC),
+        sa_column=Column(DateTime(timezone=True)),
+    )
+
+
+# Billing Models
+
+
+class TransactionType(StrEnum):
+    credit_purchase = auto()
+    credit_bonus = auto()
+    credit_refund = auto()
+    credit_adjustment = auto()
+    usage_deduction = auto()
+
+
+class TransactionStatus(StrEnum):
+    pending = auto()
+    completed = auto()
+    failed = auto()
+    reversed = auto()
+
+
+class PaymentStatus(StrEnum):
+    pending = auto()
+    processing = auto()
+    succeeded = auto()
+    failed = auto()
+    canceled = auto()
+    refunded = auto()
+    partially_refunded = auto()
+
+
+class UserCredits(SQLModel, table=True):
+    """User's credit balance for TTS usage (in USD)."""
+
+    __tablename__ = "user_credits"
+
+    user_id: str = Field(primary_key=True)  # Stack Auth user ID
+    balance: Decimal = Field(sa_column=Column(DECIMAL(19, 4), nullable=False, default=0))
+
+    total_purchased: Decimal = Field(sa_column=Column(DECIMAL(19, 4), nullable=False, default=0))
+    total_used: Decimal = Field(sa_column=Column(DECIMAL(19, 4), nullable=False, default=0))
+
+    created: datetime = Field(
+        default_factory=lambda: datetime.now(tz=dt.UTC),
+        sa_column=Column(DateTime(timezone=True)),
+    )
+    updated: datetime = Field(
+        default_factory=lambda: datetime.now(tz=dt.UTC),
+        sa_column=Column(DateTime(timezone=True)),
+    )
+
+    transactions: list["CreditTransaction"] = Relationship(
+        back_populates="user_credits",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"},
+    )
+    payment_methods: list["PaymentMethod"] = Relationship(
+        back_populates="user_credits",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"},
+    )
+
+
+class CreditTransaction(SQLModel, table=True):
+    """Audit trail for all credit balance changes."""
+
+    __tablename__ = "credit_transactions"
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    user_id: str = Field(foreign_key="user_credits.user_id", index=True)
+
+    type: TransactionType
+    status: TransactionStatus = Field(default=TransactionStatus.pending)
+
+    amount: Decimal = Field(sa_column=Column(DECIMAL(19, 4), nullable=False))
+    balance_before: Decimal = Field(sa_column=Column(DECIMAL(19, 4), nullable=False))
+    balance_after: Decimal = Field(sa_column=Column(DECIMAL(19, 4), nullable=False))
+
+    description: str | None = Field(default=None)
+    extra_data: dict | None = Field(default=None, sa_column=Column(postgresql.JSONB(), nullable=True))
+
+    # References to related records
+    payment_id: uuid.UUID | None = Field(default=None, foreign_key="invoices.id", index=True)
+    usage_reference: str | None = Field(default=None, index=True)  # e.g., document_id or block_variant_hash
+
+    created: datetime = Field(
+        default_factory=lambda: datetime.now(tz=dt.UTC),
+        sa_column=Column(DateTime(timezone=True)),
+    )
+
+    user_credits: UserCredits = Relationship(back_populates="transactions")
+    invoice: Optional["Invoice"] = Relationship(back_populates="credit_transaction")
+
+    __table_args__ = (
+        Index("idx_credit_transaction_created", "created"),
+        Index("idx_credit_transaction_user_created", "user_id", "created"),
+    )
+
+
+class PaymentMethod(SQLModel, table=True):
+    """Stored payment methods for users (tokenized via Stripe)."""
+
+    __tablename__ = "payment_methods"
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    user_id: str = Field(foreign_key="user_credits.user_id", index=True)
+
+    stripe_customer_id: str = Field(index=True)
+    stripe_payment_method_id: str = Field(unique=True)
+
+    type: str  # card, bank_account, etc.
+    card_brand: str | None = Field(default=None)  # visa, mastercard, etc.
+    card_last4: str | None = Field(default=None)
+    card_exp_month: int | None = Field(default=None)
+    card_exp_year: int | None = Field(default=None)
+
+    is_default: bool = Field(default=False)
+
+    created: datetime = Field(
+        default_factory=lambda: datetime.now(tz=dt.UTC),
+        sa_column=Column(DateTime(timezone=True)),
+    )
+    updated: datetime = Field(
+        default_factory=lambda: datetime.now(tz=dt.UTC),
+        sa_column=Column(DateTime(timezone=True)),
+    )
+
+    user_credits: UserCredits = Relationship(back_populates="payment_methods")
+    invoices: list["Invoice"] = Relationship(back_populates="payment_method")
+
+
+class Invoice(SQLModel, table=True):
+    """Payment records and receipts (in USD)."""
+
+    __tablename__ = "invoices"
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    user_id: str = Field(index=True)
+    payment_method_id: uuid.UUID | None = Field(default=None, foreign_key="payment_methods.id")
+
+    stripe_invoice_id: str | None = Field(default=None, unique=True, index=True)
+    stripe_payment_intent_id: str | None = Field(default=None, unique=True, index=True)
+    stripe_checkout_session_id: str | None = Field(default=None, unique=True, index=True)
+
+    status: PaymentStatus = Field(default=PaymentStatus.pending)
+
+    amount_usd: Decimal = Field(sa_column=Column(DECIMAL(19, 4), nullable=False))
+
+    credits_purchased: Decimal = Field(sa_column=Column(DECIMAL(19, 4), nullable=False))
+
+    description: str | None = Field(default=None)
+    extra_data: dict | None = Field(default=None, sa_column=Column(postgresql.JSONB(), nullable=True))
+
+    # Webhook event tracking for idempotency
+    processed_event_ids: list[str] = Field(
+        default_factory=list, sa_column=Column(postgresql.ARRAY(postgresql.TEXT), nullable=False)
+    )
+
+    created: datetime = Field(
+        default_factory=lambda: datetime.now(tz=dt.UTC),
+        sa_column=Column(DateTime(timezone=True)),
+    )
+    updated: datetime = Field(
+        default_factory=lambda: datetime.now(tz=dt.UTC),
+        sa_column=Column(DateTime(timezone=True)),
+    )
+
+    payment_method: Optional[PaymentMethod] = Relationship(back_populates="invoices")
+    credit_transaction: Optional[CreditTransaction] = Relationship(
+        back_populates="invoice",
+        sa_relationship_kwargs={"uselist": False},
+    )
+
+    __table_args__ = (
+        Index("idx_invoice_created", "created"),
+        Index("idx_invoice_user_created", "user_id", "created"),
+    )
+
+
+class CreditPackage(SQLModel, table=True):
+    """Pre-defined credit packages for purchase (prices in USD)."""
+
+    __tablename__ = "credit_packages"
+
+    id: int | None = Field(default=None, primary_key=True)
+
+    name: str
+    description: str | None = Field(default=None)
+
+    credits: Decimal = Field(sa_column=Column(DECIMAL(19, 4), nullable=False))
+    price_usd: Decimal = Field(sa_column=Column(DECIMAL(19, 4), nullable=False))
+
+    is_active: bool = Field(default=True)
+    sort_order: int = Field(default=0)
+
+    stripe_price_id: str | None = Field(default=None, unique=True)
 
     created: datetime = Field(
         default_factory=lambda: datetime.now(tz=dt.UTC),

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, Field
@@ -10,6 +11,7 @@ from yapit.contracts import TTS_INFLIGHT, SynthesisJob, get_queue_name
 from yapit.gateway.auth import authenticate
 from yapit.gateway.deps import (
     AudioCache,
+    AuthenticatedUser,
     CurrentBlock,
     CurrentDoc,
     CurrentTTSModel,
@@ -17,7 +19,9 @@ from yapit.gateway.deps import (
     DbSession,
     RedisClient,
 )
-from yapit.gateway.domain_models import BlockVariant, TTSModel
+from yapit.gateway.domain_models import BlockVariant, TTSModel, UserCredits
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1", tags=["synthesis"])
 
@@ -53,11 +57,30 @@ async def synthesize(
     block: CurrentBlock,
     model: CurrentTTSModel,
     voice: CurrentVoice,
+    user: AuthenticatedUser,
     db: DbSession,
     redis: RedisClient,
     cache: AudioCache,
 ) -> Response:
     """Synthesize audio for a block. Returns audio data directly with long-polling."""
+    # Check if user is admin (admins bypass credit checks)
+    is_admin = user.server_metadata and user.server_metadata.is_admin
+
+    if not is_admin:
+        # Check user credits
+        user_credits = await db.get(UserCredits, user.id)
+        if not user_credits:
+            # Create new user credits record with 0 balance
+            user_credits = UserCredits(user_id=user.id, balance=0)
+            db.add(user_credits)
+            await db.commit()
+
+        if user_credits.balance <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                detail="Insufficient credits. Please purchase credits to continue.",
+            )
+
     served_codec = model.native_codec  # TODO change to "opus" once workers transcode
     variant_hash = BlockVariant.get_hash(
         text=block.text,
@@ -115,6 +138,7 @@ async def synthesize(
         await redis.set(TTS_INFLIGHT.format(hash=variant_hash), 1, ex=300, nx=True)  # 5min lock
         job = SynthesisJob(
             variant_hash=variant_hash,
+            user_id=user.id,
             model_slug=body.model_slug,
             voice_slug=body.voice_slug,
             text=block.text,
@@ -123,15 +147,16 @@ async def synthesize(
         )
         await redis.lpush(get_queue_name(model.slug), job.model_dump_json())
 
-    # Long-polling: wait for audio to appear in cache
+    # Long-polling: wait for audio to appear in cache AND inflight to be cleared
     timeout = 60.0
     poll_interval = 0.5
     elapsed = 0.0
     while elapsed < timeout:
         audio_data = await cache.retrieve_data(variant_hash)
-        if audio_data is not None:
-            # Get updated variant with duration_ms
-            variant = await db.get(BlockVariant, variant_hash)
+        inflight_exists = await redis.exists(TTS_INFLIGHT.format(hash=variant_hash))
+
+        if audio_data is not None and not inflight_exists:
+            await db.refresh(variant)
             return _audio_response(audio_data, served_codec, model, variant.duration_ms)
 
         await asyncio.sleep(poll_interval)

@@ -1,16 +1,28 @@
 import asyncio
 import logging
+import uuid
 from abc import ABC, abstractmethod
+from decimal import Decimal
 from typing import NamedTuple
 
 from redis.asyncio import Redis
-from sqlmodel import update
+from sqlalchemy.orm import selectinload
+from sqlmodel import select, update
 
 from yapit.contracts import TTS_INFLIGHT, SynthesisJob, get_queue_name
 from yapit.gateway.cache import Cache
 from yapit.gateway.config import Settings
 from yapit.gateway.deps import get_db_session
-from yapit.gateway.domain_models import BlockVariant
+from yapit.gateway.domain_models import (
+    Block,
+    BlockVariant,
+    CreditTransaction,
+    Document,
+    TransactionStatus,
+    TransactionType,
+    TTSModel,
+    UserCredits,
+)
 
 log = logging.getLogger("processor")
 
@@ -63,6 +75,7 @@ class BaseProcessor(ABC):
                 raise RuntimeError(f"Cache write failed for {job.variant_hash}")
 
             async for db in get_db_session():
+                # Update block variant with duration and cache reference
                 await db.execute(
                     update(BlockVariant)
                     .where(BlockVariant.hash == job.variant_hash)
@@ -71,6 +84,49 @@ class BaseProcessor(ABC):
                         cache_ref=cache_ref,
                     )
                 )
+
+                # Get model info for credit calculation
+                variant_result = await db.exec(
+                    select(BlockVariant)
+                    .where(BlockVariant.hash == job.variant_hash)
+                    .options(selectinload(BlockVariant.model))
+                )
+                variant = variant_result.one()
+
+                # Calculate and deduct credits
+                duration_seconds = Decimal(result.duration_ms) / 1000
+                credits_to_deduct = duration_seconds * variant.model.credit_multiplier
+
+                # Get or create user credits
+                user_credits = await db.get(UserCredits, job.user_id)
+                if not user_credits:
+                    user_credits = UserCredits(user_id=job.user_id)
+                    db.add(user_credits)
+                    await db.flush()
+
+                # Update balance
+                balance_before = user_credits.balance
+                user_credits.balance -= credits_to_deduct
+                user_credits.total_used += credits_to_deduct
+
+                # Create transaction record
+                transaction = CreditTransaction(
+                    user_id=job.user_id,
+                    type=TransactionType.usage_deduction,
+                    status=TransactionStatus.completed,
+                    amount=-credits_to_deduct,
+                    balance_before=balance_before,
+                    balance_after=user_credits.balance,
+                    description=f"TTS synthesis: {duration_seconds:.2f}s × {variant.model.credit_multiplier} ({variant.model.name})",
+                    extra_data={
+                        "variant_hash": variant.hash,
+                        "model_slug": variant.model.slug,
+                        "duration_ms": result.duration_ms,
+                    },
+                    usage_reference=variant.hash,
+                )
+                db.add(transaction)
+
                 await db.commit()
                 break
             await self._redis.delete(TTS_INFLIGHT.format(hash=job.variant_hash))

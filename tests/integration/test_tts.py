@@ -1,36 +1,7 @@
-import os
-
 import httpx
 import pytest
-import requests
 
-
-def get_dev_token():
-    """Get access token for dev user."""
-    api_host = os.getenv("DEV_STACK_AUTH_API_HOST", "http://localhost:8102")
-    project_id = os.getenv("STACK_AUTH_PROJECT_ID")
-    client_key = os.getenv("STACK_AUTH_CLIENT_KEY")
-
-    if not project_id or not client_key:
-        raise RuntimeError("Missing STACK_AUTH_PROJECT_ID or STACK_AUTH_CLIENT_KEY")
-
-    # Sign in as dev user
-    headers = {
-        "X-Stack-Access-Type": "client",
-        "X-Stack-Project-Id": project_id,
-        "X-Stack-Publishable-Client-Key": client_key,
-    }
-
-    r = requests.post(
-        f"{api_host}/api/v1/auth/password/sign-in",
-        headers=headers,
-        json={"email": "dev@example.com", "password": "dev-password-123"},
-    )
-
-    if r.status_code not in [200, 201]:
-        raise RuntimeError(f"Failed to sign in: {r.status_code} {r.text}")
-
-    return r.json()["access_token"]
+from tests.integration.conftest import admin_user
 
 
 @pytest.mark.asyncio
@@ -41,13 +12,12 @@ def get_dev_token():
         pytest.param("kokoro-cpu-runpod", marks=pytest.mark.runpod),
     ],
 )
-async def test_tts_integration(model_slug):
+async def test_tts_integration(model_slug, admin_user):
     """Test complete TTS flow from document creation to audio retrieval.
 
     Requires: gateway, postgres, redis, and kokoro worker running.
     """
-    token = get_dev_token()
-    headers = {"Authorization": f"Bearer {token}"}
+    headers = {"Authorization": f"Bearer {admin_user['token']}"}
 
     async with httpx.AsyncClient(base_url="http://localhost:8000", timeout=70.0, headers=headers) as client:
         # Step 1: Create document

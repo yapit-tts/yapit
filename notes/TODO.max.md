@@ -4,6 +4,10 @@
 - Should Block.id be a UUID too?
 - Is there a global setting for pydantic to forbid extra vals?
 
+### Billing - Future Improvements
+
+- Rate limiting for users with negative balance to prevent abuse
+
 ### Feats
 
 - opus transcoding

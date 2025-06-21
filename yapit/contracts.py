@@ -24,6 +24,7 @@ class SynthesisJob(BaseModel):
     # routing / identity
     job_id: uuid.UUID = Field(default_factory=uuid.uuid4)
     variant_hash: str
+    user_id: str  # who to bill for this synthesis
 
     # synthesis parameters
     model_slug: str

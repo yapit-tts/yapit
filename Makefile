@@ -14,7 +14,7 @@ dev-cpu: down
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.kokoro-cpu.yml \
 	up -d --build --wait
 	@echo "Creating dev user..."
-	uv run --env-file=.env.dev python scripts/create_dev_user.py
+	uv run --env-file=.env.dev python scripts/create_user.py
 
 dev-gpu: down
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.kokoro-gpu.yml \
