@@ -3,7 +3,6 @@
 import os
 import subprocess
 import uuid
-from typing import Optional
 
 import pytest
 import requests
@@ -87,3 +86,44 @@ def regular_user():
     user_data = create_unique_user(is_admin=False)
     user_data["token"] = get_auth_token(user_data["email"], user_data["password"])
     return user_data
+
+
+async def make_client(auth_token: str = None):
+    """Create an HTTP client with optional authentication."""
+    import httpx
+
+    headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else {}
+    async with httpx.AsyncClient(base_url="http://localhost:8000", timeout=70.0, headers=headers) as client:
+        yield client
+
+
+@pytest.fixture
+async def admin_client(admin_user):
+    """HTTP client authenticated as admin user."""
+    async for client in make_client(admin_user["token"]):
+        yield client
+
+
+@pytest.fixture
+async def regular_client(regular_user):
+    """HTTP client authenticated as regular user."""
+    async for client in make_client(regular_user["token"]):
+        yield client
+
+
+async def create_document(client, text: str = "Hello integration test!"):
+    """Helper to create a document with specified text."""
+    response = await client.post(
+        "/v1/documents",
+        json={"source_type": "paste", "text_content": text},
+    )
+    assert response.status_code == 201
+    return response.json()
+
+
+async def create_unique_document(client):
+    """Helper to create a document with unique text to avoid caching."""
+    import time
+
+    unique_text = f"Unique test content {time.time()} {uuid.uuid4()}"
+    return await create_document(client, unique_text)

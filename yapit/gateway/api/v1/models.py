@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from sqlmodel import select
 
 from yapit.gateway.auth import authenticate
-from yapit.gateway.deps import AuthenticatedUser, CurrentTTSModel, DbSession
+from yapit.gateway.deps import CurrentTTSModel, DbSession
 from yapit.gateway.domain_models import TTSModel
 
 router = APIRouter(prefix="/v1/models", tags=["Models"])

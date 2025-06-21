@@ -45,11 +45,16 @@ logs:
 
 test: test-unit test-integration
 
+test-local: test-unit test-integration-local
+
 test-unit:
 	uv run --env-file=.env.dev pytest tests --ignore=tests/integration
 
 test-integration:
 	uv run --env-file=.env.dev pytest tests/integration -v
+
+test-integration-local:
+	uv run --env-file=.env.dev pytest tests/integration -v -m "not runpod"
 
 lint:
 	uv run ruff check .

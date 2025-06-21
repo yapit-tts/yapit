@@ -386,7 +386,7 @@ async def adjust_user_credits(
         balance_before=balance_before,
         balance_after=user_credits.balance,
         description=adjustment.description,
-        extra_data={"adjusted_by": "admin"},
+        details={"adjusted_by": "admin"},
     )
     db.add(transaction)
 

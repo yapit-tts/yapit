@@ -10,7 +10,6 @@ from pydantic import BaseModel as PydanticModel
 from pydantic import Field as PydanticField
 from sqlalchemy import DECIMAL, Index, UniqueConstraint
 from sqlalchemy.dialects import postgresql
-from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import JSON, TEXT, Column, DateTime, Field, Relationship, SQLModel
 
 # NOTE: Forward annotations do not work with SQLModel
@@ -210,8 +209,6 @@ class PaymentStatus(StrEnum):
 class UserCredits(SQLModel, table=True):
     """User's credit balance for TTS usage (in USD)."""
 
-    __tablename__ = "user_credits"
-
     user_id: str = Field(primary_key=True)  # Stack Auth user ID
     balance: Decimal = Field(sa_column=Column(DECIMAL(19, 4), nullable=False, default=0))
 
@@ -240,10 +237,8 @@ class UserCredits(SQLModel, table=True):
 class CreditTransaction(SQLModel, table=True):
     """Audit trail for all credit balance changes."""
 
-    __tablename__ = "credit_transactions"
-
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    user_id: str = Field(foreign_key="user_credits.user_id", index=True)
+    user_id: str = Field(foreign_key="usercredits.user_id", index=True)
 
     type: TransactionType
     status: TransactionStatus = Field(default=TransactionStatus.pending)
@@ -253,10 +248,12 @@ class CreditTransaction(SQLModel, table=True):
     balance_after: Decimal = Field(sa_column=Column(DECIMAL(19, 4), nullable=False))
 
     description: str | None = Field(default=None)
-    extra_data: dict | None = Field(default=None, sa_column=Column(postgresql.JSONB(), nullable=True))
+    details: dict | None = Field(
+        default=None, sa_column=Column(postgresql.JSONB(), nullable=True)
+    )  # metadata reserved by SQLModel
 
     # References to related records
-    payment_id: uuid.UUID | None = Field(default=None, foreign_key="invoices.id", index=True)
+    payment_id: uuid.UUID | None = Field(default=None, foreign_key="invoice.id", index=True)
     usage_reference: str | None = Field(default=None, index=True)  # e.g., document_id or block_variant_hash
 
     created: datetime = Field(
@@ -276,10 +273,8 @@ class CreditTransaction(SQLModel, table=True):
 class PaymentMethod(SQLModel, table=True):
     """Stored payment methods for users (tokenized via Stripe)."""
 
-    __tablename__ = "payment_methods"
-
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    user_id: str = Field(foreign_key="user_credits.user_id", index=True)
+    user_id: str = Field(foreign_key="usercredits.user_id", index=True)
 
     stripe_customer_id: str = Field(index=True)
     stripe_payment_method_id: str = Field(unique=True)
@@ -308,11 +303,9 @@ class PaymentMethod(SQLModel, table=True):
 class Invoice(SQLModel, table=True):
     """Payment records and receipts (in USD)."""
 
-    __tablename__ = "invoices"
-
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     user_id: str = Field(index=True)
-    payment_method_id: uuid.UUID | None = Field(default=None, foreign_key="payment_methods.id")
+    payment_method_id: uuid.UUID | None = Field(default=None, foreign_key="paymentmethod.id")
 
     stripe_invoice_id: str | None = Field(default=None, unique=True, index=True)
     stripe_payment_intent_id: str | None = Field(default=None, unique=True, index=True)
@@ -325,7 +318,9 @@ class Invoice(SQLModel, table=True):
     credits_purchased: Decimal = Field(sa_column=Column(DECIMAL(19, 4), nullable=False))
 
     description: str | None = Field(default=None)
-    extra_data: dict | None = Field(default=None, sa_column=Column(postgresql.JSONB(), nullable=True))
+    details: dict | None = Field(
+        default=None, sa_column=Column(postgresql.JSONB(), nullable=True)
+    )  # metadata reserved by SQLModel
 
     # Webhook event tracking for idempotency
     processed_event_ids: list[str] = Field(
@@ -355,8 +350,6 @@ class Invoice(SQLModel, table=True):
 
 class CreditPackage(SQLModel, table=True):
     """Pre-defined credit packages for purchase (prices in USD)."""
-
-    __tablename__ = "credit_packages"
 
     id: int | None = Field(default=None, primary_key=True)
 

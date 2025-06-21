@@ -1,7 +1,6 @@
-import httpx
 import pytest
 
-from tests.integration.conftest import admin_user
+from tests.integration.conftest import create_document
 
 
 @pytest.mark.asyncio
@@ -12,58 +11,48 @@ from tests.integration.conftest import admin_user
         pytest.param("kokoro-cpu-runpod", marks=pytest.mark.runpod),
     ],
 )
-async def test_tts_integration(model_slug, admin_user):
-    """Test complete TTS flow from document creation to audio retrieval.
+async def test_tts_integration(model_slug, admin_client):
+    """Test complete TTS flow from document creation to audio retrieval."""
+    # Step 1: Create document
+    doc_data = await create_document(admin_client)
+    document_id = doc_data["document_id"]
+    block_id = doc_data["blocks"][0]["id"]
 
-    Requires: gateway, postgres, redis, and kokoro worker running.
-    """
-    headers = {"Authorization": f"Bearer {admin_user['token']}"}
+    # Step 2: Request synthesis with long-polling
+    # This should block until audio is ready (or timeout)
+    import time
 
-    async with httpx.AsyncClient(base_url="http://localhost:8000", timeout=70.0, headers=headers) as client:
-        # Step 1: Create document
-        doc_response = await client.post(
-            "/v1/documents", json={"source_type": "paste", "text_content": "Hello integration test!"}
-        )
-        assert doc_response.status_code == 201
-        doc_data = doc_response.json()
-        document_id = doc_data["document_id"]
-        block_id = doc_data["blocks"][0]["id"]
+    start_time = time.time()
 
-        # Step 2: Request synthesis with long-polling
-        # This should block until audio is ready (or timeout)
-        import time
+    synth_response = await admin_client.post(
+        f"/v1/documents/{document_id}/blocks/{block_id}/synthesize",
+        json={"model_slug": model_slug, "voice_slug": "af_heart", "speed": 1.0},
+    )
 
-        start_time = time.time()
+    elapsed = time.time() - start_time
+    print(f"Synthesis took {elapsed:.2f} seconds")
 
-        synth_response = await client.post(
-            f"/v1/documents/{document_id}/blocks/{block_id}/synthesize",
-            json={"model_slug": model_slug, "voice_slug": "af_heart", "speed": 1.0},
-        )
+    # Should get audio directly
+    assert synth_response.status_code == 200
+    assert "audio/" in synth_response.headers["content-type"]
+    assert "X-Audio-Codec" in synth_response.headers
+    assert "X-Sample-Rate" in synth_response.headers
+    assert "X-Channels" in synth_response.headers
+    assert "X-Sample-Width" in synth_response.headers
+    assert "X-Duration-Ms" in synth_response.headers
+    assert len(synth_response.content) > 0
+    assert any(b != 0 for b in synth_response.content)
 
-        elapsed = time.time() - start_time
-        print(f"Synthesis took {elapsed:.2f} seconds")
+    # Step 3: Request same synthesis again - should return immediately from cache
+    start_time = time.time()
 
-        # Should get audio directly
-        assert synth_response.status_code == 200
-        assert "audio/" in synth_response.headers["content-type"]
-        assert "X-Audio-Codec" in synth_response.headers
-        assert "X-Sample-Rate" in synth_response.headers
-        assert "X-Channels" in synth_response.headers
-        assert "X-Sample-Width" in synth_response.headers
-        assert "X-Duration-Ms" in synth_response.headers
-        assert len(synth_response.content) > 0
-        assert any(b != 0 for b in synth_response.content)
+    cached_response = await admin_client.post(
+        f"/v1/documents/{document_id}/blocks/{block_id}/synthesize",
+        json={"model_slug": model_slug, "voice_slug": "af_heart", "speed": 1.0},
+    )
 
-        # Step 3: Request same synthesis again - should return immediately from cache
-        start_time = time.time()
-
-        cached_response = await client.post(
-            f"/v1/documents/{document_id}/blocks/{block_id}/synthesize",
-            json={"model_slug": model_slug, "voice_slug": "af_heart", "speed": 1.0},
-        )
-
-        elapsed = time.time() - start_time
-        print(f"Cached synthesis took {elapsed:.2f} seconds")
-        assert cached_response.status_code == 200
-        assert cached_response.content == synth_response.content
-        assert cached_response.headers["X-Audio-Codec"] == synth_response.headers["X-Audio-Codec"]
+    elapsed = time.time() - start_time
+    print(f"Cached synthesis took {elapsed:.2f} seconds")
+    assert cached_response.status_code == 200
+    assert cached_response.content == synth_response.content
+    assert cached_response.headers["X-Audio-Codec"] == synth_response.headers["X-Audio-Codec"]

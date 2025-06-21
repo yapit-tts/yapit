@@ -17,6 +17,7 @@ from yapit.gateway.deps import (
     CurrentTTSModel,
     CurrentVoice,
     DbSession,
+    IsAdmin,
     RedisClient,
 )
 from yapit.gateway.domain_models import BlockVariant, TTSModel, UserCredits
@@ -58,19 +59,15 @@ async def synthesize(
     model: CurrentTTSModel,
     voice: CurrentVoice,
     user: AuthenticatedUser,
+    is_admin: IsAdmin,
     db: DbSession,
     redis: RedisClient,
     cache: AudioCache,
 ) -> Response:
     """Synthesize audio for a block. Returns audio data directly with long-polling."""
-    # Check if user is admin (admins bypass credit checks)
-    is_admin = user.server_metadata and user.server_metadata.is_admin
-
-    if not is_admin:
-        # Check user credits
+    if not is_admin:  # admin users bypass credit checks (dev/self-host purposes)
         user_credits = await db.get(UserCredits, user.id)
-        if not user_credits:
-            # Create new user credits record with 0 balance
+        if not user_credits:  # first time user, create credits record with 0 balance
             user_credits = UserCredits(user_id=user.id, balance=0)
             db.add(user_credits)
             await db.commit()

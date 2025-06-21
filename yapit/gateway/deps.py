@@ -177,6 +177,11 @@ async def require_admin(user: Annotated[User, Depends(authenticate)]) -> User:
     return user
 
 
+async def is_admin(user: Annotated[User, Depends(authenticate)]) -> bool:
+    """Check if the authenticated user is an admin."""
+    return user.server_metadata and user.server_metadata.is_admin
+
+
 RedisClient = Annotated[Redis, Depends(get_redis_client)]
 AudioCache = Annotated[Cache, Depends(get_audio_cache)]
 TextSplitterDep = Annotated[TextSplitter, Depends(get_text_splitter)]
@@ -186,3 +191,4 @@ CurrentBlock = Annotated[Block, Depends(get_block)]
 CurrentBlockVariant = Annotated[BlockVariant, Depends(get_block_variant)]
 AuthenticatedUser = Annotated[User, Depends(authenticate)]
 AdminUser = Annotated[User, Depends(require_admin)]
+IsAdmin = Annotated[bool, Depends(is_admin)]
