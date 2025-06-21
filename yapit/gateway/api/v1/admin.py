@@ -1,12 +1,15 @@
 from datetime import datetime
 from decimal import Decimal
-from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlmodel import select
 
-from yapit.gateway.deps import DbSession, require_admin
+from yapit.gateway.deps import (
+    DbSession,
+    get_or_create_user_credits,
+    require_admin,
+)
 from yapit.gateway.domain_models import (
     CreditTransaction,
     Filter,
@@ -85,7 +88,6 @@ async def create_model(
     db: DbSession,
 ) -> TTSModel:
     """Create a new TTS model."""
-    # Check if model with slug already exists
     existing = (await db.exec(select(TTSModel).where(TTSModel.slug == model_data.slug))).first()
     if existing:
         raise HTTPException(
@@ -157,7 +159,6 @@ async def create_voice(
             detail=f"Model {model_slug!r} not found",
         )
 
-    # Check if voice with slug already exists for this model
     existing = (
         await db.exec(select(Voice).where(Voice.slug == voice_data.slug).where(Voice.model_id == model.id))
     ).first()
@@ -238,7 +239,6 @@ async def create_system_filter(
     db: DbSession,
 ) -> Filter:
     """Create a new system filter."""
-    # Check if system filter with name already exists
     existing = (
         await db.exec(select(Filter).where(Filter.name == filter_data.name).where(Filter.user_id == None))
     ).first()
@@ -355,19 +355,9 @@ async def adjust_user_credits(
     db: DbSession,
 ) -> UserCredits:
     """Adjust user's credit balance (grant, deduct, or refund credits)."""
-    # Get or create user credits
-    user_credits = await db.get(UserCredits, user_id)
-    if not user_credits:
-        user_credits = UserCredits(
-            user_id=user_id,
-            balance=Decimal("0"),
-            total_purchased=Decimal("0"),
-            total_used=Decimal("0"),
-        )
-        db.add(user_credits)
-        await db.flush()
+    user_credits = await get_or_create_user_credits(user_id, db)
+    await db.flush()
 
-    # Calculate new balance
     balance_before = user_credits.balance
     user_credits.balance += adjustment.amount
 
@@ -377,7 +367,6 @@ async def adjust_user_credits(
     elif adjustment.type == TransactionType.usage_deduction and adjustment.amount < 0:
         user_credits.total_used += abs(adjustment.amount)
 
-    # Create transaction record
     transaction = CreditTransaction(
         user_id=user_id,
         type=adjustment.type,
@@ -402,7 +391,7 @@ async def get_user_credit_transactions(
     limit: int = 50,
     offset: int = 0,
 ) -> list[CreditTransaction]:
-    """Get user's credit transaction history."""
+    """Get a user's credit transaction history."""
     result = await db.exec(
         select(CreditTransaction)
         .where(CreditTransaction.user_id == user_id)

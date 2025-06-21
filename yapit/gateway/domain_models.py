@@ -210,10 +210,10 @@ class UserCredits(SQLModel, table=True):
     """User's credit balance for TTS usage (in USD)."""
 
     user_id: str = Field(primary_key=True)  # Stack Auth user ID
-    balance: Decimal = Field(sa_column=Column(DECIMAL(19, 4), nullable=False, default=0))
+    balance: Decimal = Field(sa_column=Column(DECIMAL(19, 4), nullable=False))
 
-    total_purchased: Decimal = Field(sa_column=Column(DECIMAL(19, 4), nullable=False, default=0))
-    total_used: Decimal = Field(sa_column=Column(DECIMAL(19, 4), nullable=False, default=0))
+    total_purchased: Decimal = Field(sa_column=Column(DECIMAL(19, 4), nullable=False))
+    total_used: Decimal = Field(sa_column=Column(DECIMAL(19, 4), nullable=False))
 
     created: datetime = Field(
         default_factory=lambda: datetime.now(tz=dt.UTC),

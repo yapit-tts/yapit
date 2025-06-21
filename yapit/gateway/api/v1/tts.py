@@ -19,6 +19,7 @@ from yapit.gateway.deps import (
     DbSession,
     IsAdmin,
     RedisClient,
+    get_or_create_user_credits,
 )
 from yapit.gateway.domain_models import BlockVariant, TTSModel, UserCredits
 
@@ -66,11 +67,8 @@ async def synthesize(
 ) -> Response:
     """Synthesize audio for a block. Returns audio data directly with long-polling."""
     if not is_admin:  # admin users bypass credit checks (dev/self-host purposes)
-        user_credits = await db.get(UserCredits, user.id)
-        if not user_credits:  # first time user, create credits record with 0 balance
-            user_credits = UserCredits(user_id=user.id, balance=0)
-            db.add(user_credits)
-            await db.commit()
+        user_credits = await get_or_create_user_credits(user.id, db)
+        await db.commit()
 
         if user_credits.balance <= 0:
             raise HTTPException(

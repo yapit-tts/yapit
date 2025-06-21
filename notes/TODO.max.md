@@ -12,6 +12,7 @@
 
 - opus transcoding
   - depending on the intensity / scaling requirements, prlly best to do this in the gateway to save worker time?
+- fun feature: show lifetime stats (words/seconds processed, etc.)
 
 ### Refactor
 
