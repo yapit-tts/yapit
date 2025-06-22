@@ -182,11 +182,11 @@ class Filter(SQLModel, table=True):
 
 
 class TransactionType(StrEnum):
-    credit_purchase = auto()
-    credit_bonus = auto()
-    credit_refund = auto()
-    credit_adjustment = auto()
-    usage_deduction = auto()
+    credit_purchase = auto()  # User bought credits with real money
+    credit_bonus = auto()  # Free credits (sign-up bonus, promotions, admin top-up)
+    credit_refund = auto()  # Credits returned due to service issues
+    credit_adjustment = auto()  # Manual admin corrections (errors, compensation)
+    usage_deduction = auto()  # Credits consumed by TTS synthesis
 
 
 class TransactionStatus(StrEnum):
@@ -197,13 +197,13 @@ class TransactionStatus(StrEnum):
 
 
 class PaymentStatus(StrEnum):
-    pending = auto()
-    processing = auto()
-    succeeded = auto()
-    failed = auto()
-    canceled = auto()
-    refunded = auto()
-    partially_refunded = auto()
+    pending = auto()  # Payment initiated, awaiting confirmation
+    processing = auto()  # Payment being processed by provider
+    succeeded = auto()  # Payment completed successfully
+    failed = auto()  # Payment failed (insufficient funds, etc.)
+    canceled = auto()  # User or system canceled before completion
+    refunded = auto()  # Full refund issued
+    partially_refunded = auto()  # Partial refund (e.g., user got $70 back from $100)
 
 
 class UserCredits(SQLModel, table=True):

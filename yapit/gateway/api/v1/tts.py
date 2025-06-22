@@ -21,7 +21,14 @@ from yapit.gateway.deps import (
     RedisClient,
     get_or_create_user_credits,
 )
-from yapit.gateway.domain_models import BlockVariant, TTSModel, UserCredits
+from yapit.gateway.domain_models import (
+    BlockVariant,
+    CreditTransaction,
+    TransactionStatus,
+    TransactionType,
+    TTSModel,
+    UserCredits,
+)
 
 log = logging.getLogger(__name__)
 
@@ -66,15 +73,33 @@ async def synthesize(
     cache: AudioCache,
 ) -> Response:
     """Synthesize audio for a block. Returns audio data directly with long-polling."""
-    if not is_admin:  # admin users bypass credit checks (dev/self-host purposes)
-        user_credits = await get_or_create_user_credits(user.id, db)
-        await db.commit()
+    # Get or create credits for all users (including admins for tracking)
+    user_credits = await get_or_create_user_credits(user.id, db)
 
-        if user_credits.balance <= 0:
-            raise HTTPException(
-                status_code=status.HTTP_402_PAYMENT_REQUIRED,
-                detail="Insufficient credits. Please purchase credits to continue.",
-            )
+    if is_admin and user_credits.balance < 1000:  # Auto top-up admin credits if running low (dev/self-host purposes)
+        top_up_amount = 10000
+        balance_before = user_credits.balance
+        user_credits.balance += top_up_amount
+
+        # Create transaction record for audit trail
+        transaction = CreditTransaction(
+            user_id=user.id,
+            type=TransactionType.credit_bonus,
+            status=TransactionStatus.completed,
+            amount=top_up_amount,
+            balance_before=balance_before,
+            balance_after=user_credits.balance,
+            description="Admin auto top-up",
+        )
+        db.add(transaction)
+
+    await db.commit()
+
+    if user_credits.balance <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail="Insufficient credits. Please purchase credits to continue.",
+        )
 
     served_codec = model.native_codec  # TODO change to "opus" once workers transcode
     variant_hash = BlockVariant.get_hash(

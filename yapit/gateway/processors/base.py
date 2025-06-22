@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import uuid
 from abc import ABC, abstractmethod
 from decimal import Decimal
 from typing import NamedTuple
@@ -12,15 +11,12 @@ from sqlmodel import select, update
 from yapit.contracts import TTS_INFLIGHT, SynthesisJob, get_queue_name
 from yapit.gateway.cache import Cache
 from yapit.gateway.config import Settings
-from yapit.gateway.deps import get_db_session
+from yapit.gateway.deps import get_db_session, get_or_create_user_credits
 from yapit.gateway.domain_models import (
-    Block,
     BlockVariant,
     CreditTransaction,
-    Document,
     TransactionStatus,
     TransactionType,
-    TTSModel,
     UserCredits,
 )
 
@@ -97,12 +93,7 @@ class BaseProcessor(ABC):
                 duration_seconds = Decimal(result.duration_ms) / 1000
                 credits_to_deduct = duration_seconds * variant.model.credit_multiplier
 
-                # Get or create user credits
-                user_credits = await db.get(UserCredits, job.user_id)
-                if not user_credits:
-                    user_credits = UserCredits(user_id=job.user_id)
-                    db.add(user_credits)
-                    await db.flush()
+                user_credits = await get_or_create_user_credits(job.user_id, db)
 
                 # Update balance
                 balance_before = user_credits.balance
