@@ -223,15 +223,10 @@ class UserCredits(SQLModel, table=True):
         default_factory=lambda: datetime.now(tz=dt.UTC),
         sa_column=Column(DateTime(timezone=True)),
     )
+    deleted_at: datetime | None = Field(default=None, index=True)
 
-    transactions: list["CreditTransaction"] = Relationship(
-        back_populates="user_credits",
-        sa_relationship_kwargs={"cascade": "all, delete-orphan"},
-    )
-    payment_methods: list["PaymentMethod"] = Relationship(
-        back_populates="user_credits",
-        sa_relationship_kwargs={"cascade": "all, delete-orphan"},
-    )
+    transactions: list["CreditTransaction"] = Relationship(back_populates="user_credits")
+    payment_methods: list["PaymentMethod"] = Relationship(back_populates="user_credits")
 
 
 class CreditTransaction(SQLModel, table=True):
@@ -369,6 +364,21 @@ class CreditPackage(SQLModel, table=True):
         sa_column=Column(DateTime(timezone=True)),
     )
     updated: datetime = Field(
+        default_factory=lambda: datetime.now(tz=dt.UTC),
+        sa_column=Column(DateTime(timezone=True)),
+    )
+
+
+class UserUsageStats(SQLModel, table=True):
+    """Aggregated usage statistics for each user."""
+
+    user_id: str = Field(primary_key=True, foreign_key="usercredits.user_id")
+
+    total_seconds_synthesized: Decimal = Field(sa_column=Column(DECIMAL(19, 4), nullable=False, default=0))
+    total_characters_processed: int = Field(default=0)
+    total_requests: int = Field(default=0)
+
+    last_updated: datetime = Field(
         default_factory=lambda: datetime.now(tz=dt.UTC),
         sa_column=Column(DateTime(timezone=True)),
     )

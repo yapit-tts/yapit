@@ -1,6 +1,8 @@
 import asyncio
+import datetime as dt
 import logging
 from abc import ABC, abstractmethod
+from datetime import datetime
 from decimal import Decimal
 from typing import NamedTuple
 
@@ -18,6 +20,7 @@ from yapit.gateway.domain_models import (
     TransactionStatus,
     TransactionType,
     UserCredits,
+    UserUsageStats,
 )
 
 log = logging.getLogger("processor")
@@ -117,6 +120,22 @@ class BaseProcessor(ABC):
                     usage_reference=variant.hash,
                 )
                 db.add(transaction)
+
+                # Update usage statistics
+                usage_stats = await db.get(UserUsageStats, job.user_id)
+                if not usage_stats:
+                    usage_stats = UserUsageStats(
+                        user_id=job.user_id,
+                        total_seconds_synthesized=Decimal("0"),
+                        total_characters_processed=0,
+                        total_requests=0,
+                    )
+                    db.add(usage_stats)
+
+                usage_stats.total_seconds_synthesized += duration_seconds
+                usage_stats.total_characters_processed += len(job.text)
+                usage_stats.total_requests += 1
+                usage_stats.last_updated = datetime.now(tz=dt.UTC)
 
                 await db.commit()
                 break
