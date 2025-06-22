@@ -89,32 +89,16 @@ def create_dev_credit_packages() -> list[CreditPackage]:
     """Create default credit packages for purchase."""
     packages = [
         CreditPackage(
-            name="Starter",
-            description="Perfect for trying out the service",
-            credits=Decimal("100"),
-            price_usd=Decimal("5.00"),
-            sort_order=1,
+            provider_price_id="price_dev_starter",
+            credits=Decimal("10000"),
         ),
         CreditPackage(
-            name="Basic",
-            description="Great for regular use",
-            credits=Decimal("500"),
-            price_usd=Decimal("20.00"),
-            sort_order=2,
+            provider_price_id="price_dev_basic",
+            credits=Decimal("50000"),
         ),
         CreditPackage(
-            name="Pro",
-            description="Best value for power users",
-            credits=Decimal("1200"),
-            price_usd=Decimal("40.00"),
-            sort_order=3,
-        ),
-        CreditPackage(
-            name="Enterprise",
-            description="For heavy usage",
-            credits=Decimal("5000"),
-            price_usd=Decimal("150.00"),
-            sort_order=4,
+            provider_price_id="price_dev_pro",
+            credits=Decimal("100000"),
         ),
     ]
     return packages

@@ -225,7 +225,6 @@ class UserCredits(SQLModel, table=True):
     )
 
     transactions: list["CreditTransaction"] = Relationship(back_populates="user_credits")
-    payment_methods: list["PaymentMethod"] = Relationship(back_populates="user_credits")
 
 
 class CreditTransaction(SQLModel, table=True):
@@ -247,7 +246,7 @@ class CreditTransaction(SQLModel, table=True):
     )  # metadata reserved by SQLModel
 
     # References to related records
-    payment_id: uuid.UUID | None = Field(default=None, foreign_key="invoice.id", index=True)
+    external_reference: str | None = Field(default=None, index=True)  # e.g., stripe_invoice_id
     usage_reference: str | None = Field(default=None, index=True)  # e.g., document_id or block_variant_hash
 
     created: datetime = Field(
@@ -256,7 +255,6 @@ class CreditTransaction(SQLModel, table=True):
     )
 
     user_credits: UserCredits = Relationship(back_populates="transactions")
-    invoice: Optional["Invoice"] = Relationship(back_populates="credit_transaction")
 
     __table_args__ = (
         Index("idx_credit_transaction_created", "created"),
@@ -264,108 +262,26 @@ class CreditTransaction(SQLModel, table=True):
     )
 
 
-class PaymentMethod(SQLModel, table=True):
-    """Stored payment methods for users (tokenized via Stripe)."""
+class PaymentProviderMapping(SQLModel, table=True):
+    """Maps users to payment provider IDs."""
 
-    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    user_id: str = Field(foreign_key="usercredits.user_id", index=True)
-
-    stripe_customer_id: str = Field(index=True)
-    stripe_payment_method_id: str = Field(unique=True)
-
-    type: str  # card, bank_account, etc.
-    card_brand: str | None = Field(default=None)  # visa, mastercard, etc.
-    card_last4: str | None = Field(default=None)
-    card_exp_month: int | None = Field(default=None)
-    card_exp_year: int | None = Field(default=None)
-
-    is_default: bool = Field(default=False)
+    user_id: str = Field(primary_key=True)
+    provider: str = Field(default="stripe")  # future: "paddle", etc
+    provider_customer_id: str = Field(index=True)
 
     created: datetime = Field(
         default_factory=lambda: datetime.now(tz=dt.UTC),
         sa_column=Column(DateTime(timezone=True)),
-    )
-    updated: datetime = Field(
-        default_factory=lambda: datetime.now(tz=dt.UTC),
-        sa_column=Column(DateTime(timezone=True)),
-    )
-
-    user_credits: UserCredits = Relationship(back_populates="payment_methods")
-    invoices: list["Invoice"] = Relationship(back_populates="payment_method")
-
-
-class Invoice(SQLModel, table=True):
-    """Payment records and receipts (in USD)."""
-
-    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    user_id: str = Field(index=True)
-    payment_method_id: uuid.UUID | None = Field(default=None, foreign_key="paymentmethod.id")
-
-    stripe_invoice_id: str | None = Field(default=None, unique=True, index=True)
-    stripe_payment_intent_id: str | None = Field(default=None, unique=True, index=True)
-    stripe_checkout_session_id: str | None = Field(default=None, unique=True, index=True)
-
-    status: PaymentStatus = Field(default=PaymentStatus.pending)
-
-    amount_usd: Decimal = Field(sa_column=Column(DECIMAL(19, 4), nullable=False))
-
-    credits_purchased: Decimal = Field(sa_column=Column(DECIMAL(19, 4), nullable=False))
-
-    description: str | None = Field(default=None)
-    details: dict | None = Field(
-        default=None, sa_column=Column(postgresql.JSONB(), nullable=True)
-    )  # metadata reserved by SQLModel
-
-    # Webhook event tracking for idempotency
-    processed_event_ids: list[str] = Field(
-        default_factory=list, sa_column=Column(postgresql.ARRAY(postgresql.TEXT), nullable=False)
-    )
-
-    created: datetime = Field(
-        default_factory=lambda: datetime.now(tz=dt.UTC),
-        sa_column=Column(DateTime(timezone=True)),
-    )
-    updated: datetime = Field(
-        default_factory=lambda: datetime.now(tz=dt.UTC),
-        sa_column=Column(DateTime(timezone=True)),
-    )
-
-    payment_method: Optional[PaymentMethod] = Relationship(back_populates="invoices")
-    credit_transaction: Optional[CreditTransaction] = Relationship(
-        back_populates="invoice",
-        sa_relationship_kwargs={"uselist": False},
-    )
-
-    __table_args__ = (
-        Index("idx_invoice_created", "created"),
-        Index("idx_invoice_user_created", "user_id", "created"),
     )
 
 
 class CreditPackage(SQLModel, table=True):
-    """Pre-defined credit packages for purchase (prices in USD)."""
+    """Maps provider price IDs to credit amounts."""  # TODO do we even need this?
 
     id: int | None = Field(default=None, primary_key=True)
-
-    name: str
-    description: str | None = Field(default=None)
-
+    provider_price_id: str = Field(unique=True, index=True)
     credits: Decimal = Field(sa_column=Column(DECIMAL(19, 4), nullable=False))
-    price_usd: Decimal = Field(sa_column=Column(DECIMAL(19, 4), nullable=False))
-
     is_active: bool = Field(default=True)
-    sort_order: int = Field(default=0)
-
-    stripe_price_id: str | None = Field(default=None, unique=True)
-
-    created: datetime = Field(
-        default_factory=lambda: datetime.now(tz=dt.UTC),
-        sa_column=Column(DateTime(timezone=True)),
-    )
-    updated: datetime = Field(
-        default_factory=lambda: datetime.now(tz=dt.UTC),
-        sa_column=Column(DateTime(timezone=True)),
-    )
 
 
 class UserUsageStats(SQLModel, table=True):

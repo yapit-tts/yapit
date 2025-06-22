@@ -19,7 +19,6 @@ from yapit.gateway.domain_models import (
     CreditTransaction,
     TransactionStatus,
     TransactionType,
-    UserCredits,
     UserUsageStats,
 )
 
@@ -75,7 +74,7 @@ class BaseProcessor(ABC):
 
             async for db in get_db_session():
                 # Update block variant with duration and cache reference
-                await db.execute(
+                await db.exec(
                     update(BlockVariant)
                     .where(BlockVariant.hash == job.variant_hash)
                     .values(
@@ -155,7 +154,7 @@ class BaseProcessor(ABC):
         await self.initialize()
         while True:
             try:
-                _, raw = await self._redis.brpop(self._queue, timeout=0)  # block indefinitely waiting for jobs
+                _, raw = await self._redis.brpop([self._queue], timeout=0)  # block indefinitely waiting for jobs
                 asyncio.create_task(self._handle_job(raw))
             except ConnectionError as e:
                 log.error(f"Redis connection error: {e}, retrying in 5s")
