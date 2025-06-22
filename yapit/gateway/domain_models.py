@@ -223,7 +223,6 @@ class UserCredits(SQLModel, table=True):
         default_factory=lambda: datetime.now(tz=dt.UTC),
         sa_column=Column(DateTime(timezone=True)),
     )
-    deleted_at: datetime | None = Field(default=None, index=True)
 
     transactions: list["CreditTransaction"] = Relationship(back_populates="user_credits")
     payment_methods: list["PaymentMethod"] = Relationship(back_populates="user_credits")

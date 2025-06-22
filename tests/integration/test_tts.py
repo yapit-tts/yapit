@@ -1,7 +1,5 @@
 import pytest
 
-from tests.integration.conftest import create_document
-
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
@@ -11,12 +9,10 @@ from tests.integration.conftest import create_document
         pytest.param("kokoro-cpu-runpod", marks=pytest.mark.runpod),
     ],
 )
-async def test_tts_integration(model_slug, admin_client):
+async def test_tts_integration(model_slug, admin_client, test_document):
     """Test complete TTS flow from document creation to audio retrieval."""
-    # Step 1: Create document
-    doc_data = await create_document(admin_client)
-    document_id = doc_data["document_id"]
-    block_id = doc_data["blocks"][0]["id"]
+    document_id = test_document["document_id"]
+    block_id = test_document["blocks"][0]["id"]
 
     # Step 2: Request synthesis with long-polling
     # This should block until audio is ready (or timeout)

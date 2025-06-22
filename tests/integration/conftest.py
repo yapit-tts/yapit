@@ -111,19 +111,37 @@ async def regular_client(regular_user):
         yield client
 
 
-async def create_document(client, text: str = "Hello integration test!"):
-    """Helper to create a document with specified text."""
-    response = await client.post(
+@pytest.fixture
+async def test_document(admin_client):
+    """Create a test document for admin."""
+    response = await admin_client.post(
         "/v1/documents",
-        json={"source_type": "paste", "text_content": text},
+        json={"source_type": "paste", "text_content": "Hello integration test!"},
     )
     assert response.status_code == 201
     return response.json()
 
 
-async def create_unique_document(client):
-    """Helper to create a document with unique text to avoid caching."""
+@pytest.fixture
+async def unique_document(regular_client):
+    """Create a document with unique text for regular user."""
     import time
 
     unique_text = f"Unique test content {time.time()} {uuid.uuid4()}"
-    return await create_document(client, unique_text)
+    response = await regular_client.post(
+        "/v1/documents",
+        json={"source_type": "paste", "text_content": unique_text},
+    )
+    assert response.status_code == 201
+    return response.json()
+
+
+@pytest.fixture
+async def regular_document(regular_client):
+    """Create a regular test document using regular client."""
+    response = await regular_client.post(
+        "/v1/documents",
+        json={"source_type": "paste", "text_content": "Hello, I need credits!"},
+    )
+    assert response.status_code == 201
+    return response.json()

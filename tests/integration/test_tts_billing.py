@@ -5,8 +5,6 @@ from decimal import Decimal
 
 import pytest
 
-from tests.integration.conftest import create_document, create_unique_document
-
 
 async def grant_credits_via_api(admin_client, user_id: str, amount: Decimal):
     """Grant credits to a user using the admin API."""
@@ -32,12 +30,10 @@ async def get_user_credits_via_api(admin_client, user_id: str) -> dict:
 
 
 @pytest.mark.asyncio
-async def test_tts_insufficient_credits(regular_client):
+async def test_tts_insufficient_credits(regular_client, regular_document):
     """Test that TTS fails with 402 when user has no credits."""
-    # Create document
-    doc_data = await create_document(regular_client, "Hello, I need credits!")
-    document_id = doc_data["document_id"]
-    block_id = doc_data["blocks"][0]["id"]
+    document_id = regular_document["document_id"]
+    block_id = regular_document["blocks"][0]["id"]
 
     synth_response = await regular_client.post(
         f"/v1/documents/{document_id}/blocks/{block_id}/synthesize",
@@ -50,16 +46,14 @@ async def test_tts_insufficient_credits(regular_client):
 
 
 @pytest.mark.asyncio
-async def test_tts_with_credits_deduction(regular_client, admin_client, regular_user):
+async def test_tts_with_credits_deduction(regular_client, admin_client, regular_user, unique_document):
     """Test that TTS works with credits and deducts them properly."""
     # Grant 100 credits to the user using admin API
     initial_credits = Decimal("100.0")
     await grant_credits_via_api(admin_client, regular_user["id"], initial_credits)
 
-    # Create document with unique text to avoid cache
-    doc_data = await create_unique_document(regular_client)
-    document_id = doc_data["document_id"]
-    block_id = doc_data["blocks"][0]["id"]
+    document_id = unique_document["document_id"]
+    block_id = unique_document["blocks"][0]["id"]
 
     synth_response = await regular_client.post(
         f"/v1/documents/{document_id}/blocks/{block_id}/synthesize",
@@ -96,15 +90,14 @@ async def test_tts_with_credits_deduction(regular_client, admin_client, regular_
 
 
 @pytest.mark.asyncio
-async def test_tts_cached_no_credit_deduction(regular_client, admin_client, regular_user):
+async def test_tts_cached_no_credit_deduction(regular_client, admin_client, regular_user, unique_document):
     """Test that cached audio doesn't deduct credits again."""
     # Grant credits
     initial_credits = Decimal("100.0")
     await grant_credits_via_api(admin_client, regular_user["id"], initial_credits)
-    # Create document with unique text to ensure fresh synthesis
-    doc_data = await create_unique_document(regular_client)
-    document_id = doc_data["document_id"]
-    block_id = doc_data["blocks"][0]["id"]
+
+    document_id = unique_document["document_id"]
+    block_id = unique_document["blocks"][0]["id"]
 
     # First synthesis - should deduct credits
     synth_params = {"model_slug": "kokoro-cpu", "voice_slug": "af_heart", "speed": 1.0}
@@ -144,14 +137,10 @@ async def test_tts_cached_no_credit_deduction(regular_client, admin_client, regu
 
 
 @pytest.mark.asyncio
-async def test_tts_admin_no_credit_check(admin_client):
-    """Test that admins bypass credit checks entirely."""
-    # Create document
-    doc_data = await create_document(admin_client, "Admin test - no credits needed")
-
-    # Synthesize - should work even without any credits
+async def test_tts_admin_no_credit_check(admin_client, test_document):
+    """Test that admins dont need any credits."""
     synth_response = await admin_client.post(
-        f"/v1/documents/{doc_data['document_id']}/blocks/{doc_data['blocks'][0]['id']}/synthesize",
+        f"/v1/documents/{test_document['document_id']}/blocks/{test_document['blocks'][0]['id']}/synthesize",
         json={"model_slug": "kokoro-cpu", "voice_slug": "af_heart", "speed": 1.0},
     )
 
