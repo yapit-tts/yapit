@@ -196,16 +196,6 @@ class TransactionStatus(StrEnum):
     reversed = auto()
 
 
-class PaymentStatus(StrEnum):
-    pending = auto()  # Payment initiated, awaiting confirmation
-    processing = auto()  # Payment being processed by provider
-    succeeded = auto()  # Payment completed successfully
-    failed = auto()  # Payment failed (insufficient funds, etc.)
-    canceled = auto()  # User or system canceled before completion
-    refunded = auto()  # Full refund issued
-    partially_refunded = auto()  # Partial refund (e.g., user got $70 back from $100)
-
-
 class UserCredits(SQLModel, table=True):
     """User's credit balance for TTS usage (in USD)."""
 
@@ -259,19 +249,6 @@ class CreditTransaction(SQLModel, table=True):
     __table_args__ = (
         Index("idx_credit_transaction_created", "created"),
         Index("idx_credit_transaction_user_created", "user_id", "created"),
-    )
-
-
-class PaymentProviderMapping(SQLModel, table=True):
-    """Maps users to payment provider IDs."""
-
-    user_id: str = Field(primary_key=True)
-    provider: str = Field(default="stripe")  # future: "paddle", etc
-    provider_customer_id: str = Field(index=True)
-
-    created: datetime = Field(
-        default_factory=lambda: datetime.now(tz=dt.UTC),
-        sa_column=Column(DateTime(timezone=True)),
     )
 
 
