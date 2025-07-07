@@ -12,7 +12,7 @@ async def test_validate_regex_ok(client):
             "regex_rules": [{"pattern": r"foo", "replacement": ""}],
         }
     }
-    r = await client.post(f"/v1/filters/validate", json=body)
+    r = await client.post("/v1/filters/validate", json=body)
     assert r.status_code == 200, r.json()
     assert r.json()["message"] == "ok"
 
@@ -20,7 +20,7 @@ async def test_validate_regex_ok(client):
 @pytest.mark.asyncio
 async def test_validate_regex_invalid(client):
     body = {"filter_config": {"regex_rules": [{"pattern": "(", "replacement": ""}]}}
-    r = await client.post(f"/v1/filters/validate", json=body)
+    r = await client.post("/v1/filters/validate", json=body)
     assert r.status_code == 422, r.json()
 
 
@@ -33,7 +33,7 @@ async def test_apply_filters_and_blocks(client):
     raw_text = "Hello (delete me) https://example.com world."
     doc = (
         await client.post(
-            f"/v1/documents",
+            "/v1/documents",
             json={"source_type": "paste", "text_content": raw_text},
         )
     ).json()
@@ -44,7 +44,7 @@ async def test_apply_filters_and_blocks(client):
         {"pattern": r"\([^)]*\)", "replacement": ""},
     ]
     r = await client.post(
-        f"/v1/documents/{document_id}/apply_filters",
+        f"/v1/documents/{document_id}/apply-filters",
         json={"filter_config": {"regex_rules": rules}},
     )
     assert r.status_code == 202, r.json()
@@ -64,7 +64,7 @@ async def _poll_status(client, document_id: str, expect: str, timeout: float = 1
 
     t0 = time.time()
     while time.time() - t0 < timeout:
-        msg = (await client.get(f"/v1/documents/{document_id}/filter_status")).json()["message"]
+        msg = (await client.get(f"/v1/documents/{document_id}/filter-status")).json()["message"]
         if msg == expect or msg.startswith(expect):  # done | cancelled | error:...
             return
         await asyncio.sleep(0.25)

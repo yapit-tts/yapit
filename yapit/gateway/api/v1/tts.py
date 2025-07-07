@@ -27,7 +27,6 @@ from yapit.gateway.domain_models import (
     TransactionStatus,
     TransactionType,
     TTSModel,
-    UserCredits,
 )
 
 log = logging.getLogger(__name__)

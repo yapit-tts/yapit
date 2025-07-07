@@ -1,6 +1,5 @@
 """Integration tests for TTS with billing/credits."""
 
-import time
 from decimal import Decimal
 
 import pytest
@@ -20,9 +19,9 @@ async def grant_credits_via_api(admin_client, user_id: str, amount: Decimal):
     return response.json()
 
 
-async def get_user_credits_via_api(admin_client, user_id: str) -> dict:
-    """Get user credits using the admin API."""
-    response = await admin_client.get(f"/v1/admin/users/{user_id}/credits")
+async def get_user_credits_via_api(user_client) -> dict:
+    """Get user credits using the user API."""
+    response = await user_client.get("/v1/users/me/credits")
     if response.status_code == 404:
         return {"balance": "0"}
     assert response.status_code == 200
@@ -69,7 +68,7 @@ async def test_tts_with_credits_deduction(regular_client, admin_client, regular_
     assert duration_ms > 0
 
     # Verify credits were deducted via API
-    credits_after = await get_user_credits_via_api(admin_client, regular_user["id"])
+    credits_after = await get_user_credits_via_api(regular_client)
     final_balance = Decimal(credits_after["balance"])
     assert final_balance < initial_credits
 
@@ -79,7 +78,7 @@ async def test_tts_with_credits_deduction(regular_client, admin_client, regular_
     assert initial_credits - final_balance == expected_deduction
 
     # Verify transaction was created via API
-    tx_response = await admin_client.get(f"/v1/admin/users/{regular_user['id']}/credit-transactions")
+    tx_response = await regular_client.get("/v1/users/me/transactions")
     assert tx_response.status_code == 200
     transactions = tx_response.json()
 
@@ -109,7 +108,7 @@ async def test_tts_cached_no_credit_deduction(regular_client, admin_client, regu
     first_audio = first_response.content
 
     # Check balance after first synthesis
-    credits_after_first = await get_user_credits_via_api(admin_client, regular_user["id"])
+    credits_after_first = await get_user_credits_via_api(regular_client)
     balance_after_first = Decimal(credits_after_first["balance"])
     assert balance_after_first < initial_credits
 
@@ -122,12 +121,12 @@ async def test_tts_cached_no_credit_deduction(regular_client, admin_client, regu
     assert second_response.content == first_audio  # Same audio
 
     # Verify no additional credits were deducted
-    credits_after_second = await get_user_credits_via_api(admin_client, regular_user["id"])
+    credits_after_second = await get_user_credits_via_api(regular_client)
     balance_after_second = Decimal(credits_after_second["balance"])
     assert balance_after_second == balance_after_first  # No change
 
     # Verify only one transaction exists via API
-    tx_response = await admin_client.get(f"/v1/admin/users/{regular_user['id']}/credit-transactions")
+    tx_response = await regular_client.get("/v1/users/me/transactions")
     assert tx_response.status_code == 200
     transactions = tx_response.json()
 

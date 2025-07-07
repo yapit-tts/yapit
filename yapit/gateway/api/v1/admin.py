@@ -229,8 +229,8 @@ async def list_system_filters(
     db: DbSession,
 ) -> list[Filter]:
     """List all system filters (filters with no user_id)."""
-    filters = await db.exec(select(Filter).where(Filter.user_id == None))
-    return list(filters)
+    result = await db.exec(select(Filter).where(Filter.user_id == None))
+    return result.all()
 
 
 @router.post("/filters", status_code=status.HTTP_201_CREATED)
@@ -333,21 +333,6 @@ class UserCreditsResponse(BaseModel):
     updated: datetime
 
 
-@router.get("/users/{user_id}/credits", response_model=UserCreditsResponse)
-async def get_user_credits(
-    user_id: str,
-    db: DbSession,
-) -> UserCredits:
-    """Get user's credit balance and statistics."""
-    user_credits = await db.get(UserCredits, user_id)
-    if not user_credits:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No credit record found for user {user_id!r}",
-        )
-    return user_credits
-
-
 @router.post("/users/{user_id}/credits", response_model=UserCreditsResponse)
 async def adjust_user_credits(
     user_id: str,
@@ -382,21 +367,3 @@ async def adjust_user_credits(
     await db.commit()
     await db.refresh(user_credits)
     return user_credits
-
-
-@router.get("/users/{user_id}/credit-transactions")
-async def get_user_credit_transactions(
-    user_id: str,
-    db: DbSession,
-    limit: int = 50,
-    offset: int = 0,
-) -> list[CreditTransaction]:
-    """Get a user's credit transaction history."""
-    result = await db.exec(
-        select(CreditTransaction)
-        .where(CreditTransaction.user_id == user_id)
-        .order_by(CreditTransaction.created.desc())
-        .limit(limit)
-        .offset(offset)
-    )
-    return result.all()

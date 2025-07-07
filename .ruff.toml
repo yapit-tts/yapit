@@ -16,10 +16,16 @@ ignore = [
 ]
 
 [lint]
-select = [
+extend-select = [
     "I", # import sorting
     "D", # enable pydocstyle rules, adhering to google convention (see below)
 ]
+
+[lint.per-file-ignores]
+# SQLAlchemy/SQLModel requires == None for NULL comparisons
+"yapit/gateway/api/**/*.py" = ["E711"]
+"yapit/gateway/domain_models.py" = ["E711"]
+"yapit/gateway/db.py" = ["E711"]
 
 [lint.pydocstyle]
 convention = "google"

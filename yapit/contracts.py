@@ -3,7 +3,7 @@
 import uuid
 from typing import Final
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field
+from pydantic import BaseModel, ConfigDict, Field
 
 # TTS-related keys
 TTS_INFLIGHT: Final[str] = "tts:inflight:{hash}"  # redis NX lock

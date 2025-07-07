@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum, auto
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel as PydanticModel
 from pydantic import Field as PydanticField

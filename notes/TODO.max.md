@@ -18,6 +18,7 @@
 
 - can we improve dependency handling without creating separate docker images?
   - see comments abt deps only some deployments need @ pyproject.toml
+- replace .get()+exception with get_one() and add global exception handler
 
 ### Chore
 

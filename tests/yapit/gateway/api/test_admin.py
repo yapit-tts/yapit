@@ -208,7 +208,11 @@ async def test_admin_can_manage_system_filters(client, as_admin_user, session):
     response = await client.get("/v1/admin/filters")
     assert response.status_code == status.HTTP_200_OK
     filters = response.json()
-    assert any(f["name"] == "Test System Filter" for f in filters)
+    assert len(filters) > 0
+    # Find our filter
+    test_filter = next((f for f in filters if f["name"] == "Test System Filter"), None)
+    assert test_filter is not None
+    assert test_filter["id"] == filter_id
 
     # Update filter
     update_data = {"description": "Updated description"}
@@ -271,42 +275,11 @@ async def test_admin_can_deduct_credits(client, app, admin_user, test_user, sess
 
 
 @pytest.mark.asyncio
-async def test_admin_can_get_user_credits(client, app, admin_user, test_user, session):
-    """Test that admin can get user credit balance."""
-    # Set admin auth
-    app.dependency_overrides[authenticate] = lambda: admin_user
-
-    # Create credits
-    user_credits = UserCredits(
-        user_id=test_user.id,
-        balance=Decimal("50.25"),
-        total_purchased=Decimal("100"),
-        total_used=Decimal("49.75"),
-    )
-    session.add(user_credits)
-    await session.commit()
-
-    # Get credits
-    response = await client.get(f"/v1/admin/users/{test_user.id}/credits")
-    assert response.status_code == status.HTTP_200_OK
-
-    data = response.json()
-    assert data["user_id"] == test_user.id
-    assert Decimal(data["balance"]) == Decimal("50.25")
-    assert Decimal(data["total_purchased"]) == Decimal("100")
-    assert Decimal(data["total_used"]) == Decimal("49.75")
-
-
-@pytest.mark.asyncio
-async def test_regular_user_cannot_access_credit_endpoints(client, as_test_user):
-    """Test that regular users cannot access admin credit endpoints."""
+async def test_regular_user_cannot_access_admin_credit_adjustment(client, as_test_user):
+    """Test that regular users cannot access admin credit adjustment endpoint."""
     # Try to grant credits
     response = await client.post(
         f"/v1/admin/users/{as_test_user.id}/credits",
         json={"amount": "100", "description": "Unauthorized attempt", "type": "credit_bonus"},
     )
-    assert response.status_code == status.HTTP_403_FORBIDDEN
-
-    # Try to get credits
-    response = await client.get(f"/v1/admin/users/{as_test_user.id}/credits")
     assert response.status_code == status.HTTP_403_FORBIDDEN
