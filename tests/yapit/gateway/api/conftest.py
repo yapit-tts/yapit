@@ -54,7 +54,7 @@ async def app(postgres_container, redis_container) -> FastAPI:
     app = create_app(settings)
     app.dependency_overrides[authenticate] = lambda: ANON_USER
 
-    async with app.router.lifespan_context(app) as lifespan_state:
+    async with app.router.lifespan_context(app):
         yield app
 
     await close_db()

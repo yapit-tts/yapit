@@ -1,6 +1,8 @@
 line-length = 120
 target-version = "py312"
 fix = true
+
+[lint]
 ignore = [
     "D100", # missing docstring in public module
     "D101", # missing docstring in public class
@@ -14,8 +16,6 @@ ignore = [
     "D415", # don't require proper end-of-sentence (".", "!", "?")
     "D417", # don't require documentation for every function param
 ]
-
-[lint]
 extend-select = [
     "I", # import sorting
     "D", # enable pydocstyle rules, adhering to google convention (see below)
