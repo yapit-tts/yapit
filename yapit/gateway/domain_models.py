@@ -231,9 +231,10 @@ class CreditTransaction(SQLModel, table=True):
     balance_after: Decimal = Field(sa_column=Column(DECIMAL(19, 4), nullable=False))
 
     description: str | None = Field(default=None)
-    details: dict | None = Field(
-        default=None, sa_column=Column(postgresql.JSONB(), nullable=True)
-    )  # metadata reserved by SQLModel
+    details: dict | None = Field(  # name `metadata` reserved by SQLModel
+        default=None,
+        sa_column=Column(postgresql.JSONB(), nullable=True),
+    )
 
     # References to related records
     external_reference: str | None = Field(default=None, index=True)  # e.g., stripe_invoice_id
