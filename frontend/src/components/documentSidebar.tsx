@@ -1,5 +1,5 @@
-import { Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarGroupAction, } from "@/components/ui/sidebar"
-import { FileText, Plus } from "lucide-react"
+import { Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarGroupAction, SidebarFooter, } from "@/components/ui/sidebar"
+import { ChevronUp, FileText, Plus } from "lucide-react"
 
 const documents = [
 	{
@@ -44,6 +44,12 @@ const DocumentSidebar = () => {
 					</SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
+			<SidebarFooter>
+				<SidebarMenuButton>
+					dev
+					<ChevronUp className="ml-auto" />
+				</SidebarMenuButton>
+			</SidebarFooter>
     </Sidebar>
 	)
 }

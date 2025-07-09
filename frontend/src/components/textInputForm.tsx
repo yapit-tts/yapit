@@ -6,7 +6,7 @@ import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { useNavigate } from "react-router";
-import api from "@/api";
+import { useApi } from "@/api";
 
 const FormSchema = z.object({
   text: z.string(),
@@ -23,6 +23,7 @@ const TextInputForm = () => {
   });
 
 	const navigate = useNavigate();
+	const { api } = useApi();
 
   const onSubmit = async (data: FormData) => {
     try {

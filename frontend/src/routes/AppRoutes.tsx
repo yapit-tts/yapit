@@ -20,7 +20,7 @@ const AppRoutes = () => (
 		<Route path="/handler/*" element={<AuthRoutes />} />
 		<Route path="/authtest" element={<AuthTest />} />
 		<Route
-			path="/input"
+			path="/"
 			element={
 				<MainLayout>
 					<TextInputPage />

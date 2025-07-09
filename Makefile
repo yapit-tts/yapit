@@ -22,7 +22,10 @@ dev-gpu: down
 
 dev-mac: down
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.mac.yml \
-	up -d --build
+	--profile self-host \
+	up -d kokoro-cpu gateway redis postgres stack-auth --build --wait
+	@echo "Creating dev user..."
+	uv run --env-file=.env.dev python scripts/create_dev_user.py
 
 down:
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml down -v --remove-orphans
