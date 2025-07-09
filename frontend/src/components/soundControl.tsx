@@ -63,7 +63,7 @@ const SoundControl = ({ isPlaying, onPlay, onPause, style, progressBarValues, vo
 		return (hours == 0) ? minutesStr + ":" + secondsStr : hoursStr + ":" + minutesStr + ":" + secondsStr;
 	}
 
-	const handleSliderChange = (newValue: Array<number>) => {
+	const handleSliderChange = (newValue: number[]) => {
 		const newBlock = newValue[0];
 		if (newBlock !== progressBarValues.currentBlock) {
 			progressBarValues.setCurrentBlock(newBlock);
