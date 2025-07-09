@@ -1,11 +1,24 @@
-from typing import Annotated
+from datetime import datetime
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlmodel import select
 
-from yapit.gateway.deps import DbSession, require_admin
-from yapit.gateway.domain_models import Filter, TTSModel, Voice
+from yapit.gateway.deps import (
+    DbSession,
+    get_or_create_user_credits,
+    require_admin,
+)
+from yapit.gateway.domain_models import (
+    CreditTransaction,
+    Filter,
+    TransactionStatus,
+    TransactionType,
+    TTSModel,
+    UserCredits,
+    Voice,
+)
 
 router = APIRouter(prefix="/v1/admin", tags=["Admin"], dependencies=[Depends(require_admin)])
 
@@ -15,7 +28,7 @@ class ModelCreateRequest(BaseModel):
 
     slug: str
     name: str
-    price_sec: float
+    credit_multiplier: Decimal
     native_codec: str
     sample_rate: int
     channels: int
@@ -26,7 +39,7 @@ class ModelUpdateRequest(BaseModel):
     """Request to update a TTS model."""
 
     name: str | None = None
-    price_sec: float | None = None
+    credit_multiplier: Decimal | None = None
     native_codec: str | None = None
     sample_rate: int | None = None
     channels: int | None = None
@@ -75,7 +88,6 @@ async def create_model(
     db: DbSession,
 ) -> TTSModel:
     """Create a new TTS model."""
-    # Check if model with slug already exists
     existing = (await db.exec(select(TTSModel).where(TTSModel.slug == model_data.slug))).first()
     if existing:
         raise HTTPException(
@@ -147,7 +159,6 @@ async def create_voice(
             detail=f"Model {model_slug!r} not found",
         )
 
-    # Check if voice with slug already exists for this model
     existing = (
         await db.exec(select(Voice).where(Voice.slug == voice_data.slug).where(Voice.model_id == model.id))
     ).first()
@@ -218,8 +229,8 @@ async def list_system_filters(
     db: DbSession,
 ) -> list[Filter]:
     """List all system filters (filters with no user_id)."""
-    filters = await db.exec(select(Filter).where(Filter.user_id == None))
-    return list(filters)
+    result = await db.exec(select(Filter).where(Filter.user_id == None))
+    return result.all()
 
 
 @router.post("/filters", status_code=status.HTTP_201_CREATED)
@@ -228,7 +239,6 @@ async def create_system_filter(
     db: DbSession,
 ) -> Filter:
     """Create a new system filter."""
-    # Check if system filter with name already exists
     existing = (
         await db.exec(select(Filter).where(Filter.name == filter_data.name).where(Filter.user_id == None))
     ).first()
@@ -299,3 +309,61 @@ async def delete_system_filter(
 
     await db.delete(filter_obj)
     await db.commit()
+
+
+# Credit Management Endpoints
+
+
+class CreditAdjustmentRequest(BaseModel):
+    """Request to adjust user credits."""
+
+    amount: Decimal
+    description: str
+    type: TransactionType = TransactionType.credit_adjustment
+
+
+class UserCreditsResponse(BaseModel):
+    """Response with user credit information."""
+
+    user_id: str
+    balance: Decimal
+    total_purchased: Decimal
+    total_used: Decimal
+    created: datetime
+    updated: datetime
+
+
+@router.post("/users/{user_id}/credits", response_model=UserCreditsResponse)
+async def adjust_user_credits(
+    user_id: str,
+    adjustment: CreditAdjustmentRequest,
+    db: DbSession,
+) -> UserCredits:
+    """Adjust user's credit balance (grant, deduct, or refund credits)."""
+    user_credits = await get_or_create_user_credits(user_id, db)
+    await db.flush()
+
+    balance_before = user_credits.balance
+    user_credits.balance += adjustment.amount
+
+    # Update totals based on transaction type
+    if adjustment.type in [TransactionType.credit_purchase, TransactionType.credit_bonus]:
+        user_credits.total_purchased += adjustment.amount
+    elif adjustment.type == TransactionType.usage_deduction and adjustment.amount < 0:
+        user_credits.total_used += abs(adjustment.amount)
+
+    transaction = CreditTransaction(
+        user_id=user_id,
+        type=adjustment.type,
+        status=TransactionStatus.completed,
+        amount=adjustment.amount,
+        balance_before=balance_before,
+        balance_after=user_credits.balance,
+        description=adjustment.description,
+        details={"adjusted_by": "admin"},
+    )
+    db.add(transaction)
+
+    await db.commit()
+    await db.refresh(user_credits)
+    return user_credits

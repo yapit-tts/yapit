@@ -1,6 +1,8 @@
 line-length = 120
 target-version = "py312"
 fix = true
+
+[lint]
 ignore = [
     "D100", # missing docstring in public module
     "D101", # missing docstring in public class
@@ -14,12 +16,16 @@ ignore = [
     "D415", # don't require proper end-of-sentence (".", "!", "?")
     "D417", # don't require documentation for every function param
 ]
-
-[lint]
-select = [
+extend-select = [
     "I", # import sorting
     "D", # enable pydocstyle rules, adhering to google convention (see below)
 ]
+
+[lint.per-file-ignores]
+# SQLAlchemy/SQLModel requires == None for NULL comparisons
+"yapit/gateway/api/**/*.py" = ["E711"]
+"yapit/gateway/domain_models.py" = ["E711"]
+"yapit/gateway/db.py" = ["E711"]
 
 [lint.pydocstyle]
 convention = "google"

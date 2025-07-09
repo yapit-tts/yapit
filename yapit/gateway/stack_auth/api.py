@@ -1,7 +1,7 @@
 import logging
 from typing import Any
 
-from yapit.gateway.config import Settings, get_settings
+from yapit.gateway.config import Settings
 
 STACK_AUTH_LOGGER = logging.getLogger("stack-auth")
 STACK_AUTH_LOGGER.setLevel(logging.DEBUG)

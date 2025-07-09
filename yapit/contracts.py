@@ -3,7 +3,7 @@
 import uuid
 from typing import Final
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field
+from pydantic import BaseModel, ConfigDict, Field
 
 # TTS-related keys
 TTS_INFLIGHT: Final[str] = "tts:inflight:{hash}"  # redis NX lock
@@ -24,6 +24,7 @@ class SynthesisJob(BaseModel):
     # routing / identity
     job_id: uuid.UUID = Field(default_factory=uuid.uuid4)
     variant_hash: str
+    user_id: str  # who to bill for this synthesis
 
     # synthesis parameters
     model_slug: str

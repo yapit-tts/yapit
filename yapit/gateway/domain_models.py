@@ -2,14 +2,14 @@ import datetime as dt
 import hashlib
 import uuid
 from datetime import datetime
+from decimal import Decimal
 from enum import StrEnum, auto
 from typing import Any
 
 from pydantic import BaseModel as PydanticModel
 from pydantic import Field as PydanticField
-from sqlalchemy import UniqueConstraint
+from sqlalchemy import DECIMAL, Index, UniqueConstraint
 from sqlalchemy.dialects import postgresql
-from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import JSON, TEXT, Column, DateTime, Field, Relationship, SQLModel
 
 # NOTE: Forward annotations do not work with SQLModel
@@ -23,7 +23,7 @@ class TTSModel(SQLModel, table=True):
     slug: str = Field(unique=True, index=True)
     name: str
     description: str | None = Field(default=None)
-    price_sec: float = 0.0
+    credit_multiplier: Decimal = Field(sa_column=Column(DECIMAL(10, 4), nullable=False, default=1.0))
 
     sample_rate: int
     channels: int
@@ -173,6 +173,105 @@ class Filter(SQLModel, table=True):
         sa_column=Column(DateTime(timezone=True)),
     )
     updated: datetime = Field(
+        default_factory=lambda: datetime.now(tz=dt.UTC),
+        sa_column=Column(DateTime(timezone=True)),
+    )
+
+
+# Billing Models
+
+
+class TransactionType(StrEnum):
+    credit_purchase = auto()  # User bought credits with real money
+    credit_bonus = auto()  # Free credits (sign-up bonus, promotions, admin top-up)
+    credit_refund = auto()  # Credits returned due to service issues
+    credit_adjustment = auto()  # Manual admin corrections (errors, compensation)
+    usage_deduction = auto()  # Credits consumed by TTS synthesis
+
+
+class TransactionStatus(StrEnum):
+    pending = auto()
+    completed = auto()
+    failed = auto()
+    reversed = auto()
+
+
+class UserCredits(SQLModel, table=True):
+    """User's credit balance for TTS usage (in USD)."""
+
+    user_id: str = Field(primary_key=True)  # Stack Auth user ID
+    balance: Decimal = Field(sa_column=Column(DECIMAL(19, 4), nullable=False))
+
+    total_purchased: Decimal = Field(sa_column=Column(DECIMAL(19, 4), nullable=False))
+    total_used: Decimal = Field(sa_column=Column(DECIMAL(19, 4), nullable=False))
+
+    created: datetime = Field(
+        default_factory=lambda: datetime.now(tz=dt.UTC),
+        sa_column=Column(DateTime(timezone=True)),
+    )
+    updated: datetime = Field(
+        default_factory=lambda: datetime.now(tz=dt.UTC),
+        sa_column=Column(DateTime(timezone=True)),
+    )
+
+    transactions: list["CreditTransaction"] = Relationship(back_populates="user_credits")
+
+
+class CreditTransaction(SQLModel, table=True):
+    """Audit trail for all credit balance changes."""
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    user_id: str = Field(foreign_key="usercredits.user_id", index=True)
+
+    type: TransactionType
+    status: TransactionStatus = Field(default=TransactionStatus.pending)
+
+    amount: Decimal = Field(sa_column=Column(DECIMAL(19, 4), nullable=False))
+    balance_before: Decimal = Field(sa_column=Column(DECIMAL(19, 4), nullable=False))
+    balance_after: Decimal = Field(sa_column=Column(DECIMAL(19, 4), nullable=False))
+
+    description: str | None = Field(default=None)
+    details: dict | None = Field(  # name `metadata` reserved by SQLModel
+        default=None,
+        sa_column=Column(postgresql.JSONB(), nullable=True),
+    )
+
+    # References to related records
+    external_reference: str | None = Field(default=None, index=True)  # e.g., stripe_invoice_id
+    usage_reference: str | None = Field(default=None, index=True)  # e.g., document_id or block_variant_hash
+
+    created: datetime = Field(
+        default_factory=lambda: datetime.now(tz=dt.UTC),
+        sa_column=Column(DateTime(timezone=True)),
+    )
+
+    user_credits: UserCredits = Relationship(back_populates="transactions")
+
+    __table_args__ = (
+        Index("idx_credit_transaction_created", "created"),
+        Index("idx_credit_transaction_user_created", "user_id", "created"),
+    )
+
+
+class CreditPackage(SQLModel, table=True):
+    """Maps provider price IDs to credit amounts."""  # TODO do we even need this?
+
+    id: int | None = Field(default=None, primary_key=True)
+    provider_price_id: str = Field(unique=True, index=True)
+    credits: Decimal = Field(sa_column=Column(DECIMAL(19, 4), nullable=False))
+    is_active: bool = Field(default=True)
+
+
+class UserUsageStats(SQLModel, table=True):
+    """Aggregated usage statistics for each user."""
+
+    user_id: str = Field(primary_key=True, foreign_key="usercredits.user_id")
+
+    total_seconds_synthesized: Decimal = Field(sa_column=Column(DECIMAL(19, 4), nullable=False, default=0))
+    total_characters_processed: int = Field(default=0)
+    total_requests: int = Field(default=0)
+
+    last_updated: datetime = Field(
         default_factory=lambda: datetime.now(tz=dt.UTC),
         sa_column=Column(DateTime(timezone=True)),
     )

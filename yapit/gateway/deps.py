@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Annotated, AsyncIterator, Callable
 from uuid import UUID
 
@@ -13,7 +14,7 @@ from yapit.gateway.auth import authenticate
 from yapit.gateway.cache import Cache, Caches, SqliteCache
 from yapit.gateway.config import Settings, get_settings
 from yapit.gateway.db import create_session
-from yapit.gateway.domain_models import Block, BlockVariant, Document, TTSModel, Voice
+from yapit.gateway.domain_models import Block, BlockVariant, Document, TTSModel, UserCredits, Voice
 from yapit.gateway.redis_client import get_redis_client
 from yapit.gateway.stack_auth.users import User
 from yapit.gateway.text_splitter import (
@@ -134,10 +135,7 @@ async def get_block(
         raise HTTPException(404, f"Block {block_id!r} not found in document {document_id!r}")
 
     if block.document.user_id != user.id:
-        raise HTTPException(
-            status.HTTP_401_UNAUTHORIZED,
-            "cannot access block in another user's document",
-        )
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "cannot access block in another user's document")
 
     return block
 
@@ -153,28 +151,36 @@ async def get_block_variant(
         options=[selectinload(BlockVariant.block).selectinload(Block.document)],
     )
     if not variant:
-        raise HTTPException(
-            status.HTTP_404_NOT_FOUND,
-            f"BlockVariant {variant_hash!r} not found",
-        )
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"BlockVariant {variant_hash!r} not found")
 
     if variant.block.document.user_id != user.id:
-        raise HTTPException(
-            status.HTTP_401_UNAUTHORIZED,
-            "cannot access block variant in another user's document",
-        )
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "cannot access block variant in another user's document")
 
     return variant
 
 
-async def require_admin(user: Annotated[User, Depends(authenticate)]) -> User:
+async def is_admin(user: Annotated[User, Depends(authenticate)]) -> bool:
+    """Check if the authenticated user is an admin."""
+    return user.server_metadata and user.server_metadata.is_admin
+
+
+async def require_admin(is_admin: IsAdmin) -> None:
     """Require the authenticated user to be an admin."""
-    if not user.server_metadata or not user.server_metadata.is_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin access required",
+    if not is_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+
+
+async def get_or_create_user_credits(user_id: str, db: DbSession) -> UserCredits:
+    user_credits = await db.get(UserCredits, user_id)
+    if not user_credits:
+        user_credits = UserCredits(
+            user_id=user_id,
+            balance=Decimal("0"),
+            total_purchased=Decimal("0"),
+            total_used=Decimal("0"),
         )
-    return user
+        db.add(user_credits)
+    return user_credits
 
 
 RedisClient = Annotated[Redis, Depends(get_redis_client)]
@@ -185,4 +191,4 @@ CurrentVoice = Annotated[Voice, Depends(get_voice)]
 CurrentBlock = Annotated[Block, Depends(get_block)]
 CurrentBlockVariant = Annotated[BlockVariant, Depends(get_block_variant)]
 AuthenticatedUser = Annotated[User, Depends(authenticate)]
-AdminUser = Annotated[User, Depends(require_admin)]
+IsAdmin = Annotated[bool, Depends(is_admin)]

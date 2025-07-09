@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, Field
@@ -10,14 +11,25 @@ from yapit.contracts import TTS_INFLIGHT, SynthesisJob, get_queue_name
 from yapit.gateway.auth import authenticate
 from yapit.gateway.deps import (
     AudioCache,
+    AuthenticatedUser,
     CurrentBlock,
     CurrentDoc,
     CurrentTTSModel,
     CurrentVoice,
     DbSession,
+    IsAdmin,
     RedisClient,
+    get_or_create_user_credits,
 )
-from yapit.gateway.domain_models import BlockVariant, TTSModel
+from yapit.gateway.domain_models import (
+    BlockVariant,
+    CreditTransaction,
+    TransactionStatus,
+    TransactionType,
+    TTSModel,
+)
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1", tags=["synthesis"])
 
@@ -53,11 +65,41 @@ async def synthesize(
     block: CurrentBlock,
     model: CurrentTTSModel,
     voice: CurrentVoice,
+    user: AuthenticatedUser,
+    is_admin: IsAdmin,
     db: DbSession,
     redis: RedisClient,
     cache: AudioCache,
 ) -> Response:
     """Synthesize audio for a block. Returns audio data directly with long-polling."""
+    # Get or create credits for all users (including admins for tracking)
+    user_credits = await get_or_create_user_credits(user.id, db)
+
+    if is_admin and user_credits.balance < 1000:  # Auto top-up admin credits if running low (dev/self-host purposes)
+        top_up_amount = 10000
+        balance_before = user_credits.balance
+        user_credits.balance += top_up_amount
+
+        # Create transaction record for audit trail
+        transaction = CreditTransaction(
+            user_id=user.id,
+            type=TransactionType.credit_bonus,
+            status=TransactionStatus.completed,
+            amount=top_up_amount,
+            balance_before=balance_before,
+            balance_after=user_credits.balance,
+            description="Admin auto top-up",
+        )
+        db.add(transaction)
+
+    await db.commit()
+
+    if user_credits.balance <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail="Insufficient credits. Please purchase credits to continue.",
+        )
+
     served_codec = model.native_codec  # TODO change to "opus" once workers transcode
     variant_hash = BlockVariant.get_hash(
         text=block.text,
@@ -115,6 +157,7 @@ async def synthesize(
         await redis.set(TTS_INFLIGHT.format(hash=variant_hash), 1, ex=300, nx=True)  # 5min lock
         job = SynthesisJob(
             variant_hash=variant_hash,
+            user_id=user.id,
             model_slug=body.model_slug,
             voice_slug=body.voice_slug,
             text=block.text,
@@ -123,15 +166,16 @@ async def synthesize(
         )
         await redis.lpush(get_queue_name(model.slug), job.model_dump_json())
 
-    # Long-polling: wait for audio to appear in cache
+    # Long-polling: wait for audio to appear in cache AND inflight to be cleared
     timeout = 60.0
     poll_interval = 0.5
     elapsed = 0.0
     while elapsed < timeout:
         audio_data = await cache.retrieve_data(variant_hash)
-        if audio_data is not None:
-            # Get updated variant with duration_ms
-            variant = await db.get(BlockVariant, variant_hash)
+        inflight_exists = await redis.exists(TTS_INFLIGHT.format(hash=variant_hash))
+
+        if audio_data is not None and not inflight_exists:
+            await db.refresh(variant)
             return _audio_response(audio_data, served_codec, model, variant.duration_ms)
 
         await asyncio.sleep(poll_interval)

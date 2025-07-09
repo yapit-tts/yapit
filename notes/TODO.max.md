@@ -4,15 +4,21 @@
 - Should Block.id be a UUID too?
 - Is there a global setting for pydantic to forbid extra vals?
 
+### Billing - Future Improvements
+
+- Rate limiting for users with negative balance to prevent abuse
+
 ### Feats
 
 - opus transcoding
   - depending on the intensity / scaling requirements, prlly best to do this in the gateway to save worker time?
+- fun feature: show lifetime stats (words/seconds processed, etc.)
 
 ### Refactor
 
 - can we improve dependency handling without creating separate docker images?
   - see comments abt deps only some deployments need @ pyproject.toml
+- replace .get()+exception with get_one() and add global exception handler
 
 ### Chore
 

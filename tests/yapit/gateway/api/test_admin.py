@@ -1,35 +1,30 @@
 """Test admin API endpoints."""
 
+from decimal import Decimal
+
 import pytest
 from fastapi import status
 from sqlmodel import select
 
-from tests.yapit.gateway.api.conftest import ADMIN_USER, TEST_USER
-from yapit.gateway.domain_models import Filter, TTSModel, Voice
+from yapit.gateway.auth import authenticate
+from yapit.gateway.domain_models import TTSModel, UserCredits, Voice
 
 
 @pytest.mark.asyncio
-async def test_admin_access_denied_for_regular_user(client, app):
+async def test_admin_access_denied_for_regular_user(client, as_test_user):
     """Test that regular users cannot access admin endpoints."""
-    from yapit.gateway.auth import authenticate
-
-    app.dependency_overrides[authenticate] = lambda: TEST_USER
-
     response = await client.get("/v1/admin/filters")
     assert response.status_code == status.HTTP_403_FORBIDDEN
     assert "Admin access required" in response.json()["detail"]
 
 
 @pytest.mark.asyncio
-async def test_admin_can_create_model(client, app, session):
+async def test_admin_can_create_model(client, as_admin_user, session):
     """Test that admin can create a new TTS model."""
-    from yapit.gateway.auth import authenticate
-
-    app.dependency_overrides[authenticate] = lambda: ADMIN_USER
     model_data = {
         "slug": "test-model",
         "name": "Test Model",
-        "price_sec": 0.002,
+        "credit_multiplier": 2.0,
         "native_codec": "pcm",
         "sample_rate": 24000,
         "channels": 1,
@@ -46,20 +41,17 @@ async def test_admin_can_create_model(client, app, session):
     # Verify in database
     db_model = (await session.exec(select(TTSModel).where(TTSModel.slug == "test-model"))).first()
     assert db_model is not None
-    assert db_model.price_sec == 0.002
+    assert float(db_model.credit_multiplier) == 2.0
 
 
 @pytest.mark.asyncio
-async def test_admin_can_update_model(client, app, session):
+async def test_admin_can_update_model(client, as_admin_user, session):
     """Test that admin can update an existing model."""
-    from yapit.gateway.auth import authenticate
-
-    app.dependency_overrides[authenticate] = lambda: ADMIN_USER
     # First create a model
     model = TTSModel(
         slug="update-test",
         name="Original Name",
-        price_sec=0.001,
+        credit_multiplier=1.0,
         native_codec="pcm",
         sample_rate=24000,
         channels=1,
@@ -69,27 +61,23 @@ async def test_admin_can_update_model(client, app, session):
     await session.commit()
 
     # Update it
-    update_data = {"name": "Updated Name", "price_sec": 0.003}
+    update_data = {"name": "Updated Name", "credit_multiplier": 3.0}
     response = await client.put(f"/v1/admin/models/{model.slug}", json=update_data)
     assert response.status_code == status.HTTP_200_OK
 
     updated_model = response.json()
     assert updated_model["name"] == "Updated Name"
-    assert updated_model["price_sec"] == 0.003
+    assert float(updated_model["credit_multiplier"]) == 3.0
 
 
 @pytest.mark.asyncio
-async def test_admin_can_manage_voices(client, app, session):
+async def test_admin_can_manage_voices(client, as_admin_user, session):
     """Test admin can create, update, and delete voices."""
-    from yapit.gateway.auth import authenticate
-
-    app.dependency_overrides[authenticate] = lambda: ADMIN_USER
-
     # First create a model
     model = TTSModel(
         slug="voice-test-model",
         name="Voice Test Model",
-        price_sec=0.001,
+        credit_multiplier=1.0,
         native_codec="pcm",
         sample_rate=24000,
         channels=1,
@@ -133,17 +121,13 @@ async def test_admin_can_manage_voices(client, app, session):
 
 
 @pytest.mark.asyncio
-async def test_admin_voice_creation_duplicate_check(client, app, session):
+async def test_admin_voice_creation_duplicate_check(client, as_admin_user, session):
     """Test that duplicate voice slugs are rejected for the same model."""
-    from yapit.gateway.auth import authenticate
-
-    app.dependency_overrides[authenticate] = lambda: ADMIN_USER
-
     # Create a model
     model = TTSModel(
         slug="duplicate-voice-test",
         name="Duplicate Voice Test",
-        price_sec=0.001,
+        credit_multiplier=1.0,
         native_codec="pcm",
         sample_rate=24000,
         channels=1,
@@ -170,16 +154,13 @@ async def test_admin_voice_creation_duplicate_check(client, app, session):
 
 
 @pytest.mark.asyncio
-async def test_admin_can_delete_model_with_voices(client, app, session):
+async def test_admin_can_delete_model_with_voices(client, as_admin_user, session):
     """Test that deleting a model also deletes its voices (cascade)."""
-    from yapit.gateway.auth import authenticate
-
-    app.dependency_overrides[authenticate] = lambda: ADMIN_USER
     # Create model with voices
     model = TTSModel(
         slug="delete-test",
         name="Delete Test",
-        price_sec=0.001,
+        credit_multiplier=1.0,
         native_codec="pcm",
         sample_rate=24000,
         channels=1,
@@ -210,11 +191,8 @@ async def test_admin_can_delete_model_with_voices(client, app, session):
 
 
 @pytest.mark.asyncio
-async def test_admin_can_manage_system_filters(client, app, session):
+async def test_admin_can_manage_system_filters(client, as_admin_user, session):
     """Test admin can create, update, and delete system filters."""
-    from yapit.gateway.auth import authenticate
-
-    app.dependency_overrides[authenticate] = lambda: ADMIN_USER
     # Create system filter
     filter_data = {
         "name": "Test System Filter",
@@ -230,7 +208,11 @@ async def test_admin_can_manage_system_filters(client, app, session):
     response = await client.get("/v1/admin/filters")
     assert response.status_code == status.HTTP_200_OK
     filters = response.json()
-    assert any(f["name"] == "Test System Filter" for f in filters)
+    assert len(filters) > 0
+    # Find our filter
+    test_filter = next((f for f in filters if f["name"] == "Test System Filter"), None)
+    assert test_filter is not None
+    assert test_filter["id"] == filter_id
 
     # Update filter
     update_data = {"description": "Updated description"}
@@ -241,3 +223,63 @@ async def test_admin_can_manage_system_filters(client, app, session):
     # Delete filter
     response = await client.delete(f"/v1/admin/filters/{filter_id}")
     assert response.status_code == status.HTTP_204_NO_CONTENT
+
+
+# Credit Management Tests
+
+
+@pytest.mark.asyncio
+async def test_admin_can_grant_credits(client, app, admin_user, test_user, session):
+    """Test that admin can grant credits to a user."""
+    # Set admin auth
+    app.dependency_overrides[authenticate] = lambda: admin_user
+
+    # Grant credits
+    response = await client.post(
+        f"/v1/admin/users/{test_user.id}/credits",
+        json={"amount": "100.50", "description": "Test credit grant", "type": "credit_bonus"},
+    )
+    assert response.status_code == status.HTTP_200_OK
+
+    data = response.json()
+    assert data["user_id"] == test_user.id
+    assert Decimal(data["balance"]) == Decimal("100.50")
+    assert Decimal(data["total_purchased"]) == Decimal("100.50")
+
+
+@pytest.mark.asyncio
+async def test_admin_can_deduct_credits(client, app, admin_user, test_user, session):
+    """Test that admin can deduct credits from a user."""
+    # Set admin auth
+    app.dependency_overrides[authenticate] = lambda: admin_user
+
+    # First grant some credits
+    user_credits = UserCredits(
+        user_id=test_user.id,
+        balance=Decimal("100"),
+        total_purchased=Decimal("100"),
+        total_used=Decimal("0"),
+    )
+    session.add(user_credits)
+    await session.commit()
+
+    # Deduct credits
+    response = await client.post(
+        f"/v1/admin/users/{test_user.id}/credits",
+        json={"amount": "-25.75", "description": "Manual deduction", "type": "credit_adjustment"},
+    )
+    assert response.status_code == status.HTTP_200_OK
+
+    data = response.json()
+    assert Decimal(data["balance"]) == Decimal("74.25")
+
+
+@pytest.mark.asyncio
+async def test_regular_user_cannot_access_admin_credit_adjustment(client, as_test_user):
+    """Test that regular users cannot access admin credit adjustment endpoint."""
+    # Try to grant credits
+    response = await client.post(
+        f"/v1/admin/users/{as_test_user.id}/credits",
+        json={"amount": "100", "description": "Unauthorized attempt", "type": "credit_bonus"},
+    )
+    assert response.status_code == status.HTTP_403_FORBIDDEN

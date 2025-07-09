@@ -6,7 +6,6 @@ from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from yapit.gateway.config import Settings
-from yapit.gateway.domain_models import Filter, TTSModel
 
 _engine: AsyncEngine | None = None
 

@@ -14,7 +14,7 @@ dev-cpu: down
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.kokoro-cpu.yml \
 	up -d --build --wait
 	@echo "Creating dev user..."
-	uv run --env-file=.env.dev python scripts/create_dev_user.py
+	uv run --env-file=.env.dev python scripts/create_user.py
 
 dev-gpu: down
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.kokoro-gpu.yml \
@@ -45,11 +45,16 @@ logs:
 
 test: test-unit test-integration
 
+test-local: test-unit test-integration-local
+
 test-unit:
 	uv run --env-file=.env.dev pytest tests --ignore=tests/integration
 
 test-integration:
 	uv run --env-file=.env.dev pytest tests/integration -v
+
+test-integration-local:
+	uv run --env-file=.env.dev pytest tests/integration -v -m "not runpod"
 
 lint:
 	uv run ruff check .

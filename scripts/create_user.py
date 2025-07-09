@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Create a development test user in stack-auth."""
 
+import argparse
 import os
 import sys
 import time
@@ -24,7 +25,12 @@ def wait_for_stack_auth(api_host: str, max_attempts: int = 30):
     return False
 
 
-def create_dev_user():
+def create_dev_user(
+    email: str = "dev@example.com",
+    password: str = "dev-password-123",
+    is_admin: bool = True,
+    display_name: str = "Dev User",
+):
     """Create a test user for development."""
     api_host = os.getenv("DEV_STACK_AUTH_API_HOST", "http://localhost:8102")
     project_id = os.getenv("STACK_AUTH_PROJECT_ID")
@@ -38,10 +44,6 @@ def create_dev_user():
     if not wait_for_stack_auth(api_host):
         print("Error: Stack-auth not responding")
         sys.exit(1)
-
-    # Fixed dev user credentials
-    dev_email = "dev@example.com"
-    dev_password = "dev-password-123"
 
     headers = {
         "X-Stack-Access-Type": "server",
@@ -57,26 +59,56 @@ def create_dev_user():
         f"{api_host}/api/v1/users",
         headers=headers,
         json={
-            "primary_email": dev_email,
-            "password": dev_password,
+            "primary_email": email,
+            "password": password,
             "primary_email_verified": True,
             "primary_email_auth_enabled": True,
-            "display_name": "Dev User",
-            "server_metadata": {"is_admin": True},
+            "display_name": display_name,
+            "server_metadata": {"is_admin": is_admin},
         },
     )
 
     if r.status_code in [200, 201]:
         user_id = r.json()["id"]
         print(f"User created with ID: {user_id}")
+        return user_id
     elif (r.status_code == 400 and "already exists" in r.text) or (r.status_code == 409):
-        print(f"User already exists: {dev_email}")
+        print(f"User already exists: {email}")
+        # Try to find existing user
+        r = requests.get(
+            f"{api_host}/api/v1/users",
+            headers=headers,
+        )
+        if r.status_code == 200:
+            users = r.json()["items"]
+            for user in users:
+                if user.get("primary_email") == email:
+                    return user["id"]
+        return None
     else:
         print(f"Error creating user: {r.status_code} {r.text}")
         sys.exit(1)
 
-    print(f"Dev user ready: {dev_email} / {dev_password}")
+
+def main():
+    parser = argparse.ArgumentParser(description="Create a development test user in stack-auth")
+    parser.add_argument("--email", default="dev@example.com", help="User email (default: dev@example.com)")
+    parser.add_argument("--password", default="dev-password-123", help="User password (default: dev-password-123)")
+    parser.add_argument("--no-admin", action="store_true", help="Create regular user instead of admin")
+    parser.add_argument("--display-name", default="Dev User", help="User display name (default: Dev User)")
+
+    args = parser.parse_args()
+
+    user_id = create_dev_user(
+        email=args.email, password=args.password, is_admin=not args.no_admin, display_name=args.display_name
+    )
+
+    print(f"Dev user ready: {args.email} / {args.password}")
+
+    # Return user_id via exit code 0 and print to stderr for programmatic use
+    if user_id:
+        sys.stderr.write(user_id + "\n")
 
 
 if __name__ == "__main__":
-    create_dev_user()
+    main()
