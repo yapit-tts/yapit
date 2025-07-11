@@ -33,8 +33,8 @@ async def test_apply_filters_and_blocks(client):
     raw_text = "Hello (delete me) https://example.com world."
     doc = (
         await client.post(
-            "/v1/documents",
-            json={"source_type": "paste", "text_content": raw_text},
+            "/v1/documents/text",
+            json={"content": raw_text},
         )
     ).json()
     document_id = doc["document_id"]

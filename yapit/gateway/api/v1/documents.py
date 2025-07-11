@@ -1,12 +1,14 @@
 import asyncio
+import hashlib
+import json
 import logging
 from datetime import datetime
 from typing import Annotated
 from uuid import UUID
 
 import re2 as re
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
-from pydantic import BaseModel, HttpUrl
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, UploadFile, status
+from pydantic import BaseModel, Field, HttpUrl
 from redis.asyncio import Redis
 from sqlmodel import delete, func, select
 from starlette.concurrency import run_in_threadpool
@@ -18,20 +20,19 @@ from yapit.gateway.deps import (
     AuthenticatedUser,
     CurrentDoc,
     DbSession,
+    DocumentCache,
     RedisClient,
     SettingsDep,
     TextSplitterDep,
     get_doc,
 )
-from yapit.gateway.domain_models import Block, Document, FilterConfig, SourceType
+from yapit.gateway.domain_models import Block, Document, DocumentType, FilterConfig
 from yapit.gateway.text_splitter import TextSplitter
 from yapit.gateway.utils import estimate_duration_ms
 
 router = APIRouter(prefix="/v1/documents", tags=["Documents"])
 log = logging.getLogger("filters")
 
-# how many blocks to embed in create-doc response # TODO
-_PREVIEW_LIMIT = 20
 
 # Filter job constants # TODO... we need to rehaul the filter system
 FILTER_LOCK_TTL = 300
@@ -40,18 +41,17 @@ FILTER_DONE_TTL = 86_400
 TRANSFORM_TIMEOUT_S = 120
 
 
-class DocumentCreateRequest(BaseModel):
-    """Payload for creating a document.
+class TextDocumentCreateRequest(BaseModel):
+    """Create a document from direct text input."""
 
-    Attributes:
-        source_type: Where the text comes from
-        text_content: Raw text when source_type == "paste".
-        source_ref: URL or filename (for url and upload types).
-    """
+    content: str = Field(min_length=1, strip_whitespace=True)
 
-    source_type: SourceType
-    text_content: str | None = None
-    source_ref: HttpUrl | str | None = None
+
+class PreparedDocumentCreateRequest(BaseModel):
+    """Create a document from prepared content."""
+
+    hash: str
+    type: DocumentType | None = None  # Optional override of auto-detected type
 
 
 class BlockRead(BaseModel):
@@ -66,7 +66,6 @@ class DocumentCreateResponse(BaseModel):
     title: str
     num_blocks: int
     est_duration_ms: int
-    blocks: list[BlockRead]
 
 
 class BlockPage(BaseModel):
@@ -75,64 +74,90 @@ class BlockPage(BaseModel):
     next_offset: int | None
 
 
-@router.post(
-    "",
-    response_model=DocumentCreateResponse,
-    status_code=status.HTTP_201_CREATED,
-)
-async def create_document(
-    req: DocumentCreateRequest,
-    db: DbSession,
-    splitter: TextSplitterDep,
+class DocumentPrepareRequest(BaseModel):
+    url: HttpUrl
+
+
+class DocumentPrepareResponse(BaseModel):
+    hash: str  # Cache key for subsequent document creation
+    type: DocumentType  # Always returns a type (defaults to website if unsure)
+    size_mb: float
+
+    pages: int | None = None  # for documents
+    credits: int | None = None  # for documents
+    title: str | None = None  # if available
+
+
+@router.post("/prepare", response_model=DocumentPrepareResponse)
+async def prepare_document(
+    request: DocumentPrepareRequest,
+    cache: DocumentCache,
+    settings: SettingsDep,
     user: AuthenticatedUser,
-) -> DocumentCreateResponse:
-    """Create a new Document from pasted text.
+) -> DocumentPrepareResponse:
+    """Prepare a document from URL for creation.
 
-    TODO URL and file‑upload branches are stubbed (501 Not Implemented).
-
-    Returns:
-        Metadata about the created document (ID, block count, est. duration).
+    Downloads content, detects type, extracts metadata, and caches everything.
+    Returns a hash to use for subsequent document creation.
     """
-    # obtain raw text
-    title = "Untitled"
-    if req.source_type == "paste":
-        if not req.text_content or not req.text_content.strip():
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="text_content must be provided and non‑empty for paste uploads",
-            )
-        text = req.text_content.strip()
-    elif req.source_type == "url":
-        raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="URL parsing not implemented yet")
-    elif req.source_type == "upload":
-        raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="File uploads not implemented yet")
-    else:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid source_type")
-    if not text:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Unexpected error: text is missing or invalid",
-        )
+    cache_key = hashlib.sha256(str(request.url).encode()).hexdigest()
+    cached_data = await cache.retrieve_data(cache_key)
+    if cached_data:
+        cached_info = json.loads(cached_data.decode())
+        return DocumentPrepareResponse(**cached_info)
 
-    # persist Document
-    doc = Document(
-        user_id=user.id,
-        title=title,
-        source_type=req.source_type,
-        source_ref=req.source_ref,
-        original_text=text,
+    # TODO: Implement actual downloading and type detection
+    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="URL preparation not yet implemented")
+
+
+@router.post("/prepare/upload", response_model=DocumentPrepareResponse)
+async def prepare_document_upload(
+    file: UploadFile,
+    cache: DocumentCache,
+    settings: SettingsDep,
+    user: AuthenticatedUser,
+) -> DocumentPrepareResponse:
+    """Prepare a document with type "document" from file upload. Accepts various document and image formats."""
+    content = await file.read()
+
+    content_hash = hashlib.sha256(content).hexdigest()
+    cached_data = await cache.retrieve_data(content_hash)
+    if cached_data:
+        cached_info = json.loads(cached_data.decode())
+        return DocumentPrepareResponse(**cached_info)
+
+    # TODO: Extract metadata, detect pages, etc.
+    raise HTTPException(
+        status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="File upload preparation not yet implemented"
     )
-    db.add(doc)
-    await db.commit()
-    await db.refresh(doc)
 
-    # split into Blocks
+
+async def _create_document_from_text(
+    text: str,
+    document_type: DocumentType,
+    user_id: str,
+    db: DbSession,
+    splitter: TextSplitter,
+    source_ref: str | None = None,
+    title: str = "Untitled",
+) -> DocumentCreateResponse:
+    """Common logic for creating a document from text."""
     try:
         text_blocks = await run_in_threadpool(splitter.split, text=text)
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Text splitting failed: {exc}"
         ) from exc
+
+    doc = Document(
+        user_id=user_id,
+        title=title,
+        type=document_type,
+        source_ref=source_ref,
+        original_text=text,
+    )
+    db.add(doc)
+
     est_total_ms = 0
     blocks: list[Block] = []
     for idx, text_block in enumerate(text_blocks):
@@ -147,10 +172,39 @@ async def create_document(
         title=title,
         num_blocks=len(blocks),
         est_duration_ms=est_total_ms,
-        blocks=[
-            BlockRead(id=b.id, idx=b.idx, text=b.text, est_duration_ms=b.est_duration_ms)
-            for b in blocks[:_PREVIEW_LIMIT]
-        ],
+    )
+
+
+@router.post("/text", response_model=DocumentCreateResponse, status_code=status.HTTP_201_CREATED)
+async def create_text_document(
+    req: TextDocumentCreateRequest,
+    db: DbSession,
+    splitter: TextSplitterDep,
+    user: AuthenticatedUser,
+) -> DocumentCreateResponse:
+    """Create a document from direct text input."""
+    return await _create_document_from_text(
+        text=req.content,  # Already validated and stripped by Pydantic
+        document_type=DocumentType.text,
+        user_id=user.id,
+        db=db,
+        splitter=splitter,
+    )
+
+
+@router.post("", response_model=DocumentCreateResponse, status_code=status.HTTP_201_CREATED)
+async def create_document(
+    req: PreparedDocumentCreateRequest,
+    db: DbSession,
+    cache: DocumentCache,
+    splitter: TextSplitterDep,
+    user: AuthenticatedUser,
+) -> DocumentCreateResponse:
+    """Create a document from prepared content."""
+    # TODO: Retrieve from cache and process based on type (web parsing vs document parsing) # TODO#2: Add doc parsing options / OCR options, ...
+    raise HTTPException(
+        status_code=status.HTTP_501_NOT_IMPLEMENTED,
+        detail="Document creation from prepared content not yet implemented",
     )
 
 

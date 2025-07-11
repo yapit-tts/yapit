@@ -30,6 +30,12 @@ class Settings(BaseSettings):
     runpod_api_key: str | None = None
     runpod_request_timeout_seconds: int | None = None
 
+    # Document cache settings
+    document_cache_type: Caches
+    document_cache_config: CacheConfig
+    document_cache_ttl_webpage: int  # TTL for cached webpages in seconds
+    document_cache_ttl_document: int  # TTL for cached documents in seconds
+
     model_config = SettingsConfigDict(
         env_prefix="",
         env_file=[os.getenv("ENV_FILE", ""), ".env.local"],

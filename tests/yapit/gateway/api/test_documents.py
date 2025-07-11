@@ -8,8 +8,8 @@ async def test_create_document_and_paging(client):
     text = "Sentence one. Sentence two."
 
     r = await client.post(
-        "/v1/documents",
-        json={"source_type": "paste", "text_content": text, "title": "Test Document"},
+        "/v1/documents/text",
+        json={"content": text},
     )
     assert r.status_code == 201
 

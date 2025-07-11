@@ -16,10 +16,13 @@ async def test_synthesize_returns_cached_audio_immediately(client, app, as_admin
     app.dependency_overrides[get_audio_cache] = lambda: mock_cache
 
     # Create document
-    r = await client.post("/v1/documents", json={"source_type": "paste", "text_content": "Test cached audio."})
+    r = await client.post("/v1/documents/text", json={"content": "Test cached audio."})
     doc = r.json()
     document_id = doc["document_id"]
-    block_id = doc["blocks"][0]["id"]
+
+    # Fetch blocks
+    blocks_response = await client.get(f"/v1/documents/{document_id}/blocks")
+    block_id = blocks_response.json()["items"][0]["id"]
 
     # Synthesize - should return audio immediately from cache
     r = await client.post(

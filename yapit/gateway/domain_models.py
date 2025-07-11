@@ -57,18 +57,20 @@ class Voice(SQLModel, table=True):
     __table_args__ = (UniqueConstraint("slug", "model_id", name="unique_voice_per_model"),)
 
 
-class SourceType(StrEnum):
-    url = auto()
-    upload = auto()
-    paste = auto()
+class DocumentType(StrEnum):
+    """Type of document content."""
+
+    text = auto()  # Direct text input (formerly "paste")
+    website = auto()  # HTML content from URL
+    document = auto()  # PDF/DOCX/images from URL or upload
 
 
 class Document(SQLModel, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     user_id: str = Field()
 
-    source_ref: str | None = Field(default=None)
-    source_type: SourceType | None = Field(default=None)
+    source_ref: str | None = Field(default=None)  # URL or filename for non-text types
+    type: DocumentType
 
     title: str | None = Field(default=None)
 

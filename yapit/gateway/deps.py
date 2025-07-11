@@ -32,7 +32,15 @@ def get_audio_cache(settings: SettingsDep) -> Cache:
     if audio_cache_type == Caches.SQLITE.name.lower():
         return SqliteCache(settings.audio_cache_config)
     else:
-        raise ValueError(f"Invalid audio cache type '{settings.audio_cache_type}'")
+        raise ValueError(rf"Invalid audio cache type {settings.audio_cache_type}")
+
+
+def get_document_cache(settings: SettingsDep) -> Cache:
+    document_cache_type = settings.document_cache_type.lower()
+    if document_cache_type == Caches.SQLITE.name.lower():
+        return SqliteCache(settings.document_cache_config)
+    else:
+        raise ValueError(rf"Invalid document cache type {settings.document_cache_type}")
 
 
 def get_text_splitter(settings: SettingsDep) -> TextSplitter:
@@ -42,7 +50,7 @@ def get_text_splitter(settings: SettingsDep) -> TextSplitter:
     elif splitter_type == TextSplitters.HIERARCHICAL.name.lower():
         return HierarchicalSplitter(settings.splitter_config)
     else:
-        raise ValueError(f"Invalid TextSplitter type '{settings.splitter_type}' (dummy, hierarchical)")
+        raise ValueError(rf"Invalid TextSplitter type {settings.splitter_type}")
 
 
 async def get_db_session(
@@ -185,6 +193,7 @@ async def get_or_create_user_credits(user_id: str, db: DbSession) -> UserCredits
 
 RedisClient = Annotated[Redis, Depends(get_redis_client)]
 AudioCache = Annotated[Cache, Depends(get_audio_cache)]
+DocumentCache = Annotated[Cache, Depends(get_document_cache)]
 TextSplitterDep = Annotated[TextSplitter, Depends(get_text_splitter)]
 CurrentDoc = Annotated[Document, Depends(get_doc)]
 CurrentVoice = Annotated[Voice, Depends(get_voice)]

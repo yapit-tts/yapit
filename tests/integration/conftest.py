@@ -115,11 +115,18 @@ async def regular_client(regular_user):
 async def test_document(admin_client):
     """Create a test document for admin."""
     response = await admin_client.post(
-        "/v1/documents",
-        json={"source_type": "paste", "text_content": "Hello integration test!"},
+        "/v1/documents/text",
+        json={"content": "Hello integration test!"},
     )
     assert response.status_code == 201
-    return response.json()
+    doc = response.json()
+
+    # Fetch blocks separately
+    blocks_response = await admin_client.get(f"/v1/documents/{doc['document_id']}/blocks")
+    assert blocks_response.status_code == 200
+    doc["blocks"] = blocks_response.json()["items"]
+
+    return doc
 
 
 @pytest.fixture
@@ -129,19 +136,33 @@ async def unique_document(regular_client):
 
     unique_text = f"Unique test content {time.time()} {uuid.uuid4()}"
     response = await regular_client.post(
-        "/v1/documents",
-        json={"source_type": "paste", "text_content": unique_text},
+        "/v1/documents/text",
+        json={"content": unique_text},
     )
     assert response.status_code == 201
-    return response.json()
+    doc = response.json()
+
+    # Fetch blocks separately
+    blocks_response = await regular_client.get(f"/v1/documents/{doc['document_id']}/blocks")
+    assert blocks_response.status_code == 200
+    doc["blocks"] = blocks_response.json()["items"]
+
+    return doc
 
 
 @pytest.fixture
 async def regular_document(regular_client):
     """Create a regular test document using regular client."""
     response = await regular_client.post(
-        "/v1/documents",
-        json={"source_type": "paste", "text_content": "Hello, I need credits!"},
+        "/v1/documents/text",
+        json={"content": "Hello, I need credits!"},
     )
     assert response.status_code == 201
-    return response.json()
+    doc = response.json()
+
+    # Fetch blocks separately
+    blocks_response = await regular_client.get(f"/v1/documents/{doc['document_id']}/blocks")
+    assert blocks_response.status_code == 200
+    doc["blocks"] = blocks_response.json()["items"]
+
+    return doc

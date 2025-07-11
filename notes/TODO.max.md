@@ -13,6 +13,7 @@
 - opus transcoding
   - depending on the intensity / scaling requirements, prlly best to do this in the gateway to save worker time?
 - fun feature: show lifetime stats (words/seconds processed, etc.)
+- idea: "batch jobs" (process on dedicated resources, potentially longer wait times), not just for ocr api, but for tts too. Only makes sense with generous audio retention.
 
 ### Refactor
 
