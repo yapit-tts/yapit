@@ -21,9 +21,9 @@ Start the frontend and login at `http://localhost/auth/signin` with the test use
 cd frontend && npm run dev
 ```
 
-Check if everything works (needs runpod key):
+Check if everything works:
 ```bash
-make test
+make test-local  # or make test (needs runpod key)
 ```
 
 ### Stack-Auth
