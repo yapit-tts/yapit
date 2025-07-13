@@ -17,14 +17,11 @@
 
 ### Refactor
 
-- refactor gateway/ocr, gateway/processors to processors/ocr, processors/tts ?!
-- refactor credit_multiplier -> credits_per_second?
-- rename RunPodProcessor to RunpodProcessor
-
 - replace .get()+exception with get_one() and add global exception handler
 
 - can we improve dependency handling without creating separate docker images?
   - see comments abt deps only some deployments need @ pyproject.toml
+  - Search for "only needed for"   in the project.
 
 ### Perf
 

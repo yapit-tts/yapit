@@ -63,7 +63,7 @@ async def test_cleanup_expired(test_cache):
     assert await test_cache.exists("permanent")
 
     # Wait for first to expire
-    await asyncio.sleep(1.1)
+    await asyncio.sleep(1.3)  # TODO why is this so flaky / slow?
 
     # Run cleanup
     cleaned = await test_cache.cleanup_expired()

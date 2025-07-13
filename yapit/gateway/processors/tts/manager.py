@@ -9,7 +9,7 @@ from redis.asyncio import Redis
 
 from yapit.gateway.cache import Cache
 from yapit.gateway.config import Settings
-from yapit.gateway.processors.base import BaseProcessor
+from yapit.gateway.processors.tts.base import BaseProcessor
 
 log = logging.getLogger("processor_manager")
 

@@ -30,7 +30,7 @@ gateway = [
   "svix~=1.65.0",
   "psycopg2-binary~=2.9.10",
   "httpx~=0.28.1",  # only needed for LocalProcessor
-  "runpod~=1.7.12",  # only needed for RunPodProcessor
+  "runpod~=1.7.12",  # only needed for RunpodProcessor
 ]
 
 test = [

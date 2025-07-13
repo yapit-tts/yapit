@@ -4,7 +4,7 @@ import logging
 import httpx
 
 from yapit.contracts import SynthesisJob
-from yapit.gateway.processors.base import BaseProcessor, JobResult
+from yapit.gateway.processors.tts.base import BaseProcessor, JobResult
 
 log = logging.getLogger("local_processor")
 

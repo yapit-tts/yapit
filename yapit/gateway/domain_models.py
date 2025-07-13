@@ -150,8 +150,8 @@ class BlockVariant(SQLModel, table=True):
         return hasher.hexdigest()
 
 
-class OCRModel(SQLModel, table=True):
-    """Available OCR models for document processing."""
+class DocumentProcessor(SQLModel, table=True):
+    """Available document processors for content extraction."""
 
     slug: str = Field(primary_key=True)
     name: str

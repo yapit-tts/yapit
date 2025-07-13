@@ -8,7 +8,7 @@ from yapit.gateway.api.v1 import routers as v1_routers
 from yapit.gateway.config import Settings, get_settings
 from yapit.gateway.db import close_db, prepare_database
 from yapit.gateway.deps import get_audio_cache
-from yapit.gateway.processors.manager import ProcessorManager
+from yapit.gateway.processors.tts.manager import ProcessorManager
 from yapit.gateway.redis_client import create_redis_client
 
 

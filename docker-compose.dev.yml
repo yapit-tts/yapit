@@ -9,7 +9,7 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - "./endpoints.dev.json:/app/endpoints.dev.json"
+      - "./tts_processors.dev.json:/app/tts_processors.dev.json"
     
   stack-auth:
     env_file: ./.env.dev

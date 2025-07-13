@@ -1,0 +1,9 @@
+[
+  {
+    "model": "kokoro-cpu",
+    "adapter": "yapit.workers.adapters.kokoro.KokoroAdapter",
+    "processor": "yapit.gateway.processors.tts.local.LocalProcessor",
+    "worker_url": "http://kokoro-cpu:8000",
+    "max_parallel": 2
+  }
+]
