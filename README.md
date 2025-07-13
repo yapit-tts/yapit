@@ -6,10 +6,11 @@ Set up the backend dev env:
 ```bash
 uv sync --all-extras
 cp .env.prod.example .env.prod # .env.prod must exist, even if it's not used in dev
-touch .env.local # put keys that you also want to use in dev but dont want to commit here
+echo "RUNPOD_API_KEY=asdf" > .env.local # env vars you do not want to commit 
 ```
 
-If you want to also use runpod workers (or don't want to change the default dev endpoint config), put RUNPOD_API_KEY in `.env.local` (with any value, it just needs to exist).
+If you want to also use runpod workers, put `RUNPOD_API_KEY` in `.env.local`.
+This entry also needs to exist (with any value) for the gateway to start up wiith the default `endpoints.dev.json` configuration.
 
 Start the backend services:
 ```bash
@@ -21,9 +22,9 @@ Start the frontend and login at `http://localhost/auth/signin` with the test use
 cd frontend && npm run dev
 ```
 
-Check if everything works (needs runpod key):
+Check if everything works:
 ```bash
-make test
+make test-local  # or make test (needs runpod key)
 ```
 
 ### Stack-Auth
