@@ -60,7 +60,7 @@ class Voice(SQLModel, table=True):
 class DocumentType(StrEnum):
     """Type of document content."""
 
-    text = auto()  # Direct text input (formerly "paste")
+    text = auto()  # Direct text input
     website = auto()  # HTML content from URL
     document = auto()  # PDF/DOCX/images from URL or upload
 
@@ -69,7 +69,7 @@ class Document(SQLModel, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     user_id: str = Field()
 
-    source_ref: str | None = Field(default=None)  # URL or filename for non-text types
+    source_ref: str | None = Field(default=None)  # URL or filename for extracted (non-plaintext) documents
     type: DocumentType
 
     title: str | None = Field(default=None)
@@ -83,6 +83,11 @@ class Document(SQLModel, table=True):
             nullable=True,
         ),
     )
+
+    # OCR/extraction metadata
+    extraction_method: str | None = Field(default=None)  # ocr, docling, web_parser
+    # XML for frontend display (block tags, includes images, tables, etc.), if extracted from a document / website
+    structured_content: str | None = Field(default=None, sa_column=Column(TEXT, nullable=True))
 
     created: datetime = Field(
         default_factory=lambda: datetime.now(tz=dt.UTC),
@@ -143,6 +148,19 @@ class BlockVariant(SQLModel, table=True):
         hasher.update(f"|{speed:.2f}".encode("utf-8"))
         hasher.update(f"|{codec}".encode("utf-8"))
         return hasher.hexdigest()
+
+
+class OCRModel(SQLModel, table=True):
+    """Available OCR models for document processing."""
+
+    slug: str = Field(primary_key=True)
+    name: str
+    credits_per_page: Decimal = Field(sa_column=Column(DECIMAL(10, 4), nullable=False))  # cost
+
+    max_pages: int
+    max_file_size_mb: int
+    supported_formats: list[str] = Field(sa_column=Column(postgresql.JSONB(), nullable=False))
+    supports_batch: bool
 
 
 class RegexRule(PydanticModel):

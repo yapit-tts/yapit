@@ -8,7 +8,7 @@ from uuid import UUID
 
 import re2 as re
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, UploadFile, status
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, HttpUrl, constr
 from redis.asyncio import Redis
 from sqlmodel import delete, func, select
 from starlette.concurrency import run_in_threadpool
@@ -41,17 +41,17 @@ FILTER_DONE_TTL = 86_400
 TRANSFORM_TIMEOUT_S = 120
 
 
-class TextDocumentCreateRequest(BaseModel):
-    """Create a document from direct text input."""
+class PlaintextDocumentCreateRequest(BaseModel):
+    """Create a document from plain text input."""
 
-    content: str = Field(min_length=1, strip_whitespace=True)
+    content: str = constr(min_length=1, strip_whitespace=True)
 
 
 class PreparedDocumentCreateRequest(BaseModel):
     """Create a document from prepared content."""
 
     hash: str
-    type: DocumentType | None = None  # Optional override of auto-detected type
+    type: DocumentType | None = None  # Optional override type auto-detection
 
 
 class BlockRead(BaseModel):
@@ -76,6 +76,7 @@ class BlockPage(BaseModel):
 
 class DocumentPrepareRequest(BaseModel):
     url: HttpUrl
+    ocr_model: str | None = None  # None = use free extraction (docling/web parser)
 
 
 class DocumentPrepareResponse(BaseModel):
@@ -84,7 +85,8 @@ class DocumentPrepareResponse(BaseModel):
     size_mb: float
 
     pages: int | None = None  # for documents
-    credits: int | None = None  # for documents
+    credits_needed: int | None = None  # for documents requiring OCR
+    extraction_method: str | None = None  # ocr, docling, web_parser
     title: str | None = None  # if available
 
 
@@ -94,6 +96,7 @@ async def prepare_document(
     cache: DocumentCache,
     settings: SettingsDep,
     user: AuthenticatedUser,
+    db: DbSession,
 ) -> DocumentPrepareResponse:
     """Prepare a document from URL for creation.
 
@@ -107,6 +110,42 @@ async def prepare_document(
         return DocumentPrepareResponse(**cached_info)
 
     # TODO: Implement actual downloading and type detection
+    # Placeholder implementation showing the flow:
+
+    # 1. Download content headers to detect type
+    # content_type = await fetch_content_type(request.url)
+    # doc_type = detect_document_type(str(request.url), content_type)
+
+    # 2. For documents, get page count and calculate credits
+    # if doc_type == DocumentType.document and request.ocr_model:
+    #     ocr_model = await db.get(OCRModel, request.ocr_model)
+    #     if not ocr_model:
+    #         raise HTTPException(404, rf"OCR model {request.ocr_model} not found")
+    #
+    #     # Get exact page count (e.g., from PDF metadata)
+    #     page_count = await get_doc_page_count(request.url) # TODO + content size
+    #     credits_needed = page_count * ocr_model.credits_per_page
+    #     extraction_method = "ocr"
+    # else:
+    #     extraction_method = "web_parser"
+    #     credits_needed = 0
+    #     if doc_type == DocumentType.document:
+    #         extraction_method = "docling
+    #         page_count = await get_pdf_page_count(request.url)
+    #     TODO get content size in MB
+
+    # 3. Cache the preparation data
+    # prepare_data = {
+    #     "hash": cache_key,
+    #     "type": doc_type,
+    #     "size_mb": content_size_mb,
+    #     "pages": page_count if doc_type == DocumentType.document else None,
+    #     "credits_needed": credits_needed,
+    #     "extraction_method": extraction_method,
+    #     "title": extracted_title,
+    # }
+    # await cache.store(cache_key, json.dumps(prepare_data).encode(), ttl_seconds=settings.document_cache_ttl_document)
+
     raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="URL preparation not yet implemented")
 
 
@@ -140,10 +179,18 @@ async def _create_document_from_text(
     splitter: TextSplitter,
     source_ref: str | None = None,
     title: str = "Untitled",
+    extraction_method: str | None = None,
 ) -> DocumentCreateResponse:
     """Common logic for creating a document from text."""
+    # TODO: Apply regex/LLM filters here
+    filtered_text = text
+
+    # TODO: Implement proper markdown-aware chunking
+    # For now, just use the existing splitter with markdown text
+    # TODO: MD chunker should extract plain text + structure xml content from markdown for TTS
+    # For now, blocks from parsed documents contain markdown
     try:
-        text_blocks = await run_in_threadpool(splitter.split, text=text)
+        text_blocks = await run_in_threadpool(splitter.split, text=filtered_text)
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Text splitting failed: {exc}"
@@ -155,6 +202,9 @@ async def _create_document_from_text(
         type=document_type,
         source_ref=source_ref,
         original_text=text,
+        filtered_text=filtered_text if filtered_text != text else None,
+        extraction_method=extraction_method,
+        structured_content=None,  # TODO: Will be populated by MD-aware chunker with XML
     )
     db.add(doc)
 
@@ -177,7 +227,7 @@ async def _create_document_from_text(
 
 @router.post("/text", response_model=DocumentCreateResponse, status_code=status.HTTP_201_CREATED)
 async def create_text_document(
-    req: TextDocumentCreateRequest,
+    req: PlaintextDocumentCreateRequest,
     db: DbSession,
     splitter: TextSplitterDep,
     user: AuthenticatedUser,
@@ -201,10 +251,51 @@ async def create_document(
     user: AuthenticatedUser,
 ) -> DocumentCreateResponse:
     """Create a document from prepared content."""
-    # TODO: Retrieve from cache and process based on type (web parsing vs document parsing) # TODO#2: Add doc parsing options / OCR options, ...
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Document creation from prepared content not yet implemented",
+    cached_data = await cache.retrieve_data(req.hash)
+    if not cached_data:
+        raise HTTPException(
+            404, rf"Prepared content not found or expired. Have you called {prepare_document.path} first?"
+        )
+
+    prepare_info = json.loads(cached_data.decode())
+    doc_type = prepare_info.get("type", req.type) if req.type is None else req.type
+    extraction_method = prepare_info.get("extraction_method")
+
+    # TODO: Implement actual content retrieval and processing
+    # if extraction_method == "ocr":
+    #     # Process with OCR
+    #     content = prepare_info["content"]  # Raw file content
+    #     ocr_result = await ocr_manager.process_document(
+    #         content=content,
+    #         content_type=prepare_info["content_type"],
+    #         user=user,
+    #         ocr_model_slug=prepare_info["ocr_model"],
+    #         options={"pages": req.pages} if hasattr(req, "pages") else None
+    #     )
+    #
+    #     # Combine pages into single markdown
+    #     full_markdown = "\n\n".join(page.markdown for page in ocr_result.pages)
+    #     text = full_markdown
+    # elif extraction_method == "docling":  # TODO shouldnt we also just make this an "ocr" processor, or instead of calling them ocr processor call them document processors!
+    #     # Process with docling (free)
+    #     text = await process_with_docling(prepare_info["url"])
+    # else:
+    #     # Web parser
+    #     text = await extract_web_content(prepare_info["url"])
+
+    # For now, placeholder
+    text = "Placeholder text - actual extraction not yet implemented"
+    title = prepare_info.get("title", "Untitled")
+
+    return await _create_document_from_text(
+        text=text,
+        document_type=doc_type,
+        user_id=user.id,
+        db=db,
+        splitter=splitter,
+        source_ref=prepare_info.get("url"),
+        title=title,
+        extraction_method=extraction_method,
     )
 
 

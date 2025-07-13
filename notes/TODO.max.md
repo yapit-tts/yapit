@@ -17,9 +17,18 @@
 
 ### Refactor
 
+- refactor gateway/ocr, gateway/processors to processors/ocr, processors/tts ?!
+- refactor credit_multiplier -> credits_per_second?
+- rename RunPodProcessor to RunpodProcessor
+
+- replace .get()+exception with get_one() and add global exception handler
+
 - can we improve dependency handling without creating separate docker images?
   - see comments abt deps only some deployments need @ pyproject.toml
-- replace .get()+exception with get_one() and add global exception handler
+
+### Perf
+
+- For OCR: Don't download pdf from url, get page count from pdf streaming, pass url to mistral api.
 
 ### Chore
 
