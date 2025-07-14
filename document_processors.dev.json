@@ -1,6 +1,8 @@
 [
   {
     "slug": "mistral-ocr",
+    "processor": "yapit.gateway.processors.document.mistral.MistralOCRProcessor",
+    "model": "mistral-ocr-latest",
     "name": "Mistral OCR",
     "credits_per_page": 2.0,
     "max_pages": 1000,
@@ -10,6 +12,7 @@
   },
   {
     "slug": "docling-free",
+    "processor": "yapit.gateway.processors.document.docling.DoclingProcessor",
     "name": "Docling (Free)",
     "credits_per_page": 0.0,
     "max_pages": 100,

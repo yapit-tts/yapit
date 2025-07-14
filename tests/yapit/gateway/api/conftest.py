@@ -56,9 +56,11 @@ async def app(postgres_container, redis_container) -> FastAPI:
         stack_auth_api_host="",
         stack_auth_project_id="",
         stack_auth_server_key="",
-        endpoints_file="",  # No endpoints configured for unit tests
+        tts_processors_file="tests/empty_processors.json",  # Empty config for tests
+        document_processors_file="tests/empty_processors.json",  # Empty config for tests
         runpod_api_key=None,
         runpod_request_timeout_seconds=None,
+        mistral_api_key=None,
     )
 
     app = create_app(settings)

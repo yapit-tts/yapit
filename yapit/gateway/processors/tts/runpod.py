@@ -3,12 +3,12 @@ import base64
 import logging
 
 from yapit.contracts import SynthesisJob
-from yapit.gateway.processors.tts.base import BaseProcessor, JobResult
+from yapit.gateway.processors.tts.base import BaseTTSProcessor, JobResult
 
 log = logging.getLogger("runpod_processor")
 
 
-class RunpodProcessor(BaseProcessor):
+class RunpodProcessor(BaseTTSProcessor):
     """Process synthesis jobs via RunPod serverless endpoints."""
 
     def __init__(self, model_slug: str, runpod_endpoint_id: str, **kwargs):

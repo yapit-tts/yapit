@@ -6,7 +6,7 @@ Set up the backend dev env:
 ```bash
 uv sync --all-extras
 cp .env.prod.example .env.prod # .env.prod must exist, even if it's not used in dev
-echo "RUNPOD_API_KEY=asdf" > .env.local # env vars you do not want to commit 
+echo "RUNPOD_API_KEY=asdf\nMISTRAL_API_KEY=asdf" > .env.local # env vars you do not want to commit 
 ```
 
 If you want to also use runpod workers, put `RUNPOD_API_KEY` in `.env.local`.

@@ -30,7 +30,7 @@ class JobResult(NamedTuple):
     duration_ms: int
 
 
-class BaseProcessor(ABC):
+class BaseTTSProcessor(ABC):
     """Base class for processing synthesis jobs from Redis queues."""
 
     def __init__(
