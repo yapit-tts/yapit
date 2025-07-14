@@ -60,8 +60,8 @@ class SqliteCache(Cache):
                 CREATE TABLE IF NOT EXISTS cache (
                     key TEXT PRIMARY KEY,
                     data BLOB NOT NULL,
-                    created_at INTEGER NOT NULL,
-                    expires_at INTEGER  -- NULL means no expiration
+                    created_at REAL NOT NULL,
+                    expires_at REAL  -- NULL means no expiration
                 )
                 """
             )
@@ -69,7 +69,7 @@ class SqliteCache(Cache):
             db.execute("PRAGMA journal_mode=WAL")  # enable Write-Ahead Logging for better concurrency
 
     async def store(self, key: str, data: bytes, ttl_seconds: int | None = None) -> str | None:
-        ts = int(time.time())
+        ts = time.time()
         expires_at = ts + ttl_seconds if ttl_seconds else None
         with sqlite3.connect(self.db_path) as db:
             db.execute(
@@ -78,7 +78,7 @@ class SqliteCache(Cache):
         return key
 
     async def exists(self, key: str) -> bool:
-        current_time = int(time.time())
+        current_time = time.time()
         with sqlite3.connect(self.db_path) as db:
             row = db.execute(
                 "SELECT 1 FROM cache WHERE key=? AND (expires_at IS NULL OR expires_at > ?)", (key, current_time)
@@ -89,7 +89,7 @@ class SqliteCache(Cache):
         return key if await self.exists(key) else None
 
     async def retrieve_data(self, key: str) -> bytes | None:
-        current_time = int(time.time())
+        current_time = time.time()
         with sqlite3.connect(self.db_path) as db:
             row = db.execute(
                 "SELECT data FROM cache WHERE key=? AND (expires_at IS NULL OR expires_at > ?)", (key, current_time)
@@ -109,7 +109,7 @@ class SqliteCache(Cache):
 
     async def cleanup_expired(self) -> int:
         """Remove expired entries."""
-        current_time = int(time.time())
+        current_time = time.time()
         with sqlite3.connect(self.db_path) as db:
             cur = db.execute("DELETE FROM cache WHERE expires_at IS NOT NULL AND expires_at < ?", (current_time,))
         return cur.rowcount

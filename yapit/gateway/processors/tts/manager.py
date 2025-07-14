@@ -2,8 +2,9 @@ import asyncio
 import importlib
 import json
 import logging
+import pprint
 from pathlib import Path
-from typing import Any
+from typing import TypedDict
 
 from redis.asyncio import Redis
 
@@ -12,6 +13,12 @@ from yapit.gateway.config import Settings
 from yapit.gateway.processors.tts.base import BaseProcessor
 
 log = logging.getLogger("processor_manager")
+
+
+class TTSProcessorConfig(TypedDict):
+    model_slug: str
+    processor: str
+    # plus optional fields for processor-specific settings
 
 
 class ProcessorManager:
@@ -35,17 +42,11 @@ class ProcessorManager:
 
         return processor_class
 
-    def _create_processor(self, config: dict[str, Any]) -> BaseProcessor:
+    def _create_processor(self, config: TTSProcessorConfig) -> BaseProcessor:
         """Create a processor instance from configuration."""
         config = config.copy()
-        model_slug = config.pop("model")
-        processor_class_path = config.pop("processor")
-        config.pop("adapter")
-
-        processor_class = self._load_processor_class(processor_class_path)
-
-        config.update(dict(redis=self._redis, cache=self._cache, settings=self._settings))
-        return processor_class(model_slug, **config)
+        processor_class = self._load_processor_class(class_path=config.pop("processor"))
+        return processor_class(redis=self._redis, cache=self._cache, settings=self._settings, **config)
 
     async def start_from_config(self, config_path: str) -> None:
         """Load endpoint configuration and start all processors."""
@@ -60,14 +61,9 @@ class ProcessorManager:
         if not configs:
             log.warning("No endpoints configured in %s TTS functionality will not be available.", config_path)
             return
-
-        for config in configs:
-            processor = self._create_processor(config)
-            self._processors.append(processor)
-            log.info(f"Created processor for model: {config['model']}")
-
+        self._processors = [self._create_processor(config) for config in configs]
         self._tasks = [asyncio.create_task(processor.run()) for processor in self._processors]
-        log.info(f"Started {len(self._processors)} processor(s)")
+        log.info(f"Started {len(self._processors)} processor(s) with configs:\n{pprint.pformat(configs)}")
 
     async def stop(self) -> None:
         """Stop all running processors."""
