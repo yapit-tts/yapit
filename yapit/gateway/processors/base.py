@@ -4,7 +4,7 @@ import logging
 from pathlib import Path
 from typing import Type, TypedDict
 
-from yapit.gateway import Settings
+from yapit.gateway.config import Settings
 
 
 class ProcessorConfig(TypedDict):
@@ -18,7 +18,7 @@ class ProcessorConfig(TypedDict):
 class ProcessorManager[Processor]:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
-        self._processors: list[Processor] = []
+        self._processors: dict[str, Processor] = {}
 
     def _load_processors(self, config_path: str) -> None:
         """Load processor configuration from JSON file and create processor instances."""
@@ -27,7 +27,7 @@ class ProcessorManager[Processor]:
         if not processor_configs:
             logging.warning(f"No processors configured in {config_path}. Some functionality will not be available.")
             return
-        self._processors = [self._create_processor(config) for config in processor_configs]
+        self._processors = {config["slug"]: self._create_processor(config) for config in processor_configs}
         logging.info(
             f"Loaded {len(self._processors)} processor(s) with configs:\n{json.dumps(processor_configs, indent=2)}"
         )
@@ -52,3 +52,6 @@ class ProcessorManager[Processor]:
         module_path, class_name = class_path.rsplit(".", 1)
         module = importlib.import_module(module_path)
         return getattr(module, class_name)
+
+    def get_processor(self, slug: str) -> Processor | None:
+        return self._processors.get(slug)

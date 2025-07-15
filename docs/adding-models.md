@@ -117,14 +117,14 @@ Add to `tts_processors.json`:
 
 ```json
 {
-  "model_slug": "yourmodel",
+  "slug": "yourmodel",
   "processor": "yapit.gateway.processors.tts.local.LocalProcessor",
   "worker_url": "http://yourmodel:8000",
   "max_parallel": 2
 }
 ```
 
-`model_slug` should match the slug for the model in the database.
+`slug` should match the slug for the model in the database.
 
 ### 7. Add Database Entry
 
@@ -156,7 +156,7 @@ Add to `tts_processors.json`:
 
 ```json
 {
-  "model_slug": "yourmodel",
+  "slug": "yourmodel",
   "processor": "yapit.gateway.processors.tts.runpod.RunpodProcessor",
   "runpod_endpoint_id": "your-endpoint-id-from-runpod"
 }

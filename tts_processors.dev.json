@@ -1,12 +1,12 @@
 [
   {
-    "model_slug": "kokoro-cpu",
+    "slug": "kokoro-cpu",
     "processor": "yapit.gateway.processors.tts.local.LocalProcessor",
     "worker_url": "http://kokoro-cpu:8000",
     "max_parallel": 2
   },
   {
-    "model_slug": "kokoro-cpu-runpod",
+    "slug": "kokoro-cpu-runpod",
     "processor": "yapit.gateway.processors.tts.runpod.RunpodProcessor",
     "runpod_endpoint_id": "nc8eej7missbxb"
   }

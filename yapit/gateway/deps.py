@@ -4,7 +4,7 @@ from decimal import Decimal
 from typing import Annotated, AsyncIterator, Callable
 from uuid import UUID
 
-from fastapi import Body, Depends, HTTPException, status
+from fastapi import Body, Depends, HTTPException, Request, status
 from redis.asyncio import Redis
 from sqlalchemy.orm import selectinload
 from sqlmodel import select
@@ -15,7 +15,7 @@ from yapit.gateway.cache import Cache, Caches, SqliteCache
 from yapit.gateway.config import Settings, get_settings
 from yapit.gateway.db import create_session
 from yapit.gateway.domain_models import Block, BlockVariant, Document, TTSModel, UserCredits, Voice
-from yapit.gateway.redis_client import get_redis_client
+from yapit.gateway.processors.document.manager import DocumentProcessorManager
 from yapit.gateway.stack_auth.users import User
 from yapit.gateway.text_splitter import (
     DummySplitter,
@@ -191,7 +191,16 @@ async def get_or_create_user_credits(user_id: str, db: DbSession) -> UserCredits
     return user_credits
 
 
+async def get_redis_client(request: Request) -> Redis:
+    return request.app.state.redis_client
+
+
+async def get_document_processor_manager(request: Request) -> DocumentProcessorManager:
+    return request.app.state.document_processor_manager
+
+
 RedisClient = Annotated[Redis, Depends(get_redis_client)]
+DocumentProcessorManagerDep = Annotated[DocumentProcessorManager, Depends(get_document_processor_manager)]
 AudioCache = Annotated[Cache, Depends(get_audio_cache)]
 DocumentCache = Annotated[Cache, Depends(get_document_cache)]
 TextSplitterDep = Annotated[TextSplitter, Depends(get_text_splitter)]

@@ -1,244 +1,203 @@
-import asyncio
 import hashlib
-import json
 import logging
-from datetime import datetime
-from typing import Annotated
+import math
 from uuid import UUID
 
-import re2 as re
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel, HttpUrl, constr
-from redis.asyncio import Redis
-from sqlmodel import delete, func, select
-from starlette.concurrency import run_in_threadpool
+from sqlmodel import select
 
-from yapit.contracts import FILTER_CANCEL, FILTER_INFLIGHT, FILTER_STATUS
-from yapit.gateway.config import Settings
-from yapit.gateway.db import create_session
+from yapit.gateway.auth import authenticate
 from yapit.gateway.deps import (
     AuthenticatedUser,
     CurrentDoc,
     DbSession,
     DocumentCache,
-    RedisClient,
+    DocumentProcessorManagerDep,
     SettingsDep,
     TextSplitterDep,
-    get_doc,
 )
-from yapit.gateway.domain_models import Block, Document, DocumentType, FilterConfig
-from yapit.gateway.text_splitter import TextSplitter
-from yapit.gateway.utils import estimate_duration_ms
+from yapit.gateway.domain_models import Block, Document, DocumentType
+from yapit.gateway.processors.document.base import CachedDocument, DocumentExtractionResult, ExtractedPage
 
-router = APIRouter(prefix="/v1/documents", tags=["Documents"])
-log = logging.getLogger("filters")
-
-
-# Filter job constants # TODO... we need to rehaul the filter system
-FILTER_LOCK_TTL = 300
-FILTER_STATUS_TTL = 900
-FILTER_DONE_TTL = 86_400
-TRANSFORM_TIMEOUT_S = 120
-
-
-class PlaintextDocumentCreateRequest(BaseModel):
-    """Create a document from plain text input."""
-
-    content: str = constr(min_length=1, strip_whitespace=True)
-
-
-class PreparedDocumentCreateRequest(BaseModel):
-    """Create a document from prepared content."""
-
-    hash: str
-    type: DocumentType | None = None  # Optional override type auto-detection
-
-
-class BlockRead(BaseModel):
-    id: int
-    idx: int
-    text: str
-    est_duration_ms: int | None = None
-
-
-class DocumentCreateResponse(BaseModel):
-    document_id: UUID
-    title: str
-    num_blocks: int
-    est_duration_ms: int
-
-
-class BlockPage(BaseModel):
-    total: int
-    items: list[BlockRead]
-    next_offset: int | None
+router = APIRouter(prefix="/v1/documents", tags=["Documents"], dependencies=[Depends(authenticate)])
+log = logging.getLogger(__name__)
 
 
 class DocumentPrepareRequest(BaseModel):
+    """Request to prepare a document from URL."""
+
     url: HttpUrl
-    ocr_model: str | None = None  # None = use free extraction (docling/web parser)
 
 
 class DocumentPrepareResponse(BaseModel):
-    hash: str  # Cache key for subsequent document creation
-    type: DocumentType  # Always returns a type (defaults to website if unsure)
-    size_mb: float
+    """Response with document metadata and processing costs."""
 
-    pages: int | None = None  # for documents
-    credits_needed: int | None = None  # for documents requiring OCR
-    extraction_method: str | None = None  # ocr, docling, web_parser
-    title: str | None = None  # if available
+    hash: str
+    type: DocumentType
+    title: str | None = None
+    metadata: dict  # total_pages, credits_required, file_size_mb # TODO this should use a proper model introduced in processors/document/base.py
+
+
+class PreparedDocumentCreateRequest(BaseModel):
+    """Create document from prepared content."""
+
+    hash: str
+    pages: list[int] | None  # None => all pages
+    processor_slug: str | None = (
+        None  # None => web-parser TODO would make things cleaner if we make a separate endpoint for web-parser... which is possible anways since the client HAS to calll prepare, and thus knows the document type
+    )
+
+
+class TextDocumentCreateRequest(BaseModel):
+    """Create document from direct text input."""
+
+    content: str = constr(min_length=1, strip_whitespace=True)
+    title: str = "Untitled"
+
+
+class DocumentCreateResponse(BaseModel):
+    """Response after document creation."""
+
+    id: UUID
+    type: DocumentType
+    title: str
+    block_count: int
 
 
 @router.post("/prepare", response_model=DocumentPrepareResponse)
 async def prepare_document(
-    request: DocumentPrepareRequest,
-    cache: DocumentCache,
-    settings: SettingsDep,
-    user: AuthenticatedUser,
-    db: DbSession,
+    request: DocumentPrepareRequest, cache: DocumentCache, settings: SettingsDep
 ) -> DocumentPrepareResponse:
-    """Prepare a document from URL for creation.
-
-    Downloads content, detects type, extracts metadata, and caches everything.
-    Returns a hash to use for subsequent document creation.
-    """
+    """Prepare a document from URL for creation."""
     cache_key = hashlib.sha256(str(request.url).encode()).hexdigest()
     cached_data = await cache.retrieve_data(cache_key)
     if cached_data:
-        cached_info = json.loads(cached_data.decode())
-        return DocumentPrepareResponse(**cached_info)
+        cached_doc = CachedDocument.model_validate_json(cached_data)
+        return DocumentPrepareResponse(
+            hash=cache_key,
+            type=cached_doc.metadata["document_type"],
+            title=cached_doc.metadata.get("title"),
+            metadata=cached_doc.metadata,
+        )
 
-    # TODO: Implement actual downloading and type detection
-    # Placeholder implementation showing the flow:
+    # Detect document type
+    # TODO: Implement actual HTTP HEAD request to get content-type
+    content_type = "text/html"  # Placeholder
+    doc_type = detect_document_type(str(request.url), content_type)
 
-    # 1. Download content headers to detect type
-    # content_type = await fetch_content_type(request.url)
-    # doc_type = detect_document_type(str(request.url), content_type)
-
-    # 2. For documents, get page count and calculate credits
-    # if doc_type == DocumentType.document and request.ocr_model:
-    #     ocr_model = await db.get(OCRModel, request.ocr_model)
-    #     if not ocr_model:
-    #         raise HTTPException(404, rf"OCR model {request.ocr_model} not found")
-    #
-    #     # Get exact page count (e.g., from PDF metadata)
-    #     page_count = await get_doc_page_count(request.url) # TODO + content size
-    #     credits_needed = page_count * ocr_model.credits_per_page
-    #     extraction_method = "ocr"
-    # else:
-    #     extraction_method = "web_parser"
-    #     credits_needed = 0
-    #     if doc_type == DocumentType.document:
-    #         extraction_method = "docling
-    #         page_count = await get_pdf_page_count(request.url)
-    #     TODO get content size in MB
-
-    # 3. Cache the preparation data
-    # prepare_data = {
-    #     "hash": cache_key,
-    #     "type": doc_type,
-    #     "size_mb": content_size_mb,
-    #     "pages": page_count if doc_type == DocumentType.document else None,
-    #     "credits_needed": credits_needed,
-    #     "extraction_method": extraction_method,
-    #     "title": extracted_title,
-    # }
-    # await cache.store(cache_key, json.dumps(prepare_data).encode(), ttl_seconds=settings.document_cache_ttl_document)
-
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="URL preparation not yet implemented")
+    if doc_type == DocumentType.website:
+        # For websites, we'll parse immediately (free)
+        # TODO: Implement web parser
+        #  We'll leave it to the web parser implementation to cache raw webpage html content
+        metadata = {
+            "document_type": doc_type.value,
+            "total_pages": 1,  # always 1 for webpages
+            "credits_required": 0,
+            "file_size_mb": 0.1,
+        }
+        # Create cached document with placeholder extraction
+        cached_doc = CachedDocument(metadata=metadata)
+        ttl = settings.document_cache_ttl_webpage
+    else:
+        # For documents, extract metadata without downloading full file
+        # TODO: Implement PDF metadata extraction with range requests
+        metadata = {
+            "document_type": doc_type.value,
+            "total_pages": 10,  # Placeholder
+            "credits_required": 0,  # Will be calculated based on processor
+            "file_size_mb": 5.0,  # Placeholder
+        }
+        cached_doc = CachedDocument(
+            metadata=metadata,
+            content={"url": str(request.url)},  # Store URL for processors # TODO why not in metadata?
+        )
+        ttl = settings.document_cache_ttl_document
+    await cache.store(cache_key, cached_doc.model_dump_json().encode(), ttl_seconds=ttl)
+    return DocumentPrepareResponse(
+        hash=cache_key,
+        type=doc_type,
+        title=metadata.get("title"),
+        metadata=metadata,
+    )
 
 
 @router.post("/prepare/upload", response_model=DocumentPrepareResponse)
-async def prepare_document_upload(
-    file: UploadFile,
-    cache: DocumentCache,
-    settings: SettingsDep,
-    user: AuthenticatedUser,
-) -> DocumentPrepareResponse:
-    """Prepare a document with type "document" from file upload. Accepts various document and image formats."""
+async def prepare_document_upload(file: UploadFile, cache: DocumentCache) -> DocumentPrepareResponse:
+    """Prepare a document from file upload."""
     content = await file.read()
+    if not content:
+        raise HTTPException(400, "Empty file")
 
-    content_hash = hashlib.sha256(content).hexdigest()
-    cached_data = await cache.retrieve_data(content_hash)
+    cache_key = hashlib.sha256(content).hexdigest()
+    cached_data = await cache.retrieve_data(cache_key)
     if cached_data:
-        cached_info = json.loads(cached_data.decode())
-        return DocumentPrepareResponse(**cached_info)
+        cached_doc = CachedDocument.model_validate_json(cached_data)
+        return DocumentPrepareResponse(
+            hash=cache_key,
+            type=cached_doc.metadata["document_type"],
+            title=cached_doc.metadata.get("title", file.filename),
+            metadata=cached_doc.metadata,
+        )
 
-    # TODO: Extract metadata, detect pages, etc.
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="File upload preparation not yet implemented"
+    doc_type = detect_document_type(file.filename or "", file.content_type or "")  # TODO unused variable
+
+    # Extract metadata
+    # TODO: Implement actual metadata extraction
+    metadata = {
+        "document_type": DocumentType.document.value,  # Uploads are always documents
+        "total_pages": 5,  # Placeholder
+        "credits_required": 0,  # Will be calculated based on processor
+        "file_size_mb": file.size or len(content) / (1024**2),
+        "filename": file.filename,
+    }
+
+    cached_doc = CachedDocument(
+        metadata=metadata,
+        content={  # Cache document with content (brief TTL for uploads)
+            "data": content.hex(),  # Store as hex for JSON serialization # TODO why not base64?
+            "content_type": file.content_type or "application/octet-stream",
+        },
     )
-
-
-async def _create_document_from_text(
-    text: str,
-    document_type: DocumentType,
-    user_id: str,
-    db: DbSession,
-    splitter: TextSplitter,
-    source_ref: str | None = None,
-    title: str = "Untitled",
-    extraction_method: str | None = None,
-) -> DocumentCreateResponse:
-    """Common logic for creating a document from text."""
-    # TODO: Apply regex/LLM filters here
-    filtered_text = text
-
-    # TODO: Implement proper markdown-aware chunking
-    # For now, just use the existing splitter with markdown text
-    # TODO: MD chunker should extract plain text + structure xml content from markdown for TTS
-    # For now, blocks from parsed documents contain markdown
-    try:
-        text_blocks = await run_in_threadpool(splitter.split, text=filtered_text)
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Text splitting failed: {exc}"
-        ) from exc
-
-    doc = Document(
-        user_id=user_id,
-        title=title,
-        type=document_type,
-        source_ref=source_ref,
-        original_text=text,
-        filtered_text=filtered_text if filtered_text != text else None,
-        extraction_method=extraction_method,
-        structured_content=None,  # TODO: Will be populated by MD-aware chunker with XML
-    )
-    db.add(doc)
-
-    est_total_ms = 0
-    blocks: list[Block] = []
-    for idx, text_block in enumerate(text_blocks):
-        dur = estimate_duration_ms(text_block)
-        est_total_ms += dur
-        blocks.append(Block(document_id=doc.id, idx=idx, text=text_block, est_duration_ms=dur))
-    db.add_all(blocks)
-    await db.commit()
-
-    return DocumentCreateResponse(
-        document_id=doc.id,
-        title=title,
-        num_blocks=len(blocks),
-        est_duration_ms=est_total_ms,
-    )
+    await cache.store(cache_key, cached_doc.model_dump_json().encode(), ttl_seconds=600)
+    return DocumentPrepareResponse(hash=cache_key, type=DocumentType.document, title=file.filename, metadata=metadata)
 
 
 @router.post("/text", response_model=DocumentCreateResponse, status_code=status.HTTP_201_CREATED)
 async def create_text_document(
-    req: PlaintextDocumentCreateRequest,
+    req: TextDocumentCreateRequest,
     db: DbSession,
-    splitter: TextSplitterDep,
     user: AuthenticatedUser,
+    plaintext_splitter: TextSplitterDep,
 ) -> DocumentCreateResponse:
     """Create a document from direct text input."""
-    return await _create_document_from_text(
-        text=req.content,  # Already validated and stripped by Pydantic
-        document_type=DocumentType.text,
+    text_blocks = plaintext_splitter.split(text=req.content)
+
+    doc = Document(
         user_id=user.id,
-        db=db,
-        splitter=splitter,
+        type=DocumentType.text,
+        title=req.title,
+        original_text=req.content,
+        filtered_text=None,
+    )
+    db.add(doc)
+
+    blocks = [
+        Block(
+            document=doc,
+            idx=idx,
+            text=block_text,
+            est_duration_ms=estimate_duration_ms(block_text),
+        )
+        for idx, block_text in enumerate(text_blocks)
+    ]
+    db.add_all(blocks)
+    await db.commit()
+    return DocumentCreateResponse(
+        id=doc.id,
+        type=doc.type,
+        title=doc.title,
+        block_count=len(blocks),
     )
 
 
@@ -247,249 +206,147 @@ async def create_document(
     req: PreparedDocumentCreateRequest,
     db: DbSession,
     cache: DocumentCache,
-    splitter: TextSplitterDep,
+    settings: SettingsDep,
     user: AuthenticatedUser,
+    splitter: TextSplitterDep,
+    document_processor_manager: DocumentProcessorManagerDep,
 ) -> DocumentCreateResponse:
     """Create a document from prepared content."""
     cached_data = await cache.retrieve_data(req.hash)
     if not cached_data:
         raise HTTPException(
-            404, rf"Prepared content not found or expired. Have you called {prepare_document.path} first?"
+            404,
+            rf"Document with hash {req.hash} not found in cache. Have you called {prepare_document} or {prepare_document_upload}?",
+        )
+    cached_doc = CachedDocument.model_validate_json(cached_data)
+
+    doc_type = DocumentType(cached_doc.metadata["document_type"])
+    if doc_type == DocumentType.website:
+        # TODO: Implement web parser
+        extraction_result = DocumentExtractionResult(
+            pages={1: ExtractedPage(markdown="# Placeholder\n\nWeb parsing not implemented yet.")},
+            extraction_method="web-parser",
         )
 
-    prepare_info = json.loads(cached_data.decode())
-    doc_type = prepare_info.get("type", req.type) if req.type is None else req.type
-    extraction_method = prepare_info.get("extraction_method")
-
-    # TODO: Implement actual content retrieval and processing
-    # if extraction_method == "ocr":
-    #     # Process with OCR
-    #     content = prepare_info["content"]  # Raw file content
-    #     ocr_result = await ocr_manager.process_document(
-    #         content=content,
-    #         content_type=prepare_info["content_type"],
-    #         user=user,
-    #         ocr_model_slug=prepare_info["ocr_model"],
-    #         options={"pages": req.pages} if hasattr(req, "pages") else None
-    #     )
-    #
-    #     # Combine pages into single markdown
-    #     full_markdown = "\n\n".join(page.markdown for page in ocr_result.pages)
-    #     text = full_markdown
-    # elif extraction_method == "docling":  # TODO shouldnt we also just make this an "ocr" processor, or instead of calling them ocr processor call them document processors!
-    #     # Process with docling (free)
-    #     text = await process_with_docling(prepare_info["url"])
-    # else:
-    #     # Web parser
-    #     text = await extract_web_content(prepare_info["url"])
-
-    # For now, placeholder
-    text = "Placeholder text - actual extraction not yet implemented"
-    title = prepare_info.get("title", "Untitled")
-
-    return await _create_document_from_text(
-        text=text,
-        document_type=doc_type,
-        user_id=user.id,
-        db=db,
-        splitter=splitter,
-        source_ref=prepare_info.get("url"),
-        title=title,
-        extraction_method=extraction_method,
-    )
-
-
-@router.get("/{document_id}/blocks", response_model=BlockPage, dependencies=[Depends(get_doc)])
-async def list_blocks(
-    document_id: UUID,
-    db: DbSession,
-    offset: Annotated[int, Query(ge=0)] = 0,
-    limit: Annotated[int, Query(ge=1, le=100)] = 100,
-) -> BlockPage:
-    total = (await db.exec(select(func.count()).select_from(Block).where(Block.document_id == document_id))).one()
-    rows = await db.exec(
-        select(Block).where(Block.document_id == document_id).order_by(Block.idx).offset(offset).limit(limit)
-    )
-    items = [BlockRead(id=b.id, idx=b.idx, text=b.text, est_duration_ms=b.est_duration_ms) for b in rows.all()]
-
-    next_offset = offset + limit if offset + limit < total else None
-    return BlockPage(total=total, items=items, next_offset=next_offset)
-
-
-class DocumentMeta(BaseModel):
-    document_id: UUID
-    created: datetime
-    has_filtered: bool
-    last_applied_filter_config: dict | None
-
-
-class FilterJobRequest(BaseModel):
-    filter_config: FilterConfig
-
-
-class SimpleMessage(BaseModel):
-    message: str
-
-
-@router.get("/{document_id}", response_model=DocumentMeta)
-async def read_document_meta(doc: CurrentDoc) -> DocumentMeta:
-    return DocumentMeta(
-        document_id=doc.id,
-        created=doc.created,
-        has_filtered=doc.filtered_text is not None,
-        last_applied_filter_config=doc.last_applied_filter_config,
-    )
-
-
-@router.get(
-    "/{document_id}/filter-status",
-    response_model=SimpleMessage,
-    status_code=200,
-)
-async def filter_status(
-    document_id: UUID,
-    doc: CurrentDoc,
-    redis: RedisClient,
-) -> SimpleMessage:
-    key = FILTER_STATUS.format(document_id=document_id)
-    val: bytes | None = await redis.get(key)
-    if val is not None:
-        return SimpleMessage(message=val.decode())
-    return SimpleMessage(message="done" if doc.filtered_text is not None else "none")
-
-
-@router.post(
-    "/{document_id}/apply-filters",
-    response_model=SimpleMessage,
-    status_code=status.HTTP_202_ACCEPTED,
-)
-async def apply_filters(
-    document_id: UUID,
-    request_body: FilterJobRequest,
-    bg: BackgroundTasks,
-    current_doc: CurrentDoc,
-    redis: RedisClient,
-    splitter: TextSplitterDep,
-    user: AuthenticatedUser,
-    resolved_settings_for_task: SettingsDep,
-) -> SimpleMessage:
-    if not await redis.set(FILTER_INFLIGHT.format(document_id=document_id), 1, nx=True, ex=FILTER_LOCK_TTL):
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            "Filter job already in progress for this document.",
+        cached_doc.extraction = extraction_result
+        await cache.store(
+            req.hash,
+            cached_doc.model_dump_json().encode(),
+            ttl_seconds=settings.document_cache_ttl_webpage,
         )
+    else:
+        processor = document_processor_manager.get_processor(req.processor_slug)
+        if not processor:
+            raise HTTPException(404, rf"Processor {req.processor_slug} not found")
+        extraction_result = await processor.process_with_billing(
+            # content=, # TODO... pass both url and content (one of which can/should be None)
+            content_type=...,  # TODO, need to pass the detected content type from prepare_document here... at least for mistral, this needs to at least differentiate between Image files (JPG, PNG, etc.) vs any document format that's not a simple image (pdf, ...)
+            user_id=user.id,
+            cache_key=req.hash,
+            db=db,
+            cache=cache,
+            pages=req.pages,
+        )
+    extracted_text: str = "\n\n".join(page.markdown for page in extraction_result.pages.values())
 
-    await redis.set(FILTER_STATUS.format(document_id=document_id), "pending", ex=FILTER_STATUS_TTL)
-    bg.add_task(
-        _run_filter_job,
-        document_id=document_id,
-        config=request_body.filter_config,
-        splitter=splitter,
-        redis_client=redis,
-        passed_settings=resolved_settings_for_task,
+    # TODO use md-aware parser to get blocks + structured content
+    text_blocks = splitter.split(text=extracted_text)
+
+    doc = Document(
         user_id=user.id,
+        type=doc_type,
+        title=cached_doc.metadata.get("title", "Untitled"),
+        source_ref=cached_doc.metadata.get("url") or cached_doc.metadata.get("filename"),
+        original_text=extracted_text,
+        filtered_text=extracted_text,  # TODO: Implement filtering
+        extraction_method=extraction_result.extraction_method,
+        structured_content=extracted_text,  # TODO: Generate XML with structure
     )
-    return SimpleMessage(message="Filtering job started.")
+    db.add(doc)
+
+    blocks = [
+        Block(
+            document=doc,
+            idx=idx,
+            text=block_text,
+            est_duration_ms=estimate_duration_ms(block_text),
+        )
+        for idx, block_text in enumerate(text_blocks)
+    ]
+    db.add_all(blocks)
+    await db.commit()
+
+    return DocumentCreateResponse(
+        id=doc.id,
+        type=doc.type,
+        title=doc.title,
+        block_count=len(blocks),
+    )
 
 
-@router.post(
-    "/{document_id}/cancel-filter",
-    response_model=SimpleMessage,
-    status_code=status.HTTP_202_ACCEPTED,
-)
-async def cancel_filter_job(
-    redis: RedisClient,
+@router.get("/{document_id}")
+async def get_document(document: CurrentDoc) -> Document:
+    """Get document metadata."""
+    return document
+
+
+@router.get("/{document_id}/blocks")
+async def get_document_blocks(
     document: CurrentDoc,
-) -> SimpleMessage:
-    await redis.set(FILTER_CANCEL.format(document_id=document.id), 1, ex=FILTER_LOCK_TTL)
-    return SimpleMessage(message="Cancellation flag set.")
+    db: DbSession,
+    offset: int = 0,
+    limit: int = Query(default=100, le=100),
+) -> list[Block]:
+    """Get document blocks."""
+    result = await db.exec(
+        select(Block).where(Block.document_id == document.id).order_by(Block.idx).offset(offset).limit(limit)
+    )
+    return result.all()
 
 
-async def _run_filter_job(
-    document_id: UUID,
-    config: FilterConfig,
-    splitter: TextSplitter,
-    redis_client: Redis,
-    passed_settings: Settings,
-    user_id: str,
-) -> None:
-    status_key = FILTER_STATUS.format(document_id=document_id)
-    cancel_key = FILTER_CANCEL.format(document_id=document_id)
-    inflight_key = FILTER_INFLIGHT.format(document_id=document_id)
+def estimate_duration_ms(text: str, speed: float = 1.0, chars_per_second: float = 20) -> int:
+    """Estimate audio duration in milliseconds. # TODO ... per model/voice est.?
 
-    db_session_context = create_session(passed_settings)
-    db = await anext(db_session_context)
+    Args:
+        text (str): Text to be synthesized.
+        speed (float): TTS speed multiplier (1.0 = normal).
+        chars_per_second (float): Baseline CPS estimate at speed=1.0.
+    """
+    cps = chars_per_second * speed
+    return math.ceil(len(text) / cps * 1000)
 
-    try:
-        await redis_client.set(status_key, "running", ex=FILTER_STATUS_TTL)
 
-        doc: Document | None = await db.get(Document, document_id)
-        if not doc:
-            log.error(f"Document {document_id} not found in _run_filter_job")
-            await redis_client.set(status_key, "error:Document not found", ex=FILTER_DONE_TTL)
-            return
-        if doc.user_id != user_id:
-            log.error(f"User {user_id} unauthorized for document {document_id} in _run_filter_job")
-            await redis_client.set(status_key, "error:Unauthorized", ex=FILTER_DONE_TTL)
-            return
+def detect_document_type(url: str, content_type: str | None = None) -> DocumentType:
+    """Detect if URL points to a document or website. # TODO do this properly with HTTP HEAD request to get content-type header or whatever is needed
 
-        text_to_filter = doc.original_text
+    Args:
+        url: The URL to check
+        content_type: Optional Content-Type header from HTTP response
 
-        if await redis_client.exists(cancel_key):
-            await redis_client.set(status_key, "cancelled", ex=600)
-            log.info(f"Filter job for document {document_id} cancelled before transform.")
-            return
+    Returns:
+        DocumentType.document or DocumentType.website (defaults to website if unsure)
+    """
+    url_lower = url.lower()
 
-        async def _transform(current_text: str) -> str:
-            for rule in config.regex_rules:
-                if await redis_client.exists(cancel_key):
-                    raise asyncio.CancelledError
-                current_text = re.compile(rule.pattern).sub(rule.replacement, current_text)
+    # Check URL patterns for documents
+    doc_extensions = (".pdf", ".docx", ".doc", ".pptx", ".ppt", ".png", ".jpg", ".jpeg", ".tiff")
+    if any(url_lower.endswith(ext) for ext in doc_extensions):
+        return DocumentType.document
 
-            if config.llm:
-                if await redis_client.exists(cancel_key):
-                    raise asyncio.CancelledError
-                log.warning("LLM filter requested but not implemented – skipping")
-            return current_text
+    # todo: for e.g. arxiv we could replace /abs/ with /pdf/ automatically (not /html/ bcs not every paper has it)
 
-        try:
-            filtered_text = await asyncio.wait_for(_transform(text_to_filter), timeout=TRANSFORM_TIMEOUT_S)
-        except asyncio.CancelledError:
-            log.info(f"Filter job for document {document_id} was cancelled during transform.")
-            await redis_client.set(status_key, "cancelled", ex=600)
-            return
-        except asyncio.TimeoutError:
-            log.error(f"Transform for document {document_id} exceeded {TRANSFORM_TIMEOUT_S}s")
-            await redis_client.set(status_key, "error:Transform timeout", ex=FILTER_DONE_TTL)
-            return
+    # Check Content-Type header
+    if content_type:
+        content_type_lower = content_type.lower()
 
-        if await redis_client.exists(cancel_key):  # Check after transform, before DB ops
-            await redis_client.set(status_key, "cancelled", ex=600)
-            log.info(f"Filter job for document {document_id} cancelled after transform.")
-            return
+        # Document MIME types
+        doc_types = ("application/pdf", "image/", "application/msword", "application/vnd.openxmlformats-officedocument")
+        if any(doc_type in content_type_lower for doc_type in doc_types):
+            return DocumentType.document
 
-        text_blocks: list[str] = await run_in_threadpool(splitter.split, text=filtered_text)
+        # Website MIME types
+        if "text/html" in content_type_lower:
+            return DocumentType.website
 
-        await db.exec(delete(Block).where(Block.document_id == document_id))
-        new_blocks = [
-            Block(document_id=document_id, idx=i, text=blk, est_duration_ms=estimate_duration_ms(blk))
-            for i, blk in enumerate(text_blocks)
-        ]
-        db.add_all(new_blocks)
-
-        doc.filtered_text = filtered_text
-        doc.last_applied_filter_config = config.model_dump()
-        await db.commit()
-
-        await redis_client.set(status_key, "done", ex=FILTER_DONE_TTL)
-    except asyncio.CancelledError:
-        log.info(f"Filter job for document {document_id} was cancelled.")
-        if (await redis_client.get(status_key) or b"").decode() != "cancelled":
-            await redis_client.set(status_key, "cancelled", ex=600)
-    except Exception as exc:
-        log.exception(f"Error while filtering document {document_id}: {exc}")
-        await redis_client.set(status_key, f"error:{str(exc)[:100]}", ex=FILTER_DONE_TTL)
-    finally:
-        await db.close()
-        await redis_client.delete(inflight_key)
-        await redis_client.delete(cancel_key)
+    # Default to website for all unclear cases
+    return DocumentType.website

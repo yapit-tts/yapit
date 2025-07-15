@@ -1,3 +1,5 @@
+
+
 ### Fix
 
 - Thinking about security / exploits: Limits on the number of docs, filters, etc.
@@ -9,6 +11,11 @@
 - Rate limiting for users with negative balance to prevent abuse
 
 ### Feats
+
+- Check which document formats mistral ocr actually supports...
+  - Should we even support multiple formats / formats other than pdfs, like images?
+    - yes, and we should support a common set across all ocr / document processors (well ig docling is the baseline, since anything goes through docling if ocr is not used)
+    - if a document processor does not support a format, it should just be converted to pdf via pandoc or converted to markdown (e.g. for things like epub, so we can directly move to text extraction... if the user wants to use ocr on their epub, they can convert it to pdf first... but who would like to pay for just having the images also displayed. i think it's reasonable to ask them to convert it to pdf in that case.)
 
 - opus transcoding
   - depending on the intensity / scaling requirements, prlly best to do this in the gateway to save worker time?

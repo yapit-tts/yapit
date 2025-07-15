@@ -27,7 +27,7 @@ class TTSProcessorManager(ProcessorManager[BaseTTSProcessor]):
     async def start(self, config_path: str) -> None:
         """Load endpoint configuration and start all processors."""
         self._load_processors(config_path)
-        self._tasks = [asyncio.create_task(processor.run()) for processor in self._processors]
+        self._tasks = [asyncio.create_task(processor.run()) for processor in self._processors.values()]
         log.info(f"Started {len(self._tasks)} TTS processor(s)")
 
     async def stop(self) -> None:

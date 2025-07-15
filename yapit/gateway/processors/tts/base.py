@@ -35,20 +35,20 @@ class BaseTTSProcessor(ABC):
 
     def __init__(
         self,
-        model_slug: str,
+        slug: str,
         redis: Redis,
         cache: Cache,
         settings: Settings,
         max_parallel: int | None = None,
     ) -> None:
-        self._model_slug = model_slug
-        self._queue = get_queue_name(model_slug)
+        self._model_slug = slug
+        self._queue = get_queue_name(slug)
         self._redis = redis
         self._cache = cache
         self._settings = settings
         self._sem = asyncio.Semaphore(max_parallel) if max_parallel else None
 
-        log.info(f"Processor for {model_slug} listening to queue: {self._queue}")
+        log.info(f"Processor for {slug} listening to queue: {self._queue}")
 
     @abstractmethod
     async def initialize(self) -> None:
