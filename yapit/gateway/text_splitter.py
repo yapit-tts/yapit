@@ -20,7 +20,7 @@ class TextSplitter(abc.ABC):
 
     @abc.abstractmethod
     def split(self, text: str) -> list[str]:
-        """Splits input text into a list of smaller text blocks.
+        """Splits plain text input into a list of smaller text blocks.
 
         Args:
             text: The input text string to be split.
@@ -35,17 +35,8 @@ class DummySplitter(TextSplitter):
         """Simply splits text into blocks of max_chars_per_block length, disregarding any structure."""
         if not text or not text.strip():
             return []
-        blocks = []
         max_length = self.config.max_chars
-        current_pos = 0
-        text_len = len(text)
-        while current_pos < text_len:
-            end_pos = min(current_pos + max_length, text_len)
-            chunk = text[current_pos:end_pos].strip()
-            if chunk:
-                blocks.append(chunk)
-            current_pos = end_pos
-        return blocks
+        return [chunk.strip() for i in range(0, len(text), max_length) if (chunk := text[i : i + max_length].strip())]
 
 
 class HierarchicalSplitter(TextSplitter):
@@ -59,10 +50,7 @@ class HierarchicalSplitter(TextSplitter):
     ]
 
     def split(self, text: str) -> list[str]:
-        if not text or not text.strip():
-            return []
-        text = text.strip()
-        return self._split_recursive(text, level=0)
+        return self._split_recursive(text.strip(), 0) if text and text.strip() else []
 
     def _split_recursive(self, segment: str, level: int) -> list[str]:
         if len(segment) <= self.config.max_chars:
@@ -71,28 +59,17 @@ class HierarchicalSplitter(TextSplitter):
             return self._hard_cut(segment)
 
         regex, delimiter = self._DELIMS[level]
-        blocks: list[str] = []
-        current = ""
-        for part in regex.split(segment):
-            if not part:
-                continue
-            # Try appending with delimiter
-            to_append = current + delimiter + part if current else part
+        blocks, current = [], ""
+        for part in filter(None, regex.split(segment)):  # None filters all falsy (empty strings)
+            to_append = f"{current}{delimiter}{part}" if current else part
             if len(to_append) <= self.config.max_chars:
                 current = to_append
-                continue
-            # Flush current
-            if current:
-                blocks.append(current.rstrip())
-                current = ""
-            # Handle oversized part
-            if len(part) > self.config.max_chars:
-                blocks.extend(self._split_recursive(part, level + 1))
             else:
-                current = part
-        if current:
-            blocks.append(current.rstrip())
-        return blocks
+                if current:
+                    blocks.append(current.rstrip())
+                    current = ""
+                blocks.extend(self._split_recursive(part, level + 1) if len(part) > self.config.max_chars else [part])
+        return blocks + [current.rstrip()] if current else blocks
 
     def _hard_cut(self, segment: str) -> list[str]:
         blocks: list[str] = []
