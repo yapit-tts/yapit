@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from decimal import Decimal
 
 from pydantic import BaseModel
 from sqlmodel import select
@@ -111,15 +112,8 @@ class BaseDocumentProcessor(ABC):
             cached_doc.extraction = DocumentExtractionResult(pages={}, extraction_method=self.processor_slug)
 
         # Determine what pages to process
-        existing_pages = set(cached_doc.extraction.pages.keys())
-        total_pages = cached_doc.metadata.total_pages
-
-        if pages:
-            requested_pages = set(pages)
-        else:
-            requested_pages = set(range(1, total_pages + 1))
-
-        missing_pages = requested_pages - existing_pages
+        missing_pages = get_missing_pages(cached_doc, pages)
+        requested_pages = set(pages) if pages else set(range(1, cached_doc.metadata.total_pages + 1))
 
         # If all pages are cached, return them
         if not missing_pages:
@@ -130,7 +124,7 @@ class BaseDocumentProcessor(ABC):
         if not user_credits:
             raise ValueError("User credits not found")
 
-        credits_needed = len(missing_pages) * processor_model.credits_per_page
+        credits_needed = Decimal(len(missing_pages)) * processor_model.credits_per_page
         if user_credits.balance < credits_needed:
             raise ValueError(f"Insufficient credits: need {credits_needed}, have {user_credits.balance}")
 
@@ -148,7 +142,7 @@ class BaseDocumentProcessor(ABC):
         )
 
         # Bill for processed pages
-        actual_credits = len(result.pages) * processor_model.credits_per_page
+        actual_credits = Decimal(len(result.pages)) * processor_model.credits_per_page
         if actual_credits > 0:
             await self._create_transaction(db, user_id, user_credits, actual_credits, result.pages, cache_key)
 
@@ -167,7 +161,7 @@ class BaseDocumentProcessor(ABC):
         db: AsyncSession,
         user_id: str,
         user_credits: UserCredits,
-        credits: float,
+        credits: Decimal,
         processed_pages: dict[int, ExtractedPage],
         cache_key: str,
     ) -> None:
@@ -189,3 +183,45 @@ class BaseDocumentProcessor(ABC):
         db.add(transaction)
         user_credits.balance -= credits
         await db.commit()
+
+
+def get_missing_pages(
+    cached_doc: CachedDocument,
+    requested_pages: list[int] | None = None,
+) -> set[int]:
+    """Get pages that need processing (not in cache).
+
+    Args:
+        cached_doc: The cached document with existing extraction results
+        requested_pages: Specific pages to process (None means all)
+
+    Returns:
+        Set of page numbers that need processing
+    """
+    existing_pages = set()
+    if cached_doc.extraction:
+        existing_pages = set(cached_doc.extraction.pages.keys())
+    if requested_pages:
+        pages_to_process = set(requested_pages)
+    else:
+        pages_to_process = set(range(1, cached_doc.metadata.total_pages + 1))
+    return pages_to_process - existing_pages
+
+
+def calculate_credit_cost(
+    cached_doc: CachedDocument,
+    processor_credits_per_page: Decimal,
+    requested_pages: list[int] | None = None,
+) -> Decimal:
+    """Calculate credit cost for processing pages, accounting for cached pages.
+
+    Args:
+        cached_doc: The cached document with existing extraction results
+        processor_credits_per_page: Credits per page for the processor
+        requested_pages: Specific pages to process (None means all)
+
+    Returns:
+        Total credit cost for uncached pages
+    """
+    missing_pages = get_missing_pages(cached_doc, requested_pages)
+    return Decimal(len(missing_pages)) * processor_credits_per_page
