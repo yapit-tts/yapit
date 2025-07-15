@@ -1,5 +1,4 @@
 from abc import ABC, abstractmethod
-from typing import Any
 
 from pydantic import BaseModel
 from sqlmodel import select
@@ -7,7 +6,13 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from yapit.gateway.cache import SqliteCache
 from yapit.gateway.config import Settings
-from yapit.gateway.domain_models import CreditTransaction, DocumentProcessor, TransactionType, UserCredits
+from yapit.gateway.domain_models import (
+    CreditTransaction,
+    DocumentMetadata,
+    DocumentProcessor,
+    TransactionType,
+    UserCredits,
+)
 
 
 class ExtractedPage(BaseModel):
@@ -19,7 +24,7 @@ class ExtractedPage(BaseModel):
 class DocumentExtractionResult(BaseModel):
     """Unified extraction result from any processor."""
 
-    pages: dict[int, ExtractedPage]  # 1-indexed
+    pages: dict[int, ExtractedPage]  # 1-indexed !
     extraction_method: str
     # TODO: Consider adding extraction settings here if we support multiple configs
 
@@ -27,10 +32,8 @@ class DocumentExtractionResult(BaseModel):
 class CachedDocument(BaseModel):
     """Structure stored in cache for documents."""
 
-    metadata: dict[str, Any]  # TODO this should be a proper model
-    content: dict[str, Any] | None = (
-        None  # Optional - for uploads  # TODO why is this a dict? I see we store the "url" here in the perepare from url endpoint... but why? Why not store the url in metadata? Shouldnt this jhust be for the pdf/image/b64/... content?
-    )
+    metadata: DocumentMetadata
+    content: bytes | None = None  # Optional - actual file content for uploads
     extraction: DocumentExtractionResult | None = None
 
 
@@ -42,23 +45,51 @@ class BaseDocumentProcessor(ABC):
         self.settings = settings
 
     @abstractmethod
+    def supported_mime_types(self) -> set[str]:
+        """Return set of supported MIME types.
+
+        Can include wildcards like 'image/*' or specific types like 'application/pdf'.
+        """
+        pass
+
+    def is_supported(self, mime_type: str) -> bool:
+        """Check if this processor supports the given MIME type."""
+        for supported in self.supported_mime_types():
+            if supported.endswith("/*"):
+                # Wildcard match (e.g., "image/*")
+                prefix = supported[:-2]
+                if mime_type.startswith(prefix + "/"):
+                    return True
+            elif mime_type == supported:
+                return True
+        return False
+
+    @abstractmethod
     async def _extract(
         self,
-        content: bytes,  # TODO this needs to accept both bytes and http url, as some processors e.g. just pass the url to the api, so we don't need to downlaod the content in all cases on our server... should prlly handle this by having two optional params... url and content, one of which has to be not None?
-        content_type: str,
+        url: str | None = None,
+        content: bytes | None = None,
+        content_type: str | None = None,
         pages: list[int] | None = None,
     ) -> DocumentExtractionResult:
-        """Extract text from document. Always includes images if available."""
+        """Extract text from document. Always includes images if available.
+
+        Either url or content must be provided.
+        - url: For processors that can fetch content themselves (e.g., Mistral)
+        - content: For processors that need the actual file bytes
+        - content_type: MIME type (required when content is provided)
+        """
         pass
 
     async def process_with_billing(
         self,
-        content: bytes,  # TODO this needs to accept both bytes and http url, as some processors e.g. just pass the url to the api, so we don't need to downlaod the content in all cases on our server... should prlly handle this by having two optional params... url and content, one of which has to be not None?
-        content_type: str,
         user_id: str,
         cache_key: str,
         db: AsyncSession,
         cache: SqliteCache,
+        url: str | None = None,
+        content: bytes | None = None,
+        content_type: str | None = None,
         pages: list[int] | None = None,
     ) -> DocumentExtractionResult:
         """Process document with caching and billing."""
@@ -81,7 +112,7 @@ class BaseDocumentProcessor(ABC):
 
         # Determine what pages to process
         existing_pages = set(cached_doc.extraction.pages.keys())
-        total_pages = cached_doc.metadata.get("total_pages", 1)
+        total_pages = cached_doc.metadata.total_pages
 
         if pages:
             requested_pages = set(pages)
@@ -104,7 +135,7 @@ class BaseDocumentProcessor(ABC):
             raise ValueError(f"Insufficient credits: need {credits_needed}, have {user_credits.balance}")
 
         # Process missing pages
-        result = await self._extract(content, content_type, list(missing_pages))
+        result = await self._extract(url=url, content=content, content_type=content_type, pages=list(missing_pages))
 
         # Merge results
         cached_doc.extraction.pages.update(result.pages)

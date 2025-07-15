@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum, auto
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel as PydanticModel
 from pydantic import Field as PydanticField
@@ -57,20 +57,22 @@ class Voice(SQLModel, table=True):
     __table_args__ = (UniqueConstraint("slug", "model_id", name="unique_voice_per_model"),)
 
 
-class DocumentType(StrEnum):
-    """Type of document content."""
+class DocumentMetadata(PydanticModel):
+    """Metadata about a document."""
 
-    text = auto()  # Direct text input
-    website = auto()  # HTML content from URL
-    document = auto()  # PDF/DOCX/images from URL or upload
+    content_type: str  # MIME type
+    content_source: Literal["url", "upload", "text"]  # How we got the content
+
+    total_pages: int  # 1 for websites and text
+    file_size_mb: float | None = None  # File size in MB (only for uploads)
+    title: str | None = None
+    url: str | None = None  # Original URL if from web
+    filename: str | None = None  # Original filename if uploaded
 
 
 class Document(SQLModel, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     user_id: str = Field()
-
-    source_ref: str | None = Field(default=None)  # URL or filename for extracted (non-plaintext) documents
-    type: DocumentType
 
     title: str | None = Field(default=None)
 
@@ -84,9 +86,18 @@ class Document(SQLModel, table=True):
         ),
     )
 
-    # OCR/extraction metadata
-    extraction_method: str | None = Field(default=None)  # ocr, docling, web_parser
-    # XML for frontend display (block tags, includes images, tables, etc.), if extracted from a document / website
+    source_ref: str | None = Field(default=None)  # URL or filename for extracted documents
+    metadata_: DocumentMetadata | None = Field(  # name `metadata` reserved by SQLModel
+        default=None,
+        sa_column=Column(
+            "metadata",
+            JSON().with_variant(postgresql.JSONB(), "postgresql"),
+            nullable=True,
+        ),
+    )
+
+    extraction_method: str | None = Field(default=None)  # processor slug used for extraction
+    # Structured content for frontend display (XML with block tags, images, tables, etc.)
     structured_content: str | None = Field(default=None, sa_column=Column(TEXT, nullable=True))
 
     created: datetime = Field(
