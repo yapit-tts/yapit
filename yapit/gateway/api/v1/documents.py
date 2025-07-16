@@ -151,7 +151,11 @@ async def prepare_document(
     credit_cost = None
     if endpoint == "document":
         credit_cost = await calculate_document_credit_cost(
-            cached_doc, request.processor_slug, request.pages, db, document_processor_manager
+            cached_doc,
+            request.processor_slug,
+            request.pages,
+            db,
+            document_processor_manager,
         )
     return DocumentPrepareResponse(hash=cache_key, metadata=metadata, endpoint=endpoint, credit_cost=credit_cost)
 

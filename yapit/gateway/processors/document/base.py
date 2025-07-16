@@ -14,6 +14,7 @@ from yapit.gateway.domain_models import (
     TransactionType,
     UserCredits,
 )
+from yapit.gateway.exceptions import InsufficientCreditsError, ResourceNotFoundError, ValidationError
 
 
 class ExtractedPage(BaseModel):
@@ -27,7 +28,6 @@ class DocumentExtractionResult(BaseModel):
 
     pages: dict[int, ExtractedPage]  # 1-indexed !
     extraction_method: str
-    # TODO: Consider adding extraction settings here if we support multiple configs
 
 
 class CachedDocument(BaseModel):
@@ -75,10 +75,11 @@ class BaseDocumentProcessor(ABC):
     ) -> DocumentExtractionResult:
         """Extract text from document. Always includes images if available.
 
-        Either url or content must be provided.
-        - url: For processors that can fetch content themselves (e.g., Mistral)
-        - content: For processors that need the actual file bytes
-        - content_type: MIME type (required when content is provided)
+        Args:
+            url: URL of the document to process (optional)
+            content: Raw bytes of the document (optional)
+            content_type: MIME type of the document (required if content is provided)
+            pages: Specific pages to process (1-indexed, optional)
         """
         pass
 
@@ -94,6 +95,9 @@ class BaseDocumentProcessor(ABC):
         pages: list[int] | None = None,
     ) -> DocumentExtractionResult:
         """Process document with caching and billing."""
+        if url is None and content is None:
+            raise ValidationError("At least one of 'url' or 'content' must be provided")
+
         # Get processor config
         result = await db.exec(select(DocumentProcessor).where(DocumentProcessor.slug == self.processor_slug))
         processor_model = result.first()
@@ -103,7 +107,7 @@ class BaseDocumentProcessor(ABC):
         # Get cached document
         cached_data = await cache.retrieve_data(cache_key)
         if not cached_data:
-            raise ValueError("Document not found in cache. Please prepare document first.")
+            raise ResourceNotFoundError("Document not found in cache. Please prepare document first.")
 
         cached_doc = CachedDocument.model_validate_json(cached_data)
 
@@ -126,7 +130,7 @@ class BaseDocumentProcessor(ABC):
 
         credits_needed = Decimal(len(missing_pages)) * processor_model.credits_per_page
         if user_credits.balance < credits_needed:
-            raise ValueError(f"Insufficient credits: need {credits_needed}, have {user_credits.balance}")
+            raise InsufficientCreditsError(f"Insufficient credits: need {credits_needed}, have {user_credits.balance}")
 
         # Process missing pages
         result = await self._extract(url=url, content=content, content_type=content_type, pages=list(missing_pages))
@@ -193,18 +197,13 @@ def get_missing_pages(
 
     Args:
         cached_doc: The cached document with existing extraction results
-        requested_pages: Specific pages to process (None means all)
+        requested_pages: Specific pages to process (None or empty means all)
 
     Returns:
         Set of page numbers that need processing
     """
-    existing_pages = set()
-    if cached_doc.extraction:
-        existing_pages = set(cached_doc.extraction.pages.keys())
-    if requested_pages:
-        pages_to_process = set(requested_pages)
-    else:
-        pages_to_process = set(range(1, cached_doc.metadata.total_pages + 1))
+    existing_pages = set(cached_doc.extraction.pages.keys()) if cached_doc.extraction else set()
+    pages_to_process = set(requested_pages) if requested_pages else set(range(1, cached_doc.metadata.total_pages + 1))
     return pages_to_process - existing_pages
 
 

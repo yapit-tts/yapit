@@ -25,6 +25,7 @@
 ### Refactor
 
 - replace .get()+exception with get_one() and add global exception handler
+- replace generic value errors with custom exceptions (in proper format...), , add appropriate error hanlers, (document responses in routes?)
 
 - can we improve dependency handling without creating separate docker images?
   - see comments abt deps only some deployments need @ pyproject.toml
