@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum, auto
-from typing import Any, Literal
+from typing import Any, Literal, NotRequired, TypedDict
 
 from pydantic import BaseModel as PydanticModel
 from pydantic import Field as PydanticField
@@ -57,17 +57,17 @@ class Voice(SQLModel, table=True):
     __table_args__ = (UniqueConstraint("slug", "model_id", name="unique_voice_per_model"),)
 
 
-class DocumentMetadata(PydanticModel):
+class DocumentMetadata(TypedDict):
     """Metadata about a document."""
 
     content_type: str  # MIME type
     content_source: Literal["url", "upload", "text"]  # How we got the content
 
     total_pages: int  # 1 for websites and text
-    file_size_mb: float | None = None  # File size in MB (only for uploads)
-    title: str | None = None
-    url: str | None = None  # Original URL if from web
-    filename: str | None = None  # Original filename if uploaded
+    file_size: NotRequired[float | None]  # File size in bytes (only for uploads)
+    title: NotRequired[str | None]
+    url: NotRequired[str | None]  # Original URL if from web
+    filename: NotRequired[str | None]  # Original filename if uploaded
 
 
 class Document(SQLModel, table=True):

@@ -140,7 +140,7 @@ async def prepare_document(
         content_type=content_type,
         content_source="url",
         total_pages=1 if endpoint == "website" else 10,  # TODO: Extract actual page count for documents
-        file_size_mb=None if endpoint == "website" else 5.0,  # TODO: Get actual file size
+        file_size=None if endpoint == "website" else 5.0,  # TODO: Get actual file size
         url=str(request.url),
     )
 
@@ -202,7 +202,7 @@ async def prepare_document_upload(
         content_type=content_type,
         content_source="upload",
         total_pages=5,  # TODO: Extract actual page count
-        file_size_mb=(file.size or len(content)) / (1024**2),
+        file_size=file.size or len(content),
         filename=file.filename,
     )
 

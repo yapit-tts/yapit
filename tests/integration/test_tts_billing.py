@@ -31,7 +31,7 @@ async def get_user_credits_via_api(user_client) -> dict:
 @pytest.mark.asyncio
 async def test_tts_insufficient_credits(regular_client, regular_document):
     """Test that TTS fails with 402 when user has no credits."""
-    document_id = regular_document["document_id"]
+    document_id = regular_document["id"]
     block_id = regular_document["blocks"][0]["id"]
 
     synth_response = await regular_client.post(
@@ -51,7 +51,7 @@ async def test_tts_with_credits_deduction(regular_client, admin_client, regular_
     initial_credits = Decimal("100.0")
     await grant_credits_via_api(admin_client, regular_user["id"], initial_credits)
 
-    document_id = unique_document["document_id"]
+    document_id = unique_document["id"]
     block_id = unique_document["blocks"][0]["id"]
 
     synth_response = await regular_client.post(
@@ -95,7 +95,7 @@ async def test_tts_cached_no_credit_deduction(regular_client, admin_client, regu
     initial_credits = Decimal("100.0")
     await grant_credits_via_api(admin_client, regular_user["id"], initial_credits)
 
-    document_id = unique_document["document_id"]
+    document_id = unique_document["id"]
     block_id = unique_document["blocks"][0]["id"]
 
     # First synthesis - should deduct credits
@@ -139,7 +139,7 @@ async def test_tts_cached_no_credit_deduction(regular_client, admin_client, regu
 async def test_tts_admin_no_credit_check(admin_client, test_document):
     """Test that admins dont need any credits."""
     synth_response = await admin_client.post(
-        f"/v1/documents/{test_document['document_id']}/blocks/{test_document['blocks'][0]['id']}/synthesize",
+        f"/v1/documents/{test_document['id']}/blocks/{test_document['blocks'][0]['id']}/synthesize",
         json={"model_slug": "kokoro-cpu", "voice_slug": "af_heart", "speed": 1.0},
     )
 

@@ -44,7 +44,7 @@ services:
     expose: ["8000"]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()"]
-      start_period: 60s
+      start_period: 80s 
       start_interval: 1s
       interval: 30s
       timeout: 5s

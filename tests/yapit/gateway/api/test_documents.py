@@ -14,9 +14,8 @@ async def test_create_document_and_paging(client):
     assert r.status_code == 201
 
     body = r.json()
-    document_id = uuid.UUID(body["document_id"])  # validates UUID
-    assert body["num_blocks"] == 1
+    document_id = uuid.UUID(body["id"])  # validates UUID
 
-    page = (await client.get(f"/v1/documents/{document_id}/blocks")).json()
-    assert page["total"] == 1
-    assert page["items"][0]["text"] == text
+    blocks = (await client.get(f"/v1/documents/{document_id}/blocks")).json()
+    assert len(blocks) == 1
+    assert blocks[0]["text"] == text

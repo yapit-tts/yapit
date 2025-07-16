@@ -18,11 +18,11 @@ async def test_synthesize_returns_cached_audio_immediately(client, app, as_admin
     # Create document
     r = await client.post("/v1/documents/text", json={"content": "Test cached audio."})
     doc = r.json()
-    document_id = doc["document_id"]
+    document_id = doc["id"]
 
     # Fetch blocks
     blocks_response = await client.get(f"/v1/documents/{document_id}/blocks")
-    block_id = blocks_response.json()["items"][0]["id"]
+    block_id = blocks_response.json()[0]["id"]
 
     # Synthesize - should return audio immediately from cache
     r = await client.post(

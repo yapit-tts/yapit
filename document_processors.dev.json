@@ -2,22 +2,6 @@
   {
     "slug": "mistral-ocr",
     "processor": "yapit.gateway.processors.document.mistral.MistralOCRProcessor",
-    "model": "mistral-ocr-latest",
-    "name": "Mistral OCR",
-    "credits_per_page": 2.0,
-    "max_pages": 1000,
-    "max_file_size_mb": 50,
-    "supported_formats": ["pdf", "jpg", "jpeg", "png", "gif", "bmp", "tiff", "webp", "pptx", "docx"],
-    "supports_batch": true
-  },
-  {
-    "slug": "docling-free",
-    "processor": "yapit.gateway.processors.document.docling.DoclingProcessor",
-    "name": "Docling (Free)",
-    "credits_per_page": 0.0,
-    "max_pages": 100,
-    "max_file_size_mb": 20,
-    "supported_formats": ["pdf", "docx", "pptx"],
-    "supports_batch": false
+    "model": "mistral-ocr-latest"
   }
 ]
