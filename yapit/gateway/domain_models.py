@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum, auto
-from typing import Any, Literal, NotRequired, TypedDict
+from typing import Any, Literal
 
 from pydantic import BaseModel as PydanticModel
 from pydantic import Field as PydanticField
@@ -57,17 +57,16 @@ class Voice(SQLModel, table=True):
     __table_args__ = (UniqueConstraint("slug", "model_id", name="unique_voice_per_model"),)
 
 
-class DocumentMetadata(TypedDict):
+class DocumentMetadata(PydanticModel):
     """Metadata about a document."""
 
     content_type: str  # MIME type
     content_source: Literal["url", "upload", "text"]  # How we got the content
-
     total_pages: int  # 1 for websites and text
-    file_size: NotRequired[float | None]  # File size in bytes (only for uploads)
-    title: NotRequired[str | None]
-    url: NotRequired[str | None]  # Original URL if from web
-    filename: NotRequired[str | None]  # Original filename if uploaded
+    file_size: float | None = None  # File size in bytes (only for uploads)
+    title: str | None = None
+    url: str | None = None  # Original URL if from web
+    filename: str | None = None  # Original filename if uploaded
 
 
 class Document(SQLModel, table=True):
@@ -87,15 +86,6 @@ class Document(SQLModel, table=True):
     )
 
     source_ref: str | None = Field(default=None)  # URL or filename for extracted documents
-    metadata_: DocumentMetadata | None = Field(  # name `metadata` reserved by SQLModel
-        default=None,
-        sa_column=Column(
-            "metadata",
-            JSON().with_variant(postgresql.JSONB(), "postgresql"),
-            nullable=True,
-        ),
-    )
-
     extraction_method: str | None = Field(default=None)  # processor slug used for extraction
     # Structured content for frontend display (XML with block tags, images, tables, etc.)
     structured_content: str | None = Field(default=None, sa_column=Column(TEXT, nullable=True))
@@ -108,6 +98,23 @@ class Document(SQLModel, table=True):
     blocks: list["Block"] = Relationship(
         back_populates="document", sa_relationship_kwargs={"cascade": "all, delete-orphan"}
     )
+
+    metadata_dict: dict | None = Field(  # Store as dict in DB - using different field name
+        default=None,
+        sa_column=Column(
+            "metadata",
+            JSON().with_variant(postgresql.JSONB(), "postgresql"),
+            nullable=True,
+        ),
+    )
+
+    @property
+    def metadata_(self) -> DocumentMetadata | None:  # name `metadata` reserved by SQLModel
+        return DocumentMetadata(**self.metadata_dict) if self.metadata_dict else None
+
+    @metadata_.setter
+    def metadata_(self, value: DocumentMetadata | None) -> None:
+        self.metadata_dict = value.model_dump() if value else None
 
 
 class Block(SQLModel, table=True):

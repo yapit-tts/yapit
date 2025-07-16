@@ -20,6 +20,7 @@ from yapit.gateway.deps import (
     TextSplitterDep,
 )
 from yapit.gateway.domain_models import Block, Document, DocumentMetadata, DocumentProcessor
+from yapit.gateway.exceptions import ResourceNotFoundError
 from yapit.gateway.processors.document.base import (
     CachedDocument,
     DocumentExtractionResult,
@@ -126,7 +127,7 @@ async def prepare_document(
 
         credit_cost = None
         if endpoint == "document":
-            credit_cost = await calculate_document_credit_cost(
+            credit_cost = await _calculate_document_credit_cost(
                 cached_doc, request.processor_slug, request.pages, db, document_processor_manager
             )
         return DocumentPrepareResponse(
@@ -150,7 +151,7 @@ async def prepare_document(
 
     credit_cost = None
     if endpoint == "document":
-        credit_cost = await calculate_document_credit_cost(
+        credit_cost = await _calculate_document_credit_cost(
             cached_doc,
             request.processor_slug,
             request.pages,
@@ -179,7 +180,7 @@ async def prepare_document_upload(
     if cached_data:
         cached_doc = CachedDocument.model_validate_json(cached_data)
 
-        credit_cost = await calculate_document_credit_cost(
+        credit_cost = await _calculate_document_credit_cost(
             cached_doc,
             processor_slug,
             pages,
@@ -209,7 +210,7 @@ async def prepare_document_upload(
     cached_doc = CachedDocument(metadata=metadata, content=content)
     await cache.store(cache_key, cached_doc.model_dump_json().encode(), ttl_seconds=600)
 
-    credit_cost = await calculate_document_credit_cost(
+    credit_cost = await _calculate_document_credit_cost(
         cached_doc, processor_slug, pages, db, document_processor_manager
     )
 
@@ -409,32 +410,24 @@ async def get_document_blocks(
     return result.all()
 
 
-# TODO raise exceptionsi nstead of returning None if not found
-async def calculate_document_credit_cost(
+async def _calculate_document_credit_cost(
     cached_doc: CachedDocument,
-    processor_slug: str | None,
+    processor_slug: str | None,  # TODO should never be None, but be passed default processor
     pages: list[int] | None,
     db: DbSession,
     document_processor_manager: DocumentProcessorManagerDep,
 ) -> Decimal | None:
-    """Calculate credit cost for document processing.
-
-    Returns None if:
-    - No processor specified
-    - Processor not found
-    - Not a document (e.g., website)
-    """
     if not processor_slug:
         return None
 
     processor = document_processor_manager.get_processor(processor_slug)
     if not processor:
-        return None
+        raise ResourceNotFoundError(f"Document processor '{processor_slug}' not found")
 
     result = await db.exec(select(DocumentProcessor).where(DocumentProcessor.slug == processor_slug))
     processor_model = result.first()
     if not processor_model:
-        return None
+        raise ResourceNotFoundError(f"Document processor '{processor_slug}' not found in database")
 
     return calculate_credit_cost(
         cached_doc, processor_credits_per_page=processor_model.credits_per_page, requested_pages=pages
