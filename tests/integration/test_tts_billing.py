@@ -72,7 +72,7 @@ async def test_tts_with_credits_deduction(regular_client, admin_client, regular_
     final_balance = Decimal(credits_after["balance"])
     assert final_balance < initial_credits
 
-    # Calculate expected deduction (duration_seconds * credit_multiplier)
+    # Calculate expected deduction (duration_seconds * credits_per_sec)
     # For kokoro-cpu, multiplier is 1.0
     expected_deduction = Decimal(duration_ms) / 1000 * Decimal("1.0")
     assert initial_credits - final_balance == expected_deduction

@@ -93,7 +93,7 @@ class BaseProcessor(ABC):
 
                 # Calculate and deduct credits
                 duration_seconds = Decimal(result.duration_ms) / 1000
-                credits_to_deduct = duration_seconds * variant.model.credit_multiplier
+                credits_to_deduct = duration_seconds * variant.model.credits_per_sec
 
                 user_credits = await get_or_create_user_credits(job.user_id, db)
 
@@ -110,7 +110,7 @@ class BaseProcessor(ABC):
                     amount=-credits_to_deduct,
                     balance_before=balance_before,
                     balance_after=user_credits.balance,
-                    description=f"TTS synthesis: {duration_seconds:.2f}s × {variant.model.credit_multiplier} ({variant.model.name})",
+                    description=f"TTS synthesis: {duration_seconds:.2f}s × {variant.model.credits_per_sec} ({variant.model.name})",
                     details={
                         "variant_hash": variant.hash,
                         "model_slug": variant.model.slug,

@@ -17,7 +17,7 @@ def create_dev_models() -> list[TTSModel]:
     kokoro_cpu = TTSModel(
         slug="kokoro-cpu",
         name="Kokoro (CPU)",
-        credit_multiplier=Decimal("1.0"),
+        credits_per_sec=Decimal("1.0"),
         native_codec="pcm",
         sample_rate=24_000,
         channels=1,
@@ -28,7 +28,7 @@ def create_dev_models() -> list[TTSModel]:
     kokoro_cpu_runpod = TTSModel(
         slug="kokoro-cpu-runpod",
         name="Kokoro (CPU on RunPod)",
-        credit_multiplier=Decimal("1.5"),
+        credits_per_sec=Decimal("1.5"),
         native_codec="pcm",
         sample_rate=24_000,
         channels=1,
@@ -55,7 +55,7 @@ def create_dev_models() -> list[TTSModel]:
     # dia = TTSModel(
     #     slug="dia",
     #     name="Dia-1.6B",
-    #     credit_multiplier=Decimal("2.0"),
+    #     credits_per_sec=Decimal("2.0"),
     #     native_codec="pcm",
     #     sample_rate=44_100,
     #     channels=1,

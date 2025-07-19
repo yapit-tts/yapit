@@ -28,7 +28,7 @@ class ModelCreateRequest(BaseModel):
 
     slug: str
     name: str
-    credit_multiplier: Decimal
+    credits_per_sec: Decimal
     native_codec: str
     sample_rate: int
     channels: int
@@ -39,7 +39,7 @@ class ModelUpdateRequest(BaseModel):
     """Request to update a TTS model."""
 
     name: str | None = None
-    credit_multiplier: Decimal | None = None
+    credits_per_sec: Decimal | None = None
     native_codec: str | None = None
     sample_rate: int | None = None
     channels: int | None = None
