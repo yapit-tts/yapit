@@ -1,12 +1,16 @@
 import hashlib
+import io
 import logging
 import math
+import re
 from decimal import Decimal
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
+import httpx
+import pymupdf
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
-from pydantic import BaseModel, HttpUrl, constr
+from pydantic import BaseModel, HttpUrl, StringConstraints
 from sqlmodel import select
 
 from yapit.gateway.auth import authenticate
@@ -20,7 +24,7 @@ from yapit.gateway.deps import (
     TextSplitterDep,
 )
 from yapit.gateway.domain_models import Block, Document, DocumentMetadata, DocumentProcessor
-from yapit.gateway.exceptions import ResourceNotFoundError
+from yapit.gateway.exceptions import ResourceNotFoundError, ValidationError
 from yapit.gateway.processors.document.base import (
     CachedDocument,
     DocumentExtractionResult,
@@ -74,7 +78,7 @@ class BaseDocumentCreateRequest(BaseModel):
 class TextDocumentCreateRequest(BaseDocumentCreateRequest):
     """Create document from direct text input."""
 
-    content: str = constr(min_length=1, strip_whitespace=True)
+    content: Annotated[str, StringConstraints(min_length=1, strip_whitespace=True)]
 
 
 class BasePreparedDocumentCreateRequest(BaseDocumentCreateRequest):
@@ -125,7 +129,7 @@ async def prepare_document(
         cached_doc = CachedDocument.model_validate_json(cached_data)
         endpoint = "website" if cached_doc.metadata.content_type.lower() == "text/html" else "document"
 
-        credit_cost = None
+        credit_cost: int | None = None
         if endpoint == "document":
             credit_cost = await _calculate_document_credit_cost(
                 cached_doc, request.processor_slug, request.pages, db, document_processor_manager
@@ -133,24 +137,31 @@ async def prepare_document(
         return DocumentPrepareResponse(
             hash=cache_key, metadata=cached_doc.metadata, endpoint=endpoint, credit_cost=credit_cost
         )
-    # TODO: Implement actual HTTP HEAD request to get content-type
-    content_type = "text/html"  # Placeholder
 
-    endpoint: Literal["website", "document"] = "website" if content_type.lower() == "text/html" else "document"
+    content, content_type = await _download_document(request.url, settings.document_max_download_size)
+
+    page_count, title = _extract_document_info(content, content_type)
     metadata = DocumentMetadata(
         content_type=content_type,
-        content_source="url",
-        total_pages=1 if endpoint == "website" else 10,  # TODO: Extract actual page count for documents
-        file_size=None if endpoint == "website" else 5.0,  # TODO: Get actual file size
+        total_pages=page_count,
+        title=title,
         url=str(request.url),
+        file_name=request.url.path,
+        file_size=len(content),
     )
 
-    cached_doc = CachedDocument(metadata=metadata)
+    endpoint: Literal["website", "document"] = "website" if content_type.lower() == "text/html" else "document"
+    cached_doc = CachedDocument(content=content if endpoint == "document" else None, metadata=metadata)
     ttl = settings.document_cache_ttl_webpage if endpoint == "website" else settings.document_cache_ttl_document
     await cache.store(cache_key, cached_doc.model_dump_json().encode(), ttl_seconds=ttl)
 
     credit_cost = None
     if endpoint == "document":
+        if request.pages:
+            invalid_pages = [p for p in request.pages if p < 1 or p > page_count]
+            if invalid_pages:
+                raise HTTPException(400, f"Invalid page numbers: {invalid_pages}. Document has {page_count} pages.")
+
         credit_cost = await _calculate_document_credit_cost(
             cached_doc,
             request.processor_slug,
@@ -197,14 +208,14 @@ async def prepare_document_upload(
 
     content_type = file.content_type or "application/octet-stream"
 
-    # Extract metadata
-    # TODO: Implement actual metadata extraction
+    total_pages, title = _extract_document_info(content, content_type)
     metadata = DocumentMetadata(
         content_type=content_type,
-        content_source="upload",
-        total_pages=5,  # TODO: Extract actual page count
-        file_size=file.size or len(content),
-        filename=file.filename,
+        total_pages=total_pages,
+        title=title,
+        url=None,
+        file_name=file.filename,
+        file_size=len(content),
     )
 
     cached_doc = CachedDocument(metadata=metadata, content=content)
@@ -235,8 +246,11 @@ async def create_text_document(
         filtered_text=None,
         metadata_=DocumentMetadata(
             content_type="text/plain",
-            content_source="text",
             total_pages=1,
+            title=None,
+            url=None,
+            file_name=None,
+            file_size=len(req.content.encode("utf-8")),
         ),
     )
     db.add(doc)
@@ -298,7 +312,6 @@ async def create_website_document(
         user_id=user.id,
         content_type=cached_doc.metadata.content_type,
         title=cached_doc.metadata.title or req.title,
-        source_ref=cached_doc.metadata.url,
         original_text=extracted_text,
         filtered_text=extracted_text,  # TODO: Implement filtering
         extraction_method=extraction_result.extraction_method,
@@ -342,6 +355,12 @@ async def create_document(
 
     if cached_doc.metadata.content_type.lower() == "text/html":
         raise HTTPException(400, "This endpoint is for documents only. Use /documents/website for websites.")
+    if req.pages:
+        invalid_pages = [p for p in req.pages if p < 1 or p > cached_doc.metadata.total_pages]
+        if invalid_pages:
+            raise HTTPException(
+                400, f"Invalid page numbers: {invalid_pages}. Document has {cached_doc.metadata.total_pages} pages."
+            )
 
     processor = document_processor_manager.get_processor(req.processor_slug)
     if not processor:
@@ -367,7 +386,6 @@ async def create_document(
         user_id=user.id,
         content_type=cached_doc.metadata.content_type,
         title=cached_doc.metadata.title or req.title,
-        source_ref=cached_doc.metadata.url or cached_doc.metadata.filename,
         original_text=extracted_text,
         filtered_text=extracted_text,  # TODO: Implement filtering
         extraction_method=extraction_result.extraction_method,
@@ -410,9 +428,84 @@ async def get_document_blocks(
     return result.all()
 
 
+async def _download_document(url: HttpUrl, max_size: int) -> tuple[bytes, str]:
+    """Download a document from URL within size limits.
+
+    Args:
+        url: URL to download from
+        max_size: Maximum allowed file size in bytes
+
+    Returns:
+        tuple of (content bytes, content-type header)
+
+    Raises:
+        ValidationError: If download fails or file is too large
+    """
+    async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as client:
+        try:
+            head_response = await client.head(str(url))
+            if head_response.status_code != 200:
+                log.debug(f"HEAD request failed with {head_response.status_code}, falling back to GET")
+            else:
+                content_length = head_response.headers.get("content-length")
+                if content_length and int(content_length) > max_size:
+                    raise ValidationError(
+                        f"File too large: {int(content_length)} bytes exceeds maximum of {max_size} bytes"
+                    )
+            response = await client.get(str(url))
+            response.raise_for_status()
+            content = io.BytesIO()
+            downloaded = 0
+            async for chunk in response.aiter_bytes(chunk_size=8192):
+                downloaded += len(chunk)
+                if downloaded > max_size:
+                    raise ValidationError(
+                        f"File too large: downloaded {downloaded} bytes exceeds maximum of {max_size} bytes"
+                    )
+                content.write(chunk)
+            content_type = response.headers.get("content-type", "application/octet-stream")
+            return content.getvalue(), content_type
+        except httpx.HTTPStatusError as e:
+            raise ValidationError(f"Failed to download document: HTTP {e.response.status_code}")
+        except httpx.RequestError as e:
+            raise ValidationError(f"Failed to download document: {str(e)}")
+
+
+def _extract_document_info(content: bytes, content_type: str) -> tuple[int, str | None]:
+    """Extract page count and title from document content.
+
+    Args:
+        content: Document content as bytes
+        content_type: MIME type of the document
+
+    Returns:
+        Tuple of (page_count, title)
+    """
+    title = None
+    if content_type.lower() == "application/pdf":
+        with pymupdf.open(stream=content, filetype="pdf") as pdf:
+            total_pages = len(pdf)
+            if pdf.metadata and pdf.metadata.get("title"):
+                title = pdf.metadata["title"]
+    elif content_type.lower().startswith("image/"):
+        total_pages = 1
+    elif content_type.lower() == "text/html":
+        total_pages = 1
+        html_text = content.decode("utf-8", errors="ignore")
+        title_match = re.search(r"<title[^>]*>([^<]+)</title>", html_text, re.IGNORECASE)
+        if title_match:
+            title = title_match.group(1).strip()
+        else:
+            log.warning(f"Failed to extract title from HTML content:\n{html_text}", exc_info=True)
+    else:
+        raise ValidationError(f"Unsupported content type for metadata extraction: {content_type}")
+
+    return total_pages, title
+
+
 async def _calculate_document_credit_cost(
     cached_doc: CachedDocument,
-    processor_slug: str | None,  # TODO should never be None, but be passed default processor
+    processor_slug: str | None,
     pages: list[int] | None,
     db: DbSession,
     document_processor_manager: DocumentProcessorManagerDep,
@@ -420,6 +513,7 @@ async def _calculate_document_credit_cost(
     if not processor_slug:
         return None
 
+    processor_slug = processor_slug or "markitdown"  # TODO better way to handle default processor
     processor = document_processor_manager.get_processor(processor_slug)
     if not processor:
         raise ResourceNotFoundError(f"Document processor '{processor_slug}' not found")

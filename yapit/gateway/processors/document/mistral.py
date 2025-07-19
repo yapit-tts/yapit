@@ -15,24 +15,33 @@ from yapit.gateway.processors.document.base import (
 log = logging.getLogger(__name__)
 
 
+# TODO how are docs without pages billed?
+# TODO what's the point of ocring text documents?
+# TODO if we have the content already, is it better to pass the url (to save bandwidth) or the content (to not rely on external URLs, stability)?
+
+
 class MistralOCRProcessor(BaseDocumentProcessor):
-    # TODO check which ones are actually supported... (tested so far: docx, pdf, png)
     IMAGE_MIME_TYPES = {
-        "image/jpeg",
-        "image/jpg",
-        "image/png",
-        "image/webp",
-        "image/gif",
-        "image/bmp",
-        "image/tiff",
-        "image/avif",
+        "image/*",
     }
     DOCUMENT_MIME_TYPES = {
+        "application/docbook+xml",
+        "application/epub+zip",
         "application/pdf",
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/rtf",
+        "application/vnd.oasis.opendocument.text",
         "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        "application/vnd.ms-powerpoint",
-        "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/x-biblatex",
+        "application/x-bibtex",
+        "application/x-endnote+xml",
+        "application/x-fictionbook+xml",
+        "application/x-ipynb+json",
+        "application/x-jats+xml",
+        "application/x-latex",
+        "application/x-opml+xml",
+        "text/troff",
+        "text/x-dokuwiki",
     }
 
     def __init__(self, slug: str, settings: Settings, model: str):
@@ -53,7 +62,7 @@ class MistralOCRProcessor(BaseDocumentProcessor):
         return 1000
 
     @property
-    def max_file_size(self) -> int:
+    def max_file_size(self) -> int:  # TODO use this to validate early
         return 50 * 1024 * 1024
 
     async def _extract(
@@ -63,14 +72,13 @@ class MistralOCRProcessor(BaseDocumentProcessor):
         content_type: str | None = None,
         pages: list[int] | None = None,
     ) -> DocumentExtractionResult:
-        """Extract markdown with embedded images from document using Mistral OCR."""
-        doc_url = self._get_document_type(content_type) if content_type else "document_url"
-
+        doc_url = "image_url" if content_type.lower().startswith("image/") else "document_url"
+        doc_content = url if url else f"data:{content_type};base64,{base64.b64encode(content).decode('utf-8')}"
         request_params = {
             "model": self._model,
             "document": {
                 "type": doc_url,
-                doc_url: url if url else f"data:{content_type};base64,{base64.b64encode(content).decode('utf-8')}",
+                doc_url: doc_content,
             },
             "include_image_base64": True,
             "pages": [p - 1 for p in pages] if pages else None,  # API uses 0-indexed
@@ -82,12 +90,3 @@ class MistralOCRProcessor(BaseDocumentProcessor):
             pages={page.index + 1: ExtractedPage(markdown=page.markdown) for page in response.pages},  # 1-indexed pages
             extraction_method=self.processor_slug,
         )
-
-    def _get_document_type(self, content_type: str) -> str:
-        """Determine if content should be sent as image_url or document_url."""
-        content_type_lower = content_type.lower()
-
-        for mime in self.IMAGE_MIME_TYPES:
-            if content_type_lower.startswith(mime):
-                return "image_url"
-        return "document_url"

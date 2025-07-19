@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum, auto
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel as PydanticModel
 from pydantic import Field as PydanticField
@@ -61,12 +61,11 @@ class DocumentMetadata(PydanticModel):
     """Metadata about a document."""
 
     content_type: str  # MIME type
-    content_source: Literal["url", "upload", "text"]  # How we got the content
     total_pages: int  # 1 for websites and text
-    file_size: float | None = None  # File size in bytes (only for uploads)
-    title: str | None = None
+    title: str | None = None  # Document title if we can extract it
     url: str | None = None  # Original URL if from web
-    filename: str | None = None  # Original filename if uploaded
+    file_name: str | None = None  # Original filename
+    file_size: float | None = None  # Content size in bytes
 
 
 class Document(SQLModel, table=True):
@@ -85,7 +84,6 @@ class Document(SQLModel, table=True):
         ),
     )
 
-    source_ref: str | None = Field(default=None)  # URL or filename for extracted documents
     extraction_method: str | None = Field(default=None)  # processor slug used for extraction
     # Structured content for frontend display (XML with block tags, images, tables, etc.)
     structured_content: str | None = Field(default=None, sa_column=Column(TEXT, nullable=True))
