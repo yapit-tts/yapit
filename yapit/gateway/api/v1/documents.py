@@ -20,10 +20,20 @@ from yapit.gateway.deps import (
     DbSession,
     DocumentCache,
     DocumentProcessorManagerDep,
+    IsAdmin,
     SettingsDep,
     TextSplitterDep,
+    get_or_create_user_credits,
 )
-from yapit.gateway.domain_models import Block, Document, DocumentMetadata, DocumentProcessor
+from yapit.gateway.domain_models import (
+    Block,
+    CreditTransaction,
+    Document,
+    DocumentMetadata,
+    DocumentProcessor,
+    TransactionStatus,
+    TransactionType,
+)
 from yapit.gateway.exceptions import ResourceNotFoundError, ValidationError
 from yapit.gateway.processors.document.base import (
     CachedDocument,
@@ -341,6 +351,7 @@ async def create_document(
     db: DbSession,
     cache: DocumentCache,
     user: AuthenticatedUser,
+    is_admin: IsAdmin,
     splitter: TextSplitterDep,
     document_processor_manager: DocumentProcessorManagerDep,
 ) -> DocumentCreateResponse:
@@ -366,13 +377,33 @@ async def create_document(
     if not processor:
         raise HTTPException(404, rf"Processor {req.processor_slug} not found")
 
+    # Admin auto top-up for development/self-hosting
+    if is_admin:
+        user_credits = await get_or_create_user_credits(user.id, db)
+        if user_credits.balance < 1000:
+            top_up_amount = 10000
+            balance_before = user_credits.balance
+            user_credits.balance += top_up_amount
+
+            transaction = CreditTransaction(
+                user_id=user.id,
+                type=TransactionType.credit_bonus,
+                status=TransactionStatus.completed,
+                amount=top_up_amount,
+                balance_before=balance_before,
+                balance_after=user_credits.balance,
+                description="Admin auto top-up for document processing",
+            )
+            db.add(transaction)
+            await db.commit()
+
     extraction_result = await processor.process_with_billing(
         user_id=user.id,
         cache_key=req.hash,
         db=db,
         cache=cache,
-        url=cached_doc.metadata.url if cached_doc.metadata.content_source == "url" else None,
-        content=cached_doc.content if cached_doc.metadata.content_source == "upload" else None,
+        url=cached_doc.metadata.url,
+        content=cached_doc.content,
         content_type=cached_doc.metadata.content_type,
         pages=req.pages,
     )
@@ -497,6 +528,13 @@ def _extract_document_info(content: bytes, content_type: str) -> tuple[int, str 
             title = title_match.group(1).strip()
         else:
             log.warning(f"Failed to extract title from HTML content:\n{html_text}", exc_info=True)
+    elif content_type.lower().startswith("text/") or content_type.lower() in [
+        "application/xml",
+        "application/rss+xml",
+        "application/atom+xml",
+    ]:
+        # Generic text-based formats
+        total_pages = 1
     else:
         raise ValidationError(f"Unsupported content type for metadata extraction: {content_type}")
 

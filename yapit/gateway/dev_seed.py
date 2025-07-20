@@ -6,7 +6,7 @@ from pathlib import Path
 
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from yapit.gateway.domain_models import CreditPackage, Filter, TTSModel, Voice
+from yapit.gateway.domain_models import CreditPackage, DocumentProcessor, Filter, TTSModel, Voice
 
 
 def create_dev_models() -> list[TTSModel]:
@@ -85,6 +85,23 @@ def create_dev_filters() -> list[Filter]:
     return filters
 
 
+def create_dev_document_processors() -> list[DocumentProcessor]:
+    """Create document processors for development."""
+    processors = [
+        DocumentProcessor(
+            slug="markitdown",
+            name="Markitdown (Free)",
+            credits_per_page=Decimal("0"),  # Free processor
+        ),
+        DocumentProcessor(
+            slug="mistral-ocr",
+            name="Mistral OCR",
+            credits_per_page=Decimal("10"),  # 10 credits per page
+        ),
+    ]
+    return processors
+
+
 def create_dev_credit_packages() -> list[CreditPackage]:
     """Create default credit packages for purchase."""
     packages = [
@@ -105,7 +122,7 @@ def create_dev_credit_packages() -> list[CreditPackage]:
 
 
 async def seed_dev_database(db: AsyncSession) -> None:
-    """Seed development database with models, filters, and credit packages."""
+    """Seed development database with models, filters, document processors, and credit packages."""
     # Add all TTS models
     for model in create_dev_models():
         db.add(model)
@@ -113,6 +130,10 @@ async def seed_dev_database(db: AsyncSession) -> None:
     # Add default filters
     for filter_obj in create_dev_filters():
         db.add(filter_obj)
+
+    # Add document processors
+    for processor in create_dev_document_processors():
+        db.add(processor)
 
     # Add credit packages
     for package in create_dev_credit_packages():

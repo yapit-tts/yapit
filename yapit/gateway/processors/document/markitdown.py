@@ -7,7 +7,7 @@ from yapit.gateway.processors.document.base import BaseDocumentProcessor, Docume
 
 class MarkitdownProcessor(BaseDocumentProcessor):
     @property
-    def supported_mime_types(self) -> set[str]:
+    def _processor_supported_mime_types(self) -> set[str]:
         return {
             # default text formats
             "text/html",

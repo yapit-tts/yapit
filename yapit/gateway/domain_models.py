@@ -173,11 +173,6 @@ class DocumentProcessor(SQLModel, table=True):
     name: str
     credits_per_page: Decimal = Field(sa_column=Column(DECIMAL(10, 4), nullable=False))  # cost
 
-    max_pages: int
-    max_file_size_mb: int
-    supported_formats: list[str] = Field(sa_column=Column(postgresql.JSONB(), nullable=False))
-    supports_batch: bool
-
 
 class RegexRule(PydanticModel):
     pattern: str

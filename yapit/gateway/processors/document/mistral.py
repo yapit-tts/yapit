@@ -54,7 +54,7 @@ class MistralOCRProcessor(BaseDocumentProcessor):
         self._model = model
 
     @property
-    def supported_mime_types(self) -> set[str]:
+    def _processor_supported_mime_types(self) -> set[str]:
         return self.IMAGE_MIME_TYPES | self.DOCUMENT_MIME_TYPES
 
     @property

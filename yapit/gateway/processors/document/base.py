@@ -1,12 +1,13 @@
 from abc import ABC, abstractmethod
 from decimal import Decimal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from yapit.gateway.cache import SqliteCache
 from yapit.gateway.config import Settings
+from yapit.gateway.constants import PLATFORM_SUPPORTED_MIME_TYPES
 from yapit.gateway.domain_models import (
     CreditTransaction,
     DocumentMetadata,
@@ -37,6 +38,11 @@ class CachedDocument(BaseModel):
     content: bytes | None = None  # Optional - actual file content for uploads
     extraction: DocumentExtractionResult | None = None
 
+    model_config = ConfigDict(
+        ser_json_bytes="base64",
+        val_json_bytes="base64",
+    )
+
 
 class BaseDocumentProcessor(ABC):
     """Base class for all document processors."""
@@ -47,10 +53,11 @@ class BaseDocumentProcessor(ABC):
 
     @property
     @abstractmethod
-    def supported_mime_types(self) -> set[str]:
-        """Return set of supported MIME types.
+    def _processor_supported_mime_types(self) -> set[str]:
+        """Return set of MIME types this processor can handle.
 
         Can include wildcards like 'image/*' or specific types like 'application/pdf'.
+        This should return ALL formats the processor technically supports.
         """
 
     @property
@@ -79,6 +86,26 @@ class BaseDocumentProcessor(ABC):
             content_type: MIME type of the document (required if content is provided)
             pages: Specific pages to process (1-indexed, optional)
         """
+
+    @property
+    def supported_mime_types(self) -> set[str]:
+        """Return intersection of processor capabilities and platform-supported types.
+
+        Processors can use wildcards like 'image/*' which will match all platform
+        types starting with 'image/'.
+        """
+        processor_types = self._processor_supported_mime_types
+        supported = set()
+
+        for proc_type in processor_types:
+            if proc_type.endswith("/*"):
+                # Handle wildcards like "image/*"
+                prefix = proc_type[:-2]
+                supported.update(t for t in PLATFORM_SUPPORTED_MIME_TYPES if t.startswith(prefix + "/"))
+            elif proc_type in PLATFORM_SUPPORTED_MIME_TYPES:
+                supported.add(proc_type)
+
+        return supported
 
     async def process_with_billing(
         self,
@@ -196,15 +223,7 @@ class BaseDocumentProcessor(ABC):
 
     def _is_supported(self, mime_type: str) -> bool:
         """Check if this processor supports the given MIME type."""
-        for supported in self.supported_mime_types:
-            if supported.endswith("/*"):
-                # Wildcard match (e.g., "image/*")
-                prefix = supported[:-2]
-                if mime_type.startswith(prefix + "/"):
-                    return True
-            elif mime_type == supported:
-                return True
-        return False
+        return mime_type in self.supported_mime_types
 
 
 def get_missing_pages(

@@ -5,12 +5,11 @@
 Set up the backend dev env:
 ```bash
 uv sync --all-extras
-cp .env.prod.example .env.prod # .env.prod must exist, even if it's not used in dev
 echo "RUNPOD_API_KEY=asdf\nMISTRAL_API_KEY=asdf" > .env.local # env vars you do not want to commit 
 ```
 
-If you want to also use runpod workers, put `RUNPOD_API_KEY` in `.env.local`.
-This entry also needs to exist (with any value) for the gateway to start up wiith the default `endpoints.dev.json` configuration.
+If you want to use runpod workers, put `RUNPOD_API_KEY` in `.env.local`. Similarily with mistral OCR.
+These `.env.local` entries have to exist (with any value) for the gateway to start up with the default `endpoints.dev.json` configuration.
 
 Start the backend services:
 ```bash
@@ -37,4 +36,3 @@ password: yapit123
 ```
 
 > **The admin user can only be used to access the stack-auth dashboard. It's not an application user**
-

@@ -1,0 +1,34 @@
+"""Platform-wide constants for the gateway."""
+
+# MIME types that make sense for TTS use cases
+# Processors should intersect their capabilities with these
+PLATFORM_SUPPORTED_MIME_TYPES = {
+    # Text formats
+    "text/html",
+    "text/plain",
+    "text/xml",
+    "application/xml",
+    # Feed formats (blogs, news)
+    "application/rss+xml",
+    "application/atom+xml",
+    # E-book formats
+    "application/epub+zip",
+    "application/x-epub+zip",
+    # Document formats
+    "application/pdf",
+    "application/x-pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",  # DOCX
+    # Image formats
+    "image/png",
+    "image/jpeg",
+    "image/jpg",
+    "image/webp",
+    "image/gif",
+    "image/bmp",
+    "image/tiff",
+}
+
+# Formats that markitdown supports but we don't expose:
+# - application/json (not useful for TTS)
+# - text/csv (tabular data doesn't read well)
+# - application/zip (too generic)
