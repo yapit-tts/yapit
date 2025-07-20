@@ -17,17 +17,10 @@ from yapit.gateway.deps import (
     CurrentTTSModel,
     CurrentVoice,
     DbSession,
-    IsAdmin,
     RedisClient,
-    get_or_create_user_credits,
+    UserCreditsWithAdminTopup,
 )
-from yapit.gateway.domain_models import (
-    BlockVariant,
-    CreditTransaction,
-    TransactionStatus,
-    TransactionType,
-    TTSModel,
-)
+from yapit.gateway.domain_models import BlockVariant, TTSModel
 
 log = logging.getLogger(__name__)
 
@@ -66,34 +59,12 @@ async def synthesize(
     model: CurrentTTSModel,
     voice: CurrentVoice,
     user: AuthenticatedUser,
-    is_admin: IsAdmin,
+    user_credits: UserCreditsWithAdminTopup,
     db: DbSession,
     redis: RedisClient,
     cache: AudioCache,
 ) -> Response:
     """Synthesize audio for a block. Returns audio data directly with long-polling."""
-    # Get or create credits for all users (including admins for tracking)
-    user_credits = await get_or_create_user_credits(user.id, db)
-
-    if is_admin and user_credits.balance < 1000:  # Auto top-up admin credits if running low (dev/self-host purposes)
-        top_up_amount = 10000
-        balance_before = user_credits.balance
-        user_credits.balance += top_up_amount
-
-        # Create transaction record for audit trail
-        transaction = CreditTransaction(
-            user_id=user.id,
-            type=TransactionType.credit_bonus,
-            status=TransactionStatus.completed,
-            amount=top_up_amount,
-            balance_before=balance_before,
-            balance_after=user_credits.balance,
-            description="Admin auto top-up",
-        )
-        db.add(transaction)
-
-    await db.commit()
-
     if user_credits.balance <= 0:
         raise HTTPException(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,

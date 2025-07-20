@@ -20,19 +20,15 @@ from yapit.gateway.deps import (
     DbSession,
     DocumentCache,
     DocumentProcessorManagerDep,
-    IsAdmin,
     SettingsDep,
     TextSplitterDep,
-    get_or_create_user_credits,
+    UserCreditsWithAdminTopup,
 )
 from yapit.gateway.domain_models import (
     Block,
-    CreditTransaction,
     Document,
     DocumentMetadata,
     DocumentProcessor,
-    TransactionStatus,
-    TransactionType,
 )
 from yapit.gateway.exceptions import ResourceNotFoundError, ValidationError
 from yapit.gateway.processors.document.base import (
@@ -173,11 +169,7 @@ async def prepare_document(
                 raise HTTPException(400, f"Invalid page numbers: {invalid_pages}. Document has {page_count} pages.")
 
         credit_cost = await _calculate_document_credit_cost(
-            cached_doc,
-            request.processor_slug,
-            request.pages,
-            db,
-            document_processor_manager,
+            cached_doc, request.processor_slug, request.pages, db, document_processor_manager
         )
     return DocumentPrepareResponse(hash=cache_key, metadata=metadata, endpoint=endpoint, credit_cost=credit_cost)
 
@@ -187,6 +179,7 @@ async def prepare_document_upload(
     file: UploadFile,
     cache: DocumentCache,
     db: DbSession,
+    settings: SettingsDep,
     document_processor_manager: DocumentProcessorManagerDep,
     processor_slug: str | None = None,
     pages: list[int] | None = None,
@@ -202,11 +195,7 @@ async def prepare_document_upload(
         cached_doc = CachedDocument.model_validate_json(cached_data)
 
         credit_cost = await _calculate_document_credit_cost(
-            cached_doc,
-            processor_slug,
-            pages,
-            db,
-            document_processor_manager,
+            cached_doc, processor_slug, pages, db, document_processor_manager
         )
 
         return DocumentPrepareResponse(
@@ -229,7 +218,9 @@ async def prepare_document_upload(
     )
 
     cached_doc = CachedDocument(metadata=metadata, content=content)
-    await cache.store(cache_key, cached_doc.model_dump_json().encode(), ttl_seconds=600)
+    await cache.store(
+        cache_key, cached_doc.model_dump_json().encode(), ttl_seconds=settings.document_cache_ttl_document
+    )
 
     credit_cost = await _calculate_document_credit_cost(
         cached_doc, processor_slug, pages, db, document_processor_manager
@@ -336,7 +327,7 @@ async def create_document(
     db: DbSession,
     cache: DocumentCache,
     user: AuthenticatedUser,
-    is_admin: IsAdmin,
+    user_credits: UserCreditsWithAdminTopup,
     splitter: TextSplitterDep,
     document_processor_manager: DocumentProcessorManagerDep,
 ) -> DocumentCreateResponse:
@@ -361,29 +352,9 @@ async def create_document(
     processor = document_processor_manager.get_processor(req.processor_slug)
     if not processor:
         raise HTTPException(404, rf"Processor {req.processor_slug} not found")
-
-    # Admin auto top-up for development/self-hosting
-    if is_admin:
-        user_credits = await get_or_create_user_credits(user.id, db)
-        if user_credits.balance < 1000:
-            top_up_amount = 10000
-            balance_before = user_credits.balance
-            user_credits.balance += top_up_amount
-
-            transaction = CreditTransaction(
-                user_id=user.id,
-                type=TransactionType.credit_bonus,
-                status=TransactionStatus.completed,
-                amount=top_up_amount,
-                balance_before=balance_before,
-                balance_after=user_credits.balance,
-                description="Admin auto top-up for document processing",
-            )
-            db.add(transaction)
-            await db.commit()
-
     extraction_result = await processor.process_with_billing(
         user_id=user.id,
+        user_credits=user_credits,
         cache_key=req.hash,
         db=db,
         cache=cache,

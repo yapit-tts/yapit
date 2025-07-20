@@ -14,7 +14,17 @@ from yapit.gateway.auth import authenticate
 from yapit.gateway.cache import Cache, Caches, SqliteCache
 from yapit.gateway.config import Settings, get_settings
 from yapit.gateway.db import create_session
-from yapit.gateway.domain_models import Block, BlockVariant, Document, TTSModel, UserCredits, Voice
+from yapit.gateway.domain_models import (
+    Block,
+    BlockVariant,
+    CreditTransaction,
+    Document,
+    TransactionStatus,
+    TransactionType,
+    TTSModel,
+    UserCredits,
+    Voice,
+)
 from yapit.gateway.processors.document.manager import DocumentProcessorManager
 from yapit.gateway.stack_auth.users import User
 from yapit.gateway.text_splitter import (
@@ -191,6 +201,36 @@ async def get_or_create_user_credits(user_id: str, db: DbSession) -> UserCredits
     return user_credits
 
 
+async def get_user_credits_with_admin_topup(
+    user: AuthenticatedUser,
+    db: DbSession,
+    is_admin: IsAdmin,
+    min_balance: Decimal = Decimal(1000),
+    top_up_amount: Decimal = Decimal(10000),
+) -> UserCredits:
+    """Get user credits, with automatic top-up for admin users for testing/development/self-hosting.
+
+    Returns:
+        UserCredits instance (topped up if admin and balance is low)
+    """
+    user_credits = await get_or_create_user_credits(user.id, db)
+    if is_admin and user_credits.balance < min_balance:
+        balance_before = user_credits.balance
+        user_credits.balance += top_up_amount
+        transaction = CreditTransaction(
+            user_id=user.id,
+            type=TransactionType.credit_bonus,
+            status=TransactionStatus.completed,
+            amount=top_up_amount,
+            balance_before=balance_before,
+            balance_after=user_credits.balance,
+            description="Admin auto top-up",
+        )
+        db.add(transaction)
+        await db.commit()
+    return user_credits
+
+
 async def get_redis_client(request: Request) -> Redis:
     return request.app.state.redis_client
 
@@ -210,3 +250,4 @@ CurrentBlock = Annotated[Block, Depends(get_block)]
 CurrentBlockVariant = Annotated[BlockVariant, Depends(get_block_variant)]
 AuthenticatedUser = Annotated[User, Depends(authenticate)]
 IsAdmin = Annotated[bool, Depends(is_admin)]
+UserCreditsWithAdminTopup = Annotated[UserCredits, Depends(get_user_credits_with_admin_topup)]

@@ -110,6 +110,7 @@ class BaseDocumentProcessor(ABC):
     async def process_with_billing(
         self,
         user_id: str,
+        user_credits: UserCredits,
         cache_key: str,
         db: AsyncSession,
         cache: SqliteCache,
@@ -158,9 +159,6 @@ class BaseDocumentProcessor(ABC):
             return self._filter_pages(cached_doc.extraction, requested_pages)
 
         # Check credits
-        user_credits = await db.get(UserCredits, user_id)
-        if not user_credits:
-            raise ValueError("User credits not found")
         credits_needed = Decimal(len(missing_pages)) * processor_model.credits_per_page
         if user_credits.balance < credits_needed:
             raise InsufficientCreditsError(f"Insufficient credits: need {credits_needed}, have {user_credits.balance}")
