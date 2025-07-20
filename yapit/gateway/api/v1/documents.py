@@ -248,13 +248,18 @@ async def create_text_document(
     """Create a document from direct text input."""
     text_blocks = plaintext_splitter.split(text=req.content)
 
-    doc = Document(
+    # TODO: Implement proper XML generation for structured content
+    structured_content = req.content  # Placeholder until XML generation is implemented
+
+    doc = await _create_document_with_blocks(
+        db=db,
         user_id=user.id,
         content_type="text/plain",
         title=req.title,
         original_text=req.content,
-        filtered_text=None,
-        metadata_=DocumentMetadata(
+        filtered_text=None,  # No filtering for direct text input
+        structured_content=structured_content,
+        metadata=DocumentMetadata(
             content_type="text/plain",
             total_pages=1,
             title=None,
@@ -262,20 +267,9 @@ async def create_text_document(
             file_name=None,
             file_size=len(req.content.encode("utf-8")),
         ),
+        extraction_method=None,
+        text_blocks=text_blocks,
     )
-    db.add(doc)
-
-    blocks = [
-        Block(
-            document=doc,
-            idx=idx,
-            text=block_text,
-            est_duration_ms=estimate_duration_ms(block_text),
-        )
-        for idx, block_text in enumerate(text_blocks)
-    ]
-    db.add_all(blocks)
-    await db.commit()
     return DocumentCreateResponse(id=doc.id, title=doc.title)
 
 
@@ -318,30 +312,21 @@ async def create_website_document(
     # TODO use md-aware parser to get blocks + structured content
     text_blocks = splitter.split(text=extracted_text)
 
-    doc = Document(
+    # TODO: Implement proper XML generation from markdown
+    structured_content = extracted_text  # Placeholder until XML generation is implemented
+
+    doc = await _create_document_with_blocks(
+        db=db,
         user_id=user.id,
         content_type=cached_doc.metadata.content_type,
         title=cached_doc.metadata.title or req.title,
         original_text=extracted_text,
-        filtered_text=extracted_text,  # TODO: Implement filtering
+        filtered_text=None,  # TODO: Implement filtering
+        structured_content=structured_content,
+        metadata=cached_doc.metadata,
         extraction_method=extraction_result.extraction_method,
-        structured_content=extracted_text,  # TODO: Generate XML with structure
-        metadata_=cached_doc.metadata,
+        text_blocks=text_blocks,
     )
-    db.add(doc)
-
-    blocks = [
-        Block(
-            document=doc,
-            idx=idx,
-            text=block_text,
-            est_duration_ms=estimate_duration_ms(block_text),
-        )
-        for idx, block_text in enumerate(text_blocks)
-    ]
-    db.add_all(blocks)
-    await db.commit()
-
     return DocumentCreateResponse(id=doc.id, title=doc.title)
 
 
@@ -413,30 +398,21 @@ async def create_document(
     # TODO use md-aware parser to get blocks + structured content
     text_blocks = splitter.split(text=extracted_text)
 
-    doc = Document(
+    # TODO: Implement proper XML generation from markdown
+    structured_content = extracted_text  # Placeholder until XML generation is implemented
+
+    doc = await _create_document_with_blocks(
+        db=db,
         user_id=user.id,
         content_type=cached_doc.metadata.content_type,
         title=cached_doc.metadata.title or req.title,
         original_text=extracted_text,
-        filtered_text=extracted_text,  # TODO: Implement filtering
+        filtered_text=None,  # TODO: Implement filtering
+        structured_content=structured_content,
+        metadata=cached_doc.metadata,
         extraction_method=extraction_result.extraction_method,
-        structured_content=extracted_text,  # TODO: Generate XML with structure
-        metadata_=cached_doc.metadata,
+        text_blocks=text_blocks,
     )
-    db.add(doc)
-
-    blocks = [
-        Block(
-            document=doc,
-            idx=idx,
-            text=block_text,
-            est_duration_ms=estimate_duration_ms(block_text),
-        )
-        for idx, block_text in enumerate(text_blocks)
-    ]
-    db.add_all(blocks)
-    await db.commit()
-
     return DocumentCreateResponse(id=doc.id, title=doc.title)
 
 
@@ -566,7 +542,45 @@ async def _calculate_document_credit_cost(
     )
 
 
-def estimate_duration_ms(text: str, speed: float = 1.0, chars_per_second: float = 20) -> int:
+async def _create_document_with_blocks(
+    db: DbSession,
+    user_id: str,
+    content_type: str,
+    title: str | None,
+    original_text: str,
+    filtered_text: str | None,
+    structured_content: str,
+    metadata: DocumentMetadata,
+    extraction_method: str | None,
+    text_blocks: list[str],
+) -> Document:
+    doc = Document(
+        user_id=user_id,
+        content_type=content_type,
+        title=title,
+        original_text=original_text,
+        filtered_text=filtered_text,
+        extraction_method=extraction_method,
+        structured_content=structured_content,
+        metadata_=metadata,
+    )
+    db.add(doc)
+    db.add_all(
+        [
+            Block(
+                document=doc,
+                idx=idx,
+                text=block_text,
+                est_duration_ms=_estimate_duration_ms(block_text),
+            )
+            for idx, block_text in enumerate(text_blocks)
+        ]
+    )
+    await db.commit()
+    return doc
+
+
+def _estimate_duration_ms(text: str, speed: float = 1.0, chars_per_second: float = 20) -> int:
     """Estimate audio duration in milliseconds. # TODO ... per model/voice est.?
 
     Args:
