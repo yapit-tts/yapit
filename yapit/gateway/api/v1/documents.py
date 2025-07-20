@@ -16,13 +16,14 @@ from sqlmodel import select
 from yapit.gateway.auth import authenticate
 from yapit.gateway.deps import (
     AuthenticatedUser,
+    AuthenticatedUserCredits,
     CurrentDoc,
     DbSession,
     DocumentCache,
     DocumentProcessorManagerDep,
     SettingsDep,
     TextSplitterDep,
-    UserCreditsWithAdminTopup,
+    ensure_admin_credits,
 )
 from yapit.gateway.domain_models import (
     Block,
@@ -321,13 +322,18 @@ async def create_website_document(
     return DocumentCreateResponse(id=doc.id, title=doc.title)
 
 
-@router.post("/document", response_model=DocumentCreateResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/document",
+    response_model=DocumentCreateResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(ensure_admin_credits)],
+)
 async def create_document(
     req: DocumentCreateRequest,
     db: DbSession,
     cache: DocumentCache,
     user: AuthenticatedUser,
-    user_credits: UserCreditsWithAdminTopup,
+    user_credits: AuthenticatedUserCredits,
     splitter: TextSplitterDep,
     document_processor_manager: DocumentProcessorManagerDep,
 ) -> DocumentCreateResponse:

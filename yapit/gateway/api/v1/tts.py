@@ -12,13 +12,14 @@ from yapit.gateway.auth import authenticate
 from yapit.gateway.deps import (
     AudioCache,
     AuthenticatedUser,
+    AuthenticatedUserCredits,
     CurrentBlock,
     CurrentDoc,
     CurrentTTSModel,
     CurrentVoice,
     DbSession,
     RedisClient,
-    UserCreditsWithAdminTopup,
+    ensure_admin_credits,
 )
 from yapit.gateway.domain_models import BlockVariant, TTSModel
 
@@ -50,7 +51,7 @@ class SynthRequest(BaseModel):
 @router.post(
     "/documents/{document_id}/blocks/{block_id}/synthesize",
     response_class=Response,
-    dependencies=[Depends(authenticate)],
+    dependencies=[Depends(authenticate), Depends(ensure_admin_credits)],
 )
 async def synthesize(
     body: SynthRequest,
@@ -59,7 +60,7 @@ async def synthesize(
     model: CurrentTTSModel,
     voice: CurrentVoice,
     user: AuthenticatedUser,
-    user_credits: UserCreditsWithAdminTopup,
+    user_credits: AuthenticatedUserCredits,
     db: DbSession,
     redis: RedisClient,
     cache: AudioCache,

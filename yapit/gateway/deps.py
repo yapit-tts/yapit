@@ -201,19 +201,19 @@ async def get_or_create_user_credits(user_id: str, db: DbSession) -> UserCredits
     return user_credits
 
 
-async def get_user_credits_with_admin_topup(
+async def _get_or_create_user_credits_dep_helper(user: AuthenticatedUser, db: DbSession) -> UserCredits:
+    return await get_or_create_user_credits(user.id, db)
+
+
+async def ensure_admin_credits(
     user: AuthenticatedUser,
+    user_credits: AuthenticatedUserCredits,
     db: DbSession,
     is_admin: IsAdmin,
     min_balance: Decimal = Decimal(1000),
     top_up_amount: Decimal = Decimal(10000),
-) -> UserCredits:
-    """Get user credits, with automatic top-up for admin users for testing/development/self-hosting.
-
-    Returns:
-        UserCredits instance (topped up if admin and balance is low)
-    """
-    user_credits = await get_or_create_user_credits(user.id, db)
+) -> None:
+    """Ensure admin users have sufficient credits by topping up if needed (for testing/development/self-hosting)."""
     if is_admin and user_credits.balance < min_balance:
         balance_before = user_credits.balance
         user_credits.balance += top_up_amount
@@ -228,7 +228,6 @@ async def get_user_credits_with_admin_topup(
         )
         db.add(transaction)
         await db.commit()
-    return user_credits
 
 
 async def get_redis_client(request: Request) -> Redis:
@@ -250,4 +249,4 @@ CurrentBlock = Annotated[Block, Depends(get_block)]
 CurrentBlockVariant = Annotated[BlockVariant, Depends(get_block_variant)]
 AuthenticatedUser = Annotated[User, Depends(authenticate)]
 IsAdmin = Annotated[bool, Depends(is_admin)]
-UserCreditsWithAdminTopup = Annotated[UserCredits, Depends(get_user_credits_with_admin_topup)]
+AuthenticatedUserCredits = Annotated[UserCredits, Depends(_get_or_create_user_credits_dep_helper)]
