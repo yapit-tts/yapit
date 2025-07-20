@@ -46,7 +46,6 @@ class Cache(abc.ABC):
 
 
 class SqliteCache(Cache):
-    # TODO expiration, size limits, etc.
     def __init__(self, config: CacheConfig):
         super().__init__(config)
         self.db_path = Path(config.path) / "cache.db"
@@ -107,6 +106,7 @@ class SqliteCache(Cache):
             db.execute("VACUUM")
             db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
 
+    # TODO: never called
     async def cleanup_expired(self) -> int:
         """Remove expired entries."""
         current_time = time.time()
