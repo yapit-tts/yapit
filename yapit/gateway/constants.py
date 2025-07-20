@@ -6,11 +6,6 @@ PLATFORM_SUPPORTED_MIME_TYPES = {
     # Text formats
     "text/html",
     "text/plain",
-    "text/xml",
-    "application/xml",
-    # Feed formats (blogs, news)
-    "application/rss+xml",
-    "application/atom+xml",
     # E-book formats
     "application/epub+zip",
     "application/x-epub+zip",

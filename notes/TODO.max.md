@@ -2,6 +2,7 @@
 
 ### Fix
 
+- Upload size restrictions for upload endpoint
 - Thinking about security / exploits: Limits on the number of docs, filters, etc.
 - Should Block.id be a UUID too?
 - Is there a global setting for pydantic to forbid extra vals?
@@ -21,6 +22,7 @@
 
 ### Refactor
 
+- Use pydantic types in tests (deserialize responses to pydantic models) for automatic validation + easier refactoring, ...
 - replace .get()+exception with get_one() and add global exception handler
 - replace generic value errors with custom exceptions (in proper format...), , add appropriate error hanlers, (document responses in routes?)
 

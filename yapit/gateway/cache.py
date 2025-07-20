@@ -16,8 +16,8 @@ class Caches(StrEnum):
 
 class CacheConfig(BaseModel):
     path: Path | str | None = None  # only used if cache_type is fs or sqlite
-    max_size_mb: int | None = None  # Maximum cache size in MB
-    max_item_size_mb: int | None = None  # Maximum size per cached item in MB
+    max_size_mb: int | None = None
+    max_item_size_mb: int | None = None
 
 
 class Cache(abc.ABC):
@@ -100,6 +100,7 @@ class SqliteCache(Cache):
             cur = db.execute("DELETE FROM cache WHERE key=?", (key,))
         return cur.rowcount > 0
 
+    # TODO: never called
     async def vacuum(self) -> None:
         """Reclaim free space and defragment the DB. Also checkpoints the WAL into the main file."""
         with sqlite3.connect(self.db_path) as db:
