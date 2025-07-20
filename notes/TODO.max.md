@@ -3,6 +3,7 @@
 ### Fix
 
 - Upload size restrictions for upload endpoint
+- Mistral: Dont assume pages are returned in order, sort them by explicitly returned page number before returning
 - Thinking about security / exploits: Limits on the number of docs, filters, etc.
 - Should Block.id be a UUID too?
 - Is there a global setting for pydantic to forbid extra vals?

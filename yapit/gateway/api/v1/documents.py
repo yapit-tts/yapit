@@ -136,7 +136,7 @@ async def prepare_document(
         cached_doc = CachedDocument.model_validate_json(cached_data)
         endpoint = "website" if cached_doc.metadata.content_type.lower() == "text/html" else "document"
 
-        credit_cost: int | None = None
+        credit_cost: Decimal | None = None
         if endpoint == "document":
             credit_cost = await _calculate_document_credit_cost(
                 cached_doc, request.processor_slug, request.pages, db, document_processor_manager

@@ -171,7 +171,7 @@ class DocumentProcessor(SQLModel, table=True):
 
     slug: str = Field(primary_key=True)
     name: str
-    credits_per_page: Decimal = Field(sa_column=Column(DECIMAL(10, 4), nullable=False))  # cost
+    credits_per_page: Decimal = Field(sa_column=Column(DECIMAL(10, 4), nullable=False))
 
 
 class RegexRule(PydanticModel):

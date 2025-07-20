@@ -72,7 +72,7 @@ class MistralOCRProcessor(BaseDocumentProcessor):
         content_type: str | None = None,
         pages: list[int] | None = None,
     ) -> DocumentExtractionResult:
-        doc_url = "image_url" if content_type.lower().startswith("image/") else "document_url"
+        doc_url = "image_url" if content_type and content_type.lower().startswith("image/") else "document_url"
         doc_content = url if url else f"data:{content_type};base64,{base64.b64encode(content).decode('utf-8')}"
         request_params = {
             "model": self._model,
