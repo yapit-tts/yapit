@@ -86,7 +86,7 @@ class Document(SQLModel, table=True):
 
     extraction_method: str | None = Field(default=None)  # processor slug used for extraction
     # Structured content for frontend display (XML with block tags, images, tables, etc.)
-    structured_content: str | None = Field(default=None, sa_column=Column(TEXT, nullable=True))
+    structured_content: str = Field(sa_column=Column(TEXT, nullable=False))
 
     created: datetime = Field(
         default_factory=lambda: datetime.now(tz=dt.UTC),
