@@ -44,6 +44,7 @@ test = [
   "aiosqlite==0.21.0",
   "testcontainers==4.10.0",
   "httpx~=0.28.1",
+  "PyMuPDF~=1.26.3",
 ]
 
 dev = [
