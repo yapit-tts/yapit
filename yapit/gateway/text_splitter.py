@@ -60,7 +60,7 @@ class HierarchicalSplitter(TextSplitter):
 
         regex, delimiter = self._DELIMS[level]
         blocks, current = [], ""
-        for part in filter(None, regex.split(segment)):  # None filters all falsy (empty strings)
+        for part in (p for p in regex.split(segment) if p):
             to_append = f"{current}{delimiter}{part}" if current else part
             if len(to_append) <= self.config.max_chars:
                 current = to_append
