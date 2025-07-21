@@ -35,8 +35,8 @@ async def test_tts_insufficient_credits(regular_client, regular_document):
     block_id = regular_document["blocks"][0]["id"]
 
     synth_response = await regular_client.post(
-        f"/v1/documents/{document_id}/blocks/{block_id}/synthesize",
-        json={"model_slug": "kokoro-cpu", "voice_slug": "af_heart", "speed": 1.0},
+        f"/v1/documents/{document_id}/blocks/{block_id}/synthesize/models/kokoro-cpu/voices/af_heart",
+        json={"speed": 1.0},
     )
 
     assert synth_response.status_code == 402
@@ -55,8 +55,8 @@ async def test_tts_with_credits_deduction(regular_client, admin_client, regular_
     block_id = unique_document["blocks"][0]["id"]
 
     synth_response = await regular_client.post(
-        f"/v1/documents/{document_id}/blocks/{block_id}/synthesize",
-        json={"model_slug": "kokoro-cpu", "voice_slug": "af_heart", "speed": 1.0},
+        f"/v1/documents/{document_id}/blocks/{block_id}/synthesize/models/kokoro-cpu/voices/af_heart",
+        json={"speed": 1.0},
     )
 
     assert synth_response.status_code == 200
@@ -72,7 +72,7 @@ async def test_tts_with_credits_deduction(regular_client, admin_client, regular_
     final_balance = Decimal(credits_after["balance"])
     assert final_balance < initial_credits
 
-    # Calculate expected deduction (duration_seconds * credit_multiplier)
+    # Calculate expected deduction (duration_seconds * credits_per_sec)
     # For kokoro-cpu, multiplier is 1.0
     expected_deduction = Decimal(duration_ms) / 1000 * Decimal("1.0")
     assert initial_credits - final_balance == expected_deduction
@@ -99,9 +99,9 @@ async def test_tts_cached_no_credit_deduction(regular_client, admin_client, regu
     block_id = unique_document["blocks"][0]["id"]
 
     # First synthesis - should deduct credits
-    synth_params = {"model_slug": "kokoro-cpu", "voice_slug": "af_heart", "speed": 1.0}
+    synth_params = {"speed": 1.0}
     first_response = await regular_client.post(
-        f"/v1/documents/{document_id}/blocks/{block_id}/synthesize",
+        f"/v1/documents/{document_id}/blocks/{block_id}/synthesize/models/kokoro-cpu/voices/af_heart",
         json=synth_params,
     )
     assert first_response.status_code == 200
@@ -114,7 +114,7 @@ async def test_tts_cached_no_credit_deduction(regular_client, admin_client, regu
 
     # Second synthesis (same params) - should use cache
     second_response = await regular_client.post(
-        f"/v1/documents/{document_id}/blocks/{block_id}/synthesize",
+        f"/v1/documents/{document_id}/blocks/{block_id}/synthesize/models/kokoro-cpu/voices/af_heart",
         json=synth_params,
     )
     assert second_response.status_code == 200
@@ -139,8 +139,8 @@ async def test_tts_cached_no_credit_deduction(regular_client, admin_client, regu
 async def test_tts_admin_no_credit_check(admin_client, test_document):
     """Test that admins dont need any credits."""
     synth_response = await admin_client.post(
-        f"/v1/documents/{test_document['id']}/blocks/{test_document['blocks'][0]['id']}/synthesize",
-        json={"model_slug": "kokoro-cpu", "voice_slug": "af_heart", "speed": 1.0},
+        f"/v1/documents/{test_document['id']}/blocks/{test_document['blocks'][0]['id']}/synthesize/models/kokoro-cpu/voices/af_heart",
+        json={"speed": 1.0},
     )
 
     # Should succeed

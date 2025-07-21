@@ -21,8 +21,8 @@ async def test_tts_integration(model_slug, admin_client, test_document):
     start_time = time.time()
 
     synth_response = await admin_client.post(
-        f"/v1/documents/{document_id}/blocks/{block_id}/synthesize",
-        json={"model_slug": model_slug, "voice_slug": "af_heart", "speed": 1.0},
+        f"/v1/documents/{document_id}/blocks/{block_id}/synthesize/models/{model_slug}/voices/af_heart",
+        json={"speed": 1.0},
     )
 
     elapsed = time.time() - start_time
@@ -43,8 +43,8 @@ async def test_tts_integration(model_slug, admin_client, test_document):
     start_time = time.time()
 
     cached_response = await admin_client.post(
-        f"/v1/documents/{document_id}/blocks/{block_id}/synthesize",
-        json={"model_slug": model_slug, "voice_slug": "af_heart", "speed": 1.0},
+        f"/v1/documents/{document_id}/blocks/{block_id}/synthesize/models/{model_slug}/voices/af_heart",
+        json={"speed": 1.0},
     )
 
     elapsed = time.time() - start_time

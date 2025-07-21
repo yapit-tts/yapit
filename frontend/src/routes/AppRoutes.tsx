@@ -2,6 +2,7 @@ import { Routes, Route, useLocation } from "react-router";
 import MainLayout from "../layouts/MainLayout";
 import PlaybackPage from "../pages/PlaybackPage";
 import TextInputPage from "@/pages/TextInputPage";
+import AdminPanelPage from "@/pages/AdminPanelPage";
 import { stackClientApp } from "@/auth";
 import { StackHandler } from "@stackframe/react";
 import { FC } from "react";
@@ -32,6 +33,14 @@ const AppRoutes = () => (
 			element={
 				<MainLayout>
 					<PlaybackPage />
+				</MainLayout>
+			}
+		/>
+		<Route
+			path="/admin"
+			element={
+				<MainLayout>
+					<AdminPanelPage />
 				</MainLayout>
 			}
 		/>
