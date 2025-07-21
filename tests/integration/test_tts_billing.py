@@ -114,7 +114,7 @@ async def test_tts_cached_no_credit_deduction(regular_client, admin_client, regu
 
     # Second synthesis (same params) - should use cache
     second_response = await regular_client.post(
-        f"/v1/documents/{document_id}/blocks/{block_id}/synthesize",
+        f"/v1/documents/{document_id}/blocks/{block_id}/synthesize/models/kokoro-cpu/voices/af_heart",
         json=synth_params,
     )
     assert second_response.status_code == 200
