@@ -11,7 +11,7 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from yapit.gateway.auth import authenticate
-from yapit.gateway.cache import Cache, Caches, SqliteCache
+from yapit.gateway.cache import Cache, CacheConfig, Caches, SqliteCache
 from yapit.gateway.config import Settings, get_settings
 from yapit.gateway.db import create_session
 from yapit.gateway.domain_models import (
@@ -37,35 +37,33 @@ from yapit.gateway.text_splitter import (
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 
 
+def _get_cache(cache_type: Caches, config: CacheConfig) -> Cache:
+    match cache_type:
+        case Caches.SQLITE:
+            return SqliteCache(config)
+        case _:
+            raise ValueError(f"Invalid cache type {cache_type}")
+
+
 def get_audio_cache(settings: SettingsDep) -> Cache:
-    audio_cache_type = settings.audio_cache_type.lower()
-    if audio_cache_type == Caches.SQLITE.name.lower():
-        return SqliteCache(settings.audio_cache_config)
-    else:
-        raise ValueError(rf"Invalid audio cache type {settings.audio_cache_type}")
+    return _get_cache(settings.audio_cache_type, settings.audio_cache_config)
 
 
 def get_document_cache(settings: SettingsDep) -> Cache:
-    document_cache_type = settings.document_cache_type.lower()
-    if document_cache_type == Caches.SQLITE.name.lower():
-        return SqliteCache(settings.document_cache_config)
-    else:
-        raise ValueError(rf"Invalid document cache type {settings.document_cache_type}")
+    return _get_cache(settings.document_cache_type, settings.document_cache_config)
 
 
 def get_text_splitter(settings: SettingsDep) -> TextSplitter:
-    splitter_type = settings.splitter_type.lower()
-    if splitter_type == TextSplitters.DUMMY.name.lower():
-        return DummySplitter(settings.splitter_config)
-    elif splitter_type == TextSplitters.HIERARCHICAL.name.lower():
-        return HierarchicalSplitter(settings.splitter_config)
-    else:
-        raise ValueError(rf"Invalid TextSplitter type {settings.splitter_type}")
+    match settings.splitter_type:
+        case TextSplitters.DUMMY:
+            return DummySplitter(settings.splitter_config)
+        case TextSplitters.HIERARCHICAL:
+            return HierarchicalSplitter(settings.splitter_config)
+        case _:
+            raise ValueError(f"Invalid TextSplitter type {settings.splitter_type}")
 
 
-async def get_db_session(
-    settings: Settings = Depends(get_settings),
-) -> AsyncIterator[AsyncSession]:
+async def get_db_session(settings: Settings = Depends(get_settings)) -> AsyncIterator[AsyncSession]:
     async for session in create_session(settings):
         yield session
 
