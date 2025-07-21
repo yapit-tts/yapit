@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import Annotated, AsyncIterator, Callable
+from typing import Annotated, AsyncIterator
 from uuid import UUID
 
-from fastapi import Body, Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status
 from redis.asyncio import Redis
 from sqlalchemy.orm import selectinload
 from sqlmodel import select
@@ -73,34 +73,13 @@ async def get_doc(
     return doc
 
 
-def _get_param_extractor(name: str) -> Callable:
-    """Helper to return a FastAPI dependency that fetches `name` from path/query or JSON."""
-
-    async def extract(
-        value: str | None = None,  # from url path or query parameter
-        body: dict | None = Body(None),  # from already-parsed JSON
-    ) -> str:
-        if value:
-            return value
-        if body and name in body:
-            return body[name]
-        raise HTTPException(422, f"{name} missing")
-
-    extract.__name__ = f"extract_{name}"
-    return extract
-
-
-ModelSlug = Annotated[str, Depends(_get_param_extractor("model_slug"))]
-VoiceSlug = Annotated[str, Depends(_get_param_extractor("voice_slug"))]
-
-
 async def get_model(
     db: DbSession,
-    slug: ModelSlug,
+    model_slug: str,
 ) -> TTSModel:
-    model: TTSModel | None = (await db.exec(select(TTSModel).where(TTSModel.slug == slug))).first()
+    model: TTSModel | None = (await db.exec(select(TTSModel).where(TTSModel.slug == model_slug))).first()
     if not model:
-        raise HTTPException(404, f"Model {slug!r} not found")
+        raise HTTPException(404, f"Model {model_slug!r} not found")
     return model
 
 
@@ -109,8 +88,8 @@ CurrentTTSModel = Annotated[TTSModel, Depends(get_model)]
 
 async def get_voice(
     db: DbSession,
-    model_slug: ModelSlug,
-    voice_slug: VoiceSlug,
+    model_slug: str,
+    voice_slug: str,
 ) -> Voice:
     voice: Voice | None = (
         await db.exec(select(Voice).join(TTSModel).where(Voice.slug == voice_slug, TTSModel.slug == model_slug))

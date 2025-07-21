@@ -49,13 +49,11 @@ def _audio_response(data: bytes, codec: str, model: TTSModel, duration_ms: int |
 
 
 class SynthRequest(BaseModel):
-    model_slug: str
-    voice_slug: str
     speed: float = Field(1.0, gt=0)
 
 
 @router.post(
-    "/documents/{document_id}/blocks/{block_id}/synthesize",
+    "/documents/{document_id}/blocks/{block_id}/synthesize/models/{model_slug}/voices/{voice_slug}",
     response_class=Response,
     dependencies=[Depends(authenticate)],
 )
@@ -104,7 +102,7 @@ async def synthesize(
     variant_hash = BlockVariant.get_hash(
         text=block.text,
         model_slug=model.slug,
-        voice_slug=body.voice_slug,
+        voice_slug=voice.slug,
         speed=body.speed,
         codec=served_codec,
     )
@@ -158,8 +156,8 @@ async def synthesize(
         job = SynthesisJob(
             variant_hash=variant_hash,
             user_id=user.id,
-            model_slug=body.model_slug,
-            voice_slug=body.voice_slug,
+            model_slug=model.slug,
+            voice_slug=voice.slug,
             text=block.text,
             speed=body.speed,
             codec=served_codec,
