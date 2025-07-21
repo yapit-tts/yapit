@@ -4,7 +4,7 @@ from decimal import Decimal
 from typing import Annotated, AsyncIterator
 from uuid import UUID
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from redis.asyncio import Redis
 from sqlalchemy.orm import selectinload
 from sqlmodel import select
