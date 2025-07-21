@@ -23,7 +23,7 @@ class TTSModel(SQLModel, table=True):
     slug: str = Field(unique=True, index=True)
     name: str
     description: str | None = Field(default=None)
-    credit_multiplier: Decimal = Field(sa_column=Column(DECIMAL(10, 4), nullable=False, default=1.0))
+    credits_per_sec: Decimal = Field(sa_column=Column(DECIMAL(10, 4), nullable=False, default=1.0))
 
     sample_rate: int
     channels: int

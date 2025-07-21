@@ -26,8 +26,8 @@ async def test_synthesize_returns_cached_audio_immediately(client, app, as_admin
 
     # Synthesize - should return audio immediately from cache
     r = await client.post(
-        f"/v1/documents/{document_id}/blocks/{block_id}/synthesize",
-        json={"model_slug": "kokoro-cpu", "voice_slug": "af_heart", "speed": 1.0},
+        f"/v1/documents/{document_id}/blocks/{block_id}/synthesize/models/kokoro-cpu/voices/af_heart",
+        json={"speed": 1.0},
     )
     assert r.status_code == 200
     assert r.content == test_audio
