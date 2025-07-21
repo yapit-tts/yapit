@@ -73,17 +73,17 @@ class BaseDocumentProcessor(ABC):
     @abstractmethod
     async def _extract(
         self,
+        content_type: str,
         url: str | None = None,
         content: bytes | None = None,
-        content_type: str | None = None,
         pages: list[int] | None = None,
     ) -> DocumentExtractionResult:
         """Extract text from document. Always includes images if available.
 
         Args:
+            content_type: MIME type of the document
             url: URL of the document to process (optional)
             content: Raw bytes of the document (optional)
-            content_type: MIME type of the document (required if content is provided)
             pages: Specific pages to process (1-indexed, optional)
         """
 
@@ -114,9 +114,9 @@ class BaseDocumentProcessor(ABC):
         cache_key: str,
         db: AsyncSession,
         cache: SqliteCache,
+        content_type: str,
         url: str | None = None,
         content: bytes | None = None,
-        content_type: str | None = None,
         pages: list[int] | None = None,
     ) -> DocumentExtractionResult:
         """Process document with caching and billing."""

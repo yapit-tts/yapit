@@ -38,9 +38,9 @@ class MarkitdownProcessor(BaseDocumentProcessor):
 
     async def _extract(
         self,
+        content_type: str,
         url: str | None = None,
         content: bytes | None = None,
-        content_type: str | None = None,
         pages: list[int] | None = None,
     ) -> DocumentExtractionResult:
         if not content:
