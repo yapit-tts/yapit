@@ -113,17 +113,18 @@ services:
 
 ### 6. Configure Endpoint
 
-Add to `endpoints.json`:
+Add to `tts_processors.json`:
 
 ```json
 {
-  "model": "yourmodel",
-  "adapter": "yapit.workers.adapters.yourmodel.YourModelAdapter",
-  "processor": "yapit.gateway.processors.local.LocalProcessor",
+  "slug": "yourmodel",
+  "processor": "yapit.gateway.processors.tts.local.LocalProcessor",
   "worker_url": "http://yourmodel:8000",
   "max_parallel": 2
 }
 ```
+
+`slug` should match the slug for the model in the database.
 
 ### 7. Add Database Entry
 
@@ -149,20 +150,19 @@ Add `runpod` to your worker's `pyproject.toml` dependencies.
    - Docker Configuration:
      - Container Start Command: `python -m yapit.workers.handlers.runpod` 
 
-### 4. Configure RunPod Endpoint
+### 4. Configure Runpod Endpoint
 
-Add to `endpoints.json`:
+Add to `tts_processors.json`:
 
 ```json
 {
-  "model": "yourmodel",
-  "adapter": "yapit.workers.adapters.yourmodel.YourModelAdapter",
-  "processor": "yapit.gateway.processors.runpod.RunPodProcessor",
+  "slug": "yourmodel",
+  "processor": "yapit.gateway.processors.tts.runpod.RunpodProcessor",
   "runpod_endpoint_id": "your-endpoint-id-from-runpod"
 }
 ```
 
-### 5. Set RunPod API Key
+### 5. Set Runpod API Key
 
 In `.env.local` for development, or `.env.prod` for production, add:
 ```
@@ -172,5 +172,5 @@ RUNPOD_API_KEY=your-runpod-api-key
 ## Notes
 
 - To simoultaneously serve the same model locally and on RunPod (or different runpod endpoints, different providers, ...), create  
-  separate database entries, and corresponding entries in `endpoints.json`.
-- Worker URLs in endpoints.json use Docker service names for local workers
+  separate database entries, and corresponding entries in `tts_processors.json`.
+- Worker URLs in tts_processors.json use Docker service names for local workers

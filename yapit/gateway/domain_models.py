@@ -57,18 +57,20 @@ class Voice(SQLModel, table=True):
     __table_args__ = (UniqueConstraint("slug", "model_id", name="unique_voice_per_model"),)
 
 
-class SourceType(StrEnum):
-    url = auto()
-    upload = auto()
-    paste = auto()
+class DocumentMetadata(PydanticModel):
+    """Metadata about a document."""
+
+    content_type: str  # MIME type
+    total_pages: int  # 1 for websites and text
+    title: str | None = None  # Document title if we can extract it
+    url: str | None = None  # Original URL if from web
+    file_name: str | None = None  # Original filename
+    file_size: float | None = None  # Content size in bytes
 
 
 class Document(SQLModel, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     user_id: str = Field()
-
-    source_ref: str | None = Field(default=None)
-    source_type: SourceType | None = Field(default=None)
 
     title: str | None = Field(default=None)
 
@@ -82,6 +84,10 @@ class Document(SQLModel, table=True):
         ),
     )
 
+    extraction_method: str | None = Field(default=None)  # processor slug used for extraction
+    # Structured content for frontend display (XML with block tags, images, tables, etc.)
+    structured_content: str = Field(sa_column=Column(TEXT, nullable=False))
+
     created: datetime = Field(
         default_factory=lambda: datetime.now(tz=dt.UTC),
         sa_column=Column(DateTime(timezone=True)),
@@ -90,6 +96,23 @@ class Document(SQLModel, table=True):
     blocks: list["Block"] = Relationship(
         back_populates="document", sa_relationship_kwargs={"cascade": "all, delete-orphan"}
     )
+
+    metadata_dict: dict | None = Field(  # Store as dict in DB - using different field name
+        default=None,
+        sa_column=Column(
+            "metadata",
+            JSON().with_variant(postgresql.JSONB(), "postgresql"),
+            nullable=True,
+        ),
+    )
+
+    @property
+    def metadata_(self) -> DocumentMetadata | None:  # name `metadata` reserved by SQLModel
+        return DocumentMetadata(**self.metadata_dict) if self.metadata_dict else None
+
+    @metadata_.setter
+    def metadata_(self, value: DocumentMetadata | None) -> None:
+        self.metadata_dict = value.model_dump() if value else None
 
 
 class Block(SQLModel, table=True):
@@ -141,6 +164,14 @@ class BlockVariant(SQLModel, table=True):
         hasher.update(f"|{speed:.2f}".encode("utf-8"))
         hasher.update(f"|{codec}".encode("utf-8"))
         return hasher.hexdigest()
+
+
+class DocumentProcessor(SQLModel, table=True):
+    """Available document processors for content extraction."""
+
+    slug: str = Field(primary_key=True)
+    name: str
+    credits_per_page: Decimal = Field(sa_column=Column(DECIMAL(10, 4), nullable=False))
 
 
 class RegexRule(PydanticModel):

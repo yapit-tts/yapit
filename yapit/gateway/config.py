@@ -26,9 +26,19 @@ class Settings(BaseSettings):
     stack_auth_project_id: str
     stack_auth_server_key: str
 
-    endpoints_file: str
+    tts_processors_file: str
     runpod_api_key: str | None = None
     runpod_request_timeout_seconds: int | None = None
+
+    document_cache_type: Caches
+    document_cache_config: CacheConfig
+    document_cache_ttl_webpage: int  # in seconds
+    document_cache_ttl_document: int  # in seconds
+
+    document_processors_file: str
+    mistral_api_key: str | None = None
+
+    document_max_download_size: int = 100 * 1024 * 1024  # 100MB default
 
     model_config = SettingsConfigDict(
         env_prefix="",

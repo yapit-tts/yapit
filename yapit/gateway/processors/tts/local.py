@@ -4,16 +4,16 @@ import logging
 import httpx
 
 from yapit.contracts import SynthesisJob
-from yapit.gateway.processors.base import BaseProcessor, JobResult
+from yapit.gateway.processors.tts.base import BaseTTSProcessor, JobResult
 
 log = logging.getLogger("local_processor")
 
 
-class LocalProcessor(BaseProcessor):
+class LocalProcessor(BaseTTSProcessor):
     """Process synthesis jobs by forwarding to local HTTP workers."""
 
-    def __init__(self, model_slug: str, worker_url: str, **kwargs):
-        super().__init__(model_slug, **kwargs)
+    def __init__(self, slug: str, worker_url: str, **kwargs):
+        super().__init__(slug, **kwargs)
         self._worker_url = worker_url
         self._client: httpx.AsyncClient | None = None
 

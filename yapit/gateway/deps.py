@@ -14,8 +14,18 @@ from yapit.gateway.auth import authenticate
 from yapit.gateway.cache import Cache, Caches, SqliteCache
 from yapit.gateway.config import Settings, get_settings
 from yapit.gateway.db import create_session
-from yapit.gateway.domain_models import Block, BlockVariant, Document, TTSModel, UserCredits, Voice
-from yapit.gateway.redis_client import get_redis_client
+from yapit.gateway.domain_models import (
+    Block,
+    BlockVariant,
+    CreditTransaction,
+    Document,
+    TransactionStatus,
+    TransactionType,
+    TTSModel,
+    UserCredits,
+    Voice,
+)
+from yapit.gateway.processors.document.manager import DocumentProcessorManager
 from yapit.gateway.stack_auth.users import User
 from yapit.gateway.text_splitter import (
     DummySplitter,
@@ -32,7 +42,15 @@ def get_audio_cache(settings: SettingsDep) -> Cache:
     if audio_cache_type == Caches.SQLITE.name.lower():
         return SqliteCache(settings.audio_cache_config)
     else:
-        raise ValueError(f"Invalid audio cache type '{settings.audio_cache_type}'")
+        raise ValueError(rf"Invalid audio cache type {settings.audio_cache_type}")
+
+
+def get_document_cache(settings: SettingsDep) -> Cache:
+    document_cache_type = settings.document_cache_type.lower()
+    if document_cache_type == Caches.SQLITE.name.lower():
+        return SqliteCache(settings.document_cache_config)
+    else:
+        raise ValueError(rf"Invalid document cache type {settings.document_cache_type}")
 
 
 def get_text_splitter(settings: SettingsDep) -> TextSplitter:
@@ -42,7 +60,7 @@ def get_text_splitter(settings: SettingsDep) -> TextSplitter:
     elif splitter_type == TextSplitters.HIERARCHICAL.name.lower():
         return HierarchicalSplitter(settings.splitter_config)
     else:
-        raise ValueError(f"Invalid TextSplitter type '{settings.splitter_type}' (dummy, hierarchical)")
+        raise ValueError(rf"Invalid TextSplitter type {settings.splitter_type}")
 
 
 async def get_db_session(
@@ -162,8 +180,47 @@ async def get_or_create_user_credits(user_id: str, db: DbSession) -> UserCredits
     return user_credits
 
 
+async def _get_or_create_user_credits_dep_helper(user: AuthenticatedUser, db: DbSession) -> UserCredits:
+    return await get_or_create_user_credits(user.id, db)
+
+
+async def ensure_admin_credits(
+    user: AuthenticatedUser,
+    user_credits: AuthenticatedUserCredits,
+    db: DbSession,
+    is_admin: IsAdmin,
+    min_balance: Decimal = Decimal(1000),
+    top_up_amount: Decimal = Decimal(10000),
+) -> None:
+    """Ensure admin users have sufficient credits by topping up if needed (for testing/development/self-hosting)."""
+    if is_admin and user_credits.balance < min_balance:
+        balance_before = user_credits.balance
+        user_credits.balance += top_up_amount
+        transaction = CreditTransaction(
+            user_id=user.id,
+            type=TransactionType.credit_bonus,
+            status=TransactionStatus.completed,
+            amount=top_up_amount,
+            balance_before=balance_before,
+            balance_after=user_credits.balance,
+            description="Admin auto top-up",
+        )
+        db.add(transaction)
+        await db.commit()
+
+
+async def get_redis_client(request: Request) -> Redis:
+    return request.app.state.redis_client
+
+
+async def get_document_processor_manager(request: Request) -> DocumentProcessorManager:
+    return request.app.state.document_processor_manager
+
+
 RedisClient = Annotated[Redis, Depends(get_redis_client)]
+DocumentProcessorManagerDep = Annotated[DocumentProcessorManager, Depends(get_document_processor_manager)]
 AudioCache = Annotated[Cache, Depends(get_audio_cache)]
+DocumentCache = Annotated[Cache, Depends(get_document_cache)]
 TextSplitterDep = Annotated[TextSplitter, Depends(get_text_splitter)]
 CurrentDoc = Annotated[Document, Depends(get_doc)]
 CurrentVoice = Annotated[Voice, Depends(get_voice)]
@@ -171,3 +228,4 @@ CurrentBlock = Annotated[Block, Depends(get_block)]
 CurrentBlockVariant = Annotated[BlockVariant, Depends(get_block_variant)]
 AuthenticatedUser = Annotated[User, Depends(authenticate)]
 IsAdmin = Annotated[bool, Depends(is_admin)]
+AuthenticatedUserCredits = Annotated[UserCredits, Depends(_get_or_create_user_credits_dep_helper)]
