@@ -49,5 +49,5 @@ class MarkitdownProcessor(BaseDocumentProcessor):
         result = md.convert_stream(io.BytesIO(content))
         return DocumentExtractionResult(
             extraction_method=self.processor_slug,
-            pages={1: ExtractedPage(markdown=result.markdown)},  # markitdown doesnt return pages
+            pages={0: ExtractedPage(markdown=result.markdown, images=[])},  # markitdown doesnt return pages or images
         )

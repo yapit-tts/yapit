@@ -19,15 +19,21 @@ from yapit.gateway.exceptions import InsufficientCreditsError, ResourceNotFoundE
 
 
 class ExtractedPage(BaseModel):
-    """Single page extraction result."""
+    """Single page extraction result.
 
-    markdown: str  # Full markdown with images/tables/latex
+    Args:
+        markdown: Full markdown content of the page, including tables and image placeholders if available: [img-<idx>.jpeg](img-<idx>.jpeg)
+        images: List of base64 encoded images extracted from the page.
+    """
+
+    markdown: str
+    images: list[str]
 
 
 class DocumentExtractionResult(BaseModel):
     """Unified extraction result from any processor."""
 
-    pages: dict[int, ExtractedPage]  # 1-indexed !
+    pages: dict[int, ExtractedPage]
     extraction_method: str
 
 
@@ -35,7 +41,7 @@ class CachedDocument(BaseModel):
     """Structure stored in cache for documents."""
 
     metadata: DocumentMetadata
-    content: bytes | None = None  # Optional - actual file content for uploads
+    content: bytes | None = None  # file content (if not webpage or plain text)
     extraction: DocumentExtractionResult | None = None
 
     model_config = ConfigDict(
@@ -84,7 +90,7 @@ class BaseDocumentProcessor(ABC):
             content_type: MIME type of the document
             url: URL of the document to process (optional)
             content: Raw bytes of the document (optional)
-            pages: Specific pages to process (1-indexed, optional)
+            pages: Specific pages to process (optional)
         """
 
     @property
@@ -238,7 +244,7 @@ def get_missing_pages(
         Set of page numbers that need processing
     """
     existing_pages = set(cached_doc.extraction.pages.keys()) if cached_doc.extraction else set()
-    pages_to_process = set(requested_pages) if requested_pages else set(range(1, cached_doc.metadata.total_pages + 1))
+    pages_to_process = set(requested_pages) if requested_pages else set(range(cached_doc.metadata.total_pages))
     return pages_to_process - existing_pages
 
 

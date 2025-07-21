@@ -288,7 +288,7 @@ async def create_website_document(
     # TODO: Implement web parser
     # TODO: Web parser should call docling processor (not implemented yet) to convert html to markdown
     extraction_result = DocumentExtractionResult(
-        pages={1: ExtractedPage(markdown="# Placeholder\n\nWeb parsing not implemented yet.")},
+        pages={0: ExtractedPage(markdown="# Placeholder\n\nWeb parsing not implemented yet.", images=[])},
         extraction_method="web-parser",
     )
 
@@ -299,7 +299,7 @@ async def create_website_document(
         ttl_seconds=settings.document_cache_ttl_webpage,
     )
 
-    extracted_text = extraction_result.pages[1].markdown  # website are just a single page
+    extracted_text = extraction_result.pages[0].markdown  # website are just a single page
 
     # TODO use md-aware parser to get blocks + structured content
     text_blocks = splitter.split(text=extracted_text)

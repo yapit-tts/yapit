@@ -18,8 +18,6 @@ from yapit.gateway.processors.document.base import (
 
 log = logging.getLogger(__name__)
 
-# TODO if we have the content already, is it better to pass the url (to save bandwidth) or the content (to not rely on external URLs, stability)?
-
 type URLType = Literal["image_url", "document_url"]
 
 
@@ -27,7 +25,7 @@ class OCRRequest(BaseModel):
     id: str
     data_url: str  # Base64 encoded data URL or URL to the document/image
     url_type: URLType
-    pages: list[int] | None = None  # 1-indexed pages
+    pages: list[int] | None = None
 
 
 class MistralOCRProcessor(BaseDocumentProcessor):
@@ -69,19 +67,22 @@ class MistralOCRProcessor(BaseDocumentProcessor):
         content: bytes | None = None,
         pages: list[int] | None = None,
     ) -> DocumentExtractionResult:
-        response = await asyncio.to_thread(
+        response: OCRResponse = await asyncio.to_thread(
             _single_ocr,
             OCRRequest(
                 id="_",  # not necessary for single requests
                 data_url=url if url else f"data:{content_type};base64,{base64.b64encode(content).decode('utf-8')}",
                 url_type=_get_url_type(content_type),
-                pages=[p - 1 for p in pages] if pages else None,  # API uses 0-indexed
+                pages=pages,
             ),
             model=self._model,
             client=self._client,
         )
         return DocumentExtractionResult(
-            pages={page.index + 1: ExtractedPage(markdown=page.markdown) for page in response.pages},  # 1-indexed pages
+            pages={
+                page.index: ExtractedPage(markdown=page.markdown, images=[i.image_base64 for i in page.images])
+                for page in response.pages
+            },
             extraction_method=self.processor_slug,
         )
 
