@@ -27,9 +27,8 @@ const TextInputForm = () => {
 
   const onSubmit = async (data: FormData) => {
     try {
-      const response = await api.post("/v1/documents", {
-        source_type: "paste",
-        text_content: data.text, 
+      const response = await api.post("/v1/documents/text", {
+        content: data.text, 
       });
       console.log(response.data);
 

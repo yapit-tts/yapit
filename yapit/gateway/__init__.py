@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 
+import redis.asyncio as redis
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import ORJSONResponse
@@ -8,8 +9,8 @@ from yapit.gateway.api.v1 import routers as v1_routers
 from yapit.gateway.config import Settings, get_settings
 from yapit.gateway.db import close_db, prepare_database
 from yapit.gateway.deps import get_audio_cache
-from yapit.gateway.processors.manager import ProcessorManager
-from yapit.gateway.redis_client import create_redis_client
+from yapit.gateway.processors.document.manager import DocumentProcessorManager
+from yapit.gateway.processors.tts.manager import TTSProcessorManager
 
 
 @asynccontextmanager
@@ -19,21 +20,22 @@ async def lifespan(app: FastAPI):
 
     await prepare_database(settings)
 
-    app.state.redis_client = await create_redis_client(settings)
+    app.state.redis_client = await redis.from_url(settings.redis_url, decode_responses=False)
 
-    processor_manager = ProcessorManager(
+    document_processor_manager = DocumentProcessorManager(settings)
+    document_processor_manager.load_processors(settings.document_processors_file)
+    app.state.document_processor_manager = document_processor_manager
+
+    tts_processor_manager = TTSProcessorManager(
         redis=app.state.redis_client,
         cache=get_audio_cache(settings),
         settings=settings,
     )
-
-    await processor_manager.start_from_config(settings.endpoints_file)
+    await tts_processor_manager.start(settings.tts_processors_file)
 
     yield
 
-    # Stop processor manager
-    await processor_manager.stop()
-
+    await tts_processor_manager.stop()
     await close_db()
     await app.state.redis_client.aclose()
 

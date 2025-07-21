@@ -11,7 +11,7 @@ import pytest
 )
 async def test_tts_integration(model_slug, admin_client, test_document):
     """Test complete TTS flow from document creation to audio retrieval."""
-    document_id = test_document["document_id"]
+    document_id = test_document["id"]
     block_id = test_document["blocks"][0]["id"]
 
     # Step 2: Request synthesis with long-polling

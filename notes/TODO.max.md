@@ -1,5 +1,9 @@
+
+
 ### Fix
 
+- Upload size restrictions for upload endpoint
+- Mistral: Dont assume pages are returned in order, sort them by explicitly returned page number before returning
 - Thinking about security / exploits: Limits on the number of docs, filters, etc.
 - Should Block.id be a UUID too?
 - Is there a global setting for pydantic to forbid extra vals?
@@ -10,15 +14,22 @@
 
 ### Feats
 
+- if a document processor does not support a format, it should just be converted to pdf via pandoc or converted to markdown (e.g. for things like epub, so we can directly move to text extraction... if the user wants to use ocr on their epub, they can convert it to pdf first... but who would like to pay for just having the images also displayed. i think it's reasonable to ask them to convert it to pdf in that case.)
+
 - opus transcoding
   - depending on the intensity / scaling requirements, prlly best to do this in the gateway to save worker time?
 - fun feature: show lifetime stats (words/seconds processed, etc.)
+- idea: "batch jobs" (process on dedicated resources, potentially longer wait times), not just for ocr api, but for tts too. Only makes sense with generous audio retention.
 
 ### Refactor
 
+- Use pydantic types in tests (deserialize responses to pydantic models) for automatic validation + easier refactoring, ...
+- replace .get()+exception with get_one() and add global exception handler
+- replace generic value errors with custom exceptions (in proper format...), , add appropriate error hanlers, (document responses in routes?)
+
 - can we improve dependency handling without creating separate docker images?
   - see comments abt deps only some deployments need @ pyproject.toml
-- replace .get()+exception with get_one() and add global exception handler
+  - Search for "only needed for"   in the project.
 
 ### Chore
 

@@ -1,3 +1,5 @@
+import shutil
+
 import httpx
 import pytest
 import pytest_asyncio
@@ -32,6 +34,10 @@ async def app(postgres_container, redis_container) -> FastAPI:
     # Clean up any existing database state
     await close_db()
 
+    # Clean up test cache directories
+    shutil.rmtree("test_audio_cache", ignore_errors=True)
+    shutil.rmtree("test_document_cache", ignore_errors=True)
+
     settings = Settings(
         sqlalchemy_echo=True,
         db_drop_and_recreate=True,
@@ -43,12 +49,18 @@ async def app(postgres_container, redis_container) -> FastAPI:
         splitter_config=TextSplitterConfig(max_chars=1000),
         audio_cache_type=Caches.SQLITE,
         audio_cache_config=CacheConfig(path="test_audio_cache"),
+        document_cache_type=Caches.SQLITE,
+        document_cache_config=CacheConfig(path="test_document_cache"),
+        document_cache_ttl_webpage=86400,
+        document_cache_ttl_document=604800,
         stack_auth_api_host="",
         stack_auth_project_id="",
         stack_auth_server_key="",
-        endpoints_file="",  # No endpoints configured for unit tests
+        tts_processors_file="tests/empty_processors.json",  # Empty config for tests
+        document_processors_file="tests/empty_processors.json",  # Empty config for unit tests
         runpod_api_key=None,
         runpod_request_timeout_seconds=None,
+        mistral_api_key=None,
     )
 
     app = create_app(settings)
