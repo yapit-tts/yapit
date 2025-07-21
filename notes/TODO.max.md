@@ -14,8 +14,6 @@
 
 ### Feats
 
-- if a document processor does not support a format, it should just be converted to pdf via pandoc or converted to markdown (e.g. for things like epub, so we can directly move to text extraction... if the user wants to use ocr on their epub, they can convert it to pdf first... but who would like to pay for just having the images also displayed. i think it's reasonable to ask them to convert it to pdf in that case.)
-
 - opus transcoding
   - depending on the intensity / scaling requirements, prlly best to do this in the gateway to save worker time?
 - fun feature: show lifetime stats (words/seconds processed, etc.)

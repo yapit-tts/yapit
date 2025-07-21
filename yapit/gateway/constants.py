@@ -8,10 +8,8 @@ PLATFORM_SUPPORTED_MIME_TYPES = {
     "text/plain",
     # E-book formats
     "application/epub+zip",
-    "application/x-epub+zip",
     # Document formats
     "application/pdf",
-    "application/x-pdf",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",  # DOCX
     # Image formats
     "image/png",

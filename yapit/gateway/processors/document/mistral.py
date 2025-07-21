@@ -15,8 +15,6 @@ from yapit.gateway.processors.document.base import (
 log = logging.getLogger(__name__)
 
 
-# TODO how are docs without pages billed?
-# TODO what's the point of ocring text documents?
 # TODO if we have the content already, is it better to pass the url (to save bandwidth) or the content (to not rely on external URLs, stability)?
 
 
@@ -25,23 +23,10 @@ class MistralOCRProcessor(BaseDocumentProcessor):
         "image/*",
     }
     DOCUMENT_MIME_TYPES = {
-        "application/docbook+xml",
-        "application/epub+zip",
         "application/pdf",
-        "application/rtf",
-        "application/vnd.oasis.opendocument.text",
-        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "application/x-biblatex",
-        "application/x-bibtex",
-        "application/x-endnote+xml",
-        "application/x-fictionbook+xml",
-        "application/x-ipynb+json",
-        "application/x-jats+xml",
-        "application/x-latex",
-        "application/x-opml+xml",
-        "text/troff",
-        "text/x-dokuwiki",
+        "application/vnd.oasis.opendocument.text",  # ODT
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",  # PPTX
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",  # DOCX
     }
 
     def __init__(self, slug: str, settings: Settings, model: str):
