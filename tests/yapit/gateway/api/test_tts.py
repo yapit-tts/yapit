@@ -2,8 +2,10 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from yapit.gateway.api.v1.documents import DocumentCreateResponse
 from yapit.gateway.cache import Cache
 from yapit.gateway.deps import get_audio_cache
+from yapit.gateway.domain_models import Block
 
 
 @pytest.mark.asyncio
@@ -17,16 +19,16 @@ async def test_synthesize_returns_cached_audio_immediately(client, app, as_admin
 
     # Create document
     r = await client.post("/v1/documents/text", json={"content": "Test cached audio."})
-    doc = r.json()
-    document_id = doc["id"]
+    doc = DocumentCreateResponse.model_validate(r.json())
 
     # Fetch blocks
-    blocks_response = await client.get(f"/v1/documents/{document_id}/blocks")
-    block_id = blocks_response.json()[0]["id"]
+    blocks_response = await client.get(f"/v1/documents/{doc.id}/blocks")
+    blocks = [Block.model_validate(b) for b in blocks_response.json()]
+    block_id = blocks[0].id
 
     # Synthesize - should return audio immediately from cache
     r = await client.post(
-        f"/v1/documents/{document_id}/blocks/{block_id}/synthesize/models/kokoro-cpu/voices/af_heart",
+        f"/v1/documents/{doc.id}/blocks/{block_id}/synthesize/models/kokoro-cpu/voices/af_heart",
         json={"speed": 1.0},
     )
     assert r.status_code == 200

@@ -7,7 +7,7 @@ from fastapi import status
 from sqlmodel import select
 
 from yapit.gateway.auth import authenticate
-from yapit.gateway.domain_models import TTSModel, UserCredits, Voice
+from yapit.gateway.domain_models import Filter, TTSModel, UserCredits, Voice
 
 
 @pytest.mark.asyncio
@@ -34,9 +34,9 @@ async def test_admin_can_create_model(client, as_admin_user, session):
     response = await client.post("/v1/admin/models", json=model_data)
     assert response.status_code == status.HTTP_201_CREATED
 
-    created_model = response.json()
-    assert created_model["slug"] == "test-model"
-    assert created_model["name"] == "Test Model"
+    created_model = TTSModel.model_validate(response.json())
+    assert created_model.slug == "test-model"
+    assert created_model.name == "Test Model"
 
     # Verify in database
     db_model = (await session.exec(select(TTSModel).where(TTSModel.slug == "test-model"))).first()
@@ -65,9 +65,9 @@ async def test_admin_can_update_model(client, as_admin_user, session):
     response = await client.put(f"/v1/admin/models/{model.slug}", json=update_data)
     assert response.status_code == status.HTTP_200_OK
 
-    updated_model = response.json()
-    assert updated_model["name"] == "Updated Name"
-    assert float(updated_model["credits_per_sec"]) == 3.0
+    updated_model = TTSModel.model_validate(response.json())
+    assert updated_model.name == "Updated Name"
+    assert float(updated_model.credits_per_sec) == 3.0
 
 
 @pytest.mark.asyncio
@@ -96,9 +96,9 @@ async def test_admin_can_manage_voices(client, as_admin_user, session):
 
     response = await client.post(f"/v1/admin/models/{model.slug}/voices", json=voice_data)
     assert response.status_code == status.HTTP_201_CREATED
-    created_voice = response.json()
-    assert created_voice["slug"] == "test-voice"
-    assert created_voice["name"] == "Test Voice"
+    created_voice = Voice.model_validate(response.json())
+    assert created_voice.slug == "test-voice"
+    assert created_voice.name == "Test Voice"
 
     # Update the voice
     update_data = {
@@ -107,9 +107,9 @@ async def test_admin_can_manage_voices(client, as_admin_user, session):
     }
     response = await client.put(f"/v1/admin/models/{model.slug}/voices/test-voice", json=update_data)
     assert response.status_code == status.HTTP_200_OK
-    updated_voice = response.json()
-    assert updated_voice["name"] == "Updated Voice Name"
-    assert updated_voice["description"] == "Updated description"
+    updated_voice = Voice.model_validate(response.json())
+    assert updated_voice.name == "Updated Voice Name"
+    assert updated_voice.description == "Updated description"
 
     # Delete the voice
     response = await client.delete(f"/v1/admin/models/{model.slug}/voices/test-voice")
@@ -202,23 +202,25 @@ async def test_admin_can_manage_system_filters(client, as_admin_user, session):
 
     response = await client.post("/v1/admin/filters", json=filter_data)
     assert response.status_code == status.HTTP_201_CREATED
-    filter_id = response.json()["id"]
+    created_filter = Filter.model_validate(response.json())
+    filter_id = created_filter.id
 
     # List system filters
     response = await client.get("/v1/admin/filters")
     assert response.status_code == status.HTTP_200_OK
-    filters = response.json()
+    filters = [Filter.model_validate(f) for f in response.json()]
     assert len(filters) > 0
     # Find our filter
-    test_filter = next((f for f in filters if f["name"] == "Test System Filter"), None)
+    test_filter = next((f for f in filters if f.name == "Test System Filter"), None)
     assert test_filter is not None
-    assert test_filter["id"] == filter_id
+    assert test_filter.id == filter_id
 
     # Update filter
     update_data = {"description": "Updated description"}
     response = await client.put(f"/v1/admin/filters/{filter_id}", json=update_data)
     assert response.status_code == status.HTTP_200_OK
-    assert response.json()["description"] == "Updated description"
+    updated_filter = Filter.model_validate(response.json())
+    assert updated_filter.description == "Updated description"
 
     # Delete filter
     response = await client.delete(f"/v1/admin/filters/{filter_id}")
@@ -241,10 +243,10 @@ async def test_admin_can_grant_credits(client, app, admin_user, test_user, sessi
     )
     assert response.status_code == status.HTTP_200_OK
 
-    data = response.json()
-    assert data["user_id"] == test_user.id
-    assert Decimal(data["balance"]) == Decimal("100.50")
-    assert Decimal(data["total_purchased"]) == Decimal("100.50")
+    data = UserCredits.model_validate(response.json())
+    assert data.user_id == test_user.id
+    assert data.balance == Decimal("100.50")
+    assert data.total_purchased == Decimal("100.50")
 
 
 @pytest.mark.asyncio
@@ -270,8 +272,8 @@ async def test_admin_can_deduct_credits(client, app, admin_user, test_user, sess
     )
     assert response.status_code == status.HTTP_200_OK
 
-    data = response.json()
-    assert Decimal(data["balance"]) == Decimal("74.25")
+    data = UserCredits.model_validate(response.json())
+    assert data.balance == Decimal("74.25")
 
 
 @pytest.mark.asyncio

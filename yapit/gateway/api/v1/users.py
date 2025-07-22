@@ -1,4 +1,3 @@
-from decimal import Decimal
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, status
@@ -20,15 +19,6 @@ from yapit.gateway.domain_models import (
 router = APIRouter(prefix="/v1/users", tags=["Users"])
 
 
-class UserCreditsResponse(BaseModel):
-    """Response containing user's credit information."""
-
-    user_id: str
-    balance: Decimal
-    total_purchased: Decimal
-    total_used: Decimal
-
-
 class FilterRead(BaseModel):
     """User filter response."""
 
@@ -38,7 +28,7 @@ class FilterRead(BaseModel):
     config: dict[str, Any]
 
 
-@router.get("/me/credits", response_model=UserCreditsResponse)
+@router.get("/me/credits", response_model=UserCredits)
 async def get_my_credits(
     db: DbSession,
     auth_user: AuthenticatedUser,

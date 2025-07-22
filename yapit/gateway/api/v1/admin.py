@@ -1,4 +1,3 @@
-from datetime import datetime
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -305,18 +304,7 @@ class CreditAdjustmentRequest(BaseModel):
     type: TransactionType = TransactionType.credit_adjustment
 
 
-class UserCreditsResponse(BaseModel):
-    """Response with user credit information."""
-
-    user_id: str
-    balance: Decimal
-    total_purchased: Decimal
-    total_used: Decimal
-    created: datetime
-    updated: datetime
-
-
-@router.post("/users/{user_id}/credits", response_model=UserCreditsResponse)
+@router.post("/users/{user_id}/credits", response_model=UserCredits)
 async def adjust_user_credits(
     user_id: str,
     adjustment: CreditAdjustmentRequest,

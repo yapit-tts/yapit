@@ -3,9 +3,18 @@
 import os
 import subprocess
 import uuid
+from typing import NamedTuple
 
 import pytest
 import requests
+
+from yapit.gateway.api.v1.documents import DocumentCreateResponse
+from yapit.gateway.domain_models import Block
+
+
+class DocumentWithBlocks(NamedTuple):
+    doc: DocumentCreateResponse
+    blocks: list[Block]
 
 
 def get_stack_auth_config():
@@ -119,14 +128,14 @@ async def test_document(admin_client):
         json={"content": "Hello integration test!"},
     )
     assert response.status_code == 201
-    doc = response.json()
+    doc = DocumentCreateResponse.model_validate(response.json())
 
     # Fetch blocks separately
-    blocks_response = await admin_client.get(f"/v1/documents/{doc['id']}/blocks")
+    blocks_response = await admin_client.get(f"/v1/documents/{doc.id}/blocks")
     assert blocks_response.status_code == 200
-    doc["blocks"] = blocks_response.json()
+    blocks = [Block.model_validate(b) for b in blocks_response.json()]
 
-    return doc
+    return DocumentWithBlocks(doc, blocks)
 
 
 @pytest.fixture
@@ -140,14 +149,14 @@ async def unique_document(regular_client):
         json={"content": unique_text},
     )
     assert response.status_code == 201
-    doc = response.json()
+    doc = DocumentCreateResponse.model_validate(response.json())
 
     # Fetch blocks separately
-    blocks_response = await regular_client.get(f"/v1/documents/{doc['id']}/blocks")
+    blocks_response = await regular_client.get(f"/v1/documents/{doc.id}/blocks")
     assert blocks_response.status_code == 200
-    doc["blocks"] = blocks_response.json()
+    blocks = [Block.model_validate(b) for b in blocks_response.json()]
 
-    return doc
+    return DocumentWithBlocks(doc, blocks)
 
 
 @pytest.fixture
@@ -158,11 +167,11 @@ async def regular_document(regular_client):
         json={"content": "Hello, I need credits!"},
     )
     assert response.status_code == 201
-    doc = response.json()
+    doc = DocumentCreateResponse.model_validate(response.json())
 
     # Fetch blocks separately
-    blocks_response = await regular_client.get(f"/v1/documents/{doc['id']}/blocks")
+    blocks_response = await regular_client.get(f"/v1/documents/{doc.id}/blocks")
     assert blocks_response.status_code == 200
-    doc["blocks"] = blocks_response.json()
+    blocks = [Block.model_validate(b) for b in blocks_response.json()]
 
-    return doc
+    return DocumentWithBlocks(doc, blocks)
