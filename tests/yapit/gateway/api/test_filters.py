@@ -1,5 +1,7 @@
 import pytest
 
+from yapit.gateway.api.v1.filters import SimpleMessage
+
 # /filters/validate
 
 
@@ -12,7 +14,8 @@ async def test_validate_regex_ok(client):
     }
     r = await client.post("/v1/filters/validate", json=body)
     assert r.status_code == 200, r.json()
-    assert r.json()["message"] == "ok"
+    msg = SimpleMessage.model_validate(r.json())
+    assert msg.message == "ok"
 
 
 @pytest.mark.asyncio

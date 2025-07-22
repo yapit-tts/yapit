@@ -3,6 +3,7 @@
 import pytest
 from fastapi import status
 
+from yapit.gateway.api.v1.models import ModelRead, VoiceRead
 from yapit.gateway.domain_models import TTSModel, Voice
 
 
@@ -34,15 +35,13 @@ async def test_list_models(client, as_test_user, session):
     response = await client.get("/v1/models")
     assert response.status_code == status.HTTP_200_OK
 
-    models = response.json()
-    assert isinstance(models, list)
+    models = [ModelRead.model_validate(m) for m in response.json()]
     assert len(models) > 0
-    test_model = next((m for m in models if m["slug"] == "test-model"), None)
+    test_model = next((m for m in models if m.slug == "test-model"), None)
     assert test_model is not None
-    assert test_model["name"] == "Test Model"
-    assert "voices" in test_model
-    assert len(test_model["voices"]) > 0
-    assert test_model["voices"][0]["slug"] == "test-voice"
+    assert test_model.name == "Test Model"
+    assert len(test_model.voices) > 0
+    assert test_model.voices[0].slug == "test-voice"
 
 
 @pytest.mark.asyncio
@@ -63,10 +62,10 @@ async def test_read_model(client, as_test_user, session):
     response = await client.get(f"/v1/models/{model.slug}")
     assert response.status_code == status.HTTP_200_OK
 
-    data = response.json()
-    assert data["slug"] == "test-model-read"
-    assert data["name"] == "Test Model Read"
-    assert data["credits_per_sec"] == 0.02
+    model = ModelRead.model_validate(response.json())
+    assert model.slug == "test-model-read"
+    assert model.name == "Test Model Read"
+    assert float(model.credits_per_sec) == 0.02
 
 
 @pytest.mark.asyncio
@@ -98,11 +97,10 @@ async def test_list_voices(client, as_test_user, session):
     response = await client.get(f"/v1/models/{model.slug}/voices")
     assert response.status_code == status.HTTP_200_OK
 
-    voices = response.json()
-    assert isinstance(voices, list)
+    voices = [VoiceRead.model_validate(v) for v in response.json()]
     assert len(voices) == 2
-    assert voices[0]["slug"] == "voice1"
-    assert voices[1]["slug"] == "voice2"
+    assert voices[0].slug == "voice1"
+    assert voices[1].slug == "voice2"
 
 
 @pytest.mark.asyncio

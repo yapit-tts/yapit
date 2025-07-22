@@ -2,12 +2,12 @@ from abc import ABC, abstractmethod
 from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict
-from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from yapit.gateway.cache import SqliteCache
 from yapit.gateway.config import Settings
 from yapit.gateway.constants import PLATFORM_SUPPORTED_MIME_TYPES
+from yapit.gateway.db import get_by_slug_or_404
 from yapit.gateway.domain_models import (
     CreditTransaction,
     DocumentMetadata,
@@ -19,15 +19,21 @@ from yapit.gateway.exceptions import InsufficientCreditsError, ResourceNotFoundE
 
 
 class ExtractedPage(BaseModel):
-    """Single page extraction result."""
+    """Single page extraction result.
 
-    markdown: str  # Full markdown with images/tables/latex
+    Args:
+        markdown: Full markdown content of the page, including tables and image placeholders if available: [img-<idx>.jpeg](img-<idx>.jpeg)
+        images: List of base64 encoded images extracted from the page.
+    """
+
+    markdown: str
+    images: list[str]
 
 
 class DocumentExtractionResult(BaseModel):
     """Unified extraction result from any processor."""
 
-    pages: dict[int, ExtractedPage]  # 1-indexed !
+    pages: dict[int, ExtractedPage]
     extraction_method: str
 
 
@@ -35,7 +41,7 @@ class CachedDocument(BaseModel):
     """Structure stored in cache for documents."""
 
     metadata: DocumentMetadata
-    content: bytes | None = None  # Optional - actual file content for uploads
+    content: bytes | None = None  # file content (if not webpage or plain text)
     extraction: DocumentExtractionResult | None = None
 
     model_config = ConfigDict(
@@ -73,18 +79,18 @@ class BaseDocumentProcessor(ABC):
     @abstractmethod
     async def _extract(
         self,
+        content_type: str,
         url: str | None = None,
         content: bytes | None = None,
-        content_type: str | None = None,
         pages: list[int] | None = None,
     ) -> DocumentExtractionResult:
         """Extract text from document. Always includes images if available.
 
         Args:
+            content_type: MIME type of the document
             url: URL of the document to process (optional)
             content: Raw bytes of the document (optional)
-            content_type: MIME type of the document (required if content is provided)
-            pages: Specific pages to process (1-indexed, optional)
+            pages: Specific pages to process (optional)
         """
 
     @property
@@ -114,9 +120,9 @@ class BaseDocumentProcessor(ABC):
         cache_key: str,
         db: AsyncSession,
         cache: SqliteCache,
+        content_type: str,
         url: str | None = None,
         content: bytes | None = None,
-        content_type: str | None = None,
         pages: list[int] | None = None,
     ) -> DocumentExtractionResult:
         """Process document with caching and billing."""
@@ -127,14 +133,13 @@ class BaseDocumentProcessor(ABC):
                 f"Unsupported content type: {content_type}. Supported types: {self.supported_mime_types}"
             )
 
-        result = await db.exec(select(DocumentProcessor).where(DocumentProcessor.slug == self.processor_slug))
-        processor_model = result.first()
-        if not processor_model:
-            raise ValueError(f"Document processor '{self.processor_slug}' not found in database")
+        processor_model = await get_by_slug_or_404(db, DocumentProcessor, self.processor_slug)
 
         cached_data = await cache.retrieve_data(cache_key)
         if not cached_data:
-            raise ResourceNotFoundError("Document not found in cache. Please prepare document first.")
+            raise ResourceNotFoundError(
+                CachedDocument.__name__, cache_key, message=f"Document with key {cache_key!r} not found in cache"
+            )
         cached_doc = CachedDocument.model_validate_json(cached_data)
 
         if cached_doc.metadata.total_pages > self.max_pages:
@@ -152,7 +157,7 @@ class BaseDocumentProcessor(ABC):
 
         # Determine what pages to process
         missing_pages = get_missing_pages(cached_doc, pages)
-        requested_pages = set(pages) if pages else set(range(1, cached_doc.metadata.total_pages + 1))
+        requested_pages = set(pages) if pages else set(range(cached_doc.metadata.total_pages))
 
         # If all pages are cached, return them
         if not missing_pages:
@@ -161,7 +166,7 @@ class BaseDocumentProcessor(ABC):
         # Check credits
         credits_needed = Decimal(len(missing_pages)) * processor_model.credits_per_page
         if user_credits.balance < credits_needed:
-            raise InsufficientCreditsError(f"Insufficient credits: need {credits_needed}, have {user_credits.balance}")
+            raise InsufficientCreditsError(required=credits_needed, available=user_credits.balance)
 
         # Process missing pages
         result = await self._extract(url=url, content=content, content_type=content_type, pages=list(missing_pages))
@@ -191,7 +196,7 @@ class BaseDocumentProcessor(ABC):
             extraction_method=extraction.extraction_method,
         )
 
-    async def _create_transaction(  # TODO dont use a function here..
+    async def _create_transaction(
         self,
         db: AsyncSession,
         user_id: str,
@@ -238,7 +243,7 @@ def get_missing_pages(
         Set of page numbers that need processing
     """
     existing_pages = set(cached_doc.extraction.pages.keys()) if cached_doc.extraction else set()
-    pages_to_process = set(requested_pages) if requested_pages else set(range(1, cached_doc.metadata.total_pages + 1))
+    pages_to_process = set(requested_pages) if requested_pages else set(range(cached_doc.metadata.total_pages))
     return pages_to_process - existing_pages
 
 

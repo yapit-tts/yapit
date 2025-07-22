@@ -30,6 +30,7 @@ class TestMistralOCRProcessor:
         mock_page = Mock()
         mock_page.index = 0
         mock_page.markdown = "Extracted text from image"
+        mock_page.images = []  # No images in this example
 
         mock_response = Mock()
         mock_response.pages = [mock_page]
@@ -40,19 +41,19 @@ class TestMistralOCRProcessor:
 
         # Check the API was called correctly
         processor._client.ocr.process.assert_called_once()
-        call_args = processor._client.ocr.process.call_args[1]
+        call_kwargs = processor._client.ocr.process.call_args.kwargs
 
-        assert call_args["model"] == "test-model"
-        assert call_args["document"]["type"] == "image_url"
-        assert call_args["document"]["image_url"] == "https://example.com/image.png"
-        assert call_args["include_image_base64"] is True
-        assert call_args["pages"] is None
+        assert call_kwargs["model"] == "test-model"
+        assert call_kwargs["document"]["type"] == "image_url"
+        assert call_kwargs["document"]["image_url"] == "https://example.com/image.png"
+        assert call_kwargs["include_image_base64"] is True
+        assert call_kwargs["pages"] is None
 
         # Check the result
         assert result.extraction_method == "mistral-ocr"
         assert len(result.pages) == 1
-        assert 1 in result.pages  # 1-indexed
-        assert result.pages[1].markdown == "Extracted text from image"
+        assert 0 in result.pages
+        assert result.pages[0].markdown == "Extracted text from image"
 
     @pytest.mark.asyncio
     async def test_extract_with_content(self, processor):
@@ -63,6 +64,7 @@ class TestMistralOCRProcessor:
         mock_page = Mock()
         mock_page.index = 0
         mock_page.markdown = "Extracted text"
+        mock_page.images = []  # No images in this example
 
         mock_response = Mock()
         mock_response.pages = [mock_page]
@@ -73,20 +75,21 @@ class TestMistralOCRProcessor:
 
         # Check the API was called with base64 encoded content
         processor._client.ocr.process.assert_called_once()
-        call_args = processor._client.ocr.process.call_args[1]
+        call_kwargs = processor._client.ocr.process.call_args.kwargs
 
         expected_data_url = f"data:image/png;base64,{base64.b64encode(content).decode('utf-8')}"
-        assert call_args["document"]["image_url"] == expected_data_url
+        assert call_kwargs["document"]["image_url"] == expected_data_url
 
     @pytest.mark.asyncio
     async def test_extract_pdf_with_pages(self, processor):
         """Test extraction with specific pages from PDF."""
         # Mock the OCR response
         mock_pages = []
-        for i in [1, 3]:  # Pages 2 and 4 (0-indexed in response)
+        for i in [1, 3]:
             mock_page = Mock()
             mock_page.index = i
             mock_page.markdown = f"Text from page {i + 1}"
+            mock_page.images = []  # No images in this example
             mock_pages.append(mock_page)
 
         mock_response = Mock()
@@ -97,20 +100,20 @@ class TestMistralOCRProcessor:
         result = await processor._extract(
             url="https://example.com/doc.pdf",
             content_type="application/pdf",
-            pages=[2, 4],  # 1-indexed input
+            pages=[1, 3],
         )
 
-        # Check pages parameter was converted to 0-indexed
-        call_args = processor._client.ocr.process.call_args[1]
-        assert call_args["pages"] == [1, 3]  # 0-indexed for API
-        assert call_args["document"]["type"] == "document_url"
+        # Check pages parameter is passed correctly
+        call_kwargs = processor._client.ocr.process.call_args.kwargs
+        assert call_kwargs["pages"] == [1, 3]  # Pages passed as-is to API
+        assert call_kwargs["document"]["type"] == "document_url"
 
-        # Check result has correct 1-indexed pages
+        # Check result has correct 0-indexed pages
         assert len(result.pages) == 2
-        assert 2 in result.pages
-        assert 4 in result.pages
-        assert result.pages[2].markdown == "Text from page 2"
-        assert result.pages[4].markdown == "Text from page 4"
+        assert 1 in result.pages
+        assert 3 in result.pages
+        assert result.pages[1].markdown == "Text from page 2"
+        assert result.pages[3].markdown == "Text from page 4"
 
     @pytest.mark.asyncio
     @pytest.mark.mistral
@@ -138,7 +141,7 @@ class TestMistralOCRProcessor:
 
         assert result.extraction_method == "mistral-ocr"
         assert len(result.pages) == 1
-        assert "Test Image for OCR" in result.pages[1].markdown
+        assert "Test Image for OCR" in result.pages[0].markdown
 
     @pytest.mark.asyncio
     @pytest.mark.mistral
@@ -166,4 +169,4 @@ class TestMistralOCRProcessor:
 
         assert result.extraction_method == "mistral-ocr"
         assert len(result.pages) == 1
-        assert "Test PDF Document" in result.pages[1].markdown
+        assert "Test PDF Document" in result.pages[0].markdown

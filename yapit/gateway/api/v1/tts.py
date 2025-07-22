@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, Field
@@ -22,6 +23,7 @@ from yapit.gateway.deps import (
     ensure_admin_credits,
 )
 from yapit.gateway.domain_models import BlockVariant, TTSModel
+from yapit.gateway.exceptions import InsufficientCreditsError
 
 log = logging.getLogger(__name__)
 
@@ -65,10 +67,7 @@ async def synthesize(
 ) -> Response:
     """Synthesize audio for a block. Returns audio data directly with long-polling."""
     if user_credits.balance <= 0:
-        raise HTTPException(
-            status_code=status.HTTP_402_PAYMENT_REQUIRED,
-            detail="Insufficient credits. Please purchase credits to continue.",
-        )
+        raise InsufficientCreditsError(required=Decimal("1"), available=user_credits.balance)
 
     served_codec = model.native_codec  # TODO change to "opus" once workers transcode
     variant_hash = BlockVariant.get_hash(

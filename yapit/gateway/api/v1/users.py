@@ -1,10 +1,10 @@
-from decimal import Decimal
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 from sqlmodel import select
 
+from yapit.gateway.db import get_or_404
 from yapit.gateway.deps import (
     AuthenticatedUser,
     DbSession,
@@ -19,15 +19,6 @@ from yapit.gateway.domain_models import (
 router = APIRouter(prefix="/v1/users", tags=["Users"])
 
 
-class UserCreditsResponse(BaseModel):
-    """Response containing user's credit information."""
-
-    user_id: str
-    balance: Decimal
-    total_purchased: Decimal
-    total_used: Decimal
-
-
 class FilterRead(BaseModel):
     """User filter response."""
 
@@ -37,18 +28,13 @@ class FilterRead(BaseModel):
     config: dict[str, Any]
 
 
-@router.get("/me/credits", response_model=UserCreditsResponse)
+@router.get("/me/credits", response_model=UserCredits)
 async def get_my_credits(
     db: DbSession,
     auth_user: AuthenticatedUser,
 ) -> UserCredits:
     """Get current user's credit balance and statistics."""
-    user_credits = await db.get(UserCredits, auth_user.id)
-    if not user_credits:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="No credit record found",
-        )
+    user_credits = await get_or_404(db, UserCredits, auth_user.id)
     return user_credits
 
 

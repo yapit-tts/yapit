@@ -34,11 +34,11 @@ async def test_user_can_get_own_credits(client, app, test_user, session):
     response = await client.get("/v1/users/me/credits")
     assert response.status_code == status.HTTP_200_OK
 
-    data = response.json()
-    assert data["user_id"] == test_user.id
-    assert Decimal(data["balance"]) == Decimal("50.25")
-    assert Decimal(data["total_purchased"]) == Decimal("100")
-    assert Decimal(data["total_used"]) == Decimal("49.75")
+    data = UserCredits.model_validate(response.json())
+    assert data.user_id == test_user.id
+    assert data.balance == Decimal("50.25")
+    assert data.total_purchased == Decimal("100")
+    assert data.total_used == Decimal("49.75")
 
 
 @pytest.mark.asyncio
@@ -86,11 +86,11 @@ async def test_user_can_get_own_transactions(client, app, test_user, session):
     response = await client.get("/v1/users/me/transactions")
     assert response.status_code == status.HTTP_200_OK
 
-    data = response.json()
-    assert len(data) == 2
+    transactions = [CreditTransaction.model_validate(t) for t in response.json()]
+    assert len(transactions) == 2
     # Should be ordered by created desc
-    assert Decimal(data[0]["amount"]) == Decimal("-10")  # Most recent first
-    assert Decimal(data[1]["amount"]) == Decimal("100")
+    assert transactions[0].amount == Decimal("-10")  # Most recent first
+    assert transactions[1].amount == Decimal("100")
 
 
 @pytest.mark.asyncio
@@ -126,4 +126,5 @@ async def test_credits_not_found_for_new_user(client, app, test_user):
     # Get credits without any record
     response = await client.get("/v1/users/me/credits")
     assert response.status_code == status.HTTP_404_NOT_FOUND
-    assert "No credit record found" in response.json()["detail"]
+    assert response.json()["resource_type"] == "UserCredits"
+    assert response.json()["resource_id"] == test_user.id

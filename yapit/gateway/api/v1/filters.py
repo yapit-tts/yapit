@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 import re2 as re
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlmodel import select
 
@@ -37,7 +37,9 @@ def validate_regex(
         try:
             re.compile(rule.pattern)
         except re.error as exc:
-            raise HTTPException(422, f"Invalid regex: {exc}") from exc
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"Invalid regex: {exc!r}"
+            ) from exc
     return SimpleMessage(message="ok")
 
 

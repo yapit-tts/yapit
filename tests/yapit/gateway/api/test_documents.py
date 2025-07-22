@@ -1,7 +1,8 @@
-import uuid
 from unittest.mock import patch
 
 import pytest
+
+from yapit.gateway.api.v1.documents import DocumentCreateResponse, DocumentPrepareResponse
 
 
 @pytest.mark.asyncio
@@ -14,10 +15,9 @@ async def test_create_document(client):
     )
     assert r.status_code == 201
 
-    body = r.json()
-    document_id = uuid.UUID(body["id"])  # validates UUID
+    doc = DocumentCreateResponse.model_validate(r.json())
 
-    blocks = (await client.get(f"/v1/documents/{document_id}/blocks")).json()
+    blocks = (await client.get(f"/v1/documents/{doc.id}/blocks")).json()
     assert len(blocks) == 1
     assert blocks[0]["text"] == text
 
@@ -36,19 +36,18 @@ async def test_prepare_and_create_document_from_url(client, as_test_user, sessio
         prepare_response = await client.post("/v1/documents/prepare", json={"url": "https://example.com/test.txt"})
 
         assert prepare_response.status_code == 200
-        prepare_data = prepare_response.json()
+        prepare_data = DocumentPrepareResponse.model_validate(prepare_response.json())
 
-        assert "hash" in prepare_data
-        assert prepare_data["metadata"]["content_type"] == "text/plain"
-        assert prepare_data["metadata"]["total_pages"] == 1
-        assert prepare_data["endpoint"] == "document"  # Not HTML, so not "website"
-        assert prepare_data["credit_cost"] is None  # No OCR processor requested
+        assert prepare_data.metadata.content_type == "text/plain"
+        assert prepare_data.metadata.total_pages == 1
+        assert prepare_data.endpoint == "document"  # Not HTML, so not "website"
+        assert prepare_data.credit_cost is None  # No OCR processor requested
 
         # Step 2: Try to create document (will fail without processor)
         create_response = await client.post(
             "/v1/documents/document",
             json={
-                "hash": prepare_data["hash"],
+                "hash": prepare_data.hash,
                 "title": "Test Document",
                 "processor_slug": "markitdown",
                 "pages": None,  # Process all pages
@@ -80,7 +79,9 @@ async def test_prepare_caching(client, as_test_user):
         assert mock_download.call_count == 1  # Not called again
 
         # Should return same hash
-        assert response1.json()["hash"] == response2.json()["hash"]
+        data1 = DocumentPrepareResponse.model_validate(response1.json())
+        data2 = DocumentPrepareResponse.model_validate(response2.json())
+        assert data1.hash == data2.hash
 
 
 @pytest.mark.asyncio
@@ -93,13 +94,12 @@ async def test_upload_and_create_document(client, as_test_user):
     upload_response = await client.post("/v1/documents/prepare/upload", files=files)
 
     assert upload_response.status_code == 200
-    upload_data = upload_response.json()
+    upload_data = DocumentPrepareResponse.model_validate(upload_response.json())
 
-    assert "hash" in upload_data
-    assert upload_data["metadata"]["content_type"] == "text/plain"
-    assert upload_data["metadata"]["file_name"] == "test.txt"
-    assert upload_data["metadata"]["file_size"] == len(file_content)
-    assert upload_data["endpoint"] == "document"
+    assert upload_data.metadata.content_type == "text/plain"
+    assert upload_data.metadata.file_name == "test.txt"
+    assert upload_data.metadata.file_size == len(file_content)
+    assert upload_data.endpoint == "document"
 
 
 @pytest.mark.asyncio
@@ -123,6 +123,6 @@ async def test_prepare_invalid_page_numbers(client, as_test_user):
             },
         )
 
-        assert response.status_code == 400
+        assert response.status_code == 422
         assert "Invalid page numbers: [5, 10]" in response.json()["detail"]
         assert "Document has 3 pages" in response.json()["detail"]

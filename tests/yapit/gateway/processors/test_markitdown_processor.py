@@ -27,8 +27,8 @@ class TestMarkitdownProcessor:
 
         assert result.extraction_method == "markitdown"
         assert len(result.pages) == 1
-        assert 1 in result.pages
-        assert "This is a test text file" in result.pages[1].markdown
+        assert 0 in result.pages
+        assert "This is a test text file" in result.pages[0].markdown
 
     @pytest.mark.asyncio
     async def test_extract_html_file(self, processor):
@@ -41,9 +41,9 @@ class TestMarkitdownProcessor:
 
         assert result.extraction_method == "markitdown"
         assert len(result.pages) == 1
-        assert 1 in result.pages
+        assert 0 in result.pages
         # Markitdown should convert HTML to markdown
-        assert "Test HTML Document" in result.pages[1].markdown
+        assert "Test HTML Document" in result.pages[0].markdown
 
     @pytest.mark.asyncio
     async def test_extract_pdf_file(self, processor):
@@ -56,9 +56,9 @@ class TestMarkitdownProcessor:
 
         assert result.extraction_method == "markitdown"
         assert len(result.pages) == 1
-        assert 1 in result.pages
+        assert 0 in result.pages
         # Should contain the PDF text
-        assert "Test PDF Document" in result.pages[1].markdown
+        assert "Test PDF Document" in result.pages[0].markdown
 
     @pytest.mark.asyncio
     async def test_extract_no_content(self, processor):

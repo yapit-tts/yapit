@@ -1,10 +1,11 @@
 from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlmodel import select
 
 from yapit.gateway.auth import authenticate
+from yapit.gateway.db import get_by_slug_or_404
 from yapit.gateway.deps import CurrentTTSModel, DbSession
 from yapit.gateway.domain_models import TTSModel
 
@@ -86,10 +87,7 @@ async def list_voices(
     db: DbSession,
 ) -> List[VoiceRead]:
     """Get all voices available for a specific model."""
-    model = (await db.exec(select(TTSModel).where(TTSModel.slug == model_slug))).first()
-
-    if not model:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Model not found")
+    model = await get_by_slug_or_404(db, TTSModel, model_slug)
 
     return [
         VoiceRead(

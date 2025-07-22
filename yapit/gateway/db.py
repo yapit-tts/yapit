@@ -1,11 +1,14 @@
-from typing import AsyncIterator
+from __future__ import annotations
+
+from typing import Any, AsyncIterator
 
 from alembic import command, config
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
-from sqlmodel import SQLModel
+from sqlmodel import SQLModel, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from yapit.gateway.config import Settings
+from yapit.gateway.exceptions import ResourceNotFoundError
 
 _engine: AsyncEngine | None = None
 
@@ -66,3 +69,18 @@ async def _seed_db(settings: Settings) -> None:
     async for db in create_session(settings):
         await seed_dev_database(db)
         break  # only iterate once
+
+
+async def get_or_404[T: SQLModel](session: AsyncSession, model: type[T], id: Any, *, options: list | None = None) -> T:
+    result = await session.get(model, id, options=options or [])
+    if not result:
+        raise ResourceNotFoundError(model.__name__, id)
+    return result
+
+
+async def get_by_slug_or_404[T: SQLModel](session: AsyncSession, model: type[T], slug: str) -> T:
+    result = await session.exec(select(model).where(model.slug == slug))
+    item = result.first()
+    if not item:
+        raise ResourceNotFoundError(model.__name__, slug)
+    return item
