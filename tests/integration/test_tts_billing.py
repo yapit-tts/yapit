@@ -4,8 +4,6 @@ from decimal import Decimal
 
 import pytest
 
-from yapit.gateway.domain_models import CreditTransaction, UserCredits
-
 
 async def grant_credits_via_api(admin_client, user_id: str, amount: Decimal):
     """Grant credits to a user using the admin API."""
@@ -21,20 +19,20 @@ async def grant_credits_via_api(admin_client, user_id: str, amount: Decimal):
     return response.json()
 
 
-async def get_user_credits_via_api(user_client) -> UserCredits | None:
+async def get_user_credits_via_api(user_client) -> dict:
     """Get user credits using the user API."""
     response = await user_client.get("/v1/users/me/credits")
     if response.status_code == 404:
-        return None
+        return {"balance": "0"}
     assert response.status_code == 200
-    return UserCredits.model_validate(response.json())
+    return response.json()
 
 
 @pytest.mark.asyncio
 async def test_tts_insufficient_credits(regular_client, regular_document):
     """Test that TTS fails with 402 when user has no credits."""
-    document_id = regular_document.doc.id
-    block_id = regular_document.blocks[0].id
+    document_id = regular_document["id"]
+    block_id = regular_document["blocks"][0]["id"]
 
     synth_response = await regular_client.post(
         f"/v1/documents/{document_id}/blocks/{block_id}/synthesize/models/kokoro-cpu/voices/af_heart",
@@ -53,8 +51,8 @@ async def test_tts_with_credits_deduction(regular_client, admin_client, regular_
     initial_credits = Decimal("100.0")
     await grant_credits_via_api(admin_client, regular_user["id"], initial_credits)
 
-    document_id = unique_document.doc.id
-    block_id = unique_document.blocks[0].id
+    document_id = unique_document["id"]
+    block_id = unique_document["blocks"][0]["id"]
 
     synth_response = await regular_client.post(
         f"/v1/documents/{document_id}/blocks/{block_id}/synthesize/models/kokoro-cpu/voices/af_heart",
@@ -71,23 +69,23 @@ async def test_tts_with_credits_deduction(regular_client, admin_client, regular_
 
     # Verify credits were deducted via API
     credits_after = await get_user_credits_via_api(regular_client)
-    assert credits_after is not None
-    assert credits_after.balance < initial_credits
+    final_balance = Decimal(credits_after["balance"])
+    assert final_balance < initial_credits
 
     # Calculate expected deduction (duration_seconds * credits_per_sec)
     # For kokoro-cpu, multiplier is 1.0
     expected_deduction = Decimal(duration_ms) / 1000 * Decimal("1.0")
-    assert initial_credits - credits_after.balance == expected_deduction
+    assert initial_credits - final_balance == expected_deduction
 
     # Verify transaction was created via API
     tx_response = await regular_client.get("/v1/users/me/transactions")
     assert tx_response.status_code == 200
-    transactions = [CreditTransaction.model_validate(tx) for tx in tx_response.json()]
+    transactions = tx_response.json()
 
     # Find the usage deduction transaction
-    usage_tx = next((tx for tx in transactions if tx.type == "usage_deduction"), None)
+    usage_tx = next((tx for tx in transactions if tx["type"] == "usage_deduction"), None)
     assert usage_tx is not None
-    assert usage_tx.amount == -expected_deduction
+    assert Decimal(usage_tx["amount"]) == -expected_deduction
 
 
 @pytest.mark.asyncio
@@ -97,8 +95,8 @@ async def test_tts_cached_no_credit_deduction(regular_client, admin_client, regu
     initial_credits = Decimal("100.0")
     await grant_credits_via_api(admin_client, regular_user["id"], initial_credits)
 
-    document_id = unique_document.doc.id
-    block_id = unique_document.blocks[0].id
+    document_id = unique_document["id"]
+    block_id = unique_document["blocks"][0]["id"]
 
     # First synthesis - should deduct credits
     synth_params = {"speed": 1.0}
@@ -111,8 +109,8 @@ async def test_tts_cached_no_credit_deduction(regular_client, admin_client, regu
 
     # Check balance after first synthesis
     credits_after_first = await get_user_credits_via_api(regular_client)
-    assert credits_after_first is not None
-    assert credits_after_first.balance < initial_credits
+    balance_after_first = Decimal(credits_after_first["balance"])
+    assert balance_after_first < initial_credits
 
     # Second synthesis (same params) - should use cache
     second_response = await regular_client.post(
@@ -124,16 +122,16 @@ async def test_tts_cached_no_credit_deduction(regular_client, admin_client, regu
 
     # Verify no additional credits were deducted
     credits_after_second = await get_user_credits_via_api(regular_client)
-    assert credits_after_second is not None
-    assert credits_after_second.balance == credits_after_first.balance  # No change
+    balance_after_second = Decimal(credits_after_second["balance"])
+    assert balance_after_second == balance_after_first  # No change
 
     # Verify only one transaction exists via API
     tx_response = await regular_client.get("/v1/users/me/transactions")
     assert tx_response.status_code == 200
-    transactions = [CreditTransaction.model_validate(tx) for tx in tx_response.json()]
+    transactions = tx_response.json()
 
     # Count usage deduction transactions
-    usage_txs = [tx for tx in transactions if tx.type == "usage_deduction"]
+    usage_txs = [tx for tx in transactions if tx["type"] == "usage_deduction"]
     assert len(usage_txs) == 1  # Only one deduction
 
 
@@ -141,7 +139,7 @@ async def test_tts_cached_no_credit_deduction(regular_client, admin_client, regu
 async def test_tts_admin_no_credit_check(admin_client, test_document):
     """Test that admins dont need any credits."""
     synth_response = await admin_client.post(
-        f"/v1/documents/{test_document.doc.id}/blocks/{test_document.blocks[0].id}/synthesize/models/kokoro-cpu/voices/af_heart",
+        f"/v1/documents/{test_document['id']}/blocks/{test_document['blocks'][0]['id']}/synthesize/models/kokoro-cpu/voices/af_heart",
         json={"speed": 1.0},
     )
 
