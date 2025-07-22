@@ -157,7 +157,7 @@ class BaseDocumentProcessor(ABC):
 
         # Determine what pages to process
         missing_pages = get_missing_pages(cached_doc, pages)
-        requested_pages = set(pages) if pages else set(range(1, cached_doc.metadata.total_pages + 1))
+        requested_pages = set(pages) if pages else set(range(cached_doc.metadata.total_pages))
 
         # If all pages are cached, return them
         if not missing_pages:
@@ -166,7 +166,7 @@ class BaseDocumentProcessor(ABC):
         # Check credits
         credits_needed = Decimal(len(missing_pages)) * processor_model.credits_per_page
         if user_credits.balance < credits_needed:
-            raise InsufficientCreditsError(f"Insufficient credits: need {credits_needed}, have {user_credits.balance}")
+            raise InsufficientCreditsError(required=credits_needed, available=user_credits.balance)
 
         # Process missing pages
         result = await self._extract(url=url, content=content, content_type=content_type, pages=list(missing_pages))
@@ -196,7 +196,7 @@ class BaseDocumentProcessor(ABC):
             extraction_method=extraction.extraction_method,
         )
 
-    async def _create_transaction(  # TODO dont use a function here..
+    async def _create_transaction(
         self,
         db: AsyncSession,
         user_id: str,

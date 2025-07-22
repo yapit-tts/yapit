@@ -165,14 +165,7 @@ async def prepare_document(
 
     credit_cost = None
     if endpoint == "document":
-        if request.pages:
-            invalid_pages = [p for p in request.pages if p < 1 or p > page_count]
-            if invalid_pages:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail=f"Invalid page numbers: {invalid_pages!r}. Document has {page_count} pages.",
-                )
-
+        _validate_page_numbers(request.pages, page_count)
         credit_cost = await _calculate_document_credit_cost(
             cached_doc, request.processor_slug, request.pages, db, document_processor_manager
         )
@@ -360,13 +353,7 @@ async def create_document(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="This endpoint is for documents only. Use /website for websites.",
         )
-    if req.pages:
-        invalid_pages = [p for p in req.pages if p < 1 or p > cached_doc.metadata.total_pages]
-        if invalid_pages:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"Invalid page numbers: {invalid_pages!r}. Document has {cached_doc.metadata.total_pages} pages.",
-            )
+    _validate_page_numbers(req.pages, cached_doc.metadata.total_pages)
 
     processor = document_processor_manager.get_processor(req.processor_slug)
     if not processor:
@@ -587,3 +574,14 @@ def _estimate_duration_ms(text: str, speed: float = 1.0, chars_per_second: float
     """
     cps = chars_per_second * speed
     return math.ceil(len(text) / cps * 1000)
+
+
+def _validate_page_numbers(pages: list[int] | None, total_pages: int) -> None:
+    if not pages:
+        return
+    invalid_pages = [p for p in pages if p < 0 or p >= total_pages]
+    if invalid_pages:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid page numbers: {invalid_pages!r}. Document has {total_pages} pages (0-indexed).",
+        )
