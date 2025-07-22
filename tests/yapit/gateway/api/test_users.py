@@ -126,4 +126,5 @@ async def test_credits_not_found_for_new_user(client, app, test_user):
     # Get credits without any record
     response = await client.get("/v1/users/me/credits")
     assert response.status_code == status.HTTP_404_NOT_FOUND
-    assert "No credit record found" in response.json()["detail"]
+    assert response.json()["resource_type"] == "UserCredits"
+    assert response.json()["resource_id"] == test_user.id

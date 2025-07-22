@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlmodel import select
 
+from yapit.gateway.db import get_by_slug_or_404, get_or_404
 from yapit.gateway.deps import (
     DbSession,
     get_or_create_user_credits,
@@ -19,6 +20,7 @@ from yapit.gateway.domain_models import (
     UserCredits,
     Voice,
 )
+from yapit.gateway.exceptions import ResourceNotFoundError
 
 router = APIRouter(prefix="/v1/admin", tags=["Admin"], dependencies=[Depends(require_admin)])
 
@@ -92,7 +94,7 @@ async def create_model(
     if existing:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"Model with slug {model_data.slug!r} already exists",
+            detail=f"{TTSModel.__name__} with identifier {model_data.slug!r} already exists",
         )
 
     model = TTSModel(**model_data.model_dump())
@@ -109,12 +111,7 @@ async def update_model(
     db: DbSession,
 ) -> TTSModel:
     """Update an existing TTS model."""
-    model = (await db.exec(select(TTSModel).where(TTSModel.slug == model_slug))).first()
-    if not model:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Model {model_slug!r} not found",
-        )
+    model = await get_by_slug_or_404(db, TTSModel, model_slug)
 
     update_data = model_data.model_dump(exclude_unset=True)
     for key, value in update_data.items():
@@ -131,12 +128,7 @@ async def delete_model(
     db: DbSession,
 ) -> None:
     """Delete a TTS model and all its voices."""
-    model = (await db.exec(select(TTSModel).where(TTSModel.slug == model_slug))).first()
-    if not model:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Model {model_slug!r} not found",
-        )
+    model = await get_by_slug_or_404(db, TTSModel, model_slug)
 
     await db.delete(model)
     await db.commit()
@@ -152,12 +144,7 @@ async def create_voice(
     db: DbSession,
 ) -> Voice:
     """Create a new voice for a model."""
-    model = (await db.exec(select(TTSModel).where(TTSModel.slug == model_slug))).first()
-    if not model:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Model {model_slug!r} not found",
-        )
+    model = await get_by_slug_or_404(db, TTSModel, model_slug)
 
     existing = (
         await db.exec(select(Voice).where(Voice.slug == voice_data.slug).where(Voice.model_id == model.id))
@@ -165,7 +152,7 @@ async def create_voice(
     if existing:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"Voice with slug {voice_data.slug!r} already exists for model {model_slug!r}",
+            detail=f"{Voice.__name__} with slug {voice_data.slug!r} already exists for model {model_slug!r}",
         )
 
     voice = Voice(**voice_data.model_dump(), model_id=model.id)
@@ -187,9 +174,8 @@ async def update_voice(
         await db.exec(select(Voice).join(TTSModel).where(Voice.slug == voice_slug).where(TTSModel.slug == model_slug))
     ).first()
     if not voice:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Voice {voice_slug!r} not found for model {model_slug!r}",
+        raise ResourceNotFoundError(
+            Voice.__name__, voice_slug, message=f"Voice {voice_slug!r} not found for model {model_slug!r}"
         )
 
     update_data = voice_data.model_dump(exclude_unset=True)
@@ -212,9 +198,8 @@ async def delete_voice(
         await db.exec(select(Voice).join(TTSModel).where(Voice.slug == voice_slug).where(TTSModel.slug == model_slug))
     ).first()
     if not voice:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Voice {voice_slug!r} not found for model {model_slug!r}",
+        raise ResourceNotFoundError(
+            Voice.__name__, voice_slug, message=f"Voice {voice_slug!r} not found for model {model_slug!r}"
         )
 
     await db.delete(voice)
@@ -245,7 +230,7 @@ async def create_system_filter(
     if existing:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"System filter with name {filter_data.name!r} already exists",
+            detail=f"{Filter.__name__} with identifier {filter_data.name!r} already exists",
         )
 
     filter_obj = Filter(**filter_data.model_dump(), user_id=None)
@@ -262,11 +247,10 @@ async def update_system_filter(
     db: DbSession,
 ) -> Filter:
     """Update an existing system filter."""
-    filter_obj = await db.get(Filter, filter_id)
-    if not filter_obj or filter_obj.user_id is not None:
+    filter_obj = await get_or_404(db, Filter, filter_id)
+    if filter_obj.user_id is not None:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"System filter {filter_id!r} not found",
+            status_code=status.HTTP_409_CONFLICT, detail=f"The filter {filter_id!r} is not a system filter"
         )
 
     # Check name uniqueness if updating name (relevant only for system filters)
@@ -282,7 +266,7 @@ async def update_system_filter(
         if existing:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail=f"System filter with name {filter_data.name!r} already exists",
+                detail=f"{Filter.__name__} with identifier {filter_data.name!r} already exists",
             )
 
     update_data = filter_data.model_dump(exclude_unset=True)
@@ -300,11 +284,10 @@ async def delete_system_filter(
     db: DbSession,
 ) -> None:
     """Delete a system filter."""
-    filter_obj = await db.get(Filter, filter_id)
-    if not filter_obj or filter_obj.user_id is not None:
+    filter_obj = await get_or_404(db, Filter, filter_id)
+    if filter_obj.user_id is not None:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"System filter {filter_id!r} not found",
+            status_code=status.HTTP_409_CONFLICT, detail=f"The filter {filter_id!r} is not a system filter"
         )
 
     await db.delete(filter_obj)

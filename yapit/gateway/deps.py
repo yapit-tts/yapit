@@ -13,7 +13,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from yapit.gateway.auth import authenticate
 from yapit.gateway.cache import Cache, CacheConfig, Caches, SqliteCache
 from yapit.gateway.config import Settings, get_settings
-from yapit.gateway.db import create_session
+from yapit.gateway.db import create_session, get_by_slug_or_404, get_or_404
 from yapit.gateway.domain_models import (
     Block,
     BlockVariant,
@@ -25,6 +25,7 @@ from yapit.gateway.domain_models import (
     UserCredits,
     Voice,
 )
+from yapit.gateway.exceptions import ResourceNotFoundError
 from yapit.gateway.processors.document.manager import DocumentProcessorManager
 from yapit.gateway.stack_auth.users import User
 from yapit.gateway.text_splitter import (
@@ -76,16 +77,9 @@ async def get_doc(
     db: DbSession,
     user: AuthenticatedUser,
 ) -> Document:
-    doc: Document | None = await db.get(Document, document_id)
-    if not doc:
-        raise HTTPException(404, f"Document {document_id!r} not found")
-
+    doc = await get_or_404(db, Document, document_id)
     if doc.user_id != user.id:
-        raise HTTPException(
-            status.HTTP_401_UNAUTHORIZED,
-            "cannot access document of another user",
-        )
-
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cannot access document of another user")
     return doc
 
 
@@ -93,10 +87,7 @@ async def get_model(
     db: DbSession,
     model_slug: str,
 ) -> TTSModel:
-    model: TTSModel | None = (await db.exec(select(TTSModel).where(TTSModel.slug == model_slug))).first()
-    if not model:
-        raise HTTPException(404, f"Model {model_slug!r} not found")
-    return model
+    return await get_by_slug_or_404(db, TTSModel, model_slug)
 
 
 CurrentTTSModel = Annotated[TTSModel, Depends(get_model)]
@@ -111,7 +102,9 @@ async def get_voice(
         await db.exec(select(Voice).join(TTSModel).where(Voice.slug == voice_slug, TTSModel.slug == model_slug))
     ).first()
     if not voice:
-        raise HTTPException(404, f"Voice {voice_slug!r} not configured for model {model_slug!r}")
+        raise ResourceNotFoundError(
+            Voice.__name__, voice_slug, message=f"Voice {voice_slug!r} not configured for model {model_slug!r}"
+        )
     return voice
 
 
@@ -121,16 +114,16 @@ async def get_block(
     db: DbSession,
     user: AuthenticatedUser,
 ) -> Block:
-    block: Block | None = await db.get(
-        Block,
-        block_id,
-        options=[selectinload("*")],
-    )
-    if not block or block.document_id != document_id:
-        raise HTTPException(404, f"Block {block_id!r} not found in document {document_id!r}")
+    block = await get_or_404(db, Block, block_id, options=[selectinload("*")])
+    if block.document_id != document_id:
+        raise ResourceNotFoundError(
+            Block.__name__, block_id, message=f"Block {block_id!r} not found in document {document_id!r}"
+        )
 
     if block.document.user_id != user.id:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "cannot access block in another user's document")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Cannot access block in another user's document"
+        )
 
     return block
 
@@ -140,17 +133,17 @@ async def get_block_variant(
     db: DbSession,
     user: AuthenticatedUser,
 ) -> BlockVariant:
-    variant: BlockVariant | None = await db.get(
+    variant = await get_or_404(
+        db,
         BlockVariant,
         variant_hash,
         options=[selectinload(BlockVariant.block).selectinload(Block.document)],
     )
-    if not variant:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, f"BlockVariant {variant_hash!r} not found")
 
     if variant.block.document.user_id != user.id:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "cannot access block variant in another user's document")
-
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Cannot access block variant in another user's document"
+        )
     return variant
 
 

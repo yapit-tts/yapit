@@ -14,6 +14,7 @@ from pydantic import BaseModel, HttpUrl, StringConstraints
 from sqlmodel import select
 
 from yapit.gateway.auth import authenticate
+from yapit.gateway.db import get_by_slug_or_404
 from yapit.gateway.deps import (
     AuthenticatedUser,
     AuthenticatedUserCredits,
@@ -31,7 +32,7 @@ from yapit.gateway.domain_models import (
     DocumentMetadata,
     DocumentProcessor,
 )
-from yapit.gateway.exceptions import ResourceNotFoundError, ValidationError
+from yapit.gateway.exceptions import ResourceNotFoundError
 from yapit.gateway.processors.document.base import (
     CachedDocument,
     DocumentExtractionResult,
@@ -167,7 +168,10 @@ async def prepare_document(
         if request.pages:
             invalid_pages = [p for p in request.pages if p < 1 or p > page_count]
             if invalid_pages:
-                raise HTTPException(400, f"Invalid page numbers: {invalid_pages}. Document has {page_count} pages.")
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Invalid page numbers: {invalid_pages!r}. Document has {page_count} pages.",
+                )
 
         credit_cost = await _calculate_document_credit_cost(
             cached_doc, request.processor_slug, request.pages, db, document_processor_manager
@@ -188,7 +192,7 @@ async def prepare_document_upload(
     """Prepare a document from file upload."""
     content = await file.read()
     if not content:
-        raise HTTPException(400, "Empty file")
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Empty file")
 
     cache_key = hashlib.sha256(content).hexdigest()
     cached_data = await cache.retrieve_data(cache_key)
@@ -277,13 +281,17 @@ async def create_website_document(
     """Create a document from a live website."""
     cached_data = await cache.retrieve_data(req.hash)
     if not cached_data:
-        raise HTTPException(
-            404,
-            rf"Document with hash {req.hash} not found in cache. Have you called {prepare_document}?",
+        raise ResourceNotFoundError(
+            CachedDocument.__name__,
+            req.hash,
+            message=f"Document with hash {req.hash!r} not found in cache. Have you called /prepare?",
         )
     cached_doc = CachedDocument.model_validate_json(cached_data)
     if cached_doc.metadata.content_type.lower() != "text/html":
-        raise HTTPException(400, rf"This endpoint is for websites only. Use {create_document} for files.")
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="This endpoint is for websites only. Use /document for files.",
+        )
 
     # TODO: Implement web parser
     # TODO: Web parser should call docling processor (not implemented yet) to convert html to markdown
@@ -340,24 +348,29 @@ async def create_document(
     """Create a document from a file (PDF, image, etc)."""
     cached_data = await cache.retrieve_data(req.hash)
     if not cached_data:
-        raise HTTPException(
-            404,
-            rf"Document with hash {req.hash} not found in cache. Have you called {prepare_document} or {prepare_document_upload}?",
+        raise ResourceNotFoundError(
+            CachedDocument.__name__,
+            req.hash,
+            message=f"Document with hash {req.hash!r} not found in cache. Have you called /prepare or /prepare/upload?",
         )
     cached_doc = CachedDocument.model_validate_json(cached_data)
 
     if cached_doc.metadata.content_type.lower() == "text/html":
-        raise HTTPException(400, "This endpoint is for documents only. Use /documents/website for websites.")
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="This endpoint is for documents only. Use /website for websites.",
+        )
     if req.pages:
         invalid_pages = [p for p in req.pages if p < 1 or p > cached_doc.metadata.total_pages]
         if invalid_pages:
             raise HTTPException(
-                400, f"Invalid page numbers: {invalid_pages}. Document has {cached_doc.metadata.total_pages} pages."
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Invalid page numbers: {invalid_pages!r}. Document has {cached_doc.metadata.total_pages} pages.",
             )
 
     processor = document_processor_manager.get_processor(req.processor_slug)
     if not processor:
-        raise HTTPException(404, rf"Processor {req.processor_slug} not found")
+        raise ResourceNotFoundError(DocumentProcessor.__name__, req.processor_slug)
     extraction_result = await processor.process_with_billing(
         user_id=user.id,
         user_credits=user_credits,
@@ -433,8 +446,9 @@ async def _download_document(url: HttpUrl, max_size: int) -> tuple[bytes, str]:
             else:
                 content_length = head_response.headers.get("content-length")
                 if content_length and int(content_length) > max_size:
-                    raise ValidationError(
-                        f"File too large: {int(content_length)} bytes exceeds maximum of {max_size} bytes"
+                    raise HTTPException(
+                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                        detail=f"File too large: {int(content_length)} bytes exceeds maximum of {max_size} bytes",
                     )
             response = await client.get(str(url))
             response.raise_for_status()
@@ -443,16 +457,22 @@ async def _download_document(url: HttpUrl, max_size: int) -> tuple[bytes, str]:
             async for chunk in response.aiter_bytes(chunk_size=8192):
                 downloaded += len(chunk)
                 if downloaded > max_size:
-                    raise ValidationError(
-                        f"File too large: downloaded {downloaded} bytes exceeds maximum of {max_size} bytes"
+                    raise HTTPException(
+                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                        detail=f"File too large: downloaded {downloaded} bytes exceeds maximum of {max_size} bytes",
                     )
                 content.write(chunk)
             content_type = response.headers.get("content-type", "application/octet-stream")
             return content.getvalue(), content_type
         except httpx.HTTPStatusError as e:
-            raise ValidationError(f"Failed to download document: HTTP {e.response.status_code}")
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Failed to download document: HTTP {e.response.status_code}",
+            )
         except httpx.RequestError as e:
-            raise ValidationError(f"Failed to download document: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Failed to download document: {str(e)}"
+            )
 
 
 def _extract_document_info(content: bytes, content_type: str) -> tuple[int, str | None]:
@@ -489,7 +509,10 @@ def _extract_document_info(content: bytes, content_type: str) -> tuple[int, str 
         # Generic text-based formats
         total_pages = 1
     else:
-        raise ValidationError(f"Unsupported content type for metadata extraction: {content_type}")
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail=f"Unsupported content type for metadata extraction: {content_type}",
+        )
 
     return total_pages, title
 
@@ -507,12 +530,9 @@ async def _calculate_document_credit_cost(
     processor_slug = processor_slug or "markitdown"  # TODO better way to handle default processor
     processor = document_processor_manager.get_processor(processor_slug)
     if not processor:
-        raise ResourceNotFoundError(f"Document processor '{processor_slug}' not found")
+        raise ResourceNotFoundError(DocumentProcessor.__name__, processor_slug)
 
-    result = await db.exec(select(DocumentProcessor).where(DocumentProcessor.slug == processor_slug))
-    processor_model = result.first()
-    if not processor_model:
-        raise ResourceNotFoundError(f"Document processor '{processor_slug}' not found in database")
+    processor_model = await get_by_slug_or_404(db, DocumentProcessor, processor_slug)
 
     return calculate_credit_cost(
         cached_doc, processor_credits_per_page=processor_model.credits_per_page, requested_pages=pages

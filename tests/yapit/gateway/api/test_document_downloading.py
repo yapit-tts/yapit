@@ -2,9 +2,9 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
 import pytest
+from fastapi import HTTPException
 
 from yapit.gateway.api.v1.documents import _download_document, _extract_document_info
-from yapit.gateway.exceptions import ValidationError
 
 
 class TestDownloadDocument:
@@ -48,7 +48,7 @@ class TestDownloadDocument:
         with patch("httpx.AsyncClient") as mock_client_class:
             mock_client_class.return_value.__aenter__.return_value = mock_client
 
-            with pytest.raises(ValidationError, match="File too large"):
+            with pytest.raises(HTTPException, match="File too large"):
                 await _download_document("https://example.com/huge.pdf", 100 * 1024 * 1024)
 
             mock_client.get.assert_not_called()
@@ -75,7 +75,7 @@ class TestDownloadDocument:
         with patch("httpx.AsyncClient") as mock_client_class:
             mock_client_class.return_value.__aenter__.return_value = mock_client
 
-            with pytest.raises(ValidationError, match="File too large"):
+            with pytest.raises(HTTPException, match="File too large"):
                 await _download_document("https://example.com/test.pdf", 100 * 1024 * 1024)
 
     @pytest.mark.asyncio
@@ -94,7 +94,7 @@ class TestDownloadDocument:
         with patch("httpx.AsyncClient") as mock_client_class:
             mock_client_class.return_value.__aenter__.return_value = mock_client
 
-            with pytest.raises(ValidationError, match="Failed to download document: HTTP 404"):
+            with pytest.raises(HTTPException, match="Failed to download document: HTTP 404"):
                 await _download_document("https://example.com/missing.pdf", 100 * 1024 * 1024)
 
     @pytest.mark.asyncio
@@ -106,7 +106,7 @@ class TestDownloadDocument:
         with patch("httpx.AsyncClient") as mock_client_class:
             mock_client_class.return_value.__aenter__.return_value = mock_client
 
-            with pytest.raises(ValidationError, match="Failed to download document: Connection failed"):
+            with pytest.raises(HTTPException, match="Failed to download document: Connection failed"):
                 await _download_document("https://example.com/test.pdf", 100 * 1024 * 1024)
 
     @pytest.mark.asyncio
@@ -196,7 +196,7 @@ class TestExtractDocumentInfo:
         """Test handling of unsupported content types."""
         content = b"Some content"
 
-        with pytest.raises(ValidationError, match="Unsupported content type for metadata extraction: application/json"):
+        with pytest.raises(HTTPException, match="Unsupported content type for metadata extraction: application/json"):
             _extract_document_info(content, "application/json")
 
 

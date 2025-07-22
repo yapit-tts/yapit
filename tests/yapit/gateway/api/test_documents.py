@@ -123,6 +123,6 @@ async def test_prepare_invalid_page_numbers(client, as_test_user):
             },
         )
 
-        assert response.status_code == 400
+        assert response.status_code == 422
         assert "Invalid page numbers: [5, 10]" in response.json()["detail"]
         assert "Document has 3 pages" in response.json()["detail"]

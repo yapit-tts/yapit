@@ -2,12 +2,12 @@ from abc import ABC, abstractmethod
 from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict
-from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from yapit.gateway.cache import SqliteCache
 from yapit.gateway.config import Settings
 from yapit.gateway.constants import PLATFORM_SUPPORTED_MIME_TYPES
+from yapit.gateway.db import get_by_slug_or_404
 from yapit.gateway.domain_models import (
     CreditTransaction,
     DocumentMetadata,
@@ -133,14 +133,13 @@ class BaseDocumentProcessor(ABC):
                 f"Unsupported content type: {content_type}. Supported types: {self.supported_mime_types}"
             )
 
-        result = await db.exec(select(DocumentProcessor).where(DocumentProcessor.slug == self.processor_slug))
-        processor_model = result.first()
-        if not processor_model:
-            raise ValueError(f"Document processor '{self.processor_slug}' not found in database")
+        processor_model = await get_by_slug_or_404(db, DocumentProcessor, self.processor_slug)
 
         cached_data = await cache.retrieve_data(cache_key)
         if not cached_data:
-            raise ResourceNotFoundError("Document not found in cache. Please prepare document first.")
+            raise ResourceNotFoundError(
+                CachedDocument.__name__, cache_key, message=f"Document with key {cache_key!r} not found in cache"
+            )
         cached_doc = CachedDocument.model_validate_json(cached_data)
 
         if cached_doc.metadata.total_pages > self.max_pages:

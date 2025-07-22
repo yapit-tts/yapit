@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 from sqlmodel import select
 
+from yapit.gateway.db import get_or_404
 from yapit.gateway.deps import (
     AuthenticatedUser,
     DbSession,
@@ -43,12 +44,7 @@ async def get_my_credits(
     auth_user: AuthenticatedUser,
 ) -> UserCredits:
     """Get current user's credit balance and statistics."""
-    user_credits = await db.get(UserCredits, auth_user.id)
-    if not user_credits:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="No credit record found",
-        )
+    user_credits = await get_or_404(db, UserCredits, auth_user.id)
     return user_credits
 
 

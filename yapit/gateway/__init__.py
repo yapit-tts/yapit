@@ -1,14 +1,15 @@
 from contextlib import asynccontextmanager
 
 import redis.asyncio as redis
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import ORJSONResponse
+from fastapi.responses import JSONResponse, ORJSONResponse
 
 from yapit.gateway.api.v1 import routers as v1_routers
 from yapit.gateway.config import Settings, get_settings
 from yapit.gateway.db import close_db, prepare_database
 from yapit.gateway.deps import get_audio_cache
+from yapit.gateway.exceptions import APIError
 from yapit.gateway.processors.document.manager import DocumentProcessorManager
 from yapit.gateway.processors.tts.manager import TTSProcessorManager
 
@@ -62,6 +63,12 @@ def create_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # Add exception handlers
+    @app.exception_handler(APIError)
+    async def api_error_handler(request: Request, exc: APIError):
+        return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
+
     for r in v1_routers:
         app.include_router(r)
 
