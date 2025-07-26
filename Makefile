@@ -1,4 +1,9 @@
 
+define create-dev-user
+	@echo "Creating dev user..."
+	uv run --env-file=.env.dev python scripts/create_user.py
+endef
+
 build: build-cpu
 
 build-cpu:
@@ -13,8 +18,7 @@ prod-build:
 dev-cpu: down
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.kokoro-cpu.yml \
 	up -d --build --wait
-	@echo "Creating dev user..."
-	uv run --env-file=.env.dev python scripts/create_user.py
+	$(call create-dev-user)
 
 dev-gpu: down
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.kokoro-gpu.yml \
@@ -23,11 +27,21 @@ dev-gpu: down
 dev-mac: down
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.kokoro-cpu.yml -f docker-compose.mac.yml \
 	up -d --build --wait
-	@echo "Creating dev user..."
-	uv run --env-file=.env.dev python scripts/create_user.py
+	$(call create-dev-user)
 
 down:
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml down -v --remove-orphans
+
+dev-user:
+	$(call create-dev-user)
+
+token: dev-user
+	@curl -s -X POST http://localhost:8102/api/v1/auth/password/sign-in \
+	  -H "X-Stack-Access-Type: client" \
+	  -H "X-Stack-Project-Id: $$(grep STACK_AUTH_PROJECT_ID .env.dev | cut -d= -f2)" \
+	  -H "X-Stack-Publishable-Client-Key: $$(grep STACK_AUTH_CLIENT_KEY .env.dev | cut -d= -f2)" \
+	  -H "Content-Type: application/json" \
+	  -d '{"email": "dev@example.com", "password": "dev-password-123"}' | jq -r '.access_token'
 
 # Production targets
 prod-up:

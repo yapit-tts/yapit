@@ -26,6 +26,15 @@ Check if everything works:
 make test-local  # or make test (needs runpod key)
 ```
 
+### API Access
+
+To get a bearer token for API access:
+```bash
+make token
+```
+
+This will authenticate the dev user (dev@example.com) and return a bearer token.
+
 ### Stack-Auth
 
 The following admin user is created on startup:
