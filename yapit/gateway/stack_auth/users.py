@@ -45,6 +45,8 @@ async def get_user(settings: Settings, access_token: str, user_id: str) -> User 
     headers = build_headers(settings, access_token=access_token)
 
     response = requests.get(url, headers=headers)
+    if response.status_code == 401:
+        return None
     response.raise_for_status()
 
     body = response.json()

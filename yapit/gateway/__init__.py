@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 
 import redis.asyncio as redis
@@ -12,6 +13,8 @@ from yapit.gateway.deps import get_audio_cache
 from yapit.gateway.exceptions import APIError
 from yapit.gateway.processors.document.manager import DocumentProcessorManager
 from yapit.gateway.processors.tts.manager import TTSProcessorManager
+
+log = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -64,9 +67,9 @@ def create_app(
         allow_headers=["*"],
     )
 
-    # Add exception handlers
     @app.exception_handler(APIError)
     async def api_error_handler(request: Request, exc: APIError):
+        log.error(f"API error: {str(exc)}", exc_info=exc)
         return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
 
     for r in v1_routers:
