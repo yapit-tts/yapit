@@ -68,13 +68,17 @@ class HiggsAudioV2Adapter(SynthAdapter):
                 raise RuntimeError(f"vLLM server returned status {response.status_code}")
         except requests.exceptions.RequestException as e:
             raise RuntimeError(f"vLLM server not responding: {e}")
-        self._voice_presets = {
-            voice_dir.name: (
-                base64.b64encode((voice_dir / "audio.wav").read_bytes()).decode("utf-8"),
-                (voice_dir / "transcript.txt").read_text(encoding="utf-8").strip(),
-            )
-            for voice_dir in self._voice_presets_dir.iterdir()
-        }
+        self._voice_presets = (
+            {
+                voice_dir.name: (
+                    base64.b64encode((voice_dir / "audio.wav").read_bytes()).decode("utf-8"),
+                    (voice_dir / "transcript.txt").read_text(encoding="utf-8").strip(),
+                )
+                for voice_dir in self._voice_presets_dir.iterdir()
+            }
+            if self._voice_presets_dir
+            else {}
+        )
         logger.info(
             f"Loaded voice presets from {self._voice_presets_dir}: {pprint.pformat(self._voice_presets.keys())}"
         )
