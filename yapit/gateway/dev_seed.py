@@ -34,6 +34,15 @@ def create_dev_models() -> list[TTSModel]:
         channels=1,
         sample_width=2,
     )
+    higgs_audio_v2_runpod = TTSModel(
+        slug="higgs-audio-v2-runpod",
+        name="Higgs Audio V2 (RunPod)",
+        credits_per_sec=Decimal("10"),
+        native_codec="pcm",
+        sample_rate=24_000,
+        channels=1,
+        sample_width=2,
+    )
 
     # Load voices for both models
     voices_json = Path(__file__).parent.parent / "workers/kokoro/voices.json"
@@ -49,7 +58,7 @@ def create_dev_models() -> list[TTSModel]:
         kokoro_cpu.voices.append(Voice(**voice_kwargs))
         kokoro_cpu_runpod.voices.append(Voice(**voice_kwargs))
 
-    models.extend([kokoro_cpu, kokoro_cpu_runpod])
+    models.extend([kokoro_cpu, kokoro_cpu_runpod, higgs_audio_v2_runpod])
 
     # Uncomment to add Dia model
     # dia = TTSModel(

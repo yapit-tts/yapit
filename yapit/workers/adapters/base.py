@@ -6,7 +6,7 @@ class SynthAdapter(ABC):
     async def initialize(self) -> None: ...
 
     @abstractmethod
-    async def synthesize(self, text: str, *, voice: str, speed: float) -> bytes:
+    async def synthesize(self, text: str, **kwargs) -> bytes | str:
         """Synthesize text to pcm audio bytes."""
 
     @abstractmethod

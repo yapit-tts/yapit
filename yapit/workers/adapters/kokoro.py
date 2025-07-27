@@ -7,12 +7,18 @@ from pathlib import Path
 import numpy as np
 import torch
 from kokoro import KPipeline
+from typing_extensions import TypedDict
 
 from yapit.workers.adapters.base import SynthAdapter
 
 log = logging.getLogger("adapter.kokoro")
 
 DEVICE: str = os.getenv("DEVICE", "")
+
+
+class VoiceConfig(TypedDict):
+    voice: str
+    speed: float
 
 
 class KokoroAdapter(SynthAdapter):
@@ -40,19 +46,14 @@ class KokoroAdapter(SynthAdapter):
         for v in self._voices:
             self.pipe.load_voice(v)
 
-    async def synthesize(self, text: str, *, voice: str, speed: float) -> bytes:
-        await self.initialize()
-        if voice not in self._voices:
-            raise ValueError(f"Voice {voice} not found in available voices: {self._voices}")
-
+    async def synthesize(self, text: str, **kwargs: VoiceConfig) -> bytes:
         pcm_chunks = []
         async with self._lock:  # model not thread-safe
-            for _, _, audio in self.pipe(text, voice=voice, speed=speed):
+            for _, _, audio in self.pipe(text, voice=kwargs["voice"], speed=kwargs["voice"]):
                 if audio is None:
                     continue
                 pcm = (audio.numpy() * 32767).astype(np.int16).tobytes()  # scale [-1, 1] f32 tensor to int16 range
                 pcm_chunks.append(pcm)
-
         return b"".join(pcm_chunks)
 
     def calculate_duration_ms(self, audio_bytes: bytes) -> int:
