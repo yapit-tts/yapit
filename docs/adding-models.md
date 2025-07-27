@@ -145,7 +145,6 @@ Add `runpod` to your worker's `pyproject.toml` dependencies.
 3. Configure:
    - Select Dockerfile via GitHub integration or from docker registry
    - Public Environment Variables:
-     - `MODEL_SLUG`: `yourmodel`
      - `DEVICE`: `cuda` (if your adapter needs it)
    - Docker Configuration:
      - Container Start Command: `python -m yapit.workers.handlers.runpod` 
