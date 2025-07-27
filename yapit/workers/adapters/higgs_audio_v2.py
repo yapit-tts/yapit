@@ -2,7 +2,6 @@ import base64
 import logging
 import os
 import pprint
-import subprocess
 import time
 from pathlib import Path
 from typing import NotRequired
@@ -58,34 +57,21 @@ class HiggsAudioV2Adapter(SynthAdapter):
     async def initialize(self) -> None:
         if self._initialized:
             return
-        logger.info("Starting vLLM server...")
 
-        # Use the same cache directories as set in Dockerfile
-        download_dir = os.environ.get("VLLM_DOWNLOAD_DIR", "/root/.cache/vllm")
-
-        cmd = (
-            f"python3 -m vllm.entrypoints.bosonai.api_server "
-            f"--served-model-name {MODEL_NAME} "
-            f"--model bosonai/{MODEL_NAME} "
-            f"--audio-tokenizer-type bosonai/higgs-audio-v2-tokenizer "
-            f"--limit-mm-per-prompt audio=50 "
-            f"--max-model-len 8192 "
-            f"--port {VLLM_PORT} "
-            f"--download-dir {download_dir} "
-            f"--disable-mm-preprocessor-cache"
-        ).split()
-        subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        for _ in range(120):
+        # vLLM server is started by the Docker entrypoint script
+        # Just wait for it to be ready
+        logger.info("Waiting for vLLM server to be ready...")
+        for _ in range(30):  # Shorter timeout since server should already be starting
             try:
                 response = requests.get(f"http://localhost:{VLLM_PORT}/v1/models", timeout=1)
                 if response.status_code == 200:
-                    logger.info("vLLM server ready")
+                    logger.info("vLLM server is ready")
                     break
             except requests.exceptions.RequestException:
                 pass
             time.sleep(1)
         else:
-            raise RuntimeError("Failed to start vLLM server")
+            raise RuntimeError("vLLM server not responding - check container logs")
         self._voice_presets = {
             voice_dir.name: (
                 base64.b64encode((voice_dir / "audio.wav").read_bytes()).decode("utf-8"),
