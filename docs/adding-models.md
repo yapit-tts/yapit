@@ -144,10 +144,11 @@ Add `runpod` to your worker's `pyproject.toml` dependencies.
 2. Click "New Endpoint"
 3. Configure:
    - Select Dockerfile via GitHub integration or from docker registry
-   - Public Environment Variables:
-     - `DEVICE`: `cuda` (if your adapter needs it)
+   - Public Environment Variables if needed for the adapter.
    - Docker Configuration:
-     - Container Start Command: `python -m yapit.workers.handlers.runpod` 
+     - Container Start Command (overwrite CMD): `python -m yapit.workers.handlers.runpod` 
+     - Or rather use `python3 -m yapit.workers.handlers.runpod` unless you use a python base image.
+     - Don't forget to set this because runpod removed the ability to EDIT the CMD overwrite after the endpoint is created for whatever reason.
 
 ### 4. Configure Runpod Endpoint
 
