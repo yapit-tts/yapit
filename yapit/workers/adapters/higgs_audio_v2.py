@@ -59,14 +59,19 @@ class HiggsAudioV2Adapter(SynthAdapter):
         if self._initialized:
             return
         logger.info("Starting vLLM server...")
+
+        # Use the same cache directories as set in Dockerfile
+        download_dir = os.environ.get("VLLM_DOWNLOAD_DIR", "/root/.cache/vllm")
+
         cmd = (
-            f"python -m vllm.entrypoints.bosonai.api_server "
+            f"python3 -m vllm.entrypoints.bosonai.api_server "
             f"--served-model-name {MODEL_NAME} "
             f"--model bosonai/{MODEL_NAME} "
             f"--audio-tokenizer-type bosonai/higgs-audio-v2-tokenizer "
             f"--limit-mm-per-prompt audio=50 "
             f"--max-model-len 8192 "
             f"--port {VLLM_PORT} "
+            f"--download-dir {download_dir} "
             f"--disable-mm-preprocessor-cache"
         ).split()
         subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
