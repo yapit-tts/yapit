@@ -29,24 +29,18 @@ class RunpodProcessor(BaseTTSProcessor):
 
     async def process(self, job: SynthesisJob) -> JobResult:
         """Forward job to RunPod endpoint and return result."""
-        job_input = {
-            "text": job.text,
-            "voice": job.voice_slug,
-            "speed": job.speed,
-        }
-
         try:
             # RunPod SDK is synchronous, so we run it in a thread
-            result = await asyncio.to_thread(self._endpoint.run_sync, job_input, timeout=self._timeout_seconds)
+            result = await asyncio.to_thread(
+                self._endpoint.run_sync, job.synthesis_parameters.model_dump(), timeout=self._timeout_seconds
+            )
 
             if "error" in result:
                 raise RuntimeError(f"RunPod job {job.job_id} failed: {result['error']}")
 
             audio_bytes = base64.b64decode(result["audio_base64"])
             duration_ms = result["duration_ms"]
-
             return JobResult(audio=audio_bytes, duration_ms=duration_ms)
-
         except Exception as e:
             log.error(f"Failed to process job {job.job_id}: {e}")
             raise

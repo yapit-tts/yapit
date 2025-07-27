@@ -20,19 +20,12 @@ class LocalProcessor(BaseTTSProcessor):
     async def initialize(self) -> None:
         self._client = httpx.AsyncClient(timeout=60.0)
 
-    async def process(self, job: SynthesisJob) -> JobResult:
+    async def process(self, params: SynthesisJob) -> JobResult:
         if not self._client:
             raise RuntimeError("Processor not initialized")
-
-        request_data = {
-            "text": job.text,
-            "voice": job.voice_slug,
-            "speed": job.speed,
-        }
         try:
             response = await self._client.post(
-                f"{self._worker_url}/synthesize",
-                json=request_data,
+                f"{self._worker_url}/synthesize", json=params.synthesis_parameters.model_dump_json()
             )
             response.raise_for_status()
 
@@ -43,10 +36,9 @@ class LocalProcessor(BaseTTSProcessor):
             audio_bytes = base64.b64decode(result["audio_base64"])
             duration_ms = result["duration_ms"]
             return JobResult(audio=audio_bytes, duration_ms=duration_ms)
-
         except httpx.RequestError as e:
-            log.error(f"HTTP request failed for job {job.job_id}: {e}")
+            log.error(f"HTTP request failed for job {params.job_id}: {e}")
             raise
         except Exception as e:
-            log.error(f"Failed to process job {job.job_id}: {e}")
+            log.error(f"Failed to process job {params.job_id}: {e}")
             raise

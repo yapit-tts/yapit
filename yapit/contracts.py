@@ -18,6 +18,18 @@ def get_queue_name(model_slug: str) -> str:
     return f"tts:queue:{model_slug}"
 
 
+class SynthesisParameters(BaseModel):
+    """Parameters for TTS synthesis."""
+
+    model_slug: str
+    voice_slug: str
+    text: str
+    codec: str  # codec the worker must produce / translate to
+    kwargs: dict = Field(default_factory=dict)  # additional parameters for the worker
+
+    model_config = ConfigDict(frozen=True)
+
+
 class SynthesisJob(BaseModel):
     """JSON contract between gateway and worker."""
 
@@ -26,12 +38,6 @@ class SynthesisJob(BaseModel):
     variant_hash: str
     user_id: str  # who to bill for this synthesis
 
-    # synthesis parameters
-    model_slug: str
-    voice_slug: str
-    text: str
-    speed: float
-    # codec the worker must produce / translate to
-    codec: str
+    synthesis_parameters: SynthesisParameters
 
     model_config = ConfigDict(frozen=True)

@@ -16,8 +16,16 @@
 
 - opus transcoding
   - depending on the intensity / scaling requirements, prlly best to do this in the gateway to save worker time?
-- fun feature: show lifetime stats (words/seconds processed, etc.)
+- Custom voice creation
+  - needs to be model specific...
+  - higgs has prompts (essential feature)
+  - kokoro can mix existing voices (low low prio)
+  - easy import / export of custom voices, and/or some way to share them
 - idea: "batch jobs" (process on dedicated resources, potentially longer wait times), not just for ocr api, but for tts too. Only makes sense with generous audio retention.
+- fun feature: show lifetime stats (words/seconds processed, etc.)
+  - voice usage (self)
+  - voice usage (all, public voices)
+- Measure how often the block variant merge case is actually hit
 
 ### Refactor
 
