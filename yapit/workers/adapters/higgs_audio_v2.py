@@ -1,6 +1,7 @@
 import base64
 import logging
 import os
+import pprint
 import subprocess
 import time
 from pathlib import Path
@@ -74,7 +75,6 @@ class HiggsAudioV2Adapter(SynthAdapter):
                 response = requests.get(f"http://localhost:{VLLM_PORT}/v1/models", timeout=1)
                 if response.status_code == 200:
                     logger.info("vLLM server ready")
-                    self._initialized = True
                     break
             except requests.exceptions.RequestException:
                 pass
@@ -88,6 +88,10 @@ class HiggsAudioV2Adapter(SynthAdapter):
             )
             for voice_dir in self._voice_presets_dir.iterdir()
         }
+        logger.info(
+            f"Loaded voice presets from {self._voice_presets_dir}: {pprint.pformat(self._voice_presets.keys())}"
+        )
+        self._initialized = True
 
     async def synthesize(self, text: str, **kwargs: VoiceConfig) -> str:
         voice_config = DEFAULT_VOICE_CONFIG.copy()
