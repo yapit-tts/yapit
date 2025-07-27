@@ -149,6 +149,7 @@ Add `runpod` to your worker's `pyproject.toml` dependencies.
      - Container Start Command (overwrite CMD): `python -m yapit.workers.handlers.runpod` 
      - Or rather use `python3 -m yapit.workers.handlers.runpod` unless you use a python base image.
      - Don't forget to set this because runpod removed the ability to EDIT the CMD overwrite after the endpoint is created for whatever reason.
+     - Make sure to make the container disk size large enough to hold your model weights... default is only 5GB!
 
 ### 4. Configure Runpod Endpoint
 

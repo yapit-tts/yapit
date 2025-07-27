@@ -29,9 +29,7 @@
 
 ### Refactor
 
-- Use pydantic types in tests (deserialize responses to pydantic models) for automatic validation + easier refactoring, ...
-- replace .get()+exception with get_one() and add global exception handler
-- replace generic value errors with custom exceptions (in proper format...), , add appropriate error hanlers, (document responses in routes?)
+- configure runpod endpoitns via code
 
 - can we improve dependency handling without creating separate docker images?
   - see comments abt deps only some deployments need @ pyproject.toml

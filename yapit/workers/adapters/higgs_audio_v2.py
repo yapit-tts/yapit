@@ -2,7 +2,6 @@ import base64
 import logging
 import os
 import pprint
-import time
 from pathlib import Path
 from typing import NotRequired
 
@@ -58,20 +57,17 @@ class HiggsAudioV2Adapter(SynthAdapter):
         if self._initialized:
             return
 
-        # vLLM server is started by the Docker entrypoint script
-        # Just wait for it to be ready
-        logger.info("Waiting for vLLM server to be ready...")
-        for _ in range(30):  # Shorter timeout since server should already be starting
-            try:
-                response = requests.get(f"http://localhost:{VLLM_PORT}/v1/models", timeout=1)
-                if response.status_code == 200:
-                    logger.info("vLLM server is ready")
-                    break
-            except requests.exceptions.RequestException:
-                pass
-            time.sleep(1)
-        else:
-            raise RuntimeError("vLLM server not responding - check container logs")
+        # vLLM server is already started and ready by the Docker entrypoint script
+        # Just do a quick health check to confirm
+        logger.info("Checking vLLM server health...")
+        try:
+            response = requests.get(f"http://localhost:{VLLM_PORT}/v1/models", timeout=5)
+            if response.status_code == 200:
+                logger.info("vLLM server is healthy")
+            else:
+                raise RuntimeError(f"vLLM server returned status {response.status_code}")
+        except requests.exceptions.RequestException as e:
+            raise RuntimeError(f"vLLM server not responding: {e}")
         self._voice_presets = {
             voice_dir.name: (
                 base64.b64encode((voice_dir / "audio.wav").read_bytes()).decode("utf-8"),

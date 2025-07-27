@@ -30,4 +30,5 @@ COPY yapit/workers/higgs_audio_v2/start.sh /app/start.sh
 RUN chmod +x /app/start.sh
 
 ENV ADAPTER_CLASS=yapit.workers.adapters.higgs_audio_v2.HiggsAudioV2Adapter
+ENV VLLM_STARTUP_TIMEOUT=300
 ENTRYPOINT ["/app/start.sh"]

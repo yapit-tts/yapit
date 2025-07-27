@@ -2,8 +2,9 @@
 set -e
 
 # Configuration
-VLLM_PORT=8000
-VLLM_STARTUP_TIMEOUT=120
+VLLM_PORT=${VLLM_PORT:-8000}
+# vLLM needs more time for model loading, compilation, and CUDA graph capture
+VLLM_STARTUP_TIMEOUT=${VLLM_STARTUP_TIMEOUT:-300}
 
 echo "=== Starting Higgs Audio V2 Worker ==="
 echo "Current directory: $(pwd)"
