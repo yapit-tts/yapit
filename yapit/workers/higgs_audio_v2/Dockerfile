@@ -9,6 +9,17 @@ ENV HF_HOME=/root/.cache/huggingface
 ENV TRANSFORMERS_CACHE=/root/.cache/huggingface/transformers
 ENV VLLM_DOWNLOAD_DIR=/root/.cache/vllm
 
+# Pre-download models during build
+RUN pip install --no-cache-dir huggingface_hub
+RUN python3 -c "from huggingface_hub import snapshot_download; \
+    print('Downloading model weights...'); \
+    snapshot_download('bosonai/higgs-audio-v2-generation-3B-base', cache_dir='${HF_HOME}/hub'); \
+    snapshot_download('bosonai/higgs-audio-v2-tokenizer', cache_dir='${HF_HOME}/hub'); \
+    print('Model download complete!')"
+
+# Clean up to save space
+RUN apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
 COPY yapit/ /app/yapit
 
 # Install curl for health checks
