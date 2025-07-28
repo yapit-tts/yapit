@@ -119,7 +119,7 @@ class HiggsAudioV2Adapter(SynthAdapter):
             "audio": {"format": "wav"},
             "temperature": temperature,
             "top_p": top_p,
-            "extra_body": {"top_k": top_k},
+            "top_k": top_k,  # Try top_k at top level since extra_body is being ignored
             "stop": ["<|eot_id|>", "<|end_of_text|>", "<|audio_eos|>"],
         }
         if voice_config.get("seed") is not None:
