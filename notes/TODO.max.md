@@ -14,6 +14,7 @@
 
 ### Feats
 
+- deploy a non-vllm version of the higgs worker as a baseline / comparison
 - opus transcoding
   - depending on the intensity / scaling requirements, prlly best to do this in the gateway to save worker time?
 - Custom voice creation

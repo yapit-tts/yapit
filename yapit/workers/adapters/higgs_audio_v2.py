@@ -98,7 +98,8 @@ class HiggsAudioV2Adapter(SynthAdapter):
         messages = [{"role": "system", "content": system_prompt}]
 
         ref_audio, ref_transcript = self._voice_presets.get(
-            voice_config.get("ref_preset"), (voice_config["ref_audio"], voice_config["ref_audio_transcript"])
+            voice_config.get("ref_preset"),
+            (voice_config.get("ref_audio"), voice_config.get("ref_audio_transcript")),
         )
         if ref_audio and ref_transcript:
             messages.append({"role": "user", "content": ref_transcript})
@@ -122,9 +123,17 @@ class HiggsAudioV2Adapter(SynthAdapter):
             "stop": ["<|eot_id|>", "<|end_of_text|>", "<|audio_eos|>"],
         }
 
+        logger.debug(f"Sending payload to vLLM: {pprint.pformat(payload)}")
         response = requests.post(f"http://localhost:{VLLM_PORT}/v1/chat/completions", json=payload)
-        response.raise_for_status()
+
+        if response.status_code != 200:
+            logger.error(f"vLLM returned {response.status_code}: {response.text}")
+            response.raise_for_status()
+
         result = response.json()
+        if "choices" not in result or not result["choices"]:
+            logger.error(f"Unexpected response structure: {pprint.pformat(result)}")
+            raise ValueError("Invalid response from vLLM")
         return result["choices"][0]["message"]["audio"]["data"]
 
     def calculate_duration_ms(self, audio_bytes: bytes) -> int:
