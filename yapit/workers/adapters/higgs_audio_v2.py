@@ -116,7 +116,7 @@ class HiggsAudioV2Adapter(SynthAdapter):
             "model": MODEL_NAME,
             "messages": messages,
             "modalities": ["text", "audio"],
-            "audio": {"format": "pcm16"},
+            "audio": {"format": "wav"},
             "temperature": temperature,
             "top_p": top_p,
             "extra_body": {"top_k": top_k},
@@ -136,7 +136,19 @@ class HiggsAudioV2Adapter(SynthAdapter):
         if "choices" not in result or not result["choices"]:
             logger.error(f"Unexpected response structure: {pprint.pformat(result)}")
             raise ValueError("Invalid response from vLLM")
-        return result["choices"][0]["message"]["audio"]["data"]
+
+        # Get the audio data (base64 encoded WAV)
+        audio_data_b64 = result["choices"][0]["message"]["audio"]["data"]
+
+        # vLLM returns WAV format, but we need to return raw PCM
+        # The WAV has a 44-byte header we need to skip
+        wav_bytes = base64.b64decode(audio_data_b64)
+
+        # Skip WAV header (44 bytes) to get raw PCM data
+        pcm_bytes = wav_bytes[44:]
+
+        # Return base64 encoded PCM
+        return base64.b64encode(pcm_bytes).decode("utf-8")
 
     def calculate_duration_ms(self, audio_bytes: bytes) -> int:
         # 24000 Hz, 1 channel, 2 bytes per sample (16-bit)
