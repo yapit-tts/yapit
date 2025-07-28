@@ -116,12 +116,14 @@ class HiggsAudioV2Adapter(SynthAdapter):
             "model": MODEL_NAME,
             "messages": messages,
             "modalities": ["text", "audio"],
-            "audio": {"format": "pcm"},
+            "audio": {"format": "pcm16"},
             "temperature": temperature,
             "top_p": top_p,
             "extra_body": {"top_k": top_k},
             "stop": ["<|eot_id|>", "<|end_of_text|>", "<|audio_eos|>"],
         }
+        if voice_config.get("seed") is not None:
+            payload["seed"] = voice_config["seed"]
 
         logger.debug(f"Sending payload to vLLM: {pprint.pformat(payload)}")
         response = requests.post(f"http://localhost:{VLLM_PORT}/v1/chat/completions", json=payload)
