@@ -45,14 +45,14 @@ class KokoroAdapter(SynthAdapter[VoiceConfig]):
             self.pipe.load_voice(v)
 
     async def synthesize(self, text: str, **kwargs: Unpack[VoiceConfig]) -> bytes:
-        pcm_chunks = []
         async with self._lock:  # model not thread-safe (usage as local worker with fastapi)
-            for _, _, audio in self.pipe(text, voice=kwargs["voice"], speed=kwargs["speed"]):
-                if audio is None:
-                    continue
-                pcm = (audio.numpy() * 32767).astype(np.int16).tobytes()  # scale [-1, 1] f32 tensor to int16 range
-                pcm_chunks.append(pcm)
-        return b"".join(pcm_chunks)
+            return b"".join(
+                [
+                    (audio.numpy() * 32767).astype(np.int16).tobytes()  # scale [-1, 1] f32 tensor to int16 range
+                    for _, _, audio in self._pipe(text, voice=kwargs["voice"], speed=kwargs["speed"])
+                    if audio is not None
+                ]
+            )
 
     def calculate_duration_ms(self, audio_bytes: bytes) -> int:
         """Calculate audio duration for Kokoro's 24kHz mono 16-bit PCM format."""
