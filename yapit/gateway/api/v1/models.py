@@ -16,7 +16,7 @@ class VoiceRead(BaseModel):
     id: int
     slug: str
     name: str
-    lang: str
+    lang: str | None
     description: str | None
 
 
