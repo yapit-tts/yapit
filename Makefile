@@ -84,3 +84,20 @@ repomix:
 repomix-backend:
 	repomix -i "frontend,.gitignore,**/*.data,**/*sql"
 
+# This doesn't work with the Github deployment templates (yet?)... and setting up ghcr.io is a lot of overhead just for this (including way longer deploy times).
+# 	so this is just for future reference if we decide to use registry or it becomes available:
+## RunPod deployment
+#deploy:
+#	@echo "Usage: make deploy-<endpoint> or make deploy-all"
+#	@echo "Available endpoints:"
+#	@uv run --env-file=.env.local python -m yapit.runpod.deploy
+#
+#deploy-%:
+#	uv run --env-file=.env.local python -m scripts.runpod.deploy $* $(ARGS)
+#
+#deploy-all:
+#	uv run --env-file=.env.local python -m scripts.runpod.deploy all $(ARGS)
+#
+## Force redeploy examples:
+## make deploy-higgs-audio-v2 ARGS="--force"
+## make deploy-all ARGS="--force"
