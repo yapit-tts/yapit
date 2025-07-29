@@ -91,7 +91,7 @@ async def synthesize(
         await db.commit()
         created = True
     # Check if audio is cached
-    elif cached_data := (await cache.retrieve_data(variant_hash)) is not None:
+    elif (cached_data := (await cache.retrieve_data(variant_hash))) is not None:
         # Check if variant already exists for a DIFFERENT block (maybe in another doc).
         if variant.block_id != block.id:
             # Link it to this block so we don't re-synthesise identical audio.
