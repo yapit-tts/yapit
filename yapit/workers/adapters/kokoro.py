@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 from pathlib import Path
+from typing import Unpack
 
 import numpy as np
 import torch
@@ -18,7 +19,7 @@ class VoiceConfig(TypedDict):
     speed: float
 
 
-class KokoroAdapter(SynthAdapter):
+class KokoroAdapter(SynthAdapter[VoiceConfig]):
     def __init__(self):
         if not DEVICE:
             raise ValueError("DEVICE environment variable must be set to 'cpu' or 'cuda'")
@@ -43,7 +44,7 @@ class KokoroAdapter(SynthAdapter):
         for v in self._voices:
             self.pipe.load_voice(v)
 
-    async def synthesize(self, text: str, **kwargs: VoiceConfig) -> bytes:
+    async def synthesize(self, text: str, **kwargs: Unpack[VoiceConfig]) -> bytes:
         pcm_chunks = []
         async with self._lock:  # model not thread-safe (usage as local worker with fastapi)
             for _, _, audio in self.pipe(text, voice=kwargs["voice"], speed=kwargs["speed"]):

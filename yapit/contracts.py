@@ -41,3 +41,8 @@ class SynthesisJob(BaseModel):
     synthesis_parameters: SynthesisParameters
 
     model_config = ConfigDict(frozen=True)
+
+
+class SynthesisResult(BaseModel):
+    audio: bytes
+    duration_ms: int

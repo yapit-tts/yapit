@@ -78,9 +78,8 @@ async def synthesize(
         await db.exec(select(BlockVariant).where(BlockVariant.hash == variant_hash))
     ).first()
 
-    already_processing = await redis.exists(TTS_INFLIGHT.format(hash=variant_hash))
-
     # Create variant if it doesn't exist
+    created = False
     if variant is None:
         variant = BlockVariant(
             hash=variant_hash,
@@ -90,8 +89,9 @@ async def synthesize(
         )
         db.add(variant)
         await db.commit()
+        created = True
     # Check if audio is cached
-    elif not already_processing and (cached_data := (await cache.retrieve_data(variant_hash))) is not None:
+    elif cached_data := (await cache.retrieve_data(variant_hash)) is not None:
         # Check if variant already exists for a DIFFERENT block (maybe in another doc).
         if variant.block_id != block.id:
             # Link it to this block so we don't re-synthesise identical audio.
@@ -109,8 +109,8 @@ async def synthesize(
             )
             await db.commit()
         return _audio_response(cached_data, served_codec, model, variant.duration_ms)
-    # Queue the job
-    if not already_processing:
+    # Queue the job, if not already processing (we're the first one to create it or the cache expired)
+    if created or not (await redis.exists(TTS_INFLIGHT.format(hash=variant_hash))):
         await redis.set(TTS_INFLIGHT.format(hash=variant_hash), 1, ex=300, nx=True)  # 5min lock
         job = SynthesisJob(
             variant_hash=variant_hash,

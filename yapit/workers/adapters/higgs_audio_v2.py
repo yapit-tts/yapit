@@ -3,6 +3,7 @@ import logging
 import os
 import pprint
 from pathlib import Path
+from typing import Unpack
 
 import requests
 from typing_extensions import TypedDict
@@ -15,7 +16,6 @@ logger = logging.getLogger(__name__)
 MODEL_NAME = "higgs-audio-v2-generation-3B-base"
 
 VLLM_PORT = int(os.environ.get("VLLM_PORT", "8000"))
-VLLM_HOST = "localhost"
 
 
 class VoiceConfig(TypedDict, total=False):
@@ -40,7 +40,7 @@ DEFAULT_VOICE_CONFIG = VoiceConfig(
 )
 
 
-class HiggsAudioV2Adapter(SynthAdapter):
+class HiggsAudioV2Adapter(SynthAdapter[VoiceConfig]):
     def __init__(self, voice_presets_dir: str | None = None) -> None:
         super().__init__()
         self._initialized = False
@@ -68,7 +68,7 @@ class HiggsAudioV2Adapter(SynthAdapter):
             f"Loaded voice presets from {self._voice_presets_dir}: {pprint.pformat(self._voice_presets.keys())}"
         )
 
-    async def synthesize(self, text: str, **kwargs: VoiceConfig) -> str:
+    async def synthesize(self, text: str, **kwargs: Unpack[VoiceConfig]) -> str:
         voice_config = DEFAULT_VOICE_CONFIG.copy()
         voice_config.update(kwargs)
         temperature = voice_config.get("temperature")

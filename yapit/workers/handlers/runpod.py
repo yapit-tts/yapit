@@ -24,10 +24,8 @@ def _get_adapter() -> SynthAdapter:
 async def handler(job, adapter: SynthAdapter):
     """RunPod handler for any TTS model."""
     job_input = job["input"]
-    text = job_input["text"]
-    kwargs = job_input.get("kwargs", {})
     try:
-        audio = await adapter.synthesize(text, **kwargs)
+        audio = await adapter.synthesize(job_input["text"], **job_input.get("kwargs", {}))
         return {
             "audio_base64": base64.b64encode(audio).decode("utf-8") if isinstance(audio, bytes) else audio,
             "duration_ms": adapter.calculate_duration_ms(
