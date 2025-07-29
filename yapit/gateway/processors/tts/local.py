@@ -26,7 +26,7 @@ class LocalProcessor(BaseTTSProcessor):
         try:
             response = await self._client.post(
                 f"{self._worker_url}/synthesize",
-                json=job.synthesis_parameters.model_dump_json(),
+                json=job.synthesis_parameters.model_dump(),
             )
             response.raise_for_status()
             result = response.json()
