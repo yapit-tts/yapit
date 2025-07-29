@@ -1,21 +1,25 @@
 import asyncio
 import json
-import logging
 import os
 from pathlib import Path
+from typing import Unpack
 
 import numpy as np
 import torch
 from kokoro import KPipeline
+from typing_extensions import TypedDict
 
 from yapit.workers.adapters.base import SynthAdapter
-
-log = logging.getLogger("adapter.kokoro")
 
 DEVICE: str = os.getenv("DEVICE", "")
 
 
-class KokoroAdapter(SynthAdapter):
+class VoiceConfig(TypedDict):
+    voice: str
+    speed: float
+
+
+class KokoroAdapter(SynthAdapter[VoiceConfig]):
     def __init__(self):
         if not DEVICE:
             raise ValueError("DEVICE environment variable must be set to 'cpu' or 'cuda'")
@@ -40,20 +44,15 @@ class KokoroAdapter(SynthAdapter):
         for v in self._voices:
             self.pipe.load_voice(v)
 
-    async def synthesize(self, text: str, *, voice: str, speed: float) -> bytes:
-        await self.initialize()
-        if voice not in self._voices:
-            raise ValueError(f"Voice {voice} not found in available voices: {self._voices}")
-
-        pcm_chunks = []
-        async with self._lock:  # model not thread-safe
-            for _, _, audio in self.pipe(text, voice=voice, speed=speed):
-                if audio is None:
-                    continue
-                pcm = (audio.numpy() * 32767).astype(np.int16).tobytes()  # scale [-1, 1] f32 tensor to int16 range
-                pcm_chunks.append(pcm)
-
-        return b"".join(pcm_chunks)
+    async def synthesize(self, text: str, **kwargs: Unpack[VoiceConfig]) -> bytes:
+        async with self._lock:  # model not thread-safe (usage as local worker with fastapi)
+            return b"".join(
+                [
+                    (audio.numpy() * 32767).astype(np.int16).tobytes()  # scale [-1, 1] f32 tensor to int16 range
+                    for _, _, audio in self._pipe(text, voice=kwargs["voice"], speed=kwargs["speed"])
+                    if audio is not None
+                ]
+            )
 
     def calculate_duration_ms(self, audio_bytes: bytes) -> int:
         """Calculate audio duration for Kokoro's 24kHz mono 16-bit PCM format."""

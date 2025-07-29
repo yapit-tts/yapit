@@ -4,13 +4,12 @@ import logging
 from abc import ABC, abstractmethod
 from datetime import datetime
 from decimal import Decimal
-from typing import NamedTuple
 
 from redis.asyncio import Redis
 from sqlalchemy.orm import selectinload
 from sqlmodel import select, update
 
-from yapit.contracts import TTS_INFLIGHT, SynthesisJob, get_queue_name
+from yapit.contracts import TTS_INFLIGHT, SynthesisJob, SynthesisResult, get_queue_name
 from yapit.gateway.cache import Cache
 from yapit.gateway.config import Settings
 from yapit.gateway.deps import get_db_session, get_or_create_user_credits
@@ -23,11 +22,6 @@ from yapit.gateway.domain_models import (
 )
 
 log = logging.getLogger("processor")
-
-
-class JobResult(NamedTuple):
-    audio: bytes
-    duration_ms: int
 
 
 class BaseTTSProcessor(ABC):
@@ -55,7 +49,7 @@ class BaseTTSProcessor(ABC):
         """Initialize the processor (e.g., load models, establish connections)."""
 
     @abstractmethod
-    async def process(self, job: SynthesisJob) -> JobResult:
+    async def process(self, job: SynthesisJob) -> SynthesisResult:
         """Process a synthesis job and return the result."""
 
     async def _handle_job(self, raw: bytes) -> None:
@@ -132,7 +126,7 @@ class BaseTTSProcessor(ABC):
                     db.add(usage_stats)
 
                 usage_stats.total_seconds_synthesized += duration_seconds
-                usage_stats.total_characters_processed += len(job.text)
+                usage_stats.total_characters_processed += len(job.synthesis_parameters.text)
                 usage_stats.total_requests += 1
                 usage_stats.last_updated = datetime.now(tz=dt.UTC)
 

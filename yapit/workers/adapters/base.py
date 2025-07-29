@@ -1,12 +1,13 @@
 from abc import ABC, abstractmethod
+from typing import TypedDict, Unpack
 
 
-class SynthAdapter(ABC):
+class SynthAdapter[SynthesisParameters: TypedDict](ABC):
     @abstractmethod
     async def initialize(self) -> None: ...
 
     @abstractmethod
-    async def synthesize(self, text: str, *, voice: str, speed: float) -> bytes:
+    async def synthesize(self, text: str, **kwargs: Unpack[SynthesisParameters]) -> bytes | str:
         """Synthesize text to pcm audio bytes."""
 
     @abstractmethod

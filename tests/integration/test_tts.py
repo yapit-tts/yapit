@@ -3,13 +3,14 @@ import pytest
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "model_slug",
+    "model_slug,voice_slug",
     [
-        "kokoro-cpu",
-        pytest.param("kokoro-cpu-runpod", marks=pytest.mark.runpod),
+        ("kokoro-cpu", "af_heart"),
+        pytest.param("kokoro-cpu-runpod", "af_heart", marks=pytest.mark.runpod),
+        pytest.param("higgs-audio-v2-runpod-vllm", "higgs-default", marks=pytest.mark.runpod),
     ],
 )
-async def test_tts_integration(model_slug, admin_client, test_document):
+async def test_tts_integration(model_slug, voice_slug, admin_client, test_document):
     """Test complete TTS flow from document creation to audio retrieval."""
     document_id = test_document["id"]
     block_id = test_document["blocks"][0]["id"]
@@ -21,8 +22,7 @@ async def test_tts_integration(model_slug, admin_client, test_document):
     start_time = time.time()
 
     synth_response = await admin_client.post(
-        f"/v1/documents/{document_id}/blocks/{block_id}/synthesize/models/{model_slug}/voices/af_heart",
-        json={"speed": 1.0},
+        f"/v1/documents/{document_id}/blocks/{block_id}/synthesize/models/{model_slug}/voices/{voice_slug}",
     )
 
     elapsed = time.time() - start_time
@@ -43,8 +43,7 @@ async def test_tts_integration(model_slug, admin_client, test_document):
     start_time = time.time()
 
     cached_response = await admin_client.post(
-        f"/v1/documents/{document_id}/blocks/{block_id}/synthesize/models/{model_slug}/voices/af_heart",
-        json={"speed": 1.0},
+        f"/v1/documents/{document_id}/blocks/{block_id}/synthesize/models/{model_slug}/voices/{voice_slug}",
     )
 
     elapsed = time.time() - start_time

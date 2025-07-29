@@ -14,27 +14,9 @@ Models in yapit are deployed as HTTP services that processors call:
 Create `yapit/workers/adapters/yourmodel.py`:
 
 ```python
-import numpy as np
 from yapit.workers.adapters.base import SynthAdapter
 
-class YourModelAdapter(SynthAdapter):
-    async def initialize(self) -> None:
-        """Load model weights here."""
-        # self.model = load_your_model()
-        pass
-    
-    async def synthesize(self, text: str, *, voice: str, speed: float) -> bytes:
-        """Convert text to PCM audio bytes (16-bit mono/stereo)."""
-        # audio = self.model.synthesize(text, voice=voice, speed=speed)
-        # Convert to int16 PCM:
-        # return (audio * 32767).astype(np.int16).tobytes()
-        pass
-    
-    def calculate_duration_ms(self, audio_bytes: bytes) -> int:
-        """Calculate duration from PCM bytes."""
-        # Example for 24kHz mono 16-bit:
-        # return int(len(audio_bytes) / (24_000 * 1 * 2) * 1000)
-        pass
+class YourModelAdapter(SynthAdapter): ...
 ```
 
 ### 2. Create Worker Entry Point (Skip if only using RunPod -- see below)
@@ -144,11 +126,12 @@ Add `runpod` to your worker's `pyproject.toml` dependencies.
 2. Click "New Endpoint"
 3. Configure:
    - Select Dockerfile via GitHub integration or from docker registry
-   - Public Environment Variables:
-     - `MODEL_SLUG`: `yourmodel`
-     - `DEVICE`: `cuda` (if your adapter needs it)
+   - Public Environment Variables if needed for the adapter.
    - Docker Configuration:
-     - Container Start Command: `python -m yapit.workers.handlers.runpod` 
+     - Container Start Command (overwrite CMD): `python -m yapit.workers.handlers.runpod` 
+     - Or rather use `python3 -m yapit.workers.handlers.runpod` unless you use a python base image.
+     - Don't forget to set this because runpod removed the ability to EDIT the CMD overwrite after the endpoint is created for whatever reason.
+     - Make sure to make the container disk size large enough to hold your model weights... default is only 5GB!
 
 ### 4. Configure Runpod Endpoint
 

@@ -5,10 +5,9 @@ import logging
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
-from pydantic import BaseModel, Field
 from sqlmodel import select
 
-from yapit.contracts import TTS_INFLIGHT, SynthesisJob, get_queue_name
+from yapit.contracts import TTS_INFLIGHT, SynthesisJob, SynthesisParameters, get_queue_name
 from yapit.gateway.auth import authenticate
 from yapit.gateway.deps import (
     AudioCache,
@@ -44,17 +43,12 @@ def _audio_response(data: bytes, codec: str, model: TTSModel, duration_ms: int |
     )
 
 
-class SynthRequest(BaseModel):
-    speed: float = Field(1.0, gt=0)
-
-
 @router.post(
     "/documents/{document_id}/blocks/{block_id}/synthesize/models/{model_slug}/voices/{voice_slug}",
     response_class=Response,
     dependencies=[Depends(authenticate), Depends(ensure_admin_credits)],
 )
 async def synthesize(
-    body: SynthRequest,
     _: CurrentDoc,
     block: CurrentBlock,
     model: CurrentTTSModel,
@@ -70,12 +64,13 @@ async def synthesize(
         raise InsufficientCreditsError(required=Decimal("1"), available=user_credits.balance)
 
     served_codec = model.native_codec  # TODO change to "opus" once workers transcode
+
     variant_hash = BlockVariant.get_hash(
         text=block.text,
         model_slug=model.slug,
         voice_slug=voice.slug,
-        speed=body.speed,
         codec=served_codec,
+        parameters=voice.parameters,
     )
 
     # Check if variant exists in DB
@@ -83,12 +78,22 @@ async def synthesize(
         await db.exec(select(BlockVariant).where(BlockVariant.hash == variant_hash))
     ).first()
 
-    # Check if audio is already cached
-    cached_data = await cache.retrieve_data(variant_hash)
-    if cached_data is not None:
-        # If variant exists but for a different block, link it
-        if variant and variant.block_id != block.id:
-            # Variant already exists for a DIFFERENT block (maybe in another doc).
+    # Create variant if it doesn't exist
+    created = False
+    if variant is None:
+        variant = BlockVariant(
+            hash=variant_hash,
+            block_id=block.id,
+            model_id=model.id,
+            voice_id=voice.id,
+        )
+        db.add(variant)
+        await db.commit()
+        created = True
+    # Check if audio is cached
+    elif (cached_data := (await cache.retrieve_data(variant_hash))) is not None:
+        # Check if variant already exists for a DIFFERENT block (maybe in another doc).
+        if variant.block_id != block.id:
             # Link it to this block so we don't re-synthesise identical audio.
             # SECURITY: caller is already authorised for document_id/block_id. This still leaks the *existence* of the hash;
             # -> partition the cache by tenant/user or include that scope in the hash if it becomes a concern
@@ -98,40 +103,25 @@ async def synthesize(
                     block_id=block.id,
                     model_id=variant.model_id,
                     voice_id=variant.voice_id,
-                    speed=variant.speed,
-                    codec=variant.codec,
                     duration_ms=variant.duration_ms,
                     cache_ref=variant.cache_ref,
                 )
             )
             await db.commit()
-        return _audio_response(cached_data, served_codec, model, variant.duration_ms if variant else None)
-
-    # Create variant if it doesn't exist
-    if variant is None:
-        variant = BlockVariant(
-            hash=variant_hash,
-            block_id=block.id,
-            model_id=model.id,
-            voice_id=voice.id,
-            speed=body.speed,
-            codec=served_codec,
-        )
-        db.add(variant)
-        await db.commit()
-
-    already_processing = await redis.exists(TTS_INFLIGHT.format(hash=variant_hash))
-    if not already_processing:
-        # Queue the job
+        return _audio_response(cached_data, served_codec, model, variant.duration_ms)
+    # Queue the job, if not already processing (we're the first one to create it or the cache expired)
+    if created or not (await redis.exists(TTS_INFLIGHT.format(hash=variant_hash))):
         await redis.set(TTS_INFLIGHT.format(hash=variant_hash), 1, ex=300, nx=True)  # 5min lock
         job = SynthesisJob(
             variant_hash=variant_hash,
             user_id=user.id,
-            model_slug=model.slug,
-            voice_slug=voice.slug,
-            text=block.text,
-            speed=body.speed,
-            codec=served_codec,
+            synthesis_parameters=SynthesisParameters(
+                model_slug=model.slug,
+                voice_slug=voice.slug,
+                text=block.text,
+                kwargs=voice.parameters,
+                codec=served_codec,
+            ),
         )
         await redis.lpush(get_queue_name(model.slug), job.model_dump_json())
 

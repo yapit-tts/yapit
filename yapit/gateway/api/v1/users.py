@@ -2,7 +2,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
-from sqlmodel import select
+from sqlmodel import col, select
 
 from yapit.gateway.db import get_or_404
 from yapit.gateway.deps import (
@@ -49,7 +49,7 @@ async def get_my_transactions(
     result = await db.exec(
         select(CreditTransaction)
         .where(CreditTransaction.user_id == auth_user.id)
-        .order_by(CreditTransaction.created.desc())
+        .order_by(col(CreditTransaction.created).desc())
         .limit(limit)
         .offset(offset)
     )

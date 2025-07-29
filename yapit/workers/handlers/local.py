@@ -7,15 +7,10 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
+from yapit.contracts import SynthesisParameters
 from yapit.workers.adapters.base import SynthAdapter
 
 log = logging.getLogger("local_handler")
-
-
-class SynthesizeRequest(BaseModel):
-    text: str
-    voice: str
-    speed: float = 1.0
 
 
 class SynthesizeResponse(BaseModel):
@@ -53,17 +48,16 @@ def create_app(adapter_class_path: str | None = None) -> FastAPI:
         return {"status": "healthy"}
 
     @app.post("/synthesize", response_model=SynthesizeResponse)
-    async def synthesize(request: SynthesizeRequest):
+    async def synthesize(request: SynthesisParameters):
         """Synthesize speech from text."""
         try:
-            audio_bytes = await adapter.synthesize(request.text, voice=request.voice, speed=request.speed)
-
-            duration_ms = adapter.calculate_duration_ms(audio_bytes)
-
+            audio = await adapter.synthesize(request.text, **request.kwargs)
             return SynthesizeResponse(
-                audio_base64=base64.b64encode(audio_bytes).decode("utf-8"), duration_ms=duration_ms
+                audio_base64=base64.b64encode(audio).decode("utf-8") if isinstance(audio, bytes) else audio,
+                duration_ms=adapter.calculate_duration_ms(
+                    audio if isinstance(audio, bytes) else base64.b64decode(audio)
+                ),
             )
-
         except Exception as e:
             log.error(f"Synthesis failed: {e}")
             raise HTTPException(status_code=500, detail=str(e))

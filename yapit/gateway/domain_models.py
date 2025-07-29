@@ -10,7 +10,8 @@ from pydantic import BaseModel as PydanticModel
 from pydantic import Field as PydanticField
 from sqlalchemy import DECIMAL, Index, UniqueConstraint
 from sqlalchemy.dialects import postgresql
-from sqlmodel import JSON, TEXT, Column, DateTime, Field, Relationship, SQLModel
+from sqlalchemy.types import JSON
+from sqlmodel import TEXT, Column, DateTime, Field, Relationship, SQLModel
 
 # NOTE: Forward annotations do not work with SQLModel
 
@@ -41,15 +42,19 @@ class TTSModel(SQLModel, table=True):
 
 
 class Voice(SQLModel, table=True):
-    """Concrete voice belonging to a model."""
+    """Concrete voice / synthesis parameterse belonging to a model."""
 
     id: int | None = Field(default=None, primary_key=True)
     model_id: int = Field(foreign_key="ttsmodel.id")
 
     slug: str
     name: str
-    lang: str
+    lang: str | None  # None -> multilingual
     description: str | None = Field(default=None)
+
+    parameters: dict[str, Any] = Field(
+        default_factory=dict, sa_column=Column(JSON().with_variant(postgresql.JSONB(), "postgresql"), nullable=False)
+    )
 
     model: TTSModel = Relationship(back_populates="voices")
     block_variants: list["BlockVariant"] = Relationship(back_populates="voice")
@@ -134,13 +139,11 @@ class Block(SQLModel, table=True):
 class BlockVariant(SQLModel, table=True):
     """A synthesized audio variant of a text block."""
 
-    hash: str = Field(primary_key=True)  # Hash(block.text, model, voice, speed, codec)
+    hash: str = Field(primary_key=True)
 
     block_id: int = Field(foreign_key="block.id")
     model_id: int = Field(foreign_key="ttsmodel.id")
     voice_id: int = Field(foreign_key="voice.id")
-    speed: float
-    codec: str
 
     duration_ms: int | None = Field(default=None)  # real duration of synthesized audio
     cache_ref: str | None = Field(default=None)  # FS path or S3 key
@@ -155,14 +158,14 @@ class BlockVariant(SQLModel, table=True):
     voice: Voice = Relationship(back_populates="block_variants")
 
     @staticmethod
-    def get_hash(text: str, model_slug: str, voice_slug: str, speed: float, codec: str) -> str:
-        """Generates a unique hash for a given text block and synthesis parameters."""
+    def get_hash(text: str, model_slug: str, voice_slug: str, codec: str, parameters: dict) -> str:
         hasher = hashlib.sha256()
         hasher.update(text.encode("utf-8"))
         hasher.update(f"|{model_slug}".encode("utf-8"))
         hasher.update(f"|{voice_slug}".encode("utf-8"))
-        hasher.update(f"|{speed:.2f}".encode("utf-8"))
         hasher.update(f"|{codec}".encode("utf-8"))
+        for key, value in sorted(parameters.items()):
+            hasher.update(f"|{key}={value}".encode("utf-8"))
         return hasher.hexdigest()
 
 
