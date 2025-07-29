@@ -1,6 +1,5 @@
 import asyncio
 import json
-import logging
 import os
 from pathlib import Path
 
@@ -10,8 +9,6 @@ from kokoro import KPipeline
 from typing_extensions import TypedDict
 
 from yapit.workers.adapters.base import SynthAdapter
-
-log = logging.getLogger("adapter.kokoro")
 
 DEVICE: str = os.getenv("DEVICE", "")
 
@@ -48,7 +45,7 @@ class KokoroAdapter(SynthAdapter):
 
     async def synthesize(self, text: str, **kwargs: VoiceConfig) -> bytes:
         pcm_chunks = []
-        async with self._lock:  # model not thread-safe
+        async with self._lock:  # model not thread-safe (usage as local worker with fastapi)
             for _, _, audio in self.pipe(text, voice=kwargs["voice"], speed=kwargs["speed"]):
                 if audio is None:
                     continue
