@@ -92,9 +92,8 @@ async def synthesize(
         await db.commit()
     # Check if audio is cached
     elif not already_processing and (cached_data := (await cache.retrieve_data(variant_hash))) is not None:
-        # If variant exists but for a different block, link it
-        if variant and variant.block_id != block.id:
-            # Variant already exists for a DIFFERENT block (maybe in another doc).
+        # Check if variant already exists for a DIFFERENT block (maybe in another doc).
+        if variant.block_id != block.id:
             # Link it to this block so we don't re-synthesise identical audio.
             # SECURITY: caller is already authorised for document_id/block_id. This still leaks the *existence* of the hash;
             # -> partition the cache by tenant/user or include that scope in the hash if it becomes a concern
@@ -109,10 +108,9 @@ async def synthesize(
                 )
             )
             await db.commit()
-        return _audio_response(cached_data, served_codec, model, variant.duration_ms if variant else None)
-
+        return _audio_response(cached_data, served_codec, model, variant.duration_ms)
+    # Queue the job
     if not already_processing:
-        # Queue the job
         await redis.set(TTS_INFLIGHT.format(hash=variant_hash), 1, ex=300, nx=True)  # 5min lock
         job = SynthesisJob(
             variant_hash=variant_hash,

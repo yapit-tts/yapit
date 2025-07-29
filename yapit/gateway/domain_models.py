@@ -10,7 +10,8 @@ from pydantic import BaseModel as PydanticModel
 from pydantic import Field as PydanticField
 from sqlalchemy import DECIMAL, Index, UniqueConstraint
 from sqlalchemy.dialects import postgresql
-from sqlmodel import JSON, TEXT, Column, DateTime, Field, Relationship, SQLModel
+from sqlalchemy.types import JSON
+from sqlmodel import TEXT, Column, DateTime, Field, Relationship, SQLModel
 
 # NOTE: Forward annotations do not work with SQLModel
 
@@ -51,7 +52,9 @@ class Voice(SQLModel, table=True):
     lang: str | None  # None -> multilingual
     description: str | None = Field(default=None)
 
-    parameters: dict[str, Any] = Field(default_factory=dict)
+    parameters: dict[str, Any] = Field(
+        default_factory=dict, sa_column=Column(JSON().with_variant(postgresql.JSONB(), "postgresql"), nullable=False)
+    )
 
     model: TTSModel = Relationship(back_populates="voices")
     block_variants: list["BlockVariant"] = Relationship(back_populates="voice")
@@ -136,7 +139,7 @@ class Block(SQLModel, table=True):
 class BlockVariant(SQLModel, table=True):
     """A synthesized audio variant of a text block."""
 
-    hash: str = Field(primary_key=True)  # Hash(block.text, model, voice, speed, codec)
+    hash: str = Field(primary_key=True)
 
     block_id: int = Field(foreign_key="block.id")
     model_id: int = Field(foreign_key="ttsmodel.id")

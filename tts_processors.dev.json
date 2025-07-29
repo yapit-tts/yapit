@@ -11,8 +11,8 @@
     "runpod_endpoint_id": "nc8eej7missbxb"
   },
     {
-    "slug": "higgs-audio-v2-runpod",
+    "slug": "higgs-audio-v2-runpod-vllm",
     "processor": "yapit.gateway.processors.tts.runpod.RunpodProcessor",
-    "runpod_endpoint_id": "l2qio8e5org8t4"
+    "runpod_endpoint_id": "jaa8pzvapcjgf4"
   }
 ]

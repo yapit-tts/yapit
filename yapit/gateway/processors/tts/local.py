@@ -6,7 +6,7 @@ import httpx
 from yapit.contracts import SynthesisJob
 from yapit.gateway.processors.tts.base import BaseTTSProcessor, JobResult
 
-log = logging.getLogger("local_processor")
+log = logging.getLogger(__name__)
 
 
 class LocalProcessor(BaseTTSProcessor):
@@ -25,14 +25,11 @@ class LocalProcessor(BaseTTSProcessor):
             raise RuntimeError("Processor not initialized")
         try:
             response = await self._client.post(
-                f"{self._worker_url}/synthesize", json=params.synthesis_parameters.model_dump_json()
+                f"{self._worker_url}/synthesize",
+                json={"text": params.synthesis_parameters.text, "kwargs": params.synthesis_parameters.kwargs},
             )
             response.raise_for_status()
-
             result = response.json()
-            if "error" in result:
-                raise RuntimeError(f"Worker error: {result['error']}")
-
             audio_bytes = base64.b64decode(result["audio_base64"])
             duration_ms = result["duration_ms"]
             return JobResult(audio=audio_bytes, duration_ms=duration_ms)

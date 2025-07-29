@@ -35,8 +35,8 @@ def create_dev_models() -> list[TTSModel]:
         sample_width=2,
     )
     higgs_audio_v2_runpod = TTSModel(
-        slug="higgs-audio-v2-runpod",
-        name="Higgs Audio V2 (RunPod)",
+        slug="higgs-audio-v2-runpod-vllm",
+        name="Higgs Audio V2 (RunPod, VLLM)",
         credits_per_sec=Decimal("10"),
         native_codec="pcm",
         sample_rate=24_000,
@@ -44,19 +44,31 @@ def create_dev_models() -> list[TTSModel]:
         sample_width=2,
     )
 
-    # Load voices for both models
+    # load kokoro voices
     voices_json = Path(__file__).parent.parent / "workers/kokoro/voices.json"
     voices_data = json.loads(voices_json.read_text())
-
     for v in voices_data:
         voice_kwargs = {
             "slug": v["index"],
             "name": v["name"],
             "lang": v["language"],
             "description": f"Quality grade {v['overallGrade']}",
+            "parameters": {
+                "voice": v["index"],
+                "speed": 1.0,  # we just postprocess the audio in the client for speed changes
+            },
         }
         kokoro_cpu.voices.append(Voice(**voice_kwargs))
         kokoro_cpu_runpod.voices.append(Voice(**voice_kwargs))
+
+    higgs_audio_v2_runpod.voices.append(
+        Voice(
+            slug="higgs-default",
+            name="Higgs Default",
+            lang=None,
+            description="Voice without a reference audio... voice is chosen based on the processed text chunk. Might be inconsistent.",
+        )
+    )
 
     models.extend([kokoro_cpu, kokoro_cpu_runpod, higgs_audio_v2_runpod])
 

@@ -3,7 +3,6 @@ import logging
 import os
 import pprint
 from pathlib import Path
-from typing import NotRequired
 
 import requests
 from typing_extensions import TypedDict
@@ -19,16 +18,16 @@ VLLM_PORT = int(os.environ.get("VLLM_PORT", "8000"))
 VLLM_HOST = "localhost"
 
 
-class VoiceConfig(TypedDict):
+class VoiceConfig(TypedDict, total=False):
     seed: int
     temperature: float
     top_p: float
     top_k: int
-    scene_description: NotRequired[str]
-    system_prompt: NotRequired[str]
-    ref_audio: NotRequired[str | None]  # b64
-    ref_audio_transcript: NotRequired[str | None]  # text
-    ref_preset: NotRequired[str | None]  # voice preset name, takes precedence over ref_audio and ref_audio_transcript
+    scene_description: str
+    system_prompt: str
+    ref_audio: str | None  # b64
+    ref_audio_transcript: str | None  # text
+    ref_preset: str | None  # voice preset name, takes precedence over ref_audio and ref_audio_transcript
 
 
 DEFAULT_VOICE_CONFIG = VoiceConfig(
@@ -38,8 +37,6 @@ DEFAULT_VOICE_CONFIG = VoiceConfig(
     top_k=50,
     scene_description="Audio is recorded from a quiet room.",
     system_prompt="Generate audio following instruction.",
-    ref_audio=None,
-    ref_audio_transcript=None,
 )
 
 
@@ -48,26 +45,14 @@ class HiggsAudioV2Adapter(SynthAdapter):
         super().__init__()
         self._initialized = False
         self._voice_presets_dir: Path | None = Path(voice_presets_dir) if voice_presets_dir else None
-        self._voice_presets: dict[str, tuple[str, str]] = {}
+        self._voice_presets: dict[str, tuple[str, str]] | None = None
         if self._voice_presets_dir and not self._voice_presets_dir.is_dir():
             logger.error(f"voice presets dir is not a directory: {self._voice_presets_dir}")
             raise FileNotFoundError
 
     async def initialize(self) -> None:
-        if self._initialized:
+        if self._voice_presets_dir is not None:
             return
-
-        # vLLM server is already started and ready by the Docker entrypoint script
-        # Just do a quick health check to confirm
-        logger.info("Checking vLLM server health...")
-        try:
-            response = requests.get(f"http://localhost:{VLLM_PORT}/v1/models", timeout=5)
-            if response.status_code == 200:
-                logger.info("vLLM server is healthy")
-            else:
-                raise RuntimeError(f"vLLM server returned status {response.status_code}")
-        except requests.exceptions.RequestException as e:
-            raise RuntimeError(f"vLLM server not responding: {e}")
         self._voice_presets = (
             {
                 voice_dir.name: (
@@ -82,16 +67,15 @@ class HiggsAudioV2Adapter(SynthAdapter):
         logger.info(
             f"Loaded voice presets from {self._voice_presets_dir}: {pprint.pformat(self._voice_presets.keys())}"
         )
-        self._initialized = True
 
     async def synthesize(self, text: str, **kwargs: VoiceConfig) -> str:
         voice_config = DEFAULT_VOICE_CONFIG.copy()
         voice_config.update(kwargs)
-        temperature = voice_config["temperature"]
-        top_p = voice_config["top_p"]
-        top_k = voice_config["top_k"]
-        scene_description = voice_config["scene_description"]
-        system_prompt = voice_config["system_prompt"]
+        temperature = voice_config.get("temperature")
+        top_p = voice_config.get("top_p")
+        top_k = voice_config.get("top_k")
+        scene_description = voice_config.get("scene_description")
+        system_prompt = voice_config.get("system_prompt")
 
         scene_description = f"<|scene_desc_start|>\n{scene_description}\n<|scene_desc_end|>"
         system_prompt = f"{system_prompt}\n\n{scene_description}" if scene_description else system_prompt
@@ -119,7 +103,7 @@ class HiggsAudioV2Adapter(SynthAdapter):
             "audio": {"format": "wav"},
             "temperature": temperature,
             "top_p": top_p,
-            "top_k": top_k,  # Try top_k at top level since extra_body is being ignored
+            "top_k": top_k,
             "stop": ["<|eot_id|>", "<|end_of_text|>", "<|audio_eos|>"],
         }
         if voice_config.get("seed") is not None:
@@ -137,17 +121,11 @@ class HiggsAudioV2Adapter(SynthAdapter):
             logger.error(f"Unexpected response structure: {pprint.pformat(result)}")
             raise ValueError("Invalid response from vLLM")
 
-        # Get the audio data (base64 encoded WAV)
-        audio_data_b64 = result["choices"][0]["message"]["audio"]["data"]
-
         # vLLM returns WAV format, but we need to return raw PCM
         # The WAV has a 44-byte header we need to skip
+        audio_data_b64 = result["choices"][0]["message"]["audio"]["data"]
         wav_bytes = base64.b64decode(audio_data_b64)
-
-        # Skip WAV header (44 bytes) to get raw PCM data
         pcm_bytes = wav_bytes[44:]
-
-        # Return base64 encoded PCM
         return base64.b64encode(pcm_bytes).decode("utf-8")
 
     def calculate_duration_ms(self, audio_bytes: bytes) -> int:

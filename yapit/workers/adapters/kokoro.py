@@ -49,7 +49,7 @@ class KokoroAdapter(SynthAdapter):
     async def synthesize(self, text: str, **kwargs: VoiceConfig) -> bytes:
         pcm_chunks = []
         async with self._lock:  # model not thread-safe
-            for _, _, audio in self.pipe(text, voice=kwargs["voice"], speed=kwargs["voice"]):
+            for _, _, audio in self.pipe(text, voice=kwargs["voice"], speed=kwargs["speed"]):
                 if audio is None:
                     continue
                 pcm = (audio.numpy() * 32767).astype(np.int16).tobytes()  # scale [-1, 1] f32 tensor to int16 range

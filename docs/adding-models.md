@@ -14,27 +14,9 @@ Models in yapit are deployed as HTTP services that processors call:
 Create `yapit/workers/adapters/yourmodel.py`:
 
 ```python
-import numpy as np
 from yapit.workers.adapters.base import SynthAdapter
 
-class YourModelAdapter(SynthAdapter):
-    async def initialize(self) -> None:
-        """Load model weights here."""
-        # self.model = load_your_model()
-        pass
-    
-    async def synthesize(self, text: str, *, voice: str, speed: float) -> bytes:
-        """Convert text to PCM audio bytes (16-bit mono/stereo)."""
-        # audio = self.model.synthesize(text, voice=voice, speed=speed)
-        # Convert to int16 PCM:
-        # return (audio * 32767).astype(np.int16).tobytes()
-        pass
-    
-    def calculate_duration_ms(self, audio_bytes: bytes) -> int:
-        """Calculate duration from PCM bytes."""
-        # Example for 24kHz mono 16-bit:
-        # return int(len(audio_bytes) / (24_000 * 1 * 2) * 1000)
-        pass
+class YourModelAdapter(SynthAdapter): ...
 ```
 
 ### 2. Create Worker Entry Point (Skip if only using RunPod -- see below)

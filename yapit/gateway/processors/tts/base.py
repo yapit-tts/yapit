@@ -132,7 +132,7 @@ class BaseTTSProcessor(ABC):
                     db.add(usage_stats)
 
                 usage_stats.total_seconds_synthesized += duration_seconds
-                usage_stats.total_characters_processed += len(job.text)
+                usage_stats.total_characters_processed += len(job.synthesis_parameters.text)
                 usage_stats.total_requests += 1
                 usage_stats.last_updated = datetime.now(tz=dt.UTC)
 
