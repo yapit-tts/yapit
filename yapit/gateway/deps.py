@@ -180,10 +180,10 @@ async def ensure_admin_credits(
     user_credits: AuthenticatedUserCredits,
     db: DbSession,
     is_admin: IsAdmin,
-    min_balance: Decimal = Decimal(1000),
-    top_up_amount: Decimal = Decimal(10000),
 ) -> None:
     """Ensure admin users have sufficient credits by topping up if needed (for testing/development/self-hosting)."""
+    min_balance = Decimal(1000)
+    top_up_amount = Decimal(10000)
     if is_admin and user_credits.balance < min_balance:
         balance_before = user_credits.balance
         user_credits.balance += top_up_amount
