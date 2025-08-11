@@ -4,7 +4,7 @@ from decimal import Decimal
 from pydantic import BaseModel, ConfigDict
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from yapit.gateway.cache import SqliteCache
+from yapit.gateway.cache import Cache
 from yapit.gateway.config import Settings
 from yapit.gateway.constants import PLATFORM_SUPPORTED_MIME_TYPES
 from yapit.gateway.db import get_by_slug_or_404
@@ -119,7 +119,7 @@ class BaseDocumentProcessor(ABC):
         user_credits: UserCredits,
         cache_key: str,
         db: AsyncSession,
-        cache: SqliteCache,
+        cache: Cache,
         content_type: str,
         url: str | None = None,
         content: bytes | None = None,
@@ -156,20 +156,20 @@ class BaseDocumentProcessor(ABC):
             cached_doc.extraction = DocumentExtractionResult(pages={}, extraction_method=self.processor_slug)
 
         # Determine what pages to process
-        missing_pages = get_missing_pages(cached_doc, pages)
+        uncached_pages = get_uncached_pages(cached_doc, pages)
         requested_pages = set(pages) if pages else set(range(cached_doc.metadata.total_pages))
 
         # If all pages are cached, return them
-        if not missing_pages:
+        if not uncached_pages:
             return self._filter_pages(cached_doc.extraction, requested_pages)
 
         # Check credits
-        credits_needed = Decimal(len(missing_pages)) * processor_model.credits_per_page
+        credits_needed = Decimal(len(uncached_pages)) * processor_model.credits_per_page
         if user_credits.balance < credits_needed:
             raise InsufficientCreditsError(required=credits_needed, available=user_credits.balance)
 
         # Process missing pages
-        result = await self._extract(url=url, content=content, content_type=content_type, pages=list(missing_pages))
+        result = await self._extract(url=url, content=content, content_type=content_type, pages=list(uncached_pages))
 
         # Merge results
         cached_doc.extraction.pages.update(result.pages)
@@ -229,11 +229,11 @@ class BaseDocumentProcessor(ABC):
         return mime_type in self.supported_mime_types
 
 
-def get_missing_pages(
+def get_uncached_pages(
     cached_doc: CachedDocument,
     requested_pages: list[int] | None = None,
 ) -> set[int]:
-    """Get pages that need processing (not in cache).
+    """Get pages that need processing.
 
     Args:
         cached_doc: The cached document with existing extraction results
@@ -245,22 +245,3 @@ def get_missing_pages(
     existing_pages = set(cached_doc.extraction.pages.keys()) if cached_doc.extraction else set()
     pages_to_process = set(requested_pages) if requested_pages else set(range(cached_doc.metadata.total_pages))
     return pages_to_process - existing_pages
-
-
-def calculate_credit_cost(
-    cached_doc: CachedDocument,
-    processor_credits_per_page: Decimal,
-    requested_pages: list[int] | None = None,
-) -> Decimal:
-    """Calculate credit cost for processing pages, accounting for cached pages.
-
-    Args:
-        cached_doc: The cached document with existing extraction results
-        processor_credits_per_page: Credits per page for the processor
-        requested_pages: Specific pages to process (None means all)
-
-    Returns:
-        Total credit cost for uncached pages
-    """
-    missing_pages = get_missing_pages(cached_doc, requested_pages)
-    return Decimal(len(missing_pages)) * processor_credits_per_page
