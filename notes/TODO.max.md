@@ -2,6 +2,10 @@
 
 ### Fix
 
+- Tune runpod worker idle timeout (maybe 2min or even 3min is good to avoid cold starts for infrquent use + our pre-fetching pattern+block duration...)
+  - (needs refinement to be useful for proper analysis) Break even / visualization for tuning params: https://claude.ai/public/artifacts/aaba7fde-3307-4fc0-857e-a50681ce22ac | chat: https://claude.ai/chat/e6250ab2-36fe-4520-9486-09741c99c528
+  - => CREATE A SEPARATE ENDPOINT FOR CI (with 0 idle timeout)
+  - => vllm only makes sense with acive workers / regular traffic with decent idle timeout
 - Upload size restrictions for upload endpoint
 - Mistral: Dont assume pages are returned in order, sort them by explicitly returned page number before returning
 - Thinking about security / exploits: Limits on the number of docs, filters, etc.
