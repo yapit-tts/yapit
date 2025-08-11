@@ -4,13 +4,11 @@ WORKDIR /app
 
 RUN pip install --no-cache-dir runpod
 
-# Set cache directories - can be overridden
+# Pre-download models during build
 ENV HF_HOME=/root/.cache/huggingface
 ENV TRANSFORMERS_CACHE=/root/.cache/huggingface/transformers
 ENV VLLM_DOWNLOAD_DIR=/root/.cache/huggingface
 ENV VLLM_CACHE_ROOT=/root/.cache/huggingface
-
-# Pre-download models during build
 RUN pip install --no-cache-dir huggingface_hub
 RUN python3 -c "from huggingface_hub import snapshot_download; \
     print('Downloading model weights...'); \
@@ -18,15 +16,13 @@ RUN python3 -c "from huggingface_hub import snapshot_download; \
     snapshot_download('bosonai/higgs-audio-v2-tokenizer', cache_dir='${VLLM_DOWNLOAD_DIR}'); \
     print('Model download complete!')"
 
+# Install curl for health checks
+RUN apt-get update && apt-get install -y curl
 # Clean up to save space
 RUN apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
 COPY yapit/ /app/yapit
 
-# Install curl for health checks
-RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
-
-# Copy startup script
 COPY yapit/workers/higgs_audio_v2/start.sh /app/start.sh
 RUN chmod +x /app/start.sh
 
