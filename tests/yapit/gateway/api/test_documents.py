@@ -103,8 +103,8 @@ async def test_upload_and_create_document(client, as_test_user):
 
 
 @pytest.mark.asyncio
-async def test_prepare_invalid_page_numbers(client, as_test_user):
-    """Test validation of page numbers in prepare."""
+async def test_document_create_invalid_page_numbers(client, as_test_user):
+    """Test validation of page numbers when creating a document."""
     mock_content = b"fake pdf"
 
     with (
@@ -114,15 +114,25 @@ async def test_prepare_invalid_page_numbers(client, as_test_user):
         mock_download.return_value = (mock_content, "application/pdf")
         mock_extract.return_value = (3, "Test PDF")  # 3 pages
 
-        # Request invalid pages
-        response = await client.post(
+        # First prepare the document
+        prepare_response = await client.post(
             "/v1/documents/prepare",
+            json={"url": "https://example.com/test.pdf"},
+        )
+        assert prepare_response.status_code == 200
+        prepare_data = prepare_response.json()
+
+        # Try to create document with invalid pages
+        create_response = await client.post(
+            "/v1/documents/document",
             json={
-                "url": "https://example.com/test.pdf",
-                "pages": [1, 5, 10],  # Pages 5 and 10 don't exist
+                "hash": prepare_data["hash"],
+                "title": "Test Document",
+                "processor_slug": "markitdown",
+                "pages": [1, 5, 10],  # Pages 5 and 10 don't exist (0-indexed, so valid are 0,1,2)
             },
         )
 
-        assert response.status_code == 422
-        assert "Invalid page numbers: [5, 10]" in response.json()["detail"]
-        assert "Document has 3 pages" in response.json()["detail"]
+        assert create_response.status_code == 422
+        assert "Invalid page numbers: [5, 10]" in create_response.json()["detail"]
+        assert "Document has 3 pages" in create_response.json()["detail"]
