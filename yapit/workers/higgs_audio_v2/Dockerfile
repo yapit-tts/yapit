@@ -7,14 +7,15 @@ RUN pip install --no-cache-dir runpod
 # Set cache directories - can be overridden
 ENV HF_HOME=/root/.cache/huggingface
 ENV TRANSFORMERS_CACHE=/root/.cache/huggingface/transformers
-ENV VLLM_DOWNLOAD_DIR=/root/.cache/vllm
+ENV VLLM_DOWNLOAD_DIR=/root/.cache/huggingface
+ENV VLLM_CACHE_ROOT=/root/.cache/huggingface
 
 # Pre-download models during build
 RUN pip install --no-cache-dir huggingface_hub
 RUN python3 -c "from huggingface_hub import snapshot_download; \
     print('Downloading model weights...'); \
-    snapshot_download('bosonai/higgs-audio-v2-generation-3B-base', cache_dir='${HF_HOME}/hub'); \
-    snapshot_download('bosonai/higgs-audio-v2-tokenizer', cache_dir='${HF_HOME}/hub'); \
+    snapshot_download('bosonai/higgs-audio-v2-generation-3B-base', cache_dir='${VLLM_DOWNLOAD_DIR}'); \
+    snapshot_download('bosonai/higgs-audio-v2-tokenizer', cache_dir='${VLLM_DOWNLOAD_DIR}'); \
     print('Model download complete!')"
 
 # Clean up to save space
