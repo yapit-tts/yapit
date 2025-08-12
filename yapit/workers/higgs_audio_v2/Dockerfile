@@ -28,7 +28,6 @@ RUN chmod +x /app/start.sh
 
 ENV ADAPTER_CLASS=yapit.workers.adapters.higgs_audio_v2.HiggsAudioV2Adapter
 ENV VLLM_STARTUP_TIMEOUT=300
-ENV OMP_NUM_THREADS=2
 
 # Build version - increment to trigger RunPod rebuild if only code changes
 ENV YAPIT_BUILD_VERSION=2

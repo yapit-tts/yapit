@@ -5,6 +5,8 @@ set -e
 VLLM_PORT=${VLLM_PORT:-8000}
 # vLLM needs more time for model loading, compilation, and CUDA graph capture
 VLLM_STARTUP_TIMEOUT=${VLLM_STARTUP_TIMEOUT:-300}
+# Control whether to use eager mode (faster startup, slower inference)
+VLLM_ENFORCE_EAGER=${VLLM_ENFORCE_EAGER:-0}
 
 echo "=== Starting Higgs Audio V2 Worker ==="
 echo "Current directory: $(pwd)"
@@ -21,7 +23,8 @@ python3 -m vllm.entrypoints.bosonai.api_server \
   --max-model-len 8192 \
   --port ${VLLM_PORT} \
   --download-dir "${VLLM_DOWNLOAD_DIR}" \
-  --disable-mm-preprocessor-cache &
+  --disable-mm-preprocessor-cache \
+  ${VLLM_ENFORCE_EAGER:+--enforce-eager} &
 
 VLLM_PID=$!
 
