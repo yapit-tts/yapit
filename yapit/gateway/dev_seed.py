@@ -34,9 +34,20 @@ def create_dev_models() -> list[TTSModel]:
         channels=1,
         sample_width=2,
     )
+
     higgs_audio_v2_runpod = TTSModel(
         slug="higgs-audio-v2-runpod-vllm",
         name="Higgs Audio V2 (RunPod, VLLM)",
+        credits_per_sec=Decimal("10"),
+        native_codec="pcm",
+        sample_rate=24_000,
+        channels=1,
+        sample_width=2,
+    )
+
+    higgs_audio_v2_runpod_ci = TTSModel(
+        slug="higgs-audio-v2-runpod-vllm-ci",
+        name="Higgs Audio V2 (RunPod, VLLM, CI)",
         credits_per_sec=Decimal("10"),
         native_codec="pcm",
         sample_rate=24_000,
@@ -61,16 +72,16 @@ def create_dev_models() -> list[TTSModel]:
         kokoro_cpu.voices.append(Voice(**voice_kwargs))
         kokoro_cpu_runpod.voices.append(Voice(**voice_kwargs))
 
-    higgs_audio_v2_runpod.voices.append(
-        Voice(
-            slug="higgs-default",
-            name="Higgs Default",
-            lang=None,
-            description="Voice without a reference audio... voice is chosen based on the processed text chunk. Might be inconsistent.",
-        )
+    higgs_audio_v2_default_voice = Voice(
+        slug="higgs-default",
+        name="Higgs Default",
+        lang=None,
+        description="Voice without a reference audio... voice is chosen based on the processed text chunk. Might be inconsistent.",
     )
+    higgs_audio_v2_runpod.voices.append(higgs_audio_v2_default_voice)
+    higgs_audio_v2_runpod_ci.voices.append(higgs_audio_v2_default_voice)
 
-    models.extend([kokoro_cpu, kokoro_cpu_runpod, higgs_audio_v2_runpod])
+    models.extend([kokoro_cpu, kokoro_cpu_runpod, higgs_audio_v2_runpod, higgs_audio_v2_runpod_ci])
 
     # Uncomment to add Dia model
     # dia = TTSModel(

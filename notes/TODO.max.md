@@ -7,6 +7,7 @@
   - => CREATE A SEPARATE ENDPOINT FOR CI (with 0 idle timeout). Dev & prod should have decent idle timeout (AT LEAST audio-dur*num-prefetched-blocks)
   - => vllm only makes sense with acive workers / regular traffic with decent idle timeout, except: Disabling torch compile works well enough
   - => torch compile caching wip: https://github.com/vllm-project/vllm/pull/22658 
+- remove kokoro-runpod from ci once we run it from browser
 
 - Upload size restrictions for upload endpoint
 - Mistral: Dont assume pages are returned in order, sort them by explicitly returned page number before returning
