@@ -19,6 +19,7 @@ from yapit.gateway.deps import (
     CurrentVoice,
     DbSession,
     RedisClient,
+    SettingsDep,
     ensure_admin_credits,
 )
 from yapit.gateway.domain_models import BlockVariant, TTSModel
@@ -58,6 +59,7 @@ async def synthesize(
     db: DbSession,
     redis: RedisClient,
     cache: AudioCache,
+    settings: SettingsDep,
 ) -> Response:
     """Synthesize audio for a block. Returns audio data directly with long-polling."""
     if user_credits.balance <= 0:
@@ -126,7 +128,7 @@ async def synthesize(
         await redis.lpush(get_queue_name(model.slug), job.model_dump_json())
 
     # Long-polling: wait for audio to appear in cache AND inflight to be cleared
-    timeout = 180.0  # TODO set via .env ... and maybe unify with runpod request timeout
+    timeout = settings.synthesis_polling_timeout_seconds
     poll_interval = 0.5
     elapsed = 0.0
     while elapsed < timeout:
