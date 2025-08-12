@@ -4,7 +4,7 @@
 
 - Tune runpod worker idle timeout (maybe 2min or even 3min is good to avoid cold starts for infrquent use + our pre-fetching pattern+block duration...)
   - (needs refinement to be useful for proper analysis) Break even / visualization for tuning params: https://claude.ai/public/artifacts/aaba7fde-3307-4fc0-857e-a50681ce22ac | chat: https://claude.ai/chat/e6250ab2-36fe-4520-9486-09741c99c528
-  - => CREATE A SEPARATE ENDPOINT FOR CI (with 0 idle timeout)
+  - => CREATE A SEPARATE ENDPOINT FOR CI (with 0 idle timeout). Dev & prod should have decent idle timeout (AT LEAST audio-dur*num-prefetched-blocks)
   - => vllm only makes sense with acive workers / regular traffic with decent idle timeout, except: Disabling torch compile works well enough
   - => torch compile caching wip: https://github.com/vllm-project/vllm/pull/22658 
 
