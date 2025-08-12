@@ -7,7 +7,7 @@ import pytest
     [
         ("kokoro-cpu", "af_heart"),
         pytest.param("kokoro-cpu-runpod", "af_heart", marks=pytest.mark.runpod),
-        pytest.param("higgs-audio-v2-runpod-vllm", "higgs-default", marks=pytest.mark.runpod),
+        pytest.param("higgs-audio-v2-runpod-vllm-ci", "higgs-default", marks=pytest.mark.runpod),
     ],
 )
 async def test_tts_integration(model_slug, voice_slug, admin_client, test_document):

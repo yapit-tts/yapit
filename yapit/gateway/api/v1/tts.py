@@ -126,7 +126,7 @@ async def synthesize(
         await redis.lpush(get_queue_name(model.slug), job.model_dump_json())
 
     # Long-polling: wait for audio to appear in cache AND inflight to be cleared
-    timeout = 60.0
+    timeout = 180.0  # TODO set via .env ... and maybe unify with runpod request timeout
     poll_interval = 0.5
     elapsed = 0.0
     while elapsed < timeout:

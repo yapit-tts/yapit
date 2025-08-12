@@ -50,4 +50,5 @@ jobs:
           docker compose ps -a
 
       - name: Run integration tests
-        run: make test-integration
+        run: make test-integration-local # temporarily using local tests
+

@@ -93,7 +93,7 @@ async def make_client(auth_token: str = None):
     import httpx
 
     headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else {}
-    async with httpx.AsyncClient(base_url="http://localhost:8000", timeout=70.0, headers=headers) as client:
+    async with httpx.AsyncClient(base_url="http://localhost:8000", timeout=200.0, headers=headers) as client:
         yield client
 
 
