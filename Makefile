@@ -72,10 +72,10 @@ test-integration:
 test-integration-local:
 	uv run --env-file=.env.dev pytest tests/integration -v -m "not runpod and not mistral"
 
-test-integration-runpod:
+test-runpod:
 	uv run --env-file=.env.dev pytest tests/integration -v -m "runpod"
 
-test-integration-mistral:
+test-mistral:
 	uv run --env-file=.env.dev pytest tests/integration -v -m "mistral"
 
 lint:
