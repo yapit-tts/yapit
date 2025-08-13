@@ -5,7 +5,7 @@ from pydantic import BaseModel, ConfigDict
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from yapit.gateway.cache import Cache
-from yapit.gateway.constants import PLATFORM_SUPPORTED_MIME_TYPES
+from yapit.gateway.constants import SUPPORTED_DOCUMENT_MIME_TYPES
 from yapit.gateway.db import get_by_slug_or_404
 from yapit.gateway.domain_models import (
     CreditTransaction,
@@ -103,8 +103,8 @@ class BaseDocumentProcessor(Processor):
             if proc_type.endswith("/*"):
                 # Handle wildcards like "image/*"
                 prefix = proc_type[:-2]
-                supported.update(t for t in PLATFORM_SUPPORTED_MIME_TYPES if t.startswith(prefix + "/"))
-            elif proc_type in PLATFORM_SUPPORTED_MIME_TYPES:
+                supported.update(t for t in SUPPORTED_DOCUMENT_MIME_TYPES if t.startswith(prefix + "/"))
+            elif proc_type in SUPPORTED_DOCUMENT_MIME_TYPES:
                 supported.add(proc_type)
 
         return supported
@@ -149,7 +149,7 @@ class BaseDocumentProcessor(Processor):
 
         # Initialize extraction if needed
         if not cached_doc.extraction:
-            cached_doc.extraction = DocumentExtractionResult(pages={}, extraction_method=self.processor_slug)
+            cached_doc.extraction = DocumentExtractionResult(pages={}, extraction_method=self._slug)
 
         # Determine what pages to process
         uncached_pages = get_uncached_pages(cached_doc, pages)

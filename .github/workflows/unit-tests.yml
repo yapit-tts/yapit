@@ -30,4 +30,4 @@ jobs:
         run: uv pip install ".[gateway,test]"
 
       - name: Run unit tests
-        run: uv run --no-sync pytest tests --ignore=tests/integration  # no-sync to prevent uv from trying to resolve all extra deps together
+        run: uv run --no-sync pytest tests --ignore=tests/integration -m "not mistral and not runpod"  # no-sync to prevent uv from trying to resolve all extra deps together

@@ -2,7 +2,7 @@
 
 # MIME types that make sense for TTS use cases
 # Processors should intersect their capabilities with these
-PLATFORM_SUPPORTED_MIME_TYPES = {
+SUPPORTED_DOCUMENT_MIME_TYPES = {
     # Text formats
     "text/html",
     "text/plain",
@@ -11,6 +11,7 @@ PLATFORM_SUPPORTED_MIME_TYPES = {
     # Document formats
     "application/pdf",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",  # DOCX
+    "application/xhtml+xml",
     # Image formats
     "image/png",
     "image/jpeg",
@@ -25,3 +26,8 @@ PLATFORM_SUPPORTED_MIME_TYPES = {
 # - application/json (not useful for TTS)
 # - text/csv (tabular data doesn't read well)
 # - application/zip (too generic)
+
+SUPPORTED_WEB_MIME_TYPES = {
+    "text/html",
+    "application/xhtml+xml",
+}

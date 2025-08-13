@@ -4,6 +4,7 @@ import logging
 import math
 import re
 from decimal import Decimal
+from email.message import EmailMessage
 from typing import Annotated, Literal
 from uuid import UUID
 
@@ -14,6 +15,7 @@ from pydantic import BaseModel, HttpUrl, StringConstraints
 from sqlmodel import select
 
 from yapit.gateway.auth import authenticate
+from yapit.gateway.constants import SUPPORTED_WEB_MIME_TYPES
 from yapit.gateway.db import get_by_slug_or_404
 from yapit.gateway.deps import (
     AuthenticatedUser,
@@ -135,7 +137,7 @@ async def prepare_document(
     cached_data = await cache.retrieve_data(cache_key)
     if cached_data:
         cached_doc = CachedDocument.model_validate_json(cached_data)
-        endpoint = "website" if cached_doc.metadata.content_type.lower() == "text/html" else "document"
+        endpoint = _get_endpoint_type_from_content_type(cached_doc.metadata.content_type)
 
         credit_cost, uncached_pages = (None, None)
         if endpoint == "document":
@@ -162,7 +164,7 @@ async def prepare_document(
         file_size=len(content),
     )
 
-    endpoint: Literal["website", "document"] = "website" if content_type.lower() == "text/html" else "document"
+    endpoint = _get_endpoint_type_from_content_type(content_type)
     cached_doc = CachedDocument(content=content if endpoint == "document" else None, metadata=metadata)
     ttl = settings.document_cache_ttl_webpage if endpoint == "website" else settings.document_cache_ttl_document
     await cache.store(cache_key, cached_doc.model_dump_json().encode(), ttl_seconds=ttl)
@@ -285,7 +287,7 @@ async def create_website_document(
             message=f"Document with hash {req.hash!r} not found in cache. Have you called /prepare?",
         )
     cached_doc = CachedDocument.model_validate_json(cached_data)
-    if cached_doc.metadata.content_type.lower() != "text/html":
+    if _get_endpoint_type_from_content_type(cached_doc.metadata.content_type) != "website":
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="This endpoint is for websites only. Use /document for files.",
@@ -353,7 +355,7 @@ async def create_document(
         )
     cached_doc = CachedDocument.model_validate_json(cached_data)
 
-    if cached_doc.metadata.content_type.lower() == "text/html":
+    if _get_endpoint_type_from_content_type(cached_doc.metadata.content_type) == "website":
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="This endpoint is for documents only. Use /website for websites.",
@@ -485,7 +487,7 @@ def _extract_document_info(content: bytes, content_type: str) -> tuple[int, str 
                 title = pdf.metadata["title"]
     elif content_type.lower().startswith("image/"):
         total_pages = 1
-    elif content_type.lower() == "text/html":
+    elif _get_endpoint_type_from_content_type(content_type) == "website":
         total_pages = 1
         html_text = content.decode("utf-8", errors="ignore")
         title_match = re.search(r"<title[^>]*>([^<]+)</title>", html_text, re.IGNORECASE)
@@ -493,12 +495,7 @@ def _extract_document_info(content: bytes, content_type: str) -> tuple[int, str 
             title = title_match.group(1).strip()
         else:
             log.warning(f"Failed to extract title from HTML content:\n{html_text}", exc_info=True)
-    elif content_type.lower().startswith("text/") or content_type.lower() in [
-        "application/xml",
-        "application/rss+xml",
-        "application/atom+xml",
-    ]:
-        # Generic text-based formats
+    elif content_type.lower().startswith("text/"):
         total_pages = 1
     else:
         raise HTTPException(
@@ -507,6 +504,24 @@ def _extract_document_info(content: bytes, content_type: str) -> tuple[int, str 
         )
 
     return total_pages, title
+
+
+def _get_endpoint_type_from_content_type(content_type: str | None) -> Literal["website", "document"]:
+    """Determine if content should be handled as a website or document based on MIME type.
+
+    Returns:
+        "website" if content is HTML-like, "document" otherwise
+    """
+    if not content_type:
+        return "document"
+
+    try:
+        msg = EmailMessage()
+        msg["content-type"] = content_type
+        main_type = msg.get_content_type().lower()
+        return "website" if main_type in SUPPORTED_WEB_MIME_TYPES else "document"
+    except Exception:
+        return "document"
 
 
 async def _calculate_document_credit_cost(
