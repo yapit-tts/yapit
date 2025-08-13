@@ -23,8 +23,10 @@ cd frontend && npm run dev
 
 Check if everything works:
 ```bash
-make test-local  # or make test (needs runpod key)
+make test-local  # or make test (needs runpod and mistral key for all tests to run / pass)
 ```
+
+Tests for some external processors are not part of ci, but can be run manually, e.g. `make test-runpod`, `make test-mistral`.
 
 ### API Access
 

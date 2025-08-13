@@ -2,7 +2,11 @@ from unittest.mock import patch
 
 import pytest
 
-from yapit.gateway.api.v1.documents import DocumentCreateResponse, DocumentPrepareResponse
+from yapit.gateway.api.v1.documents import (
+    DocumentCreateResponse,
+    DocumentPrepareResponse,
+    _get_endpoint_type_from_content_type,
+)
 
 
 @pytest.mark.asyncio
@@ -136,3 +140,61 @@ async def test_document_create_invalid_page_numbers(client, as_test_user):
         assert create_response.status_code == 422
         assert "Invalid page numbers: [5, 10]" in create_response.json()["detail"]
         assert "Document has 3 pages" in create_response.json()["detail"]
+
+
+@pytest.mark.parametrize(
+    "content_type,expected",
+    [
+        # HTML variations - all should be "website"
+        ("text/html", "website"),
+        ("TEXT/HTML", "website"),
+        ("text/html; charset=utf-8", "website"),
+        ("text/html;charset=UTF-8", "website"),
+        ("text/html; boundary=something", "website"),
+        ("text/html; charset=utf-8; boundary=test", "website"),
+        ('text/html; charset="utf-8; tricky"', "website"),
+        # XHTML
+        ("application/xhtml+xml", "website"),
+        ("application/xhtml+xml; charset=utf-8", "website"),
+        # Documents
+        ("application/pdf", "document"),
+        ("application/pdf; version=1.7", "document"),
+        ("image/png", "document"),
+        ("image/jpeg", "document"),
+        ("text/plain", "document"),
+        ("text/plain; charset=utf-8", "document"),
+        ("application/json", "document"),
+        ("application/xml", "document"),  # Generic XML is a document
+        # Edge cases
+        (None, "document"),
+        ("", "document"),
+        ("malformed/type", "document"),
+    ],
+)
+def test_content_type_detection(content_type, expected):
+    """Test that content type detection properly handles MIME type parameters."""
+    assert _get_endpoint_type_from_content_type(content_type) == expected
+
+
+@pytest.mark.parametrize(
+    "content_type",
+    [
+        "text/html; charset=utf-8",
+        "text/html;charset=UTF-8",
+        "text/html; charset=ISO-8859-1",
+    ],
+)
+@pytest.mark.asyncio
+async def test_prepare_detects_html_with_charset_as_website(client, as_test_user, content_type):
+    """Test that HTML pages with charset parameters are correctly detected as websites."""
+    mock_html = b"<!DOCTYPE html><html><body>Test</body></html>"
+
+    with patch("yapit.gateway.api.v1.documents._download_document") as mock_download:
+        mock_download.return_value = (mock_html, content_type)
+
+        response = await client.post("/v1/documents/prepare", json={"url": "https://example.com/page.html"})
+
+        assert response.status_code == 200
+        data = DocumentPrepareResponse.model_validate(response.json())
+        assert data.endpoint == "website"
+        assert data.metadata.content_type == content_type

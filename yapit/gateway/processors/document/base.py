@@ -6,7 +6,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from yapit.gateway.cache import Cache
 from yapit.gateway.config import Settings
-from yapit.gateway.constants import PLATFORM_SUPPORTED_MIME_TYPES
+from yapit.gateway.constants import SUPPORTED_DOCUMENT_MIME_TYPES
 from yapit.gateway.db import get_by_slug_or_404
 from yapit.gateway.domain_models import (
     CreditTransaction,
@@ -107,8 +107,8 @@ class BaseDocumentProcessor(ABC):
             if proc_type.endswith("/*"):
                 # Handle wildcards like "image/*"
                 prefix = proc_type[:-2]
-                supported.update(t for t in PLATFORM_SUPPORTED_MIME_TYPES if t.startswith(prefix + "/"))
-            elif proc_type in PLATFORM_SUPPORTED_MIME_TYPES:
+                supported.update(t for t in SUPPORTED_DOCUMENT_MIME_TYPES if t.startswith(prefix + "/"))
+            elif proc_type in SUPPORTED_DOCUMENT_MIME_TYPES:
                 supported.add(proc_type)
 
         return supported
