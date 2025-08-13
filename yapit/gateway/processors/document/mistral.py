@@ -9,7 +9,6 @@ from typing import Literal
 from mistralai import Mistral, OCRResponse
 from pydantic import BaseModel
 
-from yapit.gateway.config import Settings
 from yapit.gateway.processors.document.base import (
     BaseDocumentProcessor,
     DocumentExtractionResult,
@@ -39,13 +38,13 @@ class MistralOCRProcessor(BaseDocumentProcessor):
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",  # DOCX
     }
 
-    def __init__(self, slug: str, settings: Settings, model: str):
-        super().__init__(slug, settings)
+    def __init__(self, model: str, **kwargs):
+        super().__init__(**kwargs)
 
-        if not settings.mistral_api_key:
+        if not self._settings.mistral_api_key:
             raise ValueError("MISTRAL_API_KEY is required for Mistral OCR processor")
 
-        self._client = Mistral(api_key=settings.mistral_api_key)
+        self._client = Mistral(api_key=self._settings.mistral_api_key)
         self._model = model
 
     @property
@@ -83,7 +82,7 @@ class MistralOCRProcessor(BaseDocumentProcessor):
                 page.index: ExtractedPage(markdown=page.markdown, images=[i.image_base64 for i in page.images])
                 for page in response.pages
             },
-            extraction_method=self.processor_slug,
+            extraction_method=self._slug,
         )
 
 

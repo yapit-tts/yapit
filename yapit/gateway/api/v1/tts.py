@@ -7,12 +7,13 @@ from decimal import Decimal
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlmodel import select
 
-from yapit.contracts import TTS_INFLIGHT, SynthesisJob, SynthesisParameters, get_queue_name
+from yapit.contracts import TTS_INFLIGHT, SynthesisJob, SynthesisParameters, SynthesisResult, get_queue_name
 from yapit.gateway.auth import authenticate
 from yapit.gateway.deps import (
     AudioCache,
     AuthenticatedUser,
     AuthenticatedUserCredits,
+    ClientProcessorDep,
     CurrentBlock,
     CurrentDoc,
     CurrentTTSModel,
@@ -20,6 +21,7 @@ from yapit.gateway.deps import (
     DbSession,
     RedisClient,
     SettingsDep,
+    SynthesisJobDep,
     ensure_admin_credits,
 )
 from yapit.gateway.domain_models import BlockVariant, TTSModel
@@ -145,3 +147,16 @@ async def synthesize(
     raise HTTPException(
         status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail="Audio synthesis timed out. Please try again."
     )
+
+
+@router.post("/v1/tts/submit/model/{model_slug}/job/{job_id}")
+async def submit_job(
+    _: SynthesisJobDep,
+    result: SynthesisResult,
+    processor: ClientProcessorDep,
+):
+    """Submit synthesis result from the client."""
+    if not processor.submit_result(result):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Job already completed or result already submitted"
+        )

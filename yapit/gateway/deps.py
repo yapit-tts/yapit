@@ -10,6 +10,7 @@ from sqlalchemy.orm import selectinload
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from yapit.contracts import SynthesisJob
 from yapit.gateway.auth import authenticate
 from yapit.gateway.cache import Cache, CacheConfig, Caches, SqliteCache
 from yapit.gateway.config import Settings, get_settings
@@ -27,6 +28,8 @@ from yapit.gateway.domain_models import (
 )
 from yapit.gateway.exceptions import ResourceNotFoundError
 from yapit.gateway.processors.document.manager import DocumentProcessorManager
+from yapit.gateway.processors.tts.client import ClientProcessor
+from yapit.gateway.processors.tts.manager import TTSProcessorManager
 from yapit.gateway.stack_auth.users import User
 from yapit.gateway.text_splitter import (
     DummySplitter,
@@ -42,8 +45,6 @@ def _get_cache(cache_type: Caches, config: CacheConfig) -> Cache:
     match cache_type:
         case Caches.SQLITE:
             return SqliteCache(config)
-        case _:
-            raise ValueError(f"Invalid cache type {cache_type}")
 
 
 def get_audio_cache(settings: SettingsDep) -> Cache:
@@ -60,8 +61,6 @@ def get_text_splitter(settings: SettingsDep) -> TextSplitter:
             return DummySplitter(settings.splitter_config)
         case TextSplitters.HIERARCHICAL:
             return HierarchicalSplitter(settings.splitter_config)
-        case _:
-            raise ValueError(f"Invalid TextSplitter type {settings.splitter_type}")
 
 
 async def get_db_session(settings: Settings = Depends(get_settings)) -> AsyncIterator[AsyncSession]:
@@ -147,9 +146,33 @@ async def get_block_variant(
     return variant
 
 
+async def get_client_processor(model_slug: str, tts_processor_manager: TTSProcessorManagerDep) -> ClientProcessor:
+    """Get the client processor for a given model slug."""
+    processor = tts_processor_manager.get_processor(model_slug)
+    if not isinstance(processor, ClientProcessor):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Model {model_slug!r} does not support client job submission",
+        )
+    return processor
+
+
+def get_job(
+    job_id: str,
+    user: AuthenticatedUser,
+    processor: ClientProcessorDep,
+) -> SynthesisJob:
+    job = processor.get_job(str(job_id))
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found or already completed")
+    if job.user_id != user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This job does not belong to you")
+    return job
+
+
 async def is_admin(user: Annotated[User, Depends(authenticate)]) -> bool:
     """Check if the authenticated user is an admin."""
-    return user.server_metadata and user.server_metadata.is_admin
+    return bool(user.server_metadata and user.server_metadata.is_admin)
 
 
 async def require_admin(is_admin: IsAdmin) -> None:
@@ -208,8 +231,15 @@ async def get_document_processor_manager(request: Request) -> DocumentProcessorM
     return request.app.state.document_processor_manager
 
 
+async def get_tts_processor_manager(request: Request) -> TTSProcessorManager:
+    return request.app.state.tts_processor_manager
+
+
 RedisClient = Annotated[Redis, Depends(get_redis_client)]
+TTSProcessorManagerDep = Annotated[TTSProcessorManager, Depends(get_tts_processor_manager)]
 DocumentProcessorManagerDep = Annotated[DocumentProcessorManager, Depends(get_document_processor_manager)]
+ClientProcessorDep = Annotated[ClientProcessor, Depends(get_client_processor)]
+SynthesisJobDep = Annotated[str, Depends(get_job)]
 AudioCache = Annotated[Cache, Depends(get_audio_cache)]
 DocumentCache = Annotated[Cache, Depends(get_document_cache)]
 TextSplitterDep = Annotated[TextSplitter, Depends(get_text_splitter)]

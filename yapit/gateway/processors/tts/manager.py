@@ -18,10 +18,9 @@ class TTSProcessorManager(ProcessorManager[BaseTTSProcessor]):
         self._cache = cache
         self._tasks: list[asyncio.Task] = []
 
-    def _create_processor(self, config: ProcessorConfig) -> BaseTTSProcessor:
+    def _create_processor(self, processor_class_path: str, config: ProcessorConfig) -> BaseTTSProcessor:
         """Create a processor instance from configuration."""
-        config = config.copy()
-        processor_class = self._load_processor_class(config.pop("processor"))
+        processor_class = self._load_processor_class(processor_class_path)
         return processor_class(redis=self._redis, cache=self._cache, settings=self._settings, **config)
 
     async def start(self, config_path: str) -> None:

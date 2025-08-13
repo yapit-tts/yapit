@@ -13,11 +13,22 @@ def create_dev_models() -> list[TTSModel]:
     """Create development TTS models with voices."""
     models = []
 
-    # Local CPU worker
+    # CPU worker on gateway server
     kokoro_cpu = TTSModel(
         slug="kokoro-cpu",
         name="Kokoro (CPU)",
         credits_per_sec=Decimal("1.0"),
+        native_codec="pcm",
+        sample_rate=24_000,
+        channels=1,
+        sample_width=2,
+    )
+
+    # Browser / Client CPU worker
+    kokoro_free = TTSModel(
+        slug="kokoro-client-free",
+        name="Kokoro (Free)",
+        credits_per_sec=Decimal("0"),
         native_codec="pcm",
         sample_rate=24_000,
         channels=1,
@@ -70,6 +81,7 @@ def create_dev_models() -> list[TTSModel]:
             },
         }
         kokoro_cpu.voices.append(Voice(**voice_kwargs))
+        kokoro_free.voices.append(Voice(**voice_kwargs))
         kokoro_cpu_runpod.voices.append(Voice(**voice_kwargs))
 
     higgs_audio_v2_default_voice = Voice(
@@ -81,7 +93,7 @@ def create_dev_models() -> list[TTSModel]:
     higgs_audio_v2_runpod.voices.append(higgs_audio_v2_default_voice)
     higgs_audio_v2_runpod_ci.voices.append(higgs_audio_v2_default_voice)
 
-    models.extend([kokoro_cpu, kokoro_cpu_runpod, higgs_audio_v2_runpod, higgs_audio_v2_runpod_ci])
+    models.extend([kokoro_cpu, kokoro_free, kokoro_cpu_runpod, higgs_audio_v2_runpod, higgs_audio_v2_runpod_ci])
 
     # Uncomment to add Dia model
     # dia = TTSModel(

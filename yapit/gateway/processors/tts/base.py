@@ -1,7 +1,7 @@
 import asyncio
 import datetime as dt
 import logging
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 from datetime import datetime
 from decimal import Decimal
 
@@ -12,7 +12,6 @@ from sqlmodel import select, update
 from yapit.contracts import TTS_INFLIGHT, SynthesisJob, SynthesisResult, get_queue_name
 from yapit.gateway.cache import Cache
 from yapit.gateway.config import Settings
-from yapit.gateway.deps import get_db_session, get_or_create_user_credits
 from yapit.gateway.domain_models import (
     BlockVariant,
     CreditTransaction,
@@ -20,29 +19,29 @@ from yapit.gateway.domain_models import (
     TransactionType,
     UserUsageStats,
 )
+from yapit.gateway.processors.base import Processor
 
 log = logging.getLogger("processor")
 
 
-class BaseTTSProcessor(ABC):
+class BaseTTSProcessor(Processor):
     """Base class for processing synthesis jobs from Redis queues."""
 
     def __init__(
         self,
-        slug: str,
+        settings: Settings,
         redis: Redis,
         cache: Cache,
-        settings: Settings,
         max_parallel: int | None = None,
+        **kwargs,
     ) -> None:
-        self._model_slug = slug
-        self._queue = get_queue_name(slug)
+        super().__init__(settings, **kwargs)
+        self._queue = get_queue_name(self._slug)
         self._redis = redis
         self._cache = cache
-        self._settings = settings
         self._sem = asyncio.Semaphore(max_parallel) if max_parallel else None
 
-        log.info(f"Processor for {slug} listening to queue: {self._queue}")
+        log.info(f"Processor for {self._slug} listening to queue: {self._queue}")
 
     @abstractmethod
     async def initialize(self) -> None:
@@ -54,6 +53,9 @@ class BaseTTSProcessor(ABC):
 
     async def _handle_job(self, raw: bytes) -> None:
         """Handle a single job from the queue."""
+        # break circular dependency as deps imports from ClientProcessor
+        from yapit.gateway.deps import get_db_session, get_or_create_user_credits
+
         job = None
         try:
             if self._sem:

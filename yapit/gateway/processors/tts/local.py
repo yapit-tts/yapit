@@ -12,8 +12,8 @@ log = logging.getLogger(__name__)
 class LocalProcessor(BaseTTSProcessor):
     """Process synthesis jobs by forwarding to local HTTP workers."""
 
-    def __init__(self, slug: str, worker_url: str, **kwargs):
-        super().__init__(slug, **kwargs)
+    def __init__(self, worker_url: str, **kwargs):
+        super().__init__(**kwargs)
         self._worker_url = worker_url
         self._client: httpx.AsyncClient | None = None
 
@@ -30,7 +30,9 @@ class LocalProcessor(BaseTTSProcessor):
             )
             response.raise_for_status()
             result = response.json()
-            return SynthesisResult(audio=base64.b64decode(result["audio_base64"]), duration_ms=result["duration_ms"])
+            return SynthesisResult(
+                job_id=job.job_id, audio=base64.b64decode(result["audio_base64"]), duration_ms=result["duration_ms"]
+            )
         except httpx.RequestError as e:
             log.error(f"HTTP request failed for job {job.job_id}: {e}")
             raise

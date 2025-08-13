@@ -39,6 +39,10 @@
 
 - configure runpod endpoitns via code
 
+- maybe instead of json config files just use python config files...
+  - and should move application logic config from the env file to those configs, just external keys / configs in env
+- and we don't need hot swappable processors (rolling updates) -> we should also remove the dynamic importing crap
+
 - can we improve dependency handling without creating separate docker images?
   - see comments abt deps only some deployments need @ pyproject.toml
   - Search for "only needed for"   in the project.

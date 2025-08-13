@@ -34,7 +34,7 @@ class MarkitdownProcessor(BaseDocumentProcessor):
 
     @property
     def max_file_size(self) -> int:
-        return self.settings.document_cache_max_file_size  # markitdown does not specify a limit
+        return self._settings.document_max_download_size  # markitdown does not specify a limit
 
     async def _extract(
         self,
@@ -48,6 +48,6 @@ class MarkitdownProcessor(BaseDocumentProcessor):
         md = MarkItDown(enable_plugins=False)
         result = md.convert_stream(io.BytesIO(content))
         return DocumentExtractionResult(
-            extraction_method=self.processor_slug,
+            extraction_method=self._slug,
             pages={0: ExtractedPage(markdown=result.markdown, images=[])},  # markitdown doesnt return pages or images
         )

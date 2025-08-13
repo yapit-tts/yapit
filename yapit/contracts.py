@@ -44,5 +44,6 @@ class SynthesisJob(BaseModel):
 
 
 class SynthesisResult(BaseModel):
+    job_id: uuid.UUID
     audio: bytes
     duration_ms: int
