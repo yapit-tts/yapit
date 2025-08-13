@@ -64,10 +64,10 @@ test: test-unit test-integration
 test-local: test-unit test-integration-local
 
 test-unit:
-	uv run --env-file=.env.dev pytest tests --ignore=tests/integration -v
+	uv run --env-file=.env.dev pytest tests --ignore=tests/integration -v -m "not mistral and not runpod"
 
 test-integration:
-	uv run --env-file=.env.dev pytest tests/integration -v
+	uv run --env-file=.env.dev --env-file=.env.local pytest tests/integration -v
 
 test-integration-local:
 	uv run --env-file=.env.dev pytest tests/integration -v -m "not runpod and not mistral"
@@ -76,7 +76,7 @@ test-runpod:
 	uv run --env-file=.env.dev pytest tests/integration -v -m "runpod"
 
 test-mistral:
-	uv run --env-file=.env.dev --env-file=.env.local pytest tests/integration -v -m "mistral"
+	uv run --env-file=.env.dev --env-file=.env.local pytest tests -v -m "mistral"
 
 lint:
 	uv run ruff check .
