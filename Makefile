@@ -64,7 +64,7 @@ test: test-unit test-integration
 test-local: test-unit test-integration-local
 
 test-unit:
-	uv run --env-file=.env.dev pytest tests --ignore=tests/integration
+	uv run --env-file=.env.dev pytest tests --ignore=tests/integration -v
 
 test-integration:
 	uv run --env-file=.env.dev pytest tests/integration -v
@@ -76,7 +76,7 @@ test-runpod:
 	uv run --env-file=.env.dev pytest tests/integration -v -m "runpod"
 
 test-mistral:
-	uv run --env-file=.env.dev pytest tests/integration -v -m "mistral"
+	uv run --env-file=.env.dev --env-file=.env.local pytest tests/integration -v -m "mistral"
 
 lint:
 	uv run ruff check .
