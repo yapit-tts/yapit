@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlmodel import select
 
 from yapit.contracts import TTS_INFLIGHT, SynthesisJob, SynthesisParameters, SynthesisResult, get_queue_name
@@ -62,6 +63,7 @@ async def synthesize(
     redis: RedisClient,
     cache: AudioCache,
     settings: SettingsDep,
+    job_id: uuid.UUID | None = Query(None),
 ) -> Response:
     """Synthesize audio for a block. Returns audio data directly with long-polling."""
     if user_credits.balance <= 0:
@@ -117,6 +119,7 @@ async def synthesize(
     if created or not (await redis.exists(TTS_INFLIGHT.format(hash=variant_hash))):
         await redis.set(TTS_INFLIGHT.format(hash=variant_hash), 1, ex=300, nx=True)  # 5min lock
         job = SynthesisJob(
+            job_id=job_id or uuid.uuid4(),
             variant_hash=variant_hash,
             user_id=user.id,
             synthesis_parameters=SynthesisParameters(
@@ -149,7 +152,7 @@ async def synthesize(
     )
 
 
-@router.post("/v1/tts/submit/model/{model_slug}/job/{job_id}")
+@router.post("/tts/submit/model/{model_slug}/job/{job_id}")
 async def submit_job(
     _: SynthesisJobDep,
     result: SynthesisResult,

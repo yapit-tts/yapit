@@ -21,6 +21,7 @@ class ClientProcessor(BaseTTSProcessor):
             result = await asyncio.wait_for(future, timeout=self._settings.browser_request_timeout_seconds)
             return SynthesisResult(job_id=job.job_id, audio=result.audio, duration_ms=result.duration_ms)
         except asyncio.TimeoutError:
+            self._pending_jobs.pop(str(job.job_id), None)
             raise RuntimeError(
                 f"Browser job {job.job_id} timed out after {self._settings.browser_request_timeout_seconds} seconds"
             )
