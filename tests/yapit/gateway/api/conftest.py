@@ -60,6 +60,7 @@ async def app(postgres_container, redis_container) -> FastAPI:
         document_processors_file="tests/empty_processors.json",  # Empty config for unit tests
         runpod_api_key=None,
         runpod_request_timeout_seconds=None,
+        browser_request_timeout_seconds=60,
         synthesis_polling_timeout_seconds=210,
         mistral_api_key=None,
     )
