@@ -36,7 +36,8 @@ async def test_prepare_and_process_with_markitdown(admin_client):
     prepare_data = prepare_response.json()
 
     assert prepare_data["endpoint"] == "website"  # HTML content
-    assert prepare_data["credit_cost"] is None  # No cost calculation for websites
+    assert prepare_data["credit_cost"] == "0"  # No cost calculation for websites
+    assert prepare_data["uncached_pages"] == []
 
     # Create document
     create_response = await admin_client.post(
