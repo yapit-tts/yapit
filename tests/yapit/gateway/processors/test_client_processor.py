@@ -15,7 +15,7 @@ class TestClientProcessor:
     def processor(self):
         """Create a client processor instance."""
         mock_settings = Mock()
-        mock_settings.browser_request_timeout_seconds = 5
+        mock_settings.client_request_timeout_seconds = 5
 
         mock_redis = AsyncMock()
         mock_cache = AsyncMock()
