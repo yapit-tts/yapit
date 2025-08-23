@@ -71,8 +71,8 @@ class DocumentPrepareResponse(BaseModel):
     hash: str
     metadata: DocumentMetadata
     endpoint: Literal["text", "website", "document"]
-    credit_cost: Decimal | None = None
-    uncached_pages: set[int] | None = None
+    credit_cost: Decimal
+    uncached_pages: set[int]
 
 
 class BaseDocumentCreateRequest(BaseModel):
@@ -139,11 +139,9 @@ async def prepare_document(
         cached_doc = CachedDocument.model_validate_json(cached_data)
         endpoint = _get_endpoint_type_from_content_type(cached_doc.metadata.content_type)
 
-        credit_cost, uncached_pages = (None, None)
-        if endpoint == "document":
-            credit_cost, uncached_pages = await _calculate_document_credit_cost(
-                cached_doc, request.processor_slug, None, db, document_processor_manager
-            )
+        credit_cost, uncached_pages = await _calculate_document_credit_cost(
+            cached_doc, request.processor_slug if endpoint == "document" else None, None, db, document_processor_manager
+        )
         return DocumentPrepareResponse(
             hash=cache_key,
             metadata=cached_doc.metadata,
@@ -169,11 +167,9 @@ async def prepare_document(
     ttl = settings.document_cache_ttl_webpage if endpoint == "website" else settings.document_cache_ttl_document
     await cache.store(cache_key, cached_doc.model_dump_json().encode(), ttl_seconds=ttl)
 
-    credit_cost, uncached_pages = (None, None)
-    if endpoint == "document":
-        credit_cost, uncached_pages = await _calculate_document_credit_cost(
-            cached_doc, request.processor_slug, None, db, document_processor_manager
-        )
+    credit_cost, uncached_pages = await _calculate_document_credit_cost(
+        cached_doc, request.processor_slug if endpoint == "document" else None, None, db, document_processor_manager
+    )
     return DocumentPrepareResponse(
         hash=cache_key, metadata=metadata, endpoint=endpoint, credit_cost=credit_cost, uncached_pages=uncached_pages
     )
@@ -530,9 +526,9 @@ async def _calculate_document_credit_cost(
     pages: list[int] | None,
     db: DbSession,
     document_processor_manager: DocumentProcessorManagerDep,
-) -> tuple[Decimal, set[int]] | tuple[None, None]:
+) -> tuple[Decimal, set[int]]:
     if not processor_slug:
-        return None, None
+        return Decimal(0), set()  # No processor means no credit cost
 
     processor_slug = processor_slug or "markitdown"  # TODO better way to handle default processor
     processor = document_processor_manager.get_processor(processor_slug)
