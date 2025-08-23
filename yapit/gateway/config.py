@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     tts_processors_file: str
     runpod_api_key: str | None = None
     runpod_request_timeout_seconds: int | None = None
+    client_request_timeout_seconds: int
     synthesis_polling_timeout_seconds: int
 
     document_cache_type: Caches

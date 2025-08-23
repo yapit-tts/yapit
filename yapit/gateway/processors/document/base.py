@@ -1,11 +1,10 @@
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from yapit.gateway.cache import Cache
-from yapit.gateway.config import Settings
 from yapit.gateway.constants import SUPPORTED_DOCUMENT_MIME_TYPES
 from yapit.gateway.db import get_by_slug_or_404
 from yapit.gateway.domain_models import (
@@ -16,6 +15,7 @@ from yapit.gateway.domain_models import (
     UserCredits,
 )
 from yapit.gateway.exceptions import InsufficientCreditsError, ResourceNotFoundError, ValidationError
+from yapit.gateway.processors.base import Processor
 
 
 class ExtractedPage(BaseModel):
@@ -50,12 +50,8 @@ class CachedDocument(BaseModel):
     )
 
 
-class BaseDocumentProcessor(ABC):
+class BaseDocumentProcessor(Processor):
     """Base class for all document processors."""
-
-    def __init__(self, slug: str, settings: Settings, **kwargs):
-        self.processor_slug = slug
-        self.settings = settings
 
     @property
     @abstractmethod
@@ -133,7 +129,7 @@ class BaseDocumentProcessor(ABC):
                 f"Unsupported content type: {content_type}. Supported types: {self.supported_mime_types}"
             )
 
-        processor_model = await get_by_slug_or_404(db, DocumentProcessor, self.processor_slug)
+        processor_model = await get_by_slug_or_404(db, DocumentProcessor, self._slug)
 
         cached_data = await cache.retrieve_data(cache_key)
         if not cached_data:
@@ -153,7 +149,7 @@ class BaseDocumentProcessor(ABC):
 
         # Initialize extraction if needed
         if not cached_doc.extraction:
-            cached_doc.extraction = DocumentExtractionResult(pages={}, extraction_method=self.processor_slug)
+            cached_doc.extraction = DocumentExtractionResult(pages={}, extraction_method=self._slug)
 
         # Determine what pages to process
         uncached_pages = get_uncached_pages(cached_doc, pages)
@@ -178,7 +174,7 @@ class BaseDocumentProcessor(ABC):
         await cache.store(
             cache_key,
             cached_doc.model_dump_json().encode(),
-            ttl_seconds=self.settings.document_cache_ttl_document,
+            ttl_seconds=self._settings.document_cache_ttl_document,
         )
 
         # Bill for processed pages
@@ -212,10 +208,10 @@ class BaseDocumentProcessor(ABC):
             amount=-credits,
             balance_before=user_credits.balance,
             balance_after=user_credits.balance - credits,
-            description=f"Document processing: {len(processed_pages)} pages with {self.processor_slug}",
+            description=f"Document processing: {len(processed_pages)} pages with {self._slug}",
             usage_reference=cache_key,
             details={
-                "processor": self.processor_slug,
+                "processor": self._slug,
                 "pages_processed": len(processed_pages),
                 "page_numbers": list(processed_pages.keys()),
             },

@@ -10,11 +10,10 @@ from testcontainers.redis import RedisContainer
 
 from yapit.gateway import create_app
 from yapit.gateway.auth import ANON_USER, authenticate
-from yapit.gateway.cache import CacheConfig, Caches
+from yapit.gateway.cache import CacheConfig
 from yapit.gateway.config import Settings, get_settings
 from yapit.gateway.db import close_db, create_session
 from yapit.gateway.stack_auth.users import User, UserServerMetadata
-from yapit.gateway.text_splitter import TextSplitterConfig, TextSplitters
 
 
 @pytest.fixture(scope="session")
@@ -38,30 +37,21 @@ async def app(postgres_container, redis_container) -> FastAPI:
     shutil.rmtree("test_audio_cache", ignore_errors=True)
     shutil.rmtree("test_document_cache", ignore_errors=True)
 
+    # Only override test-specific values, let everything else come from .env.dev
     settings = Settings(
-        sqlalchemy_echo=True,
-        db_drop_and_recreate=True,
-        db_seed=True,
+        # Test container URLs (must override)
         database_url=postgres_container.get_connection_url(),
         redis_url=f"redis://{redis_container.get_container_host_ip()}:{redis_container.get_exposed_port(6379)}",
-        cors_origins=["*"],
-        splitter_type=TextSplitters.HIERARCHICAL,
-        splitter_config=TextSplitterConfig(max_chars=1000),
-        audio_cache_type=Caches.SQLITE,
+        # Test-specific cache paths (must override to avoid conflicts)
         audio_cache_config=CacheConfig(path="test_audio_cache"),
-        document_cache_type=Caches.SQLITE,
         document_cache_config=CacheConfig(path="test_document_cache"),
-        document_cache_ttl_webpage=86400,
-        document_cache_ttl_document=604800,
+        # Empty auth for tests (auth is mocked)
         stack_auth_api_host="",
         stack_auth_project_id="",
         stack_auth_server_key="",
-        tts_processors_file="tests/empty_processors.json",  # Empty config for tests
-        document_processors_file="tests/empty_processors.json",  # Empty config for unit tests
-        runpod_api_key=None,
-        runpod_request_timeout_seconds=None,
-        synthesis_polling_timeout_seconds=210,
-        mistral_api_key=None,
+        # Test-specific processor configs
+        tts_processors_file="tests/empty_processors.json",
+        document_processors_file="tests/empty_processors.json",
     )
 
     app = create_app(settings)

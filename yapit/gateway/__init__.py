@@ -35,6 +35,7 @@ async def lifespan(app: FastAPI):
         cache=get_audio_cache(settings),
         settings=settings,
     )
+    app.state.tts_processor_manager = tts_processor_manager
     await tts_processor_manager.start(settings.tts_processors_file)
 
     yield

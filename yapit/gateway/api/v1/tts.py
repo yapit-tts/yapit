@@ -2,17 +2,19 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlmodel import select
 
-from yapit.contracts import TTS_INFLIGHT, SynthesisJob, SynthesisParameters, get_queue_name
+from yapit.contracts import TTS_INFLIGHT, SynthesisJob, SynthesisParameters, SynthesisResult, get_queue_name
 from yapit.gateway.auth import authenticate
 from yapit.gateway.deps import (
     AudioCache,
     AuthenticatedUser,
     AuthenticatedUserCredits,
+    ClientProcessorDep,
     CurrentBlock,
     CurrentDoc,
     CurrentTTSModel,
@@ -20,6 +22,7 @@ from yapit.gateway.deps import (
     DbSession,
     RedisClient,
     SettingsDep,
+    SynthesisJobDep,
     ensure_admin_credits,
 )
 from yapit.gateway.domain_models import BlockVariant, TTSModel
@@ -60,6 +63,7 @@ async def synthesize(
     redis: RedisClient,
     cache: AudioCache,
     settings: SettingsDep,
+    job_id: uuid.UUID | None = Query(None),
 ) -> Response:
     """Synthesize audio for a block. Returns audio data directly with long-polling."""
     if user_credits.balance <= 0:
@@ -115,6 +119,7 @@ async def synthesize(
     if created or not (await redis.exists(TTS_INFLIGHT.format(hash=variant_hash))):
         await redis.set(TTS_INFLIGHT.format(hash=variant_hash), 1, ex=300, nx=True)  # 5min lock
         job = SynthesisJob(
+            job_id=job_id or uuid.uuid4(),
             variant_hash=variant_hash,
             user_id=user.id,
             synthesis_parameters=SynthesisParameters(
@@ -145,3 +150,16 @@ async def synthesize(
     raise HTTPException(
         status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail="Audio synthesis timed out. Please try again."
     )
+
+
+@router.post("/tts/submit/model/{model_slug}/job/{job_id}")
+async def submit_job(
+    _: SynthesisJobDep,
+    result: SynthesisResult,
+    processor: ClientProcessorDep,
+):
+    """Submit synthesis result from the client."""
+    if not processor.submit_result(result):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Job already completed or result already submitted"
+        )

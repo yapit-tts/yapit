@@ -1,5 +1,9 @@
 [
   {
+    "slug": "kokoro-client-free",
+    "processor": "yapit.gateway.processors.tts.client.ClientProcessor"
+  },
+  {
     "slug": "kokoro-cpu",
     "processor": "yapit.gateway.processors.tts.local.LocalProcessor",
     "worker_url": "http://kokoro-cpu:8000",

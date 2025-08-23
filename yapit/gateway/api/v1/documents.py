@@ -52,7 +52,6 @@ class DocumentPrepareRequest(BaseModel):
     Args:
         url (HttpUrl): URL of the document to prepare.
         processor_slug (str | None): Which document processor to use (if using ocr, for credit cost calculation).
-        pages (list[int] | None): Specific pages to process for credit cost calculation (None means all).
     """
 
     url: HttpUrl

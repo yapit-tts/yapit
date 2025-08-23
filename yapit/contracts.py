@@ -1,8 +1,9 @@
 """Contracts for Redis keys, queues, and job processing."""
 
 import uuid
-from typing import Final
+from typing import Annotated, Final
 
+import annotated_types
 from pydantic import BaseModel, ConfigDict, Field
 
 # TTS-related keys
@@ -34,7 +35,7 @@ class SynthesisJob(BaseModel):
     """JSON contract between gateway and worker."""
 
     # routing / identity
-    job_id: uuid.UUID = Field(default_factory=uuid.uuid4)
+    job_id: uuid.UUID
     variant_hash: str
     user_id: str  # who to bill for this synthesis
 
@@ -44,5 +45,6 @@ class SynthesisJob(BaseModel):
 
 
 class SynthesisResult(BaseModel):
-    audio: bytes
+    job_id: uuid.UUID
+    audio: Annotated[bytes, annotated_types.MaxLen(10 * 1024 * 1024)]
     duration_ms: int
