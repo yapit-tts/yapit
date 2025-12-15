@@ -18,36 +18,39 @@ Yapit TTS - Open-source text-to-speech platform for reading documents, web pages
 ### Session Start (MANDATORY)
 
 1. **Check git state**: `git status`, `git branch`, `git log --oneline -5`
-2. **ALWAYS read `yapit-architecture.md`** - Contains critical context, current state, decisions, known issues
+2. **ALWAYS read `yapit-architecture.md`** - Critical context, current state, decisions
+3. **Read relevant task plans** from index below for additional context
 
 ### During Work
 
-- **Create task-specific plan files** for your current work (e.g., `yapit-browser-tts.md`)
-- Document in the plan file: what you're doing, which branch, decisions made, progress
-- Commit frequently - don't accumulate large uncommitted changes
+- **Create/continue task-specific plan files** for your work (e.g., `yapit-browser-tts.md`)
+- Document in plan file: goals, approach, discussions, findings, task list
+- Update task list as you progress - what was done, results, how tested
+- Commit code frequently - don't accumulate large uncommitted changes
 
-### Session End (MANDATORY)
+### Before Creating PR (MANDATORY)
 
-**ALWAYS update plan files after completing work:**
+1. **Update your task plan file** with final status, results, testing notes
 
-1. **Update your task-specific plan file**:
-   - Mark completed items as done
-   - Note blockers, decisions made, state of work
-   - If work is complete, mark plan as DONE
-
-2. **Update `yapit-architecture.md`** when merging to dev:
-   - Update "Current State" sections if architecture changed
+2. **Update `yapit-architecture.md`** to reflect merged state:
+   - Update architecture sections if changed
    - Add new technical decisions
-   - Update "Known Issues & Tech Debt" section
-   - Update branch info
+   - Update "Known Issues & Tech Debt"
 
-3. **Update this CLAUDE.md** if plan file index changes
+3. **Update this CLAUDE.md** - add PR number to plan index
+
+4. **Batch doc updates with code** - include in the PR, not after
+
+### After PR Merges
+
+- Mark task plan status as DONE in index below
+- Keep entries for history (don't remove)
 
 ### Branch Strategy
 
 - `main` - stable, production-ready
 - `dev` - integration branch
-- Feature branches merge to `dev` via PR
+- Feature branches merge to `dev` via PR, then deleted
 
 ## Plan Files
 
@@ -58,13 +61,13 @@ Plans live in `~/.claude/plans/`.
 **Master doc (ALWAYS read this):**
 - `yapit-architecture.md` - Architecture, decisions, implementation details, known issues/tech debt
 
-**Task-specific plans (created as needed):**
+**Task-specific plans:**
 
-| File | Purpose | Status |
-|------|---------|--------|
-| `yapit-browser-processor-review.md` | Review feat/browser-processor branch for merge to dev | Active |
+| File | Purpose | PR | Status |
+|------|---------|-----|--------|
+| `yapit-browser-processor-review.md` | ClientProcessor backend for browser TTS | #48 | Active |
 
-Task plans get descriptive names like `yapit-browser-tts.md`, `yapit-anonymous-sessions.md`, etc.
+Task plans get descriptive names. Keep entries after completion for history.
 
 ## Key Technical Decisions
 
