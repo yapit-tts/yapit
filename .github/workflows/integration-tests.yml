@@ -1,7 +1,16 @@
 name: Integration Tests
 
 on:
+  push:
+    paths-ignore:
+      - 'notes/**'
+      - 'docs/**'
+      - '**/*.md'
+      - '**/*.rst'
+      - '**/*.txt'
+      - '**/*.ipynb'
   pull_request:
+    types: [opened, reopened]
     paths-ignore:
       - 'notes/**'
       - 'docs/**'
