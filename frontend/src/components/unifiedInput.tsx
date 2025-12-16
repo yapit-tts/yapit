@@ -183,13 +183,29 @@ export function UnifiedInput() {
         headers: { "Content-Type": "multipart/form-data" },
       });
 
-      setPrepareData(response.data);
-      setUrlState("ready");
+      const contentType = response.data.metadata.content_type;
+
+      // Auto-create for plain text files (no OCR option needed)
+      if (contentType === "text/plain") {
+        setIsCreating(true);
+        const docResponse = await api.post<DocumentCreateResponse>("/v1/documents/document", {
+          hash: response.data.hash,
+          pages: null,
+          processor_slug: "markitdown",
+        });
+        navigate(`/playback/${docResponse.data.id}`, {
+          state: { documentTitle: docResponse.data.title }
+        });
+      } else {
+        setPrepareData(response.data);
+        setUrlState("ready");
+      }
     } catch (err) {
       setUrlState("error");
+      setIsCreating(false);
       setError(err instanceof Error ? err.message : "Failed to upload file");
     }
-  }, [api]);
+  }, [api, navigate]);
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
