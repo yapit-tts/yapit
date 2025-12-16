@@ -283,11 +283,27 @@ const PlaybackPage = () => {
       return;
     }
 
-    // Pre-synthesize next block if not the last block
-    if (currentBlock < documentBlocks.length - 1) {
-      const nextBlockId = documentBlocks[currentBlock + 1].id;
-      if (!audioBuffersRef.current.has(nextBlockId)) {
-        synthesizeBlock(nextBlockId);
+    const PREFETCH_COUNT = 3; // Buffer this many blocks ahead
+    const EVICT_THRESHOLD = 5; // Remove buffers this many blocks behind
+
+    // Pre-synthesize upcoming blocks
+    for (let i = 1; i <= PREFETCH_COUNT; i++) {
+      const targetIdx = currentBlock + i;
+      if (targetIdx < documentBlocks.length) {
+        const blockId = documentBlocks[targetIdx].id;
+        if (!audioBuffersRef.current.has(blockId)) {
+          synthesizeBlock(blockId);
+        }
+      }
+    }
+
+    // Evict old buffers to limit memory on long documents
+    if (currentBlock > EVICT_THRESHOLD) {
+      for (let i = 0; i < currentBlock - EVICT_THRESHOLD; i++) {
+        const oldBlockId = documentBlocks[i]?.id;
+        if (oldBlockId && audioBuffersRef.current.has(oldBlockId)) {
+          audioBuffersRef.current.delete(oldBlockId);
+        }
       }
     }
 

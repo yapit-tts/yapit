@@ -95,9 +95,11 @@ Plans live in `~/.claude/plans/`.
 
 **Task-specific plans:** (most recent on top)
 
-| File | Purpose | PR | Status |
-|------|---------|-----|--------|
-| `frontend-structured-document-rendering.md` | Frontend rendering of structured document blocks | #51 | Done |
+| File | Purpose | PR / Commit | Status |
+|------|---------|-------------|--------|
+| `bugs-and-tech-debt.md` | 401 errors, sidebar refresh, code review & cleanup | 8e61185 | Done |
+| `prefetching-optimization.md` | Buffer 3+ blocks ahead to prevent playback stutters | - | Planned |
+| `frontend-structured-document-rendering.md` | Frontend rendering of structured document blocks | b251854 | Done |
 | `markdown-parser-document-format.md` | Markdown parsing pipeline & JSON document format | #50 | Done |
 | `sidebar-polish-retrospective.md` | Document rename/delete, theme polish, mobile dropdown fix | - | Done |
 | `rustling-crafting-gosling.md` | Playbar: SoundTouchJS speed control, loading states, UI slider | - | Done |
