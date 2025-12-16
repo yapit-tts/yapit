@@ -93,14 +93,15 @@ Plans live in `~/.claude/plans/`.
 **Master doc (ALWAYS read this):**
 - `yapit-architecture.md` - Architecture, decisions, implementation details, known issues/tech debt
 
-**Task-specific plans:**
+**Task-specific plans:** (most recent on top)
 
 | File | Purpose | PR | Status |
 |------|---------|-----|--------|
-| `yapit-browser-processor-review.md` | ClientProcessor backend for browser TTS | #48 | Active |
+| `rustling-crafting-gosling.md` | Playbar: SoundTouchJS speed control, loading states, UI slider | - | Done |
+| `markdown-parser-document-format.md` | Markdown parsing pipeline & JSON document format | - | Research |
+| `ux-ui-strategy-session.md` | MVP feature planning & UX/UI strategy | - | Done |
+| `yapit-browser-processor-review.md` | ClientProcessor backend for browser TTS | #48 | Done |
 | `yapit-project-review.md` | GitHub project data review, roadmap update | - | Done |
-| `virtual-spinning-hammock.md` | Project overview & handover document | - | Reference |
-| `ux-ui-strategy-session.md` | MVP feature planning & UX/UI strategy | - | Pending |
 
 Task plans get descriptive names. Keep entries after completion for history.
 
@@ -110,6 +111,9 @@ Task plans get descriptive names. Keep entries after completion for history.
 - **Markdown parsing**: Backend (Python), not frontend
 - **Block highlighting MVP**: Highlight current block only (no character/sentence level)
 - **Block splitting priority**: Markdown structure → paragraphs → sentence stoppers → hard cutoff
+- **Anonymous sessions**: Yes, generate UUID for free browser TTS, claim account later
+- **Design philosophy**: Iterate by doing, don't over-plan upfront
+- **Theme**: Light/cozy Ghibli aesthetic (warm cream, green primary)
 
 ## Coding Conventions
 

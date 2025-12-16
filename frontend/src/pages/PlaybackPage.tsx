@@ -4,6 +4,7 @@ import { useLocation } from "react-router";
 import { useRef, useState, useEffect, useCallback } from "react";
 import { useApi } from '@/api';
 import { Loader2 } from "lucide-react";
+import { AudioPlayer } from '@/lib/audio';
 
 interface Block {
   id: number;
@@ -46,22 +47,23 @@ const PlaybackPage = () => {
 
   // Sound control variables
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
-	const parentWidth = useRef<HTMLDivElement | null>(null);
-	const [width, setWidth] = useState(0);
-	const [volume, setVolume] = useState<number>(50); // Volume state (0-100)
+  const isPlayingRef = useRef<boolean>(false); // Ref to track current state for async callbacks
+  const [volume, setVolume] = useState<number>(50);
+  const [playbackSpeed, setPlaybackSpeed] = useState<number>(1.0);
+  const [isSynthesizing, setIsSynthesizing] = useState<boolean>(false);
 
   // Audio setup variables
   const audioContextRef = useRef<AudioContext | null>(null);
-	const gainNodeRef = useRef<GainNode | null>(null);
-	const [currentBlock, setCurrentBlock] = useState<number>(-1);
+  const gainNodeRef = useRef<GainNode | null>(null);
+  const audioPlayerRef = useRef<AudioPlayer | null>(null);
+  const [currentBlock, setCurrentBlock] = useState<number>(-1);
 	const audioBuffersRef = useRef<Map<number, AudioBufferData>>(new Map());
-	const currentSourceRef = useRef<AudioBufferSourceNode | null>(null);
 	const [audioProgress, setAudioProgress] = useState<number>(0);
-	const audioStartTimeRef = useRef<number>(0);
 	const blockStartTimeRef = useRef<number>(0);
-	const [actualTotalDuration, setActualTotalDuration] = useState<number>(0); // Track actual total duration
-	const durationCorrectionsRef = useRef<Map<number, number>>(new Map()); // Track duration corrections per block
-	const initialTotalEstimateRef = useRef<number>(0); // Store initial estimate
+	const [actualTotalDuration, setActualTotalDuration] = useState<number>(0);
+	const durationCorrectionsRef = useRef<Map<number, number>>(new Map());
+	const initialTotalEstimateRef = useRef<number>(0);
+  const currentBlockDurationRef = useRef<number>(0);
 
   // Fetch document and blocks on mount
   useEffect(() => {
@@ -89,22 +91,36 @@ const PlaybackPage = () => {
     fetchData();
   }, [documentId, api]);
 
-  // Initialize the AudioContext and set initial total duration
+  // Initialize the AudioContext, GainNode, and AudioPlayer
   useEffect(() => {
-    const initAudio = async () => {
-      if (!audioContextRef.current) {
-        audioContextRef.current = new AudioContext({ sampleRate: 24000 });
-        // Create and connect gain node for volume control
-        gainNodeRef.current = audioContextRef.current.createGain();
-        gainNodeRef.current.connect(audioContextRef.current.destination);
-        // Set initial volume
-        gainNodeRef.current.gain.value = volume / 100;
-			}
-    };
+    // Create new AudioContext if none exists or previous one was closed
+    // Use 44100Hz because SoundTouchJS's time-stretch algorithm is hardcoded for 44100Hz
+    // Web Audio API will automatically resample our 24000Hz audio
+    if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
+      audioContextRef.current = new AudioContext({ sampleRate: 44100 });
+      gainNodeRef.current = audioContextRef.current.createGain();
+      gainNodeRef.current.connect(audioContextRef.current.destination);
+      gainNodeRef.current.gain.value = volume / 100;
+    }
 
-    initAudio();
-    
-    // Calculate initial total duration from block estimates
+    // Create AudioPlayer if needed (with pitch-preserving speed control)
+    if (!audioPlayerRef.current && audioContextRef.current && gainNodeRef.current) {
+      audioPlayerRef.current = new AudioPlayer({
+        audioContext: audioContextRef.current,
+        gainNode: gainNodeRef.current,
+        onProgress: (percentPlayed, blockDurationMs) => {
+          // Calculate total progress: previous blocks + current block position
+          const blockProgress = (percentPlayed / 100) * blockDurationMs;
+          const totalProgress = blockStartTimeRef.current + blockProgress;
+          setAudioProgress(totalProgress);
+        },
+      });
+      audioPlayerRef.current.setTempo(playbackSpeed);
+    }
+  }, [volume, playbackSpeed]);
+
+  // Calculate initial total duration from block estimates
+  useEffect(() => {
     if (documentBlocks && documentBlocks.length > 0) {
       let totalEstimate = 0;
       for (const block of documentBlocks) {
@@ -113,16 +129,9 @@ const PlaybackPage = () => {
       initialTotalEstimateRef.current = totalEstimate;
       setActualTotalDuration(totalEstimate);
     } else if (estimated_ms) {
-      // Fallback to document-level estimate if blocks not available
       initialTotalEstimateRef.current = estimated_ms;
       setActualTotalDuration(estimated_ms);
     }
-
-    return () => {
-      if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
-        audioContextRef.current.close();
-      }
-    };
   }, [documentBlocks, estimated_ms]);
 
   // Update gain node value when volume changes
@@ -132,25 +141,21 @@ const PlaybackPage = () => {
     }
   }, [volume]);
 
-	// Track page width to pass to soundcontrol
-	useEffect(() => {
-    if (!parentWidth.current) return;
-    const observer = new ResizeObserver(() => {
-      setWidth(parentWidth.current?.offsetWidth || 0);
-    });
-    observer.observe(parentWidth.current);
-    return () => observer.disconnect();
-  }, []);
+  // Update playback speed in real-time (pitch-preserving)
+  useEffect(() => {
+    if (audioPlayerRef.current) {
+      audioPlayerRef.current.setTempo(playbackSpeed);
+    }
+  }, [playbackSpeed]);
+
 
   const synthesizeBlock = useCallback(async (blockId: number): Promise<AudioBufferData | null> => {
     try {
-      const response = await api.post(`/v1/documents/${documentId}/blocks/${blockId}/synthesize`, {
-        "model_slug": "kokoro",
-        "voice_slug": "af_heart",
-        "speed": 1,
-      }, {
-        responseType: 'arraybuffer'
-      });
+      const response = await api.post(
+        `/v1/documents/${documentId}/blocks/${blockId}/synthesize/models/kokoro-cpu/voices/af_heart`,
+        {},
+        { responseType: 'arraybuffer' }
+      );
       
       const arrayBuffer = response.data;
       const sampleRate = parseInt(response.headers['x-sample-rate'] || '24000');
@@ -165,18 +170,29 @@ const PlaybackPage = () => {
       let audioBuffer: AudioBuffer;
       
       if (codec === 'pcm') {
-        // Handle raw PCM data
+        // Handle raw PCM data - resample to 44100Hz for SoundTouchJS compatibility
         const pcmData = new Int16Array(arrayBuffer);
-        const frames = pcmData.length / channels;
-        
-        audioBuffer = audioContextRef.current.createBuffer(channels, frames, sampleRate);
-        
-        // Convert Int16 PCM to Float32 and copy to audio buffer
+        const inputFrames = pcmData.length / channels;
+        const targetSampleRate = 44100;
+        const resampleRatio = targetSampleRate / sampleRate;
+        const outputFrames = Math.ceil(inputFrames * resampleRatio);
+
+        audioBuffer = audioContextRef.current.createBuffer(channels, outputFrames, targetSampleRate);
+
+        // Linear interpolation resampling from 24000Hz to 44100Hz
         for (let channel = 0; channel < channels; channel++) {
-          const channelData = audioBuffer.getChannelData(channel);
-          for (let frame = 0; frame < frames; frame++) {
-            const sampleIndex = frame * channels + channel;
-            channelData[frame] = pcmData[sampleIndex] / 32768.0; // Convert to [-1, 1] range
+          const outputData = audioBuffer.getChannelData(channel);
+          for (let outFrame = 0; outFrame < outputFrames; outFrame++) {
+            const inPos = outFrame / resampleRatio;
+            const inFrame = Math.floor(inPos);
+            const frac = inPos - inFrame;
+
+            const idx1 = inFrame * channels + channel;
+            const idx2 = Math.min(inFrame + 1, inputFrames - 1) * channels + channel;
+
+            const sample1 = pcmData[idx1] / 32768.0;
+            const sample2 = pcmData[idx2] / 32768.0;
+            outputData[outFrame] = sample1 + frac * (sample2 - sample1);
           }
         }
       } else {
@@ -222,128 +238,167 @@ const PlaybackPage = () => {
   }, [api, documentId, documentBlocks]);
 
   const playAudioBuffer = useCallback((audioBufferData: AudioBufferData) => {
-    if (!audioContextRef.current) return;
-    
-    const source = audioContextRef.current.createBufferSource();
-    source.buffer = audioBufferData.buffer;
-    
-    // Connect through gain node for volume control
-    if (gainNodeRef.current) {
-      source.connect(gainNodeRef.current);
-    } else {
-      // Fallback if gain node not initialized
-      source.connect(audioContextRef.current.destination);
-    }
-    
-    currentSourceRef.current = source;
-    
-    // Track timing for progress calculation
-    audioStartTimeRef.current = audioContextRef.current.currentTime;
-    
-    source.onended = () => {
-      currentSourceRef.current = null;
-      
-      // Calculate elapsed time for this block and add to total progress
-      if (audioContextRef.current && audioStartTimeRef.current > 0) {
-        const blockElapsed = (audioContextRef.current.currentTime - audioStartTimeRef.current) * 1000;
-        blockStartTimeRef.current += blockElapsed;
-      }
-      
-      // Check if we should move to next block or end playback
+    if (!audioPlayerRef.current) return;
+
+    // Store current block duration for progress calculation
+    currentBlockDurationRef.current = audioBufferData.duration_ms;
+
+    // Stop any currently playing audio first
+    audioPlayerRef.current.stop();
+
+    // Set up onEnded callback for auto-advance
+    audioPlayerRef.current.setOnEnded(() => {
+      // Add current block duration to cumulative progress
+      blockStartTimeRef.current += currentBlockDurationRef.current;
+
       setCurrentBlock(prev => {
         if (documentBlocks && prev < documentBlocks.length - 1) {
           return prev + 1;
         } else {
-          // End of playback - reset everything
           setIsPlaying(false);
           setAudioProgress(0);
-          audioStartTimeRef.current = 0;
           blockStartTimeRef.current = 0;
           return -1;
         }
       });
-    };
-    
-    source.start(0);
+    });
+
+    // Load and play the buffer
+    audioPlayerRef.current.load(audioBufferData.buffer);
+    audioPlayerRef.current.play();
   }, [documentBlocks]);
 
-	// Handle block changes and pre-synthesis
-	useEffect(() => {
-		if (!documentBlocks || currentBlock === -1 || !isPlaying) return;
-		
-		// Pre-synthesize next block if not the last block
-		if (currentBlock < (documentBlocks.length - 1)) {
-			const nextBlockId = documentBlocks[currentBlock + 1].id;
-			if (!audioBuffersRef.current.has(nextBlockId)) {
-				synthesizeBlock(nextBlockId);
-			}
-		}
-		
-		// Play current block
-		if (currentBlock < documentBlocks.length) {
-			const currentBlockId = documentBlocks[currentBlock]?.id;
-			if (!currentBlockId) return;
-			
-			const audioData = audioBuffersRef.current.get(currentBlockId);
-			if (audioData) {
-				playAudioBuffer(audioData);
-			} else {
-				// Synthesize and play current block
-				synthesizeBlock(currentBlockId).then(audioData => {
-					if (audioData && isPlaying) {
-						playAudioBuffer(audioData);
-					}
-				});
-			}
-		}
-	}, [currentBlock, isPlaying, documentBlocks, playAudioBuffer, synthesizeBlock]);
+  // Keep isPlayingRef in sync with state
+  useEffect(() => {
+    isPlayingRef.current = isPlaying;
+  }, [isPlaying]);
 
-	// Track audio progress for time display
-	useEffect(() => {
-		let interval: NodeJS.Timeout;
-		
-		if (isPlaying && currentBlock >= 0 && audioContextRef.current && documentBlocks) {
-			interval = setInterval(() => {
-				if (audioContextRef.current && audioStartTimeRef.current > 0) {
-					const currentTime = audioContextRef.current.currentTime;
-					const elapsed = (currentTime - audioStartTimeRef.current) * 1000;
-					const totalProgress = elapsed + blockStartTimeRef.current;
-					setAudioProgress(totalProgress);
-				}
-			}, 100);
-		}
-		
-		return () => {
-			if (interval) clearInterval(interval);
-		};
-	}, [isPlaying, currentBlock, documentBlocks]);
+  // Handle block changes and pre-synthesis
+  useEffect(() => {
+    if (!documentBlocks || currentBlock === -1 || !isPlaying) {
+      setIsSynthesizing(false);
+      return;
+    }
+
+    // Pre-synthesize next block if not the last block
+    if (currentBlock < documentBlocks.length - 1) {
+      const nextBlockId = documentBlocks[currentBlock + 1].id;
+      if (!audioBuffersRef.current.has(nextBlockId)) {
+        synthesizeBlock(nextBlockId);
+      }
+    }
+
+    // Play current block
+    if (currentBlock < documentBlocks.length) {
+      const currentBlockId = documentBlocks[currentBlock]?.id;
+      if (!currentBlockId) return;
+
+      const audioData = audioBuffersRef.current.get(currentBlockId);
+      if (audioData) {
+        setIsSynthesizing(false);
+        playAudioBuffer(audioData);
+      } else {
+        // Show loading state while synthesizing current block
+        setIsSynthesizing(true);
+        synthesizeBlock(currentBlockId).then(audioData => {
+          setIsSynthesizing(false);
+          if (audioData && isPlayingRef.current) {
+            playAudioBuffer(audioData);
+          }
+        });
+      }
+    }
+  }, [currentBlock, isPlaying, documentBlocks, playAudioBuffer, synthesizeBlock]);
+
 
   const handlePlay = async () => {
-    if (isPlaying) return; // Prevent multiple plays
-    
+    if (isPlaying) return;
+
+    if (audioContextRef.current?.state === 'suspended') {
+      await audioContextRef.current.resume();
+    }
+
     setIsPlaying(true);
-    
+
     if (currentBlock === -1) {
-      // Start from beginning - reset all timing
       setCurrentBlock(0);
       setAudioProgress(0);
-      audioStartTimeRef.current = 0;
       blockStartTimeRef.current = 0;
     }
   };
 
   const handlePause = () => {
     setIsPlaying(false);
-    
-    if (currentSourceRef.current) {
-      currentSourceRef.current.stop();
-      currentSourceRef.current = null;
+    audioPlayerRef.current?.pause();
+  };
+
+  const handleSkipBack = () => {
+    // Stop current audio
+    audioPlayerRef.current?.stop();
+
+    blockStartTimeRef.current = 0;
+    setAudioProgress(0);
+
+    if (currentBlock > 0) {
+      setCurrentBlock(currentBlock - 1);
+    } else if (currentBlock === 0 && isPlaying && documentBlocks.length > 0) {
+      // Restart current block - directly play since effect won't re-trigger
+      const blockId = documentBlocks[0].id;
+      const audioData = audioBuffersRef.current.get(blockId);
+      if (audioData) {
+        playAudioBuffer(audioData);
+      } else {
+        synthesizeBlock(blockId).then(data => {
+          if (data && isPlayingRef.current) {
+            playAudioBuffer(data);
+          }
+        });
+      }
     }
   };
 
-  // Handle volume changes
+  const handleSkipForward = () => {
+    if (documentBlocks && currentBlock < documentBlocks.length - 1) {
+      // Stop current audio
+      audioPlayerRef.current?.stop();
+
+      // Calculate progress up to the new block
+      const newBlock = currentBlock + 1;
+      let progressMs = 0;
+      for (let i = 0; i < newBlock; i++) {
+        const blockData = audioBuffersRef.current.get(documentBlocks[i].id);
+        progressMs += blockData?.duration_ms ?? documentBlocks[i].est_duration_ms ?? 0;
+      }
+      blockStartTimeRef.current = progressMs;
+      setAudioProgress(progressMs);
+      setCurrentBlock(newBlock);
+    }
+  };
+
+  const handleBlockChange = (newBlock: number) => {
+    if (newBlock === currentBlock) return;
+    if (!documentBlocks || newBlock < 0 || newBlock >= documentBlocks.length) return;
+
+    // Stop current audio
+    audioPlayerRef.current?.stop();
+
+    // Calculate progress up to the new block
+    let progressMs = 0;
+    for (let i = 0; i < newBlock; i++) {
+      const blockData = audioBuffersRef.current.get(documentBlocks[i].id);
+      progressMs += blockData?.duration_ms ?? documentBlocks[i].est_duration_ms ?? 0;
+    }
+    blockStartTimeRef.current = progressMs;
+    setAudioProgress(progressMs);
+    setCurrentBlock(newBlock);
+  };
+
   const handleVolumeChange = (newVolume: number) => {
     setVolume(newVolume);
+  };
+
+  const handleSpeedChange = (newSpeed: number) => {
+    setPlaybackSpeed(newSpeed);
   };
 
   if (isLoading) {
@@ -363,16 +418,26 @@ const PlaybackPage = () => {
   }
 
   return (
-    <div className="flex grow" ref={parentWidth}>
+    <div className="flex grow pb-32">
       <DocumentCard title={documentTitle} content={documentContent} />
       <SoundControl
         isPlaying={isPlaying}
+        isSynthesizing={isSynthesizing}
         onPlay={handlePlay}
         onPause={handlePause}
-				style={{ width: `${width}px` }}
-				progressBarValues={{estimated_ms: actualTotalDuration > 0 ? actualTotalDuration : estimated_ms, numberOfBlocks: numberOfBlocks, currentBlock: currentBlock >= 0 ? currentBlock : 0, setCurrentBlock: () => {}, audioProgress: audioProgress}}
-				volume={volume}
-				onVolumeChange={handleVolumeChange}
+        onSkipBack={handleSkipBack}
+        onSkipForward={handleSkipForward}
+        progressBarValues={{
+          estimated_ms: actualTotalDuration > 0 ? actualTotalDuration : estimated_ms,
+          numberOfBlocks,
+          currentBlock: currentBlock >= 0 ? currentBlock : 0,
+          setCurrentBlock: handleBlockChange,
+          audioProgress,
+        }}
+        volume={volume}
+        onVolumeChange={handleVolumeChange}
+        playbackSpeed={playbackSpeed}
+        onSpeedChange={handleSpeedChange}
       />
     </div>
   );

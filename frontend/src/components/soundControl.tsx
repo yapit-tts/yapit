@@ -1,116 +1,168 @@
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { Play, Pause, Volume2, Rewind, FastForward } from "lucide-react";
-import { useRef, useState, useEffect } from "react";
+import { Play, Pause, Volume2, SkipBack, SkipForward, Loader2 } from "lucide-react";
+import { useEffect, useState } from "react";
 
 interface ProgressBarValues {
-	estimated_ms: number | undefined;
-	numberOfBlocks: number | undefined;
-	currentBlock: number | undefined;
-	setCurrentBlock: (value: number) => void;
-	audioProgress: number;
-};
+  estimated_ms: number | undefined;
+  numberOfBlocks: number | undefined;
+  currentBlock: number | undefined;
+  setCurrentBlock: (value: number) => void;
+  audioProgress: number;
+}
 
 interface Props {
   isPlaying: boolean;
+  isSynthesizing: boolean;
   onPlay: () => void;
   onPause: () => void;
-	style: React.CSSProperties;
-	progressBarValues: ProgressBarValues;
-	volume: number;
-	onVolumeChange: (value: number) => void;
-};
-
-const SoundControl = ({ isPlaying, onPlay, onPause, style, progressBarValues, volume, onVolumeChange }: Props) => {
-	const estimatedAudioLengthMs = useRef<number>(progressBarValues.estimated_ms ?? 0);
-	const [audioProgressBlock, setAudioProgressBlock] = useState<number>(progressBarValues.currentBlock ?? 0);
-	const numBlocks = progressBarValues.numberOfBlocks;
-	const [estimatedAudioLength, setEstimatedAudioLength] = useState<string>("00:00");
-	const [audioProgress, setAudioProgress] = useState<string>("00:00");
-
-	// Calculate estimated audio length
-	useEffect(() => {
-		estimatedAudioLengthMs.current = progressBarValues.estimated_ms ?? 0;
-		setEstimatedAudioLength(msToTime(estimatedAudioLengthMs.current));
-	}, [progressBarValues.estimated_ms]);
-
-	// Update audio progress display
-	useEffect(() => {
-		if (progressBarValues.audioProgress > 0) {
-			setAudioProgress(msToTime(progressBarValues.audioProgress));
-		} else {
-			setAudioProgress("00:00");
-		}
-	}, [progressBarValues.audioProgress]);
-
-	useEffect(() => {
-		const newValue = progressBarValues.currentBlock ?? 0;
-		setAudioProgressBlock(newValue);
-	}, [progressBarValues.currentBlock]);
-
-	function msToTime(duration: number | undefined) {
-		if (duration == undefined) duration = 0;
-
-		const seconds: number = Math.floor((duration / 1000) % 60),
-			minutes: number = Math.floor((duration / (1000 * 60)) % 60),
-			hours: number = Math.floor((duration / (1000 * 60 * 60)) % 24);
-
-		const hoursStr: string = (hours < 10) ? "0" + hours : hours.toString(),
-		minutesStr: string = (minutes < 10) ? "0" + minutes : minutes.toString(),
-		secondsStr:string = (seconds < 10) ? "0" + seconds : seconds.toString();
-
-		return (hours == 0) ? minutesStr + ":" + secondsStr : hoursStr + ":" + minutesStr + ":" + secondsStr;
-	}
-
-	const handleSliderChange = (newValue: number[]) => {
-		const newBlock = newValue[0];
-		if (newBlock !== progressBarValues.currentBlock) {
-			progressBarValues.setCurrentBlock(newBlock);
-		}
-	}
-
-	return (
-		<div className="flex flex-col fixed bottom-0 p-4 border-t-1 border-t-border backdrop-blur-lg space-y-6 justify-center items-center" style={style}>
-			<div className="flex flex-row w-full space-x-8 justify-center items-center">
-				<Button variant="outline" size="lg"><Rewind /></Button>
-				<Button variant="secondary" size="lg" onClick={isPlaying ? onPause : onPlay}>{isPlaying ? <Pause /> : <Play />}</Button>
-				<Button variant="outline" size="lg"><FastForward /></Button>
-			</div>
-			<div className="flex flex-row w-full space-x-6 items-center justify-center">
-				<DropdownMenu>
-					<DropdownMenuTrigger>Tara</DropdownMenuTrigger>
-					<DropdownMenuContent>
-						<DropdownMenuLabel>Voice</DropdownMenuLabel>
-						<DropdownMenuSeparator />
-						<DropdownMenuItem>Tara</DropdownMenuItem>
-						<DropdownMenuItem>Leo</DropdownMenuItem>
-						<DropdownMenuItem>Cloe</DropdownMenuItem>
-					</DropdownMenuContent>
-				</DropdownMenu>
-				<div className="flex flex-row w-[60%] items-center space-x-2">
-					<Slider defaultValue={[0]} max={(numBlocks === undefined) ? 100 : numBlocks - 1} step={1} value={[audioProgressBlock ?? 0]} onValueChange={handleSliderChange} />
-					<p className="text-nowrap">{ audioProgress } / { estimatedAudioLength } (Block {(audioProgressBlock ?? 0) + 1} of {numBlocks ?? 0})</p>
-				</div>
-				<div className="flex flex-row w-[12%] items-center space-x-2">
-					<Volume2 />
-					<Slider value={[volume]} max={100} step={1} onValueChange={(values) => onVolumeChange(values[0])} />
-				</div>
-				<DropdownMenu>
-					<DropdownMenuTrigger>1.0x</DropdownMenuTrigger>
-					<DropdownMenuContent>
-						<DropdownMenuLabel>Playback Speed</DropdownMenuLabel>
-						<DropdownMenuSeparator />
-						<DropdownMenuItem>1.0x</DropdownMenuItem>
-						<DropdownMenuItem>1.25x</DropdownMenuItem>
-						<DropdownMenuItem>1.5x</DropdownMenuItem>
-						<DropdownMenuItem>1.75x</DropdownMenuItem>
-						<DropdownMenuItem>2.0x</DropdownMenuItem>
-					</DropdownMenuContent>
-				</DropdownMenu>
-			</div>
-		</div>
-	)
+  onSkipBack: () => void;
+  onSkipForward: () => void;
+  progressBarValues: ProgressBarValues;
+  volume: number;
+  onVolumeChange: (value: number) => void;
+  playbackSpeed: number;
+  onSpeedChange: (value: number) => void;
 }
 
-export { SoundControl }   
+function msToTime(duration: number | undefined): string {
+  if (duration == undefined || duration <= 0) return "0:00";
+
+  const totalSeconds = Math.floor(duration / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (hours > 0) {
+    return `${hours}:${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
+  }
+  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+}
+
+const SoundControl = ({
+  isPlaying,
+  isSynthesizing,
+  onPlay,
+  onPause,
+  onSkipBack,
+  onSkipForward,
+  progressBarValues,
+  volume,
+  onVolumeChange,
+  playbackSpeed,
+  onSpeedChange,
+}: Props) => {
+  const { estimated_ms, numberOfBlocks, currentBlock, setCurrentBlock, audioProgress } = progressBarValues;
+  const [progressDisplay, setProgressDisplay] = useState("0:00");
+  const [durationDisplay, setDurationDisplay] = useState("0:00");
+
+  useEffect(() => {
+    setProgressDisplay(msToTime(audioProgress));
+  }, [audioProgress]);
+
+  useEffect(() => {
+    setDurationDisplay(msToTime(estimated_ms));
+  }, [estimated_ms]);
+
+  const handleSliderChange = (newValue: number[]) => {
+    const newBlock = newValue[0];
+    if (newBlock !== currentBlock) {
+      setCurrentBlock(newBlock);
+    }
+  };
+
+  const numBlocks = numberOfBlocks ?? 0;
+  const blockNum = (currentBlock ?? 0) + 1;
+
+  return (
+    <div className="fixed bottom-0 left-64 right-0 bg-background/80 backdrop-blur-lg border-t border-border p-4">
+      {/* Playback controls */}
+      <div className="flex items-center justify-center gap-4 mb-3">
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={onSkipBack}
+          disabled={(currentBlock ?? 0) <= 0 && !isPlaying}
+        >
+          <SkipBack className="h-5 w-5" />
+        </Button>
+        <Button
+          variant="secondary"
+          size="lg"
+          className="rounded-full w-14 h-14"
+          onClick={isPlaying ? onPause : onPlay}
+          disabled={isSynthesizing}
+        >
+          {isSynthesizing ? (
+            <Loader2 className="h-6 w-6 animate-spin" />
+          ) : isPlaying ? (
+            <Pause className="h-6 w-6" />
+          ) : (
+            <Play className="h-6 w-6 ml-1" />
+          )}
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={onSkipForward}
+          disabled={(currentBlock ?? 0) >= numBlocks - 1}
+        >
+          <SkipForward className="h-5 w-5" />
+        </Button>
+      </div>
+
+      {/* Progress bar and info */}
+      <div className="flex items-center gap-4 max-w-2xl mx-auto">
+        <span className="text-sm text-muted-foreground w-12 text-right tabular-nums">
+          {progressDisplay}
+        </span>
+        <Slider
+          value={[currentBlock ?? 0]}
+          max={Math.max(numBlocks - 1, 0)}
+          step={1}
+          onValueChange={handleSliderChange}
+          className="flex-1"
+        />
+        <span className="text-sm text-muted-foreground w-12 tabular-nums">
+          {durationDisplay}
+        </span>
+      </div>
+
+      {/* Block info, speed, and volume */}
+      <div className="flex items-center justify-between mt-2 max-w-2xl mx-auto">
+        <span className="text-xs text-muted-foreground">
+          Block {blockNum} of {numBlocks}
+        </span>
+        <div className="flex items-center gap-4">
+          {/* Speed control slider */}
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground font-mono tabular-nums w-10">
+              {playbackSpeed.toFixed(1)}x
+            </span>
+            <Slider
+              value={[playbackSpeed]}
+              min={0.5}
+              max={3}
+              step={0.1}
+              onValueChange={(values) => onSpeedChange(values[0])}
+              className="w-24"
+            />
+          </div>
+          {/* Volume control */}
+          <div className="flex items-center gap-2">
+            <Volume2 className="h-4 w-4 text-muted-foreground" />
+            <Slider
+              value={[volume]}
+              max={100}
+              step={1}
+              onValueChange={(values) => onVolumeChange(values[0])}
+              className="w-24"
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export { SoundControl };
