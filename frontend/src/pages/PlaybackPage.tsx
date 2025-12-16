@@ -168,6 +168,29 @@ const PlaybackPage = () => {
     }
   }, [playbackSpeed]);
 
+  // When voice changes: clear cache and mark for restart if playing
+  const voiceSelectionRef = useRef(voiceSelection);
+  const pendingVoiceChangeRef = useRef(false);
+  useEffect(() => {
+    const voiceChanged = voiceSelectionRef.current.model !== voiceSelection.model ||
+                         voiceSelectionRef.current.voiceSlug !== voiceSelection.voiceSlug;
+    voiceSelectionRef.current = voiceSelection;
+
+    if (!voiceChanged) return;
+
+    // Clear all cached audio (synthesized with old voice)
+    audioBuffersRef.current.clear();
+    synthesizingRef.current.clear();
+    durationCorrectionsRef.current.clear();
+
+    // If we were playing, mark that we need to restart after synthesizeBlock is recreated
+    if (isPlayingRef.current && currentBlock >= 0) {
+      audioPlayerRef.current?.stop();
+      setIsSynthesizing(true);
+      pendingVoiceChangeRef.current = true;
+    }
+  }, [voiceSelection, currentBlock]);
+
 
   const synthesizeBlock = useCallback(async (blockId: number): Promise<AudioBufferData | null> => {
     // Check if already cached
@@ -287,6 +310,23 @@ const PlaybackPage = () => {
     audioPlayerRef.current.load(audioBufferData.buffer);
     audioPlayerRef.current.play();
   }, [documentBlocks]);
+
+  // Handle pending voice change restart (runs after synthesizeBlock is recreated with new voice)
+  useEffect(() => {
+    if (!pendingVoiceChangeRef.current) return;
+    pendingVoiceChangeRef.current = false;
+
+    const blockId = documentBlocks[currentBlock]?.id;
+    if (blockId === undefined) return;
+
+    // Synthesize with new voice and play
+    synthesizeBlock(blockId).then(audioData => {
+      setIsSynthesizing(false);
+      if (audioData && isPlayingRef.current) {
+        playAudioBuffer(audioData);
+      }
+    });
+  }, [synthesizeBlock, currentBlock, documentBlocks, playAudioBuffer]);
 
   // Keep isPlayingRef in sync with state
   useEffect(() => {
