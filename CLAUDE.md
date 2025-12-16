@@ -44,8 +44,18 @@ Constraints/Decisions: Key choices that shape the work
 
 Scope: ~5-7 bullets of what's included (not detailed task list)
 
+Open Questions: Things to clarify with user before implementation
+  - Don't guess intent - ask if unclear
+  - Can be 10 detailed questions if needed, but don't ask for sake of asking
+
 Notes: Findings, discussions, decisions as work progresses
 ```
+
+**Workflow for unclear requirements:**
+1. Create plan with goal + scope + open questions
+2. Get user answers
+3. Update plan with answers and refined implementation approach
+4. Then execute
 
 Granular task tracking belongs in working todos during implementation, not the plan file.
 
@@ -102,4 +112,5 @@ Task plans get descriptive names. Keep entries after completion for history.
 
 - No default values in Settings class - defaults in `.env*` files only
 - Follow existing patterns in codebase
+- **No architectural discussions in code comments** - those belong in the architecture doc
 - See `~/.claude/CLAUDE.md` for general coding guidelines
