@@ -10,22 +10,26 @@ import {
 	useRef,
 	useState,
 } from "react";
+import { getOrCreateAnonymousId } from "./lib/anonymousId";
 
 const baseURL = "http://localhost:8000"; // TODO: read from env vars
 
 export type Api = {
 	api: Axios;
 	isAuthReady: boolean;
+	isAnonymous: boolean;
 };
 
 const ApiContext = createContext<Api>({
 	api: axios.create({ baseURL }),
 	isAuthReady: false,
+	isAnonymous: true,
 });
 
 export const ApiProvider: FC<PropsWithChildren<{}>> = ({ children }) => {
 	const tokenRef = useRef<string | undefined>(undefined);
 	const [isAuthReady, setIsAuthReady] = useState(false);
+	const [isAnonymous, setIsAnonymous] = useState(true);
 	const user = useUser();
 
 	// Create axios instance once with interceptor that reads current token
@@ -35,6 +39,9 @@ export const ApiProvider: FC<PropsWithChildren<{}>> = ({ children }) => {
 		instance.interceptors.request.use((config) => {
 			if (tokenRef.current) {
 				config.headers.Authorization = `Bearer ${tokenRef.current}`;
+			} else {
+				// Anonymous user - send anonymous ID for session tracking
+				config.headers["X-Anonymous-ID"] = getOrCreateAnonymousId();
 			}
 			return config;
 		});
@@ -52,8 +59,9 @@ export const ApiProvider: FC<PropsWithChildren<{}>> = ({ children }) => {
 		}
 
 		if (user === null || !user.currentSession) {
-			// No user or no session - proceed without auth
+			// No user or no session - anonymous mode
 			tokenRef.current = undefined;
+			setIsAnonymous(true);
 			setIsAuthReady(true);
 			return;
 		}
@@ -63,16 +71,18 @@ export const ApiProvider: FC<PropsWithChildren<{}>> = ({ children }) => {
 			.getTokens()
 			.then(({ accessToken }) => {
 				tokenRef.current = accessToken || undefined;
+				setIsAnonymous(!accessToken);
 				setIsAuthReady(true);
 			})
 			.catch((err) => {
 				console.error("api provider: failed to get access token:", err);
+				setIsAnonymous(true);
 				setIsAuthReady(true);
 			});
 	}, [user]);
 
 	return (
-		<ApiContext.Provider value={{ api, isAuthReady }}>
+		<ApiContext.Provider value={{ api, isAuthReady, isAnonymous }}>
 			{children}
 		</ApiContext.Provider>
 	);

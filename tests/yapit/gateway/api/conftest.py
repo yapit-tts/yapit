@@ -9,11 +9,21 @@ from testcontainers.postgres import PostgresContainer
 from testcontainers.redis import RedisContainer
 
 from yapit.gateway import create_app
-from yapit.gateway.auth import ANON_USER, authenticate
+from yapit.gateway.auth import authenticate
 from yapit.gateway.cache import CacheConfig
 from yapit.gateway.config import Settings, get_settings
 from yapit.gateway.db import close_db, create_session
 from yapit.gateway.stack_auth.users import User, UserServerMetadata
+
+# Default test user for auth mocking
+DEFAULT_TEST_USER = User(
+    id="default-test-user",
+    primary_email_verified=True,
+    primary_email_auth_enabled=True,
+    signed_up_at_millis=1234567890000,
+    last_active_at_millis=1234567890000,
+    is_anonymous=False,
+)
 
 
 @pytest.fixture(scope="session")
@@ -55,7 +65,7 @@ async def app(postgres_container, redis_container) -> FastAPI:
     )
 
     app = create_app(settings)
-    app.dependency_overrides[authenticate] = lambda: ANON_USER
+    app.dependency_overrides[authenticate] = lambda: DEFAULT_TEST_USER
 
     async with app.router.lifespan_context(app):
         yield app

@@ -52,16 +52,8 @@ function DocumentSidebar() {
   const location = useLocation();
   const user = useUser();
 
-  // Refetch documents on navigation (catches newly created documents)
-  // Only fetch if user is logged in (guests don't have documents)
   useEffect(() => {
     if (!isAuthReady) return;
-
-    // No user = no documents to fetch
-    if (!user) {
-      setIsLoading(false);
-      return;
-    }
 
     const fetchDocuments = async () => {
       try {
