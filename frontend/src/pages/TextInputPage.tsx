@@ -1,13 +1,13 @@
 import { Header } from "@/components/header";
-import { TextInputForm } from "../components/textInputForm";
+import { UnifiedInput } from "@/components/unifiedInput";
 
 const TextInputPage = () => {
-	return (
-		<div className="flex flex-col justify-center w-full">
-			<Header />
-			<TextInputForm />
-		</div>
-	)
-}
+  return (
+    <div className="flex flex-col justify-center w-full px-4">
+      <Header />
+      <UnifiedInput />
+    </div>
+  );
+};
 
 export default TextInputPage;

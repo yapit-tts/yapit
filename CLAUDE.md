@@ -5,6 +5,11 @@ Yapit TTS - Open-source text-to-speech platform for reading documents, web pages
 - Free tier: Browser-side TTS via Kokoro.js (zero server cost)
 - Paid tier: Server-side models via RunPod
 
+**GitHub**: https://github.com/yapit-tts/yapit
+**Project board**: https://github.com/orgs/yapit-tts/projects/2
+
+Note: We don't work heavily with GitHub issues (solo dev + claude for now -- the local plans workflow is more efficient for us), but the project board is useful for occasionally closing/updating existing / old issues, as needed.
+
 ## Build & Test
 
 - Tests, builds, deploys via Makefile
@@ -12,6 +17,7 @@ Yapit TTS - Open-source text-to-speech platform for reading documents, web pages
 - No default values in Settings class - only defaults in `.env*` files
 - `make test-local` for basic tests, `make test` for full suite (needs API keys)
 - `make dev-cpu` to start backend (or `make dev-mac` on macOS)
+- **CI timing**: Integration tests take 4-5 minutes (Docker build). Wait for all checks before merging PRs.
 
 ## Agent Work Process
 
@@ -23,10 +29,36 @@ Yapit TTS - Open-source text-to-speech platform for reading documents, web pages
 
 ### During Work
 
-- **Create/continue task-specific plan files** for your work (e.g., `yapit-browser-tts.md`)
-- Document in plan file: goals, approach, discussions, findings, task list
-- Update task list as you progress - what was done, results, how tested
+- **Create/continue task-specific plan files** for your work
 - Commit code frequently - don't accumulate large uncommitted changes
+
+### Plan File Structure
+
+Keep plans **lightweight** - detailed upfront plans become stale fast. Focus on goal and constraints, not detailed how-to steps.
+
+```
+Goal: What success looks like (1-2 sentences)
+  - Can include: "user tests X in UI and confirms it works"
+  - Can include: "ask user about Y decision"
+
+Constraints/Decisions: Key choices that shape the work
+
+Scope: ~5-7 bullets of what's included (not detailed task list)
+
+Open Questions: Things to clarify with user before implementation
+  - Don't guess intent - ask if unclear
+  - Can be 10 detailed questions if needed, but don't ask for sake of asking
+
+Notes: Findings, discussions, decisions as work progresses
+```
+
+**Workflow for unclear requirements:**
+1. Create plan with goal + scope + open questions
+2. Get user answers
+3. Update plan with answers and refined implementation approach
+4. Then execute
+
+Granular task tracking belongs in working todos during implementation, not the plan file.
 
 ### Before Creating PR (MANDATORY)
 
@@ -66,6 +98,9 @@ Plans live in `~/.claude/plans/`.
 | File | Purpose | PR | Status |
 |------|---------|-----|--------|
 | `yapit-browser-processor-review.md` | ClientProcessor backend for browser TTS | #48 | Active |
+| `yapit-project-review.md` | GitHub project data review, roadmap update | - | Done |
+| `virtual-spinning-hammock.md` | Project overview & handover document | - | Reference |
+| `ux-ui-strategy-session.md` | MVP feature planning & UX/UI strategy | - | Pending |
 
 Task plans get descriptive names. Keep entries after completion for history.
 
@@ -80,4 +115,5 @@ Task plans get descriptive names. Keep entries after completion for history.
 
 - No default values in Settings class - defaults in `.env*` files only
 - Follow existing patterns in codebase
+- **No architectural discussions in code comments** - those belong in the architecture doc
 - See `~/.claude/CLAUDE.md` for general coding guidelines
