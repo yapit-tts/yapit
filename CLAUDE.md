@@ -17,6 +17,7 @@ Note: We don't work heavily with GitHub issues (solo dev + claude for now -- the
 - No default values in Settings class - only defaults in `.env*` files
 - `make test-local` for basic tests, `make test` for full suite (needs API keys)
 - `make dev-cpu` to start backend (or `make dev-mac` on macOS)
+- **CI timing**: Integration tests take 4-5 minutes (Docker build). Wait for all checks before merging PRs.
 
 ## Agent Work Process
 
@@ -44,8 +45,18 @@ Constraints/Decisions: Key choices that shape the work
 
 Scope: ~5-7 bullets of what's included (not detailed task list)
 
+Open Questions: Things to clarify with user before implementation
+  - Don't guess intent - ask if unclear
+  - Can be 10 detailed questions if needed, but don't ask for sake of asking
+
 Notes: Findings, discussions, decisions as work progresses
 ```
+
+**Workflow for unclear requirements:**
+1. Create plan with goal + scope + open questions
+2. Get user answers
+3. Update plan with answers and refined implementation approach
+4. Then execute
 
 Granular task tracking belongs in working todos during implementation, not the plan file.
 
@@ -88,6 +99,8 @@ Plans live in `~/.claude/plans/`.
 |------|---------|-----|--------|
 | `yapit-browser-processor-review.md` | ClientProcessor backend for browser TTS | #48 | Active |
 | `yapit-project-review.md` | GitHub project data review, roadmap update | - | Done |
+| `virtual-spinning-hammock.md` | Project overview & handover document | - | Reference |
+| `ux-ui-strategy-session.md` | MVP feature planning & UX/UI strategy | - | Pending |
 
 Task plans get descriptive names. Keep entries after completion for history.
 
@@ -102,4 +115,5 @@ Task plans get descriptive names. Keep entries after completion for history.
 
 - No default values in Settings class - defaults in `.env*` files only
 - Follow existing patterns in codebase
+- **No architectural discussions in code comments** - those belong in the architecture doc
 - See `~/.claude/CLAUDE.md` for general coding guidelines

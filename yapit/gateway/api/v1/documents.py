@@ -11,6 +11,7 @@ from uuid import UUID
 import httpx
 import pymupdf
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
+from markitdown import MarkItDown
 from pydantic import BaseModel, HttpUrl, StringConstraints
 from sqlmodel import select
 
@@ -163,7 +164,7 @@ async def prepare_document(
     )
 
     endpoint = _get_endpoint_type_from_content_type(content_type)
-    cached_doc = CachedDocument(content=content if endpoint == "document" else None, metadata=metadata)
+    cached_doc = CachedDocument(content=content, metadata=metadata)  # Store content for both documents and websites
     ttl = settings.document_cache_ttl_webpage if endpoint == "website" else settings.document_cache_ttl_document
     await cache.store(cache_key, cached_doc.model_dump_json().encode(), ttl_seconds=ttl)
 
@@ -289,11 +290,17 @@ async def create_website_document(
             detail="This endpoint is for websites only. Use /document for files.",
         )
 
-    # TODO: Implement web parser
-    # TODO: Web parser should call docling processor (not implemented yet) to convert html to markdown
+    if not cached_doc.content:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Cached document has no content. This should not happen.",
+        )
+
+    md = MarkItDown(enable_plugins=False)
+    result = md.convert_stream(io.BytesIO(cached_doc.content))
     extraction_result = DocumentExtractionResult(
-        pages={0: ExtractedPage(markdown="# Placeholder\n\nWeb parsing not implemented yet.", images=[])},
-        extraction_method="web-parser",
+        pages={0: ExtractedPage(markdown=result.markdown, images=[])},
+        extraction_method="markitdown",
     )
 
     cached_doc.extraction = extraction_result
@@ -361,6 +368,7 @@ async def create_document(
     processor = document_processor_manager.get_processor(req.processor_slug)
     if not processor:
         raise ResourceNotFoundError(DocumentProcessor.__name__, req.processor_slug)
+
     extraction_result = await processor.process_with_billing(
         user_id=user.id,
         user_credits=user_credits,
@@ -394,6 +402,32 @@ async def create_document(
         text_blocks=text_blocks,
     )
     return DocumentCreateResponse(id=doc.id, title=doc.title)
+
+
+class DocumentListItem(BaseModel):
+    """Minimal document info for list view."""
+
+    id: UUID
+    title: str | None
+    created: str  # ISO format
+
+
+@router.get("")
+async def list_documents(
+    db: DbSession,
+    user: AuthenticatedUser,
+    offset: int = 0,
+    limit: int = Query(default=50, le=100),
+) -> list[DocumentListItem]:
+    """List user's documents, most recent first."""
+    result = await db.exec(
+        select(Document)
+        .where(Document.user_id == user.id)
+        .order_by(Document.created.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    return [DocumentListItem(id=doc.id, title=doc.title, created=doc.created.isoformat()) for doc in result.all()]
 
 
 @router.get("/{document_id}")
