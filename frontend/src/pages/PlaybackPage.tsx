@@ -3,6 +3,7 @@ import { DocumentCard } from '../components/documentCard';
 import { useLocation } from "react-router";
 import { useRef, useState, useEffect, useCallback } from "react";
 import { useApi } from '@/api';
+import { Loader2 } from "lucide-react";
 
 interface Block {
   id: number;
@@ -11,12 +12,12 @@ interface Block {
   est_duration_ms: number;
 }
 
-interface ApiResponse {
-  document_id: string;
-	title: string;
-  num_blocks: number;
-  est_duration_ms: number;
-  blocks: Block[];
+interface DocumentResponse {
+  id: string;
+  title: string | null;
+  original_text: string;
+  filtered_text: string | null;
+  structured_content: string | null;
 }
 
 interface AudioBufferData {
@@ -25,15 +26,23 @@ interface AudioBufferData {
 }
 
 const PlaybackPage = () => {
-  // State variables
   const { state } = useLocation();
-  const apiResponse: ApiResponse | undefined = state?.apiResponse;
-  const documentId: string | undefined = apiResponse?.document_id;
-	const documentTitle: string | undefined = apiResponse?.title;
-	const numberOfBlocks: number | undefined = apiResponse?.num_blocks;
-  const documentBlocks: Block[] | undefined = apiResponse?.blocks;
-  const inputText: string | undefined = state?.inputText;
-	const estimated_ms: number | undefined = apiResponse?.est_duration_ms;
+  const documentId: string | undefined = state?.documentId;
+  const initialTitle: string | undefined = state?.documentTitle;
+
+  const { api } = useApi();
+
+  // Document data fetched from API
+  const [document, setDocument] = useState<DocumentResponse | null>(null);
+  const [documentBlocks, setDocumentBlocks] = useState<Block[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // Derived state
+  const documentTitle = document?.title ?? initialTitle;
+  const documentContent = document?.filtered_text ?? document?.original_text ?? "";
+  const numberOfBlocks = documentBlocks.length;
+  const estimated_ms = documentBlocks.reduce((sum, b) => sum + (b.est_duration_ms || 0), 0);
 
   // Sound control variables
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
@@ -41,8 +50,7 @@ const PlaybackPage = () => {
 	const [width, setWidth] = useState(0);
 	const [volume, setVolume] = useState<number>(50); // Volume state (0-100)
 
-  // Setup variables
-	const { api } = useApi();
+  // Audio setup variables
   const audioContextRef = useRef<AudioContext | null>(null);
 	const gainNodeRef = useRef<GainNode | null>(null);
 	const [currentBlock, setCurrentBlock] = useState<number>(-1);
@@ -54,6 +62,32 @@ const PlaybackPage = () => {
 	const [actualTotalDuration, setActualTotalDuration] = useState<number>(0); // Track actual total duration
 	const durationCorrectionsRef = useRef<Map<number, number>>(new Map()); // Track duration corrections per block
 	const initialTotalEstimateRef = useRef<number>(0); // Store initial estimate
+
+  // Fetch document and blocks on mount
+  useEffect(() => {
+    if (!documentId) {
+      setError("No document ID provided");
+      setIsLoading(false);
+      return;
+    }
+
+    const fetchData = async () => {
+      try {
+        const [docResponse, blocksResponse] = await Promise.all([
+          api.get<DocumentResponse>(`/v1/documents/${documentId}`),
+          api.get<Block[]>(`/v1/documents/${documentId}/blocks`),
+        ]);
+        setDocument(docResponse.data);
+        setDocumentBlocks(blocksResponse.data);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to fetch document");
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchData();
+  }, [documentId, api]);
 
   // Initialize the AudioContext and set initial total duration
   useEffect(() => {
@@ -312,12 +346,28 @@ const PlaybackPage = () => {
     setVolume(newVolume);
   };
 
+  if (isLoading) {
+    return (
+      <div className="flex grow items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex grow items-center justify-center text-destructive">
+        {error}
+      </div>
+    );
+  }
+
   return (
     <div className="flex grow" ref={parentWidth}>
-      <DocumentCard title={documentTitle} inputText={inputText} />
-      <SoundControl 
-        isPlaying={isPlaying} 
-        onPlay={handlePlay} 
+      <DocumentCard title={documentTitle} content={documentContent} />
+      <SoundControl
+        isPlaying={isPlaying}
+        onPlay={handlePlay}
         onPause={handlePause}
 				style={{ width: `${width}px` }}
 				progressBarValues={{estimated_ms: actualTotalDuration > 0 ? actualTotalDuration : estimated_ms, numberOfBlocks: numberOfBlocks, currentBlock: currentBlock >= 0 ? currentBlock : 0, setCurrentBlock: () => {}, audioProgress: audioProgress}}

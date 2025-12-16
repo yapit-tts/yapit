@@ -8,7 +8,8 @@ import { useDebounce } from "@/hooks/useDebounce";
 import { useApi } from "@/api";
 import { cn } from "@/lib/utils";
 
-const URL_REGEX = /^https?:\/\/.+/i;
+// Only match single-line URLs (no newlines, reasonable URL chars)
+const URL_REGEX = /^https?:\/\/[^\s]+$/i;
 const OCR_STORAGE_KEY = "yapit-ocr-enabled";
 
 interface DocumentMetadata {
@@ -33,8 +34,17 @@ interface DocumentCreateResponse {
   title: string | null;
 }
 
-type InputMode = "idle" | "text" | "url";
+type InputMode = "idle" | "text" | "url" | "file";
 type UrlState = "detecting" | "loading" | "ready" | "error";
+
+const ACCEPTED_FILE_TYPES = [
+  "application/pdf",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/msword",
+  "text/plain",
+  "text/html",
+  "application/epub+zip",
+];
 
 export function UnifiedInput() {
   const [value, setValue] = useState("");
@@ -43,12 +53,14 @@ export function UnifiedInput() {
   const [prepareData, setPrepareData] = useState<PrepareResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
   const [ocrEnabled, setOcrEnabled] = useState(() => {
     const stored = localStorage.getItem(OCR_STORAGE_KEY);
     return stored !== null ? stored === "true" : true;
   });
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const dragCounterRef = useRef(0);
   const navigate = useNavigate();
   const { api } = useApi();
 
@@ -56,8 +68,10 @@ export function UnifiedInput() {
 
   const isUrl = useCallback((text: string) => URL_REGEX.test(text.trim()), []);
 
-  // Detect input type and update mode
+  // Detect input type and update mode (skip if in file mode - file uploads manage their own state)
   useEffect(() => {
+    if (mode === "file") return;
+
     const trimmed = value.trim();
     if (!trimmed) {
       setMode("idle");
@@ -74,7 +88,7 @@ export function UnifiedInput() {
       setPrepareData(null);
       setError(null);
     }
-  }, [value, isUrl]);
+  }, [value, isUrl, mode]);
 
   // Fetch metadata when URL is detected (debounced)
   useEffect(() => {
@@ -119,15 +133,20 @@ export function UnifiedInput() {
         ? "/v1/documents/website"
         : "/v1/documents/document";
 
-      const response = await api.post<DocumentCreateResponse>(endpoint, {
-        hash: data.hash,
-        use_ocr: data.endpoint === "document" ? ocrEnabled : undefined,
-      });
+      const body = data.endpoint === "website"
+        ? { hash: data.hash }
+        : {
+            hash: data.hash,
+            pages: null, // all pages
+            processor_slug: ocrEnabled ? "mistral-ocr" : "markitdown",
+          };
+
+      const response = await api.post<DocumentCreateResponse>(endpoint, body);
 
       navigate("/playback", {
         state: {
-          apiResponse: { id: response.data.id, title: response.data.title },
-          inputText: value
+          documentId: response.data.id,
+          documentTitle: response.data.title,
         }
       });
     } catch (err) {
@@ -146,8 +165,8 @@ export function UnifiedInput() {
       });
       navigate("/playback", {
         state: {
-          apiResponse: response.data,
-          inputText: value
+          documentId: response.data.id,
+          documentTitle: response.data.title,
         }
       });
     } catch (err) {
@@ -156,11 +175,8 @@ export function UnifiedInput() {
     }
   };
 
-  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setMode("url");
+  const uploadFile = useCallback(async (file: File) => {
+    setMode("file");
     setUrlState("loading");
     setError(null);
     setValue(file.name);
@@ -179,23 +195,80 @@ export function UnifiedInput() {
       setUrlState("error");
       setError(err instanceof Error ? err.message : "Failed to upload file");
     }
+  }, [api]);
+
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    await uploadFile(file);
   };
 
-  const showMetadataBanner = mode === "url" && urlState === "ready" && prepareData?.endpoint === "document";
+  const handleDragEnter = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current++;
+    if (e.dataTransfer.items && e.dataTransfer.items.length > 0) {
+      setIsDragging(true);
+    }
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current--;
+    if (dragCounterRef.current === 0) {
+      setIsDragging(false);
+    }
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+  }, []);
+
+  const handleDrop = useCallback(async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    dragCounterRef.current = 0;
+
+    const files = e.dataTransfer.files;
+    if (files.length === 0) return;
+
+    const file = files[0];
+    const isAcceptedType = ACCEPTED_FILE_TYPES.includes(file.type) ||
+      file.name.match(/\.(pdf|docx?|txt|html?|epub)$/i);
+
+    if (!isAcceptedType) {
+      setError(`Unsupported file type: ${file.type || file.name.split('.').pop()}`);
+      return;
+    }
+
+    await uploadFile(file);
+  }, [uploadFile]);
+
+  const showMetadataBanner = (mode === "url" || mode === "file") && urlState === "ready" && prepareData?.endpoint === "document";
   const showTextMode = mode === "text" || mode === "idle";
-  const isLoadingUrl = mode === "url" && (urlState === "loading" || urlState === "detecting");
+  const isLoadingUrl = (mode === "url" || mode === "file") && (urlState === "loading" || urlState === "detecting");
 
   return (
-    <div className="flex flex-col w-full max-w-2xl mx-auto gap-4">
+    <div
+      className="flex flex-col w-full max-w-2xl mx-auto gap-4"
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
+    >
       <div className="relative">
         <Textarea
           value={value}
           onChange={(e) => setValue(e.target.value)}
-          placeholder="Paste a URL, upload a file, or type text..."
+          placeholder="Paste a URL, drop a file, or type text..."
           className={cn(
             "min-h-[120px] pr-12 resize-none transition-all",
             mode === "text" && "min-h-[200px]",
-            error && "border-destructive"
+            error && "border-destructive",
+            isDragging && "border-primary border-2 border-dashed"
           )}
           disabled={isCreating}
         />
@@ -221,7 +294,13 @@ export function UnifiedInput() {
           className="hidden"
         />
 
-        {isLoadingUrl && (
+        {isDragging && (
+          <div className="absolute inset-0 bg-primary/10 flex items-center justify-center rounded-md pointer-events-none">
+            <span className="text-primary font-medium">Drop file here</span>
+          </div>
+        )}
+
+        {isLoadingUrl && !isDragging && (
           <div className="absolute inset-0 bg-background/50 flex items-center justify-center rounded-md">
             <Loader2 className="h-6 w-6 animate-spin text-primary" />
           </div>

@@ -44,7 +44,7 @@ function DocumentSidebar() {
 
   const handleDocumentClick = (doc: DocumentItem) => {
     navigate("/playback", {
-      state: { apiResponse: { id: doc.id, title: doc.title } },
+      state: { documentId: doc.id, documentTitle: doc.title },
     });
   };
 

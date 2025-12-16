@@ -368,6 +368,7 @@ async def create_document(
     processor = document_processor_manager.get_processor(req.processor_slug)
     if not processor:
         raise ResourceNotFoundError(DocumentProcessor.__name__, req.processor_slug)
+
     extraction_result = await processor.process_with_billing(
         user_id=user.id,
         user_credits=user_credits,
