@@ -3,10 +3,8 @@ import os
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from yapit.gateway.cache import CacheConfig, Caches
-from yapit.gateway.text_splitter import TextSplitterConfig, TextSplitters
 
 
-# TODO rename file to settings.py
 class Settings(BaseSettings):
     sqlalchemy_echo: bool
     db_drop_and_recreate: bool  # If True: drops all tables and recreates (dev mode)
@@ -15,9 +13,6 @@ class Settings(BaseSettings):
     database_url: str
     redis_url: str
     cors_origins: list[str]
-
-    splitter_type: TextSplitters
-    splitter_config: TextSplitterConfig
 
     audio_cache_type: Caches
     audio_cache_config: CacheConfig

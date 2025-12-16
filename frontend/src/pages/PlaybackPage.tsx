@@ -31,7 +31,7 @@ const PlaybackPage = () => {
   const { state } = useLocation();
   const initialTitle: string | undefined = state?.documentTitle;
 
-  const { api } = useApi();
+  const { api, isAuthReady } = useApi();
 
   // Document data fetched from API
   const [document, setDocument] = useState<DocumentResponse | null>(null);
@@ -66,8 +66,10 @@ const PlaybackPage = () => {
 	const initialTotalEstimateRef = useRef<number>(0);
   const currentBlockDurationRef = useRef<number>(0);
 
-  // Fetch document and blocks on mount
+  // Fetch document and blocks on mount (wait for auth to be ready)
   useEffect(() => {
+    if (!isAuthReady) return;
+
     if (!documentId) {
       setError("No document ID provided");
       setIsLoading(false);
@@ -90,7 +92,7 @@ const PlaybackPage = () => {
     };
 
     fetchData();
-  }, [documentId, api]);
+  }, [documentId, api, isAuthReady]);
 
   // Initialize the AudioContext, GainNode, and AudioPlayer
   useEffect(() => {

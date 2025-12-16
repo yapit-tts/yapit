@@ -6,51 +6,73 @@ import {
 	PropsWithChildren,
 	useContext,
 	useEffect,
+	useMemo,
 	useRef,
+	useState,
 } from "react";
 
 const baseURL = "http://localhost:8000"; // TODO: read from env vars
 
 export type Api = {
 	api: Axios;
+	isAuthReady: boolean;
 };
 
 const ApiContext = createContext<Api>({
 	api: axios.create({ baseURL }),
+	isAuthReady: false,
 });
 
 export const ApiProvider: FC<PropsWithChildren<{}>> = ({ children }) => {
-	const ref = useRef<Axios>(axios.create({ baseURL }));
-
+	const tokenRef = useRef<string | undefined>(undefined);
+	const [isAuthReady, setIsAuthReady] = useState(false);
 	const user = useUser();
 
-	const updateToken = (token: string | undefined): void => {
-		ref.current = axios.create({
-			baseURL,
-			headers: token
-				? {
-						Authorization: `Bearer ${token}`,
-					}
-				: undefined,
+	// Create axios instance once with interceptor that reads current token
+	const api = useMemo(() => {
+		const instance = axios.create({ baseURL });
+
+		instance.interceptors.request.use((config) => {
+			if (tokenRef.current) {
+				config.headers.Authorization = `Bearer ${tokenRef.current}`;
+			}
+			return config;
 		});
-	};
+
+		return instance;
+	}, []);
 
 	useEffect(() => {
-		if (!user?.currentSession) {
-			updateToken(undefined);
+		// user === undefined means Stack Auth is still loading
+		// user === null means user is not logged in (auth resolved, no user)
+		// user object present means user is logged in
+		if (user === undefined) {
+			// Still loading, don't set isAuthReady yet
 			return;
 		}
 
+		if (user === null || !user.currentSession) {
+			// No user or no session - proceed without auth
+			tokenRef.current = undefined;
+			setIsAuthReady(true);
+			return;
+		}
+
+		// User is logged in, get the token
 		user.currentSession
 			.getTokens()
-			.then(({ accessToken }) => updateToken(accessToken || undefined))
-			.catch((err) =>
-				console.error("api provider: failed to get access token:", err),
-			);
-	}, [user?.currentSession]);
+			.then(({ accessToken }) => {
+				tokenRef.current = accessToken || undefined;
+				setIsAuthReady(true);
+			})
+			.catch((err) => {
+				console.error("api provider: failed to get access token:", err);
+				setIsAuthReady(true);
+			});
+	}, [user]);
 
 	return (
-		<ApiContext.Provider value={{ api: ref.current }}>
+		<ApiContext.Provider value={{ api, isAuthReady }}>
 			{children}
 		</ApiContext.Provider>
 	);

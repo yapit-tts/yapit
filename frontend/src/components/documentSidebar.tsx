@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router";
+import { Link, useNavigate, useParams, useLocation } from "react-router";
 import {
   Sidebar,
   SidebarContent,
@@ -46,12 +46,23 @@ function DocumentSidebar() {
   const [renameDoc, setRenameDoc] = useState<DocumentItem | null>(null);
   const [newTitle, setNewTitle] = useState("");
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
-  const { api } = useApi();
+  const { api, isAuthReady } = useApi();
   const navigate = useNavigate();
   const { documentId } = useParams();
+  const location = useLocation();
   const user = useUser();
 
+  // Refetch documents on navigation (catches newly created documents)
+  // Only fetch if user is logged in (guests don't have documents)
   useEffect(() => {
+    if (!isAuthReady) return;
+
+    // No user = no documents to fetch
+    if (!user) {
+      setIsLoading(false);
+      return;
+    }
+
     const fetchDocuments = async () => {
       try {
         const response = await api.get<DocumentItem[]>("/v1/documents");
@@ -64,7 +75,7 @@ function DocumentSidebar() {
     };
 
     fetchDocuments();
-  }, [api]);
+  }, [api, isAuthReady, user, location.pathname]);
 
   const handleDocumentClick = (doc: DocumentItem) => {
     navigate(`/playback/${doc.id}`, {
@@ -87,6 +98,7 @@ function DocumentSidebar() {
 
   const openRenameDialog = (e: React.MouseEvent, doc: DocumentItem) => {
     e.stopPropagation();
+    setOpenMenuId(null); // Close dropdown before opening dialog
     setRenameDoc(doc);
     setNewTitle(doc.title || "");
   };

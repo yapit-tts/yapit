@@ -31,12 +31,6 @@ from yapit.gateway.processors.document.manager import DocumentProcessorManager
 from yapit.gateway.processors.tts.client import ClientProcessor
 from yapit.gateway.processors.tts.manager import TTSProcessorManager
 from yapit.gateway.stack_auth.users import User
-from yapit.gateway.text_splitter import (
-    DummySplitter,
-    HierarchicalSplitter,
-    TextSplitter,
-    TextSplitters,
-)
 
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 
@@ -53,14 +47,6 @@ def get_audio_cache(settings: SettingsDep) -> Cache:
 
 def get_document_cache(settings: SettingsDep) -> Cache:
     return _get_cache(settings.document_cache_type, settings.document_cache_config)
-
-
-def get_text_splitter(settings: SettingsDep) -> TextSplitter:
-    match settings.splitter_type:
-        case TextSplitters.DUMMY:
-            return DummySplitter(settings.splitter_config)
-        case TextSplitters.HIERARCHICAL:
-            return HierarchicalSplitter(settings.splitter_config)
 
 
 async def get_db_session(settings: Settings = Depends(get_settings)) -> AsyncIterator[AsyncSession]:
@@ -242,7 +228,6 @@ ClientProcessorDep = Annotated[ClientProcessor, Depends(get_client_processor)]
 SynthesisJobDep = Annotated[str, Depends(get_job)]
 AudioCache = Annotated[Cache, Depends(get_audio_cache)]
 DocumentCache = Annotated[Cache, Depends(get_document_cache)]
-TextSplitterDep = Annotated[TextSplitter, Depends(get_text_splitter)]
 CurrentDoc = Annotated[Document, Depends(get_doc)]
 CurrentVoice = Annotated[Voice, Depends(get_voice)]
 CurrentBlock = Annotated[Block, Depends(get_block)]

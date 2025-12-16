@@ -6,7 +6,6 @@ import AdminPanelPage from "@/pages/AdminPanelPage";
 import { stackClientApp } from "@/auth";
 import { StackHandler } from "@stackframe/react";
 import { FC } from "react";
-import { AuthTest } from "@/pages/AuthTest";
 
 const AuthRoutes: FC = () => {
 	const location = useLocation();
@@ -19,7 +18,6 @@ const AuthRoutes: FC = () => {
 const AppRoutes = () => (
 	<Routes>
 		<Route path="/handler/*" element={<AuthRoutes />} />
-		<Route path="/authtest" element={<AuthTest />} />
 		<Route
 			path="/"
 			element={
