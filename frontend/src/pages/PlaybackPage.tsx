@@ -122,6 +122,18 @@ const PlaybackPage = () => {
     }
   }, [volume, playbackSpeed]);
 
+  // Reset playback state when switching documents or unmounting
+  useEffect(() => {
+    return () => {
+      audioPlayerRef.current?.stop();
+      audioContextRef.current?.suspend(); // Immediately cut off any buffered audio
+      setIsPlaying(false);
+      setCurrentBlock(-1);
+      setAudioProgress(0);
+      blockStartTimeRef.current = 0;
+    };
+  }, [documentId]);
+
   // Calculate initial total duration from block estimates
   useEffect(() => {
     if (documentBlocks && documentBlocks.length > 0) {
