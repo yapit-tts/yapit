@@ -143,11 +143,8 @@ export function UnifiedInput() {
 
       const response = await api.post<DocumentCreateResponse>(endpoint, body);
 
-      navigate("/playback", {
-        state: {
-          documentId: response.data.id,
-          documentTitle: response.data.title,
-        }
+      navigate(`/playback/${response.data.id}`, {
+        state: { documentTitle: response.data.title }
       });
     } catch (err) {
       setIsCreating(false);
@@ -163,11 +160,8 @@ export function UnifiedInput() {
       const response = await api.post<DocumentCreateResponse>("/v1/documents/text", {
         content: value.trim(),
       });
-      navigate("/playback", {
-        state: {
-          documentId: response.data.id,
-          documentTitle: response.data.title,
-        }
+      navigate(`/playback/${response.data.id}`, {
+        state: { documentTitle: response.data.title }
       });
     } catch (err) {
       setIsCreating(false);

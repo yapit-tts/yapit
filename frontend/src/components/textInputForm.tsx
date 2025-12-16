@@ -32,7 +32,7 @@ const TextInputForm = () => {
       });
       console.log(response.data);
 
-			navigate("/playback", { state: { apiResponse: response.data, inputText: data.text } });
+			navigate(`/playback/${response.data.id}`, { state: { documentTitle: response.data.title } });
     } catch (error) {
       console.error("Error posting prompt: ", error);
     }

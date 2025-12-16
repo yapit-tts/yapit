@@ -1,6 +1,6 @@
 import { SoundControl } from '@/components/soundControl';
 import { DocumentCard } from '../components/documentCard';
-import { useLocation } from "react-router";
+import { useParams, useLocation } from "react-router";
 import { useRef, useState, useEffect, useCallback } from "react";
 import { useApi } from '@/api';
 import { Loader2 } from "lucide-react";
@@ -27,8 +27,8 @@ interface AudioBufferData {
 }
 
 const PlaybackPage = () => {
+  const { documentId } = useParams<{ documentId: string }>();
   const { state } = useLocation();
-  const documentId: string | undefined = state?.documentId;
   const initialTitle: string | undefined = state?.documentTitle;
 
   const { api } = useApi();

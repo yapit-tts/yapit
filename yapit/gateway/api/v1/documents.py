@@ -435,6 +435,34 @@ async def get_document(document: CurrentDoc) -> Document:
     return document
 
 
+class DocumentUpdateRequest(BaseModel):
+    title: str | None = None
+
+
+@router.patch("/{document_id}", response_model=DocumentCreateResponse)
+async def update_document(
+    document: CurrentDoc,
+    request: DocumentUpdateRequest,
+    db: DbSession,
+) -> DocumentCreateResponse:
+    """Update document properties (currently just title)."""
+    if request.title is not None:
+        document.title = request.title
+    await db.commit()
+    await db.refresh(document)
+    return DocumentCreateResponse(id=document.id, title=document.title)
+
+
+@router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_document(
+    document: CurrentDoc,
+    db: DbSession,
+) -> None:
+    """Delete a document and all its blocks."""
+    await db.delete(document)
+    await db.commit()
+
+
 @router.get("/{document_id}/blocks")
 async def get_document_blocks(
     document: CurrentDoc,

@@ -29,7 +29,7 @@ const AppRoutes = () => (
 			}
 		/>
 		<Route
-			path="/playback"
+			path="/playback/:documentId"
 			element={
 				<MainLayout>
 					<PlaybackPage />

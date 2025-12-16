@@ -115,6 +115,31 @@ Task plans get descriptive names. Keep entries after completion for history.
 - **Design philosophy**: Iterate by doing, don't over-plan upfront
 - **Theme**: Light/cozy Ghibli aesthetic (warm cream, green primary)
 
+## Frontend Development (Chrome DevTools MCP)
+
+When working on frontend code, use Chrome DevTools MCP to visually verify changes:
+
+**Workflow:**
+1. Navigate to `http://localhost:5173` (Vite dev server)
+2. Use `take_snapshot` to get element UIDs for interaction
+3. Use `take_screenshot` to see rendered UI
+4. Interact via `click`, `fill`, `fill_form` using UIDs from snapshot
+5. Check `list_console_messages` for errors after interactions
+
+**Key commands:**
+- `navigate_page` — go to URL
+- `take_screenshot` — capture current view
+- `take_snapshot` — get DOM tree with UIDs for clicking/filling
+- `click`, `fill`, `fill_form` — interact with elements
+- `list_console_messages` — check for JS errors
+- `resize_page` — test responsive (e.g., 375x812 for mobile)
+
+**When to use:**
+- After making UI changes, screenshot to verify
+- When debugging layout/styling issues
+- Testing user flows (fill form → click submit → check result)
+- Checking console for React errors or failed requests
+
 ## Coding Conventions
 
 - No default values in Settings class - defaults in `.env*` files only
