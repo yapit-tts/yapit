@@ -97,6 +97,7 @@ Plans live in `~/.claude/plans/`.
 
 | File | Purpose | PR | Status |
 |------|---------|-----|--------|
+| `sidebar-polish-retrospective.md` | Document rename/delete, theme polish, mobile dropdown fix | - | Done |
 | `rustling-crafting-gosling.md` | Playbar: SoundTouchJS speed control, loading states, UI slider | - | Done |
 | `markdown-parser-document-format.md` | Markdown parsing pipeline & JSON document format | - | Research |
 | `ux-ui-strategy-session.md` | MVP feature planning & UX/UI strategy | - | Done |
@@ -117,28 +118,25 @@ Task plans get descriptive names. Keep entries after completion for history.
 
 ## Frontend Development (Chrome DevTools MCP)
 
-When working on frontend code, use Chrome DevTools MCP to visually verify changes:
+Use Chrome DevTools MCP to visually verify changes, test user flows, and debug issues.
 
-**Workflow:**
-1. Navigate to `http://localhost:5173` (Vite dev server)
-2. Use `take_snapshot` to get element UIDs for interaction
-3. Use `take_screenshot` to see rendered UI
-4. Interact via `click`, `fill`, `fill_form` using UIDs from snapshot
-5. Check `list_console_messages` for errors after interactions
+**Dev account:** `dev@example.com` / `dev-password-123` (from `scripts/create_user.py`)
+- MCP browser has separate session - login required on first use
+- Login: navigate to localhost:5173 → click Login → fill form → Sign In
 
 **Key commands:**
-- `navigate_page` — go to URL
-- `take_screenshot` — capture current view
-- `take_snapshot` — get DOM tree with UIDs for clicking/filling
-- `click`, `fill`, `fill_form` — interact with elements
-- `list_console_messages` — check for JS errors
-- `resize_page` — test responsive (e.g., 375x812 for mobile)
+- `take_screenshot` — see rendered UI
+- `take_snapshot` — get DOM tree with element UIDs
+- `click`, `fill`, `fill_form` — interact using UIDs from snapshot
+- `list_console_messages` — check for JS errors/warnings
+- `resize_page` — test responsive (375x812 for mobile, 1280x800 for desktop)
 
-**When to use:**
-- After making UI changes, screenshot to verify
-- When debugging layout/styling issues
-- Testing user flows (fill form → click submit → check result)
-- Checking console for React errors or failed requests
+**Use for:**
+- Visual verification after UI changes
+- Console error checking (React errors, failed requests)
+- Mobile/responsive layout testing
+- User flow testing (login → input → playback → controls)
+- Edge case verification without manual testing
 
 ## Coding Conventions
 
