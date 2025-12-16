@@ -41,6 +41,7 @@ async function loadModel(): Promise<KokoroTTS> {
   const device = hasWebGPU ? "webgpu" : "wasm";
   const dtype = device === "wasm" ? "q8" : "fp32";
 
+  console.log(`[TTS Worker] Device: ${device}, dtype: ${dtype}`);
   post({ type: "device", device, dtype });
 
   const instance = await KokoroTTS.from_pretrained(MODEL_ID, {
@@ -61,12 +62,18 @@ self.addEventListener("message", async (e: MessageEvent<MainMessage>) => {
 
   if (type === "synthesize") {
     const { text, voice, requestId } = e.data;
+    const synthStart = performance.now();
 
     try {
       // Lazy load model on first synthesis
       if (!tts) {
         if (!loadingPromise) {
+          console.log("[TTS Worker] Starting model load...");
+          const loadStart = performance.now();
           loadingPromise = loadModel();
+          loadingPromise.then(() => {
+            console.log(`[TTS Worker] Model loaded in ${(performance.now() - loadStart).toFixed(0)}ms`);
+          });
         }
         tts = await loadingPromise;
 
@@ -76,17 +83,22 @@ self.addEventListener("message", async (e: MessageEvent<MainMessage>) => {
       }
 
       // Synthesize audio - voice type is checked at runtime
+      console.log(`[TTS Worker] Synthesizing ${text.length} chars...`);
+      const genStart = performance.now();
       const audio = await tts.generate(text, { voice: voice as "af_heart" });
+      console.log(`[TTS Worker] Generated in ${(performance.now() - genStart).toFixed(0)}ms`);
 
       // Transfer audio data (zero-copy)
       // RawAudio has .audio (Float32Array) and .sampling_rate
       const audioData = audio.audio.buffer.slice(0);
+      console.log(`[TTS Worker] Total request time: ${(performance.now() - synthStart).toFixed(0)}ms`);
       post(
         { type: "audio", requestId, audioData, sampleRate: audio.sampling_rate },
         [audioData]
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      console.error("[TTS Worker] Error:", message);
       post({ type: "error", requestId, error: message });
     }
   }

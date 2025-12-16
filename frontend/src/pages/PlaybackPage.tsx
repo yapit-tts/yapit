@@ -6,6 +6,7 @@ import { useApi } from '@/api';
 import { Loader2 } from "lucide-react";
 import { AudioPlayer } from '@/lib/audio';
 import { useBrowserTTS } from '@/lib/browserTTS';
+import { type VoiceSelection, getVoiceSelection } from '@/lib/voiceSelection';
 
 interface Block {
   id: number;
@@ -54,6 +55,7 @@ const PlaybackPage = () => {
   const [volume, setVolume] = useState<number>(50);
   const [playbackSpeed, setPlaybackSpeed] = useState<number>(1.0);
   const [isSynthesizing, setIsSynthesizing] = useState<boolean>(false);
+  const [voiceSelection, setVoiceSelection] = useState<VoiceSelection>(getVoiceSelection);
 
   // Audio setup variables
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -61,6 +63,7 @@ const PlaybackPage = () => {
   const audioPlayerRef = useRef<AudioPlayer | null>(null);
   const [currentBlock, setCurrentBlock] = useState<number>(-1);
 	const audioBuffersRef = useRef<Map<number, AudioBufferData>>(new Map());
+	const synthesizingRef = useRef<Set<number>>(new Set()); // Track in-progress synthesis
 	const [audioProgress, setAudioProgress] = useState<number>(0);
 	const blockStartTimeRef = useRef<number>(0);
 	const [actualTotalDuration, setActualTotalDuration] = useState<number>(0);
@@ -167,11 +170,24 @@ const PlaybackPage = () => {
 
 
   const synthesizeBlock = useCallback(async (blockId: number): Promise<AudioBufferData | null> => {
+    // Check if already cached
+    const cached = audioBuffersRef.current.get(blockId);
+    if (cached) {
+      console.log(`[Playback] Block ${blockId} already cached, returning`);
+      return cached;
+    }
+
+    // Check if synthesis already in progress
+    if (synthesizingRef.current.has(blockId)) {
+      console.log(`[Playback] Block ${blockId} already synthesizing, skipping`);
+      return null;
+    }
+
     try {
       // Find the block to get its text
       const block = documentBlocks.find(b => b.id === blockId);
       if (!block) {
-        console.error("Block not found:", blockId);
+        console.error("[Playback] Block not found:", blockId);
         return null;
       }
 
@@ -179,8 +195,15 @@ const PlaybackPage = () => {
         return null;
       }
 
+      // Mark as synthesizing
+      synthesizingRef.current.add(blockId);
+      console.log(`[Playback] Starting synthesis for block ${blockId} (idx ${block.idx}, ${block.text.length} chars)`);
+      const startTime = performance.now();
+
       // Synthesize using browser TTS (Kokoro.js in Web Worker)
-      const { audio: floatData, sampleRate } = await browserTTS.synthesize(block.text, {});
+      const voice = voiceSelection.model === "kokoro" ? voiceSelection.voiceSlug : "af_heart";
+      const { audio: floatData, sampleRate } = await browserTTS.synthesize(block.text, { voice });
+      console.log(`[Playback] Block ${blockId} synthesized in ${(performance.now() - startTime).toFixed(0)}ms`);
 
       // Resample from 24000Hz to 44100Hz for SoundTouchJS compatibility
       const inputFrames = floatData.length;
@@ -209,8 +232,9 @@ const PlaybackPage = () => {
         duration_ms: actualDurationMs
       };
 
-      // Store in buffer map
+      // Store in buffer map and clear synthesizing flag
       audioBuffersRef.current.set(blockId, audioBufferData);
+      synthesizingRef.current.delete(blockId);
 
       // Calculate and store duration correction
       const estimatedDuration = block.est_duration_ms || 0;
@@ -226,11 +250,12 @@ const PlaybackPage = () => {
 
       return audioBufferData;
     } catch (error) {
-      console.error("Error synthesizing block:", error);
+      console.error("[Playback] Error synthesizing block:", error);
+      synthesizingRef.current.delete(blockId);
       setIsPlaying(false);
       return null;
     }
-  }, [browserTTS.synthesize, documentBlocks]);
+  }, [browserTTS.synthesize, documentBlocks, voiceSelection]);
 
   const playAudioBuffer = useCallback((audioBufferData: AudioBufferData) => {
     if (!audioPlayerRef.current) return;
@@ -275,15 +300,42 @@ const PlaybackPage = () => {
       return;
     }
 
-    const PREFETCH_COUNT = 3; // Buffer this many blocks ahead
+    console.log(`[Playback] Block change: currentBlock=${currentBlock}, cache size=${audioBuffersRef.current.size}`);
+
+    const PREFETCH_COUNT = 2;
     const EVICT_THRESHOLD = 5; // Remove buffers this many blocks behind
 
-    // Pre-synthesize upcoming blocks
+    // IMPORTANT: Play/synthesize current block FIRST before prefetching
+    if (currentBlock < documentBlocks.length) {
+      const currentBlockId = documentBlocks[currentBlock]?.id;
+      if (!currentBlockId) return;
+
+      const audioData = audioBuffersRef.current.get(currentBlockId);
+      if (audioData) {
+        console.log(`[Playback] Cache HIT for block ${currentBlockId}, playing immediately`);
+        setIsSynthesizing(false);
+        playAudioBuffer(audioData);
+      } else {
+        // Show loading state while synthesizing current block
+        console.log(`[Playback] Cache MISS for block ${currentBlockId}, synthesizing FIRST...`);
+        setIsSynthesizing(true);
+        synthesizeBlock(currentBlockId).then(audioData => {
+          setIsSynthesizing(false);
+          if (audioData && isPlayingRef.current) {
+            playAudioBuffer(audioData);
+          }
+        });
+      }
+    }
+
+    // Pre-synthesize upcoming blocks AFTER current block is queued
+    // (fire and forget - they cache themselves)
     for (let i = 1; i <= PREFETCH_COUNT; i++) {
       const targetIdx = currentBlock + i;
       if (targetIdx < documentBlocks.length) {
         const blockId = documentBlocks[targetIdx].id;
         if (!audioBuffersRef.current.has(blockId)) {
+          console.log(`[Playback] Prefetching block ${blockId} (idx ${targetIdx})`);
           synthesizeBlock(blockId);
         }
       }
@@ -294,29 +346,9 @@ const PlaybackPage = () => {
       for (let i = 0; i < currentBlock - EVICT_THRESHOLD; i++) {
         const oldBlockId = documentBlocks[i]?.id;
         if (oldBlockId && audioBuffersRef.current.has(oldBlockId)) {
+          console.log(`[Playback] Evicting block ${oldBlockId} (idx ${i})`);
           audioBuffersRef.current.delete(oldBlockId);
         }
-      }
-    }
-
-    // Play current block
-    if (currentBlock < documentBlocks.length) {
-      const currentBlockId = documentBlocks[currentBlock]?.id;
-      if (!currentBlockId) return;
-
-      const audioData = audioBuffersRef.current.get(currentBlockId);
-      if (audioData) {
-        setIsSynthesizing(false);
-        playAudioBuffer(audioData);
-      } else {
-        // Show loading state while synthesizing current block
-        setIsSynthesizing(true);
-        synthesizeBlock(currentBlockId).then(audioData => {
-          setIsSynthesizing(false);
-          if (audioData && isPlayingRef.current) {
-            playAudioBuffer(audioData);
-          }
-        });
       }
     }
   }, [currentBlock, isPlaying, documentBlocks, playAudioBuffer, synthesizeBlock]);
@@ -464,6 +496,8 @@ const PlaybackPage = () => {
         onVolumeChange={handleVolumeChange}
         playbackSpeed={playbackSpeed}
         onSpeedChange={handleSpeedChange}
+        voiceSelection={voiceSelection}
+        onVoiceChange={setVoiceSelection}
       />
     </div>
   );

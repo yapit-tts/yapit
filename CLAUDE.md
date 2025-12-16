@@ -109,6 +109,7 @@ Plans live in `~/.claude/plans/`.
 
 | File | Purpose | Status | Read When |
 |------|---------|--------|-----------|
+| `model-voice-picker.md` | Model/voice picker in playback controls | Done | VoicePicker component, voice state, localStorage persistence |
 | `plan-index-improvement.md` | Meta: improve plan index | Done | - |
 | `higgs-audio-investigation.md` | HIGGS model capabilities, voice params, vLLM vs native | Research Complete | HIGGS integration, voice config params, cold start issues |
 | `tts-performance-investigation.md` | Browser TTS perf, WASM slowness | In Progress | Slow synthesis, WASM debugging, prefetch timing |

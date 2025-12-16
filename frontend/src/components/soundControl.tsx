@@ -2,6 +2,8 @@ import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { Play, Pause, Volume2, SkipBack, SkipForward, Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
+import { VoicePicker } from "@/components/voicePicker";
+import { type VoiceSelection } from "@/lib/voiceSelection";
 
 interface ProgressBarValues {
   estimated_ms: number | undefined;
@@ -23,6 +25,8 @@ interface Props {
   onVolumeChange: (value: number) => void;
   playbackSpeed: number;
   onSpeedChange: (value: number) => void;
+  voiceSelection: VoiceSelection;
+  onVoiceChange: (selection: VoiceSelection) => void;
 }
 
 function msToTime(duration: number | undefined): string {
@@ -51,6 +55,8 @@ const SoundControl = ({
   onVolumeChange,
   playbackSpeed,
   onSpeedChange,
+  voiceSelection,
+  onVoiceChange,
 }: Props) => {
   const { estimated_ms, numberOfBlocks, currentBlock, setCurrentBlock, audioProgress } = progressBarValues;
   const [progressDisplay, setProgressDisplay] = useState("0:00");
@@ -128,11 +134,14 @@ const SoundControl = ({
         </span>
       </div>
 
-      {/* Block info, speed, and volume */}
+      {/* Voice picker, block info, speed, and volume */}
       <div className="flex items-center justify-between mt-2 max-w-2xl mx-auto">
-        <span className="text-xs text-muted-foreground">
-          Block {blockNum} of {numBlocks}
-        </span>
+        <div className="flex items-center gap-3">
+          <VoicePicker value={voiceSelection} onChange={onVoiceChange} />
+          <span className="text-xs text-muted-foreground">
+            Block {blockNum} of {numBlocks}
+          </span>
+        </div>
         <div className="flex items-center gap-4">
           {/* Speed control slider */}
           <div className="flex items-center gap-2">
