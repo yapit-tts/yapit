@@ -26,7 +26,6 @@ from yapit.gateway.deps import (
     DocumentCache,
     DocumentProcessorManagerDep,
     SettingsDep,
-    TextSplitterDep,
     ensure_admin_credits,
 )
 from yapit.gateway.domain_models import (
@@ -42,6 +41,7 @@ from yapit.gateway.processors.document.base import (
     ExtractedPage,
     get_uncached_pages,
 )
+from yapit.gateway.processors.markdown import parse_markdown, transform_to_document
 
 router = APIRouter(prefix="/v1/documents", tags=["Documents"], dependencies=[Depends(authenticate)])
 log = logging.getLogger(__name__)
@@ -236,13 +236,12 @@ async def create_text_document(
     req: TextDocumentCreateRequest,
     db: DbSession,
     user: AuthenticatedUser,
-    plaintext_splitter: TextSplitterDep,
 ) -> DocumentCreateResponse:
     """Create a document from direct text input."""
-    text_blocks = plaintext_splitter.split(text=req.content)
-
-    # TODO: Implement proper XML generation for structured content
-    structured_content = req.content  # Placeholder until XML generation is implemented
+    ast = parse_markdown(req.content)
+    structured_doc = transform_to_document(ast)
+    structured_content = structured_doc.model_dump_json()
+    text_blocks = structured_doc.get_audio_blocks()
 
     doc = await _create_document_with_blocks(
         db=db,
@@ -273,7 +272,6 @@ async def create_website_document(
     cache: DocumentCache,
     settings: SettingsDep,
     user: AuthenticatedUser,
-    splitter: TextSplitterDep,
 ) -> DocumentCreateResponse:
     """Create a document from a live website."""
     cached_data = await cache.retrieve_data(req.hash)
@@ -312,11 +310,10 @@ async def create_website_document(
 
     extracted_text = extraction_result.pages[0].markdown  # website are just a single page
 
-    # TODO use md-aware parser to get blocks + structured content
-    text_blocks = splitter.split(text=extracted_text)
-
-    # TODO: Implement proper XML generation from markdown
-    structured_content = extracted_text  # Placeholder until XML generation is implemented
+    ast = parse_markdown(extracted_text)
+    structured_doc = transform_to_document(ast)
+    structured_content = structured_doc.model_dump_json()
+    text_blocks = structured_doc.get_audio_blocks()
 
     doc = await _create_document_with_blocks(
         db=db,
@@ -345,7 +342,6 @@ async def create_document(
     cache: DocumentCache,
     user: AuthenticatedUser,
     user_credits: AuthenticatedUserCredits,
-    splitter: TextSplitterDep,
     document_processor_manager: DocumentProcessorManagerDep,
 ) -> DocumentCreateResponse:
     """Create a document from a file (PDF, image, etc)."""
@@ -383,11 +379,10 @@ async def create_document(
 
     extracted_text: str = "\n\n".join(page.markdown for page in extraction_result.pages.values())
 
-    # TODO use md-aware parser to get blocks + structured content
-    text_blocks = splitter.split(text=extracted_text)
-
-    # TODO: Implement proper XML generation from markdown
-    structured_content = extracted_text  # Placeholder until XML generation is implemented
+    ast = parse_markdown(extracted_text)
+    structured_doc = transform_to_document(ast)
+    structured_content = structured_doc.model_dump_json()
+    text_blocks = structured_doc.get_audio_blocks()
 
     doc = await _create_document_with_blocks(
         db=db,
