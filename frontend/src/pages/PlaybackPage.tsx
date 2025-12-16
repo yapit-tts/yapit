@@ -1,5 +1,5 @@
 import { SoundControl } from '@/components/soundControl';
-import { DocumentCard } from '../components/documentCard';
+import { StructuredDocumentView } from '@/components/structuredDocument';
 import { useParams, useLocation } from "react-router";
 import { useRef, useState, useEffect, useCallback } from "react";
 import { useApi } from '@/api';
@@ -41,7 +41,8 @@ const PlaybackPage = () => {
 
   // Derived state
   const documentTitle = document?.title ?? initialTitle;
-  const documentContent = document?.filtered_text ?? document?.original_text ?? "";
+  const structuredContent = document?.structured_content ?? null;
+  const fallbackContent = document?.filtered_text ?? document?.original_text ?? "";
   const numberOfBlocks = documentBlocks.length;
   const estimated_ms = documentBlocks.reduce((sum, b) => sum + (b.est_duration_ms || 0), 0);
 
@@ -391,6 +392,15 @@ const PlaybackPage = () => {
     blockStartTimeRef.current = progressMs;
     setAudioProgress(progressMs);
     setCurrentBlock(newBlock);
+
+    // If already playing, the useEffect will auto-play the new block
+    // If paused, just set position (user can press play)
+  };
+
+  // Handle click on structured document block (by audio_block_idx)
+  const handleDocumentBlockClick = (audioBlockIdx: number) => {
+    // audio_block_idx maps directly to documentBlocks index
+    handleBlockChange(audioBlockIdx);
   };
 
   const handleVolumeChange = (newVolume: number) => {
@@ -419,7 +429,13 @@ const PlaybackPage = () => {
 
   return (
     <div className="flex grow pb-32">
-      <DocumentCard title={documentTitle} content={documentContent} />
+      <StructuredDocumentView
+        structuredContent={structuredContent}
+        title={documentTitle}
+        currentAudioBlockIdx={currentBlock}
+        onBlockClick={handleDocumentBlockClick}
+        fallbackContent={fallbackContent}
+      />
       <SoundControl
         isPlaying={isPlaying}
         isSynthesizing={isSynthesizing}

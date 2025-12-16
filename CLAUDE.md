@@ -97,9 +97,10 @@ Plans live in `~/.claude/plans/`.
 
 | File | Purpose | PR | Status |
 |------|---------|-----|--------|
+| `frontend-structured-document-rendering.md` | Frontend rendering of structured document blocks | #51 | Done |
+| `markdown-parser-document-format.md` | Markdown parsing pipeline & JSON document format | #50 | Done |
 | `sidebar-polish-retrospective.md` | Document rename/delete, theme polish, mobile dropdown fix | - | Done |
 | `rustling-crafting-gosling.md` | Playbar: SoundTouchJS speed control, loading states, UI slider | - | Done |
-| `markdown-parser-document-format.md` | Markdown parsing pipeline & JSON document format | - | Ready |
 | `ux-ui-strategy-session.md` | MVP feature planning & UX/UI strategy | - | Done |
 | `yapit-browser-processor-review.md` | ClientProcessor backend for browser TTS | #48 | Done |
 | `yapit-project-review.md` | GitHub project data review, roadmap update | - | Done |
