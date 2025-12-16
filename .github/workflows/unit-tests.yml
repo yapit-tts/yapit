@@ -2,6 +2,7 @@ name: Unit Tests
 
 on:
   push:
+    branches: [main, dev]
     paths-ignore:
       - 'notes/**'
       - 'docs/**'
@@ -10,7 +11,6 @@ on:
       - '**/*.txt'
       - '**/*.ipynb'
   pull_request:
-    types: [opened, reopened]
     paths-ignore:
       - 'notes/**'
       - 'docs/**'

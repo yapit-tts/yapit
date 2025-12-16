@@ -17,6 +17,7 @@ Note: We don't work heavily with GitHub issues (solo dev + claude for now -- the
 - No default values in Settings class - only defaults in `.env*` files
 - `make test-local` for basic tests, `make test` for full suite (needs API keys)
 - `make dev-cpu` to start backend (or `make dev-mac` on macOS)
+- **CI timing**: Integration tests take 4-5 minutes (Docker build). Wait for all checks before merging PRs.
 
 ## Agent Work Process
 
