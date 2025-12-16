@@ -1,4 +1,6 @@
 
+Currently we're working towards Yapit TTS v1, aka the first deploy (still private).
+
 ## Project Overview
 
 Yapit TTS - Open-source text-to-speech platform for reading documents, web pages, and text.
@@ -12,7 +14,9 @@ Note: We don't work heavily with GitHub issues (solo dev + claude for now -- the
 
 ## Build & Test
 
-- Tests, builds, deploys via Makefile
+- Run tests, builds, deploys ONLY via Makefile commands
+    - This is to ensure these commands are documented, version controlled, and consistent
+    - Exceptions for one-off scripts, debugging or similar
 - Test workflow: `.github/workflows/`
 - No default values in Settings class - only defaults in `.env*` files
 - `make test-local` for basic tests, `make test` for full suite (needs API keys)
@@ -31,6 +35,10 @@ Note: We don't work heavily with GitHub issues (solo dev + claude for now -- the
 
 - **Create/continue task-specific plan files** for your work
 - Commit code frequently - don't accumulate large uncommitted changes
+- Update plan file notes as you go with findings, changes, insights, mistakes
+ - Make sure to do this from time to time / before context runs out / auto-compacts (such that the hand-offs have high-fidelity context, i can review those files and give feedback on what you want to write there before you compact, etc.)
+ - This is your place to capture thoughts, decisions, and context for future reference. Code comments are NOT the place for explaining architectural or design decisions (unless the code is tricky to understand, even with context of the plan file and architecture doc).
+ - It also helps you not needing to rush and panic implement stuff as you get "low context warnings" - don't rush, update the plan file incrementally, take your time to reflect on approaches, ask questions, plan, etc. When you run into auto-compaction, ~everything important should already be documented in this plan file, so you have low pressure towards the end and compaction isn't low fidelity / misinterprets things without me yk being able to double check it.
 
 ### Plan File Structure
 
@@ -84,6 +92,10 @@ Granular task tracking belongs in working todos during implementation, not the p
 - `dev` - integration branch
 - Feature branches merge to `dev` via PR, then deleted
 
+**Merge vs Rebase**: We use merge commits (not rebase) for PRs. Merges preserve commit history which is valuable for `git bisect` when tracking down regressions. Rebasing rewrites history and loses the ability to bisect through individual commits that were on the feature branch.
+
+**Releases**: No tags or releases until actual deployment. Version numbers in docs (v0, v1, etc.) are informal priority indicators, not tracked versions.
+
 ## Plan Files
 
 Plans live in `~/.claude/plans/`.
@@ -95,17 +107,21 @@ Plans live in `~/.claude/plans/`.
 
 **Task-specific plans:** (most recent on top)
 
-| File | Purpose | PR / Commit | Status |
-|------|---------|-------------|--------|
-| `bugs-and-tech-debt.md` | 401 errors, sidebar refresh, code review & cleanup | 8e61185 | Done |
-| `prefetching-optimization.md` | Buffer 3+ blocks ahead to prevent playback stutters | - | Planned |
-| `frontend-structured-document-rendering.md` | Frontend rendering of structured document blocks | b251854 | Done |
-| `markdown-parser-document-format.md` | Markdown parsing pipeline & JSON document format | #50 | Done |
-| `sidebar-polish-retrospective.md` | Document rename/delete, theme polish, mobile dropdown fix | - | Done |
-| `rustling-crafting-gosling.md` | Playbar: SoundTouchJS speed control, loading states, UI slider | - | Done |
-| `ux-ui-strategy-session.md` | MVP feature planning & UX/UI strategy | - | Done |
-| `yapit-browser-processor-review.md` | ClientProcessor backend for browser TTS | #48 | Done |
-| `yapit-project-review.md` | GitHub project data review, roadmap update | - | Done |
+| File | Purpose | Status | Read When |
+|------|---------|--------|-----------|
+| `plan-index-improvement.md` | Meta: improve plan index | Done | - |
+| `higgs-audio-investigation.md` | HIGGS model capabilities, voice params, vLLM vs native | Research Complete | HIGGS integration, voice config params, cold start issues |
+| `tts-performance-investigation.md` | Browser TTS perf, WASM slowness | In Progress | Slow synthesis, WASM debugging, prefetch timing |
+| `kokoro-js-frontend.md` | Browser TTS (Kokoro.js), anonymous auth | Phase 2 Done | useBrowserTTS hook, anonymous flow, browser TTS bugs |
+| `bugs-and-tech-debt.md` | Auth race conditions, dead code cleanup | Done | API provider patterns, isAuthReady, dropdown+dialog state |
+| `prefetching-optimization.md` | Audio block buffering | Done | Playback stutters, PREFETCH_COUNT tuning |
+| `frontend-structured-document-rendering.md` | Block rendering, click-to-jump | Done | StructuredDocument component, block highlighting |
+| `markdown-parser-document-format.md` | Markdown parsing, JSON format | Done | StructuredDocument schema, audioBlockIdx, markdown-it-py |
+| `sidebar-polish-retrospective.md` | Rename/delete, theme, dropdowns | Done | Radix dropdown patterns, theme colors, controlled state |
+| `rustling-crafting-gosling.md` | SoundTouchJS speed control | Done | Sample rate issues (44100 vs 24000), AudioPlayer, pitch-preserving playback |
+| `ux-ui-strategy-session.md` | MVP feature planning | Done | Product direction, voice picker UX, anonymous flow decisions |
+| `yapit-browser-processor-review.md` | ClientProcessor backend | Done | ClientProcessor flow, job_id coordination, /tts/submit endpoint |
+| `yapit-project-review.md` | GitHub issue status review | Done | - |
 
 Task plans get descriptive names. Keep entries after completion for history.
 
