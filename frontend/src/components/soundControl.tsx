@@ -1,6 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
-import { Play, Pause, Volume2, SkipBack, SkipForward, Loader2 } from "lucide-react";
+import { Play, Pause, Volume2, SkipBack, SkipForward, Loader2, Square } from "lucide-react";
 import { useEffect, useState } from "react";
 import { VoicePicker } from "@/components/voicePicker";
 import { type VoiceSelection } from "@/lib/voiceSelection";
@@ -18,6 +18,7 @@ interface Props {
   isSynthesizing: boolean;
   onPlay: () => void;
   onPause: () => void;
+  onCancelSynthesis: () => void;
   onSkipBack: () => void;
   onSkipForward: () => void;
   progressBarValues: ProgressBarValues;
@@ -48,6 +49,7 @@ const SoundControl = ({
   isSynthesizing,
   onPlay,
   onPause,
+  onCancelSynthesis,
   onSkipBack,
   onSkipForward,
   progressBarValues,
@@ -61,6 +63,7 @@ const SoundControl = ({
   const { estimated_ms, numberOfBlocks, currentBlock, setCurrentBlock, audioProgress } = progressBarValues;
   const [progressDisplay, setProgressDisplay] = useState("0:00");
   const [durationDisplay, setDurationDisplay] = useState("0:00");
+  const [isHoveringSpinner, setIsHoveringSpinner] = useState(false);
 
   useEffect(() => {
     setProgressDisplay(msToTime(audioProgress));
@@ -96,11 +99,16 @@ const SoundControl = ({
           variant="secondary"
           size="lg"
           className="rounded-full w-14 h-14"
-          onClick={isPlaying ? onPause : onPlay}
-          disabled={isSynthesizing}
+          onClick={isSynthesizing ? onCancelSynthesis : isPlaying ? onPause : onPlay}
+          onMouseEnter={() => isSynthesizing && setIsHoveringSpinner(true)}
+          onMouseLeave={() => setIsHoveringSpinner(false)}
         >
           {isSynthesizing ? (
-            <Loader2 className="h-6 w-6 animate-spin" />
+            isHoveringSpinner ? (
+              <Square className="h-5 w-5 fill-current" />
+            ) : (
+              <Loader2 className="h-6 w-6 animate-spin" />
+            )
           ) : isPlaying ? (
             <Pause className="h-6 w-6" />
           ) : (

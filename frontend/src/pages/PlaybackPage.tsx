@@ -415,6 +415,16 @@ const PlaybackPage = () => {
     audioPlayerRef.current?.pause();
   };
 
+  // Cancel synthesis - stop waiting for TTS, reset to ready state
+  const handleCancelSynthesis = () => {
+    setIsPlaying(false);
+    setIsSynthesizing(false);
+    audioPlayerRef.current?.stop();
+
+    // Clear pending synthesis queue (let in-progress ones finish, they'll just cache)
+    synthesizingRef.current.clear();
+  };
+
   const handleSkipBack = () => {
     // Stop current audio
     audioPlayerRef.current?.stop();
@@ -523,6 +533,7 @@ const PlaybackPage = () => {
         isSynthesizing={isSynthesizing}
         onPlay={handlePlay}
         onPause={handlePause}
+        onCancelSynthesis={handleCancelSynthesis}
         onSkipBack={handleSkipBack}
         onSkipForward={handleSkipForward}
         progressBarValues={{
