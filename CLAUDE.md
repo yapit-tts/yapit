@@ -98,6 +98,8 @@ Plans live in `~/.claude/plans/`.
 |------|---------|-----|--------|
 | `yapit-browser-processor-review.md` | ClientProcessor backend for browser TTS | #48 | Active |
 | `yapit-project-review.md` | GitHub project data review, roadmap update | - | Done |
+| `virtual-spinning-hammock.md` | Project overview & handover document | - | Reference |
+| `ux-ui-strategy-session.md` | MVP feature planning & UX/UI strategy | - | Pending |
 
 Task plans get descriptive names. Keep entries after completion for history.
 
