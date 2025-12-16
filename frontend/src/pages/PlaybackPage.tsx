@@ -5,6 +5,7 @@ import { useRef, useState, useEffect, useCallback } from "react";
 import { useApi } from '@/api';
 import { Loader2 } from "lucide-react";
 import { AudioPlayer } from '@/lib/audio';
+import { useBrowserTTS } from '@/lib/browserTTS';
 
 interface Block {
   id: number;
@@ -32,6 +33,7 @@ const PlaybackPage = () => {
   const initialTitle: string | undefined = state?.documentTitle;
 
   const { api, isAuthReady } = useApi();
+  const browserTTS = useBrowserTTS();
 
   // Document data fetched from API
   const [document, setDocument] = useState<DocumentResponse | null>(null);
@@ -166,91 +168,69 @@ const PlaybackPage = () => {
 
   const synthesizeBlock = useCallback(async (blockId: number): Promise<AudioBufferData | null> => {
     try {
-      const response = await api.post(
-        `/v1/documents/${documentId}/blocks/${blockId}/synthesize/models/kokoro-cpu/voices/af_heart`,
-        {},
-        { responseType: 'arraybuffer' }
-      );
-      
-      const arrayBuffer = response.data;
-      const sampleRate = parseInt(response.headers['x-sample-rate'] || '24000');
-      const channels = parseInt(response.headers['x-channels'] || '1');
-      const codec = response.headers['x-audio-codec'] || 'pcm';
-      const durationMs = parseInt(response.headers['x-duration-ms'] || '0');
-      
+      // Find the block to get its text
+      const block = documentBlocks.find(b => b.id === blockId);
+      if (!block) {
+        console.error("Block not found:", blockId);
+        return null;
+      }
+
       if (!audioContextRef.current) {
         return null;
       }
-      
-      let audioBuffer: AudioBuffer;
-      
-      if (codec === 'pcm') {
-        // Handle raw PCM data - resample to 44100Hz for SoundTouchJS compatibility
-        const pcmData = new Int16Array(arrayBuffer);
-        const inputFrames = pcmData.length / channels;
-        const targetSampleRate = 44100;
-        const resampleRatio = targetSampleRate / sampleRate;
-        const outputFrames = Math.ceil(inputFrames * resampleRatio);
 
-        audioBuffer = audioContextRef.current.createBuffer(channels, outputFrames, targetSampleRate);
+      // Synthesize using browser TTS (Kokoro.js in Web Worker)
+      const { audio: floatData, sampleRate } = await browserTTS.synthesize(block.text, {});
 
-        // Linear interpolation resampling from 24000Hz to 44100Hz
-        for (let channel = 0; channel < channels; channel++) {
-          const outputData = audioBuffer.getChannelData(channel);
-          for (let outFrame = 0; outFrame < outputFrames; outFrame++) {
-            const inPos = outFrame / resampleRatio;
-            const inFrame = Math.floor(inPos);
-            const frac = inPos - inFrame;
+      // Resample from 24000Hz to 44100Hz for SoundTouchJS compatibility
+      const inputFrames = floatData.length;
+      const targetSampleRate = 44100;
+      const resampleRatio = targetSampleRate / sampleRate;
+      const outputFrames = Math.ceil(inputFrames * resampleRatio);
 
-            const idx1 = inFrame * channels + channel;
-            const idx2 = Math.min(inFrame + 1, inputFrames - 1) * channels + channel;
+      const audioBuffer = audioContextRef.current.createBuffer(1, outputFrames, targetSampleRate);
+      const outputData = audioBuffer.getChannelData(0);
 
-            const sample1 = pcmData[idx1] / 32768.0;
-            const sample2 = pcmData[idx2] / 32768.0;
-            outputData[outFrame] = sample1 + frac * (sample2 - sample1);
-          }
-        }
-      } else {
-        // Handle encoded audio formats (WAV, MP3, OGG, etc.)
-        audioBuffer = await audioContextRef.current.decodeAudioData(arrayBuffer);
+      // Linear interpolation resampling
+      for (let outFrame = 0; outFrame < outputFrames; outFrame++) {
+        const inPos = outFrame / resampleRatio;
+        const inFrame = Math.floor(inPos);
+        const frac = inPos - inFrame;
+
+        const sample1 = floatData[inFrame] ?? 0;
+        const sample2 = floatData[Math.min(inFrame + 1, inputFrames - 1)] ?? 0;
+        outputData[outFrame] = sample1 + frac * (sample2 - sample1);
       }
-      
-      const actualDurationMs = durationMs > 0 ? durationMs : Math.round(audioBuffer.duration * 1000);
-      
+
+      const actualDurationMs = Math.round(audioBuffer.duration * 1000);
+
       const audioBufferData: AudioBufferData = {
         buffer: audioBuffer,
         duration_ms: actualDurationMs
       };
-      
+
       // Store in buffer map
       audioBuffersRef.current.set(blockId, audioBufferData);
-      
+
       // Calculate and store duration correction
-      if (documentBlocks && documentBlocks.length > 0) {
-        const block = documentBlocks.find(b => b.id === blockId);
-        if (block) {
-          const estimatedDuration = block.est_duration_ms || 0;
-          const actualDuration = actualDurationMs || 0;
-          const correction = actualDuration - estimatedDuration;
-          
-          durationCorrectionsRef.current.set(blockId, correction);
-          
-          // Recalculate total if we have initial estimate
-          if (initialTotalEstimateRef.current > 0) {
-            const totalCorrection = Array.from(durationCorrectionsRef.current.values()).reduce((sum, corr) => sum + corr, 0);
-            const newTotal = initialTotalEstimateRef.current + totalCorrection;
-            setActualTotalDuration(newTotal);
-          }
-        }
+      const estimatedDuration = block.est_duration_ms || 0;
+      const correction = actualDurationMs - estimatedDuration;
+      durationCorrectionsRef.current.set(blockId, correction);
+
+      // Recalculate total if we have initial estimate
+      if (initialTotalEstimateRef.current > 0) {
+        const totalCorrection = Array.from(durationCorrectionsRef.current.values()).reduce((sum, corr) => sum + corr, 0);
+        const newTotal = initialTotalEstimateRef.current + totalCorrection;
+        setActualTotalDuration(newTotal);
       }
-      
+
       return audioBufferData;
     } catch (error) {
-      console.error("Error synthesizing block: ", error);
+      console.error("Error synthesizing block:", error);
       setIsPlaying(false);
       return null;
     }
-  }, [api, documentId, documentBlocks]);
+  }, [browserTTS.synthesize, documentBlocks]);
 
   const playAudioBuffer = useCallback((audioBufferData: AudioBufferData) => {
     if (!audioPlayerRef.current) return;
