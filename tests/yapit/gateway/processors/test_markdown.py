@@ -267,6 +267,44 @@ class TestParagraphSplitting:
         assert len(doc.blocks) == 1
         assert doc.blocks[0].visual_group_id is None
 
+    def test_split_preserves_bold_formatting(self):
+        """Bold formatting is preserved when paragraph is split."""
+        text = "This paper presents **Yapit**, an open-source platform. It provides text-to-speech capabilities."
+        ast = parse_markdown(text)
+        doc = transform_to_document(ast, max_block_chars=60)
+
+        # Should split into 2 blocks
+        assert len(doc.blocks) == 2
+
+        # First block should have bold formatting in HTML
+        assert "<strong>Yapit</strong>" in doc.blocks[0].html
+
+        # First block AST should contain strong node
+        ast_types = [node.type for node in doc.blocks[0].ast]
+        assert "strong" in ast_types
+
+    def test_split_preserves_italic_formatting(self):
+        """Italic formatting is preserved when paragraph is split."""
+        text = "The *important* feature is speed. Another sentence here to force a split."
+        ast = parse_markdown(text)
+        doc = transform_to_document(ast, max_block_chars=40)
+
+        # Should split
+        assert len(doc.blocks) >= 2
+
+        # First block should have italic formatting
+        assert "<em>important</em>" in doc.blocks[0].html
+
+    def test_split_preserves_nested_formatting(self):
+        """Nested formatting (bold inside italic) is preserved."""
+        text = "Here is *italic with **bold** inside* text. More text here to split."
+        ast = parse_markdown(text)
+        doc = transform_to_document(ast, max_block_chars=50)
+
+        # First block should have nested formatting
+        assert "<em>" in doc.blocks[0].html
+        assert "<strong>" in doc.blocks[0].html
+
 
 class TestAudioBlockIndexing:
     """Test audio block index assignment."""
