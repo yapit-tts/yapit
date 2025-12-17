@@ -245,6 +245,28 @@ class TestParagraphSplitting:
         for block in doc.blocks:
             assert block.plain_text.endswith(".") or block.plain_text.endswith(".")
 
+    def test_split_paragraphs_share_visual_group_id(self):
+        """Split paragraph blocks share the same visual_group_id."""
+        text = "Sentence one here. Sentence two here. Sentence three here. Sentence four here."
+        ast = parse_markdown(text)
+        doc = transform_to_document(ast, max_block_chars=50)
+
+        # Should have multiple blocks from the same paragraph
+        assert len(doc.blocks) > 1
+        # All should share the same visual_group_id
+        group_ids = [b.visual_group_id for b in doc.blocks]
+        assert all(g == group_ids[0] for g in group_ids)
+        assert group_ids[0] is not None
+
+    def test_unsplit_paragraph_has_no_visual_group_id(self):
+        """Unsplit paragraphs have visual_group_id = None."""
+        text = "Short paragraph."
+        ast = parse_markdown(text)
+        doc = transform_to_document(ast, max_block_chars=1000)
+
+        assert len(doc.blocks) == 1
+        assert doc.blocks[0].visual_group_id is None
+
 
 class TestAudioBlockIndexing:
     """Test audio block index assignment."""

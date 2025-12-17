@@ -35,10 +35,11 @@ from yapit.gateway.processors.markdown.models import (
 class DocumentTransformer:
     """Transforms markdown AST to StructuredDocument."""
 
-    def __init__(self, max_block_chars: int = 1000):
+    def __init__(self, max_block_chars: int = 150):
         self.max_block_chars = max_block_chars
         self._block_counter = 0
         self._audio_idx_counter = 0
+        self._visual_group_counter = 0
         self._md = self._create_renderer()
 
     def _create_renderer(self) -> MarkdownIt:
@@ -59,10 +60,16 @@ class DocumentTransformer:
         self._audio_idx_counter += 1
         return idx
 
+    def _next_visual_group_id(self) -> str:
+        id_ = f"vg{self._visual_group_counter}"
+        self._visual_group_counter += 1
+        return id_
+
     def transform(self, ast: SyntaxTreeNode) -> StructuredDocument:
         """Transform AST root to StructuredDocument."""
         self._block_counter = 0
         self._audio_idx_counter = 0
+        self._visual_group_counter = 0
         blocks = self._transform_children(ast)
         return StructuredDocument(blocks=blocks)
 
@@ -147,6 +154,9 @@ class DocumentTransformer:
         chunks = self._split_text_into_chunks(plain_text)
         blocks = []
 
+        # All blocks from same paragraph share a visual_group_id
+        visual_group_id = self._next_visual_group_id()
+
         for chunk in chunks:
             # For split blocks, we use plain text as both HTML and content
             # This is a simplification - we lose formatting in split blocks
@@ -158,6 +168,7 @@ class DocumentTransformer:
                     ast=[TextContent(content=chunk)],
                     plain_text=chunk,
                     audio_block_idx=self._next_audio_idx(),
+                    visual_group_id=visual_group_id,
                 )
             )
 
@@ -452,10 +463,6 @@ class DocumentTransformer:
             return node.content or ""
 
 
-def transform_to_document(ast: SyntaxTreeNode, max_block_chars: int = 1000) -> StructuredDocument:
-    """Transform markdown AST to StructuredDocument.
-
-    Convenience function that creates a transformer and runs it.
-    """
-    transformer = DocumentTransformer(max_block_chars=max_block_chars)
-    return transformer.transform(ast)
+def transform_to_document(ast: SyntaxTreeNode, **kwargs) -> StructuredDocument:
+    """Transform markdown AST to StructuredDocument."""
+    return DocumentTransformer(**kwargs).transform(ast)

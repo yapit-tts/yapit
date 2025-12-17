@@ -37,6 +37,8 @@ class Settings(BaseSettings):
 
     document_max_download_size: int = 100 * 1024 * 1024  # 100MB default
 
+    max_block_chars: int
+
     stripe_secret_key: str | None = None
     stripe_webhook_secret: str | None = None
 

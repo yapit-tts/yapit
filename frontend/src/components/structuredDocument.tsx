@@ -33,6 +33,7 @@ interface ParagraphBlock {
   ast: InlineContent[];
   plain_text: string;
   audio_block_idx: number;
+  visual_group_id?: string;
 }
 
 interface ListBlock {
@@ -153,11 +154,27 @@ function HeadingBlockView({ block, isActive, onClick }: BlockProps & { block: He
   }
 }
 
-function ParagraphBlockView({ block, isActive, onClick }: BlockProps & { block: ParagraphBlock }) {
+type GroupPosition = "standalone" | "first" | "middle" | "last";
+
+function ParagraphBlockView({
+  block,
+  isActive,
+  onClick,
+  groupPosition = "standalone",
+}: BlockProps & { block: ParagraphBlock; groupPosition?: GroupPosition }) {
+  // Adjust margins and padding based on position in visual group
+  const spacingClass = {
+    standalone: "my-3 py-1",
+    first: "mt-3 mb-0 pt-1 pb-0",
+    middle: "my-0 py-0",
+    last: "mt-0 mb-3 pt-0 pb-1",
+  }[groupPosition];
+
   return (
     <p
       className={cn(
-        "my-3 leading-relaxed py-1",
+        spacingClass,
+        "leading-relaxed",
         onClick && clickableClass,
         isActive && activeBlockClass
       )}
@@ -309,9 +326,10 @@ interface BlockViewProps {
   block: ContentBlock;
   currentAudioBlockIdx: number;
   onBlockClick?: (audioIdx: number) => void;
+  groupPosition?: GroupPosition;
 }
 
-function BlockView({ block, currentAudioBlockIdx, onBlockClick }: BlockViewProps) {
+function BlockView({ block, currentAudioBlockIdx, onBlockClick, groupPosition }: BlockViewProps) {
   const isActive = block.audio_block_idx === currentAudioBlockIdx && currentAudioBlockIdx >= 0;
   const handleClick = block.audio_block_idx !== null && onBlockClick
     ? () => onBlockClick(block.audio_block_idx as number)
@@ -323,7 +341,7 @@ function BlockView({ block, currentAudioBlockIdx, onBlockClick }: BlockViewProps
     case "heading":
       return <HeadingBlockView {...baseProps} block={block} />;
     case "paragraph":
-      return <ParagraphBlockView {...baseProps} block={block} />;
+      return <ParagraphBlockView {...baseProps} block={block} groupPosition={groupPosition} />;
     case "list":
       return <ListBlockView {...baseProps} block={block} />;
     case "blockquote":
@@ -394,6 +412,24 @@ export function StructuredDocumentView({
     );
   }
 
+  // Compute group positions for paragraphs with visual_group_id
+  const getGroupPosition = (block: ContentBlock, idx: number): GroupPosition | undefined => {
+    if (block.type !== "paragraph" || !block.visual_group_id) return undefined;
+
+    const prevBlock = idx > 0 ? doc.blocks[idx - 1] : null;
+    const nextBlock = idx < doc.blocks.length - 1 ? doc.blocks[idx + 1] : null;
+
+    const prevSameGroup =
+      prevBlock?.type === "paragraph" && prevBlock.visual_group_id === block.visual_group_id;
+    const nextSameGroup =
+      nextBlock?.type === "paragraph" && nextBlock.visual_group_id === block.visual_group_id;
+
+    if (!prevSameGroup && !nextSameGroup) return "standalone";
+    if (!prevSameGroup && nextSameGroup) return "first";
+    if (prevSameGroup && nextSameGroup) return "middle";
+    return "last";
+  };
+
   return (
     <article className="flex flex-col overflow-y-auto m-[10%] mt-[4%] prose-container">
       {title && (
@@ -402,12 +438,13 @@ export function StructuredDocumentView({
         </h1>
       )}
       <div className="structured-content">
-        {doc.blocks.map((block) => (
+        {doc.blocks.map((block, idx) => (
           <BlockView
             key={block.id}
             block={block}
             currentAudioBlockIdx={currentAudioBlockIdx}
             onBlockClick={onBlockClick}
+            groupPosition={getGroupPosition(block, idx)}
           />
         ))}
       </div>

@@ -74,6 +74,7 @@ class ParagraphBlock(BaseModel):
     ast: list[InlineContent]
     plain_text: str
     audio_block_idx: int
+    visual_group_id: str | None = None  # Groups split sentences from the same paragraph
 
 
 class ListItem(BaseModel):
