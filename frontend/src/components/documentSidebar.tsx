@@ -214,7 +214,7 @@ function DocumentSidebar() {
       <SidebarFooter className="border-t border-sidebar-border">
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton onClick={() => navigate("/settings")}>
+            <SidebarMenuButton onClick={() => navigate("/credits")}>
               <Coins className="text-primary" />
               <span className="truncate">
                 {creditBalance !== null ? `${creditBalance.toLocaleString()} credits` : "Buy Credits"}
@@ -236,7 +236,7 @@ function DocumentSidebar() {
                 side="top"
                 className="min-w-[var(--radix-popper-anchor-width)]"
               >
-                <DropdownMenuItem onClick={() => navigate("/settings")}>
+                <DropdownMenuItem disabled>
                   <Settings className="mr-2 h-4 w-4" />
                   Settings
                 </DropdownMenuItem>

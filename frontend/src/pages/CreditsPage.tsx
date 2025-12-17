@@ -36,7 +36,7 @@ interface CreditTransaction {
   created: string;
 }
 
-const SettingsPage = () => {
+const CreditsPage = () => {
   const { api, isAuthReady, isAnonymous } = useApi();
   const navigate = useNavigate();
 
@@ -120,7 +120,7 @@ const SettingsPage = () => {
         Back
       </Button>
 
-      <h1 className="text-3xl font-bold mb-8">Settings</h1>
+      <h1 className="text-3xl font-bold mb-8">Credits</h1>
 
       {/* Credit Balance */}
       {!isAnonymous && credits && (
@@ -203,12 +203,8 @@ const SettingsPage = () => {
                       <div className="font-medium flex items-center gap-2">
                         {tx.description || tx.type.replace(/_/g, " ")}
                         {tx.status !== "completed" && (
-                          <span className={`text-xs px-1.5 py-0.5 rounded ${
-                            tx.status === "pending" ? "bg-yellow-100 text-yellow-800" :
-                            tx.status === "failed" ? "bg-red-100 text-red-800" :
-                            "bg-gray-100 text-gray-800"
-                          }`}>
-                            {tx.status}
+                          <span className="text-xs text-muted-foreground">
+                            ({tx.status})
                           </span>
                         )}
                       </div>
@@ -233,4 +229,4 @@ const SettingsPage = () => {
   );
 };
 
-export default SettingsPage;
+export default CreditsPage;
