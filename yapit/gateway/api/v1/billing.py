@@ -85,7 +85,6 @@ async def create_checkout_session(
     request: CheckoutRequest,
     http_request: Request,
     settings: SettingsDep,
-    db: DbSession,
     user: AuthenticatedUser,
 ) -> CheckoutResponse:
     """Create a Stripe Checkout Session for credit purchase."""
@@ -128,25 +127,14 @@ async def create_checkout_session(
         metadata={
             "user_id": user.id,
             "package_id": pack.id,
+            "package_name": pack.name,
             "credits": str(pack.credits),
+            "price_cents": str(pack.price_cents),
+            "currency": pack.currency,
         },
     )
 
-    user_credits = await get_or_create_user_credits(user.id, db)
-    transaction = CreditTransaction(
-        user_id=user.id,
-        type=TransactionType.credit_purchase,
-        status=TransactionStatus.pending,
-        amount=Decimal(pack.credits),
-        balance_before=user_credits.balance,
-        balance_after=user_credits.balance,  # Not yet applied
-        description=f"Credit pack: {pack.name}",
-        external_reference=session.id,
-        details={"package_id": pack.id, "price_cents": pack.price_cents, "currency": pack.currency},
-    )
-    db.add(transaction)
-    await db.commit()
-
+    assert session.url is not None
     return CheckoutResponse(checkout_url=session.url, session_id=session.id)
 
 
@@ -167,15 +155,12 @@ async def stripe_webhook(
         event = stripe.Webhook.construct_event(payload, sig_header, settings.stripe_webhook_secret)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid payload")
-    except stripe.error.SignatureVerificationError:
+    except stripe.SignatureVerificationError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid signature")
 
     if event["type"] in ("checkout.session.completed", "checkout.session.async_payment_succeeded"):
         session = event["data"]["object"]
         await _fulfill_credits(session, db)
-    elif event["type"] == "checkout.session.async_payment_failed":
-        session = event["data"]["object"]
-        await _fail_transaction(session["id"], db)
 
     return {"status": "ok"}
 
@@ -186,43 +171,35 @@ async def _fulfill_credits(session: dict, db: DbSession) -> None:
     metadata = session.get("metadata", {})
     credits = int(metadata.get("credits", 0))
     user_id = metadata.get("user_id")
+    package_name = metadata.get("package_name", "Unknown")
 
     if not credits or not user_id:
         return
 
-    result = await db.exec(
-        select(CreditTransaction).where(
-            CreditTransaction.external_reference == session_id,
-            CreditTransaction.status == TransactionStatus.pending,
-        )
-    )
-    transaction = result.first()
-    if not transaction:
+    # Check if already processed (idempotency)
+    result = await db.exec(select(CreditTransaction).where(CreditTransaction.external_reference == session_id))
+    if result.first():
         return
 
     user_credits = await get_or_create_user_credits(user_id, db)
 
-    transaction.balance_before = user_credits.balance
+    # Create completed transaction
+    transaction = CreditTransaction(
+        user_id=user_id,
+        type=TransactionType.credit_purchase,
+        amount=Decimal(credits),
+        balance_before=user_credits.balance,
+        description=f"Credit purchase - {package_name}",
+        external_reference=session_id,
+        status=TransactionStatus.completed,
+    )
+
     user_credits.balance += Decimal(credits)
     user_credits.total_purchased += Decimal(credits)
     transaction.balance_after = user_credits.balance
-    transaction.status = TransactionStatus.completed
 
+    db.add(transaction)
     await db.commit()
-
-
-async def _fail_transaction(session_id: str, db: DbSession) -> None:
-    """Mark a transaction as failed."""
-    result = await db.exec(
-        select(CreditTransaction).where(
-            CreditTransaction.external_reference == session_id,
-            CreditTransaction.status == TransactionStatus.pending,
-        )
-    )
-    transaction = result.first()
-    if transaction:
-        transaction.status = TransactionStatus.failed
-        await db.commit()
 
 
 @router.get("/checkout/{session_id}/status")
@@ -241,7 +218,8 @@ async def get_checkout_status(
     transaction = result.first()
 
     if not transaction:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transaction not found")
+        # No transaction yet = webhook hasn't processed the payment
+        return CheckoutStatusResponse(status=TransactionStatus.pending)
 
     return CheckoutStatusResponse(
         status=transaction.status,
