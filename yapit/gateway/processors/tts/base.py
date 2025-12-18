@@ -32,14 +32,12 @@ class BaseTTSProcessor(Processor):
         settings: Settings,
         redis: Redis,
         cache: Cache,
-        max_parallel: int | None = None,
         **kwargs,
     ) -> None:
         super().__init__(settings, **kwargs)
         self._queue = get_queue_name(self._slug)
         self._redis = redis
         self._cache = cache
-        self._sem = asyncio.Semaphore(max_parallel) if max_parallel else None
 
         log.info(f"Processor for {self._slug} listening to queue: {self._queue}")
 
@@ -58,9 +56,6 @@ class BaseTTSProcessor(Processor):
 
         job = None
         try:
-            if self._sem:
-                await self._sem.acquire()
-
             job = SynthesisJob.model_validate_json(raw)
             result = await self.process(job)
 
@@ -145,9 +140,6 @@ class BaseTTSProcessor(Processor):
             if job:
                 await self._redis.delete(TTS_INFLIGHT.format(hash=job.variant_hash))
             raise
-        finally:
-            if self._sem:
-                self._sem.release()
 
     async def run(self) -> None:
         """Main processing loop - pull jobs from Redis queue."""

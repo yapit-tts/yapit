@@ -8,3 +8,5 @@ services:
     environment:
       ADAPTER_CLASS: yapit.workers.adapters.kokoro.KokoroAdapter
     restart: unless-stopped
+    deploy:
+      replicas: ${KOKORO_CPU_REPLICAS:-2}

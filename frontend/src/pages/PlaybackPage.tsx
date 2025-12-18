@@ -134,16 +134,14 @@ const PlaybackPage = () => {
   // Initialize the AudioContext, GainNode, and AudioPlayer
   useEffect(() => {
     // Create new AudioContext if none exists or previous one was closed
-    // Use 44100Hz because SoundTouchJS's time-stretch algorithm is hardcoded for 44100Hz
-    // Web Audio API will automatically resample our 24000Hz audio
     if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
-      audioContextRef.current = new AudioContext({ sampleRate: 44100 });
+      audioContextRef.current = new AudioContext();
       gainNodeRef.current = audioContextRef.current.createGain();
       gainNodeRef.current.connect(audioContextRef.current.destination);
       gainNodeRef.current.gain.value = volume / 100;
     }
 
-    // Create AudioPlayer if needed (with pitch-preserving speed control)
+    // Create AudioPlayer if needed (uses browser native preservesPitch)
     if (!audioPlayerRef.current && audioContextRef.current && gainNodeRef.current) {
       audioPlayerRef.current = new AudioPlayer({
         audioContext: audioContextRef.current,
@@ -303,25 +301,9 @@ const PlaybackPage = () => {
         console.log(`[Playback] Block ${blockId} browser synthesis in ${(performance.now() - startTime).toFixed(0)}ms`);
       }
 
-      // Resample to 44100Hz for SoundTouchJS compatibility
-      const inputFrames = floatData.length;
-      const targetSampleRate = 44100;
-      const resampleRatio = targetSampleRate / sampleRate;
-      const outputFrames = Math.ceil(inputFrames * resampleRatio);
-
-      const audioBuffer = audioContextRef.current.createBuffer(1, outputFrames, targetSampleRate);
-      const outputData = audioBuffer.getChannelData(0);
-
-      // Linear interpolation resampling
-      for (let outFrame = 0; outFrame < outputFrames; outFrame++) {
-        const inPos = outFrame / resampleRatio;
-        const inFrame = Math.floor(inPos);
-        const frac = inPos - inFrame;
-
-        const sample1 = floatData[inFrame] ?? 0;
-        const sample2 = floatData[Math.min(inFrame + 1, inputFrames - 1)] ?? 0;
-        outputData[outFrame] = sample1 + frac * (sample2 - sample1);
-      }
+      // Create AudioBuffer at native sample rate
+      const audioBuffer = audioContextRef.current.createBuffer(1, floatData.length, sampleRate);
+      audioBuffer.getChannelData(0).set(floatData);
 
       const actualDurationMs = durationMs || Math.round(audioBuffer.duration * 1000);
 

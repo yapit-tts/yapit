@@ -6,8 +6,7 @@
   {
     "slug": "kokoro-cpu",
     "processor": "yapit.gateway.processors.tts.local.LocalProcessor",
-    "worker_url": "http://kokoro-cpu:8000",
-    "max_parallel": 2
+    "worker_url": "http://kokoro-cpu:8000"
   },
   {
     "slug": "higgs-native",
