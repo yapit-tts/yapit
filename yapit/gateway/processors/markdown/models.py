@@ -62,7 +62,7 @@ class HeadingBlock(BaseModel):
     html: str
     ast: list[InlineContent]
     plain_text: str
-    audio_block_idx: int
+    audio_block_idx: int | None = None
 
 
 class ParagraphBlock(BaseModel):
@@ -73,7 +73,7 @@ class ParagraphBlock(BaseModel):
     html: str
     ast: list[InlineContent]
     plain_text: str
-    audio_block_idx: int
+    audio_block_idx: int | None = None
     visual_group_id: str | None = None  # Groups split sentences from the same paragraph
 
 
@@ -94,7 +94,7 @@ class ListBlock(BaseModel):
     start: int | None = None
     items: list[ListItem]
     plain_text: str
-    audio_block_idx: int
+    audio_block_idx: int | None = None
 
 
 class BlockquoteBlock(BaseModel):
@@ -104,7 +104,7 @@ class BlockquoteBlock(BaseModel):
     id: str
     blocks: list["ContentBlock"]
     plain_text: str
-    audio_block_idx: int
+    audio_block_idx: int | None = None
 
 
 class CodeBlock(BaseModel):

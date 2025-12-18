@@ -68,6 +68,10 @@ class BaseTTSProcessor(Processor):
             if cache_ref is None:
                 raise RuntimeError(f"Cache write failed for {job.variant_hash}")
 
+            # Cache audio tokens for context accumulation (HIGGS native adapter)
+            if result.audio_tokens:
+                await self._cache.store(f"{job.variant_hash}:tokens", result.audio_tokens.encode("utf-8"))
+
             async for db in get_db_session():
                 # Update block variant with duration and cache reference
                 await db.exec(

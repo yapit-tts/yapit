@@ -1,5 +1,6 @@
 """Development database seeding."""
 
+import base64
 import json
 from decimal import Decimal
 from pathlib import Path
@@ -7,6 +8,17 @@ from pathlib import Path
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from yapit.gateway.domain_models import CreditPackage, DocumentProcessor, Filter, TTSModel, Voice
+
+
+def load_voice_prompt(name: str) -> tuple[str, str]:
+    """Load a voice prompt (audio + transcript) and return as (base64_audio, transcript)."""
+    voice_dir = Path(__file__).parent.parent / "data/voice_prompts"
+    audio_path = voice_dir / f"{name}.wav"
+    transcript_path = voice_dir / f"{name}.txt"
+    return (
+        base64.b64encode(audio_path.read_bytes()).decode("utf-8"),
+        transcript_path.read_text(encoding="utf-8").strip(),
+    )
 
 
 def create_dev_models() -> list[TTSModel]:
@@ -35,31 +47,11 @@ def create_dev_models() -> list[TTSModel]:
         sample_width=2,
     )
 
-    # RunPod CPU worker (for testing)
-    kokoro_cpu_runpod = TTSModel(
-        slug="kokoro-cpu-runpod",
-        name="Kokoro (CPU on RunPod)",
-        credits_per_sec=Decimal("1.5"),
-        native_codec="pcm",
-        sample_rate=24_000,
-        channels=1,
-        sample_width=2,
-    )
-
-    higgs_audio_v2_runpod = TTSModel(
-        slug="higgs-audio-v2-runpod-vllm",
-        name="Higgs Audio V2 (RunPod, VLLM)",
-        credits_per_sec=Decimal("10"),
-        native_codec="pcm",
-        sample_rate=24_000,
-        channels=1,
-        sample_width=2,
-    )
-
-    higgs_audio_v2_runpod_ci = TTSModel(
-        slug="higgs-audio-v2-runpod-vllm-ci",
-        name="Higgs Audio V2 (RunPod, VLLM, CI)",
-        credits_per_sec=Decimal("10"),
+    # HIGGS native on RunPod GPU
+    higgs_native = TTSModel(
+        slug="higgs-native",
+        name="HIGGS Audio V2",
+        credits_per_sec=Decimal("2"),
         native_codec="pcm",
         sample_rate=24_000,
         channels=1,
@@ -82,18 +74,41 @@ def create_dev_models() -> list[TTSModel]:
         }
         kokoro_cpu.voices.append(Voice(**voice_kwargs))
         kokoro_free.voices.append(Voice(**voice_kwargs))
-        kokoro_cpu_runpod.voices.append(Voice(**voice_kwargs))
 
-    higgs_audio_v2_default_voice = Voice(
-        slug="higgs-default",
-        name="Higgs Default",
-        lang=None,
-        description="Voice without a reference audio... voice is chosen based on the processed text chunk. Might be inconsistent.",
+    # Load reference voices for HIGGS
+    en_man_audio, en_man_transcript = load_voice_prompt("en_man")
+    en_woman_audio, en_woman_transcript = load_voice_prompt("en_woman")
+
+    higgs_native.voices.append(
+        Voice(
+            slug="en-man",
+            name="English Male",
+            lang="en",
+            description="Male American accent, clear and professional.",
+            parameters={
+                "ref_audio": en_man_audio,
+                "ref_audio_transcript": en_man_transcript,
+                "seed": 42,
+                "temperature": 0.3,
+            },
+        )
     )
-    higgs_audio_v2_runpod.voices.append(higgs_audio_v2_default_voice)
-    higgs_audio_v2_runpod_ci.voices.append(higgs_audio_v2_default_voice)
+    higgs_native.voices.append(
+        Voice(
+            slug="en-woman",
+            name="English Female",
+            lang="en",
+            description="Female American accent, clear and informative.",
+            parameters={
+                "ref_audio": en_woman_audio,
+                "ref_audio_transcript": en_woman_transcript,
+                "seed": 42,
+                "temperature": 0.3,
+            },
+        )
+    )
 
-    models.extend([kokoro_cpu, kokoro_free, kokoro_cpu_runpod, higgs_audio_v2_runpod, higgs_audio_v2_runpod_ci])
+    models.extend([kokoro_cpu, kokoro_free, higgs_native])
 
     # Uncomment to add Dia model
     # dia = TTSModel(

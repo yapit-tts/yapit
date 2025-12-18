@@ -40,6 +40,7 @@ class DocumentTransformer:
         self._block_counter = 0
         self._audio_idx_counter = 0
         self._visual_group_counter = 0
+        self._inside_blockquote = False  # Nested blocks don't get audio indices
         self._md = self._create_renderer()
 
     def _create_renderer(self) -> MarkdownIt:
@@ -55,7 +56,9 @@ class DocumentTransformer:
         self._block_counter += 1
         return id_
 
-    def _next_audio_idx(self) -> int:
+    def _next_audio_idx(self) -> int | None:
+        if self._inside_blockquote:
+            return None
         idx = self._audio_idx_counter
         self._audio_idx_counter += 1
         return idx
@@ -428,11 +431,16 @@ class DocumentTransformer:
         ]
 
     def _transform_blockquote(self, node: SyntaxTreeNode) -> list[BlockquoteBlock]:
-        """Transform blockquote node."""
-        # Recursively transform children
-        inner_blocks = self._transform_children(node)
+        """Transform blockquote node.
 
-        # Collect plain text from inner blocks
+        The blockquote itself gets an audio index, but nested blocks don't.
+        This ensures audio indices match between get_audio_blocks() and the
+        structured content (get_audio_blocks only iterates top-level blocks).
+        """
+        self._inside_blockquote = True
+        inner_blocks = self._transform_children(node)
+        self._inside_blockquote = False
+
         plain_texts = []
         for block in inner_blocks:
             if hasattr(block, "plain_text") and block.plain_text:

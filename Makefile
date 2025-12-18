@@ -90,20 +90,17 @@ repomix:
 repomix-backend:
 	repomix -i "frontend,.gitignore,**/*.data,**/*sql"
 
-# This doesn't work with the Github deployment templates (yet?)... and setting up ghcr.io is a lot of overhead just for this (including way longer deploy times).
-# 	so this is just for future reference if we decide to use registry or it becomes available:
-## RunPod deployment
-#deploy:
-#	@echo "Usage: make deploy-<endpoint> or make deploy-all"
-#	@echo "Available endpoints:"
-#	@uv run --env-file=.env.local python -m yapit.runpod.deploy
-#
-#deploy-%:
-#	uv run --env-file=.env.local python -m scripts.runpod.deploy $* $(ARGS)
-#
-#deploy-all:
-#	uv run --env-file=.env.local python -m scripts.runpod.deploy all $(ARGS)
-#
-## Force redeploy examples:
-## make deploy-higgs-audio-v2 ARGS="--force"
-## make deploy-all ARGS="--force"
+# RunPod deployment
+HIGGS_TAG := $(shell date +%Y%m%d-%H%M%S)
+HIGGS_IMAGE := maxw01/higgs-worker:$(HIGGS_TAG)
+
+deploy-higgs: deploy-higgs-build deploy-higgs-push deploy-higgs-runpod
+
+deploy-higgs-build:
+	docker build -t $(HIGGS_IMAGE) -f yapit/workers/higgs_audio_v2_native/Dockerfile .
+
+deploy-higgs-push:
+	docker push $(HIGGS_IMAGE)
+
+deploy-higgs-runpod:
+	uv run --env-file=.env.local python infra/runpod/deploy.py higgs-native --image-tag $(HIGGS_TAG)

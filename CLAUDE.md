@@ -17,10 +17,14 @@ Note: We don't work heavily with GitHub issues (solo dev + claude for now -- the
 - Run tests, builds, deploys ONLY via Makefile commands
     - This is to ensure these commands are documented, version controlled, and consistent
     - Exceptions for one-off scripts, debugging or similar
+- **Docker operations**: Use `make` commands (e.g., `make dev-cpu`), NOT raw `docker compose` commands
+    - Make commands handle env vars, build steps, and proper orchestration
+    - **ALWAYS ask user before stopping/restarting Docker services** - they may be actively testing
 - Test workflow: `.github/workflows/`
 - No default values in Settings class - only defaults in `.env*` files
 - `make test-local` for basic tests, `make test` for full suite (needs API keys)
 - `make dev-cpu` to start backend (or `make dev-mac` on macOS)
+  - If no dev user exists after startup (login fails), run `make dev-user` - there's a race condition where stack-auth health check sometimes fails before user creation runs
 - **CI timing**: Integration tests take 4-5 minutes (Docker build). Wait for all checks before merging PRs.
 
 ## Agent Work Process
@@ -100,7 +104,10 @@ Granular task tracking belongs in working todos during implementation, not the p
 
 Plans live in `~/.claude/plans/`.
 
-**Note**: Plan file read/write may require entering plan mode first in some sessions. If you can't access plan files, try entering then exiting plan mode.
+**IMPORTANT: Do NOT use EnterPlanMode tool for creating/updating plan files.** The plan mode tool adds friction (permission prompts, can't edit files, generates random names). Instead:
+- Create plan files directly using the Write tool
+- Edit them using the Edit tool
+- Name files descriptively yourself (e.g., `feature-name.md` or `task-description.md`)
 
 **Master doc (ALWAYS read this):**
 - `yapit-architecture.md` - Architecture, decisions, implementation details, known issues/tech debt
@@ -109,6 +116,13 @@ Plans live in `~/.claude/plans/`.
 
 | File | Purpose | Status | Read When |
 |------|---------|--------|-----------|
+| `kokoro-cpu-parallelism.md` | Docker replicas for kokoro-cpu, load balancing options, max_parallel explained | Planning | Kokoro scaling, worker replicas, parallelism |
+| `runpod-cli-knowledge.md` | RunPod CLI reference: pod creation, SSH, file transfer, common issues | Reference | RunPod GPU pods, file transfer, SSH issues |
+| `reflective-hopping-pancake.md` | HIGGS voice consistency via context accumulation (pass audio tokens between blocks) | Phase 1: Testing | HIGGS voice consistency, audio tokens, context passing, long-form reading |
+| `kokoro-cpu-performance-subblocks.md` | Sub-block splitting for faster time-to-first-block, kokoro CPU perf analysis | Planning | TTS latency, block splitting, sub-block highlighting, kokoro scaling |
+| `billing-pricing-strategy.md` | Stripe Managed Payments, credit pricing, competitor analysis, Austrian business setup | Decided | Billing integration, pricing, Stripe setup |
+| `cloud-storage-provider.md` | S3/R2 evaluation for audio cache and document storage | Decision: Not Needed | Cloud storage, caching strategy, infrastructure |
+| `runpod-infra-as-code.md` | RunPod IaC: native adapter, model caching, slim Docker, SDK deploy | Ready for Implementation | RunPod deployment, HIGGS worker, GitHub Actions, model caching |
 | `model-voice-picker.md` | Model/voice picker in playback controls | Done | VoicePicker component, voice state, localStorage persistence |
 | `plan-index-improvement.md` | Meta: improve plan index | Done | - |
 | `higgs-audio-investigation.md` | HIGGS model capabilities, voice params, vLLM vs native | Research Complete | HIGGS integration, voice config params, cold start issues |
@@ -163,4 +177,6 @@ Use Chrome DevTools MCP to visually verify changes, test user flows, and debug i
 - No default values in Settings class - defaults in `.env*` files only
 - Follow existing patterns in codebase
 - **No architectural discussions in code comments** - those belong in the architecture doc
+- **No useless comments**: Don't add inline comments that restate what code does, don't add untested metrics/claims, don't add "LLM-style" explanatory comments. Comments should only explain non-obvious "why" - if you feel a comment is needed, the code probably needs refactoring instead.
+- **Backwards compatibility is NEVER an issue** - This is a rapidly evolving codebase. Don't preserve old approaches alongside new ones. Replace, don't accumulate. If old code needs updating to match new patterns, update it. If old endpoints/configs are superseded, delete them.
 - See `~/.claude/CLAUDE.md` for general coding guidelines
