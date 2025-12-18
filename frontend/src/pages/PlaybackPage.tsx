@@ -222,6 +222,19 @@ const PlaybackPage = () => {
     });
   }, [currentBlock]); // Only depend on currentBlock - documentId comes from ref
 
+  // Live scroll tracking - keep current block visible during playback
+  useEffect(() => {
+    // Only scroll during active playback (not on restore or manual click)
+    if (currentBlock < 0 || !isPlayingRef.current) return;
+
+    const blockElement = window.document.querySelector(
+      `[data-audio-block-idx="${currentBlock}"]`
+    );
+    if (blockElement) {
+      blockElement.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [currentBlock]);
+
   // Refs for keyboard handler to avoid stale closures
   const handlePlayRef = useRef<() => void>(() => {});
   const handlePauseRef = useRef<() => void>(() => {});
