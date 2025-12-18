@@ -116,6 +116,8 @@ Plans live in `~/.claude/plans/`.
 
 | File | Purpose | Status | Read When |
 |------|---------|--------|-----------|
+| `in-document-anchor-links.md` | Make relative links like `#methods` scroll to headings | Feasibility Done | Anchor links, in-doc navigation, heading IDs |
+| `playback-ux-improvements.md` | Position persistence fix, KaTeX rendering, auto-scroll, settings UI | In Progress | Playback UX, position restore, math rendering, scroll tracking |
 | `audio-speed-control.md` | Replace SoundTouchJS with browser native preservesPitch | Done | Audio speed control, playback bugs at high speed |
 | `kokoro-cpu-parallelism.md` | Docker replicas for kokoro-cpu, load balancing options, max_parallel removed | Done | Kokoro scaling, worker replicas, parallelism |
 | `runpod-cli-knowledge.md` | RunPod CLI reference: pod creation, SSH, file transfer, common issues | Reference | RunPod GPU pods, file transfer, SSH issues |
@@ -172,6 +174,16 @@ Use Chrome DevTools MCP to visually verify changes, test user flows, and debug i
 - Mobile/responsive layout testing
 - User flow testing (login → input → playback → controls)
 - Edge case verification without manual testing
+
+**Context awareness:**
+Action tools (click, wait_for, fill, etc.) automatically return a full page snapshot. On complex documents this can be ~10k tokens per interaction. This is fine—just be aware:
+
+- **Screenshots for visual debugging** - when you need to see the actual rendered UI
+- **Document size varies** - test documents might be large; if debugging a specific bug on a known large document, that's unavoidable
+- **Before a debugging session** - if you're about to do multiple DevTools interactions on a potentially large page, update your plan file first with current goal and next steps. That way if context gets consumed quickly, you don't lose track of what you were doing
+- **Consider test documents** - if testing generic UI behavior (not a specific bug), you can create/use a simple test document to keep snapshots small
+
+Don't be paranoid about this—just factor it in when planning longer debugging sessions.
 
 ## Coding Conventions
 

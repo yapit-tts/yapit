@@ -1,4 +1,5 @@
-import { memo } from "react";
+import { memo, useEffect, useRef } from "react";
+import katex from "katex";
 import { cn } from "@/lib/utils";
 
 // === TypeScript types matching backend Pydantic models ===
@@ -258,11 +259,27 @@ function CodeBlockView({ block }: BlockProps & { block: CodeBlock }) {
 }
 
 function MathBlockView({ block }: BlockProps & { block: MathBlock }) {
-  // Basic math display - could integrate KaTeX/MathJax later
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (containerRef.current) {
+      try {
+        katex.render(block.content, containerRef.current, {
+          displayMode: true,
+          throwOnError: false,
+        });
+      } catch (e) {
+        console.warn("KaTeX render error:", e);
+        containerRef.current.textContent = block.content;
+      }
+    }
+  }, [block.content]);
+
   return (
-    <div className="my-4 p-4 bg-muted/50 rounded border border-border text-center font-mono overflow-x-auto">
-      <code className="text-sm">{block.content}</code>
-    </div>
+    <div
+      ref={containerRef}
+      className="my-4 p-4 bg-muted/50 rounded border border-border text-center overflow-x-auto"
+    />
   );
 }
 
@@ -387,6 +404,28 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
   onBlockClick,
   fallbackContent,
 }: StructuredDocumentViewProps) {
+  const contentRef = useRef<HTMLDivElement>(null);
+
+  // Render inline math after content updates
+  useEffect(() => {
+    if (!contentRef.current) return;
+    const mathSpans = contentRef.current.querySelectorAll(".math-inline");
+    mathSpans.forEach((span) => {
+      const latex = span.textContent || "";
+      if (latex && !span.classList.contains("katex-rendered")) {
+        try {
+          katex.render(latex, span as HTMLElement, {
+            displayMode: false,
+            throwOnError: false,
+          });
+          span.classList.add("katex-rendered");
+        } catch (e) {
+          console.warn("KaTeX inline render error:", e);
+        }
+      }
+    });
+  }, [structuredContent, currentAudioBlockIdx]);
+
   // Parse structured content or fall back to plain text
   let doc: StructuredDocument | null = null;
 
@@ -439,7 +478,7 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
           {title}
         </h1>
       )}
-      <div className="structured-content">
+      <div ref={contentRef} className="structured-content">
         {doc.blocks.map((block, idx) => (
           <BlockView
             key={block.id}
