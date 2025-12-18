@@ -1,6 +1,37 @@
-import { memo, useEffect, useRef } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef } from "react";
 import katex from "katex";
 import { cn } from "@/lib/utils";
+
+// === Slug generation for heading anchors ===
+
+function generateSlug(text: string): string {
+  return text
+    .toLowerCase()
+    .trim()
+    .replace(/[^\w\s-]/g, "") // Remove special chars except spaces and hyphens
+    .replace(/\s+/g, "-") // Replace spaces with hyphens
+    .replace(/-+/g, "-") // Collapse multiple hyphens
+    .replace(/^-|-$/g, ""); // Trim leading/trailing hyphens
+}
+
+function buildSlugMap(blocks: ContentBlock[]): Map<string, string> {
+  const slugMap = new Map<string, string>();
+  const slugCounts = new Map<string, number>();
+
+  for (const block of blocks) {
+    if (block.type === "heading") {
+      const baseSlug = generateSlug(block.plain_text);
+      if (!baseSlug) continue;
+
+      const count = slugCounts.get(baseSlug) || 0;
+      const slug = count === 0 ? baseSlug : `${baseSlug}-${count}`;
+      slugCounts.set(baseSlug, count + 1);
+      slugMap.set(block.id, slug);
+    }
+  }
+
+  return slugMap;
+}
 
 // === TypeScript types matching backend Pydantic models ===
 
@@ -122,7 +153,7 @@ interface BlockProps {
 const activeBlockClass = "bg-primary/10 border-l-4 border-l-primary -ml-4 pl-3";
 const clickableClass = "cursor-pointer hover:bg-muted/50 transition-colors rounded";
 
-function HeadingBlockView({ block, isActive, onClick }: BlockProps & { block: HeadingBlock }) {
+function HeadingBlockView({ block, isActive, onClick, slugId }: BlockProps & { block: HeadingBlock; slugId?: string }) {
   const sizeClasses: Record<number, string> = {
     1: "text-3xl font-bold mt-8 mb-4",
     2: "text-2xl font-semibold mt-6 mb-3",
@@ -140,12 +171,12 @@ function HeadingBlockView({ block, isActive, onClick }: BlockProps & { block: He
   );
 
   const props = {
+    id: slugId,
     className,
     onClick,
     dangerouslySetInnerHTML: { __html: block.html },
   };
 
-  // Use explicit elements to satisfy TypeScript
   switch (block.level) {
     case 1: return <h1 {...props} />;
     case 2: return <h2 {...props} />;
@@ -345,9 +376,10 @@ interface BlockViewProps {
   currentAudioBlockIdx: number;
   onBlockClick?: (audioIdx: number) => void;
   groupPosition?: GroupPosition;
+  slugMap?: Map<string, string>;
 }
 
-function BlockView({ block, currentAudioBlockIdx, onBlockClick, groupPosition }: BlockViewProps) {
+function BlockView({ block, currentAudioBlockIdx, onBlockClick, groupPosition, slugMap }: BlockViewProps) {
   const isActive = block.audio_block_idx === currentAudioBlockIdx && currentAudioBlockIdx >= 0;
   const handleClick = block.audio_block_idx !== null && onBlockClick
     ? () => onBlockClick(block.audio_block_idx as number)
@@ -357,7 +389,7 @@ function BlockView({ block, currentAudioBlockIdx, onBlockClick, groupPosition }:
 
   switch (block.type) {
     case "heading":
-      return <HeadingBlockView {...baseProps} block={block} />;
+      return <HeadingBlockView {...baseProps} block={block} slugId={slugMap?.get(block.id)} />;
     case "paragraph":
       return <ParagraphBlockView {...baseProps} block={block} groupPosition={groupPosition} />;
     case "list":
@@ -406,6 +438,23 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
 }: StructuredDocumentViewProps) {
   const contentRef = useRef<HTMLDivElement>(null);
 
+  // Parse structured content
+  const doc = useMemo(() => {
+    if (!structuredContent) return null;
+    try {
+      return JSON.parse(structuredContent) as StructuredDocument;
+    } catch (e) {
+      console.warn("Failed to parse structured content:", e);
+      return null;
+    }
+  }, [structuredContent]);
+
+  // Build slug map for heading anchors
+  const slugMap = useMemo(() => {
+    if (!doc?.blocks) return new Map<string, string>();
+    return buildSlugMap(doc.blocks);
+  }, [doc]);
+
   // Render inline math after content updates
   useEffect(() => {
     if (!contentRef.current) return;
@@ -426,16 +475,61 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
     });
   }, [structuredContent, currentAudioBlockIdx]);
 
-  // Parse structured content or fall back to plain text
-  let doc: StructuredDocument | null = null;
+  // Mark dead anchor links (no matching heading)
+  useEffect(() => {
+    if (!contentRef.current) return;
 
-  if (structuredContent) {
-    try {
-      doc = JSON.parse(structuredContent) as StructuredDocument;
-    } catch (e) {
-      console.warn("Failed to parse structured content:", e);
+    // Small delay to ensure heading IDs are in the DOM
+    const timeoutId = setTimeout(() => {
+      if (!contentRef.current) return;
+      const anchorLinks = contentRef.current.querySelectorAll('a[href^="#"]');
+      anchorLinks.forEach((link) => {
+        const fragment = link.getAttribute("href")?.slice(1);
+        if (!fragment) return;
+        const targetExists = document.getElementById(fragment);
+        if (targetExists) {
+          link.classList.remove("dead-link");
+        } else {
+          link.classList.add("dead-link");
+        }
+      });
+    }, 0);
+
+    return () => clearTimeout(timeoutId);
+  });
+
+  // Handle clicks on links within document content
+  const handleContentClick = useCallback((e: React.MouseEvent) => {
+    const target = e.target as HTMLElement;
+    const anchor = target.closest("a") as HTMLAnchorElement | null;
+    if (!anchor) return;
+
+    const href = anchor.getAttribute("href");
+    if (!href) return;
+
+    // Anchor links (#fragment) - scroll to heading if exists, otherwise no-op
+    if (href.startsWith("#")) {
+      e.preventDefault();
+      const fragment = href.slice(1);
+      const targetElement = document.getElementById(fragment);
+      if (targetElement) {
+        targetElement.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+      return;
     }
-  }
+
+    // Relative links (/path) - no-op, these are from original site and don't work here
+    if (href.startsWith("/")) {
+      e.preventDefault();
+      return;
+    }
+
+    // External links (http://, https://) - open in new tab
+    if (href.startsWith("http://") || href.startsWith("https://")) {
+      e.preventDefault();
+      window.open(href, "_blank", "noopener,noreferrer");
+    }
+  }, []);
 
   // Fallback to plain text rendering
   if (!doc || !doc.blocks || doc.blocks.length === 0) {
@@ -478,7 +572,7 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
           {title}
         </h1>
       )}
-      <div ref={contentRef} className="structured-content">
+      <div ref={contentRef} className="structured-content" onClick={handleContentClick}>
         {doc.blocks.map((block, idx) => (
           <div
             key={block.id}
@@ -489,6 +583,7 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
               currentAudioBlockIdx={currentAudioBlockIdx}
               onBlockClick={onBlockClick}
               groupPosition={getGroupPosition(block, idx)}
+              slugMap={slugMap}
             />
           </div>
         ))}
@@ -496,13 +591,47 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
 
       {/* Inline styles for HTML content */}
       <style>{`
+        /* Base link style */
         .structured-content a {
           color: var(--primary);
-          text-decoration: underline;
+          text-decoration: none;
         }
         .structured-content a:hover {
           opacity: 0.8;
         }
+
+        /* Internal anchor links - dotted underline */
+        .structured-content a[href^="#"]:not(.dead-link) {
+          text-decoration: underline;
+          text-decoration-style: dotted;
+          text-underline-offset: 2px;
+        }
+
+        /* External links - solid underline + icon */
+        .structured-content a[href^="http"] {
+          text-decoration: underline;
+          text-underline-offset: 2px;
+        }
+        .structured-content a[href^="http"]::after {
+          content: " ↗";
+          font-size: 0.7em;
+          text-decoration: none;
+          display: inline;
+        }
+
+        /* Dead links - slightly muted, no underline */
+        .structured-content a[href^="/"],
+        .structured-content a[href^="#"].dead-link {
+          color: var(--primary);
+          opacity: 0.7;
+          text-decoration: none;
+          cursor: default;
+        }
+        .structured-content a[href^="/"]::after,
+        .structured-content a.dead-link::after {
+          content: none;
+        }
+
         .structured-content strong {
           font-weight: 600;
         }

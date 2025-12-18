@@ -116,8 +116,9 @@ Plans live in `~/.claude/plans/`.
 
 | File | Purpose | Status | Read When |
 |------|---------|--------|-----------|
-| `in-document-anchor-links.md` | Make relative links like `#methods` scroll to headings | Feasibility Done | Anchor links, in-doc navigation, heading IDs |
-| `playback-ux-improvements.md` | Position persistence fix, KaTeX rendering, auto-scroll, settings UI | In Progress | Playback UX, position restore, math rendering, scroll tracking |
+| `monitoring-observability-logging.md` | Monitoring, metrics, logging, tracing for gateway and workers | Research Needed | Observability, performance monitoring, debugging, Sentry, OpenTelemetry |
+| `in-document-anchor-links.md` | Make relative links like `#methods` scroll to headings | Done | Anchor links, in-doc navigation, heading IDs, link styling |
+| `playback-ux-improvements.md` | Position persistence fix, KaTeX rendering, auto-scroll, settings UI | Done | Playback UX, position restore, math rendering, scroll tracking |
 | `audio-speed-control.md` | Replace SoundTouchJS with browser native preservesPitch | Done | Audio speed control, playback bugs at high speed |
 | `kokoro-cpu-parallelism.md` | Docker replicas for kokoro-cpu, load balancing options, max_parallel removed | Done | Kokoro scaling, worker replicas, parallelism |
 | `runpod-cli-knowledge.md` | RunPod CLI reference: pod creation, SSH, file transfer, common issues | Reference | RunPod GPU pods, file transfer, SSH issues |
