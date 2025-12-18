@@ -480,13 +480,17 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
       )}
       <div ref={contentRef} className="structured-content">
         {doc.blocks.map((block, idx) => (
-          <BlockView
+          <div
             key={block.id}
-            block={block}
-            currentAudioBlockIdx={currentAudioBlockIdx}
-            onBlockClick={onBlockClick}
-            groupPosition={getGroupPosition(block, idx)}
-          />
+            data-audio-block-idx={block.audio_block_idx ?? undefined}
+          >
+            <BlockView
+              block={block}
+              currentAudioBlockIdx={currentAudioBlockIdx}
+              onBlockClick={onBlockClick}
+              groupPosition={getGroupPosition(block, idx)}
+            />
+          </div>
         ))}
       </div>
 

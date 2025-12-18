@@ -193,6 +193,17 @@ const PlaybackPage = () => {
       setCurrentBlock(saved.block);
       setAudioProgress(saved.progressMs);
       blockStartTimeRef.current = saved.progressMs;
+
+      // Scroll to restored block after React renders the blocks
+      // Use setTimeout to ensure DOM is fully updated after state changes
+      setTimeout(() => {
+        const blockElement = window.document.querySelector(
+          `[data-audio-block-idx="${saved.block}"]`
+        );
+        if (blockElement) {
+          blockElement.scrollIntoView({ behavior: "smooth", block: "center" });
+        }
+      }, 100);
     }
   }, [documentId, documentBlocks.length]);
 
