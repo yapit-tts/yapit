@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { cn } from "@/lib/utils";
 
 // === TypeScript types matching backend Pydantic models ===
@@ -378,7 +379,8 @@ interface StructuredDocumentViewProps {
   fallbackContent?: string;
 }
 
-export function StructuredDocumentView({
+// Memoized to prevent re-renders from parent's audioProgress updates
+export const StructuredDocumentView = memo(function StructuredDocumentView({
   structuredContent,
   title,
   currentAudioBlockIdx,
@@ -474,7 +476,7 @@ export function StructuredDocumentView({
       `}</style>
     </article>
   );
-}
+});
 
 // Export types for use elsewhere
 export type { StructuredDocument, ContentBlock, InlineContent };

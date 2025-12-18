@@ -206,6 +206,28 @@ const PlaybackPage = () => {
     });
   }, [documentId, currentBlock]);
 
+  // Refs for keyboard handler to avoid stale closures
+  const handlePlayRef = useRef<() => void>(() => {});
+  const handlePauseRef = useRef<() => void>(() => {});
+
+  // Keyboard handler for spacebar play/pause (uses refs to avoid stale closures)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Only handle spacebar when not focused on an input
+      if (e.code === "Space" && !["INPUT", "TEXTAREA", "SELECT"].includes((e.target as HTMLElement).tagName)) {
+        e.preventDefault(); // Prevent page scroll
+        if (isPlayingRef.current) {
+          handlePauseRef.current();
+        } else {
+          handlePlayRef.current();
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []); // Empty deps - uses refs
+
   // Update gain node value when volume changes
   useEffect(() => {
     if (gainNodeRef.current) {
@@ -502,6 +524,10 @@ const PlaybackPage = () => {
     audioPlayerRef.current?.pause();
   };
 
+  // Keep refs updated for keyboard handler (avoids stale closures)
+  handlePlayRef.current = handlePlay;
+  handlePauseRef.current = handlePause;
+
   // Cancel synthesis - stop waiting for TTS, reset to ready state
   const handleCancelSynthesis = () => {
     setIsPlaying(false);
@@ -557,7 +583,8 @@ const PlaybackPage = () => {
     }
   };
 
-  const handleBlockChange = (newBlock: number) => {
+  // Memoized to prevent StructuredDocumentView re-renders from audioProgress updates
+  const handleBlockChange = useCallback((newBlock: number) => {
     if (newBlock === currentBlock) return;
     if (!documentBlocks || newBlock < 0 || newBlock >= documentBlocks.length) return;
 
@@ -575,12 +602,13 @@ const PlaybackPage = () => {
 
     // If already playing, the useEffect will auto-play the new block
     // If paused, just set position (user can press play)
-  };
+  }, [currentBlock, documentBlocks]);
 
   // Handle click on structured document block (by audio_block_idx)
-  const handleDocumentBlockClick = (audioBlockIdx: number) => {
+  // Memoized to prevent StructuredDocumentView re-renders from audioProgress updates
+  const handleDocumentBlockClick = useCallback((audioBlockIdx: number) => {
     handleBlockChange(audioBlockIdx);
-  };
+  }, [handleBlockChange]);
 
   const handleVolumeChange = (newVolume: number) => {
     setVolume(newVolume);
