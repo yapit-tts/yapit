@@ -95,7 +95,7 @@ const PlaybackPage = () => {
   const audioPlayerRef = useRef<AudioPlayer | null>(null);
   const [currentBlock, setCurrentBlock] = useState<number>(-1);
 	const audioBuffersRef = useRef<Map<number, AudioBufferData>>(new Map());
-	const synthesizingRef = useRef<Set<number>>(new Set()); // Track in-progress synthesis
+	const synthesizingRef = useRef<Map<number, Promise<AudioBufferData | null>>>(new Map()); // Track in-progress synthesis promises
 	const [audioProgress, setAudioProgress] = useState<number>(0);
 	const blockStartTimeRef = useRef<number>(0);
 	const [actualTotalDuration, setActualTotalDuration] = useState<number>(0);
@@ -252,92 +252,100 @@ const PlaybackPage = () => {
       return cached;
     }
 
-    // Check if synthesis already in progress
-    if (synthesizingRef.current.has(blockId)) {
-      console.log(`[Playback] Block ${blockId} already synthesizing, skipping`);
+    // Check if synthesis already in progress - return the existing promise
+    const existingPromise = synthesizingRef.current.get(blockId);
+    if (existingPromise) {
+      console.log(`[Playback] Block ${blockId} already synthesizing, awaiting existing promise`);
+      return existingPromise;
+    }
+
+    // Find the block to get its text
+    const block = documentBlocks.find(b => b.id === blockId);
+    if (!block) {
+      console.error("[Playback] Block not found:", blockId);
       return null;
     }
 
-    try {
-      // Find the block to get its text
-      const block = documentBlocks.find(b => b.id === blockId);
-      if (!block) {
-        console.error("[Playback] Block not found:", blockId);
-        return null;
-      }
-
-      if (!audioContextRef.current) {
-        return null;
-      }
-
-      // Mark as synthesizing
-      synthesizingRef.current.add(blockId);
-      console.log(`[Playback] Starting synthesis for block ${blockId} (idx ${block.idx}, ${block.text.length} chars)`);
-      const startTime = performance.now();
-
-      let floatData: Float32Array;
-      let sampleRate: number;
-      let durationMs: number;
-
-      if (voiceSelection.model === "higgs" || voiceSelection.model === "kokoro-server") {
-        // Server-side synthesis via API
-        const modelSlug = voiceSelection.model === "higgs" ? "higgs-native" : "kokoro-cpu";
-        const response = await api.post(
-          `/v1/documents/${documentId}/blocks/${blockId}/synthesize/models/${modelSlug}/voices/${voiceSelection.voiceSlug}`,
-          null,
-          { responseType: "arraybuffer" }
-        );
-
-        sampleRate = parseInt(response.headers["x-sample-rate"] || "24000", 10);
-        durationMs = parseInt(response.headers["x-duration-ms"] || "0", 10);
-        floatData = pcmToFloat32(response.data);
-        console.log(`[Playback] Block ${blockId} ${modelSlug} synthesis in ${(performance.now() - startTime).toFixed(0)}ms`);
-      } else {
-        // Browser-side synthesis via Kokoro.js Web Worker
-        const result = await browserTTS.synthesize(block.text, { voice: voiceSelection.voiceSlug });
-        floatData = result.audio;
-        sampleRate = result.sampleRate;
-        durationMs = Math.round((floatData.length / sampleRate) * 1000);
-        console.log(`[Playback] Block ${blockId} browser synthesis in ${(performance.now() - startTime).toFixed(0)}ms`);
-      }
-
-      // Create AudioBuffer at native sample rate
-      const audioBuffer = audioContextRef.current.createBuffer(1, floatData.length, sampleRate);
-      audioBuffer.getChannelData(0).set(floatData);
-
-      const actualDurationMs = durationMs || Math.round(audioBuffer.duration * 1000);
-
-      const audioBufferData: AudioBufferData = {
-        buffer: audioBuffer,
-        duration_ms: actualDurationMs
-      };
-
-      // Store in buffer map and clear synthesizing flag
-      audioBuffersRef.current.set(blockId, audioBufferData);
-      synthesizingRef.current.delete(blockId);
-
-      // Calculate and store duration correction
-      const estimatedDuration = block.est_duration_ms || 0;
-      const correction = actualDurationMs - estimatedDuration;
-      durationCorrectionsRef.current.set(blockId, correction);
-
-      // Recalculate total if we have initial estimate
-      if (initialTotalEstimateRef.current > 0) {
-        const totalCorrection = Array.from(durationCorrectionsRef.current.values()).reduce((sum, corr) => sum + corr, 0);
-        const newTotal = initialTotalEstimateRef.current + totalCorrection;
-        setActualTotalDuration(newTotal);
-      }
-
-      return audioBufferData;
-    } catch (error) {
-      console.error("[Playback] Error synthesizing block:", error);
-      synthesizingRef.current.delete(blockId);
-      setIsPlaying(false);
+    if (!audioContextRef.current) {
       return null;
     }
+
+    // Create the synthesis promise
+    const synthesisPromise = (async (): Promise<AudioBufferData | null> => {
+      try {
+        console.log(`[Playback] Starting synthesis for block ${blockId} (idx ${block.idx}, ${block.text.length} chars)`);
+        const startTime = performance.now();
+
+        let floatData: Float32Array;
+        let sampleRate: number;
+        let durationMs: number;
+
+        if (voiceSelection.model === "higgs" || voiceSelection.model === "kokoro-server") {
+          // Server-side synthesis via API
+          const modelSlug = voiceSelection.model === "higgs" ? "higgs-native" : "kokoro-cpu";
+          const response = await api.post(
+            `/v1/documents/${documentId}/blocks/${blockId}/synthesize/models/${modelSlug}/voices/${voiceSelection.voiceSlug}`,
+            null,
+            { responseType: "arraybuffer" }
+          );
+
+          sampleRate = parseInt(response.headers["x-sample-rate"] || "24000", 10);
+          durationMs = parseInt(response.headers["x-duration-ms"] || "0", 10);
+          floatData = pcmToFloat32(response.data);
+          console.log(`[Playback] Block ${blockId} ${modelSlug} synthesis in ${(performance.now() - startTime).toFixed(0)}ms`);
+        } else {
+          // Browser-side synthesis via Kokoro.js Web Worker
+          const result = await browserTTS.synthesize(block.text, { voice: voiceSelection.voiceSlug });
+          floatData = result.audio;
+          sampleRate = result.sampleRate;
+          durationMs = Math.round((floatData.length / sampleRate) * 1000);
+          console.log(`[Playback] Block ${blockId} browser synthesis in ${(performance.now() - startTime).toFixed(0)}ms`);
+        }
+
+        // Create AudioBuffer at native sample rate
+        const audioBuffer = audioContextRef.current!.createBuffer(1, floatData.length, sampleRate);
+        audioBuffer.getChannelData(0).set(floatData);
+
+        const actualDurationMs = durationMs || Math.round(audioBuffer.duration * 1000);
+
+        const audioBufferData: AudioBufferData = {
+          buffer: audioBuffer,
+          duration_ms: actualDurationMs
+        };
+
+        // Store in buffer map
+        audioBuffersRef.current.set(blockId, audioBufferData);
+
+        // Calculate and store duration correction
+        const estimatedDuration = block.est_duration_ms || 0;
+        const correction = actualDurationMs - estimatedDuration;
+        durationCorrectionsRef.current.set(blockId, correction);
+
+        // Recalculate total if we have initial estimate
+        if (initialTotalEstimateRef.current > 0) {
+          const totalCorrection = Array.from(durationCorrectionsRef.current.values()).reduce((sum, corr) => sum + corr, 0);
+          const newTotal = initialTotalEstimateRef.current + totalCorrection;
+          setActualTotalDuration(newTotal);
+        }
+
+        return audioBufferData;
+      } catch (error) {
+        console.error("[Playback] Error synthesizing block:", error);
+        setIsPlaying(false);
+        return null;
+      } finally {
+        // Always clear the synthesizing promise when done
+        synthesizingRef.current.delete(blockId);
+      }
+    })();
+
+    // Store the promise so others can await it
+    synthesizingRef.current.set(blockId, synthesisPromise);
+
+    return synthesisPromise;
   }, [api, browserTTS.synthesize, documentBlocks, documentId, voiceSelection]);
 
-  const playAudioBuffer = useCallback((audioBufferData: AudioBufferData) => {
+  const playAudioBuffer = useCallback(async (audioBufferData: AudioBufferData) => {
     if (!audioPlayerRef.current) return;
 
     // Store current block duration for progress calculation
@@ -363,9 +371,9 @@ const PlaybackPage = () => {
       });
     });
 
-    // Load and play the buffer
-    audioPlayerRef.current.load(audioBufferData.buffer);
-    audioPlayerRef.current.play();
+    // Load audio (wait for it to be ready) then play
+    await audioPlayerRef.current.load(audioBufferData.buffer);
+    await audioPlayerRef.current.play();
   }, [documentBlocks]);
 
   // Handle pending voice change restart (runs after synthesizeBlock is recreated with new voice)
@@ -529,7 +537,6 @@ const PlaybackPage = () => {
     if (newBlock === currentBlock) return;
     if (!documentBlocks || newBlock < 0 || newBlock >= documentBlocks.length) return;
 
-    // Stop current audio
     audioPlayerRef.current?.stop();
 
     // Calculate progress up to the new block
@@ -548,7 +555,6 @@ const PlaybackPage = () => {
 
   // Handle click on structured document block (by audio_block_idx)
   const handleDocumentBlockClick = (audioBlockIdx: number) => {
-    // audio_block_idx maps directly to documentBlocks index
     handleBlockChange(audioBlockIdx);
   };
 

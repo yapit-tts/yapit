@@ -43,29 +43,42 @@ export class AudioPlayer {
   }
 
   /**
-   * Load an AudioBuffer and prepare for playback
+   * Load an AudioBuffer and prepare for playback.
+   * Returns a promise that resolves when audio is ready to play.
    */
-  load(buffer: AudioBuffer): void {
+  load(buffer: AudioBuffer): Promise<void> {
     this.stop();
     this.currentDurationMs = Math.round(buffer.duration * 1000);
 
     // Convert AudioBuffer to WAV blob
     const wavBlob = this.audioBufferToWav(buffer);
     this.currentBlobUrl = URL.createObjectURL(wavBlob);
-    this.audioElement.src = this.currentBlobUrl;
-    this.audioElement.playbackRate = this._tempo;
+
+    return new Promise((resolve) => {
+      const onCanPlay = () => {
+        this.audioElement.removeEventListener("canplaythrough", onCanPlay);
+        resolve();
+      };
+      this.audioElement.addEventListener("canplaythrough", onCanPlay);
+      this.audioElement.src = this.currentBlobUrl!;
+      this.audioElement.playbackRate = this._tempo;
+    });
   }
 
   /**
    * Start or resume playback
    */
-  play(): void {
+  async play(): Promise<void> {
     if (this.audioContext.state === "suspended") {
-      this.audioContext.resume();
+      await this.audioContext.resume();
     }
 
-    this.audioElement.play();
-    this.startProgressTracking();
+    try {
+      await this.audioElement.play();
+      this.startProgressTracking();
+    } catch (err) {
+      console.error("[AudioPlayer] play() failed:", err);
+    }
   }
 
   /**
