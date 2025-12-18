@@ -389,6 +389,17 @@ const PlaybackPage = () => {
       setIsSynthesizing(false);
       if (audioData && isPlayingRef.current) {
         playAudioBuffer(audioData);
+      } else if (!audioData && isPlayingRef.current) {
+        // Synthesis failed after voice change - auto-advance
+        console.error(`[Playback] SYNTHESIS FAILED after voice change for block ${blockId}, auto-advancing`);
+        setCurrentBlock(prev => {
+          if (documentBlocks && prev < documentBlocks.length - 1) {
+            return prev + 1;
+          } else {
+            setIsPlaying(false);
+            return -1;
+          }
+        });
       }
     });
   }, [synthesizeBlock, currentBlock, documentBlocks, playAudioBuffer]);
@@ -428,6 +439,17 @@ const PlaybackPage = () => {
           setIsSynthesizing(false);
           if (audioData && isPlayingRef.current) {
             playAudioBuffer(audioData);
+          } else if (!audioData && isPlayingRef.current) {
+            // Synthesis failed (empty block, network error, etc.) - auto-advance
+            console.error(`[Playback] SYNTHESIS FAILED for block ${currentBlockId} (idx ${currentBlock}), auto-advancing to next block`);
+            setCurrentBlock(prev => {
+              if (documentBlocks && prev < documentBlocks.length - 1) {
+                return prev + 1;
+              } else {
+                setIsPlaying(false);
+                return -1;
+              }
+            });
           }
         });
       }
@@ -509,6 +531,8 @@ const PlaybackPage = () => {
         synthesizeBlock(blockId).then(data => {
           if (data && isPlayingRef.current) {
             playAudioBuffer(data);
+          } else if (!data) {
+            console.error(`[Playback] SYNTHESIS FAILED for block ${blockId} on skip-back restart`);
           }
         });
       }

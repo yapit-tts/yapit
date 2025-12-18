@@ -56,8 +56,11 @@ class DocumentTransformer:
         self._block_counter += 1
         return id_
 
-    def _next_audio_idx(self) -> int | None:
+    def _next_audio_idx(self, plain_text: str) -> int | None:
+        """Get next audio block index, or None if text is empty/unspeakable."""
         if self._inside_blockquote:
+            return None
+        if not plain_text.strip():
             return None
         idx = self._audio_idx_counter
         self._audio_idx_counter += 1
@@ -126,7 +129,7 @@ class DocumentTransformer:
                 html=html,
                 ast=ast,
                 plain_text=plain_text,
-                audio_block_idx=self._next_audio_idx(),
+                audio_block_idx=self._next_audio_idx(plain_text),
             )
         ]
 
@@ -145,7 +148,7 @@ class DocumentTransformer:
                     html=html,
                     ast=ast,
                     plain_text=plain_text,
-                    audio_block_idx=self._next_audio_idx(),
+                    audio_block_idx=self._next_audio_idx(plain_text),
                 )
             ]
 
@@ -178,7 +181,7 @@ class DocumentTransformer:
                     html=chunk_html,
                     ast=chunk_ast,
                     plain_text=chunk_text,
-                    audio_block_idx=self._next_audio_idx(),
+                    audio_block_idx=self._next_audio_idx(chunk_text),
                     visual_group_id=visual_group_id,
                 )
             )
@@ -419,14 +422,15 @@ class DocumentTransformer:
             )
             plain_texts.append(" ".join(item_plain_parts))
 
+        combined_plain_text = " ".join(plain_texts)
         return [
             ListBlock(
                 id=self._next_block_id(),
                 ordered=ordered,
                 start=start,
                 items=items,
-                plain_text=" ".join(plain_texts),
-                audio_block_idx=self._next_audio_idx(),
+                plain_text=combined_plain_text,
+                audio_block_idx=self._next_audio_idx(combined_plain_text),
             )
         ]
 
@@ -446,12 +450,13 @@ class DocumentTransformer:
             if hasattr(block, "plain_text") and block.plain_text:
                 plain_texts.append(block.plain_text)
 
+        combined_plain_text = " ".join(plain_texts)
         return [
             BlockquoteBlock(
                 id=self._next_block_id(),
                 blocks=inner_blocks,
-                plain_text=" ".join(plain_texts),
-                audio_block_idx=self._next_audio_idx(),
+                plain_text=combined_plain_text,
+                audio_block_idx=self._next_audio_idx(combined_plain_text),
             )
         ]
 
@@ -550,7 +555,7 @@ class DocumentTransformer:
             return f'<a href="{href}"{title_attr}>{inner}</a>'
         elif node.type == "image":
             src = node.attrs.get("src", "")
-            alt = node.attrs.get("alt", "")
+            alt = node.content or ""  # Alt text is in node.content, not attrs['alt']
             title = node.attrs.get("title", "")
             title_attr = f' title="{title}"' if title else ""
             return f'<img src="{src}" alt="{alt}"{title_attr} />'
@@ -602,10 +607,12 @@ class DocumentTransformer:
                 )
             ]
         elif node.type == "image":
+            # Alt text is in node.content (or children), not attrs['alt']
+            alt = node.content or ""
             return [
                 InlineImageContent(
                     src=node.attrs.get("src", ""),
-                    alt=node.attrs.get("alt", ""),
+                    alt=alt,
                 )
             ]
         elif node.type == "softbreak":
@@ -637,7 +644,8 @@ class DocumentTransformer:
         elif node.type == "code_inline":
             return node.content or ""
         elif node.type == "image":
-            return node.attrs.get("alt", "")
+            # Alt text is in node.content, not attrs['alt']
+            return node.content or ""
         elif node.type in ("softbreak", "hardbreak"):
             return " "
         elif node.type == "math_inline":

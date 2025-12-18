@@ -340,6 +340,43 @@ class TestAudioBlockIndexing:
         assert audio_blocks[0] == "Title"
         assert audio_blocks[1] == "Some text."
 
+    def test_empty_paragraph_skips_audio_index(self):
+        """Paragraphs with only images (no alt text) don't get audio indices."""
+        md = "Before.\n\n![](image.png)\n\nAfter."
+        ast = parse_markdown(md)
+        doc = transform_to_document(ast)
+
+        assert len(doc.blocks) == 3
+        assert doc.blocks[0].audio_block_idx == 0  # "Before."
+        assert doc.blocks[1].audio_block_idx is None  # image-only paragraph
+        assert doc.blocks[2].audio_block_idx == 1  # "After." (not 2!)
+
+        audio_blocks = doc.get_audio_blocks()
+        assert len(audio_blocks) == 2
+        assert audio_blocks[0] == "Before."
+        assert audio_blocks[1] == "After."
+
+    def test_inline_math_only_paragraph_skips_audio_index(self):
+        """Paragraphs with only inline math don't get audio indices."""
+        md = "Before.\n\n$E=mc^2$\n\nAfter."
+        ast = parse_markdown(md)
+        doc = transform_to_document(ast)
+
+        assert len(doc.blocks) == 3
+        assert doc.blocks[0].audio_block_idx == 0  # "Before."
+        assert doc.blocks[1].audio_block_idx is None  # math-only paragraph
+        assert doc.blocks[2].audio_block_idx == 1  # "After." (not 2!)
+
+    def test_image_with_alt_text_gets_audio_index(self):
+        """Images with alt text contribute to audio, so paragraph gets index."""
+        md = "![A cat sitting on a mat](image.png)"
+        ast = parse_markdown(md)
+        doc = transform_to_document(ast)
+
+        assert len(doc.blocks) == 1
+        assert doc.blocks[0].audio_block_idx == 0
+        assert doc.blocks[0].plain_text == "A cat sitting on a mat"
+
 
 class TestJsonSerialization:
     """Test JSON serialization of StructuredDocument."""
