@@ -196,15 +196,20 @@ const PlaybackPage = () => {
     }
   }, [documentId, documentBlocks.length]);
 
-  // Save playback position when currentBlock changes
-  useEffect(() => {
-    if (!documentId || currentBlock < 0) return;
+  // Ref to track documentId for position saving (avoids saving old position to new doc on navigation)
+  const documentIdRef = useRef(documentId);
+  documentIdRef.current = documentId;
 
-    setPlaybackPosition(documentId, {
+  // Save playback position when currentBlock changes
+  // Uses ref for documentId so navigating to a new doc doesn't save old position to new doc's key
+  useEffect(() => {
+    if (!documentIdRef.current || currentBlock < 0) return;
+
+    setPlaybackPosition(documentIdRef.current, {
       block: currentBlock,
       progressMs: blockStartTimeRef.current,
     });
-  }, [documentId, currentBlock]);
+  }, [currentBlock]); // Only depend on currentBlock - documentId comes from ref
 
   // Refs for keyboard handler to avoid stale closures
   const handlePlayRef = useRef<() => void>(() => {});
