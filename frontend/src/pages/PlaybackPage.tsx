@@ -7,6 +7,7 @@ import { Loader2 } from "lucide-react";
 import { AudioPlayer } from '@/lib/audio';
 import { useBrowserTTS } from '@/lib/browserTTS';
 import { type VoiceSelection, getVoiceSelection } from '@/lib/voiceSelection';
+import { useSettings } from '@/hooks/useSettings';
 
 // Playback position persistence
 const POSITION_KEY_PREFIX = "yapit_playback_position_";
@@ -67,6 +68,7 @@ const PlaybackPage = () => {
 
   const { api, isAuthReady } = useApi();
   const browserTTS = useBrowserTTS();
+  const { settings } = useSettings();
 
   // Document data fetched from API
   const [document, setDocument] = useState<DocumentResponse | null>(null);
@@ -85,7 +87,7 @@ const PlaybackPage = () => {
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const isPlayingRef = useRef<boolean>(false); // Ref to track current state for async callbacks
   const [volume, setVolume] = useState<number>(50);
-  const [playbackSpeed, setPlaybackSpeed] = useState<number>(1.0);
+  const [playbackSpeed, setPlaybackSpeed] = useState<number>(settings.defaultSpeed);
   const [isSynthesizing, setIsSynthesizing] = useState<boolean>(false);
   const [voiceSelection, setVoiceSelection] = useState<VoiceSelection>(getVoiceSelection);
 
@@ -195,17 +197,18 @@ const PlaybackPage = () => {
       blockStartTimeRef.current = saved.progressMs;
 
       // Scroll to restored block after React renders the blocks
-      // Use setTimeout to ensure DOM is fully updated after state changes
-      setTimeout(() => {
-        const blockElement = window.document.querySelector(
-          `[data-audio-block-idx="${saved.block}"]`
-        );
-        if (blockElement) {
-          blockElement.scrollIntoView({ behavior: "smooth", block: "center" });
-        }
-      }, 100);
+      if (settings.scrollOnRestore) {
+        setTimeout(() => {
+          const blockElement = window.document.querySelector(
+            `[data-audio-block-idx="${saved.block}"]`
+          );
+          if (blockElement) {
+            blockElement.scrollIntoView({ behavior: "smooth", block: "center" });
+          }
+        }, 100);
+      }
     }
-  }, [documentId, documentBlocks.length]);
+  }, [documentId, documentBlocks.length, settings.scrollOnRestore]);
 
   // Ref to track documentId for position saving (avoids saving old position to new doc on navigation)
   const documentIdRef = useRef(documentId);
@@ -225,7 +228,7 @@ const PlaybackPage = () => {
   // Live scroll tracking - keep current block visible during playback
   useEffect(() => {
     // Only scroll during active playback (not on restore or manual click)
-    if (currentBlock < 0 || !isPlayingRef.current) return;
+    if (currentBlock < 0 || !isPlayingRef.current || !settings.liveScrollTracking) return;
 
     const blockElement = window.document.querySelector(
       `[data-audio-block-idx="${currentBlock}"]`
@@ -233,7 +236,7 @@ const PlaybackPage = () => {
     if (blockElement) {
       blockElement.scrollIntoView({ behavior: "smooth", block: "center" });
     }
-  }, [currentBlock]);
+  }, [currentBlock, settings.liveScrollTracking]);
 
   // Refs for keyboard handler to avoid stale closures
   const handlePlayRef = useRef<() => void>(() => {});

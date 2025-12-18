@@ -3,6 +3,7 @@ import { Slider } from "@/components/ui/slider";
 import { Play, Pause, Volume2, SkipBack, SkipForward, Loader2, Square } from "lucide-react";
 import { useEffect, useState } from "react";
 import { VoicePicker } from "@/components/voicePicker";
+import { SettingsDialog } from "@/components/settingsDialog";
 import { type VoiceSelection } from "@/lib/voiceSelection";
 
 interface ProgressBarValues {
@@ -176,6 +177,8 @@ const SoundControl = ({
               className="w-24"
             />
           </div>
+          {/* Settings */}
+          <SettingsDialog />
         </div>
       </div>
     </div>
