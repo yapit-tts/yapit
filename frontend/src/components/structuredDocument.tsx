@@ -23,7 +23,7 @@ interface HeadingBlock {
   html: string;
   ast: InlineContent[];
   plain_text: string;
-  audio_block_idx: number;
+  audio_block_idx: number | null;
 }
 
 interface ParagraphBlock {
@@ -32,7 +32,7 @@ interface ParagraphBlock {
   html: string;
   ast: InlineContent[];
   plain_text: string;
-  audio_block_idx: number;
+  audio_block_idx: number | null;
   visual_group_id?: string;
 }
 
@@ -43,7 +43,7 @@ interface ListBlock {
   start?: number;
   items: ListItem[];
   plain_text: string;
-  audio_block_idx: number;
+  audio_block_idx: number | null;
 }
 
 interface BlockquoteBlock {
@@ -51,7 +51,7 @@ interface BlockquoteBlock {
   id: string;
   blocks: ContentBlock[];
   plain_text: string;
-  audio_block_idx: number;
+  audio_block_idx: number | null;
 }
 
 interface CodeBlock {

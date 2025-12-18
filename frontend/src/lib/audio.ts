@@ -51,13 +51,20 @@ export class AudioPlayer {
       // Detect end of playback (>= 99.5% to handle floating point)
       if (detail.percentagePlayed >= 99.5 && !this.hasEnded) {
         this.hasEnded = true;
-        // Small delay to let final audio complete
+        // Calculate remaining audio time + buffer margin before disconnecting
+        const remainingPercent = 100 - detail.percentagePlayed;
+        const remainingMs = (remainingPercent / 100) * this.currentBufferDurationMs;
+        // Add margin for SoundTouchJS buffer (16384 samples @ 44100Hz = ~372ms)
+        // and account for tempo (faster = less buffer time needed)
+        const bufferMarginMs = Math.ceil(400 / this._tempo);
+        const delayMs = Math.max(50, remainingMs + bufferMarginMs);
+
         setTimeout(() => {
           if (this.hasEnded) {
             this.disconnect();
             this.onEndedCallback?.();
           }
-        }, 50);
+        }, delayMs);
       }
     });
   }

@@ -8,6 +8,28 @@ import { AudioPlayer } from '@/lib/audio';
 import { useBrowserTTS } from '@/lib/browserTTS';
 import { type VoiceSelection, getVoiceSelection } from '@/lib/voiceSelection';
 
+// Playback position persistence
+const POSITION_KEY_PREFIX = "yapit_playback_position_";
+
+interface PlaybackPosition {
+  block: number;
+  progressMs: number;
+}
+
+function getPlaybackPosition(documentId: string): PlaybackPosition | null {
+  try {
+    const stored = localStorage.getItem(POSITION_KEY_PREFIX + documentId);
+    if (stored) return JSON.parse(stored);
+  } catch {
+    // Ignore parse errors
+  }
+  return null;
+}
+
+function setPlaybackPosition(documentId: string, position: PlaybackPosition): void {
+  localStorage.setItem(POSITION_KEY_PREFIX + documentId, JSON.stringify(position));
+}
+
 interface Block {
   id: number;
   idx: number;
@@ -26,6 +48,16 @@ interface DocumentResponse {
 interface AudioBufferData {
   buffer: AudioBuffer;
   duration_ms: number;
+}
+
+// Convert PCM Int16 bytes to Float32Array for Web Audio API
+function pcmToFloat32(pcmData: ArrayBuffer): Float32Array {
+  const int16View = new Int16Array(pcmData);
+  const float32 = new Float32Array(int16View.length);
+  for (let i = 0; i < int16View.length; i++) {
+    float32[i] = int16View[i] / 32768; // Normalize Int16 to [-1, 1]
+  }
+  return float32;
 }
 
 const PlaybackPage = () => {
@@ -154,6 +186,28 @@ const PlaybackPage = () => {
     }
   }, [documentBlocks, estimated_ms]);
 
+  // Restore playback position from localStorage when document loads
+  useEffect(() => {
+    if (!documentId || documentBlocks.length === 0) return;
+
+    const saved = getPlaybackPosition(documentId);
+    if (saved && saved.block >= 0 && saved.block < documentBlocks.length) {
+      setCurrentBlock(saved.block);
+      setAudioProgress(saved.progressMs);
+      blockStartTimeRef.current = saved.progressMs;
+    }
+  }, [documentId, documentBlocks.length]);
+
+  // Save playback position when currentBlock changes
+  useEffect(() => {
+    if (!documentId || currentBlock < 0) return;
+
+    setPlaybackPosition(documentId, {
+      block: currentBlock,
+      progressMs: blockStartTimeRef.current,
+    });
+  }, [documentId, currentBlock]);
+
   // Update gain node value when volume changes
   useEffect(() => {
     if (gainNodeRef.current) {
@@ -223,12 +277,33 @@ const PlaybackPage = () => {
       console.log(`[Playback] Starting synthesis for block ${blockId} (idx ${block.idx}, ${block.text.length} chars)`);
       const startTime = performance.now();
 
-      // Synthesize using browser TTS (Kokoro.js in Web Worker)
-      const voice = voiceSelection.model === "kokoro" ? voiceSelection.voiceSlug : "af_heart";
-      const { audio: floatData, sampleRate } = await browserTTS.synthesize(block.text, { voice });
-      console.log(`[Playback] Block ${blockId} synthesized in ${(performance.now() - startTime).toFixed(0)}ms`);
+      let floatData: Float32Array;
+      let sampleRate: number;
+      let durationMs: number;
 
-      // Resample from 24000Hz to 44100Hz for SoundTouchJS compatibility
+      if (voiceSelection.model === "higgs" || voiceSelection.model === "kokoro-server") {
+        // Server-side synthesis via API
+        const modelSlug = voiceSelection.model === "higgs" ? "higgs-native" : "kokoro-cpu";
+        const response = await api.post(
+          `/v1/documents/${documentId}/blocks/${blockId}/synthesize/models/${modelSlug}/voices/${voiceSelection.voiceSlug}`,
+          null,
+          { responseType: "arraybuffer" }
+        );
+
+        sampleRate = parseInt(response.headers["x-sample-rate"] || "24000", 10);
+        durationMs = parseInt(response.headers["x-duration-ms"] || "0", 10);
+        floatData = pcmToFloat32(response.data);
+        console.log(`[Playback] Block ${blockId} ${modelSlug} synthesis in ${(performance.now() - startTime).toFixed(0)}ms`);
+      } else {
+        // Browser-side synthesis via Kokoro.js Web Worker
+        const result = await browserTTS.synthesize(block.text, { voice: voiceSelection.voiceSlug });
+        floatData = result.audio;
+        sampleRate = result.sampleRate;
+        durationMs = Math.round((floatData.length / sampleRate) * 1000);
+        console.log(`[Playback] Block ${blockId} browser synthesis in ${(performance.now() - startTime).toFixed(0)}ms`);
+      }
+
+      // Resample to 44100Hz for SoundTouchJS compatibility
       const inputFrames = floatData.length;
       const targetSampleRate = 44100;
       const resampleRatio = targetSampleRate / sampleRate;
@@ -248,7 +323,7 @@ const PlaybackPage = () => {
         outputData[outFrame] = sample1 + frac * (sample2 - sample1);
       }
 
-      const actualDurationMs = Math.round(audioBuffer.duration * 1000);
+      const actualDurationMs = durationMs || Math.round(audioBuffer.duration * 1000);
 
       const audioBufferData: AudioBufferData = {
         buffer: audioBuffer,
@@ -278,7 +353,7 @@ const PlaybackPage = () => {
       setIsPlaying(false);
       return null;
     }
-  }, [browserTTS.synthesize, documentBlocks, voiceSelection]);
+  }, [api, browserTTS.synthesize, documentBlocks, documentId, voiceSelection]);
 
   const playAudioBuffer = useCallback((audioBufferData: AudioBufferData) => {
     if (!audioPlayerRef.current) return;

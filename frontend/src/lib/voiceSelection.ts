@@ -1,6 +1,6 @@
 // Voice selection types and localStorage utilities
 
-export type ModelType = "kokoro" | "higgs";
+export type ModelType = "kokoro" | "kokoro-server" | "higgs";
 
 export interface VoiceSelection {
   model: ModelType;
@@ -109,11 +109,8 @@ export const KOKORO_VOICES: KokoroVoice[] = [
 ];
 
 export const HIGGS_PRESETS: HiggsPreset[] = [
-  { slug: "smart", name: "Smart Voice", description: "Auto-selects based on text" },
-  { slug: "belinda", name: "Belinda", description: "Female, US" },
-  { slug: "en_man", name: "English Man", description: "Male, US" },
-  { slug: "en_woman", name: "English Woman", description: "Female, US" },
-  { slug: "chadwick", name: "Chadwick", description: "Male, US" },
+  { slug: "en-man", name: "English Man", description: "Male, US" },
+  { slug: "en-woman", name: "English Woman", description: "Female, US" },
 ];
 
 export const HIGGS_SCENES = [
