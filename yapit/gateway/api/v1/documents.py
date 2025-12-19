@@ -484,7 +484,9 @@ async def _download_document(url: HttpUrl, max_size: int) -> tuple[bytes, str]:
     Raises:
         ValidationError: If download fails or file is too large
     """
-    async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as client:
+    # User-Agent required by Wikipedia and many other sites (they block requests without it)
+    headers = {"User-Agent": "Yapit/1.0 (https://yapit.app; document fetcher)"}
+    async with httpx.AsyncClient(follow_redirects=True, timeout=30.0, headers=headers) as client:
         try:
             head_response = await client.head(str(url))
             if head_response.status_code != 200:
