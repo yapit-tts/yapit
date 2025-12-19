@@ -38,7 +38,10 @@ class RunpodProcessor(BaseTTSProcessor):
             if "error" in result:
                 raise RuntimeError(f"RunPod job {job.job_id} failed: {result['error']}")
             return SynthesisResult(
-                job_id=job.job_id, audio=base64.b64decode(result["audio_base64"]), duration_ms=result["duration_ms"]
+                job_id=job.job_id,
+                audio=base64.b64decode(result["audio_base64"]),
+                duration_ms=result["duration_ms"],
+                audio_tokens=result.get("audio_tokens"),
             )
         except Exception as e:
             log.error(f"Failed to process job {job.job_id}: {e}")

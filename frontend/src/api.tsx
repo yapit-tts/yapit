@@ -27,22 +27,38 @@ const ApiContext = createContext<Api>({
 });
 
 export const ApiProvider: FC<PropsWithChildren<{}>> = ({ children }) => {
-	const tokenRef = useRef<string | undefined>(undefined);
+	const userRef = useRef<typeof user>(undefined);
 	const [isAuthReady, setIsAuthReady] = useState(false);
 	const [isAnonymous, setIsAnonymous] = useState(true);
 	const user = useUser();
 
-	// Create axios instance once with interceptor that reads current token
+	// Keep userRef in sync with current user
+	useEffect(() => {
+		userRef.current = user;
+	}, [user]);
+
+	// Create axios instance once with interceptor that fetches fresh token per request
 	const api = useMemo(() => {
 		const instance = axios.create({ baseURL });
 
-		instance.interceptors.request.use((config) => {
-			if (tokenRef.current) {
-				config.headers.Authorization = `Bearer ${tokenRef.current}`;
-			} else {
-				// Anonymous user - send anonymous ID for session tracking
-				config.headers["X-Anonymous-ID"] = getOrCreateAnonymousId();
+		instance.interceptors.request.use(async (config) => {
+			const currentUser = userRef.current;
+
+			if (currentUser?.currentSession) {
+				// Fetch fresh token for each request (handles expiry/refresh automatically)
+				try {
+					const { accessToken } = await currentUser.currentSession.getTokens();
+					if (accessToken) {
+						config.headers.Authorization = `Bearer ${accessToken}`;
+						return config;
+					}
+				} catch (err) {
+					console.error("api: failed to get access token:", err);
+				}
 			}
+
+			// Anonymous user or token fetch failed - send anonymous ID
+			config.headers["X-Anonymous-ID"] = getOrCreateAnonymousId();
 			return config;
 		});
 
@@ -60,17 +76,15 @@ export const ApiProvider: FC<PropsWithChildren<{}>> = ({ children }) => {
 
 		if (user === null || !user.currentSession) {
 			// No user or no session - anonymous mode
-			tokenRef.current = undefined;
 			setIsAnonymous(true);
 			setIsAuthReady(true);
 			return;
 		}
 
-		// User is logged in, get the token
+		// User is logged in - verify we can get a token
 		user.currentSession
 			.getTokens()
 			.then(({ accessToken }) => {
-				tokenRef.current = accessToken || undefined;
 				setIsAnonymous(!accessToken);
 				setIsAuthReady(true);
 			})

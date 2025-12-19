@@ -30,7 +30,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ChevronUp, FileText, Plus, Loader2, MoreHorizontal, User2, LogOut, LogIn, Trash2, Pencil, Settings } from "lucide-react";
+import { ChevronUp, FileText, Plus, Loader2, MoreHorizontal, User2, LogOut, LogIn, Trash2, Pencil, Settings, Coins } from "lucide-react";
 import { useApi } from "@/api";
 import { useUser } from "@stackframe/react";
 
@@ -46,7 +46,8 @@ function DocumentSidebar() {
   const [renameDoc, setRenameDoc] = useState<DocumentItem | null>(null);
   const [newTitle, setNewTitle] = useState("");
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
-  const { api, isAuthReady } = useApi();
+  const [creditBalance, setCreditBalance] = useState<number | null>(null);
+  const { api, isAuthReady, isAnonymous } = useApi();
   const navigate = useNavigate();
   const { documentId } = useParams();
   const location = useLocation();
@@ -66,8 +67,19 @@ function DocumentSidebar() {
       }
     };
 
+    const fetchCredits = async () => {
+      if (isAnonymous) return;
+      try {
+        const response = await api.get<{ balance: string }>("/v1/users/me/credits");
+        setCreditBalance(parseFloat(response.data.balance));
+      } catch {
+        // Credits not available (user may not have record yet)
+      }
+    };
+
     fetchDocuments();
-  }, [api, isAuthReady, user, location.pathname]);
+    fetchCredits();
+  }, [api, isAuthReady, isAnonymous, user, location.pathname]);
 
   const handleDocumentClick = (doc: DocumentItem) => {
     navigate(`/playback/${doc.id}`, {
@@ -202,6 +214,14 @@ function DocumentSidebar() {
       <SidebarFooter className="border-t border-sidebar-border">
         <SidebarMenu>
           <SidebarMenuItem>
+            <SidebarMenuButton onClick={() => navigate("/credits")}>
+              <Coins className="text-primary" />
+              <span className="truncate">
+                {creditBalance !== null ? `${creditBalance.toLocaleString()} credits` : "Buy Credits"}
+              </span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <SidebarMenuButton>
@@ -216,7 +236,7 @@ function DocumentSidebar() {
                 side="top"
                 className="min-w-[var(--radix-popper-anchor-width)]"
               >
-                <DropdownMenuItem>
+                <DropdownMenuItem disabled>
                   <Settings className="mr-2 h-4 w-4" />
                   Settings
                 </DropdownMenuItem>

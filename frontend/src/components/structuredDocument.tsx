@@ -1,4 +1,37 @@
+import { memo, useCallback, useEffect, useMemo, useRef } from "react";
+import katex from "katex";
 import { cn } from "@/lib/utils";
+
+// === Slug generation for heading anchors ===
+
+function generateSlug(text: string): string {
+  return text
+    .toLowerCase()
+    .trim()
+    .replace(/[^\w\s-]/g, "") // Remove special chars except spaces and hyphens
+    .replace(/\s+/g, "-") // Replace spaces with hyphens
+    .replace(/-+/g, "-") // Collapse multiple hyphens
+    .replace(/^-|-$/g, ""); // Trim leading/trailing hyphens
+}
+
+function buildSlugMap(blocks: ContentBlock[]): Map<string, string> {
+  const slugMap = new Map<string, string>();
+  const slugCounts = new Map<string, number>();
+
+  for (const block of blocks) {
+    if (block.type === "heading") {
+      const baseSlug = generateSlug(block.plain_text);
+      if (!baseSlug) continue;
+
+      const count = slugCounts.get(baseSlug) || 0;
+      const slug = count === 0 ? baseSlug : `${baseSlug}-${count}`;
+      slugCounts.set(baseSlug, count + 1);
+      slugMap.set(block.id, slug);
+    }
+  }
+
+  return slugMap;
+}
 
 // === TypeScript types matching backend Pydantic models ===
 
@@ -23,7 +56,7 @@ interface HeadingBlock {
   html: string;
   ast: InlineContent[];
   plain_text: string;
-  audio_block_idx: number;
+  audio_block_idx: number | null;
 }
 
 interface ParagraphBlock {
@@ -32,7 +65,8 @@ interface ParagraphBlock {
   html: string;
   ast: InlineContent[];
   plain_text: string;
-  audio_block_idx: number;
+  audio_block_idx: number | null;
+  visual_group_id?: string;
 }
 
 interface ListBlock {
@@ -42,7 +76,7 @@ interface ListBlock {
   start?: number;
   items: ListItem[];
   plain_text: string;
-  audio_block_idx: number;
+  audio_block_idx: number | null;
 }
 
 interface BlockquoteBlock {
@@ -50,7 +84,7 @@ interface BlockquoteBlock {
   id: string;
   blocks: ContentBlock[];
   plain_text: string;
-  audio_block_idx: number;
+  audio_block_idx: number | null;
 }
 
 interface CodeBlock {
@@ -119,7 +153,7 @@ interface BlockProps {
 const activeBlockClass = "bg-primary/10 border-l-4 border-l-primary -ml-4 pl-3";
 const clickableClass = "cursor-pointer hover:bg-muted/50 transition-colors rounded";
 
-function HeadingBlockView({ block, isActive, onClick }: BlockProps & { block: HeadingBlock }) {
+function HeadingBlockView({ block, isActive, onClick, slugId }: BlockProps & { block: HeadingBlock; slugId?: string }) {
   const sizeClasses: Record<number, string> = {
     1: "text-3xl font-bold mt-8 mb-4",
     2: "text-2xl font-semibold mt-6 mb-3",
@@ -137,12 +171,12 @@ function HeadingBlockView({ block, isActive, onClick }: BlockProps & { block: He
   );
 
   const props = {
+    id: slugId,
     className,
     onClick,
     dangerouslySetInnerHTML: { __html: block.html },
   };
 
-  // Use explicit elements to satisfy TypeScript
   switch (block.level) {
     case 1: return <h1 {...props} />;
     case 2: return <h2 {...props} />;
@@ -157,7 +191,7 @@ function ParagraphBlockView({ block, isActive, onClick }: BlockProps & { block: 
   return (
     <p
       className={cn(
-        "my-3 leading-relaxed py-1",
+        "my-3 py-1 leading-relaxed",
         onClick && clickableClass,
         isActive && activeBlockClass
       )}
@@ -193,28 +227,40 @@ function ListBlockView({ block, isActive, onClick }: BlockProps & { block: ListB
   );
 }
 
-function BlockquoteBlockView({ block, isActive, onClick, currentAudioBlockIdx, onBlockClick }: BlockProps & {
+function BlockquoteBlockView({ block, currentAudioBlockIdx, onBlockClick }: {
   block: BlockquoteBlock;
   currentAudioBlockIdx: number;
   onBlockClick?: (audioIdx: number) => void;
 }) {
+  // Group nested blocks by visual_group_id (same as top-level)
+  const groupedBlocks = groupBlocks(block.blocks);
+
+  // Blockquote is a visual container - nested blocks have their own audio indices
   return (
-    <blockquote
-      className={cn(
-        "my-4 border-l-4 border-muted-foreground/30 pl-4 italic text-muted-foreground py-1",
-        onClick && clickableClass,
-        isActive && activeBlockClass
-      )}
-      onClick={onClick}
-    >
-      {block.blocks.map((nestedBlock) => (
-        <BlockView
-          key={nestedBlock.id}
-          block={nestedBlock}
-          currentAudioBlockIdx={currentAudioBlockIdx}
-          onBlockClick={onBlockClick}
-        />
-      ))}
+    <blockquote className="my-4 border-l-4 border-muted-foreground/30 pl-4 italic text-muted-foreground py-1">
+      {groupedBlocks.map((grouped) => {
+        if (grouped.kind === "paragraph-group") {
+          return (
+            <ParagraphGroupView
+              key={grouped.blocks[0].id}
+              blocks={grouped.blocks}
+              currentAudioBlockIdx={currentAudioBlockIdx}
+              onBlockClick={onBlockClick}
+            />
+          );
+        } else {
+          const b = grouped.block;
+          return (
+            <div key={b.id} data-audio-block-idx={b.audio_block_idx ?? undefined}>
+              <BlockView
+                block={b}
+                currentAudioBlockIdx={currentAudioBlockIdx}
+                onBlockClick={onBlockClick}
+              />
+            </div>
+          );
+        }
+      })}
     </blockquote>
   );
 }
@@ -240,11 +286,27 @@ function CodeBlockView({ block }: BlockProps & { block: CodeBlock }) {
 }
 
 function MathBlockView({ block }: BlockProps & { block: MathBlock }) {
-  // Basic math display - could integrate KaTeX/MathJax later
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (containerRef.current) {
+      try {
+        katex.render(block.content, containerRef.current, {
+          displayMode: true,
+          throwOnError: false,
+        });
+      } catch (e) {
+        console.warn("KaTeX render error:", e);
+        containerRef.current.textContent = block.content;
+      }
+    }
+  }, [block.content]);
+
   return (
-    <div className="my-4 p-4 bg-muted/50 rounded border border-border text-center font-mono overflow-x-auto">
-      <code className="text-sm">{block.content}</code>
-    </div>
+    <div
+      ref={containerRef}
+      className="my-4 p-4 bg-muted/50 rounded border border-border text-center overflow-x-auto"
+    />
   );
 }
 
@@ -303,15 +365,90 @@ function ThematicBreakView() {
   return <hr className="my-6 border-t border-border" />;
 }
 
+// === Block grouping for visual continuity ===
+
+type GroupedBlock =
+  | { kind: "single"; block: ContentBlock }
+  | { kind: "paragraph-group"; blocks: ParagraphBlock[] };
+
+function groupBlocks(blocks: ContentBlock[]): GroupedBlock[] {
+  const result: GroupedBlock[] = [];
+  let currentGroup: ParagraphBlock[] = [];
+  let currentGroupId: string | null = null;
+
+  const flushGroup = () => {
+    if (currentGroup.length > 1) {
+      result.push({ kind: "paragraph-group", blocks: currentGroup });
+    } else if (currentGroup.length === 1) {
+      result.push({ kind: "single", block: currentGroup[0] });
+    }
+    currentGroup = [];
+    currentGroupId = null;
+  };
+
+  for (const block of blocks) {
+    const groupId = block.type === "paragraph" ? block.visual_group_id : null;
+
+    if (groupId && groupId === currentGroupId) {
+      currentGroup.push(block as ParagraphBlock);
+    } else {
+      flushGroup();
+      if (groupId) {
+        currentGroup = [block as ParagraphBlock];
+        currentGroupId = groupId;
+      } else {
+        result.push({ kind: "single", block });
+      }
+    }
+  }
+
+  flushGroup();
+  return result;
+}
+
+// Renders multiple paragraph blocks as spans within a single <p>
+interface ParagraphGroupViewProps {
+  blocks: ParagraphBlock[];
+  currentAudioBlockIdx: number;
+  onBlockClick?: (audioIdx: number) => void;
+}
+
+function ParagraphGroupView({ blocks, currentAudioBlockIdx, onBlockClick }: ParagraphGroupViewProps) {
+  return (
+    <p className="my-3 py-1 leading-relaxed">
+      {blocks.map((block) => {
+        const isActive = block.audio_block_idx === currentAudioBlockIdx && currentAudioBlockIdx >= 0;
+        const handleClick = block.audio_block_idx !== null && onBlockClick
+          ? () => onBlockClick(block.audio_block_idx as number)
+          : undefined;
+
+        return (
+          <span
+            key={block.id}
+            data-audio-block-idx={block.audio_block_idx ?? undefined}
+            className={cn(
+              handleClick && "cursor-pointer hover:bg-muted/50 transition-colors",
+              isActive && "bg-primary/10 rounded"
+            )}
+            onClick={handleClick}
+            dangerouslySetInnerHTML={{ __html: block.html }}
+          />
+        );
+      })}
+    </p>
+  );
+}
+
 // === Main block renderer ===
 
 interface BlockViewProps {
   block: ContentBlock;
   currentAudioBlockIdx: number;
   onBlockClick?: (audioIdx: number) => void;
+  slugMap?: Map<string, string>;
 }
 
-function BlockView({ block, currentAudioBlockIdx, onBlockClick }: BlockViewProps) {
+function BlockView({ block, currentAudioBlockIdx, onBlockClick, slugMap }: BlockViewProps) {
   const isActive = block.audio_block_idx === currentAudioBlockIdx && currentAudioBlockIdx >= 0;
   const handleClick = block.audio_block_idx !== null && onBlockClick
     ? () => onBlockClick(block.audio_block_idx as number)
@@ -321,7 +458,7 @@ function BlockView({ block, currentAudioBlockIdx, onBlockClick }: BlockViewProps
 
   switch (block.type) {
     case "heading":
-      return <HeadingBlockView {...baseProps} block={block} />;
+      return <HeadingBlockView {...baseProps} block={block} slugId={slugMap?.get(block.id)} />;
     case "paragraph":
       return <ParagraphBlockView {...baseProps} block={block} />;
     case "list":
@@ -329,7 +466,6 @@ function BlockView({ block, currentAudioBlockIdx, onBlockClick }: BlockViewProps
     case "blockquote":
       return (
         <BlockquoteBlockView
-          {...baseProps}
           block={block}
           currentAudioBlockIdx={currentAudioBlockIdx}
           onBlockClick={onBlockClick}
@@ -360,23 +496,108 @@ interface StructuredDocumentViewProps {
   fallbackContent?: string;
 }
 
-export function StructuredDocumentView({
+// Memoized to prevent re-renders from parent's audioProgress updates
+export const StructuredDocumentView = memo(function StructuredDocumentView({
   structuredContent,
   title,
   currentAudioBlockIdx,
   onBlockClick,
   fallbackContent,
 }: StructuredDocumentViewProps) {
-  // Parse structured content or fall back to plain text
-  let doc: StructuredDocument | null = null;
+  const contentRef = useRef<HTMLDivElement>(null);
 
-  if (structuredContent) {
+  // Parse structured content
+  const doc = useMemo(() => {
+    if (!structuredContent) return null;
     try {
-      doc = JSON.parse(structuredContent) as StructuredDocument;
+      return JSON.parse(structuredContent) as StructuredDocument;
     } catch (e) {
       console.warn("Failed to parse structured content:", e);
+      return null;
     }
-  }
+  }, [structuredContent]);
+
+  // Build slug map for heading anchors
+  const slugMap = useMemo(() => {
+    if (!doc?.blocks) return new Map<string, string>();
+    return buildSlugMap(doc.blocks);
+  }, [doc]);
+
+  // Render inline math after content updates
+  useEffect(() => {
+    if (!contentRef.current) return;
+    const mathSpans = contentRef.current.querySelectorAll(".math-inline");
+    mathSpans.forEach((span) => {
+      const latex = span.textContent || "";
+      if (latex && !span.classList.contains("katex-rendered")) {
+        try {
+          katex.render(latex, span as HTMLElement, {
+            displayMode: false,
+            throwOnError: false,
+          });
+          span.classList.add("katex-rendered");
+        } catch (e) {
+          console.warn("KaTeX inline render error:", e);
+        }
+      }
+    });
+  }, [structuredContent, currentAudioBlockIdx]);
+
+  // Mark dead anchor links (no matching heading)
+  useEffect(() => {
+    if (!contentRef.current) return;
+
+    // Small delay to ensure heading IDs are in the DOM
+    const timeoutId = setTimeout(() => {
+      if (!contentRef.current) return;
+      const anchorLinks = contentRef.current.querySelectorAll('a[href^="#"]');
+      anchorLinks.forEach((link) => {
+        const fragment = link.getAttribute("href")?.slice(1);
+        if (!fragment) return;
+        const targetExists = document.getElementById(fragment);
+        if (targetExists) {
+          link.classList.remove("dead-link");
+        } else {
+          link.classList.add("dead-link");
+        }
+      });
+    }, 0);
+
+    return () => clearTimeout(timeoutId);
+  });
+
+  // Handle clicks on links within document content
+  const handleContentClick = useCallback((e: React.MouseEvent) => {
+    const target = e.target as HTMLElement;
+    const anchor = target.closest("a") as HTMLAnchorElement | null;
+    if (!anchor) return;
+
+    const href = anchor.getAttribute("href");
+    if (!href) return;
+
+    // Anchor links (#fragment) - scroll to heading if exists, otherwise no-op
+    if (href.startsWith("#")) {
+      e.preventDefault();
+      const fragment = href.slice(1);
+      const targetElement = document.getElementById(fragment);
+      if (targetElement) {
+        targetElement.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+      return;
+    }
+
+    // Relative links (/path) - no-op, these are from original site and don't work here
+    if (href.startsWith("/")) {
+      e.preventDefault();
+      return;
+    }
+
+    // External links (http://, https://) - open in new tab
+    if (href.startsWith("http://") || href.startsWith("https://")) {
+      e.preventDefault();
+      window.open(href, "_blank", "noopener,noreferrer");
+    }
+  }, []);
 
   // Fallback to plain text rendering
   if (!doc || !doc.blocks || doc.blocks.length === 0) {
@@ -394,6 +615,9 @@ export function StructuredDocumentView({
     );
   }
 
+  // Group consecutive paragraphs with same visual_group_id
+  const groupedBlocks = groupBlocks(doc.blocks);
+
   return (
     <article className="flex flex-col overflow-y-auto m-[10%] mt-[4%] prose-container">
       {title && (
@@ -401,26 +625,79 @@ export function StructuredDocumentView({
           {title}
         </h1>
       )}
-      <div className="structured-content">
-        {doc.blocks.map((block) => (
-          <BlockView
-            key={block.id}
-            block={block}
-            currentAudioBlockIdx={currentAudioBlockIdx}
-            onBlockClick={onBlockClick}
-          />
-        ))}
+      <div ref={contentRef} className="structured-content" onClick={handleContentClick}>
+        {groupedBlocks.map((grouped) => {
+          if (grouped.kind === "paragraph-group") {
+            return (
+              <ParagraphGroupView
+                key={grouped.blocks[0].id}
+                blocks={grouped.blocks}
+                currentAudioBlockIdx={currentAudioBlockIdx}
+                onBlockClick={onBlockClick}
+              />
+            );
+          } else {
+            const block = grouped.block;
+            return (
+              <div
+                key={block.id}
+                data-audio-block-idx={block.audio_block_idx ?? undefined}
+              >
+                <BlockView
+                  block={block}
+                  currentAudioBlockIdx={currentAudioBlockIdx}
+                  onBlockClick={onBlockClick}
+                  slugMap={slugMap}
+                />
+              </div>
+            );
+          }
+        })}
       </div>
 
       {/* Inline styles for HTML content */}
       <style>{`
+        /* Base link style */
         .structured-content a {
           color: var(--primary);
-          text-decoration: underline;
+          text-decoration: none;
         }
         .structured-content a:hover {
           opacity: 0.8;
         }
+
+        /* Internal anchor links - dotted underline */
+        .structured-content a[href^="#"]:not(.dead-link) {
+          text-decoration: underline;
+          text-decoration-style: dotted;
+          text-underline-offset: 2px;
+        }
+
+        /* External links - solid underline + icon */
+        .structured-content a[href^="http"] {
+          text-decoration: underline;
+          text-underline-offset: 2px;
+        }
+        .structured-content a[href^="http"]::after {
+          content: " ↗";
+          font-size: 0.7em;
+          text-decoration: none;
+          display: inline;
+        }
+
+        /* Dead links - slightly muted, no underline */
+        .structured-content a[href^="/"],
+        .structured-content a[href^="#"].dead-link {
+          color: var(--primary);
+          opacity: 0.7;
+          text-decoration: none;
+          cursor: default;
+        }
+        .structured-content a[href^="/"]::after,
+        .structured-content a.dead-link::after {
+          content: none;
+        }
+
         .structured-content strong {
           font-weight: 600;
         }
@@ -437,7 +714,7 @@ export function StructuredDocumentView({
       `}</style>
     </article>
   );
-}
+});
 
 // Export types for use elsewhere
 export type { StructuredDocument, ContentBlock, InlineContent };

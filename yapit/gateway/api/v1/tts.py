@@ -1,15 +1,20 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import io
 import logging
+import pickle
 import uuid
 from decimal import Decimal
 
+import numpy as np
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlmodel import select
 
 from yapit.contracts import TTS_INFLIGHT, SynthesisJob, SynthesisParameters, SynthesisResult, get_queue_name
 from yapit.gateway.auth import authenticate
+from yapit.gateway.cache import Cache
 from yapit.gateway.deps import (
     AudioCache,
     AuthenticatedUser,
@@ -25,12 +30,74 @@ from yapit.gateway.deps import (
     SynthesisJobDep,
     ensure_admin_credits,
 )
-from yapit.gateway.domain_models import BlockVariant, TTSModel
+from yapit.gateway.domain_models import Block, BlockVariant, TTSModel, Voice
 from yapit.gateway.exceptions import InsufficientCreditsError
 
 log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1", tags=["synthesis"])
+
+# Max number of preceding blocks to use for voice context
+CONTEXT_BUFFER_SIZE = 3
+
+
+async def _build_context_tokens(
+    db: "DbSession",
+    cache: Cache,
+    document_id: uuid.UUID,
+    current_block_idx: int,
+    model: TTSModel,
+    voice: Voice,
+    codec: str,
+) -> str | None:
+    """Build serialized context tokens from preceding blocks.
+
+    Retrieves cached audio tokens from up to CONTEXT_BUFFER_SIZE preceding blocks
+    and serializes them for the worker.
+    """
+    if current_block_idx == 0:
+        return None
+
+    # Query preceding blocks (ordered by idx, limited to buffer size)
+    start_idx = max(0, current_block_idx - CONTEXT_BUFFER_SIZE)
+    result = await db.exec(
+        select(Block)
+        .where(Block.document_id == document_id)
+        .where(Block.idx >= start_idx)
+        .where(Block.idx < current_block_idx)
+        .order_by(Block.idx)
+    )
+    preceding_blocks = result.all()
+
+    if not preceding_blocks:
+        return None
+
+    # Collect (text, tokens) tuples from cached variants
+    context_items: list[tuple[str, np.ndarray]] = []
+    for blk in preceding_blocks:
+        variant_hash = BlockVariant.get_hash(
+            text=blk.text,
+            model_slug=model.slug,
+            voice_slug=voice.slug,
+            codec=codec,
+            parameters=voice.parameters,
+        )
+        token_data = await cache.retrieve_data(f"{variant_hash}:tokens")
+        if token_data is None:
+            continue
+        # token_data is bytes (UTF-8 encoded base64 string from np.save)
+        b64_str = token_data.decode("utf-8")
+        buffer = io.BytesIO(base64.b64decode(b64_str))
+        arr = np.load(buffer, allow_pickle=False)
+        context_items.append((blk.text, arr))
+
+    if not context_items:
+        return None
+
+    # Serialize list of (text, array) tuples (matches deserialize_context_tokens in adapter)
+    buffer = io.BytesIO()
+    pickle.dump(context_items, buffer)
+    return base64.b64encode(buffer.getvalue()).decode("utf-8")
 
 
 def _audio_response(data: bytes, codec: str, model: TTSModel, duration_ms: int | None = None) -> Response:
@@ -118,6 +185,20 @@ async def synthesize(
     # Queue the job, if not already processing (we're the first one to create it or the cache expired)
     if created or not (await redis.exists(TTS_INFLIGHT.format(hash=variant_hash))):
         await redis.set(TTS_INFLIGHT.format(hash=variant_hash), 1, ex=300, nx=True)  # 5min lock
+
+        # Build context tokens from preceding blocks (HIGGS only, for voice consistency)
+        context_tokens = None
+        if model.slug.startswith("higgs"):
+            context_tokens = await _build_context_tokens(
+                db=db,
+                cache=cache,
+                document_id=block.document_id,
+                current_block_idx=block.idx,
+                model=model,
+                voice=voice,
+                codec=served_codec,
+            )
+
         job = SynthesisJob(
             job_id=job_id or uuid.uuid4(),
             variant_hash=variant_hash,
@@ -128,13 +209,14 @@ async def synthesize(
                 text=block.text,
                 kwargs=voice.parameters,
                 codec=served_codec,
+                context_tokens=context_tokens,
             ),
         )
         await redis.lpush(get_queue_name(model.slug), job.model_dump_json())
 
     # Long-polling: wait for audio to appear in cache AND inflight to be cleared
     timeout = settings.synthesis_polling_timeout_seconds
-    poll_interval = 0.5
+    poll_interval = 0.1
     elapsed = 0.0
     while elapsed < timeout:
         audio_data = await cache.retrieve_data(variant_hash)

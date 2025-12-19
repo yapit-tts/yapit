@@ -6,6 +6,8 @@ SUPPORTED_DOCUMENT_MIME_TYPES = {
     # Text formats
     "text/html",
     "text/plain",
+    "text/markdown",
+    "text/x-markdown",
     # E-book formats
     "application/epub+zip",
     # Document formats

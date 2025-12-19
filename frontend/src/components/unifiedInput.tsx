@@ -43,6 +43,8 @@ const ACCEPTED_FILE_TYPES = [
   "application/msword",
   "text/plain",
   "text/html",
+  "text/markdown",
+  "text/x-markdown",
   "application/epub+zip",
 ];
 
@@ -185,8 +187,9 @@ export function UnifiedInput() {
 
       const contentType = response.data.metadata.content_type;
 
-      // Auto-create for plain text files (no OCR option needed)
-      if (contentType === "text/plain") {
+      // Auto-create for text-based files (no OCR option needed)
+      const isTextBased = ["text/plain", "text/markdown", "text/x-markdown", "text/html"].includes(contentType);
+      if (isTextBased) {
         setIsCreating(true);
         const docResponse = await api.post<DocumentCreateResponse>("/v1/documents/document", {
           hash: response.data.hash,
@@ -247,7 +250,7 @@ export function UnifiedInput() {
 
     const file = files[0];
     const isAcceptedType = ACCEPTED_FILE_TYPES.includes(file.type) ||
-      file.name.match(/\.(pdf|docx?|txt|html?|epub)$/i);
+      file.name.match(/\.(pdf|docx?|txt|md|html?|epub)$/i);
 
     if (!isAcceptedType) {
       setError(`Unsupported file type: ${file.type || file.name.split('.').pop()}`);
@@ -299,7 +302,7 @@ export function UnifiedInput() {
         <input
           ref={fileInputRef}
           type="file"
-          accept=".pdf,.docx,.doc,.txt,.html,.htm,.epub"
+          accept=".pdf,.docx,.doc,.txt,.md,.html,.htm,.epub"
           onChange={handleFileSelect}
           className="hidden"
         />

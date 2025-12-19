@@ -36,6 +36,7 @@ gateway = [
   "mistralai~=1.9.2",  # only needed for MistralOCRProcessor
   "markdown-it-py~=3.0",
   "mdit-py-plugins~=0.4",
+  "stripe~=12.0",
 ]
 
 test = [

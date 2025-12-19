@@ -62,7 +62,7 @@ class HeadingBlock(BaseModel):
     html: str
     ast: list[InlineContent]
     plain_text: str
-    audio_block_idx: int
+    audio_block_idx: int | None = None
 
 
 class ParagraphBlock(BaseModel):
@@ -73,7 +73,8 @@ class ParagraphBlock(BaseModel):
     html: str
     ast: list[InlineContent]
     plain_text: str
-    audio_block_idx: int
+    audio_block_idx: int | None = None
+    visual_group_id: str | None = None  # Groups split sentences from the same paragraph
 
 
 class ListItem(BaseModel):
@@ -93,7 +94,7 @@ class ListBlock(BaseModel):
     start: int | None = None
     items: list[ListItem]
     plain_text: str
-    audio_block_idx: int
+    audio_block_idx: int | None = None
 
 
 class BlockquoteBlock(BaseModel):
@@ -103,7 +104,7 @@ class BlockquoteBlock(BaseModel):
     id: str
     blocks: list["ContentBlock"]
     plain_text: str
-    audio_block_idx: int
+    audio_block_idx: int | None = None
 
 
 class CodeBlock(BaseModel):
@@ -179,12 +180,22 @@ class StructuredDocument(BaseModel):
     blocks: list[ContentBlock]
 
     def get_audio_blocks(self) -> list[str]:
-        """Extract plain_text from blocks that have audio (prose only)."""
+        """Extract plain_text from blocks that have audio (prose only).
+
+        Recurses into container blocks (blockquotes) to collect nested audio.
+        """
         result = []
-        for block in self.blocks:
-            if block.audio_block_idx is not None:
-                result.append(block.plain_text)
+        self._collect_audio_blocks(self.blocks, result)
         return result
+
+    def _collect_audio_blocks(self, blocks: list["ContentBlock"], result: list[str]) -> None:
+        """Recursively collect audio blocks."""
+        for block in blocks:
+            if block.type == "blockquote":
+                # Recurse into blockquote's nested blocks
+                self._collect_audio_blocks(block.blocks, result)
+            elif block.audio_block_idx is not None:
+                result.append(block.plain_text)
 
 
 # Rebuild models to resolve forward references

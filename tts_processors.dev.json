@@ -6,22 +6,11 @@
   {
     "slug": "kokoro-cpu",
     "processor": "yapit.gateway.processors.tts.local.LocalProcessor",
-    "worker_url": "http://kokoro-cpu:8000",
-    "max_parallel": 2
+    "worker_url": "http://kokoro-cpu:8000"
   },
   {
-    "slug": "kokoro-cpu-runpod",
+    "slug": "higgs-native",
     "processor": "yapit.gateway.processors.tts.runpod.RunpodProcessor",
-    "runpod_endpoint_id": "nc8eej7missbxb"
-  },
-  {
-    "slug": "higgs-audio-v2-runpod-vllm",
-    "processor": "yapit.gateway.processors.tts.runpod.RunpodProcessor",
-    "runpod_endpoint_id": "jaa8pzvapcjgf4"
-  },
-  {
-    "slug": "higgs-audio-v2-runpod-vllm-ci",
-    "processor": "yapit.gateway.processors.tts.runpod.RunpodProcessor",
-    "runpod_endpoint_id": "uyq5s2h9ze1gu4"
+    "runpod_endpoint_id": "u3n08ucrd64b3p"
   }
 ]

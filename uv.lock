@@ -1638,6 +1638,19 @@ wheels = [
 ]
 
 [[package]]
+name = "stripe"
+version = "12.5.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "requests" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/bd/92/f1b72783e13662026efc7d3f0fc201230edab55edd1604326a97162d8ce4/stripe-12.5.1.tar.gz", hash = "sha256:5407d092c355c31393e767d2dcb2d5a8c3980caa9a073acb32d0ccb3c01b04b5", size = 1432826, upload-time = "2025-09-05T13:27:07.976Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1d/8d/f4c2f047eedc943aea573cb56af2c9481b2d97ee8de9819f8c5d87e9ba34/stripe-12.5.1-py2.py3-none-any.whl", hash = "sha256:39b47b331dfe933ce6cf6bd654e0ae9ba082caa9d1dd8d0ae9ae48293975f115", size = 1664067, upload-time = "2025-09-05T13:27:05.559Z" },
+]
+
+[[package]]
 name = "svix"
 version = "1.65.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1992,6 +2005,7 @@ gateway = [
     { name = "requests" },
     { name = "runpod" },
     { name = "sqlmodel" },
+    { name = "stripe" },
     { name = "svix" },
 ]
 test = [
@@ -2033,6 +2047,7 @@ requires-dist = [
     { name = "requests", marker = "extra == 'test'", specifier = "~=2.32.3" },
     { name = "runpod", marker = "extra == 'gateway'", specifier = "~=1.7.12" },
     { name = "sqlmodel", marker = "extra == 'gateway'", specifier = "~=0.0.24" },
+    { name = "stripe", marker = "extra == 'gateway'", specifier = "~=12.0" },
     { name = "svix", marker = "extra == 'gateway'", specifier = "~=1.65.0" },
     { name = "testcontainers", marker = "extra == 'test'", specifier = "==4.10.0" },
 ]

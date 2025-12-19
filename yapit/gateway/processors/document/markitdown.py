@@ -12,6 +12,8 @@ class MarkitdownProcessor(BaseDocumentProcessor):
             # default text formats
             "text/html",
             "text/plain",
+            "text/markdown",
+            "text/x-markdown",
             "text/csv",
             "text/xml",
             "application/xml",

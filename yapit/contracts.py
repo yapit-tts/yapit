@@ -27,6 +27,8 @@ class SynthesisParameters(BaseModel):
     text: str
     codec: str  # codec the worker must produce / translate to
     kwargs: dict = Field(default_factory=dict)  # additional parameters for the worker
+    # For HIGGS context accumulation: base64-encoded serialized audio token tensors from previous blocks
+    context_tokens: str | None = None
 
     model_config = ConfigDict(frozen=True)
 
@@ -48,3 +50,5 @@ class SynthesisResult(BaseModel):
     job_id: uuid.UUID
     audio: Annotated[bytes, annotated_types.MaxLen(10 * 1024 * 1024)]
     duration_ms: int
+    # For HIGGS context accumulation: base64-encoded serialized audio token tensor from this block
+    audio_tokens: str | None = None

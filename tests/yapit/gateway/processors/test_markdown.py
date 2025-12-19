@@ -161,8 +161,8 @@ class TestTransformToDocument:
         assert len(doc.blocks) == 1
         block = doc.blocks[0]
         assert isinstance(block, BlockquoteBlock)
-        # Blockquote has nested paragraph (idx 0), then blockquote itself (idx 1)
-        assert block.audio_block_idx == 1
+        # Blockquote is a container (no audio index), nested blocks get their own
+        assert block.audio_block_idx is None
         assert len(block.blocks) == 1
         assert block.blocks[0].audio_block_idx == 0
 
@@ -245,6 +245,66 @@ class TestParagraphSplitting:
         for block in doc.blocks:
             assert block.plain_text.endswith(".") or block.plain_text.endswith(".")
 
+    def test_split_paragraphs_share_visual_group_id(self):
+        """Split paragraph blocks share the same visual_group_id."""
+        text = "Sentence one here. Sentence two here. Sentence three here. Sentence four here."
+        ast = parse_markdown(text)
+        doc = transform_to_document(ast, max_block_chars=50)
+
+        # Should have multiple blocks from the same paragraph
+        assert len(doc.blocks) > 1
+        # All should share the same visual_group_id
+        group_ids = [b.visual_group_id for b in doc.blocks]
+        assert all(g == group_ids[0] for g in group_ids)
+        assert group_ids[0] is not None
+
+    def test_unsplit_paragraph_has_no_visual_group_id(self):
+        """Unsplit paragraphs have visual_group_id = None."""
+        text = "Short paragraph."
+        ast = parse_markdown(text)
+        doc = transform_to_document(ast, max_block_chars=1000)
+
+        assert len(doc.blocks) == 1
+        assert doc.blocks[0].visual_group_id is None
+
+    def test_split_preserves_bold_formatting(self):
+        """Bold formatting is preserved when paragraph is split."""
+        text = "This paper presents **Yapit**, an open-source platform. It provides text-to-speech capabilities."
+        ast = parse_markdown(text)
+        doc = transform_to_document(ast, max_block_chars=60)
+
+        # Should split into 2 blocks
+        assert len(doc.blocks) == 2
+
+        # First block should have bold formatting in HTML
+        assert "<strong>Yapit</strong>" in doc.blocks[0].html
+
+        # First block AST should contain strong node
+        ast_types = [node.type for node in doc.blocks[0].ast]
+        assert "strong" in ast_types
+
+    def test_split_preserves_italic_formatting(self):
+        """Italic formatting is preserved when paragraph is split."""
+        text = "The *important* feature is speed. Another sentence here to force a split."
+        ast = parse_markdown(text)
+        doc = transform_to_document(ast, max_block_chars=40)
+
+        # Should split
+        assert len(doc.blocks) >= 2
+
+        # First block should have italic formatting
+        assert "<em>important</em>" in doc.blocks[0].html
+
+    def test_split_preserves_nested_formatting(self):
+        """Nested formatting (bold inside italic) is preserved."""
+        text = "Here is *italic with **bold** inside* text. More text here to split."
+        ast = parse_markdown(text)
+        doc = transform_to_document(ast, max_block_chars=50)
+
+        # First block should have nested formatting
+        assert "<em>" in doc.blocks[0].html
+        assert "<strong>" in doc.blocks[0].html
+
 
 class TestAudioBlockIndexing:
     """Test audio block index assignment."""
@@ -279,6 +339,43 @@ class TestAudioBlockIndexing:
         assert len(audio_blocks) == 2
         assert audio_blocks[0] == "Title"
         assert audio_blocks[1] == "Some text."
+
+    def test_empty_paragraph_skips_audio_index(self):
+        """Paragraphs with only images (no alt text) don't get audio indices."""
+        md = "Before.\n\n![](image.png)\n\nAfter."
+        ast = parse_markdown(md)
+        doc = transform_to_document(ast)
+
+        assert len(doc.blocks) == 3
+        assert doc.blocks[0].audio_block_idx == 0  # "Before."
+        assert doc.blocks[1].audio_block_idx is None  # image-only paragraph
+        assert doc.blocks[2].audio_block_idx == 1  # "After." (not 2!)
+
+        audio_blocks = doc.get_audio_blocks()
+        assert len(audio_blocks) == 2
+        assert audio_blocks[0] == "Before."
+        assert audio_blocks[1] == "After."
+
+    def test_inline_math_only_paragraph_skips_audio_index(self):
+        """Paragraphs with only inline math don't get audio indices."""
+        md = "Before.\n\n$E=mc^2$\n\nAfter."
+        ast = parse_markdown(md)
+        doc = transform_to_document(ast)
+
+        assert len(doc.blocks) == 3
+        assert doc.blocks[0].audio_block_idx == 0  # "Before."
+        assert doc.blocks[1].audio_block_idx is None  # math-only paragraph
+        assert doc.blocks[2].audio_block_idx == 1  # "After." (not 2!)
+
+    def test_image_with_alt_text_gets_audio_index(self):
+        """Images with alt text contribute to audio, so paragraph gets index."""
+        md = "![A cat sitting on a mat](image.png)"
+        ast = parse_markdown(md)
+        doc = transform_to_document(ast)
+
+        assert len(doc.blocks) == 1
+        assert doc.blocks[0].audio_block_idx == 0
+        assert doc.blocks[0].plain_text == "A cat sitting on a mat"
 
 
 class TestJsonSerialization:

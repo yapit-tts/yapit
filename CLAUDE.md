@@ -1,4 +1,6 @@
 
+Currently we're working towards Yapit TTS v1, aka the first deploy (still private).
+
 ## Project Overview
 
 Yapit TTS - Open-source text-to-speech platform for reading documents, web pages, and text.
@@ -12,11 +14,18 @@ Note: We don't work heavily with GitHub issues (solo dev + claude for now -- the
 
 ## Build & Test
 
-- Tests, builds, deploys via Makefile
+- Run tests, builds, deploys ONLY via Makefile commands
+    - This is to ensure these commands are documented, version controlled, and consistent
+    - Exceptions for one-off scripts, debugging or similar
+- **Docker operations**: Use `make` commands (e.g., `make dev-cpu`), NOT raw `docker compose` commands
+    - Make commands handle env vars, build steps, and proper orchestration
+    - **ALWAYS ask user before stopping/restarting Docker services** - they may be actively testing
+- **CRITICAL: Backend changes require restart** - If you modify any backend Python code (gateway, processors, models, etc.), you MUST tell the user to restart the backend. The running Docker container has the old code. Say explicitly: "Backend code changed - please restart with `make dev-cpu`". Don't keep debugging "why isn't it working" if you forgot this step!
 - Test workflow: `.github/workflows/`
 - No default values in Settings class - only defaults in `.env*` files
 - `make test-local` for basic tests, `make test` for full suite (needs API keys)
 - `make dev-cpu` to start backend (or `make dev-mac` on macOS)
+  - If no dev user exists after startup (login fails), run `make dev-user` - there's a race condition where stack-auth health check sometimes fails before user creation runs
 - **CI timing**: Integration tests take 4-5 minutes (Docker build). Wait for all checks before merging PRs.
 
 ## Agent Work Process
@@ -31,6 +40,10 @@ Note: We don't work heavily with GitHub issues (solo dev + claude for now -- the
 
 - **Create/continue task-specific plan files** for your work
 - Commit code frequently - don't accumulate large uncommitted changes
+- Update plan file notes as you go with findings, changes, insights, mistakes
+ - Make sure to do this from time to time / before context runs out / auto-compacts (such that the hand-offs have high-fidelity context, i can review those files and give feedback on what you want to write there before you compact, etc.)
+ - This is your place to capture thoughts, decisions, and context for future reference. Code comments are NOT the place for explaining architectural or design decisions (unless the code is tricky to understand, even with context of the plan file and architecture doc).
+ - It also helps you not needing to rush and panic implement stuff as you get "low context warnings" - don't rush, update the plan file incrementally, take your time to reflect on approaches, ask questions, plan, etc. When you run into auto-compaction, ~everything important should already be documented in this plan file, so you have low pressure towards the end and compaction isn't low fidelity / misinterprets things without me yk being able to double check it.
 
 ### Plan File Structure
 
@@ -84,28 +97,52 @@ Granular task tracking belongs in working todos during implementation, not the p
 - `dev` - integration branch
 - Feature branches merge to `dev` via PR, then deleted
 
+**Merge vs Rebase**: We use merge commits (not rebase) for PRs. Merges preserve commit history which is valuable for `git bisect` when tracking down regressions. Rebasing rewrites history and loses the ability to bisect through individual commits that were on the feature branch.
+
+**Releases**: No tags or releases until actual deployment. Version numbers in docs (v0, v1, etc.) are informal priority indicators, not tracked versions.
+
 ## Plan Files
 
 Plans live in `~/.claude/plans/`.
 
-**Note**: Plan file read/write may require entering plan mode first in some sessions. If you can't access plan files, try entering then exiting plan mode.
+**IMPORTANT: Do NOT use EnterPlanMode tool for creating/updating plan files.** The plan mode tool adds friction (permission prompts, can't edit files, generates random names). Instead:
+- Create plan files directly using the Write tool
+- Edit them using the Edit tool
+- Name files descriptively yourself (e.g., `feature-name.md` or `task-description.md`)
 
 **Master doc (ALWAYS read this):**
 - `yapit-architecture.md` - Architecture, decisions, implementation details, known issues/tech debt
 
 **Task-specific plans:** (most recent on top)
 
-| File | Purpose | PR / Commit | Status |
-|------|---------|-------------|--------|
-| `bugs-and-tech-debt.md` | 401 errors, sidebar refresh, code review & cleanup | 8e61185 | Done |
-| `prefetching-optimization.md` | Buffer 3+ blocks ahead to prevent playback stutters | - | Planned |
-| `frontend-structured-document-rendering.md` | Frontend rendering of structured document blocks | b251854 | Done |
-| `markdown-parser-document-format.md` | Markdown parsing pipeline & JSON document format | #50 | Done |
-| `sidebar-polish-retrospective.md` | Document rename/delete, theme polish, mobile dropdown fix | - | Done |
-| `rustling-crafting-gosling.md` | Playbar: SoundTouchJS speed control, loading states, UI slider | - | Done |
-| `ux-ui-strategy-session.md` | MVP feature planning & UX/UI strategy | - | Done |
-| `yapit-browser-processor-review.md` | ClientProcessor backend for browser TTS | #48 | Done |
-| `yapit-project-review.md` | GitHub project data review, roadmap update | - | Done |
+| File | Purpose | Status | Read When |
+|------|---------|--------|-----------|
+| `visual-group-rendering.md` | Render split paragraphs as single `<p>` with `<span>`s to preserve original appearance | Done | Split paragraphs, visual_group_id, paragraph rendering |
+| `monitoring-observability-logging.md` | Monitoring, metrics, logging, tracing for gateway and workers | Research Needed | Observability, performance monitoring, debugging, Sentry, OpenTelemetry |
+| `in-document-anchor-links.md` | Make relative links like `#methods` scroll to headings | Done | Anchor links, in-doc navigation, heading IDs, link styling |
+| `playback-ux-improvements.md` | Position persistence fix, KaTeX rendering, auto-scroll, settings UI | Done | Playback UX, position restore, math rendering, scroll tracking |
+| `audio-speed-control.md` | Replace SoundTouchJS with browser native preservesPitch | Done | Audio speed control, playback bugs at high speed |
+| `kokoro-cpu-parallelism.md` | Docker replicas for kokoro-cpu, load balancing options, max_parallel removed | Done | Kokoro scaling, worker replicas, parallelism |
+| `runpod-cli-knowledge.md` | RunPod CLI reference: pod creation, SSH, file transfer, common issues | Reference | RunPod GPU pods, file transfer, SSH issues |
+| `reflective-hopping-pancake.md` | HIGGS voice consistency via context accumulation (pass audio tokens between blocks) | Phase 1: Testing | HIGGS voice consistency, audio tokens, context passing, long-form reading |
+| `kokoro-cpu-performance-subblocks.md` | Sub-block splitting for faster time-to-first-block, kokoro CPU perf analysis | Planning | TTS latency, block splitting, sub-block highlighting, kokoro scaling |
+| `billing-pricing-strategy.md` | Stripe Managed Payments, credit pricing, competitor analysis, Austrian business setup | Decided | Billing integration, pricing, Stripe setup |
+| `cloud-storage-provider.md` | S3/R2 evaluation for audio cache and document storage | Decision: Not Needed | Cloud storage, caching strategy, infrastructure |
+| `runpod-infra-as-code.md` | RunPod IaC: native adapter, model caching, slim Docker, SDK deploy | Ready for Implementation | RunPod deployment, HIGGS worker, GitHub Actions, model caching |
+| `model-voice-picker.md` | Model/voice picker in playback controls | Done | VoicePicker component, voice state, localStorage persistence |
+| `plan-index-improvement.md` | Meta: improve plan index | Done | - |
+| `higgs-audio-investigation.md` | HIGGS model capabilities, voice params, vLLM vs native | Research Complete | HIGGS integration, voice config params, cold start issues |
+| `tts-performance-investigation.md` | Browser TTS perf, WASM slowness | In Progress | Slow synthesis, WASM debugging, prefetch timing |
+| `kokoro-js-frontend.md` | Browser TTS (Kokoro.js), anonymous auth | Phase 2 Done | useBrowserTTS hook, anonymous flow, browser TTS bugs |
+| `bugs-and-tech-debt.md` | Auth race conditions, dead code cleanup | Done | API provider patterns, isAuthReady, dropdown+dialog state |
+| `prefetching-optimization.md` | Audio block buffering | Done | Playback stutters, PREFETCH_COUNT tuning |
+| `frontend-structured-document-rendering.md` | Block rendering, click-to-jump | Done | StructuredDocument component, block highlighting |
+| `markdown-parser-document-format.md` | Markdown parsing, JSON format | Done | StructuredDocument schema, audioBlockIdx, markdown-it-py |
+| `sidebar-polish-retrospective.md` | Rename/delete, theme, dropdowns | Done | Radix dropdown patterns, theme colors, controlled state |
+| `rustling-crafting-gosling.md` | SoundTouchJS speed control | Done | Sample rate issues (44100 vs 24000), AudioPlayer, pitch-preserving playback |
+| `ux-ui-strategy-session.md` | MVP feature planning | Done | Product direction, voice picker UX, anonymous flow decisions |
+| `yapit-browser-processor-review.md` | ClientProcessor backend | Done | ClientProcessor flow, job_id coordination, /tts/submit endpoint |
+| `yapit-project-review.md` | GitHub issue status review | Done | - |
 
 Task plans get descriptive names. Keep entries after completion for history.
 
@@ -141,9 +178,21 @@ Use Chrome DevTools MCP to visually verify changes, test user flows, and debug i
 - User flow testing (login → input → playback → controls)
 - Edge case verification without manual testing
 
+**Context awareness:**
+Action tools (click, wait_for, fill, etc.) automatically return a full page snapshot. On complex documents this can be ~10k tokens per interaction. This is fine—just be aware:
+
+- **Screenshots for visual debugging** - when you need to see the actual rendered UI
+- **Document size varies** - test documents might be large; if debugging a specific bug on a known large document, that's unavoidable
+- **Before a debugging session** - if you're about to do multiple DevTools interactions on a potentially large page, update your plan file first with current goal and next steps. That way if context gets consumed quickly, you don't lose track of what you were doing
+- **Consider test documents** - if testing generic UI behavior (not a specific bug), you can create/use a simple test document to keep snapshots small
+
+Don't be paranoid about this—just factor it in when planning longer debugging sessions.
+
 ## Coding Conventions
 
 - No default values in Settings class - defaults in `.env*` files only
 - Follow existing patterns in codebase
 - **No architectural discussions in code comments** - those belong in the architecture doc
+- **No useless comments**: Don't add inline comments that restate what code does, don't add untested metrics/claims, don't add "LLM-style" explanatory comments. Comments should only explain non-obvious "why" - if you feel a comment is needed, the code probably needs refactoring instead.
+- **Backwards compatibility is NEVER an issue** - This is a rapidly evolving codebase. Don't preserve old approaches alongside new ones. Replace, don't accumulate. If old code needs updating to match new patterns, update it. If old endpoints/configs are superseded, delete them.
 - See `~/.claude/CLAUDE.md` for general coding guidelines
