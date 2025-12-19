@@ -1,7 +1,7 @@
 import { SoundControl } from '@/components/soundControl';
 import { StructuredDocumentView } from '@/components/structuredDocument';
 import { useParams, useLocation, Link } from "react-router";
-import { useRef, useState, useEffect, useCallback } from "react";
+import { useRef, useState, useEffect, useLayoutEffect, useCallback } from "react";
 import { useApi } from '@/api';
 import { Loader2, FileQuestion } from "lucide-react";
 import { AxiosError } from "axios";
@@ -109,6 +109,8 @@ const PlaybackPage = () => {
   const gainNodeRef = useRef<GainNode | null>(null);
   const audioPlayerRef = useRef<AudioPlayer | null>(null);
   const [currentBlock, setCurrentBlock] = useState<number>(-1);
+  const currentBlockRef = useRef<number>(-1);
+  currentBlockRef.current = currentBlock; // Sync ref with state for use in callbacks
 	const audioBuffersRef = useRef<Map<number, AudioBufferData>>(new Map());
 	const synthesizingRef = useRef<Map<number, Promise<AudioBufferData | null>>>(new Map()); // Track in-progress synthesis promises
 	const [audioProgress, setAudioProgress] = useState<number>(0);
@@ -117,6 +119,34 @@ const PlaybackPage = () => {
 	const durationCorrectionsRef = useRef<Map<number, number>>(new Map());
 	const initialTotalEstimateRef = useRef<number>(0);
   const currentBlockDurationRef = useRef<number>(0);
+
+  // Track previous block for DOM-based highlighting (avoids React re-renders)
+  const prevBlockIdxRef = useRef<number>(-1);
+
+  // DOM-based active block highlighting - directly manipulate CSS classes
+  // This runs synchronously before browser paint to avoid flicker
+  // Note: Use window.document because there's a local `document` state variable
+  useLayoutEffect(() => {
+    const ACTIVE_BLOCK_CLASS = "audio-block-active";
+
+    // Remove active class from previous block
+    if (prevBlockIdxRef.current >= 0) {
+      const prevElements = window.document.querySelectorAll(
+        `[data-audio-block-idx="${prevBlockIdxRef.current}"]`
+      );
+      prevElements.forEach((el) => el.classList.remove(ACTIVE_BLOCK_CLASS));
+    }
+
+    // Add active class to current block
+    if (currentBlock >= 0) {
+      const currentElements = window.document.querySelectorAll(
+        `[data-audio-block-idx="${currentBlock}"]`
+      );
+      currentElements.forEach((el) => el.classList.add(ACTIVE_BLOCK_CLASS));
+    }
+
+    prevBlockIdxRef.current = currentBlock;
+  }, [currentBlock]);
 
   // Fetch document and blocks on mount (wait for auth to be ready)
   useEffect(() => {
@@ -651,8 +681,9 @@ const PlaybackPage = () => {
   };
 
   // Memoized to prevent StructuredDocumentView re-renders from audioProgress updates
+  // Uses currentBlockRef instead of currentBlock to keep callback stable
   const handleBlockChange = useCallback((newBlock: number) => {
-    if (newBlock === currentBlock) return;
+    if (newBlock === currentBlockRef.current) return;
     if (!documentBlocks || newBlock < 0 || newBlock >= documentBlocks.length) return;
 
     audioPlayerRef.current?.stop();
@@ -669,7 +700,7 @@ const PlaybackPage = () => {
 
     // If already playing, the useEffect will auto-play the new block
     // If paused, just set position (user can press play)
-  }, [currentBlock, documentBlocks]);
+  }, [documentBlocks]);
 
   // Handle click on structured document block (by audio_block_idx)
   // Memoized to prevent StructuredDocumentView re-renders from audioProgress updates
@@ -720,7 +751,6 @@ const PlaybackPage = () => {
         title={documentTitle}
         sourceUrl={sourceUrl}
         markdownContent={markdownContent}
-        currentAudioBlockIdx={currentBlock}
         onBlockClick={handleDocumentBlockClick}
         fallbackContent={fallbackContent}
       />

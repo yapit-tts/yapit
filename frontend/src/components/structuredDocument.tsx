@@ -147,14 +147,15 @@ interface StructuredDocument {
 
 interface BlockProps {
   block: ContentBlock;
-  isActive: boolean;
   onClick?: () => void;
 }
 
-const activeBlockClass = "bg-primary/10 border-l-4 border-l-primary -ml-4 pl-3";
-const clickableClass = "cursor-pointer hover:bg-muted/50 transition-colors rounded";
+// Always have border-l-4 to prevent layout shift when active state changes
+// Active state is managed via DOM manipulation in PlaybackPage, not React props (avoids re-renders)
+const blockBaseClass = "border-l-4 border-l-transparent -ml-1 transition-colors duration-150";
+const clickableClass = "cursor-pointer hover:bg-muted/50 rounded";
 
-function HeadingBlockView({ block, isActive, onClick, slugId }: BlockProps & { block: HeadingBlock; slugId?: string }) {
+function HeadingBlockView({ block, onClick, slugId }: BlockProps & { block: HeadingBlock; slugId?: string }) {
   const sizeClasses: Record<number, string> = {
     1: "text-3xl font-bold mt-8 mb-4",
     2: "text-2xl font-semibold mt-6 mb-3",
@@ -167,8 +168,8 @@ function HeadingBlockView({ block, isActive, onClick, slugId }: BlockProps & { b
   const className = cn(
     sizeClasses[block.level],
     "py-1",
-    onClick && clickableClass,
-    isActive && activeBlockClass
+    blockBaseClass,
+    onClick && clickableClass
   );
 
   const props = {
@@ -188,13 +189,13 @@ function HeadingBlockView({ block, isActive, onClick, slugId }: BlockProps & { b
   }
 }
 
-function ParagraphBlockView({ block, isActive, onClick }: BlockProps & { block: ParagraphBlock }) {
+function ParagraphBlockView({ block, onClick }: BlockProps & { block: ParagraphBlock }) {
   return (
     <p
       className={cn(
         "my-3 py-1 leading-relaxed",
-        onClick && clickableClass,
-        isActive && activeBlockClass
+        blockBaseClass,
+        onClick && clickableClass
       )}
       onClick={onClick}
       dangerouslySetInnerHTML={{ __html: block.html }}
@@ -202,17 +203,16 @@ function ParagraphBlockView({ block, isActive, onClick }: BlockProps & { block: 
   );
 }
 
-function ListBlockView({ block, isActive, onClick }: BlockProps & { block: ListBlock }) {
+function ListBlockView({ block, onClick }: BlockProps & { block: ListBlock }) {
   const ListTag = block.ordered ? "ol" : "ul";
   const listClass = block.ordered ? "list-decimal" : "list-disc";
 
   return (
     <ListTag
       className={cn(
-        "my-3 ml-6 py-1",
+        "my-3 ml-6 py-1 transition-colors duration-150 rounded",
         listClass,
-        onClick && clickableClass,
-        isActive && activeBlockClass
+        onClick && clickableClass
       )}
       onClick={onClick}
       start={block.ordered ? block.start : undefined}
@@ -228,9 +228,8 @@ function ListBlockView({ block, isActive, onClick }: BlockProps & { block: ListB
   );
 }
 
-function BlockquoteBlockView({ block, currentAudioBlockIdx, onBlockClick }: {
+function BlockquoteBlockView({ block, onBlockClick }: {
   block: BlockquoteBlock;
-  currentAudioBlockIdx: number;
   onBlockClick?: (audioIdx: number) => void;
 }) {
   // Group nested blocks by visual_group_id (same as top-level)
@@ -245,7 +244,6 @@ function BlockquoteBlockView({ block, currentAudioBlockIdx, onBlockClick }: {
             <ParagraphGroupView
               key={grouped.blocks[0].id}
               blocks={grouped.blocks}
-              currentAudioBlockIdx={currentAudioBlockIdx}
               onBlockClick={onBlockClick}
             />
           );
@@ -255,7 +253,6 @@ function BlockquoteBlockView({ block, currentAudioBlockIdx, onBlockClick }: {
             <div key={b.id} data-audio-block-idx={b.audio_block_idx ?? undefined}>
               <BlockView
                 block={b}
-                currentAudioBlockIdx={currentAudioBlockIdx}
                 onBlockClick={onBlockClick}
               />
             </div>
@@ -410,15 +407,13 @@ function groupBlocks(blocks: ContentBlock[]): GroupedBlock[] {
 // Renders multiple paragraph blocks as spans within a single <p>
 interface ParagraphGroupViewProps {
   blocks: ParagraphBlock[];
-  currentAudioBlockIdx: number;
   onBlockClick?: (audioIdx: number) => void;
 }
 
-function ParagraphGroupView({ blocks, currentAudioBlockIdx, onBlockClick }: ParagraphGroupViewProps) {
+function ParagraphGroupView({ blocks, onBlockClick }: ParagraphGroupViewProps) {
   return (
     <p className="my-3 py-1 leading-relaxed">
       {blocks.map((block) => {
-        const isActive = block.audio_block_idx === currentAudioBlockIdx && currentAudioBlockIdx >= 0;
         const handleClick = block.audio_block_idx !== null && onBlockClick
           ? () => onBlockClick(block.audio_block_idx as number)
           : undefined;
@@ -428,8 +423,8 @@ function ParagraphGroupView({ blocks, currentAudioBlockIdx, onBlockClick }: Para
             key={block.id}
             data-audio-block-idx={block.audio_block_idx ?? undefined}
             className={cn(
-              handleClick && "cursor-pointer hover:bg-muted/50 transition-colors",
-              isActive && "bg-primary/10 rounded"
+              "transition-colors duration-150 rounded",
+              handleClick && "cursor-pointer hover:bg-muted/50"
             )}
             onClick={handleClick}
             dangerouslySetInnerHTML={{ __html: block.html }}
@@ -444,18 +439,16 @@ function ParagraphGroupView({ blocks, currentAudioBlockIdx, onBlockClick }: Para
 
 interface BlockViewProps {
   block: ContentBlock;
-  currentAudioBlockIdx: number;
   onBlockClick?: (audioIdx: number) => void;
   slugMap?: Map<string, string>;
 }
 
-function BlockView({ block, currentAudioBlockIdx, onBlockClick, slugMap }: BlockViewProps) {
-  const isActive = block.audio_block_idx === currentAudioBlockIdx && currentAudioBlockIdx >= 0;
+function BlockView({ block, onBlockClick, slugMap }: BlockViewProps) {
   const handleClick = block.audio_block_idx !== null && onBlockClick
     ? () => onBlockClick(block.audio_block_idx as number)
     : undefined;
 
-  const baseProps = { block, isActive, onClick: handleClick };
+  const baseProps = { block, onClick: handleClick };
 
   switch (block.type) {
     case "heading":
@@ -468,7 +461,6 @@ function BlockView({ block, currentAudioBlockIdx, onBlockClick, slugMap }: Block
       return (
         <BlockquoteBlockView
           block={block}
-          currentAudioBlockIdx={currentAudioBlockIdx}
           onBlockClick={onBlockClick}
         />
       );
@@ -494,7 +486,6 @@ interface StructuredDocumentViewProps {
   title?: string;
   sourceUrl?: string | null;
   markdownContent?: string | null;
-  currentAudioBlockIdx: number;
   onBlockClick?: (audioIdx: number) => void;
   fallbackContent?: string;
 }
@@ -505,7 +496,6 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
   title,
   sourceUrl,
   markdownContent,
-  currentAudioBlockIdx,
   onBlockClick,
   fallbackContent,
 }: StructuredDocumentViewProps) {
@@ -581,7 +571,7 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
         }
       }
     });
-  }, [structuredContent, currentAudioBlockIdx]);
+  }, [structuredContent]);
 
   // Mark dead anchor links (no matching heading)
   useEffect(() => {
@@ -738,7 +728,6 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
               <ParagraphGroupView
                 key={grouped.blocks[0].id}
                 blocks={grouped.blocks}
-                currentAudioBlockIdx={currentAudioBlockIdx}
                 onBlockClick={onBlockClick}
               />
             );
@@ -751,7 +740,6 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
               >
                 <BlockView
                   block={block}
-                  currentAudioBlockIdx={currentAudioBlockIdx}
                   onBlockClick={onBlockClick}
                   slugMap={slugMap}
                 />
@@ -816,6 +804,31 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
           border-radius: 0.25rem;
           font-size: 0.875em;
           font-family: ui-monospace, monospace;
+        }
+
+        /* Nested lists (rendered via dangerouslySetInnerHTML) */
+        .structured-content li ul,
+        .structured-content li ol {
+          margin-left: 1.5rem;
+          margin-top: 0.25rem;
+          margin-bottom: 0.25rem;
+        }
+        .structured-content li ul {
+          list-style-type: disc;
+        }
+        .structured-content li ol {
+          list-style-type: decimal;
+        }
+
+        /* Active audio block highlighting (applied via DOM manipulation) */
+        /* Block-level elements get left border + background */
+        .structured-content .audio-block-active {
+          background: oklch(0.55 0.1 133.7 / 0.15);
+          border-left-color: oklch(0.55 0.1 133.7);
+        }
+        /* Inline spans (paragraph groups) get background only */
+        .structured-content span.audio-block-active {
+          background: oklch(0.55 0.1 133.7 / 0.15);
         }
       `}</style>
     </article>

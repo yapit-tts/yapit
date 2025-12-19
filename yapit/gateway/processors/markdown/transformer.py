@@ -398,7 +398,6 @@ class DocumentTransformer:
         plain_texts = []
 
         for list_item in node.children:
-            # List items contain paragraphs
             item_html_parts = []
             item_ast: list[InlineContent] = []
             item_plain_parts = []
@@ -409,6 +408,11 @@ class DocumentTransformer:
                     item_html_parts.append(self._render_inline_html(inline))
                     item_ast.extend(self._transform_inline(inline))
                     item_plain_parts.append(self._extract_plain_text(inline))
+                elif child.type in ("bullet_list", "ordered_list"):
+                    # Nested list - render as HTML and extract plain text
+                    nested_html, nested_plain = self._render_list_html(child)
+                    item_html_parts.append(nested_html)
+                    item_plain_parts.append(nested_plain)
 
             items.append(
                 ListItem(
@@ -430,6 +434,36 @@ class DocumentTransformer:
                 audio_block_idx=self._next_audio_idx(combined_plain_text),
             )
         ]
+
+    def _render_list_html(self, node: SyntaxTreeNode) -> tuple[str, str]:
+        """Render a list node to HTML and plain text (for nested lists)."""
+        ordered = node.type == "ordered_list"
+        tag = "ol" if ordered else "ul"
+        start_attr = f' start="{node.attrs.get("start")}"' if ordered and node.attrs.get("start") else ""
+
+        items_html = []
+        items_plain = []
+
+        for list_item in node.children:
+            item_parts_html = []
+            item_parts_plain = []
+
+            for child in list_item.children:
+                if child.type == "paragraph":
+                    inline = child.children[0] if child.children else None
+                    item_parts_html.append(self._render_inline_html(inline))
+                    item_parts_plain.append(self._extract_plain_text(inline))
+                elif child.type in ("bullet_list", "ordered_list"):
+                    nested_html, nested_plain = self._render_list_html(child)
+                    item_parts_html.append(nested_html)
+                    item_parts_plain.append(nested_plain)
+
+            items_html.append(f"<li>{' '.join(item_parts_html)}</li>")
+            items_plain.append(" ".join(item_parts_plain))
+
+        html = f"<{tag}{start_attr}>{''.join(items_html)}</{tag}>"
+        plain = " ".join(items_plain)
+        return html, plain
 
     def _transform_blockquote(self, node: SyntaxTreeNode) -> list[BlockquoteBlock]:
         """Transform blockquote node.
