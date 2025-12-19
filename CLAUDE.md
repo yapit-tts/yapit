@@ -36,19 +36,38 @@ Note: We don't work heavily with GitHub issues (solo dev + claude for now -- the
 2. **ALWAYS read `yapit-architecture.md`** - Critical context, current state, decisions
 3. **Read relevant task plans** from index below for additional context
 
-### During Work
+### During Work: Plan Files as Handover Documents
 
-- **Create/continue task-specific plan files** for your work
-- Commit code frequently - don't accumulate large uncommitted changes
-- Update plan file notes as you go with findings, changes, insights, mistakes
- - Make sure to do this from time to time / before context runs out / auto-compacts (such that the hand-offs have high-fidelity context, i can review those files and give feedback on what you want to write there before you compact, etc.)
- - This is your place to capture thoughts, decisions, and context for future reference. Code comments are NOT the place for explaining architectural or design decisions (unless the code is tricky to understand, even with context of the plan file and architecture doc).
- - It also helps you not needing to rush and panic implement stuff as you get "low context warnings" - don't rush, update the plan file incrementally, take your time to reflect on approaches, ask questions, plan, etc. When you run into auto-compaction, ~everything important should already be documented in this plan file, so you have low pressure towards the end and compaction isn't low fidelity / misinterprets things without me yk being able to double check it.
+Plan files are **devlogs** - the synthesis of thoughts, decisions, and learnings as code evolves. They're core to the workflow, not a chore.
+
+**Two key purposes:**
+1. **Handover:** Working memory that survives context exhaustion. Context can run out unexpectedly (debugging, Chrome DevTools dumps, verbose logs). The plan file ensures the next agent can proceed exactly where you left off with full context - all knowledge necessary for the task, all considerations, all user feedback distilled.
+2. **Brainstorm capture:** Short-term todo list and idea staging. Some plans are "Research Needed" or just-started brainstorms - concrete capture of ideas before full execution.
+
+**How to use them:**
+- **Create early:** Start a plan file when you begin work, not when running low on context
+- **Update continuously:** Not documentation to fill at milestones - update as you work, after each decision or discovery
+- **Capture working state:** File should always reflect "where am I right now" - current state, next steps, what you just learned
+- **Commit logical units** - don't accumulate large uncommitted changes, but commit coherent chunks not random checkpoints
+
+**Why this matters:**
+- When auto-compaction happens, everything important is already in the file
+- No panic-implementing as context warnings appear - take time to reflect
+- User can review handover content and give feedback before compaction
+- Next agent reads handover + referenced files and has all knowledge necessary to proceed exactly as you would have
+
+**Where learnings flow:**
+- Task-specific context, decisions, dead ends → **plan file** (stays there)
+- Code style learnings, conventions discovered → **CLAUDE.md**
+- Architecture decisions, patterns, tech debt → **yapit-architecture.md** (also serves as medium-long term todo list)
+
+Code comments are NOT the place for architectural decisions or work context.
 
 ### Plan File Structure
 
-Keep plans **lightweight** - detailed upfront plans become stale fast. Focus on goal and constraints, not detailed how-to steps.
+Keep plans **lightweight** - focus on goal, constraints, and issues encountered, not detailed how-to steps. Detailed upfront plans become stale fast.
 
+**Starting structure:**
 ```
 Goal: What success looks like (1-2 sentences)
   - Can include: "user tests X in UI and confirms it works"
@@ -61,15 +80,29 @@ Scope: ~5-7 bullets of what's included (not detailed task list)
 Open Questions: Things to clarify with user before implementation
   - Don't guess intent - ask if unclear
   - Can be 10 detailed questions if needed, but don't ask for sake of asking
-
-Notes: Findings, discussions, decisions as work progresses
 ```
+
+**As work progresses, add:**
+```
+Current State: Where are you right now?
+  - What's done, what you just figured out, any blockers
+
+Next Steps: What you'd do next / if you had infinite context
+
+Notes: Findings, discussions, decisions, dead ends
+  - Include "this didn't work because..." for failed approaches
+```
+
+**Key behaviors:**
+- Update "Current State" and "Next Steps" frequently - critical for handover
+- Before context-heavy operations (debugging, DevTools, large reads), quick-update the file
+- At the end: distill key learnings into Notes - what worked, what didn't, what the next agent needs to know
 
 **Workflow for unclear requirements:**
 1. Create plan with goal + scope + open questions
 2. Get user answers
-3. Update plan with answers and refined implementation approach
-4. Then execute
+3. Update plan with answers and refined approach
+4. Execute, updating Current State/Next Steps as you go
 
 Granular task tracking belongs in working todos during implementation, not the plan file.
 
@@ -117,6 +150,7 @@ Plans live in `~/.claude/plans/`.
 
 | File | Purpose | Status | Read When |
 |------|---------|--------|-----------|
+| `xml-support-and-biorxiv-403.md` | XML support evaluation, bioRxiv 403 investigation | Done | XML formats, JATS, bioRxiv access, User-Agent issues |
 | `ui-qol-improvements.md` | 404 page, MediaSession sync, hide new doc button on homepage | Done | 404 handling, hardware media keys, sidebar UX |
 | `document-qol-features.md` | Source URL clickable title + markdown export buttons | Done | Document export, source URL, copy/download markdown |
 | `visual-group-rendering.md` | Render split paragraphs as single `<p>` with `<span>`s to preserve original appearance | Done | Split paragraphs, visual_group_id, paragraph rendering |

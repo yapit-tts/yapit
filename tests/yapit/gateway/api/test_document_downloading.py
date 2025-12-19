@@ -94,8 +94,9 @@ class TestDownloadDocument:
         with patch("httpx.AsyncClient") as mock_client_class:
             mock_client_class.return_value.__aenter__.return_value = mock_client
 
-            with pytest.raises(HTTPException, match="Failed to download document: HTTP 404"):
+            with pytest.raises(HTTPException) as exc_info:
                 await _download_document("https://example.com/missing.pdf", 100 * 1024 * 1024)
+            assert exc_info.value.status_code == 422
 
     @pytest.mark.asyncio
     async def test_download_network_error(self):
@@ -106,8 +107,9 @@ class TestDownloadDocument:
         with patch("httpx.AsyncClient") as mock_client_class:
             mock_client_class.return_value.__aenter__.return_value = mock_client
 
-            with pytest.raises(HTTPException, match="Failed to download document: Connection failed"):
+            with pytest.raises(HTTPException) as exc_info:
                 await _download_document("https://example.com/test.pdf", 100 * 1024 * 1024)
+            assert exc_info.value.status_code == 422
 
     @pytest.mark.asyncio
     async def test_download_no_content_type(self):
