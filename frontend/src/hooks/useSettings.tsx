@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useContext, createContext, ReactNode } from "react";
 
 export interface AppSettings {
   scrollOnRestore: boolean;
@@ -36,7 +36,14 @@ function saveSettings(settings: AppSettings): void {
   }
 }
 
-export function useSettings() {
+interface SettingsContextValue {
+  settings: AppSettings;
+  setSettings: (updates: Partial<AppSettings>) => void;
+}
+
+const SettingsContext = createContext<SettingsContextValue | null>(null);
+
+export function SettingsProvider({ children }: { children: ReactNode }) {
   const [settings, setSettingsState] = useState<AppSettings>(loadSettings);
 
   // Sync across tabs
@@ -58,5 +65,17 @@ export function useSettings() {
     });
   }, []);
 
-  return { settings, setSettings };
+  return (
+    <SettingsContext.Provider value={{ settings, setSettings }}>
+      {children}
+    </SettingsContext.Provider>
+  );
+}
+
+export function useSettings() {
+  const context = useContext(SettingsContext);
+  if (!context) {
+    throw new Error("useSettings must be used within a SettingsProvider");
+  }
+  return context;
 }
