@@ -187,27 +187,11 @@ function HeadingBlockView({ block, isActive, onClick, slugId }: BlockProps & { b
   }
 }
 
-type GroupPosition = "standalone" | "first" | "middle" | "last";
-
-function ParagraphBlockView({
-  block,
-  isActive,
-  onClick,
-  groupPosition = "standalone",
-}: BlockProps & { block: ParagraphBlock; groupPosition?: GroupPosition }) {
-  // Adjust margins and padding based on position in visual group
-  const spacingClass = {
-    standalone: "my-3 py-1",
-    first: "mt-3 mb-0 pt-1 pb-0",
-    middle: "my-0 py-0",
-    last: "mt-0 mb-3 pt-0 pb-1",
-  }[groupPosition];
-
+function ParagraphBlockView({ block, isActive, onClick }: BlockProps & { block: ParagraphBlock }) {
   return (
     <p
       className={cn(
-        spacingClass,
-        "leading-relaxed",
+        "my-3 py-1 leading-relaxed",
         onClick && clickableClass,
         isActive && activeBlockClass
       )}
@@ -243,28 +227,40 @@ function ListBlockView({ block, isActive, onClick }: BlockProps & { block: ListB
   );
 }
 
-function BlockquoteBlockView({ block, isActive, onClick, currentAudioBlockIdx, onBlockClick }: BlockProps & {
+function BlockquoteBlockView({ block, currentAudioBlockIdx, onBlockClick }: {
   block: BlockquoteBlock;
   currentAudioBlockIdx: number;
   onBlockClick?: (audioIdx: number) => void;
 }) {
+  // Group nested blocks by visual_group_id (same as top-level)
+  const groupedBlocks = groupBlocks(block.blocks);
+
+  // Blockquote is a visual container - nested blocks have their own audio indices
   return (
-    <blockquote
-      className={cn(
-        "my-4 border-l-4 border-muted-foreground/30 pl-4 italic text-muted-foreground py-1",
-        onClick && clickableClass,
-        isActive && activeBlockClass
-      )}
-      onClick={onClick}
-    >
-      {block.blocks.map((nestedBlock) => (
-        <BlockView
-          key={nestedBlock.id}
-          block={nestedBlock}
-          currentAudioBlockIdx={currentAudioBlockIdx}
-          onBlockClick={onBlockClick}
-        />
-      ))}
+    <blockquote className="my-4 border-l-4 border-muted-foreground/30 pl-4 italic text-muted-foreground py-1">
+      {groupedBlocks.map((grouped) => {
+        if (grouped.kind === "paragraph-group") {
+          return (
+            <ParagraphGroupView
+              key={grouped.blocks[0].id}
+              blocks={grouped.blocks}
+              currentAudioBlockIdx={currentAudioBlockIdx}
+              onBlockClick={onBlockClick}
+            />
+          );
+        } else {
+          const b = grouped.block;
+          return (
+            <div key={b.id} data-audio-block-idx={b.audio_block_idx ?? undefined}>
+              <BlockView
+                block={b}
+                currentAudioBlockIdx={currentAudioBlockIdx}
+                onBlockClick={onBlockClick}
+              />
+            </div>
+          );
+        }
+      })}
     </blockquote>
   );
 }
@@ -369,17 +365,90 @@ function ThematicBreakView() {
   return <hr className="my-6 border-t border-border" />;
 }
 
+// === Block grouping for visual continuity ===
+
+type GroupedBlock =
+  | { kind: "single"; block: ContentBlock }
+  | { kind: "paragraph-group"; blocks: ParagraphBlock[] };
+
+function groupBlocks(blocks: ContentBlock[]): GroupedBlock[] {
+  const result: GroupedBlock[] = [];
+  let currentGroup: ParagraphBlock[] = [];
+  let currentGroupId: string | null = null;
+
+  const flushGroup = () => {
+    if (currentGroup.length > 1) {
+      result.push({ kind: "paragraph-group", blocks: currentGroup });
+    } else if (currentGroup.length === 1) {
+      result.push({ kind: "single", block: currentGroup[0] });
+    }
+    currentGroup = [];
+    currentGroupId = null;
+  };
+
+  for (const block of blocks) {
+    const groupId = block.type === "paragraph" ? block.visual_group_id : null;
+
+    if (groupId && groupId === currentGroupId) {
+      currentGroup.push(block as ParagraphBlock);
+    } else {
+      flushGroup();
+      if (groupId) {
+        currentGroup = [block as ParagraphBlock];
+        currentGroupId = groupId;
+      } else {
+        result.push({ kind: "single", block });
+      }
+    }
+  }
+
+  flushGroup();
+  return result;
+}
+
+// Renders multiple paragraph blocks as spans within a single <p>
+interface ParagraphGroupViewProps {
+  blocks: ParagraphBlock[];
+  currentAudioBlockIdx: number;
+  onBlockClick?: (audioIdx: number) => void;
+}
+
+function ParagraphGroupView({ blocks, currentAudioBlockIdx, onBlockClick }: ParagraphGroupViewProps) {
+  return (
+    <p className="my-3 py-1 leading-relaxed">
+      {blocks.map((block) => {
+        const isActive = block.audio_block_idx === currentAudioBlockIdx && currentAudioBlockIdx >= 0;
+        const handleClick = block.audio_block_idx !== null && onBlockClick
+          ? () => onBlockClick(block.audio_block_idx as number)
+          : undefined;
+
+        return (
+          <span
+            key={block.id}
+            data-audio-block-idx={block.audio_block_idx ?? undefined}
+            className={cn(
+              handleClick && "cursor-pointer hover:bg-muted/50 transition-colors",
+              isActive && "bg-primary/10 rounded"
+            )}
+            onClick={handleClick}
+            dangerouslySetInnerHTML={{ __html: block.html }}
+          />
+        );
+      })}
+    </p>
+  );
+}
+
 // === Main block renderer ===
 
 interface BlockViewProps {
   block: ContentBlock;
   currentAudioBlockIdx: number;
   onBlockClick?: (audioIdx: number) => void;
-  groupPosition?: GroupPosition;
   slugMap?: Map<string, string>;
 }
 
-function BlockView({ block, currentAudioBlockIdx, onBlockClick, groupPosition, slugMap }: BlockViewProps) {
+function BlockView({ block, currentAudioBlockIdx, onBlockClick, slugMap }: BlockViewProps) {
   const isActive = block.audio_block_idx === currentAudioBlockIdx && currentAudioBlockIdx >= 0;
   const handleClick = block.audio_block_idx !== null && onBlockClick
     ? () => onBlockClick(block.audio_block_idx as number)
@@ -391,13 +460,12 @@ function BlockView({ block, currentAudioBlockIdx, onBlockClick, groupPosition, s
     case "heading":
       return <HeadingBlockView {...baseProps} block={block} slugId={slugMap?.get(block.id)} />;
     case "paragraph":
-      return <ParagraphBlockView {...baseProps} block={block} groupPosition={groupPosition} />;
+      return <ParagraphBlockView {...baseProps} block={block} />;
     case "list":
       return <ListBlockView {...baseProps} block={block} />;
     case "blockquote":
       return (
         <BlockquoteBlockView
-          {...baseProps}
           block={block}
           currentAudioBlockIdx={currentAudioBlockIdx}
           onBlockClick={onBlockClick}
@@ -547,23 +615,8 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
     );
   }
 
-  // Compute group positions for paragraphs with visual_group_id
-  const getGroupPosition = (block: ContentBlock, idx: number): GroupPosition | undefined => {
-    if (block.type !== "paragraph" || !block.visual_group_id) return undefined;
-
-    const prevBlock = idx > 0 ? doc.blocks[idx - 1] : null;
-    const nextBlock = idx < doc.blocks.length - 1 ? doc.blocks[idx + 1] : null;
-
-    const prevSameGroup =
-      prevBlock?.type === "paragraph" && prevBlock.visual_group_id === block.visual_group_id;
-    const nextSameGroup =
-      nextBlock?.type === "paragraph" && nextBlock.visual_group_id === block.visual_group_id;
-
-    if (!prevSameGroup && !nextSameGroup) return "standalone";
-    if (!prevSameGroup && nextSameGroup) return "first";
-    if (prevSameGroup && nextSameGroup) return "middle";
-    return "last";
-  };
+  // Group consecutive paragraphs with same visual_group_id
+  const groupedBlocks = groupBlocks(doc.blocks);
 
   return (
     <article className="flex flex-col overflow-y-auto m-[10%] mt-[4%] prose-container">
@@ -573,20 +626,33 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
         </h1>
       )}
       <div ref={contentRef} className="structured-content" onClick={handleContentClick}>
-        {doc.blocks.map((block, idx) => (
-          <div
-            key={block.id}
-            data-audio-block-idx={block.audio_block_idx ?? undefined}
-          >
-            <BlockView
-              block={block}
-              currentAudioBlockIdx={currentAudioBlockIdx}
-              onBlockClick={onBlockClick}
-              groupPosition={getGroupPosition(block, idx)}
-              slugMap={slugMap}
-            />
-          </div>
-        ))}
+        {groupedBlocks.map((grouped) => {
+          if (grouped.kind === "paragraph-group") {
+            return (
+              <ParagraphGroupView
+                key={grouped.blocks[0].id}
+                blocks={grouped.blocks}
+                currentAudioBlockIdx={currentAudioBlockIdx}
+                onBlockClick={onBlockClick}
+              />
+            );
+          } else {
+            const block = grouped.block;
+            return (
+              <div
+                key={block.id}
+                data-audio-block-idx={block.audio_block_idx ?? undefined}
+              >
+                <BlockView
+                  block={block}
+                  currentAudioBlockIdx={currentAudioBlockIdx}
+                  onBlockClick={onBlockClick}
+                  slugMap={slugMap}
+                />
+              </div>
+            );
+          }
+        })}
       </div>
 
       {/* Inline styles for HTML content */}

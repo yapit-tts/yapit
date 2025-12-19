@@ -40,7 +40,6 @@ class DocumentTransformer:
         self._block_counter = 0
         self._audio_idx_counter = 0
         self._visual_group_counter = 0
-        self._inside_blockquote = False  # Nested blocks don't get audio indices
         self._md = self._create_renderer()
 
     def _create_renderer(self) -> MarkdownIt:
@@ -58,8 +57,6 @@ class DocumentTransformer:
 
     def _next_audio_idx(self, plain_text: str) -> int | None:
         """Get next audio block index, or None if text is empty/unspeakable."""
-        if self._inside_blockquote:
-            return None
         if not plain_text.strip():
             return None
         idx = self._audio_idx_counter
@@ -437,13 +434,10 @@ class DocumentTransformer:
     def _transform_blockquote(self, node: SyntaxTreeNode) -> list[BlockquoteBlock]:
         """Transform blockquote node.
 
-        The blockquote itself gets an audio index, but nested blocks don't.
-        This ensures audio indices match between get_audio_blocks() and the
-        structured content (get_audio_blocks only iterates top-level blocks).
+        Blockquote is a visual container - nested blocks get their own audio indices.
+        get_audio_blocks() recurses into blockquote.blocks to collect them.
         """
-        self._inside_blockquote = True
         inner_blocks = self._transform_children(node)
-        self._inside_blockquote = False
 
         plain_texts = []
         for block in inner_blocks:
@@ -456,7 +450,7 @@ class DocumentTransformer:
                 id=self._next_block_id(),
                 blocks=inner_blocks,
                 plain_text=combined_plain_text,
-                audio_block_idx=self._next_audio_idx(combined_plain_text),
+                # No audio_block_idx - it's a container, nested blocks have their own
             )
         ]
 

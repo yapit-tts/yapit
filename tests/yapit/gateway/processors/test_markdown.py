@@ -161,10 +161,10 @@ class TestTransformToDocument:
         assert len(doc.blocks) == 1
         block = doc.blocks[0]
         assert isinstance(block, BlockquoteBlock)
-        # Blockquote gets audio index, nested blocks don't (avoids index mismatch)
-        assert block.audio_block_idx == 0
+        # Blockquote is a container (no audio index), nested blocks get their own
+        assert block.audio_block_idx is None
         assert len(block.blocks) == 1
-        assert block.blocks[0].audio_block_idx is None
+        assert block.blocks[0].audio_block_idx == 0
 
 
 class TestInlineFormatting:
