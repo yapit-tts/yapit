@@ -117,6 +117,8 @@ Plans live in `~/.claude/plans/`.
 
 | File | Purpose | Status | Read When |
 |------|---------|--------|-----------|
+| `ui-qol-improvements.md` | 404 page, MediaSession sync, hide new doc button on homepage | Done | 404 handling, hardware media keys, sidebar UX |
+| `document-qol-features.md` | Source URL clickable title + markdown export buttons | Done | Document export, source URL, copy/download markdown |
 | `visual-group-rendering.md` | Render split paragraphs as single `<p>` with `<span>`s to preserve original appearance | Done | Split paragraphs, visual_group_id, paragraph rendering |
 | `monitoring-observability-logging.md` | Monitoring, metrics, logging, tracing for gateway and workers | Research Needed | Observability, performance monitoring, debugging, Sentry, OpenTelemetry |
 | `in-document-anchor-links.md` | Make relative links like `#methods` scroll to headings | Done | Anchor links, in-doc navigation, heading IDs, link styling |
@@ -125,10 +127,10 @@ Plans live in `~/.claude/plans/`.
 | `kokoro-cpu-parallelism.md` | Docker replicas for kokoro-cpu, load balancing options, max_parallel removed | Done | Kokoro scaling, worker replicas, parallelism |
 | `runpod-cli-knowledge.md` | RunPod CLI reference: pod creation, SSH, file transfer, common issues | Reference | RunPod GPU pods, file transfer, SSH issues |
 | `reflective-hopping-pancake.md` | HIGGS voice consistency via context accumulation (pass audio tokens between blocks) | Phase 1: Testing | HIGGS voice consistency, audio tokens, context passing, long-form reading |
-| `kokoro-cpu-performance-subblocks.md` | Sub-block splitting for faster time-to-first-block, kokoro CPU perf analysis | Planning | TTS latency, block splitting, sub-block highlighting, kokoro scaling |
+| `kokoro-cpu-performance-subblocks.md` | Sub-block splitting for faster time-to-first-block, kokoro CPU perf analysis | Done | TTS latency, block splitting, sub-block highlighting, kokoro scaling |
 | `billing-pricing-strategy.md` | Stripe Managed Payments, credit pricing, competitor analysis, Austrian business setup | Decided | Billing integration, pricing, Stripe setup |
 | `cloud-storage-provider.md` | S3/R2 evaluation for audio cache and document storage | Decision: Not Needed | Cloud storage, caching strategy, infrastructure |
-| `runpod-infra-as-code.md` | RunPod IaC: native adapter, model caching, slim Docker, SDK deploy | Ready for Implementation | RunPod deployment, HIGGS worker, GitHub Actions, model caching |
+| `runpod-infra-as-code.md` | RunPod IaC: native adapter, model caching, slim Docker, SDK deploy | Done | RunPod deployment, HIGGS worker, GitHub Actions, model caching |
 | `model-voice-picker.md` | Model/voice picker in playback controls | Done | VoicePicker component, voice state, localStorage persistence |
 | `plan-index-improvement.md` | Meta: improve plan index | Done | - |
 | `higgs-audio-investigation.md` | HIGGS model capabilities, voice params, vLLM vs native | Research Complete | HIGGS integration, voice config params, cold start issues |

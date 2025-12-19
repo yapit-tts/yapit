@@ -247,7 +247,6 @@ async def create_text_document(
     doc = await _create_document_with_blocks(
         db=db,
         user_id=user.id,
-        content_type="text/plain",
         title=req.title,
         original_text=req.content,
         filtered_text=None,  # No filtering for direct text input
@@ -319,7 +318,6 @@ async def create_website_document(
     doc = await _create_document_with_blocks(
         db=db,
         user_id=user.id,
-        content_type=cached_doc.metadata.content_type,
         title=cached_doc.metadata.title or req.title,
         original_text=extracted_text,
         filtered_text=None,  # TODO: Implement filtering
@@ -389,7 +387,6 @@ async def create_document(
     doc = await _create_document_with_blocks(
         db=db,
         user_id=user.id,
-        content_type=cached_doc.metadata.content_type,
         title=cached_doc.metadata.title or req.title,
         original_text=extracted_text,
         filtered_text=None,  # TODO: Implement filtering
@@ -515,12 +512,13 @@ async def _download_document(url: HttpUrl, max_size: int) -> tuple[bytes, str]:
             return content.getvalue(), content_type
         except httpx.HTTPStatusError as e:
             raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"Failed to download document: HTTP {e.response.status_code}",
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"URL returned error: HTTP {e.response.status_code}",
             )
-        except httpx.RequestError as e:
+        except httpx.RequestError:
             raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Failed to download document: {str(e)}"
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Unable to reach URL - check it's correct and accessible",
             )
 
 
@@ -624,7 +622,6 @@ def _calculate_credit_cost(
 async def _create_document_with_blocks(
     db: DbSession,
     user_id: str,
-    content_type: str,
     title: str | None,
     original_text: str,
     filtered_text: str | None,
@@ -635,13 +632,12 @@ async def _create_document_with_blocks(
 ) -> Document:
     doc = Document(
         user_id=user_id,
-        content_type=content_type,
         title=title,
         original_text=original_text,
         filtered_text=filtered_text,
         extraction_method=extraction_method,
         structured_content=structured_content,
-        metadata_=metadata,
+        metadata_dict=metadata.model_dump(),
     )
     db.add(doc)
     db.add_all(

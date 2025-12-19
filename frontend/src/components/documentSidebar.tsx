@@ -151,11 +151,13 @@ function DocumentSidebar() {
       <SidebarContent>
         <SidebarGroup>
           <SidebarGroupLabel>Documents</SidebarGroupLabel>
-          <SidebarGroupAction title="Add Document" asChild>
-            <Link to="/">
-              <Plus /> <span className="sr-only">Add Document</span>
-            </Link>
-          </SidebarGroupAction>
+          {location.pathname !== "/" && (
+            <SidebarGroupAction title="Add Document" asChild>
+              <Link to="/">
+                <Plus /> <span className="sr-only">Add Document</span>
+              </Link>
+            </SidebarGroupAction>
+          )}
           <SidebarGroupContent>
             <SidebarMenu>
               {isLoading ? (

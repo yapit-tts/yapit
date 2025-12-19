@@ -1,9 +1,10 @@
 import { SoundControl } from '@/components/soundControl';
 import { StructuredDocumentView } from '@/components/structuredDocument';
-import { useParams, useLocation } from "react-router";
+import { useParams, useLocation, Link } from "react-router";
 import { useRef, useState, useEffect, useCallback } from "react";
 import { useApi } from '@/api';
-import { Loader2 } from "lucide-react";
+import { Loader2, FileQuestion } from "lucide-react";
+import { AxiosError } from "axios";
 import { AudioPlayer } from '@/lib/audio';
 import { useBrowserTTS } from '@/lib/browserTTS';
 import { type VoiceSelection, getVoiceSelection } from '@/lib/voiceSelection';
@@ -38,12 +39,22 @@ interface Block {
   est_duration_ms: number;
 }
 
+interface DocumentMetadata {
+  content_type?: string;
+  page_count?: number;
+  title?: string;
+  url?: string;
+  file_name?: string;
+  file_size?: number;
+}
+
 interface DocumentResponse {
   id: string;
   title: string | null;
   original_text: string;
   filtered_text: string | null;
   structured_content: string | null;
+  metadata_dict: DocumentMetadata | null;
 }
 
 interface AudioBufferData {
@@ -80,6 +91,8 @@ const PlaybackPage = () => {
   const documentTitle = document?.title ?? initialTitle;
   const structuredContent = document?.structured_content ?? null;
   const fallbackContent = document?.filtered_text ?? document?.original_text ?? "";
+  const sourceUrl = document?.metadata_dict?.url ?? null;
+  const markdownContent = document?.filtered_text ?? document?.original_text ?? null;
   const numberOfBlocks = documentBlocks.length;
   const estimated_ms = documentBlocks.reduce((sum, b) => sum + (b.est_duration_ms || 0), 0);
 
@@ -124,7 +137,12 @@ const PlaybackPage = () => {
         setDocument(docResponse.data);
         setDocumentBlocks(blocksResponse.data);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to fetch document");
+        if (err instanceof AxiosError && (err.response?.status === 404 || err.response?.status === 422)) {
+          // 404 = doc doesn't exist, 422 = invalid UUID format (same user experience)
+          setError("not_found");
+        } else {
+          setError(err instanceof Error ? err.message : "Failed to fetch document");
+        }
       } finally {
         setIsLoading(false);
       }
@@ -258,6 +276,23 @@ const PlaybackPage = () => {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []); // Empty deps - uses refs
+
+  // MediaSession handlers for hardware media keys (headphones, keyboards)
+  useEffect(() => {
+    if (!("mediaSession" in navigator)) return;
+
+    navigator.mediaSession.setActionHandler("play", () => {
+      handlePlayRef.current();
+    });
+    navigator.mediaSession.setActionHandler("pause", () => {
+      handlePauseRef.current();
+    });
+
+    return () => {
+      navigator.mediaSession.setActionHandler("play", null);
+      navigator.mediaSession.setActionHandler("pause", null);
+    };
   }, []); // Empty deps - uses refs
 
   // Update gain node value when volume changes
@@ -659,6 +694,18 @@ const PlaybackPage = () => {
   }
 
   if (error) {
+    if (error === "not_found") {
+      return (
+        <div className="flex min-h-[80vh] flex-col items-center justify-center gap-4 text-muted-foreground">
+          <FileQuestion className="h-16 w-16" />
+          <h1 className="text-xl font-semibold">Document not found</h1>
+          <p className="text-sm">This document may have been deleted or the link is incorrect.</p>
+          <Link to="/" className="text-primary hover:underline">
+            ← Back to home
+          </Link>
+        </div>
+      );
+    }
     return (
       <div className="flex grow items-center justify-center text-destructive">
         {error}
@@ -671,6 +718,8 @@ const PlaybackPage = () => {
       <StructuredDocumentView
         structuredContent={structuredContent}
         title={documentTitle}
+        sourceUrl={sourceUrl}
+        markdownContent={markdownContent}
         currentAudioBlockIdx={currentBlock}
         onBlockClick={handleDocumentBlockClick}
         fallbackContent={fallbackContent}

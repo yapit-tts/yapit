@@ -7,9 +7,10 @@ import { MetadataBanner } from "@/components/metadataBanner";
 import { useDebounce } from "@/hooks/useDebounce";
 import { useApi } from "@/api";
 import { cn } from "@/lib/utils";
+import { AxiosError } from "axios";
 
-// Only match single-line URLs (no newlines, reasonable URL chars)
-const URL_REGEX = /^https?:\/\/[^\s]+$/i;
+// Match URLs with at least a domain and TLD (e.g., example.com, not just http://a)
+const URL_REGEX = /^https?:\/\/[^\s.]+\.[^\s]{2,}/i;
 const OCR_STORAGE_KEY = "yapit-ocr-enabled";
 
 interface DocumentMetadata {
@@ -116,7 +117,13 @@ export function UnifiedInput() {
         }
       } catch (err) {
         setUrlState("error");
-        setError(err instanceof Error ? err.message : "Failed to fetch URL");
+        if (err instanceof AxiosError && err.response) {
+          // Use backend's error message if available (it's now user-friendly)
+          const detail = err.response.data?.detail;
+          setError(detail || err.message);
+        } else {
+          setError(err instanceof Error ? err.message : "Failed to fetch URL");
+        }
       }
     };
 

@@ -1,5 +1,6 @@
-import { memo, useCallback, useEffect, useMemo, useRef } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import katex from "katex";
+import { Copy, Download, Music, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // === Slug generation for heading anchors ===
@@ -491,6 +492,8 @@ function BlockView({ block, currentAudioBlockIdx, onBlockClick, slugMap }: Block
 interface StructuredDocumentViewProps {
   structuredContent: string | null;
   title?: string;
+  sourceUrl?: string | null;
+  markdownContent?: string | null;
   currentAudioBlockIdx: number;
   onBlockClick?: (audioIdx: number) => void;
   fallbackContent?: string;
@@ -500,11 +503,48 @@ interface StructuredDocumentViewProps {
 export const StructuredDocumentView = memo(function StructuredDocumentView({
   structuredContent,
   title,
+  sourceUrl,
+  markdownContent,
   currentAudioBlockIdx,
   onBlockClick,
   fallbackContent,
 }: StructuredDocumentViewProps) {
   const contentRef = useRef<HTMLDivElement>(null);
+  const [copied, setCopied] = useState(false);
+
+  // Copy markdown to clipboard
+  const handleCopyMarkdown = useCallback(async () => {
+    if (!markdownContent) return;
+    try {
+      await navigator.clipboard.writeText(markdownContent);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error("Failed to copy:", err);
+    }
+  }, [markdownContent]);
+
+  // Download markdown file
+  const handleDownloadMarkdown = useCallback(() => {
+    if (!markdownContent) return;
+    const filename = (title || "document").replace(/[^a-z0-9]/gi, "_").toLowerCase() + ".md";
+    const blob = new Blob([markdownContent], { type: "text/markdown" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, [markdownContent, title]);
+
+  // Open source URL in new tab
+  const handleTitleClick = useCallback(() => {
+    if (sourceUrl) {
+      window.open(sourceUrl, "_blank", "noopener,noreferrer");
+    }
+  }, [sourceUrl]);
 
   // Parse structured content
   const doc = useMemo(() => {
@@ -604,9 +644,42 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
     return (
       <div className="flex flex-col overflow-y-auto m-[10%] mt-[4%]">
         {title && (
-          <p className="mb-[4%] text-4xl font-bold border-b border-b-border pb-2">
-            {title}
-          </p>
+          <div className="flex items-center justify-between mb-[4%] border-b border-b-border pb-2">
+            <p
+              className={cn(
+                "text-4xl font-bold",
+                sourceUrl && "cursor-pointer hover:opacity-80"
+              )}
+              onClick={sourceUrl ? handleTitleClick : undefined}
+            >
+              {title}
+            </p>
+            <div className="flex items-center gap-1 ml-4">
+              <button
+                onClick={handleCopyMarkdown}
+                disabled={!markdownContent}
+                className="p-2 rounded hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                title={copied ? "Copied!" : "Copy markdown"}
+              >
+                {copied ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4 text-muted-foreground" />}
+              </button>
+              <button
+                onClick={handleDownloadMarkdown}
+                disabled={!markdownContent}
+                className="p-2 rounded hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                title="Download markdown"
+              >
+                <Download className="h-4 w-4 text-muted-foreground" />
+              </button>
+              <button
+                disabled
+                className="p-2 rounded opacity-40 cursor-not-allowed"
+                title="Export as audio (coming soon)"
+              >
+                <Music className="h-4 w-4 text-muted-foreground" />
+              </button>
+            </div>
+          </div>
         )}
         <pre className="whitespace-pre-wrap break-words w-full">
           {fallbackContent || "No content available"}
@@ -621,9 +694,42 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
   return (
     <article className="flex flex-col overflow-y-auto m-[10%] mt-[4%] prose-container">
       {title && (
-        <h1 className="mb-6 text-4xl font-bold border-b border-b-border pb-2">
-          {title}
-        </h1>
+        <div className="flex items-center justify-between mb-6 border-b border-b-border pb-2">
+          <h1
+            className={cn(
+              "text-4xl font-bold",
+              sourceUrl && "cursor-pointer hover:opacity-80"
+            )}
+            onClick={sourceUrl ? handleTitleClick : undefined}
+          >
+            {title}
+          </h1>
+          <div className="flex items-center gap-1 ml-4">
+            <button
+              onClick={handleCopyMarkdown}
+              disabled={!markdownContent}
+              className="p-2 rounded hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              title={copied ? "Copied!" : "Copy markdown"}
+            >
+              {copied ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4 text-muted-foreground" />}
+            </button>
+            <button
+              onClick={handleDownloadMarkdown}
+              disabled={!markdownContent}
+              className="p-2 rounded hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              title="Download markdown"
+            >
+              <Download className="h-4 w-4 text-muted-foreground" />
+            </button>
+            <button
+              disabled
+              className="p-2 rounded opacity-40 cursor-not-allowed"
+              title="Export as audio (coming soon)"
+            >
+              <Music className="h-4 w-4 text-muted-foreground" />
+            </button>
+          </div>
+        </div>
       )}
       <div ref={contentRef} className="structured-content" onClick={handleContentClick}>
         {groupedBlocks.map((grouped) => {
