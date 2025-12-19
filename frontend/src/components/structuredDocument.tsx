@@ -413,7 +413,7 @@ interface ParagraphGroupViewProps {
 function ParagraphGroupView({ blocks, onBlockClick }: ParagraphGroupViewProps) {
   return (
     <p className="my-3 py-1 leading-relaxed">
-      {blocks.map((block) => {
+      {blocks.map((block, idx) => {
         const handleClick = block.audio_block_idx !== null && onBlockClick
           ? () => onBlockClick(block.audio_block_idx as number)
           : undefined;
@@ -427,8 +427,11 @@ function ParagraphGroupView({ blocks, onBlockClick }: ParagraphGroupViewProps) {
               handleClick && "cursor-pointer hover:bg-muted/50"
             )}
             onClick={handleClick}
-            dangerouslySetInnerHTML={{ __html: block.html }}
-          />
+          >
+            {/* Add space between consecutive spans (lost during sentence splitting) */}
+            {idx > 0 && " "}
+            <span dangerouslySetInnerHTML={{ __html: block.html }} />
+          </span>
         );
       })}
     </p>
