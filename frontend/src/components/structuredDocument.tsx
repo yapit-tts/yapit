@@ -736,10 +736,14 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
             );
           } else {
             const block = grouped.block;
+            const handleWrapperClick = block.audio_block_idx !== null && onBlockClick
+              ? () => onBlockClick(block.audio_block_idx as number)
+              : undefined;
             return (
               <div
                 key={block.id}
                 data-audio-block-idx={block.audio_block_idx ?? undefined}
+                onClick={handleWrapperClick}
               >
                 <BlockView
                   block={block}

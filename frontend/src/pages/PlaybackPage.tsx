@@ -505,6 +505,12 @@ const PlaybackPage = () => {
 
     // Synthesize with new voice and play
     synthesizeBlock(blockId).then(audioData => {
+      // Check if this block is still the one we want (user may have clicked elsewhere)
+      const stillCurrentBlock = documentBlocks[currentBlockRef.current]?.id === blockId;
+      if (!stillCurrentBlock) {
+        console.log(`[Playback] Voice change block ${blockId} finished but user moved, skipping`);
+        return;
+      }
       setIsSynthesizing(false);
       if (audioData && isPlayingRef.current) {
         playAudioBuffer(audioData);
@@ -535,8 +541,6 @@ const PlaybackPage = () => {
       return;
     }
 
-    console.log(`[Playback] Block change: currentBlock=${currentBlock}, cache size=${audioBuffersRef.current.size}`);
-
     const PREFETCH_COUNT = 2;
     const EVICT_THRESHOLD = 5; // Remove buffers this many blocks behind
 
@@ -555,6 +559,12 @@ const PlaybackPage = () => {
         console.log(`[Playback] Cache MISS for block ${currentBlockId}, synthesizing FIRST...`);
         setIsSynthesizing(true);
         synthesizeBlock(currentBlockId).then(audioData => {
+          // Check if this block is still the one we want (user may have clicked elsewhere)
+          const stillCurrentBlock = documentBlocks[currentBlockRef.current]?.id === currentBlockId;
+          if (!stillCurrentBlock) {
+            console.log(`[Playback] Block ${currentBlockId} finished but user moved to different block, skipping playback`);
+            return;
+          }
           setIsSynthesizing(false);
           if (audioData && isPlayingRef.current) {
             playAudioBuffer(audioData);
@@ -684,8 +694,12 @@ const PlaybackPage = () => {
   // Uses currentBlockRef instead of currentBlock to keep callback stable
   const handleBlockChange = useCallback((newBlock: number) => {
     if (newBlock === currentBlockRef.current) return;
-    if (!documentBlocks || newBlock < 0 || newBlock >= documentBlocks.length) return;
+    if (!documentBlocks || newBlock < 0 || newBlock >= documentBlocks.length) {
+      console.warn(`[Playback] Invalid block ${newBlock} (have ${documentBlocks?.length ?? 0} blocks)`);
+      return;
+    }
 
+    console.log(`[Playback] Jumping to block ${newBlock}`);
     audioPlayerRef.current?.stop();
 
     // Calculate progress up to the new block

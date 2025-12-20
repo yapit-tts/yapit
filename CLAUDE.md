@@ -150,6 +150,7 @@ Plans live in `~/.claude/plans/`.
 
 | File | Purpose | Status | Read When |
 |------|---------|--------|-----------|
+| `block-click-investigation.md` | Block click not working on some documents - investigated race condition and handler structure | Investigated | Block click issues, wrapper div onclick, documentBlocks race condition |
 | `playback-flicker-and-whitespace.md` | Fix playback flicker, block highlighting, list rendering, whitespace between spans | Done | Playback flicker, DOM-based highlighting, list CSS, paragraph group spacing |
 | `xml-support-and-biorxiv-403.md` | XML support evaluation, bioRxiv 403 investigation | Done | XML formats, JATS, bioRxiv access, User-Agent issues |
 | `ui-qol-improvements.md` | 404 page, MediaSession sync, hide new doc button on homepage | Done | 404 handling, hardware media keys, sidebar UX |

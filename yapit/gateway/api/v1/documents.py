@@ -461,13 +461,13 @@ async def delete_document(
 async def get_document_blocks(
     document: CurrentDoc,
     db: DbSession,
-    offset: int = 0,
-    limit: int = Query(default=100, le=100),
 ) -> list[Block]:
-    """Get document blocks."""
-    result = await db.exec(
-        select(Block).where(Block.document_id == document.id).order_by(Block.idx).offset(offset).limit(limit)
-    )
+    """Get all document blocks for playback.
+
+    Returns all blocks without pagination - needed for playback to work correctly.
+    Data size is small (~200 bytes/block), so even 1000+ blocks is fine.
+    """
+    result = await db.exec(select(Block).where(Block.document_id == document.id).order_by(Block.idx))
     return result.all()
 
 
