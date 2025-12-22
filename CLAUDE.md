@@ -156,7 +156,7 @@ Plans live in `~/.claude/plans/`.
 | `ui-qol-improvements.md` | 404 page, MediaSession sync, hide new doc button on homepage | Done | 404 handling, hardware media keys, sidebar UX |
 | `document-qol-features.md` | Source URL clickable title + markdown export buttons | Done | Document export, source URL, copy/download markdown |
 | `visual-group-rendering.md` | Render split paragraphs as single `<p>` with `<span>`s to preserve original appearance | Done | Split paragraphs, visual_group_id, paragraph rendering |
-| `monitoring-observability-logging.md` | Monitoring, metrics, logging, tracing for gateway and workers | Research Needed | Observability, performance monitoring, debugging, Sentry, OpenTelemetry |
+| `monitoring-observability-logging.md` | Structured logging with loguru: request tracing, synthesis timing, JSON output for Claude analysis | Ready to Implement | Logging, observability, performance debugging, loguru |
 | `in-document-anchor-links.md` | Make relative links like `#methods` scroll to headings | Done | Anchor links, in-doc navigation, heading IDs, link styling |
 | `playback-ux-improvements.md` | Position persistence fix, KaTeX rendering, auto-scroll, settings UI | Done | Playback UX, position restore, math rendering, scroll tracking |
 | `audio-speed-control.md` | Replace SoundTouchJS with browser native preservesPitch | Done | Audio speed control, playback bugs at high speed |
