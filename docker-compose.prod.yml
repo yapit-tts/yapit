@@ -86,6 +86,8 @@ services:
       - ./.env.local
     networks:
       - dokploy-network
+    ports:
+      - "127.0.0.1:8101:8101"  # Dashboard - localhost only (SSH tunnel access)
     healthcheck:
       test: ["CMD-SHELL", "curl -fs http://localhost:8101/health && curl -fs http://localhost:8102/health"]
       start_period: 80s
