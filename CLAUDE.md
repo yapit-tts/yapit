@@ -1,11 +1,7 @@
 
-Currently we're working towards Yapit TTS v1, aka the first deploy (still private).
-
 ## Project Overview
 
 Yapit TTS - Open-source text-to-speech platform for reading documents, web pages, and text.
-- Free tier: Browser-side TTS via Kokoro.js (zero server cost)
-- Paid tier: Server-side models via RunPod
 
 **GitHub**: https://github.com/yapit-tts/yapit
 **Project board**: https://github.com/orgs/yapit-tts/projects/2
@@ -28,101 +24,17 @@ Note: We don't work heavily with GitHub issues (solo dev + claude for now -- the
   - If no dev user exists after startup (login fails), run `make dev-user` - there's a race condition where stack-auth health check sometimes fails before user creation runs
 - **CI timing**: Integration tests take 4-5 minutes (Docker build). Wait for all checks before merging PRs.
 
-## Agent Work Process
+## Agent Work Structure
 
-### Session Start (MANDATORY)
+Task files live in `agent/tasks/`, persistent knowledge in `agent/knowledge/`.
 
-1. **Check git state**: `git status`, `git branch`, `git log --oneline -5`
-2. **ALWAYS read `yapit-architecture.md`** - Critical context, current state, decisions
-3. **Read relevant task plans** from index below for additional context
+**Master doc (ALWAYS read at session start):**
+- `agent/knowledge/architecture.md` - Architecture, decisions, implementation details, known issues/tech debt
 
-### During Work: Plan Files as Handover Documents
-
-Plan files are **devlogs** - the synthesis of thoughts, decisions, and learnings as code evolves. They're core to the workflow, not a chore.
-
-**Two key purposes:**
-1. **Handover:** Working memory that survives context exhaustion. Context can run out unexpectedly (debugging, Chrome DevTools dumps, verbose logs). The plan file ensures the next agent can proceed exactly where you left off with full context - all knowledge necessary for the task, all considerations, all user feedback distilled.
-2. **Brainstorm capture:** Short-term todo list and idea staging. Some plans are "Research Needed" or just-started brainstorms - concrete capture of ideas before full execution.
-
-**How to use them:**
-- **Create early:** Start a plan file when you begin work, not when running low on context
-- **Update continuously:** Not documentation to fill at milestones - update as you work, after each decision or discovery
-- **Capture working state:** File should always reflect "where am I right now" - current state, next steps, what you just learned
-- **Commit logical units** - don't accumulate large uncommitted changes, but commit coherent chunks not random checkpoints
-
-**Why this matters:**
-- When auto-compaction happens, everything important is already in the file
-- No panic-implementing as context warnings appear - take time to reflect
-- User can review handover content and give feedback before compaction
-- Next agent reads handover + referenced files and has all knowledge necessary to proceed exactly as you would have
-
-**Where learnings flow:**
-- Task-specific context, decisions, dead ends → **plan file** (stays there)
-- Code style learnings, conventions discovered → **CLAUDE.md**
-- Architecture decisions, patterns, tech debt → **yapit-architecture.md** (also serves as medium-long term todo list)
-
-Code comments are NOT the place for architectural decisions or work context.
-
-### Plan File Structure
-
-Keep plans **lightweight** - focus on goal, constraints, and issues encountered, not detailed how-to steps. Detailed upfront plans become stale fast.
-
-**Starting structure:**
-```
-Goal: What success looks like (1-2 sentences)
-  - Can include: "user tests X in UI and confirms it works"
-  - Can include: "ask user about Y decision"
-
-Constraints/Decisions: Key choices that shape the work
-
-Scope: ~5-7 bullets of what's included (not detailed task list)
-
-Open Questions: Things to clarify with user before implementation
-  - Don't guess intent - ask if unclear
-  - Can be 10 detailed questions if needed, but don't ask for sake of asking
-```
-
-**As work progresses, add:**
-```
-Current State: Where are you right now?
-  - What's done, what you just figured out, any blockers
-
-Next Steps: What you'd do next / if you had infinite context
-
-Notes: Findings, discussions, decisions, dead ends
-  - Include "this didn't work because..." for failed approaches
-```
-
-**Key behaviors:**
-- Update "Current State" and "Next Steps" frequently - critical for handover
-- Before context-heavy operations (debugging, DevTools, large reads), quick-update the file
-- At the end: distill key learnings into Notes - what worked, what didn't, what the next agent needs to know
-
-**Workflow for unclear requirements:**
-1. Create plan with goal + scope + open questions
-2. Get user answers
-3. Update plan with answers and refined approach
-4. Execute, updating Current State/Next Steps as you go
-
-Granular task tracking belongs in working todos during implementation, not the plan file.
-
-### Before Creating PR (MANDATORY)
-
-1. **Update your task plan file** with final status, results, testing notes
-
-2. **Update `yapit-architecture.md`** to reflect merged state:
-   - Update architecture sections if changed
-   - Add new technical decisions
-   - Update "Known Issues & Tech Debt"
-
-3. **Update this CLAUDE.md** - add PR number to plan index
-
-4. **Batch doc updates with code** - include in the PR, not after
-
-### After PR Merges
-
-- Mark task plan status as DONE in index below
-- Keep entries for history (don't remove)
+**Before Creating PR (MANDATORY):**
+1. Update your task file with final status, results, testing notes
+2. Update `agent/knowledge/architecture.md` to reflect merged state
+3. Batch doc updates with code - include in the PR, not after
 
 ### Branch Strategy
 
@@ -130,23 +42,13 @@ Granular task tracking belongs in working todos during implementation, not the p
 - `dev` - integration branch
 - Feature branches merge to `dev` via PR, then deleted
 
-**Merge vs Rebase**: We use merge commits (not rebase) for PRs. Merges preserve commit history which is valuable for `git bisect` when tracking down regressions. Rebasing rewrites history and loses the ability to bisect through individual commits that were on the feature branch.
+**Merge vs Rebase**: We use merge commits (not rebase) for PRs. Merges preserve commit history which is valuable for `git bisect` when tracking down regressions.
 
-**Releases**: No tags or releases until actual deployment. Version numbers in docs (v0, v1, etc.) are informal priority indicators, not tracked versions.
+**Releases**: No tags or releases until actual deployment. Version numbers in docs (v0, v1, etc.) are informal priority indicators.
 
-## Plan Files
+### Legacy Plans
 
-Plans live in `~/.claude/plans/`.
-
-**IMPORTANT: Do NOT use EnterPlanMode tool for creating/updating plan files.** The plan mode tool adds friction (permission prompts, can't edit files, generates random names). Instead:
-- Create plan files directly using the Write tool
-- Edit them using the Edit tool
-- Name files descriptively yourself (e.g., `feature-name.md` or `task-description.md`)
-
-**Master doc (ALWAYS read this):**
-- `yapit-architecture.md` - Architecture, decisions, implementation details, known issues/tech debt
-
-**Task-specific plans:** (most recent on top)
+Old plan files live in `~/.claude/plans/` (searchable via memex). New work uses `agent/tasks/`.
 
 | File | Purpose | Status | Read When |
 |------|---------|--------|-----------|
@@ -182,8 +84,6 @@ Plans live in `~/.claude/plans/`.
 | `yapit-browser-processor-review.md` | ClientProcessor backend | Done | ClientProcessor flow, job_id coordination, /tts/submit endpoint |
 | `yapit-project-review.md` | GitHub issue status review | Done | - |
 
-Task plans get descriptive names. Keep entries after completion for history.
-
 ## Key Technical Decisions
 
 - **Structured content format**: JSON (not XML) - native to React frontend, Pydantic backend
@@ -193,6 +93,23 @@ Task plans get descriptive names. Keep entries after completion for history.
 - **Anonymous sessions**: Yes, generate UUID for free browser TTS, claim account later
 - **Design philosophy**: Iterate by doing, don't over-plan upfront
 - **Theme**: Light/cozy Ghibli aesthetic (warm cream, green primary)
+
+## Memex MCP
+
+You have access to markdown vaults via memex. Use them to find past work, discover connections, and document knowledge that helps future sessions.
+
+Vaults:
+- /home/max/repos/github/MaxWolf-01/claude-global-knowledge — Your global knowledge: cross-project learnings, user preferences, workflow insights
+- ./agent — Project-specific: tasks, architecture decisions, conventions, debugging patterns
+- ~/.claude/plans — Legacy plan files (see table above)
+
+Search tips:
+- Use 1-3 sentence questions, not keywords: "How does the auth flow handle token refresh?" beats "auth token refresh"
+- Mention key terms explicitly in your query
+- For exact term lookup, use keywords parameter with a focused query
+- For precise "find this exact file/string" needs, use grep/rg instead — memex is for exploration
+
+Workflow: Search to find entry points → Explore to follow connections (outlinks, backlinks, similar notes) → Build context before implementation.
 
 ## Frontend Development (Chrome DevTools MCP)
 
@@ -233,4 +150,3 @@ Don't be paranoid about this—just factor it in when planning longer debugging 
 - **No architectural discussions in code comments** - those belong in the architecture doc
 - **No useless comments**: Don't add inline comments that restate what code does, don't add untested metrics/claims, don't add "LLM-style" explanatory comments. Comments should only explain non-obvious "why" - if you feel a comment is needed, the code probably needs refactoring instead.
 - **Backwards compatibility is NEVER an issue** - This is a rapidly evolving codebase. Don't preserve old approaches alongside new ones. Replace, don't accumulate. If old code needs updating to match new patterns, update it. If old endpoints/configs are superseded, delete them.
-- See `~/.claude/CLAUDE.md` for general coding guidelines

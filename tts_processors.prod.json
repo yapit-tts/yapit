@@ -1,0 +1,16 @@
+[
+  {
+    "slug": "kokoro-client-free",
+    "processor": "yapit.gateway.processors.tts.client.ClientProcessor"
+  },
+  {
+    "slug": "kokoro-cpu",
+    "processor": "yapit.gateway.processors.tts.local.LocalProcessor",
+    "worker_url": "http://kokoro-cpu:8000"
+  },
+  {
+    "slug": "higgs-native",
+    "processor": "yapit.gateway.processors.tts.runpod.RunpodProcessor",
+    "runpod_endpoint_id": "brqwsipekpok15"
+  }
+]

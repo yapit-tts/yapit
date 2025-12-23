@@ -1,0 +1,108 @@
+volumes:
+  pgdata:
+  audio_cache:
+  document_cache:
+
+networks:
+  dokploy-network:
+    external: true
+
+services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    networks:
+      - dokploy-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.yapit-frontend.rule=Host(`yaptts.org`)"
+      - "traefik.http.routers.yapit-frontend.entrypoints=websecure"
+      - "traefik.http.routers.yapit-frontend.tls.certresolver=letsencrypt"
+      - "traefik.http.services.yapit-frontend.loadbalancer.server.port=80"
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    env_file:
+      - ./.env.prod
+      - ./.env.local
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - dokploy-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-yapit}"]
+      start_period: 30s
+      start_interval: 1s
+      interval: 30s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    networks:
+      - dokploy-network
+
+  gateway:
+    build:
+      context: .
+      dockerfile: yapit/gateway/Dockerfile
+    env_file:
+      - ./.env.prod
+      - ./.env.local
+    volumes:
+      - ./tts_processors.prod.json:/app/tts_processors.prod.json:ro
+      - audio_cache:/data/audio_cache
+      - document_cache:/data/document_cache
+    depends_on:
+      redis:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      stack-auth:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - dokploy-network
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()"]
+      start_period: 80s
+      start_interval: 1s
+      interval: 30s
+      timeout: 5s
+      retries: 10
+
+  stack-auth:
+    build:
+      dockerfile: ./docker/Dockerfile.stackauth
+    restart: unless-stopped
+    env_file:
+      - ./.env.prod
+      - ./.env.local
+    networks:
+      - dokploy-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:8101/health && curl -fs http://localhost:8102/health"]
+      start_period: 80s
+      start_interval: 1s
+      interval: 30s
+      timeout: 5s
+      retries: 10
+
+  kokoro-cpu:
+    build:
+      context: .
+      dockerfile: yapit/workers/kokoro/Dockerfile.cpu
+    command: python -m yapit.workers.kokoro
+    environment:
+      ADAPTER_CLASS: yapit.workers.adapters.kokoro.KokoroAdapter
+    restart: unless-stopped
+    networks:
+      - dokploy-network
+    deploy:
+      replicas: ${KOKORO_CPU_REPLICAS:-2}

@@ -1,0 +1,11 @@
+[
+  {
+    "slug": "mistral-ocr",
+    "processor": "yapit.gateway.processors.document.mistral.MistralOCRProcessor",
+    "model": "mistral-ocr-latest"
+  },
+  {
+    "slug": "markitdown",
+    "processor": "yapit.gateway.processors.document.markitdown.MarkitdownProcessor"
+  }
+]

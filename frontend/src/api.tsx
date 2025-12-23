@@ -12,7 +12,7 @@ import {
 } from "react";
 import { getOrCreateAnonymousId } from "./lib/anonymousId";
 
-const baseURL = "http://localhost:8000"; // TODO: read from env vars
+const baseURL = import.meta.env.VITE_API_BASE_URL;
 
 export type Api = {
 	api: Axios;
