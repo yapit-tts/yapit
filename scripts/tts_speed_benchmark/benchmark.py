@@ -31,6 +31,7 @@ Usage:
 """
 
 import argparse
+import base64
 import json
 import os
 import statistics
@@ -176,25 +177,63 @@ def synthesize_local(
     return data["duration_ms"], elapsed_ms
 
 
+def load_voice_prompt(voice_slug: str) -> tuple[str, str]:
+    """Load voice prompt files for HIGGS.
+    Returns (base64_audio, transcript).
+    """
+    # Voice prompts are in yapit/data/voice_prompts/
+    # Map slug to filename: "en-woman" -> "en_woman"
+    filename = voice_slug.replace("-", "_")
+    voice_dir = Path(__file__).parent.parent.parent / "yapit/data/voice_prompts"
+    audio_path = voice_dir / f"{filename}.wav"
+    transcript_path = voice_dir / f"{filename}.txt"
+
+    if not audio_path.exists():
+        raise FileNotFoundError(f"Voice prompt not found: {audio_path}")
+
+    audio_b64 = base64.b64encode(audio_path.read_bytes()).decode("utf-8")
+    transcript = transcript_path.read_text(encoding="utf-8").strip()
+    return audio_b64, transcript
+
+
+# Cache loaded voice prompts
+_voice_prompt_cache: dict[str, tuple[str, str]] = {}
+
+
+def get_voice_prompt(voice_slug: str) -> tuple[str, str]:
+    """Get cached voice prompt."""
+    if voice_slug not in _voice_prompt_cache:
+        _voice_prompt_cache[voice_slug] = load_voice_prompt(voice_slug)
+    return _voice_prompt_cache[voice_slug]
+
+
 def synthesize_runpod(
     endpoint_id: str,
     text: str,
     voice_slug: str = "en-woman",
     api_key: str | None = None,
 ) -> tuple[int, float]:
-    """Synthesize text via RunPod serverless endpoint.
+    """Synthesize text via RunPod serverless endpoint (HIGGS).
     Returns (duration_ms, synthesis_time_ms).
     """
     api_key = api_key or os.environ.get("RUNPOD_API_KEY")
     if not api_key:
         raise ValueError("RUNPOD_API_KEY not set")
 
+    # Load voice prompt for HIGGS
+    ref_audio, ref_transcript = get_voice_prompt(voice_slug)
+
     url = f"https://api.runpod.ai/v2/{endpoint_id}/runsync"
     headers = {"Authorization": f"Bearer {api_key}"}
     payload = {
         "input": {
             "text": text,
-            "voice": voice_slug,
+            "kwargs": {
+                "ref_audio": ref_audio,
+                "ref_audio_transcript": ref_transcript,
+                "seed": 42,
+                "temperature": 0.3,
+            },
         }
     }
 
