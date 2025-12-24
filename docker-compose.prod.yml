@@ -26,6 +26,7 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     env_file:
+      - ./.env
       - ./.env.prod
     volumes:
       - pgdata:/var/lib/postgresql/data
@@ -50,6 +51,7 @@ services:
       context: .
       dockerfile: yapit/gateway/Dockerfile
     env_file:
+      - ./.env
       - ./.env.prod
     volumes:
       - ./tts_processors.prod.json:/app/tts_processors.prod.json:ro
@@ -80,6 +82,7 @@ services:
       dockerfile: ./docker/Dockerfile.stackauth
     restart: unless-stopped
     env_file:
+      - ./.env
       - ./.env.prod
     networks:
       - dokploy-network
