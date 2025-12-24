@@ -48,35 +48,38 @@ From architecture doc:
 
 ## Current State
 
-Full IaC pipeline working: SSH key rotation script → Dokploy API → GitHub deploy key → git clone succeeds.
+Using hybrid approach: SOPS for version-controlled secrets + Dokploy for deployment features.
 
 **Done:**
-- SSH key setup/rotation script: `scripts/dokploy-ssh-key-rotate.sh`
-- Deploy key added to GitHub via script
-- Compose configured for SSH-based git access (not GitHub App)
-- Dokploy API token saved at `/root/.dokploy-token`
-- Deployment triggers successfully, repo clones via SSH
+- SSH key setup/rotation: `scripts/dokploy-ssh-key-rotate.sh`
+- Deploy key added to GitHub, git clone via SSH works
+- SOPS encrypted secrets: `.env.local.sops` committed
+- Age key on VPS (`/root/.age/yapit.txt`) and local (`~/.config/sops/age/yapit.txt`)
+- Sync script: `scripts/sync-secrets-to-dokploy.sh`
+- Trigger script: `scripts/trigger-deploy.sh`
 
 **Current blocker:**
-- Deployment fails at docker compose step: `.env.local` not found
-- Dokploy clones fresh each deploy, so manually created files are lost
-- Solution: SOPS-encrypted `.env.local.sops` in repo, decrypted at deploy time
+- Need to remove `env_file: .env.local` from docker-compose.prod.yml
+- Need to sync secrets to Dokploy via script
+- Need to clear test command from Dokploy compose config
 
-**Still pending (from before):**
+**Still pending:**
 - DNS not configured (yaptts.org → 78.46.242.1)
 - Stack Auth project not created
-- Traefik status unknown (may auto-heal when Dokploy deploys successfully)
+- Traefik status unknown
 
 ## Next Steps
 
 1. ~~SSH key IaC~~ ✓
-2. **Set up SOPS** - encrypt `.env.local`, commit `.env.local.sops`, decrypt at deploy
-3. **Configure DNS** - Point yaptts.org A record to 78.46.242.1
-4. **Deploy successfully** - With SOPS decryption working
-5. **Create Stack Auth project** - Once stack is running with Traefik
-6. **Test end-to-end**
+2. ~~SOPS setup~~ ✓
+3. **Update compose** - Remove `env_file: .env.local`
+4. **Sync secrets** - Run `scripts/sync-secrets-to-dokploy.sh`
+5. **Test deploy**
+6. **Configure DNS** - yaptts.org → 78.46.242.1
+7. **Create Stack Auth project**
+8. **Test end-to-end**
 
-**Future:** Enable Hetzner backups (~€1.10/mo)
+**Future:** Hetzner backups (~€1.10/mo), auto-deploy webhook on merge to main
 
 ## Notes / Findings
 
@@ -431,3 +434,48 @@ curl -H "x-api-key: $TOKEN" \
 - Encrypt `.env.local` → commit `.env.local.sops`
 - One age private key to manage (on VPS + local)
 - Full IaC worth the setup overhead for reduced friction long-term
+
+### 2025-12-24 - Dokploy vs SSH Deploy Decision
+
+**Explored Dokploy command override:**
+- Dokploy v0.16+ changed `command` field from "append" to "override"
+- BUT: still runs as `docker <command>`, so can't run arbitrary shell scripts
+- Tested: `command: "bash -c echo test"` → ran as `docker bash -c echo test` → failed
+
+**Options analyzed:**
+
+1. **SSH deploy (abandon Dokploy runner):**
+   - Full control, any script/command
+   - Lose: Dokploy UI logs, deploy history, zero-downtime, notifications, rollbacks
+   - Gain: True IaC, SOPS works natively
+
+2. **Dokploy runner + SOPS hybrid:**
+   - Keep Dokploy features (zero-downtime, rollbacks, notifications, webhooks)
+   - SOPS stays in repo for version control
+   - Sync decrypted secrets to Dokploy env vars via API (one-time or when secrets change)
+   - Dokploy injects env vars to containers
+
+**Decision: Hybrid approach (option 2)**
+- SOPS for version-controlled secrets
+- Dokploy for deployment features
+- Best of both worlds, minimal maintenance burden
+
+**Dokploy features we keep:**
+- Zero-downtime deployments
+- Rollback capability
+- Deploy notifications (Slack/Discord/etc)
+- Auto-deploy on push (webhook)
+- Traefik + SSL management
+- Deploy history in UI
+
+**Scripts created:**
+- `scripts/sync-secrets-to-dokploy.sh` - decrypt SOPS, push to Dokploy env vars
+- `scripts/trigger-deploy.sh` - trigger deploy via API (optional, can use webhook)
+- `scripts/dokploy-ssh-key-rotate.sh` - SSH key rotation (already committed)
+
+**Age key locations:**
+- VPS: `/root/.age/yapit.txt`
+- Local: `~/.config/sops/age/yapit.txt`
+- Env var: `YAPIT_SOPS_AGE_KEY_FILE`
+
+**Next:** Update docker-compose.prod.yml to remove `env_file: .env.local` (Dokploy injects env vars directly)
