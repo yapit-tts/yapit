@@ -48,41 +48,35 @@ From architecture doc:
 
 ## Current State
 
-VPS provisioned and Dokploy installed. Production compose and supporting files created:
+Full IaC pipeline working: SSH key rotation script → Dokploy API → GitHub deploy key → git clone succeeds.
 
-**Files created/modified this session:**
-- `docker-compose.prod.yml` - production compose with Dokploy network, Traefik labels, all services
-- `tts_processors.prod.json` - TTS processor config for production
-- `frontend/Dockerfile` - multi-stage build (node → nginx)
-- `frontend/nginx.conf` - routes /api/* to gateway, serves static files
-- `frontend/.env.production` - production env vars (Vite reads this by default)
-- `frontend/src/api.tsx` - changed hardcoded localhost to env var `VITE_API_BASE_URL`
-- `frontend/src/hooks/useWS.ts` - changed hardcoded localhost to env var `VITE_WS_BASE_URL`
-- `frontend/.env.development` - added VITE_API_BASE_URL and VITE_WS_BASE_URL
+**Done:**
+- SSH key setup/rotation script: `scripts/dokploy-ssh-key-rotate.sh`
+- Deploy key added to GitHub via script
+- Compose configured for SSH-based git access (not GitHub App)
+- Dokploy API token saved at `/root/.dokploy-token`
+- Deployment triggers successfully, repo clones via SSH
 
-**Still needed:**
-- `.env.prod` needs actual values (currently a template)
-- Stack Auth setup decision (see Open Questions)
-- Hetzner firewall created but not documented
+**Current blocker:**
+- Deployment fails at docker compose step: `.env.local` not found
+- Dokploy clones fresh each deploy, so manually created files are lost
+- Solution: SOPS-encrypted `.env.local.sops` in repo, decrypted at deploy time
+
+**Still pending (from before):**
+- DNS not configured (yaptts.org → 78.46.242.1)
+- Stack Auth project not created
+- Traefik status unknown (may auto-heal when Dokploy deploys successfully)
 
 ## Next Steps
 
-1. ~~**Decide on Dokploy vs manual setup**~~ → Dokploy chosen ✓
-2. ~~**Decide VPS size**~~ → CX33 (4 vCPU, 8GB) ✓
-3. ~~**Create Hetzner account**~~ ✓
-4. ~~**Provision CX33 VPS**~~ → 78.46.242.1 ✓
-5. ~~**Install Dokploy**~~ ✓ - http://78.46.242.1:3000
-6. ~~**Create Hetzner firewall**~~ ✓ - 22, 80, 443, 3000
-7. ~~**Adapt docker-compose for Dokploy**~~ ✓ - docker-compose.prod.yml created
-8. ~~**Decide Stack Auth setup**~~ → new project required (fresh DB)
-9. ~~**Fill in .env.prod**~~ ✓ - non-sensitive values only, secrets in .env.local
-10. **Create .env.local on VPS** - copy .env.local.template, fill secrets
-11. **Deploy stack** - via Dokploy UI
-12. **Create Stack Auth project** - SSH tunnel to 8101, create project, update .env.local
-13. **Configure DNS** - point yaptts.org to Hetzner (via Cloudflare or Squarespace)
-14. **Test end-to-end** - measure real Kokoro CPU latency
+1. ~~SSH key IaC~~ ✓
+2. **Set up SOPS** - encrypt `.env.local`, commit `.env.local.sops`, decrypt at deploy
+3. **Configure DNS** - Point yaptts.org A record to 78.46.242.1
+4. **Deploy successfully** - With SOPS decryption working
+5. **Create Stack Auth project** - Once stack is running with Traefik
+6. **Test end-to-end**
 
-**Future (when real users):** Enable Hetzner backups (20% of server price, ~€1.10/mo currently)
+**Future:** Enable Hetzner backups (~€1.10/mo)
 
 ## Notes / Findings
 
@@ -191,3 +185,249 @@ Created production compose and supporting files:
 - `.env.local.template` = template showing what secrets are needed
 - `docker-compose.prod.yml` references both: `env_file: [.env.prod, .env.local]`
 - Frontend Stack Auth CLIENT_KEY is intentionally public (embedded in JS bundle)
+
+### 2025-12-23 - Session End: Ready for Deployment
+
+Committed and pushed to dev branch (cde9213). All deployment files ready:
+- `docker-compose.prod.yml` - Dokploy-ready compose with Traefik labels
+- `.env.prod` - non-sensitive config
+- `.env.local.template` - template for secrets (copy to .env.local, fill values)
+- `frontend/Dockerfile`, `nginx.conf` - frontend build and API proxying
+- `frontend/.env.production` - frontend prod env (Stack Auth CLIENT_KEY is public)
+- `tts_processors.prod.json`, `document_processors.prod.json`
+
+### 2025-12-24 - Deployment Attempt
+
+**Completed:**
+- Created `.env.local` on VPS via SSH with generated secrets (Postgres password, Stack server secret, API keys from local .env.local)
+- Switched VPS repo from `main` to `dev` branch
+- Added missing `DB_DROP_AND_RECREATE=0` to `.env.prod`, committed and pushed
+- Added `ports: "127.0.0.1:8101:8101"` to stack-auth in compose for SSH tunnel access
+- Deployed stack via `docker compose -f docker-compose.prod.yml up -d --build`
+- All containers running: frontend, postgres (healthy), redis, stack-auth (healthy), kokoro-cpu x2
+- Gateway crashing due to missing required Stack Auth credentials
+
+**Issues discovered:**
+1. Dokploy's Traefik container crashed with error: "read /etc/traefik/traefik.yml: is a directory"
+   - Investigated: `/etc/dokploy/traefik/traefik.yml` is actually a file (612 bytes), not a directory
+   - Deleted crashed container, but Dokploy didn't recreate it
+   - Traefik is NOT managed as a Swarm service, it's a standalone container
+
+2. Stack Auth dashboard CORS errors:
+   - Dashboard is configured with `NEXT_PUBLIC_STACK_API_URL=https://yaptts.org/auth/api`
+   - These are baked into Next.js build, can't change at runtime
+   - Without DNS pointing to VPS and Traefik routing, the API calls fail
+
+**Chicken-and-egg situation:**
+- Need Stack Auth credentials to start gateway
+- Need dashboard to create Stack Auth project
+- Dashboard needs yaptts.org to work
+- yaptts.org needs Traefik to route traffic
+- Traefik is broken
+
+**Resolution: Use Dokploy properly (not manual docker compose)**
+
+The previous agent miscommunicated - user manually cloned repo thinking that was the setup, but Dokploy should manage the clone/deploy itself. We were bypassing Dokploy entirely.
+
+**Correct approach:**
+1. Create Project in Dokploy UI ✓ (user created "Yapit Test")
+2. Create Compose Service ✓ (user created one)
+3. Configure: GitHub repo, branch, compose path, env vars
+4. Deploy via Dokploy - it handles Traefik routing automatically
+
+**Current state (2025-12-24 ~01:15 UTC):**
+- Dokploy CLI installed and authenticated on VPS
+- API working with `x-api-key` header (not Bearer token!)
+- Project "Yapit Test" exists (projectId: Gfl4K6JPpdj7ARtMeZ6q7)
+- Compose service "Yapit" configured via API:
+  - composeId: Fmex638n6F7Nrw81Lubc_
+  - repository: yapit, owner: yapit-tts, branch: dev
+  - composePath: ./docker-compose.prod.yml
+  - env vars set (secrets)
+- **Deployment FAILED**: composeFile empty - Dokploy can't access GitHub repo
+- GitHub App NOT configured in Dokploy (githubAppName: null)
+
+**Blocking:** Need to configure GitHub access in Dokploy before it can pull the repo (repo is private)
+
+**Next step:** User needs to install GitHub App via Dokploy UI (one-time):
+1. Go to http://78.46.242.1:3000
+2. Settings → Git → GitHub → Create Github App
+3. Name it uniquely (e.g., "yapit-dokploy")
+4. Click Install, authorize for yapit-tts organization
+5. After installed, redeploy via API: `curl -X POST ... compose.deploy`
+
+**Note:** GitHub App setup is UI-only. After that, everything is IaC via API.
+
+---
+
+## Dokploy API Reference (IaC)
+
+**Auth:** All API calls use `x-api-key` header (NOT Bearer token)
+```bash
+curl -H "x-api-key: <token>" "http://localhost:3000/api/trpc/<endpoint>"
+```
+
+**Token location:** Generated in Dokploy UI → Settings → Profile → API/CLI
+
+### Working API Endpoints
+
+**List projects:**
+```bash
+curl -H "x-api-key: $TOKEN" "http://localhost:3000/api/trpc/project.all"
+```
+
+**Configure compose service:**
+```bash
+curl -X POST -H "x-api-key: $TOKEN" -H "Content-Type: application/json" \
+  "http://localhost:3000/api/trpc/compose.update" \
+  -d '{"json":{"composeId":"<id>","repository":"yapit","owner":"yapit-tts","branch":"dev","composePath":"./docker-compose.prod.yml"}}'
+```
+
+**Set environment variables:**
+```bash
+ENV_CONTENT="KEY1=value1\nKEY2=value2"
+curl -X POST -H "x-api-key: $TOKEN" -H "Content-Type: application/json" \
+  "http://localhost:3000/api/trpc/compose.update" \
+  -d "{\"json\":{\"composeId\":\"<id>\",\"env\":\"$ENV_CONTENT\"}}"
+```
+
+**Deploy:**
+```bash
+curl -X POST -H "x-api-key: $TOKEN" -H "Content-Type: application/json" \
+  "http://localhost:3000/api/trpc/compose.deploy" \
+  -d '{"json":{"composeId":"<id>"}}'
+```
+
+**Generate SSH key:**
+```bash
+curl -X POST -H "x-api-key: $TOKEN" -H "Content-Type: application/json" \
+  "http://localhost:3000/api/trpc/sshKey.generate" -d '{"json":{}}'
+```
+
+**Check status:**
+```bash
+curl -H "x-api-key: $TOKEN" \
+  "http://localhost:3000/api/trpc/compose.one?input=%7B%22json%22%3A%7B%22composeId%22%3A%22<id>%22%7D%7D"
+```
+
+### Current IDs
+- organizationId: `xnapgeezv3mhXzL8EddMV`
+- projectId: `Gfl4K6JPpdj7ARtMeZ6q7`
+- environmentId: `c1mxFwNRnW4vYM0LfS0R4`
+- composeId: `Fmex638n6F7Nrw81Lubc_`
+
+**CRITICAL SECURITY ISSUE:**
+- Stack Auth dashboard shows warning: CVE-2025-55182 - urgent vulnerability in React Server Components
+- Message: "You may be running on an old version of Next.js/React. Please update to the newest version immediately"
+- Link: https://vercel.com/changelog/cve-2025-55182
+- Current image: `stackauth/server:09921e6` (pinned in `docker/Dockerfile.stackauth`)
+- Latest image: `stackauth/server:3ef9cb3` (Dec 22, 2025)
+
+**Why version is pinned (context from commit 1c4443e by lukasl-dev):**
+- Stack Auth renamed env vars without documenting: `STACK_RUN_SEED_SCRIPT` → `STACK_SKIP_SEED_SCRIPT` (inverted logic)
+- Pinned to working version as quick fix
+
+**Before updating to latest:**
+1. Check Stack Auth changelog/docs for env var changes since `09921e6`
+2. Compare our `.env.dev` and `.env.prod` against current Stack Auth docs
+3. Test in dev environment first
+4. Verify all auth flows still work (login, signup, token refresh, etc.)
+
+---
+
+## Session Summary (2025-12-24 ~01:30 UTC)
+
+**What worked:**
+- Dokploy API with `x-api-key` header (not Bearer)
+- Created/configured compose service via API
+- Set env vars via API
+- Generated SSH key via API
+
+**What didn't work:**
+- Deployment failed: Dokploy couldn't access private GitHub repo
+- SSH key creation via API (complex, gave up)
+- GitHub App must be installed via UI (one-time)
+
+**Key learnings:**
+- Dokploy uses tRPC API at `/api/trpc/<endpoint>`
+- Compose service was created in UI but not configured
+- Previous agent ran manual `docker compose` instead of using Dokploy properly
+
+**IaC status:**
+- ✅ Compose config via API
+- ✅ Env vars via API (stored in Dokploy)
+- ✅ Deploy trigger via API
+- ✅ SSH key generation via API (`sshKey.generate`)
+- ✅ SSH key creation/storage via API (`sshKey.create`)
+- ✅ Compose SSH key linking via API (`compose.update` with `customGitSSHKeyId`, `customGitUrl`, `sourceType: "git"`)
+- ✅ GitHub deploy key via `gh api` (requires deploy keys enabled on repo - one-time UI toggle)
+- ✅ Full rotation script: `scripts/dokploy-ssh-key-rotate.sh`
+- 🔄 Secrets management: SOPS setup in progress
+
+**Remaining:**
+1. ~~GitHub access~~ ✓ (SSH key, not GitHub App)
+2. Set up SOPS for secrets
+3. Redeploy via API
+4. Configure DNS
+5. Create Stack Auth project
+6. Test end-to-end
+
+### 2025-12-24 - SSH Key IaC Investigation
+
+**Goal:** Determine if SSH-based GitHub access can be fully automated via Dokploy API (for IaC purposes).
+
+**Tested endpoints:**
+- `sshKey.all` - List keys ✅
+- `sshKey.one` - Get single key ✅
+- `sshKey.generate` - Generate new keypair (returns keypair, doesn't persist) ✅
+- `sshKey.create` - Store keypair with name/description ✅
+- `sshKey.remove` - Delete key ✅
+- `compose.update` - Can set `sourceType: "git"`, `customGitUrl`, `customGitBranch`, `customGitSSHKeyId` ✅
+
+**Finding:** Full SSH-based git access IS possible via API:
+1. Generate or provide SSH keypair
+2. Create key in Dokploy: `sshKey.create` with privateKey, publicKey, name, organizationId
+3. Update compose: `compose.update` with sourceType="git", customGitUrl="git@github.com:org/repo.git", customGitSSHKeyId="<id>"
+4. Add public key to GitHub as deploy key (this is the manual step OR use GitHub API)
+5. Deploy via `compose.deploy`
+
+**Blocker for yapit-tts/yapit:** Deploy keys are disabled for this repository (HTTP 422 error when trying to add via `gh repo deploy-key add` or `gh api repos/.../keys`). This is likely an org-level security setting.
+
+**Options:**
+1. Enable deploy keys in GitHub org/repo settings → then SSH IaC works fully
+2. Keep using GitHub App (current approach) → one-time UI setup, then IaC for deploys
+
+**Initial recommendation was GitHub App**, but user preferred full IaC. Proceeded with SSH approach.
+
+**API token saved:** `/root/.dokploy-token`
+
+### 2025-12-24 - SSH Key IaC Implementation
+
+**Continued from investigation above.** User enabled deploy keys in GitHub org settings.
+
+**Created:** `scripts/dokploy-ssh-key-rotate.sh` - full IaC script that:
+1. Generates SSH keypair via Dokploy API
+2. Stores key in Dokploy with timestamped name
+3. Adds public key to GitHub as deploy key via `gh api`
+4. Updates compose to use SSH mode with new key
+5. Lists old keys for cleanup
+
+**Ran script successfully:**
+- Key `dokploy-20251224-031531` created and active
+- Compose switched from GitHub App to SSH (`sourceType: "git"`)
+- Old `yapit-deploy` key cleaned up
+
+**Tested deployment:**
+- `compose.deploy` API call succeeded
+- Repo cloned via SSH ✅
+- Docker compose build started
+- **Failed:** `.env.local` not found
+
+**Root cause:** Dokploy clones fresh each deploy, wiping any manually created files.
+
+**Solution:** SOPS - encrypt `.env.local` → `.env.local.sops`, commit to repo, decrypt at deploy time.
+
+**Decision:** SOPS + age for secrets management
+- Encrypt `.env.local` → commit `.env.local.sops`
+- One age private key to manage (on VPS + local)
+- Full IaC worth the setup overhead for reduced friction long-term
