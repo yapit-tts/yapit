@@ -657,13 +657,15 @@ async def _create_document_with_blocks(
     return doc
 
 
-def _estimate_duration_ms(text: str, speed: float = 1.0, chars_per_second: float = 20) -> int:
-    """Estimate audio duration in milliseconds. # TODO ... per model/voice est.?
+def _estimate_duration_ms(text: str, speed: float = 1.0, chars_per_second: float = 13) -> int:
+    """Estimate audio duration in milliseconds.
 
     Args:
         text (str): Text to be synthesized.
         speed (float): TTS speed multiplier (1.0 = normal).
         chars_per_second (float): Baseline CPS estimate at speed=1.0.
+            Benchmarked at ~13 CPS for Kokoro on realistic document content.
+            Variance is high (~40%) due to content type, so treat as rough estimate.
     """
     cps = chars_per_second * speed
     return math.ceil(len(text) / cps * 1000)
