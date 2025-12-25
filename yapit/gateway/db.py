@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any, AsyncIterator
 
@@ -55,7 +56,8 @@ async def prepare_database(settings: Settings) -> None:
         alembic_cfg = config.Config(str(ALEMBIC_INI))
         # Set absolute path for migrations (relative path in ini doesn't work from /app)
         alembic_cfg.set_main_option("script_location", str(ALEMBIC_INI.parent / "migrations"))
-        command.upgrade(alembic_cfg, "head")
+        # Run in thread to avoid blocking event loop
+        await asyncio.to_thread(command.upgrade, alembic_cfg, "head")
     if settings.db_seed:
         await _seed_db(settings)
 
