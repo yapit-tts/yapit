@@ -53,6 +53,8 @@ async def prepare_database(settings: Settings) -> None:
             await conn.run_sync(SQLModel.metadata.create_all)
     else:
         alembic_cfg = config.Config(str(ALEMBIC_INI))
+        # Set absolute path for migrations (relative path in ini doesn't work from /app)
+        alembic_cfg.set_main_option("script_location", str(ALEMBIC_INI.parent / "migrations"))
         command.upgrade(alembic_cfg, "head")
     if settings.db_seed:
         await _seed_db(settings)
