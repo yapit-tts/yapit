@@ -48,38 +48,79 @@ From architecture doc:
 
 ## Current State
 
-Using hybrid approach: SOPS for version-controlled secrets + Dokploy for deployment features.
+**IaC infrastructure complete.** Dokploy deployment succeeds (composeStatus: done).
 
 **Done:**
 - SSH key setup/rotation: `scripts/dokploy-ssh-key-rotate.sh`
 - Deploy key added to GitHub, git clone via SSH works
 - SOPS encrypted secrets: `.env.local.sops` committed
 - Age key on VPS (`/root/.age/yapit.txt`) and local (`~/.config/sops/age/yapit.txt`)
-- Sync script: `scripts/sync-secrets-to-dokploy.sh`
+- Sync script: `scripts/sync-secrets-to-dokploy.sh` (requires `YAPIT_SOPS_AGE_KEY_FILE` env var)
 - Trigger script: `scripts/trigger-deploy.sh`
+- docker-compose.prod.yml uses `.env` + `.env.prod` (Dokploy writes secrets to `.env`)
+- Secrets synced to Dokploy via `sync-secrets-to-dokploy.sh`
+- Deployment succeeds: postgres, stack-auth, redis, kokoro, frontend all healthy
 
 **Current blocker:**
-- Need to remove `env_file: .env.local` from docker-compose.prod.yml
-- Need to sync secrets to Dokploy via script
-- Need to clear test command from Dokploy compose config
+- None - ready to push and deploy
 
 **Still pending:**
 - DNS not configured (yaptts.org → 78.46.242.1)
-- Stack Auth project not created
-- Traefik status unknown
+- Stack Auth project not created (blocked by gateway)
+- Traefik routing (needs DNS)
 
 ## Next Steps
 
 1. ~~SSH key IaC~~ ✓
 2. ~~SOPS setup~~ ✓
-3. **Update compose** - Remove `env_file: .env.local`
-4. **Sync secrets** - Run `scripts/sync-secrets-to-dokploy.sh`
-5. **Test deploy**
-6. **Configure DNS** - yaptts.org → 78.46.242.1
-7. **Create Stack Auth project**
-8. **Test end-to-end**
+3. ~~Dokploy env injection~~ ✓
+4. ~~Test deployment~~ ✓
+5. ~~Generate proper initial migration~~ ✓
+6. **Push & test deploy** - Verify gateway starts
+7. **Configure DNS** - yaptts.org → 78.46.242.1
+8. **Create Stack Auth project** - Via dashboard once gateway works
+9. **Test end-to-end**
 
 **Future:** Hetzner backups (~€1.10/mo), auto-deploy webhook on merge to main
+
+## Database Migration Workflow
+
+**Dev mode** (`DB_DROP_AND_RECREATE=1`):
+- Tables dropped and recreated from SQLModel on every restart
+- Alembic is completely bypassed
+- Change models freely, restart, done
+
+**Prod mode** (`DB_DROP_AND_RECREATE=0`):
+- Runs `alembic upgrade head` on startup
+- Applies migrations to evolve schema while preserving data
+
+**Creating new migrations:**
+
+```bash
+# Requires postgres running (make dev-cpu or docker compose up)
+make migration-new MSG="add user preferences"
+```
+
+What this does:
+1. Wipes database
+2. Applies existing migrations (DB at "prod state")
+3. Runs autogenerate (compares prod state to current models)
+4. Generates migration with the diff
+
+After running, restart dev (`make dev-cpu`) to recreate tables.
+
+**Workflow for schema changes:**
+1. Change models in code
+2. Restart dev, test (create_all handles it)
+3. When ready: `make migration-new MSG="description"`
+4. Review generated migration in `yapit/gateway/migrations/versions/`
+5. Commit model changes + migration together
+
+**Files:**
+- `yapit/gateway/alembic.ini` - alembic config
+- `yapit/gateway/migrations/env.py` - imports models, filters to only yapit tables (ignores Stack Auth)
+- `yapit/gateway/migrations/versions/` - migration files
+- `yapit/gateway/db.py` - calls alembic on startup in prod mode
 
 ## Notes / Findings
 
@@ -478,4 +519,87 @@ curl -H "x-api-key: $TOKEN" \
 - Local: `~/.config/sops/age/yapit.txt`
 - Env var: `YAPIT_SOPS_AGE_KEY_FILE`
 
-**Next:** Update docker-compose.prod.yml to remove `env_file: .env.local` (Dokploy injects env vars directly)
+### 2025-12-24 - Deployment Testing & Fixes
+
+**Sync script works:**
+- `scripts/sync-secrets-to-dokploy.sh` successfully synced 19 env vars to Dokploy
+- Requires `YAPIT_SOPS_AGE_KEY_FILE` env var pointing to age private key
+
+**docker-compose.prod.yml updated:**
+- Changed `env_file: .env.prod` → `env_file: [.env, .env.prod]`
+- Dokploy writes secrets to `.env`, compose reads from both files
+
+**Deployment succeeded:**
+- Cleaned up old manual containers (port 8101 conflict)
+- `composeStatus: "done"` ✅
+- All containers healthy except gateway
+
+**Gateway issue (code bug, not infra):**
+- Crashes with: `No config file 'alembic.ini' found`
+- The file doesn't exist in the codebase
+- Needs to be created or alembic initialization skipped for prod
+
+**IaC workflow complete:**
+1. Edit secrets locally → re-encrypt: `SOPS_AGE_KEY_FILE=... sops .env.local.sops`
+2. Sync to Dokploy: `scripts/sync-secrets-to-dokploy.sh`
+3. Push code changes → auto-deploy (or manual: `scripts/trigger-deploy.sh`)
+
+**Commits:**
+- `b5a7441` - feat: add IaC deployment with SOPS encrypted secrets
+- `7339148` - feat: switch to Dokploy env injection for secrets
+- `ed2a919` - fix: add .env to env_file for Dokploy env injection
+
+### 2025-12-25 - Alembic Setup Complete
+
+**Problem:** Gateway crashed in prod with "No config file 'alembic.ini' found"
+
+**Solution implemented:**
+- Initialized alembic: `alembic.ini`, `migrations/env.py`, `migrations/versions/`
+- Added `include_object` filter to ignore Stack Auth tables (shared database)
+- Generated initial migration with explicit DDL (not create_all hack)
+- Updated `db.py` to find alembic.ini via `Path(__file__).parent`
+- Added postgres port 5432 to docker-compose.dev.yml (for local alembic access)
+- Created `make migration-new` target that:
+  1. Wipes DB and applies existing migrations (gets "prod state")
+  2. Runs autogenerate to detect model changes
+  3. Generates new migration
+
+**Key insight:** Dev uses create_all (ignores alembic), but we still need to generate migrations for prod. The make target automates resetting the DB to migration state before autogenerating.
+
+**Files changed:**
+- `yapit/gateway/alembic.ini` (new)
+- `yapit/gateway/migrations/env.py` (new)
+- `yapit/gateway/migrations/versions/efc48e1f9c00_initial_schema.py` (new)
+- `yapit/gateway/db.py` (ALEMBIC_INI path)
+- `docker-compose.dev.yml` (postgres port)
+- `Makefile` (migration-new target)
+
+**Ready to commit and push.**
+
+**Retrospective - Communication breakdown:**
+
+The alembic discussion took much longer than necessary due to poor communication on both sides.
+
+*Agent mistakes:*
+- Rushed to implement without clarifying goals upfront
+- Made assumptions about user preferences (e.g., "migrations are rare")
+- Contradicted myself (port exposure: "doesn't matter" → "make it temporary" → no reason given)
+- Tried to take shortcuts (create_all hack) instead of doing it properly
+- Didn't follow the task workflow: should have stated goal, assumptions, and options BEFORE acting
+- When user pushed back, kept proposing solutions instead of stopping to understand the actual question
+
+*User confusion points:*
+- Unclear on how alembic autogenerate works (compares DB to models, not models to models)
+- Unclear why dev database was involved when migrations are for prod
+- These are reasonable - the alembic mental model isn't obvious
+
+*What would have helped:*
+- Agent: Start with "Here's what I understand the goal to be, here are the options, which do you prefer?" BEFORE any implementation
+- Agent: When user pushes back, STOP and ask "What am I missing?" instead of defending
+- Agent: Explain the "why" before the "what" - e.g., "Alembic needs a database at old state because X" before proposing solutions
+- User: (Nothing really - the pushback was appropriate and eventually got us to the right place)
+
+*For future agents:*
+- The migration workflow is now documented in "Database Migration Workflow" section above
+- The `make migration-new` target handles the complexity - just use it
+- Don't try to "optimize" or "simplify" the workflow without understanding why it exists

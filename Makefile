@@ -78,6 +78,24 @@ test-runpod:
 test-mistral:
 	uv run --env-file=.env.dev --env-file=.env.local pytest tests -v -m "mistral"
 
+# Database migrations (for prod schema changes)
+# Resets DB to migration state, then generates migration from model diff
+# Requires postgres to be running. Restart dev afterward to recreate tables.
+# Usage: make migration-new MSG="add user preferences"
+migration-new:
+ifndef MSG
+	$(error MSG is required. Usage: make migration-new MSG="description")
+endif
+	@docker compose -f docker-compose.yml -f docker-compose.dev.yml ps postgres --format '{{.Status}}' | grep -q "Up" || \
+		(echo "Error: postgres not running. Start with: make dev-cpu" && exit 1)
+	@echo "Resetting database to migration state..."
+	@docker compose -f docker-compose.yml -f docker-compose.dev.yml exec -T postgres psql -U yapit -d yapit -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;" > /dev/null
+	@cd yapit/gateway && DATABASE_URL="postgresql://yapit:yapit@localhost:5432/yapit" uv run alembic upgrade head
+	@echo "Generating migration..."
+	@cd yapit/gateway && DATABASE_URL="postgresql://yapit:yapit@localhost:5432/yapit" uv run alembic revision --autogenerate -m "$(MSG)"
+	@echo "Done. Review migration in yapit/gateway/migrations/versions/"
+	@echo "Restart dev to recreate tables: make dev-cpu"
+
 lint:
 	uv run ruff check .
 

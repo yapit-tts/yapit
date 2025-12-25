@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, AsyncIterator
 
 from alembic import command, config
@@ -9,6 +10,8 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from yapit.gateway.config import Settings
 from yapit.gateway.exceptions import ResourceNotFoundError
+
+ALEMBIC_INI = Path(__file__).parent / "alembic.ini"
 
 _engine: AsyncEngine | None = None
 
@@ -49,7 +52,7 @@ async def prepare_database(settings: Settings) -> None:
             await conn.run_sync(SQLModel.metadata.drop_all)
             await conn.run_sync(SQLModel.metadata.create_all)
     else:
-        alembic_cfg = config.Config("alembic.ini")
+        alembic_cfg = config.Config(str(ALEMBIC_INI))
         command.upgrade(alembic_cfg, "head")
     if settings.db_seed:
         await _seed_db(settings)
