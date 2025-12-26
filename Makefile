@@ -96,6 +96,15 @@ endif
 	@echo "Done. Review migration in yapit/gateway/migrations/versions/"
 	@echo "Restart dev to recreate tables: make dev-cpu"
 
+# Decrypt .env.local.sops for dev (removes prod Stack Auth credentials)
+# Prefers YAPIT_SOPS_AGE_KEY_FILE over SOPS_AGE_KEY_FILE (yapit key may differ from global)
+env-local-dev:
+	@if [ -z "$$YAPIT_SOPS_AGE_KEY_FILE" ]; then \
+		echo "Error: Set YAPIT_SOPS_AGE_KEY_FILE to the yapit age key path"; exit 1; \
+	fi
+	@SOPS_AGE_KEY_FILE=$$YAPIT_SOPS_AGE_KEY_FILE sops -d .env.local.sops | grep -v "^STACK_" > .env.local
+	@echo "Created .env.local (prod Stack Auth credentials removed)"
+
 lint:
 	uv run ruff check .
 
