@@ -265,6 +265,68 @@ Audio cache is a **session buffer**, not a permanent archive:
 
 ---
 
+## Database Migrations (Alembic)
+
+**Dev mode** (`DB_DROP_AND_RECREATE=1`):
+- Tables dropped and recreated from SQLModel on every restart
+- Alembic is bypassed
+- Change models freely, restart, done
+
+**Prod mode** (`DB_DROP_AND_RECREATE=0`):
+- Runs `alembic upgrade head` on startup
+- Applies migrations to evolve schema while preserving data
+
+### Creating Migrations
+
+```bash
+# Requires postgres running (make dev-cpu or docker compose up)
+make migration-new MSG="add user preferences"
+```
+
+What this does:
+1. Wipes database
+2. Applies existing migrations (DB at "prod state")
+3. Runs autogenerate (compares prod state to current models)
+4. Generates migration with the diff
+
+After running, restart dev (`make dev-cpu`) to recreate tables.
+
+### Workflow for Schema Changes
+
+1. Change models in code
+2. Restart dev, test (create_all handles it)
+3. When ready: `make migration-new MSG="description"`
+4. Review generated migration in `yapit/gateway/migrations/versions/`
+5. Commit model changes + migration together
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `yapit/gateway/alembic.ini` | Alembic config |
+| `yapit/gateway/migrations/env.py` | Imports models, filters to yapit tables only |
+| `yapit/gateway/migrations/versions/` | Migration files |
+| `yapit/gateway/db.py` | Runs alembic on startup in prod mode |
+
+### Gotcha: Stack Auth Tables
+
+Alembic's `include_object` filter ignores Stack Auth tables (shared database). Only yapit-prefixed tables are managed.
+
+### Resetting Prod DB (Pre-Launch)
+
+While there are no real users, you can wipe yapit tables without touching Stack Auth:
+
+```bash
+ssh root@78.46.242.1
+docker exec <postgres-container> psql -U yapit -d yapit -c "
+DROP TABLE IF EXISTS blockvariants, blocks, documents, usercredits, ttsmodels, voices, alembic_version CASCADE;
+"
+```
+
+Then redeploy - alembic runs migrations on empty tables. Stack Auth project/users stay intact.
+
+---
+
 ## Frontend Architecture
 
 ### Current State (main branch)
@@ -354,6 +416,8 @@ Audio cache is a **session buffer**, not a permanent archive:
 - Billing - Stripe integration
 - Rate limiting - Not urgent until public launch
 - Monitoring - See `monitoring-observability-logging.md` plan
+- OAuth providers (GitHub, Google) - create OAuth apps, configure in Stack Auth dashboard
+- New user onboarding: auto-grant starter credits (currently manual SQL insert)
 
 ---
 
@@ -386,7 +450,7 @@ Audio cache is a **session buffer**, not a permanent archive:
 ```bash
 # Setup
 uv sync --all-extras
-echo "RUNPOD_API_KEY=xxx\nMISTRAL_API_KEY=xxx" > .env.local
+echo "RUNPOD_API_KEY=xxx\nMISTRAL_API_KEY=xxx" > .env
 
 # Start backend (PostgreSQL + Redis + Gateway)
 make dev-cpu  # or make dev-mac
@@ -430,6 +494,11 @@ No limits on anonymous users currently. Add config-driven safeguards based on re
 - **Admin panel** (#22, #25) - Stub - actually needed? E.g. for self-host, but what settings even?
 - **Rate limiting** (#47) - Not urgent until public launch.
 - **Cache eviction / ...**
+- Hetzner backups + scaling + restore drill (verify the flow works before going live)
+- Auto-deploy webhook on merge to main
+- Production seed script (one-time seed for fresh deployments)
+- Favicon for frontend
+- Signup page buttons show permanent loading spinners (including sign up button, not just OAuth)
 - Tracking of the active / read out block. (toggleable)
 - which license? do we have any licensing issues with libs we use?
 - allow registered users to have 100 free ocr pages or sth like that + idk 15k credits, while we're scaling. And once we have steady income, we can like allow idk a steady but low amount for free per month.
@@ -451,9 +520,10 @@ No limits on anonymous users currently. Add config-driven safeguards based on re
  - stress test document sidebar with 500+ documents (pagination working, implemented in FE, etc.?)
 - idk where else I wrote this down now too, but like yh definitely some kind of batch processing or / process entire doc in the background for free or a very low amount of credits (for kokoro) would be nice. but have to figure out the UX for this (both like UI/UX and like billing wise UX). For higgs I have to still see whether this will be an issue, else this might need to be like the ONLY modus operandi in the end? Like if else it's just too high latency, we need to do the entire doc or idk man. Or fetch like the 50-block neighbourhood of a block that's clicked to more efficiently utilize serverless workers but yh idfk.
 - documnents with long titles not shown in sidebar (just cutoff with elipsis) - maybe display full on hover?
-- !!!! take a look at this when working on deployment stuff, this might make a few things a lot easier !!!!  https://github.com/dokploy/dokploy
+- ~~Dokploy~~ - using it, see [[dokploy-operations]]
 - write a testimonial for "VibeTyper" The S2T software I use (the dev will give a backlink to yapit / + my personal site and test the product too - plus he said he uses dockploy for VibeTyper)
 - the way we're displaying HTML from websites... are we safe from xss attacks? like do we sanitize the html properly? etc. pp.
+- rename model slugs from "kokoro-cpu" to "kokoro-server" etc. to be more accurate
 
 
 ### Nice to Have / Future Enhancements

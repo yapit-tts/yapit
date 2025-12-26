@@ -12,7 +12,7 @@ echo "==> Pulling latest code..."
 git pull --ff-only
 
 echo "==> Decrypting secrets..."
-SOPS_AGE_KEY_FILE="$AGE_KEY" sops -d .env.local.sops > .env.local
+SOPS_AGE_KEY_FILE="$AGE_KEY" sops -d .env.sops > .env
 
 echo "==> Starting services..."
 docker compose -f docker-compose.prod.yml up -d --build --remove-orphans

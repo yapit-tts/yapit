@@ -67,7 +67,7 @@ test-unit:
 	uv run --env-file=.env.dev pytest tests --ignore=tests/integration -v -m "not mistral and not runpod"
 
 test-integration:
-	uv run --env-file=.env.dev --env-file=.env.local pytest tests/integration -v
+	uv run --env-file=.env.dev --env-file=.env pytest tests/integration -v
 
 test-integration-local:
 	uv run --env-file=.env.dev pytest tests/integration -v -m "not runpod and not mistral"
@@ -76,7 +76,7 @@ test-runpod:
 	uv run --env-file=.env.dev pytest tests/integration -v -m "runpod"
 
 test-mistral:
-	uv run --env-file=.env.dev --env-file=.env.local pytest tests -v -m "mistral"
+	uv run --env-file=.env.dev --env-file=.env pytest tests -v -m "mistral"
 
 # Database migrations (for prod schema changes)
 # Resets DB to migration state, then generates migration from model diff
@@ -96,14 +96,14 @@ endif
 	@echo "Done. Review migration in yapit/gateway/migrations/versions/"
 	@echo "Restart dev to recreate tables: make dev-cpu"
 
-# Decrypt .env.local.sops for dev (removes prod Stack Auth credentials)
+# Decrypt .env.sops for dev (removes prod Stack Auth credentials)
 # Prefers YAPIT_SOPS_AGE_KEY_FILE over SOPS_AGE_KEY_FILE (yapit key may differ from global)
-env-local-dev:
+env-dev:
 	@if [ -z "$$YAPIT_SOPS_AGE_KEY_FILE" ]; then \
 		echo "Error: Set YAPIT_SOPS_AGE_KEY_FILE to the yapit age key path"; exit 1; \
 	fi
-	@SOPS_AGE_KEY_FILE=$$YAPIT_SOPS_AGE_KEY_FILE sops -d .env.local.sops | grep -v "^STACK_" > .env.local
-	@echo "Created .env.local (prod Stack Auth credentials removed)"
+	@SOPS_AGE_KEY_FILE=$$YAPIT_SOPS_AGE_KEY_FILE sops -d .env.sops | grep -v "^STACK_" > .env
+	@echo "Created .env (prod Stack Auth credentials removed)"
 
 lint:
 	uv run ruff check .
@@ -130,4 +130,4 @@ deploy-higgs-push:
 	docker push $(HIGGS_IMAGE)
 
 deploy-higgs-runpod:
-	uv run --env-file=.env.local python infra/runpod/deploy.py higgs-native --image-tag $(HIGGS_TAG)
+	uv run --env-file=.env python infra/runpod/deploy.py higgs-native --image-tag $(HIGGS_TAG)

@@ -1,9 +1,11 @@
 ---
-status: active
+status: done
 type: implementation
 ---
 
 # Task: Hetzner VPS Production Deployment
+
+**Knowledge extracted:** [[dokploy-operations]], [[stack-auth-production]], [[secrets-management]], [[architecture#Database Migrations (Alembic)]]
 
 ## Goal
 
@@ -53,7 +55,7 @@ From architecture doc:
 **Done:**
 - SSH key setup/rotation: `scripts/dokploy-ssh-key-rotate.sh`
 - Deploy key added to GitHub, git clone via SSH works
-- SOPS encrypted secrets: `.env.local.sops` committed
+- SOPS encrypted secrets: `.env.sops` committed
 - Age key on VPS (`/root/.age/yapit.txt`) and local (`~/.config/sops/age/yapit.txt`)
 - Sync script: `scripts/sync-secrets-to-dokploy.sh` (requires `YAPIT_SOPS_AGE_KEY_FILE` env var)
 - Trigger script: `scripts/trigger-deploy.sh`
@@ -79,8 +81,12 @@ All services healthy, auth flow working end-to-end.
 
 **Remaining:**
 - Disable dashboard signups (security hardening) - set `STACK_SEED_INTERNAL_PROJECT_SIGN_UP_ENABLED=false`
+- Create production seed script (one-time seed for fresh deployments)
+- Configure OAuth providers (GitHub, Google) - need to create OAuth apps and add credentials to Stack Auth dashboard
+- Add favicon to frontend
 - Hetzner backups (~€1.10/mo)
 - Auto-deploy webhook on merge to main
+- New user onboarding: auto-grant starter credits (currently manual SQL insert)
 
 ## Security Hardening (for real production)
 
@@ -243,9 +249,9 @@ Created production compose and supporting files:
 
 **Secrets handling (corrected):**
 - `.env.prod` = non-sensitive config (in git)
-- `.env.local` = secrets (gitignored, created on each machine - dev or prod)
-- `.env.local.template` = template showing what secrets are needed
-- `docker-compose.prod.yml` references both: `env_file: [.env.prod, .env.local]`
+- `.env` = secrets (gitignored, created on each machine - dev or prod)
+- `.env.template` = template showing what secrets are needed
+- `docker-compose.prod.yml` references both: `env_file: [.env.prod, .env]`
 - Frontend Stack Auth CLIENT_KEY is intentionally public (embedded in JS bundle)
 
 ### 2025-12-23 - Session End: Ready for Deployment
@@ -253,7 +259,7 @@ Created production compose and supporting files:
 Committed and pushed to dev branch (cde9213). All deployment files ready:
 - `docker-compose.prod.yml` - Dokploy-ready compose with Traefik labels
 - `.env.prod` - non-sensitive config
-- `.env.local.template` - template for secrets (copy to .env.local, fill values)
+- `.env.template` - template for secrets (copy to .env, fill values)
 - `frontend/Dockerfile`, `nginx.conf` - frontend build and API proxying
 - `frontend/.env.production` - frontend prod env (Stack Auth CLIENT_KEY is public)
 - `tts_processors.prod.json`, `document_processors.prod.json`
@@ -261,7 +267,7 @@ Committed and pushed to dev branch (cde9213). All deployment files ready:
 ### 2025-12-24 - Deployment Attempt
 
 **Completed:**
-- Created `.env.local` on VPS via SSH with generated secrets (Postgres password, Stack server secret, API keys from local .env.local)
+- Created `.env` on VPS via SSH with generated secrets (Postgres password, Stack server secret, API keys from local .env)
 - Switched VPS repo from `main` to `dev` branch
 - Added missing `DB_DROP_AND_RECREATE=0` to `.env.prod`, committed and pushed
 - Added `ports: "127.0.0.1:8101:8101"` to stack-auth in compose for SSH tunnel access
@@ -483,14 +489,14 @@ curl -H "x-api-key: $TOKEN" \
 - `compose.deploy` API call succeeded
 - Repo cloned via SSH ✅
 - Docker compose build started
-- **Failed:** `.env.local` not found
+- **Failed:** `.env` not found
 
 **Root cause:** Dokploy clones fresh each deploy, wiping any manually created files.
 
-**Solution:** SOPS - encrypt `.env.local` → `.env.local.sops`, commit to repo, decrypt at deploy time.
+**Solution:** SOPS - encrypt `.env` → `.env.sops`, commit to repo, decrypt at deploy time.
 
 **Decision:** SOPS + age for secrets management
-- Encrypt `.env.local` → commit `.env.local.sops`
+- Encrypt `.env` → commit `.env.sops`
 - One age private key to manage (on VPS + local)
 - Full IaC worth the setup overhead for reduced friction long-term
 
@@ -558,7 +564,7 @@ curl -H "x-api-key: $TOKEN" \
 - Needs to be created or alembic initialization skipped for prod
 
 **IaC workflow complete:**
-1. Edit secrets locally → re-encrypt: `SOPS_AGE_KEY_FILE=... sops .env.local.sops`
+1. Edit secrets locally → re-encrypt: `SOPS_AGE_KEY_FILE=... sops .env.sops`
 2. Sync to Dokploy: `scripts/sync-secrets-to-dokploy.sh`
 3. Push code changes → auto-deploy (or manual: `scripts/trigger-deploy.sh`)
 
@@ -766,7 +772,7 @@ KnownError<PERMISSION_NOT_FOUND>: Permission "team_member" not found
 **Stack Auth project creation:**
 - Created "Yapit-Test" project via auth.yaptts.org dashboard
 - Credentials stored in:
-  - `.env.local.sops` (encrypted, version-controlled)
+  - `.env.sops` (encrypted, version-controlled)
   - Dokploy env vars (synced via API)
   - `frontend/.env.production` (client key is public, safe to commit)
 
@@ -797,3 +803,56 @@ KnownError<PERMISSION_NOT_FOUND>: Permission "team_member" not found
 - https://yaptts.org - Frontend working with auth
 - https://auth.yaptts.org - Stack Auth dashboard (admin access)
 - Sign up/login flow working end-to-end
+
+**Post-deployment issues discovered:**
+
+1. **Database not seeded** - `DB_SEED=0` in prod (correct), but initial seed never ran
+   - Fixed: Manually ran `seed_dev_database()` via docker exec
+   - TODO: Create one-time seed script for fresh deployments
+
+2. **No user credits** - New users have 0 balance, synthesis returns 402
+   - Fixed: Manually inserted credits via SQL
+   - TODO: Auto-grant starter credits on signup (needs gateway code change)
+
+3. **OAuth providers not configured** - GitHub/Google buttons show loading spinner forever
+   - Stack Auth uses shared dev OAuth keys that only work for localhost
+   - Fix: Create OAuth apps in GitHub/Google, configure in Stack Auth dashboard
+   - See: https://docs.stack-auth.com/docs/getting-started/production
+
+4. **Favicon 404** - Minor, no favicon in frontend build
+
+**Manual seed command for future reference:**
+```bash
+ssh root@78.46.242.1 'docker exec yapit-test-app-nmqlyd-gateway-1 python -c "
+from yapit.gateway.dev_seed import seed_dev_database
+from yapit.gateway.db import create_session
+from yapit.gateway.config import Settings
+import asyncio
+
+async def seed():
+    settings = Settings()
+    async for db in create_session(settings):
+        await seed_dev_database(db)
+        await db.commit()
+        print(\"Seeded!\")
+        break
+
+asyncio.run(seed())
+"'
+```
+
+**Manual credit grant command:**
+```sql
+INSERT INTO usercredits (user_id, balance, total_purchased, total_used, created, updated)
+VALUES ('<user_id>', 10000.0000, 10000.0000, 0.0000, NOW(), NOW());
+```
+
+### 2025-12-26 - Archived
+
+Extracted reusable knowledge to:
+- `agent/knowledge/dokploy-operations.md` - API patterns, Traefik recovery, nginx DNS caching
+- `agent/knowledge/stack-auth-production.md` - Subdomain setup, trusted domains, security hardening
+- `agent/knowledge/secrets-management.md` - SOPS/Age workflow
+- `agent/knowledge/architecture.md` - Database migration workflow section added
+
+"Remaining" items moved to architecture.md TODOs (v1 and Low Priority sections).

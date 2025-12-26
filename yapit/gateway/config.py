@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     stack_auth_server_key: str
 
     tts_processors_file: str
+    tts_overflow_queue_threshold: int  # jobs per worker before routing to overflow
     runpod_api_key: str | None = None
     runpod_request_timeout_seconds: int | None = None
     client_request_timeout_seconds: int
@@ -44,7 +45,7 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(
         env_prefix="",
-        env_file=[os.getenv("ENV_FILE", ""), ".env.local"],
+        env_file=[os.getenv("ENV_FILE", ""), ".env"],
         extra="ignore",
         env_nested_delimiter="__",
     )

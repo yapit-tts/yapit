@@ -147,7 +147,7 @@ Add to `tts_processors.json`:
 
 ### 5. Set Runpod API Key
 
-In `.env.local` for development, or `.env.prod` for production, add:
+In `.env` for development, or `.env.prod` for production, add:
 ```
 RUNPOD_API_KEY=your-runpod-api-key
 ```

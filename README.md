@@ -5,11 +5,11 @@
 Set up the backend dev env:
 ```bash
 uv sync --all-extras
-echo "RUNPOD_API_KEY=asdf\nMISTRAL_API_KEY=asdf" > .env.local # env vars you do not want to commit 
+echo "RUNPOD_API_KEY=asdf\nMISTRAL_API_KEY=asdf" > .env # env vars you do not want to commit 
 ```
 
-If you want to use runpod workers, put `RUNPOD_API_KEY` in `.env.local`. Similarily with mistral OCR.
-These `.env.local` entries have to exist (with any value) for the gateway to start up with the default `endpoints.dev.json` configuration.
+If you want to use runpod workers, put `RUNPOD_API_KEY` in `.env`. Similarily with mistral OCR.
+These `.env` entries have to exist (with any value) for the gateway to start up with the default `endpoints.dev.json` configuration.
 
 Start the backend services:
 ```bash

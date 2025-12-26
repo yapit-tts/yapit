@@ -44,8 +44,8 @@ jobs:
       - name: Create env files for Docker Compose
         run: |
           touch .env.prod
-          echo "RUNPOD_API_KEY=${{ secrets.RUNPOD_API_KEY }}" > .env.local
-          echo "MISTRAL_API_KEY=${{ secrets.MISTRAL_API_KEY }}" >> .env.local
+          echo "RUNPOD_API_KEY=${{ secrets.RUNPOD_API_KEY }}" > .env
+          echo "MISTRAL_API_KEY=${{ secrets.MISTRAL_API_KEY }}" >> .env
 
       - name: Build
         run: make dev-cpu

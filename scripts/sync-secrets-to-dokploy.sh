@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Sync SOPS-encrypted secrets to Dokploy environment variables
-# Run locally after updating .env.local.sops
+# Run locally after updating .env.sops
 #
 # Requires: YAPIT_SOPS_AGE_KEY_FILE env var pointing to age private key
 set -euo pipefail
@@ -8,7 +8,7 @@ set -euo pipefail
 VPS_HOST="root@78.46.242.1"
 DOKPLOY_API="http://localhost:3000/api/trpc"
 COMPOSE_ID="Fmex638n6F7Nrw81Lubc_"
-SOPS_FILE=".env.local.sops"
+SOPS_FILE=".env.sops"
 
 cd "$(dirname "$0")/.."
 
