@@ -62,12 +62,10 @@ From architecture doc:
 - Deployment succeeds: postgres, stack-auth, redis, kokoro, frontend all healthy
 
 **Current blocker:**
-- None - ready to push and deploy
+- Need to create Stack Auth project to enable authentication
 
 **Still pending:**
-- DNS not configured (yaptts.org → 78.46.242.1)
-- Stack Auth project not created (blocked by gateway)
-- Traefik routing (needs DNS)
+- Stack Auth project not created
 
 ## Next Steps
 
@@ -76,12 +74,31 @@ From architecture doc:
 3. ~~Dokploy env injection~~ ✓
 4. ~~Test deployment~~ ✓
 5. ~~Generate proper initial migration~~ ✓
-6. **Push & test deploy** - Verify gateway starts
-7. **Configure DNS** - yaptts.org → 78.46.242.1
-8. **Create Stack Auth project** - Via dashboard once gateway works
+6. ~~Push & test deploy~~ ✓ (gateway healthy)
+7. ~~Configure DNS~~ ✓ (yaptts.org → 78.46.242.1)
+8. **Create Stack Auth project** - Via dashboard at https://yaptts.org:8101 or SSH tunnel
 9. **Test end-to-end**
 
 **Future:** Hetzner backups (~€1.10/mo), auto-deploy webhook on merge to main
+
+## Security Hardening (for real production)
+
+After creating your admin account on the Stack Auth dashboard:
+
+1. **Disable dashboard signups** - Change in `.env.prod`:
+   ```
+   STACK_SEED_INTERNAL_PROJECT_SIGN_UP_ENABLED=false
+   ```
+   This prevents anyone from signing up to the admin dashboard.
+
+2. **Dashboard access** - Port 8101 is already internal-only (SSH tunnel required). Never expose it publicly.
+
+3. **Stack Auth API keys** - The internal project uses randomly generated keys per deployment (not hardcoded defaults). Your admin password is set by you during signup.
+
+4. **Consider for public launch**:
+   - Hetzner firewall rules (already in place for 22, 80, 443)
+   - Rate limiting on auth endpoints
+   - Database backups enabled
 
 ## Database Migration Workflow
 
@@ -574,7 +591,7 @@ curl -H "x-api-key: $TOKEN" \
 - `docker-compose.dev.yml` (postgres port)
 - `Makefile` (migration-new target)
 
-**Ready to commit and push.**
+**Committed and deployed.**
 
 **Retrospective - Communication breakdown:**
 
@@ -603,3 +620,100 @@ The alembic discussion took much longer than necessary due to poor communication
 - The migration workflow is now documented in "Database Migration Workflow" section above
 - The `make migration-new` target handles the complexity - just use it
 - Don't try to "optimize" or "simplify" the workflow without understanding why it exists
+
+### 2025-12-25 - Deployment Fixed, Gateway Healthy
+
+**Issues fixed during deployment:**
+
+1. **Alembic path issue** (commit a3ac707)
+   - `script_location = migrations` in alembic.ini is relative
+   - Resolved from CWD (/app), not from alembic.ini location
+   - Fix: Set absolute path via `alembic_cfg.set_main_option()`
+
+2. **Async event loop blocking** (commit f87b3ad)
+   - `alembic.command.upgrade()` is synchronous
+   - Called in async context, blocked event loop, caused uvicorn timeout
+   - Fix: `await asyncio.to_thread(command.upgrade, ...)`
+
+3. **Missing document_processors.prod.json mount** (commit ceac12b)
+   - docker-compose.prod.yml had tts_processors.prod.json but not document_processors.prod.json
+   - Gateway failed silently trying to load missing file
+   - Fix: Added volume mount
+
+**Current state:**
+- Gateway: healthy ✓
+- Stack Auth: healthy ✓
+- Postgres: healthy ✓
+- Redis: running ✓
+- Kokoro workers: running ✓
+- Frontend: running ✓
+- DNS: configured (yaptts.org → 78.46.242.1)
+
+**Next:**
+- Create Stack Auth project (via dashboard at https://yaptts.org or SSH tunnel)
+- Test end-to-end
+
+**Commits:**
+- `4b0f403` - feat: add alembic migrations for prod database schema
+- `a3ac707` - fix: set absolute path for alembic migrations
+- `f87b3ad` - fix: run alembic upgrade in thread to avoid blocking event loop
+- `ceac12b` - fix: mount document_processors.prod.json in gateway
+
+### 2025-12-26 - Stack Auth Upgrade Investigation
+
+**Problem:** Local dev broken after changing `STACK_SKIP_SEED_SCRIPT=false`. Stack Auth seed script fails with:
+```
+KnownError<PERMISSION_NOT_FOUND>: Permission "team_member" not found
+```
+
+**Root cause investigation:**
+
+1. **Pinned version `09921e6` (August 2025) has a bug** in the seed script:
+   - Tries to UPDATE permissions that don't exist on partially-initialized databases
+   - Filed as [GitHub issue #868](https://github.com/stack-auth/stack-auth/issues/868)
+   - Fixed in [PR #1016](https://github.com/stack-auth/stack-auth/pull/1016), merged November 13, 2025
+
+2. **Why it "worked" before:**
+   - Lucas set `STACK_SKIP_SEED_SCRIPT=true` to AVOID the buggy seed script
+   - The dev database was already set up from earlier (before version was pinned)
+   - Commit `4b6bc36` ("Fix stack-auth regression") changed `STACK_RUN_SEED_SCRIPT=true` → `STACK_SKIP_SEED_SCRIPT=true`
+
+3. **Current state:**
+   - Prod: Seed succeeded (fresh DB, internal project created from scratch)
+   - Dev: Seed fails (partially initialized DB, team_member permission missing)
+
+4. **CVE-2025-55182:** The pinned version also has an urgent security vulnerability in React Server Components that's fixed in newer versions.
+
+**Available versions:**
+- Pinned: `stackauth/server:09921e6` (August 2025) - has seed bug + CVE
+- Latest: `stackauth/server:3ef9cb3` (December 22, 2025) - has fixes
+
+**Clarifications on seed scripts:**
+- `yapit/gateway/dev_seed.py` - Seeds **Yapit** database (TTS models, voices, filters) - NOT Stack Auth related
+- Stack Auth seed script - Creates the "internal" project that powers the Stack Auth dashboard
+- `scripts/create_user.py` - Creates dev user in Stack Auth using the Yapit project credentials
+
+**Dev user workflow:**
+- `make dev-user` calls `scripts/create_user.py`
+- Uses `STACK_AUTH_PROJECT_ID` and `STACK_AUTH_SERVER_KEY` (Yapit project, not internal)
+- Creates `dev@example.com` / `dev-password-123` for app login
+
+**Integration tests:**
+- Create unique users via `create_unique_user()` in conftest.py
+- Don't depend on the dev user - safe to wipe DB
+
+**Decision: Upgrade Stack Auth to `3ef9cb3`**
+- Fixes the seed script (now idempotent - works on fresh and existing DBs)
+- Fixes CVE-2025-55182
+- Pin to specific tag (not `latest`) to avoid future breaking changes
+- Keep `STACK_SKIP_SEED_SCRIPT=false` for both dev and prod
+
+**For dev database after upgrade:**
+- Can wipe and let it re-initialize: `docker volume rm yapit_postgres-data`
+- Dev user will need to be recreated via `make dev-user`
+- Credentials stay the same: `dev@example.com` / `dev-password-123`
+
+**Routing fix also deployed:**
+- Fixed double `/api/api/` in Stack Auth URLs
+- Added `/auth/` location for dashboard proxy
+- Changed `NEXT_PUBLIC_STACK_API_URL` from `.../auth/api` to `.../auth`
