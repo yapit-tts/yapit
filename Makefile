@@ -105,6 +105,14 @@ env-dev:
 	@SOPS_AGE_KEY_FILE=$$YAPIT_SOPS_AGE_KEY_FILE sops -d .env.sops | grep -v "^STACK_" > .env
 	@echo "Created .env (prod Stack Auth credentials removed)"
 
+check: check-backend check-frontend
+
+check-backend:
+	ty check yapit/gateway/
+
+check-frontend:
+	cd frontend && npm run lint && npx tsc --noEmit
+
 lint:
 	uv run ruff check .
 

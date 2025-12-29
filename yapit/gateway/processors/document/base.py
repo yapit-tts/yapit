@@ -5,6 +5,7 @@ from pydantic import BaseModel, ConfigDict
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from yapit.gateway.cache import Cache
+from yapit.gateway.config import Settings
 from yapit.gateway.constants import SUPPORTED_DOCUMENT_MIME_TYPES
 from yapit.gateway.db import get_by_slug_or_404
 from yapit.gateway.domain_models import (
@@ -15,7 +16,6 @@ from yapit.gateway.domain_models import (
     UserCredits,
 )
 from yapit.gateway.exceptions import InsufficientCreditsError, ResourceNotFoundError, ValidationError
-from yapit.gateway.processors.base import Processor
 
 
 class ExtractedPage(BaseModel):
@@ -50,8 +50,12 @@ class CachedDocument(BaseModel):
     )
 
 
-class BaseDocumentProcessor(Processor):
+class BaseDocumentProcessor:
     """Base class for all document processors."""
+
+    def __init__(self, settings: Settings, slug: str, **kwargs) -> None:
+        self._settings = settings
+        self._slug = slug
 
     @property
     @abstractmethod

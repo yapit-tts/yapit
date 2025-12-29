@@ -7,11 +7,17 @@ import { Loader2, FileQuestion } from "lucide-react";
 import { AxiosError } from "axios";
 import { AudioPlayer } from '@/lib/audio';
 import { useBrowserTTS } from '@/lib/browserTTS';
-import { type VoiceSelection, getVoiceSelection } from '@/lib/voiceSelection';
+import { type VoiceSelection, getVoiceSelection, getBackendModelSlug, isServerSideModel } from '@/lib/voiceSelection';
 import { useSettings } from '@/hooks/useSettings';
+import { useTTSWebSocket } from '@/hooks/useTTSWebSocket';
 
 // Playback position persistence
 const POSITION_KEY_PREFIX = "yapit_playback_position_";
+
+// Parallel prefetch configuration
+const BATCH_SIZE = 8;           // Blocks per request
+const REFILL_THRESHOLD = 8;     // When ready_ahead < this, request more
+const MIN_BUFFER_TO_START = 4;  // Minimum cached blocks before starting playback
 
 interface PlaybackPosition {
   block: number;
@@ -80,6 +86,7 @@ const PlaybackPage = () => {
   const { api, isAuthReady } = useApi();
   const browserTTS = useBrowserTTS();
   const { settings } = useSettings();
+  const ttsWS = useTTSWebSocket();
 
   // Document data fetched from API
   const [document, setDocument] = useState<DocumentResponse | null>(null);
@@ -99,6 +106,8 @@ const PlaybackPage = () => {
   // Sound control variables
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const isPlayingRef = useRef<boolean>(false); // Ref to track current state for async callbacks
+  const [isBuffering, setIsBuffering] = useState<boolean>(false); // Waiting for initial buffer to fill
+  const isBufferingRef = useRef<boolean>(false); // Ref for async callbacks
   const [volume, setVolume] = useState<number>(50);
   const [playbackSpeed, setPlaybackSpeed] = useState<number>(settings.defaultSpeed);
   const [isSynthesizing, setIsSynthesizing] = useState<boolean>(false);
@@ -122,6 +131,16 @@ const PlaybackPage = () => {
 
   // Track previous block for DOM-based highlighting (avoids React re-renders)
   const prevBlockIdxRef = useRef<number>(-1);
+
+  // Parallel prefetch tracking
+  const prefetchedUpToRef = useRef<number>(-1); // Highest block index we've triggered prefetch for
+  const playingBlockRef = useRef<number>(-1); // Block currently being played (prevents duplicate play calls)
+
+  // Block states for progress bar visualization
+  // 'pending' = not started, 'synthesizing' = in progress, 'cached' = ready
+  type BlockState = 'pending' | 'synthesizing' | 'cached';
+  const [blockStates, setBlockStates] = useState<BlockState[]>([]);
+  const [blockStateVersion, setBlockStateVersion] = useState(0); // Trigger re-derive
 
   // DOM-based active block highlighting - directly manipulate CSS classes
   // This runs synchronously before browser paint to avoid flicker
@@ -216,8 +235,10 @@ const PlaybackPage = () => {
       setCurrentBlock(-1);
       setAudioProgress(0);
       blockStartTimeRef.current = 0;
+      prefetchedUpToRef.current = -1; // Reset prefetch tracking
+      ttsWS.reset(); // Reset WS state
     };
-  }, [documentId]);
+  }, [documentId, ttsWS.reset]);
 
   // Calculate initial total duration from block estimates
   useEffect(() => {
@@ -286,6 +307,34 @@ const PlaybackPage = () => {
     }
   }, [currentBlock, settings.liveScrollTracking]);
 
+  // Derive block states from refs (browser mode) or WS (server mode)
+  const isServerMode = isServerSideModel(voiceSelection.model);
+
+  useEffect(() => {
+    if (!documentBlocks || documentBlocks.length === 0) {
+      setBlockStates([]);
+      return;
+    }
+
+    const states: BlockState[] = documentBlocks.map((block, idx) => {
+      // Local cache takes precedence (already fetched and ready to play)
+      if (audioBuffersRef.current.has(block.id)) return 'cached';
+
+      if (isServerMode) {
+        // Server mode: use WS block states
+        const wsStatus = ttsWS.blockStates.get(idx);
+        if (wsStatus === 'cached') return 'cached';
+        if (wsStatus === 'queued' || wsStatus === 'processing') return 'synthesizing';
+        return 'pending';
+      } else {
+        // Browser mode: use local synthesizing ref
+        if (synthesizingRef.current.has(block.id)) return 'synthesizing';
+        return 'pending';
+      }
+    });
+    setBlockStates(states);
+  }, [documentBlocks, currentBlock, blockStateVersion, isServerMode, ttsWS.blockStates]);
+
   // Refs for keyboard handler to avoid stale closures
   const handlePlayRef = useRef<() => void>(() => {});
   const handlePauseRef = useRef<() => void>(() => {});
@@ -339,9 +388,50 @@ const PlaybackPage = () => {
     }
   }, [playbackSpeed]);
 
-  // When voice changes: clear cache and mark for restart if playing
+  // Helper to fetch audio from HTTP and create AudioBuffer
+  const fetchAudioFromUrl = useCallback(async (audioUrl: string, blockId: number): Promise<AudioBufferData | null> => {
+    if (!audioContextRef.current) return null;
+
+    try {
+      const response = await api.get(audioUrl, { responseType: "arraybuffer" });
+      const sampleRate = parseInt(response.headers["x-sample-rate"] || "24000", 10);
+      const durationMs = parseInt(response.headers["x-duration-ms"] || "0", 10);
+
+      const floatData = pcmToFloat32(response.data);
+      const audioBuffer = audioContextRef.current.createBuffer(1, floatData.length, sampleRate);
+      audioBuffer.getChannelData(0).set(floatData);
+
+      const actualDurationMs = durationMs || Math.round(audioBuffer.duration * 1000);
+      const audioBufferData: AudioBufferData = {
+        buffer: audioBuffer,
+        duration_ms: actualDurationMs,
+      };
+
+      // Cache locally
+      audioBuffersRef.current.set(blockId, audioBufferData);
+
+      // Update duration correction
+      const block = documentBlocks.find(b => b.id === blockId);
+      if (block) {
+        const correction = actualDurationMs - (block.est_duration_ms || 0);
+        durationCorrectionsRef.current.set(blockId, correction);
+        if (initialTotalEstimateRef.current > 0) {
+          const totalCorrection = Array.from(durationCorrectionsRef.current.values()).reduce((sum, c) => sum + c, 0);
+          setActualTotalDuration(initialTotalEstimateRef.current + totalCorrection);
+        }
+      }
+
+      return audioBufferData;
+    } catch (error) {
+      console.error("[Playback] Error fetching audio:", error);
+      return null;
+    }
+  }, [api, documentBlocks]);
+
+  // When voice changes: clear cache and mark for restart if playing/buffering
   const voiceSelectionRef = useRef(voiceSelection);
   const pendingVoiceChangeRef = useRef(false);
+  const wasBufferingOnVoiceChangeRef = useRef(false); // Track if we were buffering (vs playing)
   useEffect(() => {
     const voiceChanged = voiceSelectionRef.current.model !== voiceSelection.model ||
                          voiceSelectionRef.current.voiceSlug !== voiceSelection.voiceSlug;
@@ -353,116 +443,266 @@ const PlaybackPage = () => {
     audioBuffersRef.current.clear();
     synthesizingRef.current.clear();
     durationCorrectionsRef.current.clear();
+    prefetchedUpToRef.current = -1; // Reset prefetch tracking
+    ttsWS.reset(); // Reset WS state (server mode)
 
-    // If we were playing, mark that we need to restart after synthesizeBlock is recreated
-    if (isPlayingRef.current && currentBlock >= 0) {
+    // If we were playing or buffering, mark that we need to restart
+    const wasActive = isPlayingRef.current || isBufferingRef.current;
+    if (wasActive && currentBlock >= 0) {
+      wasBufferingOnVoiceChangeRef.current = isBufferingRef.current && !isPlayingRef.current;
       audioPlayerRef.current?.stop();
+      setIsBuffering(false); // Cancel any in-progress buffering
       setIsSynthesizing(true);
       pendingVoiceChangeRef.current = true;
     }
-  }, [voiceSelection, currentBlock]);
+  }, [voiceSelection, currentBlock, ttsWS.reset]);
 
 
+  // Synthesize a single block for browser mode (local synthesis)
+  const synthesizeBlockBrowser = useCallback(async (block: Block): Promise<AudioBufferData | null> => {
+    if (!audioContextRef.current) return null;
+
+    try {
+      console.log(`[Playback] Browser synthesis for block ${block.id} (idx ${block.idx})`);
+      const startTime = performance.now();
+
+      const result = await browserTTS.synthesize(block.text, { voice: voiceSelection.voiceSlug });
+      const { audio: floatData, sampleRate } = result;
+      const durationMs = Math.round((floatData.length / sampleRate) * 1000);
+
+      console.log(`[Playback] Block ${block.id} browser synthesis in ${(performance.now() - startTime).toFixed(0)}ms`);
+
+      const audioBuffer = audioContextRef.current.createBuffer(1, floatData.length, sampleRate);
+      audioBuffer.getChannelData(0).set(floatData);
+
+      const audioBufferData: AudioBufferData = {
+        buffer: audioBuffer,
+        duration_ms: durationMs,
+      };
+
+      audioBuffersRef.current.set(block.id, audioBufferData);
+
+      // Duration correction
+      const correction = durationMs - (block.est_duration_ms || 0);
+      durationCorrectionsRef.current.set(block.id, correction);
+      if (initialTotalEstimateRef.current > 0) {
+        const totalCorrection = Array.from(durationCorrectionsRef.current.values()).reduce((sum, c) => sum + c, 0);
+        setActualTotalDuration(initialTotalEstimateRef.current + totalCorrection);
+      }
+
+      return audioBufferData;
+    } catch (error) {
+      console.error("[Playback] Browser synthesis error:", error);
+      return null;
+    }
+  }, [browserTTS.synthesize, voiceSelection.voiceSlug]);
+
+  // Get or wait for audio for a block (works for both browser and server mode)
   const synthesizeBlock = useCallback(async (blockId: number): Promise<AudioBufferData | null> => {
-    // Check if already cached
+    // Check local cache first
     const cached = audioBuffersRef.current.get(blockId);
     if (cached) {
-      console.log(`[Playback] Block ${blockId} already cached, returning`);
+      console.log(`[Playback] Block ${blockId} cached locally, returning`);
       return cached;
     }
 
-    // Check if synthesis already in progress - return the existing promise
+    // Check if already in progress
     const existingPromise = synthesizingRef.current.get(blockId);
     if (existingPromise) {
-      console.log(`[Playback] Block ${blockId} already synthesizing, awaiting existing promise`);
+      console.log(`[Playback] Block ${blockId} already synthesizing, awaiting`);
       return existingPromise;
     }
 
-    // Find the block to get its text
     const block = documentBlocks.find(b => b.id === blockId);
-    if (!block) {
-      console.error("[Playback] Block not found:", blockId);
-      return null;
+    if (!block || !audioContextRef.current) return null;
+
+    if (!isServerSideModel(voiceSelection.model)) {
+      // Browser mode: synthesize locally
+      const synthesisPromise = synthesizeBlockBrowser(block);
+      synthesizingRef.current.set(blockId, synthesisPromise);
+      setBlockStateVersion(v => v + 1);
+      synthesisPromise.finally(() => {
+        synthesizingRef.current.delete(blockId);
+        setBlockStateVersion(v => v + 1);
+      });
+      return synthesisPromise;
     }
 
-    if (!audioContextRef.current) {
-      return null;
-    }
-
-    // Create the synthesis promise
+    // Server mode: check WS for audio URL, or wait for it
     const synthesisPromise = (async (): Promise<AudioBufferData | null> => {
       try {
-        console.log(`[Playback] Starting synthesis for block ${blockId} (idx ${block.idx}, ${block.text.length} chars)`);
-        const startTime = performance.now();
+        const MAX_WAIT_MS = 60000;
+        const POLL_INTERVAL_MS = 100;
+        const startTime = Date.now();
 
-        let floatData: Float32Array;
-        let sampleRate: number;
-        let durationMs: number;
-
-        if (voiceSelection.model === "higgs" || voiceSelection.model === "kokoro-server") {
-          // Server-side synthesis via API
-          const modelSlug = voiceSelection.model === "higgs" ? "higgs-native" : "kokoro-cpu";
-          const response = await api.post(
-            `/v1/documents/${documentId}/blocks/${blockId}/synthesize/models/${modelSlug}/voices/${voiceSelection.voiceSlug}`,
-            null,
-            { responseType: "arraybuffer" }
-          );
-
-          sampleRate = parseInt(response.headers["x-sample-rate"] || "24000", 10);
-          durationMs = parseInt(response.headers["x-duration-ms"] || "0", 10);
-          floatData = pcmToFloat32(response.data);
-          console.log(`[Playback] Block ${blockId} ${modelSlug} synthesis in ${(performance.now() - startTime).toFixed(0)}ms`);
-        } else {
-          // Browser-side synthesis via Kokoro.js Web Worker
-          const result = await browserTTS.synthesize(block.text, { voice: voiceSelection.voiceSlug });
-          floatData = result.audio;
-          sampleRate = result.sampleRate;
-          durationMs = Math.round((floatData.length / sampleRate) * 1000);
-          console.log(`[Playback] Block ${blockId} browser synthesis in ${(performance.now() - startTime).toFixed(0)}ms`);
+        // Wait for WS connection first (with timeout)
+        while (!ttsWS.checkConnected() && Date.now() - startTime < MAX_WAIT_MS) {
+          await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS));
+        }
+        if (!ttsWS.checkConnected()) {
+          console.error(`[Playback] WS connection timeout for block ${block.idx}`);
+          return null;
         }
 
-        // Create AudioBuffer at native sample rate
-        const audioBuffer = audioContextRef.current!.createBuffer(1, floatData.length, sampleRate);
-        audioBuffer.getChannelData(0).set(floatData);
-
-        const actualDurationMs = durationMs || Math.round(audioBuffer.duration * 1000);
-
-        const audioBufferData: AudioBufferData = {
-          buffer: audioBuffer,
-          duration_ms: actualDurationMs
-        };
-
-        // Store in buffer map
-        audioBuffersRef.current.set(blockId, audioBufferData);
-
-        // Calculate and store duration correction
-        const estimatedDuration = block.est_duration_ms || 0;
-        const correction = actualDurationMs - estimatedDuration;
-        durationCorrectionsRef.current.set(blockId, correction);
-
-        // Recalculate total if we have initial estimate
-        if (initialTotalEstimateRef.current > 0) {
-          const totalCorrection = Array.from(durationCorrectionsRef.current.values()).reduce((sum, corr) => sum + corr, 0);
-          const newTotal = initialTotalEstimateRef.current + totalCorrection;
-          setActualTotalDuration(newTotal);
+        // Check if WS already has audio URL
+        let audioUrl = ttsWS.getAudioUrl(block.idx);
+        if (audioUrl) {
+          console.log(`[Playback] Block ${block.idx} has audio URL from WS, fetching`);
+          return await fetchAudioFromUrl(audioUrl, blockId);
         }
 
-        return audioBufferData;
-      } catch (error) {
-        console.error("[Playback] Error synthesizing block:", error);
-        setIsPlaying(false);
+        // Request synthesis via WS if not already queued/processing
+        const wsStatus = ttsWS.getBlockStatus(block.idx);
+        if (!wsStatus || wsStatus === 'pending' || wsStatus === 'error') {
+          console.log(`[Playback] Requesting block ${block.idx} via WS`);
+          ttsWS.synthesize({
+            documentId: documentId!,
+            blockIndices: [block.idx],
+            cursor: currentBlockRef.current,
+            model: getBackendModelSlug(voiceSelection.model),
+            voice: voiceSelection.voiceSlug,
+          });
+        }
+
+        // Poll for audio URL
+        while (Date.now() - startTime < MAX_WAIT_MS) {
+          audioUrl = ttsWS.getAudioUrl(block.idx);
+          if (audioUrl) {
+            console.log(`[Playback] Block ${block.idx} ready after ${Date.now() - startTime}ms, fetching`);
+            return await fetchAudioFromUrl(audioUrl, blockId);
+          }
+
+          if (ttsWS.getBlockStatus(block.idx) === 'error') {
+            console.error(`[Playback] Block ${block.idx} synthesis error from server`);
+            return null;
+          }
+
+          await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS));
+        }
+
+        console.error(`[Playback] Timeout waiting for block ${block.idx}`);
         return null;
-      } finally {
-        // Always clear the synthesizing promise when done
-        synthesizingRef.current.delete(blockId);
+      } catch (error) {
+        console.error("[Playback] Server synthesis error:", error);
+        return null;
       }
     })();
 
-    // Store the promise so others can await it
     synthesizingRef.current.set(blockId, synthesisPromise);
+    setBlockStateVersion(v => v + 1);
+    synthesisPromise.finally(() => {
+      synthesizingRef.current.delete(blockId);
+      setBlockStateVersion(v => v + 1);
+    });
 
     return synthesisPromise;
-  }, [api, browserTTS.synthesize, documentBlocks, documentId, voiceSelection]);
+  }, [documentBlocks, documentId, voiceSelection, synthesizeBlockBrowser, fetchAudioFromUrl, ttsWS]);
+
+  // Trigger prefetch for a range of blocks (fire and forget)
+  const triggerPrefetchBatch = useCallback((fromIdx: number, count: number) => {
+    if (!documentBlocks || documentBlocks.length === 0 || !documentId) return;
+
+    const maxIdx = documentBlocks.length - 1;
+    const toIdx = Math.min(fromIdx + count - 1, maxIdx);
+
+    console.log(`[Prefetch] Triggering batch: blocks ${fromIdx} to ${toIdx} (${toIdx - fromIdx + 1} blocks)`);
+
+    if (isServerSideModel(voiceSelection.model)) {
+      if (!ttsWS.checkConnected()) {
+        console.log(`[Prefetch] Skipping batch - WS not connected`);
+        return;
+      }
+
+      const indicesToRequest: number[] = [];
+      for (let idx = fromIdx; idx <= toIdx; idx++) {
+        const block = documentBlocks[idx];
+        if (!block) continue;
+        if (audioBuffersRef.current.has(block.id)) continue;
+        const wsStatus = ttsWS.getBlockStatus(idx);
+        if (wsStatus === 'cached' || wsStatus === 'queued' || wsStatus === 'processing') continue;
+        indicesToRequest.push(idx);
+      }
+
+      if (indicesToRequest.length > 0) {
+        ttsWS.synthesize({
+          documentId,
+          blockIndices: indicesToRequest,
+          cursor: currentBlockRef.current,
+          model: getBackendModelSlug(voiceSelection.model),
+          voice: voiceSelection.voiceSlug,
+        });
+      }
+    } else {
+      // Browser mode: fire individual synthesis requests
+      for (let idx = fromIdx; idx <= toIdx; idx++) {
+        const block = documentBlocks[idx];
+        if (!block) continue;
+        if (audioBuffersRef.current.has(block.id)) continue;
+        if (synthesizingRef.current.has(block.id)) continue;
+        synthesizeBlock(block.id);
+      }
+    }
+
+    // Track highest prefetched index
+    if (toIdx > prefetchedUpToRef.current) {
+      prefetchedUpToRef.current = toIdx;
+    }
+  }, [documentBlocks, documentId, voiceSelection, synthesizeBlock, ttsWS]);
+
+  // Check buffer level and trigger refill if needed
+  const checkAndRefillBuffer = useCallback(() => {
+    if (!documentBlocks || documentBlocks.length === 0) return;
+
+    const isServer = isServerSideModel(voiceSelection.model);
+
+    // Count "ready" blocks ahead = cached + queued + processing
+    // This prevents over-requesting when blocks are in-flight
+    let readyAhead = 0;
+    for (let idx = currentBlockRef.current + 1; idx < documentBlocks.length; idx++) {
+      const block = documentBlocks[idx];
+      // Check local cache first
+      if (audioBuffersRef.current.has(block.id)) {
+        readyAhead++;
+        continue;
+      }
+      // For server mode, also count queued/processing from WS state
+      if (isServer) {
+        const wsStatus = ttsWS.getBlockStatus(idx);
+        if (wsStatus === 'queued' || wsStatus === 'processing' || wsStatus === 'cached') {
+          readyAhead++;
+          continue;
+        }
+      }
+      // For browser mode, count synthesizing
+      if (!isServer && synthesizingRef.current.has(block.id)) {
+        readyAhead++;
+        continue;
+      }
+      // Found a gap - stop counting contiguous ready blocks
+      break;
+    }
+
+    // Only refill if we don't have enough ready blocks ahead
+    if (readyAhead < REFILL_THRESHOLD) {
+      // Find the first block that's not ready
+      let firstUnreadyIdx = currentBlockRef.current + 1;
+      for (let idx = currentBlockRef.current + 1; idx < documentBlocks.length; idx++) {
+        const block = documentBlocks[idx];
+        const isCached = audioBuffersRef.current.has(block.id);
+        const isQueued = isServer && ['queued', 'processing', 'cached'].includes(ttsWS.getBlockStatus(idx) || '');
+        const isSynthesizing = !isServer && synthesizingRef.current.has(block.id);
+        if (!isCached && !isQueued && !isSynthesizing) {
+          firstUnreadyIdx = idx;
+          break;
+        }
+      }
+
+      if (firstUnreadyIdx < documentBlocks.length) {
+        console.log(`[Prefetch] Buffer low: ${readyAhead} ready ahead, requesting from block ${firstUnreadyIdx}`);
+        triggerPrefetchBatch(firstUnreadyIdx, BATCH_SIZE);
+      }
+    }
+  }, [documentBlocks, triggerPrefetchBatch, voiceSelection.model, ttsWS]);
 
   const playAudioBuffer = useCallback(async (audioBufferData: AudioBufferData) => {
     if (!audioPlayerRef.current) return;
@@ -500,10 +740,25 @@ const PlaybackPage = () => {
     if (!pendingVoiceChangeRef.current) return;
     pendingVoiceChangeRef.current = false;
 
+    const wasBuffering = wasBufferingOnVoiceChangeRef.current;
+    wasBufferingOnVoiceChangeRef.current = false;
+
     const blockId = documentBlocks[currentBlock]?.id;
     if (blockId === undefined) return;
 
-    // Synthesize with new voice and play
+    // If we were buffering, re-enter buffering state with new voice
+    if (wasBuffering) {
+      console.log(`[Playback] Voice changed during buffering, restarting buffer with new voice`);
+      setIsSynthesizing(false);
+      setIsBuffering(true);
+      // Trigger prefetch for server mode
+      if (isServerSideModel(voiceSelection.model) && ttsWS.checkConnected()) {
+        triggerPrefetchBatch(currentBlock, BATCH_SIZE);
+      }
+      return;
+    }
+
+    // We were playing: synthesize current block with new voice and play
     synthesizeBlock(blockId).then(audioData => {
       // Check if this block is still the one we want (user may have clicked elsewhere)
       const stillCurrentBlock = documentBlocks[currentBlockRef.current]?.id === blockId;
@@ -527,37 +782,108 @@ const PlaybackPage = () => {
         });
       }
     });
-  }, [synthesizeBlock, currentBlock, documentBlocks, playAudioBuffer]);
+  }, [synthesizeBlock, currentBlock, documentBlocks, playAudioBuffer, voiceSelection.model, ttsWS, triggerPrefetchBatch]);
 
   // Keep isPlayingRef in sync with state
   useEffect(() => {
     isPlayingRef.current = isPlaying;
   }, [isPlaying]);
 
-  // Handle block changes and pre-synthesis
+  // Keep isBufferingRef in sync with state
+  useEffect(() => {
+    isBufferingRef.current = isBuffering;
+  }, [isBuffering]);
+
+  // Watch for buffer to fill during buffering state
+  // When enough blocks are cached, transition to playing
+  useEffect(() => {
+    if (!isBuffering || !documentBlocks.length) return;
+
+    const startBlock = currentBlockRef.current >= 0 ? currentBlockRef.current : 0;
+
+    // Count cached blocks ahead
+    let cachedAhead = 0;
+    for (let idx = startBlock; idx < documentBlocks.length; idx++) {
+      const block = documentBlocks[idx];
+      if (audioBuffersRef.current.has(block.id)) {
+        cachedAhead++;
+      } else {
+        break;
+      }
+    }
+
+    console.log(`[Buffering] Progress: ${cachedAhead}/${MIN_BUFFER_TO_START} blocks cached`);
+
+    if (cachedAhead >= MIN_BUFFER_TO_START) {
+      console.log(`[Buffering] Buffer ready, starting playback`);
+      setIsBuffering(false);
+      setIsPlaying(true);
+    }
+  }, [isBuffering, documentBlocks, blockStateVersion, ttsWS.audioUrls]);
+
+  // Proactively fetch audio when WS reports blocks as cached (server mode only)
+  // This ensures audio is ready before we try to play it
+  useEffect(() => {
+    if (!isServerMode || !documentBlocks.length) return;
+
+    for (const [blockIdx, audioUrl] of ttsWS.audioUrls) {
+      const block = documentBlocks[blockIdx];
+      if (!block) continue;
+      // Skip if already cached locally or currently fetching
+      if (audioBuffersRef.current.has(block.id)) continue;
+      if (synthesizingRef.current.has(block.id)) continue;
+
+      // Fetch audio in background
+      const fetchPromise = fetchAudioFromUrl(audioUrl, block.id);
+      synthesizingRef.current.set(block.id, fetchPromise);
+      fetchPromise.finally(() => {
+        synthesizingRef.current.delete(block.id);
+        setBlockStateVersion(v => v + 1);
+      });
+    }
+  }, [isServerMode, ttsWS.audioUrls, documentBlocks, fetchAudioFromUrl]);
+
+  // Handle block changes and playback
   useEffect(() => {
     if (!documentBlocks || currentBlock === -1 || !isPlaying) {
       setIsSynthesizing(false);
+      playingBlockRef.current = -1; // Reset when not playing
       return;
     }
 
-    const PREFETCH_COUNT = 2;
-    const EVICT_THRESHOLD = 5; // Remove buffers this many blocks behind
+    // For server mode: if WS is disconnected, we can still play cached blocks
+    // Only skip if we need to synthesize AND WS is down
+    const currentBlockId = documentBlocks[currentBlock]?.id;
+    const hasCachedAudio = currentBlockId && audioBuffersRef.current.has(currentBlockId);
 
-    // IMPORTANT: Play/synthesize current block FIRST before prefetching
+    if (isServerMode && !ttsWS.isConnected && !hasCachedAudio) {
+      console.log(`[Playback] Waiting for WS connection (no cached audio for block ${currentBlock})...`);
+      return;
+    }
+
+    const EVICT_THRESHOLD = 20; // Keep more buffers with parallel prefetch
+
+    // Play/synthesize current block
     if (currentBlock < documentBlocks.length) {
-      const currentBlockId = documentBlocks[currentBlock]?.id;
       if (!currentBlockId) return;
+
+      // Skip if we're already playing this block
+      if (playingBlockRef.current === currentBlock) {
+        return;
+      }
 
       const audioData = audioBuffersRef.current.get(currentBlockId);
       if (audioData) {
         console.log(`[Playback] Cache HIT for block ${currentBlockId}, playing immediately`);
+        playingBlockRef.current = currentBlock;
         setIsSynthesizing(false);
+        setBlockStateVersion(v => v + 1); // Ensure progress bar reflects cached state
         playAudioBuffer(audioData);
       } else {
         // Show loading state while synthesizing current block
-        console.log(`[Playback] Cache MISS for block ${currentBlockId}, synthesizing FIRST...`);
+        console.log(`[Playback] Cache MISS for block ${currentBlockId}, synthesizing...`);
         setIsSynthesizing(true);
+        playingBlockRef.current = currentBlock; // Mark as playing (waiting for synthesis)
         synthesizeBlock(currentBlockId).then(audioData => {
           // Check if this block is still the one we want (user may have clicked elsewhere)
           const stillCurrentBlock = documentBlocks[currentBlockRef.current]?.id === currentBlockId;
@@ -584,18 +910,8 @@ const PlaybackPage = () => {
       }
     }
 
-    // Pre-synthesize upcoming blocks AFTER current block is queued
-    // (fire and forget - they cache themselves)
-    for (let i = 1; i <= PREFETCH_COUNT; i++) {
-      const targetIdx = currentBlock + i;
-      if (targetIdx < documentBlocks.length) {
-        const blockId = documentBlocks[targetIdx].id;
-        if (!audioBuffersRef.current.has(blockId)) {
-          console.log(`[Playback] Prefetching block ${blockId} (idx ${targetIdx})`);
-          synthesizeBlock(blockId);
-        }
-      }
-    }
+    // Check buffer level and trigger refill if needed
+    checkAndRefillBuffer();
 
     // Evict old buffers to limit memory on long documents
     if (currentBlock > EVICT_THRESHOLD) {
@@ -607,43 +923,96 @@ const PlaybackPage = () => {
         }
       }
     }
-  }, [currentBlock, isPlaying, documentBlocks, playAudioBuffer, synthesizeBlock]);
+  }, [currentBlock, isPlaying, documentBlocks, playAudioBuffer, synthesizeBlock, triggerPrefetchBatch, checkAndRefillBuffer, isServerMode, ttsWS.isConnected]);
 
+
+  // Helper: count cached blocks ahead of a given position
+  const countCachedAhead = useCallback((fromIdx: number): number => {
+    if (!documentBlocks || documentBlocks.length === 0) return 0;
+    let count = 0;
+    for (let idx = fromIdx; idx < documentBlocks.length; idx++) {
+      const block = documentBlocks[idx];
+      if (audioBuffersRef.current.has(block.id)) {
+        count++;
+      } else {
+        break; // Stop at first gap
+      }
+    }
+    return count;
+  }, [documentBlocks]);
 
   const handlePlay = async () => {
-    if (isPlaying) return;
+    if (isPlaying || isBuffering) return;
 
     if (audioContextRef.current?.state === 'suspended') {
       await audioContextRef.current.resume();
     }
 
-    setIsPlaying(true);
-
+    // Determine starting position
+    const startBlock = currentBlock === -1 ? 0 : currentBlock;
     if (currentBlock === -1) {
       setCurrentBlock(0);
       setAudioProgress(0);
       blockStartTimeRef.current = 0;
+    }
+
+    const isServer = isServerSideModel(voiceSelection.model);
+
+    // Browser mode: start immediately (single-threaded WASM, pre-buffering would add latency)
+    // Server mode: check buffer and potentially enter buffering state first
+    if (!isServer) {
+      console.log(`[Playback] Browser mode, starting immediately`);
+      setIsPlaying(true);
+      return;
+    }
+
+    // Server mode: check if we have enough cached blocks to start playing
+    const cachedAhead = countCachedAhead(startBlock);
+
+    if (cachedAhead >= MIN_BUFFER_TO_START) {
+      console.log(`[Playback] Buffer ready: ${cachedAhead} blocks cached, starting playback`);
+      setIsPlaying(true);
+    } else {
+      console.log(`[Playback] Buffer insufficient: ${cachedAhead}/${MIN_BUFFER_TO_START} blocks, entering buffering state`);
+      setIsBuffering(true);
+
+      // Request initial batch for server mode
+      if (ttsWS.isConnected) {
+        triggerPrefetchBatch(startBlock, BATCH_SIZE);
+      }
     }
   };
 
   const handlePause = () => {
     setIsPlaying(false);
     audioPlayerRef.current?.pause();
+    // Note: Don't cancel buffering/prefetch - let it continue in background
   };
 
   // Keep refs updated for keyboard handler (avoids stale closures)
   handlePlayRef.current = handlePlay;
   handlePauseRef.current = handlePause;
 
-  // Cancel synthesis - stop waiting for TTS, reset to ready state
-  const handleCancelSynthesis = () => {
+  // Cancel buffering - stop waiting, return to stopped state
+  const handleCancelBuffering = () => {
+    console.log(`[Playback] Canceling buffering`);
+    setIsBuffering(false);
     setIsPlaying(false);
     setIsSynthesizing(false);
     audioPlayerRef.current?.stop();
 
-    // Clear pending synthesis queue (let in-progress ones finish, they'll just cache)
+    // Send cursor_moved to evict queued blocks in backend
+    if (documentId && isServerSideModel(voiceSelection.model)) {
+      ttsWS.moveCursor(documentId, currentBlockRef.current);
+    }
+
+    // Clear local synthesis tracking
     synthesizingRef.current.clear();
+    prefetchedUpToRef.current = -1;
   };
+
+  // Legacy cancel handler - now redirects to cancel buffering
+  const handleCancelSynthesis = handleCancelBuffering;
 
   const handleSkipBack = () => {
     // Stop current audio
@@ -770,7 +1139,10 @@ const PlaybackPage = () => {
       />
       <SoundControl
         isPlaying={isPlaying}
+        isBuffering={isBuffering}
         isSynthesizing={isSynthesizing}
+        isReconnecting={ttsWS.isReconnecting}
+        connectionError={ttsWS.connectionError}
         onPlay={handlePlay}
         onPause={handlePause}
         onCancelSynthesis={handleCancelSynthesis}
@@ -782,6 +1154,7 @@ const PlaybackPage = () => {
           currentBlock: currentBlock >= 0 ? currentBlock : 0,
           setCurrentBlock: handleBlockChange,
           audioProgress,
+          blockStates,
         }}
         volume={volume}
         onVolumeChange={handleVolumeChange}

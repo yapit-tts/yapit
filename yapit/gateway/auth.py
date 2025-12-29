@@ -2,7 +2,7 @@ import logging
 import time
 from typing import Annotated
 
-from fastapi import Depends, Header, HTTPException, Security, status
+from fastapi import Depends, Header, HTTPException, Security, WebSocket, WebSocketException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from yapit.gateway.config import Settings, get_settings
@@ -57,3 +57,27 @@ async def authenticate(
         detail="not authenticated",
         headers={"WWW-Authenticate": "Bearer"},
     )
+
+
+async def authenticate_ws(
+    websocket: WebSocket,
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> User:
+    """Authenticate WebSocket connection via query param token or anonymous ID."""
+    token = websocket.query_params.get("token")
+    anonymous_id = websocket.query_params.get("anonymous_id")
+
+    if token:
+        try:
+            user = await get_me(settings, access_token=token)
+            if user is not None:
+                return user
+            LOGGER.warning("WS auth: get_me returned None for token")
+        except Exception as e:
+            LOGGER.error(f"WS auth: get_me raised exception: {e}")
+        raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid token")
+
+    if anonymous_id:
+        return create_anonymous_user(anonymous_id)
+
+    raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION, reason="Not authenticated")

@@ -13,7 +13,7 @@ import pymupdf
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
 from markitdown import MarkItDown
 from pydantic import BaseModel, HttpUrl, StringConstraints
-from sqlmodel import select
+from sqlmodel import col, select
 
 from yapit.gateway.auth import authenticate
 from yapit.gateway.constants import SUPPORTED_WEB_MIME_TYPES
@@ -417,7 +417,7 @@ async def list_documents(
     result = await db.exec(
         select(Document)
         .where(Document.user_id == user.id)
-        .order_by(Document.created.desc())
+        .order_by(col(Document.created).desc())
         .offset(offset)
         .limit(limit)
     )

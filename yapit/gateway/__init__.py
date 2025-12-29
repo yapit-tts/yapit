@@ -25,6 +25,7 @@ async def lifespan(app: FastAPI):
     await prepare_database(settings)
 
     app.state.redis_client = await redis.from_url(settings.redis_url, decode_responses=False)
+    app.state.audio_cache = get_audio_cache(settings)
 
     document_processor_manager = DocumentProcessorManager(settings)
     document_processor_manager.load_processors(settings.document_processors_file)
@@ -32,7 +33,7 @@ async def lifespan(app: FastAPI):
 
     tts_processor_manager = TTSProcessorManager(
         redis=app.state.redis_client,
-        cache=get_audio_cache(settings),
+        cache=app.state.audio_cache,
         settings=settings,
     )
     app.state.tts_processor_manager = tts_processor_manager

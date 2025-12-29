@@ -1,16 +1,22 @@
 [
   {
-    "slug": "kokoro-client-free",
-    "processor": "yapit.gateway.processors.tts.client.ClientProcessor"
+    "model": "kokoro",
+    "mode": "server",
+    "backend": {
+      "processor": "yapit.gateway.processors.tts.local.LocalProcessor",
+      "worker_url": "http://kokoro-cpu:8000"
+    },
+    "overflow": {
+      "processor": "yapit.gateway.processors.tts.runpod.RunpodProcessor",
+      "runpod_endpoint_id": "todo-add-kokoro-runpod-endpoint"
+    }
   },
   {
-    "slug": "kokoro-cpu",
-    "processor": "yapit.gateway.processors.tts.local.LocalProcessor",
-    "worker_url": "http://kokoro-cpu:8000"
-  },
-  {
-    "slug": "higgs-native",
-    "processor": "yapit.gateway.processors.tts.runpod.RunpodProcessor",
-    "runpod_endpoint_id": "brqwsipekpok15"
+    "model": "higgs",
+    "mode": "server",
+    "backend": {
+      "processor": "yapit.gateway.processors.tts.runpod.RunpodProcessor",
+      "runpod_endpoint_id": "brqwsipekpok15"
+    }
   }
 ]

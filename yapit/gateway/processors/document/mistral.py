@@ -101,7 +101,7 @@ def _single_ocr(request: OCRRequest, model: str, client: Mistral) -> OCRResponse
         "pages": request.pages,
     }
     log.info(f"Calling Mistral OCR API with params:\n{pprint.pformat(request_params)}")
-    return client.ocr.process(**request_params)
+    return client.ocr.process(**request_params)  # ty: ignore[invalid-argument-type]
 
 
 # TODO actually support batch processing vs. priority requests

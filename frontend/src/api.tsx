@@ -26,7 +26,7 @@ const ApiContext = createContext<Api>({
 	isAnonymous: true,
 });
 
-export const ApiProvider: FC<PropsWithChildren<{}>> = ({ children }) => {
+export const ApiProvider: FC<PropsWithChildren> = ({ children }) => {
 	const userRef = useRef<typeof user>(undefined);
 	const [isAuthReady, setIsAuthReady] = useState(false);
 	const [isAnonymous, setIsAnonymous] = useState(true);

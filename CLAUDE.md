@@ -20,6 +20,7 @@ Note: We don't work heavily with GitHub issues (solo dev + claude for now -- the
 - Test workflow: `.github/workflows/`
 - No default values in Settings class - only defaults in `.env*` files
 - `make test-local` for basic tests, `make test` for full suite (needs API keys)
+- `make check` for type checking (backend: ty, frontend: tsc + eslint)
 - `make dev-cpu` to start backend (or `make dev-mac` on macOS)
   - If no dev user exists after startup (login fails), run `make dev-user` - there's a race condition where stack-auth health check sometimes fails before user creation runs
 - **CI timing**: Integration tests take 4-5 minutes (Docker build). Wait for all checks before merging PRs.
@@ -27,14 +28,10 @@ Note: We don't work heavily with GitHub issues (solo dev + claude for now -- the
 ## Agent Work Structure
 
 Task files live in `agent/tasks/`, persistent knowledge in `agent/knowledge/`.
+Queryable via grep "^status: active" agent/tasks/*.md
 
-**Master doc (ALWAYS read at session start):**
+**Master doc:**
 - `agent/knowledge/architecture.md` - Architecture, decisions, implementation details, known issues/tech debt
-
-**Before Creating PR (MANDATORY):**
-1. Update your task file with final status, results, testing notes
-2. Update `agent/knowledge/architecture.md` to reflect merged state
-3. Batch doc updates with code - include in the PR, not after
 
 ### Branch Strategy
 
@@ -49,6 +46,7 @@ Task files live in `agent/tasks/`, persistent knowledge in `agent/knowledge/`.
 ### Legacy Plans
 
 Old plan files live in `~/.claude/plans/` (searchable via memex). New work uses `agent/tasks/`.
+Put less weight on these.
 
 | File | Purpose | Status | Read When |
 |------|---------|--------|-----------|
@@ -75,7 +73,6 @@ Old plan files live in `~/.claude/plans/` (searchable via memex). New work uses 
 | `tts-performance-investigation.md` | Browser TTS perf, WASM slowness | In Progress | Slow synthesis, WASM debugging, prefetch timing |
 | `kokoro-js-frontend.md` | Browser TTS (Kokoro.js), anonymous auth | Phase 2 Done | useBrowserTTS hook, anonymous flow, browser TTS bugs |
 | `bugs-and-tech-debt.md` | Auth race conditions, dead code cleanup | Done | API provider patterns, isAuthReady, dropdown+dialog state |
-| `prefetching-optimization.md` | Audio block buffering | Done | Playback stutters, PREFETCH_COUNT tuning |
 | `frontend-structured-document-rendering.md` | Block rendering, click-to-jump | Done | StructuredDocument component, block highlighting |
 | `markdown-parser-document-format.md` | Markdown parsing, JSON format | Done | StructuredDocument schema, audioBlockIdx, markdown-it-py |
 | `sidebar-polish-retrospective.md` | Rename/delete, theme, dropdowns | Done | Radix dropdown patterns, theme colors, controlled state |
@@ -142,6 +139,8 @@ Action tools (click, wait_for, fill, etc.) automatically return a full page snap
 - **Consider test documents** - if testing generic UI behavior (not a specific bug), you can create/use a simple test document to keep snapshots small
 
 Don't be paranoid about this—just factor it in when planning longer debugging sessions.
+
+**If MCP won't connect:** Ask the user to close Chrome so MCP can launch a fresh instance.
 
 ## Coding Conventions
 

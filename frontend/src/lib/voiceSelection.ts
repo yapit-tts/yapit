@@ -2,6 +2,24 @@
 
 export type ModelType = "kokoro" | "kokoro-server" | "higgs";
 
+// Map frontend model types to backend model slugs
+// Frontend uses "kokoro" (browser), "kokoro-server" (server), "higgs" (server)
+// Backend database has "kokoro" and "higgs" as model slugs
+export function getBackendModelSlug(model: ModelType): string {
+  switch (model) {
+    case "kokoro":
+    case "kokoro-server":
+      return "kokoro";
+    case "higgs":
+      return "higgs";
+  }
+}
+
+// Check if model uses server-side synthesis
+export function isServerSideModel(model: ModelType): boolean {
+  return model === "higgs" || model === "kokoro-server";
+}
+
 export interface VoiceSelection {
   model: ModelType;
   voiceSlug: string;

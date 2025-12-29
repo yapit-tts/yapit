@@ -1,10 +1,66 @@
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
-import { Play, Pause, Volume2, SkipBack, SkipForward, Loader2, Square } from "lucide-react";
+import { Play, Pause, Volume2, SkipBack, SkipForward, Loader2, Square, WifiOff } from "lucide-react";
 import { useEffect, useState } from "react";
 import { VoicePicker } from "@/components/voicePicker";
 import { SettingsDialog } from "@/components/settingsDialog";
 import { type VoiceSelection } from "@/lib/voiceSelection";
+
+type BlockState = 'pending' | 'synthesizing' | 'cached';
+
+interface BlockyProgressBarProps {
+  blockStates: BlockState[];
+  currentBlock: number;
+  onBlockClick: (idx: number) => void;
+}
+
+function BlockyProgressBar({ blockStates, currentBlock, onBlockClick }: BlockyProgressBarProps) {
+  const numBlocks = blockStates.length;
+
+  // Debug: log what we're receiving
+  console.log(`[BlockyProgressBar] numBlocks=${numBlocks}, currentBlock=${currentBlock}, states:`,
+    blockStates.slice(0, 10).map((s, i) => `${i}:${s}`).join(', '));
+
+  if (numBlocks === 0) {
+    console.log('[BlockyProgressBar] No blocks, showing empty bar');
+    return <div className="flex-1 h-3 bg-muted rounded" />;
+  }
+
+  // Always show individual blocks filling the entire width (like a health bar)
+  // Each block is an equal slice of the total width
+  return (
+    <div className="flex-1 flex items-center h-3 bg-muted/30 rounded overflow-hidden">
+      {blockStates.map((state, idx) => {
+        const isCurrent = idx === currentBlock;
+
+        // State-based colors
+        let bgColor = 'bg-muted/50'; // pending - subtle gray
+        if (state === 'synthesizing') bgColor = 'bg-yellow-500/70 animate-pulse';
+        else if (state === 'cached') bgColor = 'bg-primary/60';
+
+        // Current block is brighter with highlight
+        if (isCurrent) {
+          bgColor = 'bg-primary';
+        }
+
+        return (
+          <button
+            key={idx}
+            className={`h-full transition-colors duration-150 hover:brightness-110 ${bgColor}`}
+            style={{
+              flex: '1 1 0',
+              minWidth: 0,
+              // Tiny gap between blocks (border creates the divider effect)
+              borderRight: idx < numBlocks - 1 ? '1px solid rgba(0,0,0,0.1)' : 'none',
+            }}
+            onClick={() => onBlockClick(idx)}
+            title={`Block ${idx + 1}: ${state}`}
+          />
+        );
+      })}
+    </div>
+  );
+}
 
 interface ProgressBarValues {
   estimated_ms: number | undefined;
@@ -12,11 +68,15 @@ interface ProgressBarValues {
   currentBlock: number | undefined;
   setCurrentBlock: (value: number) => void;
   audioProgress: number;
+  blockStates: BlockState[];
 }
 
 interface Props {
   isPlaying: boolean;
+  isBuffering: boolean;
   isSynthesizing: boolean;
+  isReconnecting?: boolean;
+  connectionError?: string | null;
   onPlay: () => void;
   onPause: () => void;
   onCancelSynthesis: () => void;
@@ -47,7 +107,10 @@ function msToTime(duration: number | undefined): string {
 
 const SoundControl = ({
   isPlaying,
+  isBuffering,
   isSynthesizing,
+  isReconnecting,
+  connectionError,
   onPlay,
   onPause,
   onCancelSynthesis,
@@ -61,7 +124,7 @@ const SoundControl = ({
   voiceSelection,
   onVoiceChange,
 }: Props) => {
-  const { estimated_ms, numberOfBlocks, currentBlock, setCurrentBlock, audioProgress } = progressBarValues;
+  const { estimated_ms, numberOfBlocks, currentBlock, setCurrentBlock, audioProgress, blockStates } = progressBarValues;
   const [progressDisplay, setProgressDisplay] = useState("0:00");
   const [durationDisplay, setDurationDisplay] = useState("0:00");
   const [isHoveringSpinner, setIsHoveringSpinner] = useState(false);
@@ -73,13 +136,6 @@ const SoundControl = ({
   useEffect(() => {
     setDurationDisplay(msToTime(estimated_ms));
   }, [estimated_ms]);
-
-  const handleSliderChange = (newValue: number[]) => {
-    const newBlock = newValue[0];
-    if (newBlock !== currentBlock) {
-      setCurrentBlock(newBlock);
-    }
-  };
 
   const numBlocks = numberOfBlocks ?? 0;
   const blockNum = (currentBlock ?? 0) + 1;
@@ -100,11 +156,11 @@ const SoundControl = ({
           variant="secondary"
           size="lg"
           className="rounded-full w-14 h-14"
-          onClick={isSynthesizing ? onCancelSynthesis : isPlaying ? onPause : onPlay}
-          onMouseEnter={() => isSynthesizing && setIsHoveringSpinner(true)}
+          onClick={isBuffering || isSynthesizing ? onCancelSynthesis : isPlaying ? onPause : onPlay}
+          onMouseEnter={() => (isBuffering || isSynthesizing) && setIsHoveringSpinner(true)}
           onMouseLeave={() => setIsHoveringSpinner(false)}
         >
-          {isSynthesizing ? (
+          {isBuffering || isSynthesizing ? (
             isHoveringSpinner ? (
               <Square className="h-5 w-5 fill-current" />
             ) : (
@@ -126,17 +182,15 @@ const SoundControl = ({
         </Button>
       </div>
 
-      {/* Progress bar and info */}
+      {/* Blocky progress bar */}
       <div className="flex items-center gap-4 max-w-2xl mx-auto">
         <span className="text-sm text-muted-foreground w-12 text-right tabular-nums">
           {progressDisplay}
         </span>
-        <Slider
-          value={[currentBlock ?? 0]}
-          max={Math.max(numBlocks - 1, 0)}
-          step={1}
-          onValueChange={handleSliderChange}
-          className="flex-1"
+        <BlockyProgressBar
+          blockStates={blockStates}
+          currentBlock={currentBlock ?? 0}
+          onBlockClick={setCurrentBlock}
         />
         <span className="text-sm text-muted-foreground w-12 tabular-nums">
           {durationDisplay}
@@ -150,6 +204,12 @@ const SoundControl = ({
           <span className="text-xs text-muted-foreground">
             Block {blockNum} of {numBlocks}
           </span>
+          {(isReconnecting || connectionError) && (
+            <span className={`flex items-center gap-1 text-xs ${connectionError ? 'text-destructive' : 'text-yellow-600'}`}>
+              <WifiOff className="h-3 w-3" />
+              {connectionError || 'Reconnecting...'}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-4">
           {/* Speed control slider */}

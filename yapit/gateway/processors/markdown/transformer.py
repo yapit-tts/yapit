@@ -5,6 +5,7 @@ with both HTML and AST representations for prose blocks.
 """
 
 import re
+from typing import Literal, cast
 
 from markdown_it import MarkdownIt
 from markdown_it.tree import SyntaxTreeNode
@@ -112,7 +113,7 @@ class DocumentTransformer:
 
     def _transform_heading(self, node: SyntaxTreeNode) -> list[HeadingBlock]:
         """Transform heading node."""
-        level = int(node.tag[1])  # h1 -> 1, h2 -> 2, etc.
+        level = cast(Literal[1, 2, 3, 4, 5, 6], int(node.tag[1]))  # h1 -> 1, h2 -> 2, etc.
         inline = node.children[0] if node.children else None
 
         html = self._render_inline_html(inline)
@@ -392,7 +393,7 @@ class DocumentTransformer:
     def _transform_list(self, node: SyntaxTreeNode) -> list[ListBlock]:
         """Transform list (bullet or ordered) node."""
         ordered = node.type == "ordered_list"
-        start = node.attrs.get("start") if ordered else None
+        start = cast(int | None, node.attrs.get("start")) if ordered else None
 
         items = []
         plain_texts = []
@@ -629,8 +630,8 @@ class DocumentTransformer:
                 inner.extend(self._transform_inline_node(child))
             return [
                 LinkContent(
-                    href=node.attrs.get("href", ""),
-                    title=node.attrs.get("title"),
+                    href=cast(str, node.attrs.get("href", "")),
+                    title=cast(str | None, node.attrs.get("title")),
                     content=inner,
                 )
             ]
@@ -639,7 +640,7 @@ class DocumentTransformer:
             alt = node.content or ""
             return [
                 InlineImageContent(
-                    src=node.attrs.get("src", ""),
+                    src=cast(str, node.attrs.get("src", "")),
                     alt=alt,
                 )
             ]

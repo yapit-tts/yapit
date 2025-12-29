@@ -25,61 +25,48 @@ def create_dev_models() -> list[TTSModel]:
     """Create development TTS models with voices."""
     models = []
 
-    # CPU worker on gateway server
-    kokoro_cpu = TTSModel(
-        slug="kokoro-cpu",
-        name="Kokoro (CPU)",
-        credits_per_sec=Decimal("1.0"),
+    kokoro = TTSModel(
+        slug="kokoro",
+        name="Kokoro",
+        credits_per_sec=Decimal("1.0"),  # charged when synthesis_mode=server
         native_codec="pcm",
         sample_rate=24_000,
         channels=1,
         sample_width=2,
     )
 
-    # Browser / Client CPU worker
-    kokoro_free = TTSModel(
-        slug="kokoro-client-free",
-        name="Kokoro (Free)",
-        credits_per_sec=Decimal("0"),
-        native_codec="pcm",
-        sample_rate=24_000,
-        channels=1,
-        sample_width=2,
-    )
-
-    # HIGGS native on RunPod GPU
-    higgs_native = TTSModel(
-        slug="higgs-native",
+    higgs = TTSModel(
+        slug="higgs",
         name="HIGGS Audio V2",
-        credits_per_sec=Decimal("2"),
+        credits_per_sec=Decimal("2.0"),
         native_codec="pcm",
         sample_rate=24_000,
         channels=1,
         sample_width=2,
     )
 
-    # load kokoro voices
+    # Load kokoro voices
     voices_json = Path(__file__).parent.parent / "workers/kokoro/voices.json"
     voices_data = json.loads(voices_json.read_text())
     for v in voices_data:
-        voice_kwargs = {
-            "slug": v["index"],
-            "name": v["name"],
-            "lang": v["language"],
-            "description": f"Quality grade {v['overallGrade']}",
-            "parameters": {
-                "voice": v["index"],
-                "speed": 1.0,  # we just postprocess the audio in the client for speed changes
-            },
-        }
-        kokoro_cpu.voices.append(Voice(**voice_kwargs))
-        kokoro_free.voices.append(Voice(**voice_kwargs))
+        kokoro.voices.append(
+            Voice(
+                slug=v["index"],
+                name=v["name"],
+                lang=v["language"],
+                description=f"Quality grade {v['overallGrade']}",
+                parameters={
+                    "voice": v["index"],
+                    "speed": 1.0,  # we just postprocess the audio in the client for speed changes
+                },
+            )
+        )
 
     # Load reference voices for HIGGS
     en_man_audio, en_man_transcript = load_voice_prompt("en_man")
     en_woman_audio, en_woman_transcript = load_voice_prompt("en_woman")
 
-    higgs_native.voices.append(
+    higgs.voices.append(
         Voice(
             slug="en-man",
             name="English Male",
@@ -93,7 +80,7 @@ def create_dev_models() -> list[TTSModel]:
             },
         )
     )
-    higgs_native.voices.append(
+    higgs.voices.append(
         Voice(
             slug="en-woman",
             name="English Female",
@@ -108,7 +95,7 @@ def create_dev_models() -> list[TTSModel]:
         )
     )
 
-    models.extend([kokoro_cpu, kokoro_free, higgs_native])
+    models.extend([kokoro, higgs])
 
     # Uncomment to add Dia model
     # dia = TTSModel(

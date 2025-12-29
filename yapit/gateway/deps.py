@@ -10,11 +10,10 @@ from sqlalchemy.orm import selectinload
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from yapit.contracts import SynthesisJob
 from yapit.gateway.auth import authenticate
 from yapit.gateway.cache import Cache, CacheConfig, Caches, SqliteCache
 from yapit.gateway.config import Settings, get_settings
-from yapit.gateway.db import create_session, get_by_slug_or_404, get_or_404
+from yapit.gateway.db import create_session, get_by_slug_or_404, get_or_404, get_or_create_user_credits
 from yapit.gateway.domain_models import (
     Block,
     BlockVariant,
@@ -28,7 +27,6 @@ from yapit.gateway.domain_models import (
 )
 from yapit.gateway.exceptions import ResourceNotFoundError
 from yapit.gateway.processors.document.manager import DocumentProcessorManager
-from yapit.gateway.processors.tts.client import ClientProcessor
 from yapit.gateway.processors.tts.manager import TTSProcessorManager
 from yapit.gateway.stack_auth.users import User
 
@@ -122,7 +120,10 @@ async def get_block_variant(
         db,
         BlockVariant,
         variant_hash,
-        options=[selectinload(BlockVariant.block).selectinload(Block.document)],
+        options=[
+            selectinload(BlockVariant.block).selectinload(Block.document),
+            selectinload(BlockVariant.model),
+        ],
     )
 
     if variant.block.document.user_id != user.id:
@@ -130,30 +131,6 @@ async def get_block_variant(
             status_code=status.HTTP_403_FORBIDDEN, detail="Cannot access block variant in another user's document"
         )
     return variant
-
-
-async def get_client_processor(model_slug: str, tts_processor_manager: TTSProcessorManagerDep) -> ClientProcessor:
-    """Get the client processor for a given model slug."""
-    processor = tts_processor_manager.get_processor(model_slug)
-    if not isinstance(processor, ClientProcessor):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Model {model_slug!r} does not support client job submission",
-        )
-    return processor
-
-
-def get_job(
-    job_id: str,
-    user: AuthenticatedUser,
-    processor: ClientProcessorDep,
-) -> SynthesisJob:
-    job = processor.get_job(str(job_id))
-    if not job:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found or already completed")
-    if job.user_id != user.id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This job does not belong to you")
-    return job
 
 
 async def is_admin(user: Annotated[User, Depends(authenticate)]) -> bool:
@@ -165,19 +142,6 @@ async def require_admin(is_admin: IsAdmin) -> None:
     """Require the authenticated user to be an admin."""
     if not is_admin:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
-
-
-async def get_or_create_user_credits(user_id: str, db: DbSession) -> UserCredits:
-    user_credits = await db.get(UserCredits, user_id)
-    if not user_credits:
-        user_credits = UserCredits(
-            user_id=user_id,
-            balance=Decimal("0"),
-            total_purchased=Decimal("0"),
-            total_used=Decimal("0"),
-        )
-        db.add(user_credits)
-    return user_credits
 
 
 async def _get_or_create_user_credits_dep_helper(user: AuthenticatedUser, db: DbSession) -> UserCredits:
@@ -224,8 +188,6 @@ async def get_tts_processor_manager(request: Request) -> TTSProcessorManager:
 RedisClient = Annotated[Redis, Depends(get_redis_client)]
 TTSProcessorManagerDep = Annotated[TTSProcessorManager, Depends(get_tts_processor_manager)]
 DocumentProcessorManagerDep = Annotated[DocumentProcessorManager, Depends(get_document_processor_manager)]
-ClientProcessorDep = Annotated[ClientProcessor, Depends(get_client_processor)]
-SynthesisJobDep = Annotated[str, Depends(get_job)]
 AudioCache = Annotated[Cache, Depends(get_audio_cache)]
 DocumentCache = Annotated[Cache, Depends(get_document_cache)]
 CurrentDoc = Annotated[Document, Depends(get_doc)]

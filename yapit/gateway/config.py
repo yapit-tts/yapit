@@ -40,6 +40,10 @@ class Settings(BaseSettings):
 
     max_block_chars: int
 
+    # TTS prefetch eviction window
+    tts_buffer_behind: int  # Blocks to keep behind cursor for skip-back
+    tts_buffer_ahead: int  # Prefetch window ahead of cursor
+
     stripe_secret_key: str | None = None
     stripe_webhook_secret: str | None = None
 
@@ -51,7 +55,7 @@ class Settings(BaseSettings):
     )
 
 
-def get_settings() -> Settings:
+def get_settings() -> Settings:  # ty: ignore[invalid-return-type]
     """This is only used for dependency references, see __init__.py:
 
     app.dependency_overrides[get_settings] = lambda: Settings()  # type: ignore

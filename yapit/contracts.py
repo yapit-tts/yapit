@@ -1,29 +1,36 @@
 """Contracts for Redis keys, queues, and job processing."""
 
 import uuid
-from typing import Annotated, Final
+from typing import Annotated, Final, Literal
 
 import annotated_types
 from pydantic import BaseModel, ConfigDict, Field
 
-# TTS-related keys
-TTS_INFLIGHT: Final[str] = "tts:inflight:{hash}"  # redis NX lock
+TTS_INFLIGHT: Final[str] = "tts:inflight:{hash}"
+TTS_CURSOR: Final[str] = "tts:cursor:{user_id}:{document_id}"
 
-# Filter-related keys (one filter-job per document)
-FILTER_STATUS: Final[str] = "filters:{document_id}:status"  # pending | running | done | error
-FILTER_CANCEL: Final[str] = "filters:{document_id}:cancel"  # set -> worker aborts ASAP
-FILTER_INFLIGHT: Final[str] = "filters:{document_id}:inflight"  # redis NX lock
+FILTER_STATUS: Final[str] = "filters:{document_id}:status"
+FILTER_CANCEL: Final[str] = "filters:{document_id}:cancel"
+FILTER_INFLIGHT: Final[str] = "filters:{document_id}:inflight"
 
 
-def get_queue_name(model_slug: str) -> str:
-    return f"tts:queue:{model_slug}"
+SynthesisMode = Literal["browser", "server"]
+
+
+def get_queue_name(model: str) -> str:
+    """Queue name for server-side synthesis. Browser mode doesn't use queues."""
+    return f"tts:queue:{model}"
+
+
+def get_pubsub_channel(user_id: str) -> str:
+    return f"tts:done:{user_id}"
 
 
 class SynthesisParameters(BaseModel):
     """Parameters for TTS synthesis."""
 
-    model_slug: str
-    voice_slug: str
+    model: str
+    voice: str
     text: str
     codec: str  # codec the worker must produce / translate to
     kwargs: dict = Field(default_factory=dict)  # additional parameters for the worker
@@ -36,10 +43,11 @@ class SynthesisParameters(BaseModel):
 class SynthesisJob(BaseModel):
     """JSON contract between gateway and worker."""
 
-    # routing / identity
     job_id: uuid.UUID
     variant_hash: str
-    user_id: str  # who to bill for this synthesis
+    user_id: str
+    document_id: uuid.UUID
+    block_idx: int
 
     synthesis_parameters: SynthesisParameters
 
@@ -52,3 +60,42 @@ class SynthesisResult(BaseModel):
     duration_ms: int
     # For HIGGS context accumulation: base64-encoded serialized audio token tensor from this block
     audio_tokens: str | None = None
+
+
+# WebSocket messages: Client → Server
+
+
+class WSSynthesizeRequest(BaseModel):
+    type: Literal["synthesize"] = "synthesize"
+    document_id: uuid.UUID
+    block_indices: list[int]
+    cursor: int
+    model: str
+    voice: str
+    synthesis_mode: SynthesisMode
+
+
+class WSCursorMoved(BaseModel):
+    type: Literal["cursor_moved"] = "cursor_moved"
+    document_id: uuid.UUID
+    cursor: int
+
+
+# WebSocket messages: Server → Client
+
+BlockStatus = Literal["queued", "processing", "cached", "error"]
+
+
+class WSBlockStatus(BaseModel):
+    type: Literal["status"] = "status"
+    document_id: uuid.UUID
+    block_idx: int
+    status: BlockStatus
+    audio_url: str | None = None
+    error: str | None = None
+
+
+class WSEvicted(BaseModel):
+    type: Literal["evicted"] = "evicted"
+    document_id: uuid.UUID
+    block_indices: list[int]

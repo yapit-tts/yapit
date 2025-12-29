@@ -9,9 +9,17 @@ from redis.asyncio import Redis
 from sqlalchemy.orm import selectinload
 from sqlmodel import select, update
 
-from yapit.contracts import TTS_INFLIGHT, SynthesisJob, SynthesisResult, get_queue_name
+from yapit.contracts import (
+    TTS_INFLIGHT,
+    SynthesisJob,
+    SynthesisResult,
+    WSBlockStatus,
+    get_pubsub_channel,
+    get_queue_name,
+)
 from yapit.gateway.cache import Cache
 from yapit.gateway.config import Settings
+from yapit.gateway.db import create_session, get_or_create_user_credits
 from yapit.gateway.domain_models import (
     BlockVariant,
     CreditTransaction,
@@ -19,12 +27,11 @@ from yapit.gateway.domain_models import (
     TransactionType,
     UserUsageStats,
 )
-from yapit.gateway.processors.base import Processor
 
 log = logging.getLogger("processor")
 
 
-class BaseTTSProcessor(Processor):
+class BaseTTSProcessor:
     """Base class for processing synthesis jobs from Redis queues."""
 
     def __init__(
@@ -32,14 +39,15 @@ class BaseTTSProcessor(Processor):
         settings: Settings,
         redis: Redis,
         cache: Cache,
-        **kwargs,
+        model: str,
     ) -> None:
-        super().__init__(settings, **kwargs)
-        self._queue = get_queue_name(self._slug)
+        self._settings = settings
+        self._model = model
+        self._queue = get_queue_name(model)
         self._redis = redis
         self._cache = cache
 
-        log.info(f"Processor for {self._slug} listening to queue: {self._queue}")
+        log.info(f"Processor for model={model} listening to queue: {self._queue}")
 
     @abstractmethod
     async def initialize(self) -> None:
@@ -51,12 +59,18 @@ class BaseTTSProcessor(Processor):
 
     async def _handle_job(self, raw: bytes) -> None:
         """Handle a single job from the queue."""
-        # break circular dependency as deps imports from ClientProcessor
-        from yapit.gateway.deps import get_db_session, get_or_create_user_credits
-
         job = None
         try:
             job = SynthesisJob.model_validate_json(raw)
+
+            # Check if block was evicted (cursor moved away)
+            pending_key = f"tts:pending:{job.user_id}:{job.document_id}"
+            is_pending = await self._redis.sismember(pending_key, job.block_idx)
+            if not is_pending:
+                log.debug(f"Block {job.block_idx} evicted (not in pending set), skipping")
+                await self._redis.delete(TTS_INFLIGHT.format(hash=job.variant_hash))
+                return
+
             result = await self.process(job)
 
             cache_ref = await self._cache.store(job.variant_hash, result.audio)
@@ -67,7 +81,7 @@ class BaseTTSProcessor(Processor):
             if result.audio_tokens:
                 await self._cache.store(f"{job.variant_hash}:tokens", result.audio_tokens.encode("utf-8"))
 
-            async for db in get_db_session():
+            async for db in create_session(self._settings):
                 # Update block variant with duration and cache reference
                 await db.exec(
                     update(BlockVariant)
@@ -133,6 +147,20 @@ class BaseTTSProcessor(Processor):
 
                 await db.commit()
                 break
+
+            # Remove from pending set (now cached)
+            pending_key = f"tts:pending:{job.user_id}:{job.document_id}"
+            await self._redis.srem(pending_key, job.block_idx)
+
+            await self._redis.publish(
+                get_pubsub_channel(job.user_id),
+                WSBlockStatus(
+                    document_id=job.document_id,
+                    block_idx=job.block_idx,
+                    status="cached",
+                    audio_url=f"/v1/audio/{job.variant_hash}",
+                ).model_dump_json(),
+            )
             await self._redis.delete(TTS_INFLIGHT.format(hash=job.variant_hash))
 
         except Exception as e:
