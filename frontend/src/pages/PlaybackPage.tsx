@@ -812,9 +812,13 @@ const PlaybackPage = () => {
       }
     }
 
-    console.log(`[Buffering] Progress: ${cachedAhead}/${MIN_BUFFER_TO_START} blocks cached`);
+    // For short documents, don't require more blocks than exist
+    const remainingBlocks = documentBlocks.length - startBlock;
+    const requiredBuffer = Math.min(MIN_BUFFER_TO_START, remainingBlocks);
 
-    if (cachedAhead >= MIN_BUFFER_TO_START) {
+    console.log(`[Buffering] Progress: ${cachedAhead}/${requiredBuffer} blocks cached`);
+
+    if (cachedAhead >= requiredBuffer) {
       console.log(`[Buffering] Buffer ready, starting playback`);
       setIsBuffering(false);
       setIsPlaying(true);
@@ -967,13 +971,16 @@ const PlaybackPage = () => {
     }
 
     // Server mode: check if we have enough cached blocks to start playing
+    // For short documents, don't require more blocks than exist
     const cachedAhead = countCachedAhead(startBlock);
+    const remainingBlocks = documentBlocks.length - startBlock;
+    const requiredBuffer = Math.min(MIN_BUFFER_TO_START, remainingBlocks);
 
-    if (cachedAhead >= MIN_BUFFER_TO_START) {
+    if (cachedAhead >= requiredBuffer) {
       console.log(`[Playback] Buffer ready: ${cachedAhead} blocks cached, starting playback`);
       setIsPlaying(true);
     } else {
-      console.log(`[Playback] Buffer insufficient: ${cachedAhead}/${MIN_BUFFER_TO_START} blocks, entering buffering state`);
+      console.log(`[Playback] Buffer insufficient: ${cachedAhead}/${requiredBuffer} blocks, entering buffering state`);
       setIsBuffering(true);
 
       // Request initial batch for server mode
