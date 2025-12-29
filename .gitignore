@@ -199,3 +199,6 @@ cython_debug/
 .pypirc
 
 .data/
+
+# Private agent files (not for public commit)
+agent/*/private/

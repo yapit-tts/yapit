@@ -104,6 +104,7 @@ RunPod (serverless, on-demand)
 | Audio cache | **Local SSD (SQLite)** | Session buffer, not permanent archive. LRU eviction, 7-14 day TTL |
 | CPU inference | **On VPS** | Marginal cost = $0 (already paying for box). RunPod CPU only if VPS maxed |
 | GPU inference | **RunPod serverless** | Pay-per-use for premium models, no 24/7 GPU cost |
+| Kokoro CPU threads | **OMP_NUM_THREADS=4** | Benchmarked optimal per replica. VPS scales well to T=8 (no hybrid core issues like i9). See `kokoro-cpu-benchmarking.md` for data. |
 
 ### Cache Strategy
 
@@ -204,43 +205,88 @@ Audio cache is a **session buffer**, not a permanent archive:
 - `GET /documents/{id}` - Get document
 - `GET /documents/{id}/blocks` - Get all blocks for playback
 
-**TTS:**
-- `POST /documents/{id}/blocks/{id}/synthesize/models/{model}/voices/{voice}` - Synthesize block (long-polling)
-- `POST /tts/submit/model/{model}/job/{job}` - Submit browser-synthesized audio (for ClientProcessor)
+**TTS (WebSocket):**
+- `WS /v1/ws/tts` - WebSocket for synthesis control (see below)
+
+**Audio:**
+- `GET /v1/audio/{variant_hash}` - Fetch cached audio by variant hash
+- `POST /v1/audio` - Submit browser-synthesized audio for caching
+
+### TTS Architecture: Model + Mode Separation
+
+**Core concept**: Model identity and deployment mode are separate concerns.
+
+**Model** (what): `kokoro`, `higgs` — the actual TTS model
+**Mode** (where): `browser`, `server` — where synthesis happens
+
+**DB stores models**, not deployment combinations:
+- One `TTSModel` entry per actual model (kokoro, higgs)
+- `credits_per_sec` is the server-side cost (browser mode = free)
+
+**Routing** is config-driven (`tts_processors.*.json`):
+```json
+{
+  "model": "kokoro",
+  "mode": "server",
+  "backend": {"processor": "LocalProcessor", "worker_url": "..."},
+  "overflow": {"processor": "RunpodProcessor", ...}
+}
+```
 
 ### TTS Processors (`yapit/gateway/processors/tts/`)
 
-| Processor | Config Slug | Purpose |
-|-----------|-------------|---------|
-| ClientProcessor | `kokoro-client-free` | Browser-side TTS. Frontend synthesizes with Kokoro.js, submits result to backend for caching |
-| LocalProcessor | `kokoro-cpu` | Server-side Kokoro via local HTTP worker. Used by `model: "kokoro-server"` in frontend |
-| LocalProcessor | `higgs-native` | Server-side HIGGS via local HTTP worker. Voices: `en-man`, `en-woman` |
-| RunpodProcessor | `kokoro-cpu-runpod`, `higgs-*` | Serverless via RunPod API |
+| Processor | Purpose |
+|-----------|---------|
+| LocalProcessor | Server-side via local HTTP worker (Kokoro on VPS) |
+| RunpodProcessor | Serverless via RunPod API (HIGGS, overflow) |
 
-**Frontend ModelType mapping:**
-- `kokoro` → ClientProcessor (browser TTS, zero server cost)
-- `kokoro-server` → LocalProcessor with `kokoro-cpu` slug
-- `higgs` → LocalProcessor with `higgs-native` slug
+**Overflow routing**: When queue depth exceeds threshold, requests route to overflow processor (e.g., RunPod serverless).
 
-### ClientProcessor Flow (for free browser TTS)
+### WebSocket Synthesis Flow (Server Mode)
 
 ```
-1. Frontend generates job_id (UUID)
-2. Frontend calls: POST /synthesize?job_id={job_id}
-   └─ Backend: Creates Future, stores in ClientProcessor._pending_jobs
-   └─ Backend: Long-polls waiting for result
-
-3. CONCURRENTLY, frontend synthesizes with Kokoro.js locally
-
-4. Frontend calls: POST /tts/submit with audio result
-   └─ Backend: ClientProcessor.submit_result() resolves Future
-   └─ Backend: Caches audio (for cross-device access, stats)
-
-5. Long-poll completes, returns audio to frontend
-   └─ (Frontend already has it locally - backend caching is for cross-device + analytics)
+Frontend                    Gateway                     Workers
+   |                           |                           |
+   |--WS connect + auth------->|                           |
+   |                           |                           |
+   |--{type: "synthesize",     |                           |
+   |   blocks: [0,1,2...],     |                           |
+   |   model: "kokoro",        |                           |
+   |   voice: "af_heart"}----->|                           |
+   |                           |                           |
+   |                           |--lpush to Redis queue---->|
+   |                           |                           |
+   |<--{type: "status",        |                           |
+   |    block_idx: 0,          |                           |
+   |    status: "queued"}------|                           |
+   |                           |                           |
+   |                           |<--brpop, process----------|
+   |                           |                           |
+   |                           |<--pubsub: done------------|
+   |                           |                           |
+   |<--{type: "status",        |                           |
+   |    block_idx: 0,          |                           |
+   |    status: "cached",      |                           |
+   |    audio_url: "/v1/audio/hash"}                       |
+   |                           |                           |
+   |--GET /v1/audio/hash------>|                           |
+   |<--audio bytes-------------|                           |
 ```
 
-**Note**: `kokoro-client-free` has `credits_per_sec=0` - no billing for free tier.
+**Key design decisions:**
+- WS for control messages (status updates, eviction)
+- HTTP for audio fetch (large binary, cacheable)
+- Redis pubsub for worker → gateway notifications
+- Queue per model: `tts:queue:kokoro`, `tts:queue:higgs`
+
+### Browser TTS Flow (Free Tier)
+
+Browser mode bypasses WS entirely:
+1. Frontend synthesizes locally with Kokoro.js (WASM/WebGPU)
+2. Frontend calls `POST /v1/audio` to cache result
+3. Audio available at `GET /v1/audio/{hash}` for cross-device access
+
+No credits charged for browser mode (zero server cost).
 
 ### Document Processors (`yapit/gateway/processors/document/`)
 
@@ -369,13 +415,17 @@ Then redeploy - alembic runs migrations on empty tables. Stack Auth project/user
 | File | Purpose |
 |------|---------|
 | `yapit/gateway/api/v1/documents.py` | Document CRUD, prepare flow, website stub |
-| `yapit/gateway/api/v1/tts.py` | Synthesis endpoint (long-polling), submit endpoint |
-| `yapit/gateway/processors/tts/client.py` | ClientProcessor - browser TTS coordination |
+| `yapit/gateway/api/v1/ws.py` | WebSocket endpoint for TTS synthesis control |
+| `yapit/gateway/api/v1/audio.py` | Audio fetch (GET) and browser TTS submit (POST) |
+| `yapit/gateway/processors/tts/manager.py` | TTSProcessorManager - routes model+mode to processor |
+| `yapit/gateway/processors/tts/base.py` | BaseTTSProcessor - queue polling, pubsub publish |
+| `yapit/gateway/processors/tts/local.py` | LocalProcessor - HTTP worker communication |
+| `yapit/gateway/processors/tts/runpod.py` | RunpodProcessor - serverless API |
 | `yapit/gateway/processors/document/markitdown.py` | MarkItDown wrapper |
 | `yapit/gateway/domain_models.py` | All SQLModel definitions |
 | `yapit/gateway/deps.py` | FastAPI dependency injection |
 | `yapit/gateway/cache.py` | SQLite cache implementation |
-| `yapit/contracts.py` | SynthesisJob, SynthesisResult (worker contracts) |
+| `yapit/contracts.py` | SynthesisJob, SynthesisResult, WS message schemas |
 | `yapit/gateway/processors/markdown/parser.py` | markdown-it-py wrapper, parse_markdown() |
 | `yapit/gateway/processors/markdown/transformer.py` | AST → StructuredDocument conversion |
 | `yapit/gateway/processors/markdown/models.py` | Pydantic models for StructuredDocument |
@@ -392,7 +442,7 @@ Then redeploy - alembic runs migrations on empty tables. Stack Auth project/user
 ### Config
 | File | Purpose |
 |------|---------|
-| `tts_processors.dev.json` | Maps model slugs to processor classes |
+| `tts_processors.dev.json` | Routes model+mode to processors (backend + optional overflow) |
 | `document_processors.dev.json` | Maps processor slugs to classes |
 | `.env.dev` | Dev environment variables |
 
@@ -469,7 +519,6 @@ make test-local
 ## Known Issues & Tech Debt
 
 ### Medium Priority
-- **ClientProcessor caching flow** - Round-trip is conceptually odd (frontend has audio but still calls backend). Works, leave as-is until requirements clearer.
 - **URL structure review** - Current `/playback/{id}` works but consider alternatives: `/d/{id}` (shorter), `/documents/{id}` (RESTful), or `/listen/{id}` (action-oriented). Low priority but worth thinking about before public launch.
 - UI stuff for when you dont have engh credits, and so on. Generally the whole ui picker with isntead of "server / browser" have "free / pro/premium" and greying out voices you cant use, stuff like that.
 
@@ -487,9 +536,9 @@ No limits on anonymous users currently. Add config-driven safeguards based on re
 - **Inconsistent API call patterns** - Some components check `isAuthReady`, some don't need to. Pattern could be standardized with a wrapper hook that handles waiting internally.
 - **Dropdown+dialog state coordination** - The pattern of closing dropdown before opening dialog (sidebar rename) is easy to forget and caused a freeze bug. Consider a utility or clearer pattern.
 - **No global document state** - Sidebar fetches documents independently. Fine for now, but if multiple components need document list, would need refetch or context.
-- **useWS.ts dead code** - WebSocket hook exists but is not imported anywhere. Delete or implement if real-time features are needed.
 
-### Low Priority / Later
+### ~~Low Priority / Later~~ The actual, slightly random, todolist
+- **Kokoro thread/replica tuning for prod**: Test T=8×2 vs T=4×4 on 16 vCPU. T=8×2 = lower latency per request; T=4×4 = better load distribution. Compare UX impact.
 - **Filter system** (contracts.py) - Partially implemented, ignoring for now.
 - **Admin panel** (#22, #25) - Stub - actually needed? E.g. for self-host, but what settings even?
 - **Rate limiting** (#47) - Not urgent until public launch.
@@ -518,12 +567,12 @@ No limits on anonymous users currently. Add config-driven safeguards based on re
  - because yh smtms it's not the best flow still yk if the sentences are kinda split audibly unnaturally. at least with kokoro that's an issue - need to test whether higgs actually solves this with the audio context!
  - i would however do this end-to-end, after we've test-deployed on the VPS, so we see how fast the real kokoro cpu inference is. + testing a bit more with laptops that actually have a functioning webgpu...
  - stress test document sidebar with 500+ documents (pagination working, implemented in FE, etc.?)
-- idk where else I wrote this down now too, but like yh definitely some kind of batch processing or / process entire doc in the background for free or a very low amount of credits (for kokoro) would be nice. but have to figure out the UX for this (both like UI/UX and like billing wise UX). For higgs I have to still see whether this will be an issue, else this might need to be like the ONLY modus operandi in the end? Like if else it's just too high latency, we need to do the entire doc or idk man. Or fetch like the 50-block neighbourhood of a block that's clicked to more efficiently utilize serverless workers but yh idfk.
 - documnents with long titles not shown in sidebar (just cutoff with elipsis) - maybe display full on hover?
 - ~~Dokploy~~ - using it, see [[dokploy-operations]]
 - write a testimonial for "VibeTyper" The S2T software I use (the dev will give a backlink to yapit / + my personal site and test the product too - plus he said he uses dockploy for VibeTyper)
 - the way we're displaying HTML from websites... are we safe from xss attacks? like do we sanitize the html properly? etc. pp.
-- rename model slugs from "kokoro-cpu" to "kokoro-server" etc. to be more accurate
+- TODO: Considering adding  https://docs.inworld.ai/docs/quickstart-tts ... if higgs is making problems / if this is actually higher quality / faster / cheaper than higgs on runpod.
+- is the edge case of a block being sent to a server worker which for some reason fails to process it (worker crash / oom / whatever) handled properly? like is there a timeout after which we retry or sth? or do we just hang forever?
 
 
 ### Nice to Have / Future Enhancements
