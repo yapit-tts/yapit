@@ -135,9 +135,7 @@ function DocumentSidebar() {
           <SidebarMenuItem>
             <SidebarMenuButton asChild size="lg">
               <Link to="/">
-                <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground font-semibold">
-                  Y
-                </div>
+                <img src="/favicon.svg" alt="Yapit" className="size-8" />
                 <div className="flex flex-col gap-0.5 leading-none">
                   <span className="font-semibold">yapit</span>
                   <span className="text-xs text-muted-foreground">text to speech</span>
@@ -176,7 +174,7 @@ function DocumentSidebar() {
                       isActive={documentId === doc.id}
                     >
                       <FileText className="shrink-0" />
-                      <span className="truncate">
+                      <span className="truncate" title={doc.title || "Untitled"}>
                         {doc.title || "Untitled"}
                       </span>
                     </SidebarMenuButton>
