@@ -93,6 +93,7 @@ function SmoothProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
 
   // Drag state
   const [isDragging, setIsDragging] = useState(false);
+  const [seekPosition, setSeekPosition] = useState<number | null>(null); // Block index being seeked to
   const dragStartXRef = useRef<number | null>(null);
   const DRAG_THRESHOLD = 5; // pixels before we consider it a drag vs click
 
@@ -128,6 +129,7 @@ function SmoothProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
       }
     }
 
+    setSeekPosition(blockIdx);
     onBlockHover?.(blockIdx, currentlyDragging);
   };
 
@@ -135,12 +137,14 @@ function SmoothProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
     const blockIdx = getBlockFromX(clientX);
     onBlockClick(blockIdx);
     setIsDragging(false);
+    setSeekPosition(null);
     dragStartXRef.current = null;
     onBlockHover?.(null, false);
   };
 
   const handleCancel = () => {
     setIsDragging(false);
+    setSeekPosition(null);
     dragStartXRef.current = null;
     onBlockHover?.(null, false);
   };
@@ -154,14 +158,17 @@ function SmoothProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
     if (dragStartXRef.current !== null) {
       handleMove(e.clientX);
     } else {
-      // Just hovering
-      onBlockHover?.(getBlockFromX(e.clientX), false);
+      // Just hovering - show indicator but don't trigger drag behavior
+      const blockIdx = getBlockFromX(e.clientX);
+      setSeekPosition(blockIdx);
+      onBlockHover?.(blockIdx, false);
     }
   };
   const handleMouseUp = (e: React.MouseEvent) => {
     handleEnd(e.clientX);
   };
   const handleMouseLeave = () => {
+    setSeekPosition(null); // Always clear indicator on leave
     if (!isDragging) {
       onBlockHover?.(null, false);
     }
@@ -239,7 +246,7 @@ function SmoothProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
       aria-valuenow={currentBlock + 1}
       tabIndex={0}
     >
-      {/* Position indicator - bright green line matching blocky mode's current block */}
+      {/* Current position indicator - bright green */}
       <div
         className="absolute top-0 bottom-0 w-1 pointer-events-none"
         style={{
@@ -249,6 +256,18 @@ function SmoothProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
           boxShadow: '0 0 6px oklch(0.55 0.15 145 / 0.8)',
         }}
       />
+      {/* Seek position indicator - yellow/amber, only during drag */}
+      {seekPosition !== null && seekPosition !== currentBlock && (
+        <div
+          className="absolute top-0 bottom-0 w-1.5 pointer-events-none"
+          style={{
+            left: `${(seekPosition / numBlocks) * 100}%`,
+            transform: 'translateX(-50%)',
+            backgroundColor: 'oklch(0.75 0.15 85)',
+            boxShadow: '0 0 8px oklch(0.75 0.15 85 / 0.9)',
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -260,6 +279,7 @@ function BlockyProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
 
   // Drag state
   const [isDragging, setIsDragging] = useState(false);
+  const [seekPosition, setSeekPosition] = useState<number | null>(null);
   const dragStartXRef = useRef<number | null>(null);
   const DRAG_THRESHOLD = 5;
 
@@ -294,6 +314,7 @@ function BlockyProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
         currentlyDragging = true;
       }
     }
+    setSeekPosition(blockIdx);
     onBlockHover?.(blockIdx, currentlyDragging);
   };
 
@@ -301,12 +322,14 @@ function BlockyProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
     const blockIdx = getBlockFromX(clientX);
     onBlockClick(blockIdx);
     setIsDragging(false);
+    setSeekPosition(null);
     dragStartXRef.current = null;
     onBlockHover?.(null, false);
   };
 
   const handleCancel = () => {
     setIsDragging(false);
+    setSeekPosition(null);
     dragStartXRef.current = null;
     onBlockHover?.(null, false);
   };
@@ -320,11 +343,14 @@ function BlockyProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
     if (dragStartXRef.current !== null) {
       handleMove(e.clientX);
     } else {
-      onBlockHover?.(getBlockFromX(e.clientX), false);
+      const blockIdx = getBlockFromX(e.clientX);
+      setSeekPosition(blockIdx);
+      onBlockHover?.(blockIdx, false);
     }
   };
   const handleMouseUp = (e: React.MouseEvent) => handleEnd(e.clientX);
   const handleMouseLeave = () => {
+    setSeekPosition(null);
     if (!isDragging) onBlockHover?.(null, false);
   };
 
@@ -354,6 +380,7 @@ function BlockyProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
     >
       {blockStates.map((state, idx) => {
         const isCurrent = idx === currentBlock;
+        const isSeekTarget = seekPosition === idx && seekPosition !== currentBlock;
 
         // State-based colors
         let bgColor = 'bg-muted/50'; // pending - subtle gray
@@ -365,6 +392,11 @@ function BlockyProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
           bgColor = 'bg-primary';
         }
 
+        // Seek target gets yellow highlight
+        if (isSeekTarget) {
+          bgColor = 'bg-yellow-400';
+        }
+
         return (
           <div
             key={idx}
@@ -373,6 +405,7 @@ function BlockyProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
               flex: '1 1 0',
               minWidth: 0,
               borderRight: idx < numBlocks - 1 ? '1px solid rgba(0,0,0,0.1)' : 'none',
+              boxShadow: isSeekTarget ? 'inset 0 0 0 2px oklch(0.75 0.15 85)' : 'none',
             }}
             title={`Block ${idx + 1}: ${state}`}
           />
