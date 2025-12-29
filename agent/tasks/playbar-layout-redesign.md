@@ -1,5 +1,5 @@
 ---
-status: active
+status: done
 type: implementation
 ---
 
@@ -77,9 +77,11 @@ Expanded (tap chevron/swipe up):
 ## Next Steps
 
 1. ~~Fix responsive positioning - make playbar + content respond to sidebar state~~ ✅ Done
-2. Increase progress bar touch target size
-3. Implement expandable mobile layout
-4. Implement smooth visualization mode for >200 block documents
+2. ~~Increase progress bar touch target size~~ ✅ Done
+3. ~~Implement expandable mobile layout~~ ✅ Done
+4. ~~Implement smooth visualization mode for >200 block documents~~ ✅ Done
+
+All layout items complete. Remaining work for drag/swipe interactions is tracked in [[progress-bar-ux]].
 
 ## Open Questions
 
@@ -125,6 +127,48 @@ For smooth mode:
 ---
 
 ## Work Log
+
+### 2025-12-29 - Remaining Layout Items Complete
+
+**What was done:**
+
+1. **Touch target size** - Progress bar height increased from `h-3` (12px) to `h-10` (40px) on mobile, `h-5` (20px) on desktop. Applied to both `BlockyProgressBar` and new `SmoothProgressBar`.
+
+2. **Expandable mobile layout** - On mobile, the playbar now shows collapsed by default:
+   - Collapsed: controls + progress bar + "Block X of Y" + chevron
+   - Expanded: adds voice picker, speed slider, volume slider, settings
+   - Chevron rotates 180° when expanded
+   - Desktop always shows full horizontal layout (unchanged)
+
+3. **Smooth gradient visualization** - For documents with >200 blocks (SMOOTH_THRESHOLD):
+   - CSS gradient with color stops at block boundaries
+   - Position indicator (thin vertical line) for current block
+   - Click-to-seek still works (maps x position to block index)
+   - State colors: pending (muted), synthesizing (yellow), cached (primary/60), current (primary)
+
+**Files modified:**
+- `frontend/src/components/soundControl.tsx`:
+  - Added `SmoothProgressBar` component (lines 21-97)
+  - Added `SMOOTH_THRESHOLD = 200` constant
+  - Updated `BlockyProgressBar` height classes
+  - Added `isMobileExpanded` state and conditional rendering for mobile/desktop layouts
+  - Added `ChevronUp` icon import
+
+**Verified with Chrome DevTools MCP:**
+- ✅ Mobile (375x812): Taller progress bar, collapsed layout, chevron expands to show voice/speed/volume
+- ✅ Desktop: Full horizontal layout unchanged
+- ✅ 331-block document uses SmoothProgressBar with gradient + position indicator
+
+**Status:** Layout items implemented, but smooth gradient had a bug (see below)
+
+### 2025-12-29 - Gradient Bug Fix
+
+Initial `SmoothProgressBar` gradient was transparent because of invalid CSS syntax:
+- ❌ `oklch(var(--primary))` - wrong, var already contains full `oklch(...)` value
+- ✅ `var(--primary)` - correct for solid colors
+- ✅ `color-mix(in oklch, var(--primary) 60%, transparent)` - correct for opacity
+
+Fixed in `soundControl.tsx:44-48`.
 
 ### 2025-12-29 - Responsive Positioning Implemented
 

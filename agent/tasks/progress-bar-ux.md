@@ -1,5 +1,5 @@
 ---
-status: active
+status: blocked
 type: implementation
 ---
 
@@ -7,11 +7,23 @@ type: implementation
 
 **Component:** `frontend/src/components/soundControl.tsx` → `BlockyProgressBar`
 
+**Blocked by:** [[playbar-layout-redesign]] - mobile layout is completely broken, need stable responsive foundation before adding interactions
+
+## Scope
+
+This task covers:
+1. **Drag/swipe seeking** - touch/mouse drag to navigate blocks (blocked)
+2. **Hover highlighting** - highlight document block when hovering progress bar (can implement independently)
+
+Layout/sizing work has been moved to [[playbar-layout-redesign]].
+
 ## Design Decision
 
 Keep the blocky visualization (shows synthesis state at a glance) but make it behave like a slider via drag/swipe. No separate slider needed — the drag behavior turns the blocky bar into a slider while preserving the visual state info.
 
 The innovation: "a progress bar that shows you synthesis state AND behaves like a slider."
+
+Note: For documents with many blocks (100+), [[playbar-layout-redesign]] will implement a smooth gradient visualization. The drag interaction will still work - position maps to block index regardless of visual representation.
 
 ## Current State
 
@@ -25,7 +37,7 @@ Missing: drag/swipe interaction, document highlighting on hover.
 
 ## Planned Improvements
 
-### 1. Drag/Swipe Seeking (Mobile + Desktop)
+### 1. Drag/Swipe Seeking (Mobile + Desktop) — BLOCKED
 
 **Mobile:** Touch and swipe horizontally across the progress bar to seek through blocks. Like a slider in video games.
 
@@ -52,8 +64,6 @@ Essentially: drag for visual exploration ("where do I want to jump to?"), releas
 - Doesn't snap playback to that block—just visual preview
 - Current playing block stays highlighted with its normal treatment
 - Two blocks can be highlighted simultaneously: hovered + current
-- the pbar needs to be slightly larger anyways, not just for mobile (Then bigger docs are also much less of an issue)
- - and this task is a good opportunity to also encompass yk maybe a full visual redesign of the playbar section? hm, maybe not. prlly better to make that a separate task? unless it's important to think it holistically, yk with how we do mobile etc. and proper responsive layout and like yk reposition some of the audio controls / redesign a bit - should maybe brainstorma and create prototypes before we implement this feature !
 
 **Implementation:**
 - Need to lift hover state up to parent (or use context) so document view can access it
@@ -66,11 +76,12 @@ Essentially: drag for visual exploration ("where do I want to jump to?"), releas
 - Different color for hover (yellow?) to distinguish from "currently playing"
 - Start with same green, see if distinction is needed
 
-### 3. Mobile-First Considerations
+### 3. Mobile-First Considerations — MOVED
 
-- Progress bar needs adequate touch target height on mobile (currently `h-3`, might need `h-4` or larger on mobile)
-- Consider full-width on mobile (currently constrained by `max-w-2xl`)
-- Swipe gesture should feel native and responsive
+Moved to [[playbar-layout-redesign]]:
+- Touch target sizing
+- Responsive layout (full-width on mobile)
+- Smooth visualization for many-block documents
 
 ## Technical Notes
 
@@ -129,3 +140,24 @@ const handlePointerUp = (e: PointerEvent) => {
 - `frontend/src/components/soundControl.tsx` - Progress bar component
 - `frontend/src/pages/PlaybackPage.tsx` - Parent, manages currentBlock state
 - `frontend/src/components/structuredDocument.tsx` - Document view, block highlighting
+
+---
+
+## Work Log
+
+### 2025-12-29 - Analysis and Task Split
+
+Investigated current playbar implementation via Chrome DevTools MCP.
+
+**Critical finding:** Mobile layout is completely broken. The playbar uses `fixed bottom-0 left-64` which assumes a 256px sidebar. On mobile (375x812), the sidebar becomes a dialog overlay, not fixed positioning, so the playbar is pushed almost entirely off-screen.
+
+Also discovered:
+- Documents with many blocks (514 in test case) make individual block segments sub-pixel and meaningless
+- Progress bar height `h-3` (12px) is too small for touch targets
+
+**Decision:** Split layout work into separate task [[playbar-layout-redesign]] since it's substantial and this task was getting scope creep. The drag/swipe interaction (this task) is blocked on stable layout, but hover highlighting could potentially be implemented independently.
+
+User confirmed:
+- Mobile is must-work-well priority
+- Smooth gradient visualization for long docs is acceptable
+- Drag should still work on smooth visualization (maps position to block index)
