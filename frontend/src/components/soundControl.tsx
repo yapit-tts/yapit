@@ -9,6 +9,61 @@ import { useSidebar } from "@/components/ui/sidebar";
 
 type BlockState = 'pending' | 'synthesizing' | 'cached';
 
+// Hook for repeat-on-hold with acceleration (like volume buttons)
+function useRepeatOnHold(callback: () => void, disabled?: boolean) {
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const currentDelayRef = useRef(400);
+
+  const INITIAL_DELAY = 400; // Wait before starting to repeat
+  const START_INTERVAL = 400; // First repeat interval
+  const MIN_INTERVAL = 50; // Fastest repeat interval
+  const ACCELERATION = 0.85; // Multiply interval by this each repeat
+
+  const stop = useCallback(() => {
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+    currentDelayRef.current = START_INTERVAL;
+  }, []);
+
+  const startRepeating = useCallback(() => {
+    if (disabled) return;
+
+    const repeat = () => {
+      callback();
+      currentDelayRef.current = Math.max(MIN_INTERVAL, currentDelayRef.current * ACCELERATION);
+      intervalRef.current = setTimeout(repeat, currentDelayRef.current) as unknown as ReturnType<typeof setInterval>;
+    };
+
+    timeoutRef.current = setTimeout(repeat, INITIAL_DELAY);
+  }, [callback, disabled]);
+
+  const handleStart = useCallback(() => {
+    if (disabled) return;
+    callback(); // Fire immediately on press
+    startRepeating();
+  }, [callback, disabled, startRepeating]);
+
+  // Cleanup on unmount
+  useEffect(() => stop, [stop]);
+
+  // Use both mouse and touch events for broad compatibility
+  return {
+    onMouseDown: handleStart,
+    onMouseUp: stop,
+    onMouseLeave: stop,
+    onTouchStart: handleStart,
+    onTouchEnd: stop,
+    onTouchCancel: stop,
+  };
+}
+
 // Switch to smooth gradient visualization for documents with many blocks
 const SMOOTH_THRESHOLD = 200;
 
@@ -38,9 +93,10 @@ function SmoothProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
   }, [numBlocks]);
 
   const handlePointerDown = (e: React.PointerEvent) => {
+    e.preventDefault(); // Prevent default touch behaviors
     dragStartXRef.current = e.clientX;
-    // Capture pointer for drag tracking outside element
-    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    // Capture pointer on the container for reliable tracking
+    barRef.current?.setPointerCapture(e.pointerId);
   };
 
   const handlePointerMove = (e: React.PointerEvent) => {
@@ -63,13 +119,8 @@ function SmoothProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
   const handlePointerUp = (e: React.PointerEvent) => {
     const blockIdx = getBlockFromX(e.clientX);
 
-    if (!isDragging) {
-      // Was a click (no significant movement)
-      onBlockClick(blockIdx);
-    } else {
-      // Was a drag - commit the position
-      onBlockClick(blockIdx);
-    }
+    // Always commit position on pointer up (click or drag release)
+    onBlockClick(blockIdx);
 
     // Reset drag state
     setIsDragging(false);
@@ -147,10 +198,15 @@ function SmoothProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
       aria-valuenow={currentBlock + 1}
       tabIndex={0}
     >
-      {/* Position indicator for current block */}
+      {/* Position indicator - bright green line matching blocky mode's current block */}
       <div
-        className="absolute top-0 bottom-0 w-0.5 bg-foreground/80 pointer-events-none"
-        style={{ left: `${currentPct}%` }}
+        className="absolute top-0 bottom-0 w-1 pointer-events-none"
+        style={{
+          left: `${currentPct}%`,
+          transform: 'translateX(-50%)',
+          backgroundColor: 'oklch(0.55 0.15 145)',
+          boxShadow: '0 0 6px oklch(0.55 0.15 145 / 0.8)',
+        }}
       />
     </div>
   );
@@ -179,8 +235,9 @@ function BlockyProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
   }
 
   const handlePointerDown = (e: React.PointerEvent) => {
+    e.preventDefault(); // Prevent default touch behaviors
     dragStartXRef.current = e.clientX;
-    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    barRef.current?.setPointerCapture(e.pointerId);
   };
 
   const handlePointerMove = (e: React.PointerEvent) => {
@@ -200,8 +257,6 @@ function BlockyProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
 
   const handlePointerUp = (e: React.PointerEvent) => {
     const blockIdx = getBlockFromX(e.clientX);
-
-    // Both click and drag-release commit the position
     onBlockClick(blockIdx);
 
     setIsDragging(false);
@@ -333,6 +388,12 @@ const SoundControl = ({
   // Get sidebar state for responsive positioning
   const { state: sidebarState, isMobile } = useSidebar();
 
+  const numBlocks = numberOfBlocks ?? 0;
+
+  // Long-press repeat with acceleration for skip buttons
+  const skipBackProps = useRepeatOnHold(onSkipBack, (currentBlock ?? 0) <= 0 && !isPlaying);
+  const skipForwardProps = useRepeatOnHold(onSkipForward, (currentBlock ?? 0) >= numBlocks - 1);
+
   useEffect(() => {
     setProgressDisplay(msToTime(audioProgress));
   }, [audioProgress]);
@@ -341,7 +402,6 @@ const SoundControl = ({
     setDurationDisplay(msToTime(estimated_ms));
   }, [estimated_ms]);
 
-  const numBlocks = numberOfBlocks ?? 0;
   const blockNum = (currentBlock ?? 0) + 1;
 
   // Playbar positioning: on mobile or collapsed sidebar, use full width; on desktop with expanded sidebar, offset by sidebar width
@@ -356,8 +416,8 @@ const SoundControl = ({
         <Button
           variant="ghost"
           size="icon"
-          onClick={onSkipBack}
           disabled={(currentBlock ?? 0) <= 0 && !isPlaying}
+          {...skipBackProps}
         >
           <SkipBack className="h-5 w-5" />
         </Button>
@@ -384,8 +444,8 @@ const SoundControl = ({
         <Button
           variant="ghost"
           size="icon"
-          onClick={onSkipForward}
           disabled={(currentBlock ?? 0) >= numBlocks - 1}
+          {...skipForwardProps}
         >
           <SkipForward className="h-5 w-5" />
         </Button>

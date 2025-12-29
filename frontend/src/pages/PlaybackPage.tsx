@@ -208,7 +208,7 @@ const PlaybackPage = () => {
     if (!isDraggingProgressBar) return;
     if (hoveredBlock === null || hoveredBlock === currentBlock) return;
 
-    const SCROLL_THROTTLE_MS = 350; // Slower = less jittery on fast drags
+    const SCROLL_THROTTLE_MS = 500; // Higher = less jittery on fast drags
     const now = Date.now();
     if (now - lastHoverScrollTimeRef.current < SCROLL_THROTTLE_MS) return;
 
@@ -217,12 +217,14 @@ const PlaybackPage = () => {
     );
     if (!element) return;
 
-    // Check if element is visible in viewport
+    // Check if element is visible in viewport (with some margin)
     const rect = element.getBoundingClientRect();
-    const isVisible = rect.top >= 0 && rect.bottom <= window.innerHeight;
+    const margin = 50; // Don't scroll if block is near edge
+    const isVisible = rect.top >= margin && rect.bottom <= window.innerHeight - margin;
 
     if (!isVisible) {
-      element.scrollIntoView({ behavior: "smooth", block: "center" });
+      // Use instant scroll to avoid queuing animations
+      element.scrollIntoView({ behavior: "auto", block: "center" });
       lastHoverScrollTimeRef.current = now;
     }
   }, [hoveredBlock, currentBlock, isDraggingProgressBar]);
@@ -459,7 +461,9 @@ const PlaybackPage = () => {
 
       const floatData = pcmToFloat32(response.data);
       if (floatData.length === 0) {
-        console.warn("[Playback] Empty audio from cache for block", blockId, "- will be skipped");
+        const block = documentBlocks.find(b => b.id === blockId);
+        const blockText = block?.text ?? "(unknown)";
+        console.warn(`[Playback] Empty audio from cache for block ${blockId} - will be skipped. Content: "${blockText}"`);
         return null;
       }
       const audioBuffer = audioContextRef.current.createBuffer(1, floatData.length, sampleRate);
@@ -1106,25 +1110,36 @@ const PlaybackPage = () => {
     // Stop current audio
     audioPlayerRef.current?.stop();
 
-    blockStartTimeRef.current = 0;
-    setAudioProgress(0);
-
     if (currentBlock > 0) {
-      setCurrentBlock(currentBlock - 1);
-    } else if (currentBlock === 0 && isPlaying && documentBlocks.length > 0) {
-      // Restart current block - directly play since effect won't re-trigger
-      const blockId = documentBlocks[0].id;
-      const audioData = audioBuffersRef.current.get(blockId);
-      if (audioData) {
-        playAudioBuffer(audioData);
-      } else {
-        synthesizeBlock(blockId).then(data => {
-          if (data && isPlayingRef.current) {
-            playAudioBuffer(data);
-          } else if (!data) {
-            console.error(`[Playback] SYNTHESIS FAILED for block ${blockId} on skip-back restart`);
-          }
-        });
+      // Calculate progress up to the new block
+      const newBlock = currentBlock - 1;
+      let progressMs = 0;
+      for (let i = 0; i < newBlock; i++) {
+        const blockData = audioBuffersRef.current.get(documentBlocks[i].id);
+        progressMs += blockData?.duration_ms ?? documentBlocks[i].est_duration_ms ?? 0;
+      }
+      blockStartTimeRef.current = progressMs;
+      setAudioProgress(progressMs);
+      setCurrentBlock(newBlock);
+    } else if (currentBlock === 0) {
+      // At first block - restart from beginning
+      blockStartTimeRef.current = 0;
+      setAudioProgress(0);
+      if (isPlaying && documentBlocks.length > 0) {
+        // Restart current block - directly play since effect won't re-trigger
+        const blockId = documentBlocks[0].id;
+        const audioData = audioBuffersRef.current.get(blockId);
+        if (audioData) {
+          playAudioBuffer(audioData);
+        } else {
+          synthesizeBlock(blockId).then(data => {
+            if (data && isPlayingRef.current) {
+              playAudioBuffer(data);
+            } else if (!data) {
+              console.error(`[Playback] SYNTHESIS FAILED for block ${blockId} on skip-back restart`);
+            }
+          });
+        }
       }
     }
   };
