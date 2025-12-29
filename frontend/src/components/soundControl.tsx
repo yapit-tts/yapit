@@ -16,12 +16,18 @@ interface ProgressBarProps {
   blockStates: BlockState[];
   currentBlock: number;
   onBlockClick: (idx: number) => void;
+  onBlockHover?: (idx: number | null, isDragging: boolean) => void;
 }
 
 // Smooth gradient visualization for large documents
-function SmoothProgressBar({ blockStates, currentBlock, onBlockClick }: ProgressBarProps) {
+function SmoothProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHover }: ProgressBarProps) {
   const barRef = useRef<HTMLDivElement>(null);
   const numBlocks = blockStates.length;
+
+  // Drag state
+  const [isDragging, setIsDragging] = useState(false);
+  const dragStartXRef = useRef<number | null>(null);
+  const DRAG_THRESHOLD = 5; // pixels before we consider it a drag vs click
 
   const getBlockFromX = useCallback((clientX: number) => {
     if (!barRef.current) return 0;
@@ -31,9 +37,58 @@ function SmoothProgressBar({ blockStates, currentBlock, onBlockClick }: Progress
     return Math.min(numBlocks - 1, Math.floor(pct * numBlocks));
   }, [numBlocks]);
 
-  const handleClick = (e: React.MouseEvent) => {
+  const handlePointerDown = (e: React.PointerEvent) => {
+    dragStartXRef.current = e.clientX;
+    // Capture pointer for drag tracking outside element
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+  };
+
+  const handlePointerMove = (e: React.PointerEvent) => {
     const blockIdx = getBlockFromX(e.clientX);
-    onBlockClick(blockIdx);
+
+    // Check if we should enter drag mode
+    let currentlyDragging = isDragging;
+    if (dragStartXRef.current !== null && !isDragging) {
+      const moved = Math.abs(e.clientX - dragStartXRef.current) > DRAG_THRESHOLD;
+      if (moved) {
+        setIsDragging(true);
+        currentlyDragging = true;
+      }
+    }
+
+    // During drag or hover, update the highlighted block (pass drag state)
+    onBlockHover?.(blockIdx, currentlyDragging);
+  };
+
+  const handlePointerUp = (e: React.PointerEvent) => {
+    const blockIdx = getBlockFromX(e.clientX);
+
+    if (!isDragging) {
+      // Was a click (no significant movement)
+      onBlockClick(blockIdx);
+    } else {
+      // Was a drag - commit the position
+      onBlockClick(blockIdx);
+    }
+
+    // Reset drag state
+    setIsDragging(false);
+    dragStartXRef.current = null;
+    onBlockHover?.(null, false);
+  };
+
+  const handlePointerLeave = () => {
+    // Only clear hover if not dragging (dragging uses pointer capture)
+    if (!isDragging) {
+      onBlockHover?.(null, false);
+    }
+  };
+
+  const handlePointerCancel = () => {
+    // Drag was cancelled (e.g., system gesture)
+    setIsDragging(false);
+    dragStartXRef.current = null;
+    onBlockHover?.(null, false);
   };
 
   // Build CSS gradient from block states
@@ -79,9 +134,13 @@ function SmoothProgressBar({ blockStates, currentBlock, onBlockClick }: Progress
   return (
     <div
       ref={barRef}
-      className="flex-1 h-10 md:h-5 rounded overflow-hidden cursor-pointer relative"
+      className="flex-1 h-10 md:h-5 rounded overflow-hidden cursor-pointer relative touch-none"
       style={{ background: gradient }}
-      onClick={handleClick}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onPointerLeave={handlePointerLeave}
+      onPointerCancel={handlePointerCancel}
       role="slider"
       aria-valuemin={1}
       aria-valuemax={numBlocks}
@@ -98,22 +157,80 @@ function SmoothProgressBar({ blockStates, currentBlock, onBlockClick }: Progress
 }
 
 // Individual block visualization for smaller documents
-function BlockyProgressBar({ blockStates, currentBlock, onBlockClick }: ProgressBarProps) {
+function BlockyProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHover }: ProgressBarProps) {
+  const barRef = useRef<HTMLDivElement>(null);
   const numBlocks = blockStates.length;
 
-  // Debug: log what we're receiving
-  console.log(`[BlockyProgressBar] numBlocks=${numBlocks}, currentBlock=${currentBlock}, states:`,
-    blockStates.slice(0, 10).map((s, i) => `${i}:${s}`).join(', '));
+  // Drag state
+  const [isDragging, setIsDragging] = useState(false);
+  const dragStartXRef = useRef<number | null>(null);
+  const DRAG_THRESHOLD = 5;
+
+  const getBlockFromX = useCallback((clientX: number) => {
+    if (!barRef.current) return 0;
+    const rect = barRef.current.getBoundingClientRect();
+    const x = clientX - rect.left;
+    const pct = Math.max(0, Math.min(1, x / rect.width));
+    return Math.min(numBlocks - 1, Math.floor(pct * numBlocks));
+  }, [numBlocks]);
 
   if (numBlocks === 0) {
-    console.log('[BlockyProgressBar] No blocks, showing empty bar');
     return <div className="flex-1 h-10 md:h-5 bg-muted rounded" />;
   }
 
-  // Always show individual blocks filling the entire width (like a health bar)
-  // Each block is an equal slice of the total width
+  const handlePointerDown = (e: React.PointerEvent) => {
+    dragStartXRef.current = e.clientX;
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+  };
+
+  const handlePointerMove = (e: React.PointerEvent) => {
+    const blockIdx = getBlockFromX(e.clientX);
+
+    let currentlyDragging = isDragging;
+    if (dragStartXRef.current !== null && !isDragging) {
+      const moved = Math.abs(e.clientX - dragStartXRef.current) > DRAG_THRESHOLD;
+      if (moved) {
+        setIsDragging(true);
+        currentlyDragging = true;
+      }
+    }
+
+    onBlockHover?.(blockIdx, currentlyDragging);
+  };
+
+  const handlePointerUp = (e: React.PointerEvent) => {
+    const blockIdx = getBlockFromX(e.clientX);
+
+    // Both click and drag-release commit the position
+    onBlockClick(blockIdx);
+
+    setIsDragging(false);
+    dragStartXRef.current = null;
+    onBlockHover?.(null, false);
+  };
+
+  const handlePointerLeave = () => {
+    if (!isDragging) {
+      onBlockHover?.(null, false);
+    }
+  };
+
+  const handlePointerCancel = () => {
+    setIsDragging(false);
+    dragStartXRef.current = null;
+    onBlockHover?.(null, false);
+  };
+
   return (
-    <div className="flex-1 flex items-center h-10 md:h-5 bg-muted/30 rounded overflow-hidden">
+    <div
+      ref={barRef}
+      className="flex-1 flex items-center h-10 md:h-5 bg-muted/30 rounded overflow-hidden touch-none"
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onPointerLeave={handlePointerLeave}
+      onPointerCancel={handlePointerCancel}
+    >
       {blockStates.map((state, idx) => {
         const isCurrent = idx === currentBlock;
 
@@ -128,16 +245,14 @@ function BlockyProgressBar({ blockStates, currentBlock, onBlockClick }: Progress
         }
 
         return (
-          <button
+          <div
             key={idx}
             className={`h-full transition-colors duration-150 hover:brightness-110 ${bgColor}`}
             style={{
               flex: '1 1 0',
               minWidth: 0,
-              // Tiny gap between blocks (border creates the divider effect)
               borderRight: idx < numBlocks - 1 ? '1px solid rgba(0,0,0,0.1)' : 'none',
             }}
-            onClick={() => onBlockClick(idx)}
             title={`Block ${idx + 1}: ${state}`}
           />
         );
@@ -151,6 +266,7 @@ interface ProgressBarValues {
   numberOfBlocks: number | undefined;
   currentBlock: number | undefined;
   setCurrentBlock: (value: number) => void;
+  onBlockHover?: (idx: number | null, isDragging: boolean) => void;
   audioProgress: number;
   blockStates: BlockState[];
 }
@@ -208,7 +324,7 @@ const SoundControl = ({
   voiceSelection,
   onVoiceChange,
 }: Props) => {
-  const { estimated_ms, numberOfBlocks, currentBlock, setCurrentBlock, audioProgress, blockStates } = progressBarValues;
+  const { estimated_ms, numberOfBlocks, currentBlock, setCurrentBlock, onBlockHover, audioProgress, blockStates } = progressBarValues;
   const [progressDisplay, setProgressDisplay] = useState("0:00");
   const [durationDisplay, setDurationDisplay] = useState("0:00");
   const [isHoveringSpinner, setIsHoveringSpinner] = useState(false);
@@ -285,12 +401,14 @@ const SoundControl = ({
             blockStates={blockStates}
             currentBlock={currentBlock ?? 0}
             onBlockClick={setCurrentBlock}
+            onBlockHover={onBlockHover}
           />
         ) : (
           <BlockyProgressBar
             blockStates={blockStates}
             currentBlock={currentBlock ?? 0}
             onBlockClick={setCurrentBlock}
+            onBlockHover={onBlockHover}
           />
         )}
         <span className="text-sm text-muted-foreground w-12 tabular-nums">

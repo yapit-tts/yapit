@@ -837,6 +837,16 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
         .structured-content span.audio-block-active {
           background: oklch(0.55 0.1 133.7 / 0.15);
         }
+
+        /* Hover highlighting from progress bar (applied via DOM manipulation) */
+        /* Uses amber/yellow to distinguish from active (green) */
+        .structured-content .audio-block-hovered {
+          background: oklch(0.75 0.15 85 / 0.2);
+          border-left-color: oklch(0.75 0.15 85);
+        }
+        .structured-content span.audio-block-hovered {
+          background: oklch(0.75 0.15 85 / 0.2);
+        }
       `}</style>
     </article>
   );
