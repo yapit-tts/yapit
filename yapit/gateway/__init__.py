@@ -1,4 +1,5 @@
 import logging
+import os
 from contextlib import asynccontextmanager
 
 import redis.asyncio as redis
@@ -80,5 +81,12 @@ def create_app(
     @app.get("/health")
     async def health():
         return {"status": "ok"}
+
+    @app.get("/version")
+    async def version():
+        return {
+            "commit": os.environ.get("GIT_COMMIT", "unknown"),
+            "build_time": os.environ.get("BUILD_TIME", "unknown"),
+        }
 
     return app
