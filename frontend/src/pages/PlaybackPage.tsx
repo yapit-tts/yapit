@@ -1110,6 +1110,12 @@ const PlaybackPage = () => {
     // Stop current audio
     audioPlayerRef.current?.stop();
 
+    // Don't modify progress if we're in an invalid state
+    if (currentBlock < 0 || !documentBlocks.length) {
+      console.log('[SkipBack] Invalid state, currentBlock:', currentBlock);
+      return;
+    }
+
     if (currentBlock > 0) {
       // Calculate progress up to the new block
       const newBlock = currentBlock - 1;
@@ -1118,11 +1124,13 @@ const PlaybackPage = () => {
         const blockData = audioBuffersRef.current.get(documentBlocks[i].id);
         progressMs += blockData?.duration_ms ?? documentBlocks[i].est_duration_ms ?? 0;
       }
+      console.log('[SkipBack] Going to block', newBlock, 'progress:', progressMs);
       blockStartTimeRef.current = progressMs;
       setAudioProgress(progressMs);
       setCurrentBlock(newBlock);
-    } else if (currentBlock === 0) {
-      // At first block - restart from beginning
+    } else {
+      // At first block (currentBlock === 0) - restart from beginning
+      console.log('[SkipBack] At first block, restarting');
       blockStartTimeRef.current = 0;
       setAudioProgress(0);
       if (isPlaying && documentBlocks.length > 0) {

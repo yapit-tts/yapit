@@ -14,6 +14,7 @@ function useRepeatOnHold(callback: () => void, disabled?: boolean) {
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const currentDelayRef = useRef(400);
+  const isActiveRef = useRef(false);
 
   const INITIAL_DELAY = 400; // Wait before starting to repeat
   const START_INTERVAL = 400; // First repeat interval
@@ -21,6 +22,7 @@ function useRepeatOnHold(callback: () => void, disabled?: boolean) {
   const ACCELERATION = 0.85; // Multiply interval by this each repeat
 
   const stop = useCallback(() => {
+    isActiveRef.current = false;
     if (intervalRef.current) {
       clearInterval(intervalRef.current);
       intervalRef.current = null;
@@ -33,9 +35,10 @@ function useRepeatOnHold(callback: () => void, disabled?: boolean) {
   }, []);
 
   const startRepeating = useCallback(() => {
-    if (disabled) return;
+    if (disabled || !isActiveRef.current) return;
 
     const repeat = () => {
+      if (!isActiveRef.current) return;
       callback();
       currentDelayRef.current = Math.max(MIN_INTERVAL, currentDelayRef.current * ACCELERATION);
       intervalRef.current = setTimeout(repeat, currentDelayRef.current) as unknown as ReturnType<typeof setInterval>;
@@ -44,21 +47,30 @@ function useRepeatOnHold(callback: () => void, disabled?: boolean) {
     timeoutRef.current = setTimeout(repeat, INITIAL_DELAY);
   }, [callback, disabled]);
 
-  const handleStart = useCallback(() => {
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
     if (disabled) return;
-    callback(); // Fire immediately on press
+    e.preventDefault();
+    isActiveRef.current = true;
+    callback();
+    startRepeating();
+  }, [callback, disabled, startRepeating]);
+
+  const handleTouchStart = useCallback((e: React.TouchEvent) => {
+    if (disabled) return;
+    e.preventDefault();
+    isActiveRef.current = true;
+    callback();
     startRepeating();
   }, [callback, disabled, startRepeating]);
 
   // Cleanup on unmount
   useEffect(() => stop, [stop]);
 
-  // Use both mouse and touch events for broad compatibility
   return {
-    onMouseDown: handleStart,
+    onMouseDown: handleMouseDown,
     onMouseUp: stop,
     onMouseLeave: stop,
-    onTouchStart: handleStart,
+    onTouchStart: handleTouchStart,
     onTouchEnd: stop,
     onTouchCancel: stop,
   };
@@ -92,54 +104,80 @@ function SmoothProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
     return Math.min(numBlocks - 1, Math.floor(pct * numBlocks));
   }, [numBlocks]);
 
-  const handlePointerDown = (e: React.PointerEvent) => {
-    e.preventDefault(); // Prevent default touch behaviors
-    dragStartXRef.current = e.clientX;
-    // Capture pointer on the container for reliable tracking
-    barRef.current?.setPointerCapture(e.pointerId);
+  // Get X coordinate from either mouse or touch event
+  const getClientX = (e: React.MouseEvent | React.TouchEvent): number => {
+    if ('touches' in e) {
+      return e.touches[0]?.clientX ?? e.changedTouches[0]?.clientX ?? 0;
+    }
+    return e.clientX;
   };
 
-  const handlePointerMove = (e: React.PointerEvent) => {
-    const blockIdx = getBlockFromX(e.clientX);
+  const handleStart = (clientX: number) => {
+    dragStartXRef.current = clientX;
+  };
 
-    // Check if we should enter drag mode
+  const handleMove = (clientX: number) => {
+    const blockIdx = getBlockFromX(clientX);
+
     let currentlyDragging = isDragging;
     if (dragStartXRef.current !== null && !isDragging) {
-      const moved = Math.abs(e.clientX - dragStartXRef.current) > DRAG_THRESHOLD;
+      const moved = Math.abs(clientX - dragStartXRef.current) > DRAG_THRESHOLD;
       if (moved) {
         setIsDragging(true);
         currentlyDragging = true;
       }
     }
 
-    // During drag or hover, update the highlighted block (pass drag state)
     onBlockHover?.(blockIdx, currentlyDragging);
   };
 
-  const handlePointerUp = (e: React.PointerEvent) => {
-    const blockIdx = getBlockFromX(e.clientX);
-
-    // Always commit position on pointer up (click or drag release)
+  const handleEnd = (clientX: number) => {
+    const blockIdx = getBlockFromX(clientX);
     onBlockClick(blockIdx);
-
-    // Reset drag state
     setIsDragging(false);
     dragStartXRef.current = null;
     onBlockHover?.(null, false);
   };
 
-  const handlePointerLeave = () => {
-    // Only clear hover if not dragging (dragging uses pointer capture)
+  const handleCancel = () => {
+    setIsDragging(false);
+    dragStartXRef.current = null;
+    onBlockHover?.(null, false);
+  };
+
+  // Mouse events
+  const handleMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    handleStart(e.clientX);
+  };
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (dragStartXRef.current !== null) {
+      handleMove(e.clientX);
+    } else {
+      // Just hovering
+      onBlockHover?.(getBlockFromX(e.clientX), false);
+    }
+  };
+  const handleMouseUp = (e: React.MouseEvent) => {
+    handleEnd(e.clientX);
+  };
+  const handleMouseLeave = () => {
     if (!isDragging) {
       onBlockHover?.(null, false);
     }
   };
 
-  const handlePointerCancel = () => {
-    // Drag was cancelled (e.g., system gesture)
-    setIsDragging(false);
-    dragStartXRef.current = null;
-    onBlockHover?.(null, false);
+  // Touch events
+  const handleTouchStart = (e: React.TouchEvent) => {
+    e.preventDefault();
+    handleStart(getClientX(e));
+  };
+  const handleTouchMove = (e: React.TouchEvent) => {
+    e.preventDefault();
+    handleMove(getClientX(e));
+  };
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    handleEnd(getClientX(e));
   };
 
   // Build CSS gradient from block states
@@ -187,11 +225,14 @@ function SmoothProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
       ref={barRef}
       className="flex-1 h-10 md:h-5 rounded overflow-hidden cursor-pointer relative touch-none"
       style={{ background: gradient }}
-      onPointerDown={handlePointerDown}
-      onPointerMove={handlePointerMove}
-      onPointerUp={handlePointerUp}
-      onPointerLeave={handlePointerLeave}
-      onPointerCancel={handlePointerCancel}
+      onMouseDown={handleMouseDown}
+      onMouseMove={handleMouseMove}
+      onMouseUp={handleMouseUp}
+      onMouseLeave={handleMouseLeave}
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+      onTouchCancel={handleCancel}
       role="slider"
       aria-valuemin={1}
       aria-valuemax={numBlocks}
@@ -234,57 +275,82 @@ function BlockyProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
     return <div className="flex-1 h-10 md:h-5 bg-muted rounded" />;
   }
 
-  const handlePointerDown = (e: React.PointerEvent) => {
-    e.preventDefault(); // Prevent default touch behaviors
-    dragStartXRef.current = e.clientX;
-    barRef.current?.setPointerCapture(e.pointerId);
+  // Get X coordinate from touch event
+  const getClientX = (e: React.TouchEvent): number => {
+    return e.touches[0]?.clientX ?? e.changedTouches[0]?.clientX ?? 0;
   };
 
-  const handlePointerMove = (e: React.PointerEvent) => {
-    const blockIdx = getBlockFromX(e.clientX);
+  const handleStart = (clientX: number) => {
+    dragStartXRef.current = clientX;
+  };
 
+  const handleMove = (clientX: number) => {
+    const blockIdx = getBlockFromX(clientX);
     let currentlyDragging = isDragging;
     if (dragStartXRef.current !== null && !isDragging) {
-      const moved = Math.abs(e.clientX - dragStartXRef.current) > DRAG_THRESHOLD;
+      const moved = Math.abs(clientX - dragStartXRef.current) > DRAG_THRESHOLD;
       if (moved) {
         setIsDragging(true);
         currentlyDragging = true;
       }
     }
-
     onBlockHover?.(blockIdx, currentlyDragging);
   };
 
-  const handlePointerUp = (e: React.PointerEvent) => {
-    const blockIdx = getBlockFromX(e.clientX);
+  const handleEnd = (clientX: number) => {
+    const blockIdx = getBlockFromX(clientX);
     onBlockClick(blockIdx);
-
     setIsDragging(false);
     dragStartXRef.current = null;
     onBlockHover?.(null, false);
   };
 
-  const handlePointerLeave = () => {
-    if (!isDragging) {
-      onBlockHover?.(null, false);
+  const handleCancel = () => {
+    setIsDragging(false);
+    dragStartXRef.current = null;
+    onBlockHover?.(null, false);
+  };
+
+  // Mouse events
+  const handleMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    handleStart(e.clientX);
+  };
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (dragStartXRef.current !== null) {
+      handleMove(e.clientX);
+    } else {
+      onBlockHover?.(getBlockFromX(e.clientX), false);
     }
   };
-
-  const handlePointerCancel = () => {
-    setIsDragging(false);
-    dragStartXRef.current = null;
-    onBlockHover?.(null, false);
+  const handleMouseUp = (e: React.MouseEvent) => handleEnd(e.clientX);
+  const handleMouseLeave = () => {
+    if (!isDragging) onBlockHover?.(null, false);
   };
+
+  // Touch events
+  const handleTouchStart = (e: React.TouchEvent) => {
+    e.preventDefault();
+    handleStart(getClientX(e));
+  };
+  const handleTouchMove = (e: React.TouchEvent) => {
+    e.preventDefault();
+    handleMove(getClientX(e));
+  };
+  const handleTouchEnd = (e: React.TouchEvent) => handleEnd(getClientX(e));
 
   return (
     <div
       ref={barRef}
       className="flex-1 flex items-center h-10 md:h-5 bg-muted/30 rounded overflow-hidden touch-none"
-      onPointerDown={handlePointerDown}
-      onPointerMove={handlePointerMove}
-      onPointerUp={handlePointerUp}
-      onPointerLeave={handlePointerLeave}
-      onPointerCancel={handlePointerCancel}
+      onMouseDown={handleMouseDown}
+      onMouseMove={handleMouseMove}
+      onMouseUp={handleMouseUp}
+      onMouseLeave={handleMouseLeave}
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+      onTouchCancel={handleCancel}
     >
       {blockStates.map((state, idx) => {
         const isCurrent = idx === currentBlock;
