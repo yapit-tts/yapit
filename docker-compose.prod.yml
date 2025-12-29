@@ -51,8 +51,7 @@ services:
       context: .
       dockerfile: yapit/gateway/Dockerfile
       args:
-        GIT_COMMIT: ${GIT_COMMIT:-unknown}
-        BUILD_TIME: ${BUILD_TIME:-unknown}
+        GIT_COMMIT: ${GIT_COMMIT}
     env_file:
       - ./.env
       - ./.env.prod

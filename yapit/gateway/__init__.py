@@ -1,5 +1,4 @@
 import logging
-import os
 from contextlib import asynccontextmanager
 
 import redis.asyncio as redis
@@ -84,9 +83,11 @@ def create_app(
 
     @app.get("/version")
     async def version():
-        return {
-            "commit": os.environ.get("GIT_COMMIT", "unknown"),
-            "build_time": os.environ.get("BUILD_TIME", "unknown"),
-        }
+        try:
+            with open("/app/version.txt") as f:
+                commit = f.read().strip()
+        except FileNotFoundError:
+            commit = "unknown"
+        return {"commit": commit}
 
     return app

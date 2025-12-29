@@ -9,9 +9,8 @@ RUN pip install uv --no-cache-dir  && uv pip install ".[gateway]" --no-cache-dir
 COPY yapit/ /app/yapit
 
 ARG GIT_COMMIT=unknown
-ARG BUILD_TIME=unknown
-ENV GIT_COMMIT=${GIT_COMMIT} BUILD_TIME=${BUILD_TIME}
-ENV PYTHONUNBUFFERED=1 PYTHONPATH=/app/gateway
+RUN echo "$GIT_COMMIT" > /app/version.txt
 
+ENV PYTHONUNBUFFERED=1 PYTHONPATH=/app/gateway
 EXPOSE 8000
 CMD ["uvicorn", "yapit.gateway:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
