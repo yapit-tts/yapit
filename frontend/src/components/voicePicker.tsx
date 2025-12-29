@@ -8,10 +8,13 @@ import { Slider } from "@/components/ui/slider";
 import {
   type VoiceSelection,
   type ModelType,
+  type KokoroLanguageCode,
   KOKORO_VOICES,
   HIGGS_PRESETS,
   HIGGS_SCENES,
-  groupKokoroVoices,
+  LANGUAGE_INFO,
+  groupKokoroVoicesByLanguage,
+  isHighQualityVoice,
   setVoiceSelection,
   getPinnedVoices,
   togglePinnedVoice,
@@ -26,10 +29,24 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
   const [open, setOpen] = useState(false);
   const [pinnedVoices, setPinnedVoices] = useState<string[]>([]);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  // Track which language sections are expanded (user manages, we just remember)
+  const [expandedLanguages, setExpandedLanguages] = useState<Set<KokoroLanguageCode>>(new Set(["a"]));
 
   useEffect(() => {
     setPinnedVoices(getPinnedVoices());
   }, []);
+
+  const toggleLanguageExpanded = (lang: KokoroLanguageCode) => {
+    setExpandedLanguages(prev => {
+      const next = new Set(prev);
+      if (next.has(lang)) {
+        next.delete(lang);
+      } else {
+        next.add(lang);
+      }
+      return next;
+    });
+  };
 
   const handlePinToggle = (slug: string) => {
     const newPinned = togglePinnedVoice(slug);
@@ -100,7 +117,7 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
     ? `Kokoro${isKokoroServer ? " (Server)" : ""}`
     : "HIGGS";
 
-  const voiceGroups = groupKokoroVoices(KOKORO_VOICES);
+  const voiceGroups = groupKokoroVoicesByLanguage(KOKORO_VOICES);
 
   // Get pinned voices for current model
   const pinnedKokoro = KOKORO_VOICES.filter(v => pinnedVoices.includes(v.index));
@@ -148,15 +165,17 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
                 </button>
               </div>
             </div>
-            {/* Pinned section */}
+            {/* Starred section */}
             {pinnedKokoro.length > 0 && (
               <div className="border-b">
-                <div className="px-3 py-1.5 text-xs font-medium text-muted-foreground">Pinned</div>
+                <div className="px-3 py-1.5 text-xs font-medium text-muted-foreground">Starred</div>
                 {pinnedKokoro.map(voice => (
                   <VoiceRow
                     key={voice.index}
                     name={voice.name}
-                    detail={voice.overallGrade}
+                    flag={LANGUAGE_INFO[voice.language].flag}
+                    isHighQuality={isHighQualityVoice(voice)}
+                    gender={voice.gender}
                     isPinned={true}
                     isSelected={value.voiceSlug === voice.index}
                     onSelect={() => handleVoiceSelect(voice.index)}
@@ -166,22 +185,35 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
               </div>
             )}
 
-            {/* Grouped voices */}
+            {/* Language sections */}
             {voiceGroups.map(group => (
-              <div key={group.key} className="border-b last:border-b-0">
-                <div className="px-3 py-1.5 text-xs font-medium text-muted-foreground">{group.label}</div>
-                {group.voices.map(voice => (
-                  <VoiceRow
-                    key={voice.index}
-                    name={voice.name}
-                    detail={voice.overallGrade}
-                    isPinned={pinnedVoices.includes(voice.index)}
-                    isSelected={value.voiceSlug === voice.index}
-                    onSelect={() => handleVoiceSelect(voice.index)}
-                    onPinToggle={() => handlePinToggle(voice.index)}
-                  />
-                ))}
-              </div>
+              <Collapsible
+                key={group.language}
+                open={expandedLanguages.has(group.language)}
+                onOpenChange={() => toggleLanguageExpanded(group.language)}
+                className="border-b last:border-b-0"
+              >
+                <CollapsibleTrigger className="flex w-full items-center gap-2 px-3 py-2 text-xs font-medium hover:bg-accent">
+                  <ChevronRight className={`h-3 w-3 transition-transform ${expandedLanguages.has(group.language) ? "rotate-90" : ""}`} />
+                  <span>{group.flag}</span>
+                  <span className="flex-1 text-left">{group.label}</span>
+                  <span className="text-muted-foreground">({group.voices.length})</span>
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                  {group.voices.map(voice => (
+                    <VoiceRow
+                      key={voice.index}
+                      name={voice.name}
+                      isHighQuality={isHighQualityVoice(voice)}
+                      gender={voice.gender}
+                      isPinned={pinnedVoices.includes(voice.index)}
+                      isSelected={value.voiceSlug === voice.index}
+                      onSelect={() => handleVoiceSelect(voice.index)}
+                      onPinToggle={() => handlePinToggle(voice.index)}
+                    />
+                  ))}
+                </CollapsibleContent>
+              </Collapsible>
             ))}
           </TabsContent>
 
@@ -268,14 +300,17 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
 
 interface VoiceRowProps {
   name: string;
-  detail?: string;
+  flag?: string; // language flag for starred section
+  detail?: string; // for HIGGS
+  isHighQuality?: boolean; // for Kokoro A/B tier
+  gender?: "Female" | "Male"; // for Kokoro
   isPinned: boolean;
   isSelected: boolean;
   onSelect: () => void;
   onPinToggle: () => void;
 }
 
-function VoiceRow({ name, detail, isPinned, isSelected, onSelect, onPinToggle }: VoiceRowProps) {
+function VoiceRow({ name, flag, detail, isHighQuality, gender, isPinned, isSelected, onSelect, onPinToggle }: VoiceRowProps) {
   return (
     <div
       className={`flex items-center gap-2 px-3 py-1.5 cursor-pointer hover:bg-accent ${isSelected ? "bg-accent" : ""}`}
@@ -290,7 +325,12 @@ function VoiceRow({ name, detail, isPinned, isSelected, onSelect, onPinToggle }:
       >
         <Star className={`h-3 w-3 ${isPinned ? "fill-current text-yellow-500" : ""}`} />
       </button>
-      <span className="text-sm flex-1">{name}</span>
+      <span className="text-sm flex-1 flex items-center gap-1.5">
+        {flag && <span className="text-xs">{flag}</span>}
+        {name}
+        {isHighQuality && <span className="text-xs" title="High quality">✨</span>}
+      </span>
+      {gender && <span className="text-xs text-muted-foreground">{gender === "Female" ? "♀" : "♂"}</span>}
       {detail && <span className="text-xs text-muted-foreground">{detail}</span>}
     </div>
   );
