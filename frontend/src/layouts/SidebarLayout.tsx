@@ -5,7 +5,7 @@ const SidebarLayout = ({ children }: { children: React.ReactNode }) => {
   return (
     <SidebarProvider>
       <DocumentSidebar />
-      <main className="w-full">
+      <main className="flex-1 min-w-0">
         <SidebarTrigger className="fixed backdrop-blur-lg" />
         {children}
       </main>

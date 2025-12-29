@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { VoicePicker } from "@/components/voicePicker";
 import { SettingsDialog } from "@/components/settingsDialog";
 import { type VoiceSelection } from "@/lib/voiceSelection";
+import { useSidebar } from "@/components/ui/sidebar";
 
 type BlockState = 'pending' | 'synthesizing' | 'cached';
 
@@ -129,6 +130,9 @@ const SoundControl = ({
   const [durationDisplay, setDurationDisplay] = useState("0:00");
   const [isHoveringSpinner, setIsHoveringSpinner] = useState(false);
 
+  // Get sidebar state for responsive positioning
+  const { state: sidebarState, isMobile } = useSidebar();
+
   useEffect(() => {
     setProgressDisplay(msToTime(audioProgress));
   }, [audioProgress]);
@@ -140,8 +144,13 @@ const SoundControl = ({
   const numBlocks = numberOfBlocks ?? 0;
   const blockNum = (currentBlock ?? 0) + 1;
 
+  // Playbar positioning: on mobile or collapsed sidebar, use full width; on desktop with expanded sidebar, offset by sidebar width
+  const playbarPositionClass = isMobile || sidebarState === "collapsed"
+    ? "left-0"
+    : "left-[var(--sidebar-width)]";
+
   return (
-    <div className="fixed bottom-0 left-64 right-0 bg-background/80 backdrop-blur-lg border-t border-border p-4">
+    <div className={`fixed bottom-0 right-0 bg-background/80 backdrop-blur-lg border-t border-border p-4 transition-[left] duration-200 ease-linear ${playbarPositionClass}`}>
       {/* Playback controls */}
       <div className="flex items-center justify-center gap-4 mb-3">
         <Button
