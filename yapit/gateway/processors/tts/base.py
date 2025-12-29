@@ -73,6 +73,21 @@ class BaseTTSProcessor:
 
             result = await self.process(job)
 
+            if not result.audio:
+                log.info(f"Empty audio for block {job.block_idx}, marking as skipped")
+                pending_key = f"tts:pending:{job.user_id}:{job.document_id}"
+                await self._redis.srem(pending_key, job.block_idx)
+                await self._redis.publish(
+                    get_pubsub_channel(job.user_id),
+                    WSBlockStatus(
+                        document_id=job.document_id,
+                        block_idx=job.block_idx,
+                        status="skipped",
+                    ).model_dump_json(),
+                )
+                await self._redis.delete(TTS_INFLIGHT.format(hash=job.variant_hash))
+                return
+
             cache_ref = await self._cache.store(job.variant_hash, result.audio)
             if cache_ref is None:
                 raise RuntimeError(f"Cache write failed for {job.variant_hash}")

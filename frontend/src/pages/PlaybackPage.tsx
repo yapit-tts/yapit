@@ -132,6 +132,18 @@ const PlaybackPage = () => {
   // Track previous block for DOM-based highlighting (avoids React re-renders)
   const prevBlockIdxRef = useRef<number>(-1);
 
+  // Hover/drag highlighting state (progress bar → document)
+  const [hoveredBlock, setHoveredBlock] = useState<number | null>(null);
+  const [isDraggingProgressBar, setIsDraggingProgressBar] = useState(false);
+  const prevHoveredBlockRef = useRef<number | null>(null);
+  const lastHoverScrollTimeRef = useRef<number>(0);
+
+  // Handler for progress bar hover/drag - updates both hover position and drag state
+  const handleBlockHover = useCallback((idx: number | null, isDragging: boolean) => {
+    setHoveredBlock(idx);
+    setIsDraggingProgressBar(isDragging);
+  }, []);
+
   // Parallel prefetch tracking
   const prefetchedUpToRef = useRef<number>(-1); // Highest block index we've triggered prefetch for
   const playingBlockRef = useRef<number>(-1); // Block currently being played (prevents duplicate play calls)
@@ -166,6 +178,54 @@ const PlaybackPage = () => {
 
     prevBlockIdxRef.current = currentBlock;
   }, [currentBlock]);
+
+  // DOM-based hover highlighting (progress bar → document block)
+  useLayoutEffect(() => {
+    const HOVER_BLOCK_CLASS = "audio-block-hovered";
+
+    // Remove hover class from previous block
+    if (prevHoveredBlockRef.current !== null) {
+      const prevElements = window.document.querySelectorAll(
+        `[data-audio-block-idx="${prevHoveredBlockRef.current}"]`
+      );
+      prevElements.forEach((el) => el.classList.remove(HOVER_BLOCK_CLASS));
+    }
+
+    // Add hover class to currently hovered block (if not same as active)
+    if (hoveredBlock !== null && hoveredBlock !== currentBlock) {
+      const hoveredElements = window.document.querySelectorAll(
+        `[data-audio-block-idx="${hoveredBlock}"]`
+      );
+      hoveredElements.forEach((el) => el.classList.add(HOVER_BLOCK_CLASS));
+    }
+
+    prevHoveredBlockRef.current = hoveredBlock;
+  }, [hoveredBlock, currentBlock]);
+
+  // Scroll to hovered block during drag (not hover) - throttled, only when off-screen
+  useEffect(() => {
+    // Only scroll when actively dragging, not on passive hover
+    if (!isDraggingProgressBar) return;
+    if (hoveredBlock === null || hoveredBlock === currentBlock) return;
+
+    const SCROLL_THROTTLE_MS = 350; // Slower = less jittery on fast drags
+    const now = Date.now();
+    if (now - lastHoverScrollTimeRef.current < SCROLL_THROTTLE_MS) return;
+
+    const element = window.document.querySelector(
+      `[data-audio-block-idx="${hoveredBlock}"]`
+    );
+    if (!element) return;
+
+    // Check if element is visible in viewport
+    const rect = element.getBoundingClientRect();
+    const isVisible = rect.top >= 0 && rect.bottom <= window.innerHeight;
+
+    if (!isVisible) {
+      element.scrollIntoView({ behavior: "smooth", block: "center" });
+      lastHoverScrollTimeRef.current = now;
+    }
+  }, [hoveredBlock, currentBlock, isDraggingProgressBar]);
 
   // Fetch document and blocks on mount (wait for auth to be ready)
   useEffect(() => {
@@ -398,6 +458,10 @@ const PlaybackPage = () => {
       const durationMs = parseInt(response.headers["x-duration-ms"] || "0", 10);
 
       const floatData = pcmToFloat32(response.data);
+      if (floatData.length === 0) {
+        console.warn("[Playback] Empty audio from cache for block", blockId, "- will be skipped");
+        return null;
+      }
       const audioBuffer = audioContextRef.current.createBuffer(1, floatData.length, sampleRate);
       audioBuffer.getChannelData(0).set(floatData);
 
@@ -801,11 +865,12 @@ const PlaybackPage = () => {
 
     const startBlock = currentBlockRef.current >= 0 ? currentBlockRef.current : 0;
 
-    // Count cached blocks ahead
+    // Count resolved blocks ahead (cached or skipped)
     let cachedAhead = 0;
     for (let idx = startBlock; idx < documentBlocks.length; idx++) {
       const block = documentBlocks[idx];
-      if (audioBuffersRef.current.has(block.id)) {
+      const isSkipped = ttsWS.blockStates.get(idx) === "skipped";
+      if (audioBuffersRef.current.has(block.id) || isSkipped) {
         cachedAhead++;
       } else {
         break;
@@ -823,7 +888,7 @@ const PlaybackPage = () => {
       setIsBuffering(false);
       setIsPlaying(true);
     }
-  }, [isBuffering, documentBlocks, blockStateVersion, ttsWS.audioUrls]);
+  }, [isBuffering, documentBlocks, blockStateVersion, ttsWS.audioUrls, ttsWS.blockStates]);
 
   // Proactively fetch audio when WS reports blocks as cached (server mode only)
   // This ensures audio is ready before we try to play it
@@ -873,6 +938,21 @@ const PlaybackPage = () => {
 
       // Skip if we're already playing this block
       if (playingBlockRef.current === currentBlock) {
+        return;
+      }
+
+      // Auto-advance if this block is marked as skipped (empty audio)
+      if (ttsWS.blockStates.get(currentBlock) === "skipped") {
+        console.log(`[Playback] Block ${currentBlock} is skipped, advancing to next`);
+        playingBlockRef.current = currentBlock;
+        setCurrentBlock(prev => {
+          if (documentBlocks && prev < documentBlocks.length - 1) {
+            return prev + 1;
+          } else {
+            setIsPlaying(false);
+            return -1;
+          }
+        });
         return;
       }
 
@@ -927,23 +1007,24 @@ const PlaybackPage = () => {
         }
       }
     }
-  }, [currentBlock, isPlaying, documentBlocks, playAudioBuffer, synthesizeBlock, triggerPrefetchBatch, checkAndRefillBuffer, isServerMode, ttsWS.isConnected]);
+  }, [currentBlock, isPlaying, documentBlocks, playAudioBuffer, synthesizeBlock, triggerPrefetchBatch, checkAndRefillBuffer, isServerMode, ttsWS.isConnected, ttsWS.blockStates]);
 
 
-  // Helper: count cached blocks ahead of a given position
+  // Helper: count resolved blocks ahead (cached or skipped)
   const countCachedAhead = useCallback((fromIdx: number): number => {
     if (!documentBlocks || documentBlocks.length === 0) return 0;
     let count = 0;
     for (let idx = fromIdx; idx < documentBlocks.length; idx++) {
       const block = documentBlocks[idx];
-      if (audioBuffersRef.current.has(block.id)) {
+      const isSkipped = ttsWS.blockStates.get(idx) === "skipped";
+      if (audioBuffersRef.current.has(block.id) || isSkipped) {
         count++;
       } else {
         break; // Stop at first gap
       }
     }
     return count;
-  }, [documentBlocks]);
+  }, [documentBlocks, ttsWS.blockStates]);
 
   const handlePlay = async () => {
     if (isPlaying || isBuffering) return;
@@ -1160,6 +1241,7 @@ const PlaybackPage = () => {
           numberOfBlocks,
           currentBlock: currentBlock >= 0 ? currentBlock : 0,
           setCurrentBlock: handleBlockChange,
+          onBlockHover: handleBlockHover,
           audioProgress,
           blockStates,
         }}

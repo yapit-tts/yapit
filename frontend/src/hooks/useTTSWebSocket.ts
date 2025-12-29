@@ -4,13 +4,13 @@ import { getOrCreateAnonymousId } from "@/lib/anonymousId";
 
 const WS_BASE_URL = import.meta.env.VITE_WS_BASE_URL;
 
-export type BlockStatus = "pending" | "queued" | "processing" | "cached" | "error";
+export type BlockStatus = "pending" | "queued" | "processing" | "cached" | "skipped" | "error";
 
 interface WSBlockStatusMessage {
   type: "status";
   document_id: string;
   block_idx: number;
-  status: "queued" | "processing" | "cached" | "error";
+  status: "queued" | "processing" | "cached" | "skipped" | "error";
   audio_url?: string;
   error?: string;
 }

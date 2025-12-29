@@ -83,7 +83,7 @@ class WSCursorMoved(BaseModel):
 
 # WebSocket messages: Server → Client
 
-BlockStatus = Literal["queued", "processing", "cached", "error"]
+BlockStatus = Literal["queued", "processing", "cached", "skipped", "error"]
 
 
 class WSBlockStatus(BaseModel):
