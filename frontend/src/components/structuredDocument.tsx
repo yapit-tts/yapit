@@ -814,16 +814,21 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
           list-style-type: decimal;
         }
 
-        /* All audio blocks get permanent padding to prevent layout shift */
+        /* Block-level audio blocks - padding + negative margin keeps text position unchanged */
         .structured-content [data-audio-block-idx] {
           padding-left: 0.625rem;
           padding-right: 0.625rem;
+          margin-left: -0.625rem;
+          margin-right: -0.625rem;
           border-radius: 0.5rem;
         }
+        /* Inline spans - minimal padding for subtle highlight extension */
         .structured-content span[data-audio-block-idx] {
           padding-left: 0.0625rem;
           padding-right: 0.0625rem;
-          border-radius: 0.125rem;
+          margin-left: -0.0625rem;
+          margin-right: -0.0625rem;
+          border-radius: 0.25rem;
         }
 
         /* Active audio block highlighting - just toggle background */
