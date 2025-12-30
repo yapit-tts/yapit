@@ -20,6 +20,9 @@
   --color-secondary-foreground: var(--secondary-foreground);
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
+  --color-muted-warm: var(--muted-warm);
+  --color-muted-brown: var(--muted-brown);
+  --color-muted-table: var(--muted-table);
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
@@ -55,6 +58,9 @@
   --secondary-foreground: oklch(0.96 0.0267 97.61);
   --muted: oklch(0.86 0.0461 115.51);
   --muted-foreground: oklch(0.556 0 0);
+  --muted-warm: oklch(0.88 0.035 85);
+  --muted-brown: oklch(0.9036 0.029 91.66);
+  --muted-table: oklch(0.82 0.04 75);
   --accent: oklch(0.93 0.025 130);
   --accent-foreground: oklch(0.30 0.04 130);
   --destructive: oklch(0.577 0.245 27.325);
@@ -113,6 +119,10 @@
 @layer base {
   * {
     @apply border-border outline-ring/50;
+  }
+  html {
+    /* Prevent layout shift when overlay scrollbar appears/disappears (macOS) */
+    scrollbar-gutter: stable;
   }
   body {
     @apply bg-background text-foreground;

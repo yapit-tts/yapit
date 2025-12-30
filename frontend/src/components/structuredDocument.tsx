@@ -153,9 +153,9 @@ interface BlockProps {
 // Always have border-l-4 to prevent layout shift when active state changes
 // Active state is managed via DOM manipulation in PlaybackPage, not React props (avoids re-renders)
 const blockBaseClass = "border-l-4 border-l-transparent -ml-1 transition-colors duration-150";
-const clickableClass = "cursor-pointer hover:bg-muted/50 rounded";
+const clickableClass = "cursor-pointer clickable-block";
 
-function HeadingBlockView({ block, onClick, slugId }: BlockProps & { block: HeadingBlock; slugId?: string }) {
+function HeadingBlockView({ block, slugId }: { block: HeadingBlock; slugId?: string }) {
   const sizeClasses: Record<number, string> = {
     1: "text-3xl font-bold mt-8 mb-4",
     2: "text-2xl font-semibold mt-6 mb-3",
@@ -167,15 +167,12 @@ function HeadingBlockView({ block, onClick, slugId }: BlockProps & { block: Head
 
   const className = cn(
     sizeClasses[block.level],
-    "py-1",
-    blockBaseClass,
-    onClick && clickableClass
+    "py-1"
   );
 
   const props = {
     id: slugId,
     className,
-    onClick,
     dangerouslySetInnerHTML: { __html: block.html },
   };
 
@@ -189,32 +186,22 @@ function HeadingBlockView({ block, onClick, slugId }: BlockProps & { block: Head
   }
 }
 
-function ParagraphBlockView({ block, onClick }: BlockProps & { block: ParagraphBlock }) {
+function ParagraphBlockView({ block }: { block: ParagraphBlock }) {
   return (
     <p
-      className={cn(
-        "my-3 py-1 leading-relaxed",
-        blockBaseClass,
-        onClick && clickableClass
-      )}
-      onClick={onClick}
+      className="my-3 py-1 leading-relaxed"
       dangerouslySetInnerHTML={{ __html: block.html }}
     />
   );
 }
 
-function ListBlockView({ block, onClick }: BlockProps & { block: ListBlock }) {
+function ListBlockView({ block }: { block: ListBlock }) {
   const ListTag = block.ordered ? "ol" : "ul";
   const listClass = block.ordered ? "list-decimal" : "list-disc";
 
   return (
     <ListTag
-      className={cn(
-        "my-3 ml-6 py-1 transition-colors duration-150 rounded",
-        listClass,
-        onClick && clickableClass
-      )}
-      onClick={onClick}
+      className={cn("my-3 ml-6 py-1", listClass)}
       start={block.ordered ? block.start : undefined}
     >
       {block.items.map((item, idx) => (
@@ -250,7 +237,12 @@ function BlockquoteBlockView({ block, onBlockClick }: {
         } else {
           const b = grouped.block;
           return (
-            <div key={b.id} data-audio-block-idx={b.audio_block_idx ?? undefined}>
+            <div
+              key={b.id}
+              data-audio-block-idx={b.audio_block_idx ?? undefined}
+              className={cn(blockBaseClass, b.audio_block_idx !== null && onBlockClick && clickableClass)}
+              onClick={b.audio_block_idx !== null && onBlockClick ? () => onBlockClick(b.audio_block_idx as number) : undefined}
+            >
               <BlockView
                 block={b}
                 onBlockClick={onBlockClick}
@@ -267,13 +259,13 @@ function CodeBlockView({ block }: BlockProps & { block: CodeBlock }) {
   return (
     <div className="my-4">
       {block.language && (
-        <div className="text-xs text-muted-foreground bg-muted px-3 py-1 rounded-t border border-b-0 border-border">
+        <div className="text-xs text-muted-foreground bg-muted-brown px-3 py-1 rounded-t border border-b-0 border-border">
           {block.language}
         </div>
       )}
       <pre
         className={cn(
-          "bg-muted p-4 overflow-x-auto text-sm font-mono",
+          "bg-muted-brown p-4 overflow-x-auto text-sm font-mono",
           block.language ? "rounded-b border border-t-0 border-border" : "rounded border border-border"
         )}
       >
@@ -303,7 +295,7 @@ function MathBlockView({ block }: BlockProps & { block: MathBlock }) {
   return (
     <div
       ref={containerRef}
-      className="my-4 p-4 bg-muted/50 rounded border border-border text-center overflow-x-auto"
+      className="my-4 p-4 bg-muted-brown rounded border border-border text-center overflow-x-auto"
     />
   );
 }
@@ -313,7 +305,7 @@ function TableBlockView({ block }: BlockProps & { block: TableBlock }) {
     <div className="my-4 overflow-x-auto">
       <table className="w-full border-collapse border border-border text-sm">
         <thead>
-          <tr className="bg-muted">
+          <tr className="bg-muted-brown">
             {block.headers.map((header, idx) => (
               <th
                 key={idx}
@@ -325,7 +317,7 @@ function TableBlockView({ block }: BlockProps & { block: TableBlock }) {
         </thead>
         <tbody>
           {block.rows.map((row, rowIdx) => (
-            <tr key={rowIdx} className="hover:bg-muted/30">
+            <tr key={rowIdx} className="hover:bg-muted-brown/30">
               {row.map((cell, cellIdx) => (
                 <td
                   key={cellIdx}
@@ -423,8 +415,8 @@ function ParagraphGroupView({ blocks, onBlockClick }: ParagraphGroupViewProps) {
             key={block.id}
             data-audio-block-idx={block.audio_block_idx ?? undefined}
             className={cn(
-              "transition-colors duration-150 rounded",
-              handleClick && "cursor-pointer hover:bg-muted/50"
+              "transition-colors duration-150",
+              handleClick && "cursor-pointer clickable-span"
             )}
             onClick={handleClick}
           >
@@ -447,19 +439,13 @@ interface BlockViewProps {
 }
 
 function BlockView({ block, onBlockClick, slugMap }: BlockViewProps) {
-  const handleClick = block.audio_block_idx !== null && onBlockClick
-    ? () => onBlockClick(block.audio_block_idx as number)
-    : undefined;
-
-  const baseProps = { block, onClick: handleClick };
-
   switch (block.type) {
     case "heading":
-      return <HeadingBlockView {...baseProps} block={block} slugId={slugMap?.get(block.id)} />;
+      return <HeadingBlockView block={block} slugId={slugMap?.get(block.id)} />;
     case "paragraph":
-      return <ParagraphBlockView {...baseProps} block={block} />;
+      return <ParagraphBlockView block={block} />;
     case "list":
-      return <ListBlockView {...baseProps} block={block} />;
+      return <ListBlockView block={block} />;
     case "blockquote":
       return (
         <BlockquoteBlockView
@@ -468,13 +454,13 @@ function BlockView({ block, onBlockClick, slugMap }: BlockViewProps) {
         />
       );
     case "code":
-      return <CodeBlockView {...baseProps} block={block} />;
+      return <CodeBlockView block={block} />;
     case "math":
-      return <MathBlockView {...baseProps} block={block} />;
+      return <MathBlockView block={block} />;
     case "table":
-      return <TableBlockView {...baseProps} block={block} />;
+      return <TableBlockView block={block} />;
     case "image":
-      return <ImageBlockView {...baseProps} block={block} />;
+      return <ImageBlockView block={block} />;
     case "hr":
       return <ThematicBreakView />;
     default:
@@ -724,7 +710,7 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
           </div>
         </div>
       )}
-      <div ref={contentRef} className="structured-content" onClick={handleContentClick}>
+      <div ref={contentRef} className="structured-content px-3" onClick={handleContentClick}>
         {groupedBlocks.map((grouped) => {
           if (grouped.kind === "paragraph-group") {
             return (
@@ -743,6 +729,7 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
               <div
                 key={block.id}
                 data-audio-block-idx={block.audio_block_idx ?? undefined}
+                className={cn(blockBaseClass, handleWrapperClick && clickableClass)}
                 onClick={handleWrapperClick}
               >
                 <BlockView
@@ -806,7 +793,7 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
           font-style: italic;
         }
         .structured-content code:not(pre code) {
-          background: hsl(var(--muted));
+          background: var(--muted-brown);
           padding: 0.125rem 0.375rem;
           border-radius: 0.25rem;
           font-size: 0.875em;
@@ -827,25 +814,36 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
           list-style-type: decimal;
         }
 
-        /* Active audio block highlighting (applied via DOM manipulation) */
-        /* Block-level elements get left border + background */
+        /* All audio blocks get permanent padding to prevent layout shift */
+        .structured-content [data-audio-block-idx] {
+          padding-left: 0.625rem;
+          padding-right: 0.625rem;
+          border-radius: 0.5rem;
+        }
+        .structured-content span[data-audio-block-idx] {
+          padding-left: 0.25rem;
+          padding-right: 0.25rem;
+          border-radius: 0.375rem;
+        }
+
+        /* Active audio block highlighting - just toggle background */
         .structured-content .audio-block-active {
           background: oklch(0.55 0.1 133.7 / 0.15);
           border-left-color: oklch(0.55 0.1 133.7);
         }
-        /* Inline spans (paragraph groups) get background only */
-        .structured-content span.audio-block-active {
-          background: oklch(0.55 0.1 133.7 / 0.15);
+
+        /* Hover highlighting from progress bar */
+        .structured-content .audio-block-hovered {
+          background: oklch(0.55 0.1 133.7 / 0.1);
+          border-left-color: oklch(0.55 0.1 133.7 / 0.6);
         }
 
-        /* Hover highlighting from progress bar (applied via DOM manipulation) */
-        /* Uses amber/yellow to distinguish from active (green) */
-        .structured-content .audio-block-hovered {
-          background: oklch(0.75 0.15 85 / 0.2);
-          border-left-color: oklch(0.75 0.15 85);
+        /* Native hover on clickable blocks */
+        .structured-content .clickable-block:hover:not(.audio-block-active) {
+          background: oklch(0.55 0.1 133.7 / 0.1);
         }
-        .structured-content span.audio-block-hovered {
-          background: oklch(0.75 0.15 85 / 0.2);
+        .structured-content .clickable-span:hover:not(.audio-block-active) {
+          background: oklch(0.55 0.1 133.7 / 0.1);
         }
       `}</style>
     </article>
