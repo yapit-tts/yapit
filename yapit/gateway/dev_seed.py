@@ -95,7 +95,51 @@ def create_dev_models() -> list[TTSModel]:
         )
     )
 
-    models.extend([kokoro, higgs])
+    # Inworld TTS-1 (faster, cheaper)
+    inworld = TTSModel(
+        slug="inworld",
+        name="Inworld TTS-1",
+        credits_per_sec=Decimal("1.0"),  # ~$0.005/min at $5/1M chars
+        native_codec="mp3",
+        sample_rate=48_000,
+        channels=1,
+        sample_width=2,
+    )
+
+    # Inworld TTS-1-Max (slower, higher quality, 2x price)
+    inworld_max = TTSModel(
+        slug="inworld-max",
+        name="Inworld TTS-1-Max",
+        credits_per_sec=Decimal("2.0"),  # ~$0.01/min at $10/1M chars
+        native_codec="mp3",
+        sample_rate=48_000,
+        channels=1,
+        sample_width=2,
+    )
+
+    # Load Inworld voices (shared between both models)
+    inworld_voices_json = Path(__file__).parent.parent / "data/inworld/voices.json"
+    inworld_voices_data = json.loads(inworld_voices_json.read_text())
+    for v in inworld_voices_data.get("voices", []):
+        voice = Voice(
+            slug=v["voiceId"].lower(),
+            name=v["displayName"],
+            lang=v["languages"][0] if v.get("languages") else "en",
+            description=v.get("description", ""),
+            parameters={"voice_id": v["voiceId"]},
+        )
+        inworld.voices.append(voice)
+        inworld_max.voices.append(
+            Voice(
+                slug=v["voiceId"].lower(),
+                name=v["displayName"],
+                lang=v["languages"][0] if v.get("languages") else "en",
+                description=v.get("description", ""),
+                parameters={"voice_id": v["voiceId"]},
+            )
+        )
+
+    models.extend([kokoro, higgs, inworld, inworld_max])
 
     # Uncomment to add Dia model
     # dia = TTSModel(

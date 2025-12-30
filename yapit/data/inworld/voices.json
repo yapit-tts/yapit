@@ -1,0 +1,604 @@
+{
+  "voices": [
+    {
+      "languages": [
+        "en"
+      ],
+      "voiceId": "Alex",
+      "displayName": "Alex",
+      "description": "Energetic and expressive mid-range male voice, with a mildly nasal quality",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "en"
+      ],
+      "voiceId": "Ashley",
+      "displayName": "Ashley",
+      "description": "A warm, natural female voice",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "en"
+      ],
+      "voiceId": "Craig",
+      "displayName": "Craig",
+      "description": "Older British male with a refined and articulate voice",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "en"
+      ],
+      "voiceId": "Deborah",
+      "displayName": "Deborah",
+      "description": "Gentle and elegant female voice",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "en"
+      ],
+      "voiceId": "Dennis",
+      "displayName": "Dennis",
+      "description": "Middle-aged man with a smooth, calm and friendly voice",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "en"
+      ],
+      "voiceId": "Edward",
+      "displayName": "Edward",
+      "description": "Male with a fast-talking, emphatic and streetwise tone",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "en"
+      ],
+      "voiceId": "Elizabeth",
+      "displayName": "Elizabeth",
+      "description": "Professional middle-aged woman, perfect for narrations and voiceovers",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "en"
+      ],
+      "voiceId": "Hades",
+      "displayName": "Hades",
+      "description": "Commanding and gruff male voice, think an omniscient narrator or castle guard",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "en"
+      ],
+      "voiceId": "Julia",
+      "displayName": "Julia",
+      "description": "Quirky, high-pitched female voice that delivers lines with playful energy",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "en"
+      ],
+      "voiceId": "Pixie",
+      "displayName": "Pixie",
+      "description": "High-pitched, childlike female voice with a squeaky quality - great for a cartoon character",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "en"
+      ],
+      "voiceId": "Mark",
+      "displayName": "Mark",
+      "description": "Energetic, expressive man with a rapid-fire delivery",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "en"
+      ],
+      "voiceId": "Olivia",
+      "displayName": "Olivia",
+      "description": "Young, British female with an upbeat, friendly tone",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "en"
+      ],
+      "voiceId": "Priya",
+      "displayName": "Priya",
+      "description": "Even-toned female voice with an Indian accent",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "en"
+      ],
+      "voiceId": "Ronald",
+      "displayName": "Ronald",
+      "description": "Confident, British man with a deep, gravelly voice",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "en"
+      ],
+      "voiceId": "Sarah",
+      "displayName": "Sarah",
+      "description": "Fast-talking young adult woman, with a questioning and curious tone",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "en"
+      ],
+      "voiceId": "Shaun",
+      "displayName": "Shaun",
+      "description": "Friendly, dynamic male voice great for conversations",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "en"
+      ],
+      "voiceId": "Theodore",
+      "displayName": "Theodore",
+      "description": "Gravelly male voice, with a time-worn quality",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "en"
+      ],
+      "voiceId": "Timothy",
+      "displayName": "Timothy",
+      "description": "Lively, upbeat American male voice",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "en"
+      ],
+      "voiceId": "Wendy",
+      "displayName": "Wendy",
+      "description": "Posh, middle-aged British female voice",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "en"
+      ],
+      "voiceId": "Dominus",
+      "displayName": "Dominus",
+      "description": "Robotic, deep male voice with a menacing quality. Perfect for villains",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "en"
+      ],
+      "voiceId": "Hana",
+      "displayName": "Hana",
+      "description": "Bright, expressive young female voice, perfect for storytelling, gaming, and playful content",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "en"
+      ],
+      "voiceId": "Clive",
+      "displayName": "Clive",
+      "description": "British-accented English-language male voice with a calm, cordial quality",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "en"
+      ],
+      "voiceId": "Carter",
+      "displayName": "Carter",
+      "description": "Energetic, mature radio announcer-style male voice, great for storytelling, pep talks, and voiceovers.",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "en"
+      ],
+      "voiceId": "Blake",
+      "displayName": "Blake",
+      "description": "Rich, intimate male voice, perfect for audiobooks, romantic content, and reassuring narration",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "en"
+      ],
+      "voiceId": "Luna",
+      "displayName": "Luna",
+      "description": "Calm, relaxing female voice, perfect for meditations, sleep stories, and mindfulness exercises",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "zh"
+      ],
+      "voiceId": "Yichen",
+      "displayName": "Yichen",
+      "description": "A calm, flat young adult male Chinese voice",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "zh"
+      ],
+      "voiceId": "Xiaoyin",
+      "displayName": "Xiaoyin",
+      "description": "A youthful Chinese female voice with a gentle, sweet voice",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "zh"
+      ],
+      "voiceId": "Xinyi",
+      "displayName": "Xinyi",
+      "description": "A Chinese woman with a neutral tone, perfect for narrations",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "zh"
+      ],
+      "voiceId": "Jing",
+      "displayName": "Jing",
+      "description": "An energetic, fast-paced young Chinese female",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "nl"
+      ],
+      "voiceId": "Erik",
+      "displayName": "Erik",
+      "description": "Older Dutch male voice with a weathered edge",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "nl"
+      ],
+      "voiceId": "Katrien",
+      "displayName": "Katrien",
+      "description": "Dutch woman with an expressive voice",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "nl"
+      ],
+      "voiceId": "Lennart",
+      "displayName": "Lennart",
+      "description": "A confident Dutch male voice. Calm and relaxed",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "nl"
+      ],
+      "voiceId": "Lore",
+      "displayName": "Lore",
+      "description": "Clear, calm Dutch female voice, great for narrations and professional use cases",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "fr"
+      ],
+      "voiceId": "Alain",
+      "displayName": "Alain",
+      "description": "Deep, smooth middle-aged male French voice. Composed and calm",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "fr"
+      ],
+      "voiceId": "H\u00e9l\u00e8ne",
+      "displayName": "H\u00e9l\u00e8ne",
+      "description": "Middle-aged French woman, with a smooth, musical, and graceful voice",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "fr"
+      ],
+      "voiceId": "Mathieu",
+      "displayName": "Mathieu",
+      "description": "A French male voice carrying a nasal quality",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "fr"
+      ],
+      "voiceId": "\u00c9tienne",
+      "displayName": "\u00c9tienne",
+      "description": "Calm young adult French male",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "de"
+      ],
+      "voiceId": "Johanna",
+      "displayName": "Johanna",
+      "description": "A calm older German female with a low, smoky voice",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "de"
+      ],
+      "voiceId": "Josef",
+      "displayName": "Josef",
+      "description": "An articulate German male voice with an announcer-like quality",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "it"
+      ],
+      "voiceId": "Gianni",
+      "displayName": "Gianni",
+      "description": "Deep, smooth Italian male voice that speaks rapidly",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "it"
+      ],
+      "voiceId": "Orietta",
+      "displayName": "Orietta",
+      "description": "Calm adult female Italian voice, with a soothing cadence",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "ja"
+      ],
+      "voiceId": "Asuka",
+      "displayName": "Asuka",
+      "description": "Friendly, young adult Japanese female voice",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "ja"
+      ],
+      "voiceId": "Satoshi",
+      "displayName": "Satoshi",
+      "description": "Dramatic, expressive male Japanese voice filled with energy",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "ko"
+      ],
+      "voiceId": "Hyunwoo",
+      "displayName": "Hyunwoo",
+      "description": "Young adult Korean male voice",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "ko"
+      ],
+      "voiceId": "Minji",
+      "displayName": "Minji",
+      "description": "Energetic, friendly young Korean female voice",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "ko"
+      ],
+      "voiceId": "Seojun",
+      "displayName": "Seojun",
+      "description": "Clear, deep mature Korean male voice",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "ko"
+      ],
+      "voiceId": "Yoona",
+      "displayName": "Yoona",
+      "description": "Korean woman with a gentle, soothing voice",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "pl"
+      ],
+      "voiceId": "Szymon",
+      "displayName": "Szymon",
+      "description": "Polish adult male voice with a warm, friendly quality",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "pl"
+      ],
+      "voiceId": "Wojciech",
+      "displayName": "Wojciech",
+      "description": "A middle-aged Polish male voice",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "pt"
+      ],
+      "voiceId": "Heitor",
+      "displayName": "Heitor",
+      "description": "Composed Portuguese-speaking male voice with a neutral tone",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "pt"
+      ],
+      "voiceId": "Mait\u00ea",
+      "displayName": "Mait\u00ea",
+      "description": "Middle-aged Portuguese-speaking female voice",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "es"
+      ],
+      "voiceId": "Diego",
+      "displayName": "Diego",
+      "description": "Spanish-speaking male voice with a soothing, gentle quality",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "es"
+      ],
+      "voiceId": "Lupita",
+      "displayName": "Lupita",
+      "description": "Vibrant, energetic young Spanish-speaking female voice",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "es"
+      ],
+      "voiceId": "Miguel",
+      "displayName": "Miguel",
+      "description": "A calm adult Spanish-speaking male voice, perfect for storytelling",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "es"
+      ],
+      "voiceId": "Rafael",
+      "displayName": "Rafael",
+      "description": "Middle-aged Spanish-speaking male with a deep, composed voice. Great for narrations",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "ru"
+      ],
+      "voiceId": "Svetlana",
+      "displayName": "Svetlana",
+      "description": "Soft, high-pitched female voice, with a moderate pace and slightly breathy quality.",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "ru"
+      ],
+      "voiceId": "Elena",
+      "displayName": "Elena",
+      "description": "Clear, mid-range female voice, with a smooth texture and a neutral, informational tone.",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "ru"
+      ],
+      "voiceId": "Dmitry",
+      "displayName": "Dmitry",
+      "description": "Deep, gravelly male voice, delivered at a moderate pace with a commanding and narrative tone.",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "ru"
+      ],
+      "voiceId": "Nikolai",
+      "displayName": "Nikolai",
+      "description": "Deep, resonant male voice, delivered at a measured pace with a clear, theatrical, and narrative quality.",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "hi"
+      ],
+      "voiceId": "Riya",
+      "displayName": "Riya",
+      "description": "Professional and clean female voice, with a clear and articulate tone, moderate pace, and a polished, approachable quality.",
+      "tags": [],
+      "isCustom": false
+    }
+  ]
+}

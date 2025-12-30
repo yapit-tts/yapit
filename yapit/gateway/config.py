@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     tts_overflow_queue_threshold: int  # jobs per worker before routing to overflow
     runpod_api_key: str | None = None
     runpod_request_timeout_seconds: int | None = None
+    inworld_api_key: str | None = None
     client_request_timeout_seconds: int
     synthesis_polling_timeout_seconds: int
 

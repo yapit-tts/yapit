@@ -91,6 +91,15 @@ Put less weight on these.
 - **Design philosophy**: Iterate by doing, don't over-plan upfront
 - **Theme**: Light/cozy Ghibli aesthetic (warm cream, green primary)
 
+## Codebase Structure
+
+Run `tre -L 10` to get a gitignore-respecting tree view. Always use `-L 10` for full depth - if you want less output, scope to a specific directory instead of reducing depth (which hides files):
+- Full repo: `tre -L 10`
+- Frontend only: `tre frontend -L 10`
+- Backend only: `tre yapit -L 10`
+
+Use liberally: at task start for orientation, when looking for where something lives, after creating/moving files.
+
 ## Memex MCP
 
 You have access to markdown vaults via memex. Use them to find past work, discover connections, and document knowledge that helps future sessions.
