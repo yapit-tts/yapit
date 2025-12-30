@@ -14,6 +14,7 @@ from sqlmodel import col, select
 
 from yapit.contracts import (
     TTS_INFLIGHT,
+    TTS_SUBSCRIBERS,
     SynthesisJob,
     SynthesisParameters,
     WSBlockStatus,
@@ -165,7 +166,13 @@ async def _queue_synthesis_job(
         db.add(variant)
         await db.commit()
 
-    # Check if already processing
+    # Track this block as subscriber to be notified when synthesis completes
+    subscriber_key = TTS_SUBSCRIBERS.format(hash=variant_hash)
+    subscriber_entry = f"{user.id}:{block.document_id}:{block.idx}"
+    await redis.sadd(subscriber_key, subscriber_entry)
+    await redis.expire(subscriber_key, 600)  # 10 min TTL
+
+    # Check if already processing - if so, we're now subscribed and will be notified
     if await redis.exists(TTS_INFLIGHT.format(hash=variant_hash)):
         return variant_hash, False
     await redis.set(TTS_INFLIGHT.format(hash=variant_hash), 1, ex=300, nx=True)
@@ -262,6 +269,14 @@ async def _handle_synthesize(
         for idx in msg.block_indices:
             block = block_map.get(idx)
             if not block:
+                log.warning(f"Block {idx} not found in document {msg.document_id}")
+                await ws.send_json(
+                    WSBlockStatus(
+                        document_id=msg.document_id,
+                        block_idx=idx,
+                        status="skipped",
+                    ).model_dump(mode="json")
+                )
                 continue
 
             try:

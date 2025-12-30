@@ -1,4 +1,5 @@
 import logging
+import sys
 from contextlib import asynccontextmanager
 
 import redis.asyncio as redis
@@ -13,6 +14,13 @@ from yapit.gateway.deps import get_audio_cache
 from yapit.gateway.exceptions import APIError
 from yapit.gateway.processors.document.manager import DocumentProcessorManager
 from yapit.gateway.processors.tts.manager import TTSProcessorManager
+
+# Configure root logger for application-wide logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+    stream=sys.stdout,
+)
 
 log = logging.getLogger(__name__)
 

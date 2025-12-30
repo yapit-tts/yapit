@@ -7,6 +7,9 @@ import annotated_types
 from pydantic import BaseModel, ConfigDict, Field
 
 TTS_INFLIGHT: Final[str] = "tts:inflight:{hash}"
+TTS_SUBSCRIBERS: Final[str] = (
+    "tts:subscribers:{hash}"  # Set of user_id:doc_id:block_idx to notify when variant completes
+)
 TTS_CURSOR: Final[str] = "tts:cursor:{user_id}:{document_id}"
 
 FILTER_STATUS: Final[str] = "filters:{document_id}:status"

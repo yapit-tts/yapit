@@ -1,6 +1,7 @@
 import asyncio
 import datetime as dt
 import logging
+import uuid
 from abc import abstractmethod
 from datetime import datetime
 from decimal import Decimal
@@ -11,6 +12,8 @@ from sqlmodel import select, update
 
 from yapit.contracts import (
     TTS_INFLIGHT,
+    TTS_SUBSCRIBERS,
+    BlockStatus,
     SynthesisJob,
     SynthesisResult,
     WSBlockStatus,
@@ -57,6 +60,47 @@ class BaseTTSProcessor:
     async def process(self, job: SynthesisJob) -> SynthesisResult:
         """Process a synthesis job and return the result."""
 
+    async def _notify_subscribers(
+        self,
+        variant_hash: str,
+        status: BlockStatus,
+        audio_url: str | None = None,
+        error: str | None = None,
+    ) -> None:
+        """Notify all blocks subscribed to this variant hash."""
+        subscriber_key = TTS_SUBSCRIBERS.format(hash=variant_hash)
+        subscribers = await self._redis.smembers(subscriber_key)
+
+        for entry in subscribers:
+            # Entry format: "user_id:doc_id:block_idx"
+            parts = entry.decode().split(":")
+            if len(parts) != 3:
+                log.warning(f"Invalid subscriber entry: {entry}")
+                continue
+
+            user_id, doc_id_str, block_idx_str = parts
+            doc_id = uuid.UUID(doc_id_str)
+            block_idx = int(block_idx_str)
+
+            # Remove from pending set
+            pending_key = f"tts:pending:{user_id}:{doc_id}"
+            await self._redis.srem(pending_key, block_idx)
+
+            # Publish status to user's channel
+            await self._redis.publish(
+                get_pubsub_channel(user_id),
+                WSBlockStatus(
+                    document_id=doc_id,
+                    block_idx=block_idx,
+                    status=status,
+                    audio_url=audio_url,
+                    error=error,
+                ).model_dump_json(),
+            )
+
+        # Clean up subscribers set
+        await self._redis.delete(subscriber_key)
+
     async def _handle_job(self, raw: bytes) -> None:
         """Handle a single job from the queue."""
         job = None
@@ -74,17 +118,8 @@ class BaseTTSProcessor:
             result = await self.process(job)
 
             if not result.audio:
-                log.info(f"Empty audio for block {job.block_idx}, marking as skipped")
-                pending_key = f"tts:pending:{job.user_id}:{job.document_id}"
-                await self._redis.srem(pending_key, job.block_idx)
-                await self._redis.publish(
-                    get_pubsub_channel(job.user_id),
-                    WSBlockStatus(
-                        document_id=job.document_id,
-                        block_idx=job.block_idx,
-                        status="skipped",
-                    ).model_dump_json(),
-                )
+                log.info(f"Empty audio for variant {job.variant_hash}, marking all subscribers as skipped")
+                await self._notify_subscribers(job.variant_hash, status="skipped")
                 await self._redis.delete(TTS_INFLIGHT.format(hash=job.variant_hash))
                 return
 
@@ -163,26 +198,20 @@ class BaseTTSProcessor:
                 await db.commit()
                 break
 
-            # Remove from pending set (now cached)
-            pending_key = f"tts:pending:{job.user_id}:{job.document_id}"
-            await self._redis.srem(pending_key, job.block_idx)
-
-            await self._redis.publish(
-                get_pubsub_channel(job.user_id),
-                WSBlockStatus(
-                    document_id=job.document_id,
-                    block_idx=job.block_idx,
-                    status="cached",
-                    audio_url=f"/v1/audio/{job.variant_hash}",
-                ).model_dump_json(),
+            # Notify all subscribers that audio is cached
+            await self._notify_subscribers(
+                job.variant_hash,
+                status="cached",
+                audio_url=f"/v1/audio/{job.variant_hash}",
             )
             await self._redis.delete(TTS_INFLIGHT.format(hash=job.variant_hash))
 
         except Exception as e:
-            log.error(f"Failed to process job: {e}")
+            log.error(f"Failed to process job: {e}", exc_info=True)
             if job:
                 await self._redis.delete(TTS_INFLIGHT.format(hash=job.variant_hash))
-            raise
+                # Notify all subscribers of error so they don't hang waiting
+                await self._notify_subscribers(job.variant_hash, status="error", error=str(e))
 
     async def run(self) -> None:
         """Main processing loop - pull jobs from Redis queue."""
