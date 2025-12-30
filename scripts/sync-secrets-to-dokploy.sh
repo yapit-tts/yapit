@@ -33,4 +33,4 @@ RESULT=$(ssh "$VPS_HOST" "TOKEN=\$(cat /root/.dokploy-token); curl -s -X POST \
 
 echo "$RESULT" | jq -r '.result.data.json.env | split("\n") | length | "Set \(.) environment variables"'
 
-log "Done. Trigger deploy with: scripts/trigger-deploy.sh"
+log "Done."

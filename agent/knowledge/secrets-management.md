@@ -26,19 +26,13 @@ Dokploy clones fresh on each deploy, wiping manually created files. SOPS lets us
 SOPS_AGE_KEY_FILE=~/.config/sops/age/yapit.txt sops .env.sops
 ```
 
-### Sync to Dokploy
+### Deploy
 ```bash
 export YAPIT_SOPS_AGE_KEY_FILE=~/.config/sops/age/yapit.txt
-./scripts/sync-secrets-to-dokploy.sh
+./scripts/deploy.sh
 ```
 
-This decrypts SOPS file and pushes secrets to Dokploy's env vars via API.
-
-### Deploy
-Push code changes → auto-deploy (if webhook configured), or:
-```bash
-./scripts/trigger-deploy.sh
-```
+This syncs secrets to Dokploy (idempotent), then triggers deployment via API.
 
 ## File Organization
 
