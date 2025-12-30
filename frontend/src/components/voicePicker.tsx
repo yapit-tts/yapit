@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { ChevronDown, Star, ChevronRight, Monitor, Server } from "lucide-react";
+import { ChevronDown, Star, ChevronRight, Monitor, Server, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -9,16 +9,20 @@ import {
   type VoiceSelection,
   type ModelType,
   type KokoroLanguageCode,
+  type InworldLanguageCode,
   KOKORO_VOICES,
   HIGGS_PRESETS,
   HIGGS_SCENES,
   LANGUAGE_INFO,
+  INWORLD_LANGUAGE_INFO,
   groupKokoroVoicesByLanguage,
+  groupInworldVoicesByLanguage,
   isHighQualityVoice,
   setVoiceSelection,
   getPinnedVoices,
   togglePinnedVoice,
 } from "@/lib/voiceSelection";
+import { useInworldVoices } from "@/hooks/useInworldVoices";
 
 interface VoicePickerProps {
   value: VoiceSelection;
@@ -30,14 +34,30 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
   const [pinnedVoices, setPinnedVoices] = useState<string[]>([]);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   // Track which language sections are expanded (user manages, we just remember)
-  const [expandedLanguages, setExpandedLanguages] = useState<Set<KokoroLanguageCode>>(new Set(["a"]));
+  const [expandedKokoroLangs, setExpandedKokoroLangs] = useState<Set<KokoroLanguageCode>>(new Set(["a"]));
+  const [expandedInworldLangs, setExpandedInworldLangs] = useState<Set<InworldLanguageCode>>(new Set(["en"]));
+
+  // Fetch Inworld voices from API
+  const { voices: inworldVoices, isLoading: inworldLoading } = useInworldVoices();
 
   useEffect(() => {
     setPinnedVoices(getPinnedVoices());
   }, []);
 
-  const toggleLanguageExpanded = (lang: KokoroLanguageCode) => {
-    setExpandedLanguages(prev => {
+  const toggleKokoroLangExpanded = (lang: KokoroLanguageCode) => {
+    setExpandedKokoroLangs(prev => {
+      const next = new Set(prev);
+      if (next.has(lang)) {
+        next.delete(lang);
+      } else {
+        next.add(lang);
+      }
+      return next;
+    });
+  };
+
+  const toggleInworldLangExpanded = (lang: InworldLanguageCode) => {
+    setExpandedInworldLangs(prev => {
       const next = new Set(prev);
       if (next.has(lang)) {
         next.delete(lang);
@@ -53,14 +73,23 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
     setPinnedVoices(newPinned);
   };
 
-  // Track whether Kokoro should use server (vs browser)
+  // Track model type for tab logic
   const isKokoroServer = value.model === "kokoro-server";
   const isKokoroModel = value.model === "kokoro" || value.model === "kokoro-server";
-  const activeTab = isKokoroModel ? "kokoro" : "higgs";
+  const isInworldModel = value.model === "inworld" || value.model === "inworld-max";
+  const isInworldMax = value.model === "inworld-max";
+  const activeTab = isKokoroModel ? "kokoro" : isInworldModel ? "inworld" : "higgs";
 
   const handleVoiceSelect = (voiceSlug: string) => {
-    // Preserve current Kokoro source (browser/server) when selecting voice
-    const model = activeTab === "kokoro" ? (isKokoroServer ? "kokoro-server" : "kokoro") : "higgs";
+    // Preserve current model variant when selecting voice
+    let model: ModelType;
+    if (activeTab === "kokoro") {
+      model = isKokoroServer ? "kokoro-server" : "kokoro";
+    } else if (activeTab === "inworld") {
+      model = isInworldMax ? "inworld-max" : "inworld";
+    } else {
+      model = "higgs";
+    }
     const newSelection: VoiceSelection = {
       ...value,
       model,
@@ -73,9 +102,20 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
 
   const handleModelChange = (tab: string) => {
     // When switching tabs, select default voice for that model
-    const defaultVoice = tab === "kokoro" ? "af_heart" : "en-man";
-    // Preserve server preference when switching to Kokoro tab
-    const model: ModelType = tab === "higgs" ? "higgs" : (isKokoroServer ? "kokoro-server" : "kokoro");
+    let defaultVoice: string;
+    let model: ModelType;
+
+    if (tab === "kokoro") {
+      defaultVoice = "af_heart";
+      model = isKokoroServer ? "kokoro-server" : "kokoro";
+    } else if (tab === "inworld") {
+      defaultVoice = inworldVoices.length > 0 ? inworldVoices[0].slug : "Ashley";
+      model = isInworldMax ? "inworld-max" : "inworld";
+    } else {
+      defaultVoice = "en-man";
+      model = "higgs";
+    }
+
     const newSelection: VoiceSelection = {
       model,
       voiceSlug: defaultVoice,
@@ -88,6 +128,16 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
 
   const handleKokoroSourceToggle = () => {
     const newModel: ModelType = isKokoroServer ? "kokoro" : "kokoro-server";
+    const newSelection: VoiceSelection = {
+      ...value,
+      model: newModel,
+    };
+    onChange(newSelection);
+    setVoiceSelection(newSelection);
+  };
+
+  const handleInworldModelToggle = () => {
+    const newModel: ModelType = isInworldMax ? "inworld" : "inworld-max";
     const newSelection: VoiceSelection = {
       ...value,
       model: newModel,
@@ -109,19 +159,31 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
   };
 
   // Get display name for current selection
-  const currentVoiceName = isKokoroModel
-    ? KOKORO_VOICES.find(v => v.index === value.voiceSlug)?.name ?? value.voiceSlug
-    : HIGGS_PRESETS.find(p => p.slug === value.voiceSlug)?.name ?? value.voiceSlug;
+  let currentVoiceName: string;
+  if (isKokoroModel) {
+    currentVoiceName = KOKORO_VOICES.find(v => v.index === value.voiceSlug)?.name ?? value.voiceSlug;
+  } else if (isInworldModel) {
+    currentVoiceName = inworldVoices.find(v => v.slug === value.voiceSlug)?.name ?? value.voiceSlug;
+  } else {
+    currentVoiceName = HIGGS_PRESETS.find(p => p.slug === value.voiceSlug)?.name ?? value.voiceSlug;
+  }
 
-  const modelLabel = isKokoroModel
-    ? `Kokoro${isKokoroServer ? " (Server)" : ""}`
-    : "HIGGS";
+  let modelLabel: string;
+  if (isKokoroModel) {
+    modelLabel = `Kokoro${isKokoroServer ? " (Server)" : ""}`;
+  } else if (isInworldModel) {
+    modelLabel = isInworldMax ? "Inworld Max" : "Inworld";
+  } else {
+    modelLabel = "HIGGS";
+  }
 
-  const voiceGroups = groupKokoroVoicesByLanguage(KOKORO_VOICES);
+  const kokoroVoiceGroups = groupKokoroVoicesByLanguage(KOKORO_VOICES);
+  const inworldVoiceGroups = groupInworldVoicesByLanguage(inworldVoices);
 
   // Get pinned voices for current model
   const pinnedKokoro = KOKORO_VOICES.filter(v => pinnedVoices.includes(v.index));
   const pinnedHiggs = HIGGS_PRESETS.filter(p => pinnedVoices.includes(p.slug));
+  const pinnedInworld = inworldVoices.filter(v => pinnedVoices.includes(v.slug));
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -137,6 +199,7 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
         <Tabs value={activeTab} onValueChange={handleModelChange}>
           <TabsList className="w-full rounded-none border-b">
             <TabsTrigger value="kokoro" className="flex-1">Kokoro</TabsTrigger>
+            <TabsTrigger value="inworld" className="flex-1">Inworld</TabsTrigger>
             <TabsTrigger value="higgs" className="flex-1">HIGGS</TabsTrigger>
           </TabsList>
 
@@ -186,15 +249,15 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
             )}
 
             {/* Language sections */}
-            {voiceGroups.map(group => (
+            {kokoroVoiceGroups.map(group => (
               <Collapsible
                 key={group.language}
-                open={expandedLanguages.has(group.language)}
-                onOpenChange={() => toggleLanguageExpanded(group.language)}
+                open={expandedKokoroLangs.has(group.language)}
+                onOpenChange={() => toggleKokoroLangExpanded(group.language)}
                 className="border-b last:border-b-0"
               >
                 <CollapsibleTrigger className="flex w-full items-center gap-2 px-3 py-2 text-xs font-medium hover:bg-accent">
-                  <ChevronRight className={`h-3 w-3 transition-transform ${expandedLanguages.has(group.language) ? "rotate-90" : ""}`} />
+                  <ChevronRight className={`h-3 w-3 transition-transform ${expandedKokoroLangs.has(group.language) ? "rotate-90" : ""}`} />
                   <span>{group.flag}</span>
                   <span className="flex-1 text-left">{group.label}</span>
                   <span className="text-muted-foreground">({group.voices.length})</span>
@@ -215,6 +278,89 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
                 </CollapsibleContent>
               </Collapsible>
             ))}
+          </TabsContent>
+
+          <TabsContent value="inworld" className="m-0 max-h-80 overflow-y-auto">
+            {/* Model toggle: inworld vs inworld-max */}
+            <div className="flex items-center justify-between px-3 py-2 border-b bg-muted/30">
+              <span className="text-xs text-muted-foreground">Quality</span>
+              <div className="flex rounded-md border bg-background">
+                <button
+                  onClick={() => isInworldMax && handleInworldModelToggle()}
+                  className={`flex items-center gap-1 px-2 py-1 text-xs rounded-l-md transition-colors ${
+                    !isInworldMax ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  TTS-1
+                </button>
+                <button
+                  onClick={() => !isInworldMax && handleInworldModelToggle()}
+                  className={`flex items-center gap-1 px-2 py-1 text-xs rounded-r-md transition-colors ${
+                    isInworldMax ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  TTS-1-Max
+                </button>
+              </div>
+            </div>
+
+            {inworldLoading ? (
+              <div className="flex items-center justify-center py-8 text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                <span className="text-xs">Loading voices...</span>
+              </div>
+            ) : (
+              <>
+                {/* Starred section */}
+                {pinnedInworld.length > 0 && (
+                  <div className="border-b">
+                    <div className="px-3 py-1.5 text-xs font-medium text-muted-foreground">Starred</div>
+                    {pinnedInworld.map(voice => (
+                      <VoiceRow
+                        key={voice.slug}
+                        name={voice.name}
+                        flag={INWORLD_LANGUAGE_INFO[voice.lang]?.flag}
+                        detail={voice.description ?? undefined}
+                        isPinned={true}
+                        isSelected={value.voiceSlug === voice.slug}
+                        onSelect={() => handleVoiceSelect(voice.slug)}
+                        onPinToggle={() => handlePinToggle(voice.slug)}
+                      />
+                    ))}
+                  </div>
+                )}
+
+                {/* Language sections */}
+                {inworldVoiceGroups.map(group => (
+                  <Collapsible
+                    key={group.language}
+                    open={expandedInworldLangs.has(group.language)}
+                    onOpenChange={() => toggleInworldLangExpanded(group.language)}
+                    className="border-b last:border-b-0"
+                  >
+                    <CollapsibleTrigger className="flex w-full items-center gap-2 px-3 py-2 text-xs font-medium hover:bg-accent">
+                      <ChevronRight className={`h-3 w-3 transition-transform ${expandedInworldLangs.has(group.language) ? "rotate-90" : ""}`} />
+                      <span>{group.flag}</span>
+                      <span className="flex-1 text-left">{group.label}</span>
+                      <span className="text-muted-foreground">({group.voices.length})</span>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent>
+                      {group.voices.map(voice => (
+                        <VoiceRow
+                          key={voice.slug}
+                          name={voice.name}
+                          detail={voice.description ?? undefined}
+                          isPinned={pinnedVoices.includes(voice.slug)}
+                          isSelected={value.voiceSlug === voice.slug}
+                          onSelect={() => handleVoiceSelect(voice.slug)}
+                          onPinToggle={() => handlePinToggle(voice.slug)}
+                        />
+                      ))}
+                    </CollapsibleContent>
+                  </Collapsible>
+                ))}
+              </>
+            )}
           </TabsContent>
 
           <TabsContent value="higgs" className="m-0 max-h-80 overflow-y-auto">

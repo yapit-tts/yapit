@@ -1,10 +1,10 @@
 // Voice selection types and localStorage utilities
 
-export type ModelType = "kokoro" | "kokoro-server" | "higgs";
+export type ModelType = "kokoro" | "kokoro-server" | "higgs" | "inworld" | "inworld-max";
 
 // Map frontend model types to backend model slugs
 // Frontend uses "kokoro" (browser), "kokoro-server" (server), "higgs" (server)
-// Backend database has "kokoro" and "higgs" as model slugs
+// Backend database has "kokoro", "higgs", "inworld", "inworld-max" as model slugs
 export function getBackendModelSlug(model: ModelType): string {
   switch (model) {
     case "kokoro":
@@ -12,12 +12,16 @@ export function getBackendModelSlug(model: ModelType): string {
       return "kokoro";
     case "higgs":
       return "higgs";
+    case "inworld":
+      return "inworld";
+    case "inworld-max":
+      return "inworld-max";
   }
 }
 
 // Check if model uses server-side synthesis
 export function isServerSideModel(model: ModelType): boolean {
-  return model === "higgs" || model === "kokoro-server";
+  return model === "higgs" || model === "kokoro-server" || model === "inworld" || model === "inworld-max";
 }
 
 export interface VoiceSelection {
@@ -208,8 +212,8 @@ export interface VoiceLanguageGroup {
   voices: KokoroVoice[];
 }
 
-// Language display order: English first, then alphabetically by label
-const LANGUAGE_ORDER: KokoroLanguageCode[] = ["a", "b", "j", "z", "e", "f", "h", "i", "p"];
+// Language display order by number of speakers (English first, then by global speaker count)
+const LANGUAGE_ORDER: KokoroLanguageCode[] = ["a", "b", "z", "h", "e", "f", "p", "j", "i"];
 
 // Group Kokoro voices by language, sorted by quality within each group
 export function groupKokoroVoicesByLanguage(voices: KokoroVoice[]): VoiceLanguageGroup[] {
@@ -244,6 +248,68 @@ export function groupKokoroVoicesByLanguage(voices: KokoroVoice[]): VoiceLanguag
 // Check if voice is high quality (A or B tier) - for star indicator
 export function isHighQualityVoice(voice: KokoroVoice): boolean {
   return voice.grade !== undefined && gradeScore(voice.grade) >= 80;
+}
+
+// Inworld voice types (fetched from API)
+export type InworldLanguageCode = "en" | "zh" | "nl" | "fr" | "de" | "it" | "ja" | "ko" | "pl" | "pt" | "es" | "ru" | "hi";
+
+export const INWORLD_LANGUAGE_INFO: Record<InworldLanguageCode, { label: string; flag: string }> = {
+  en: { label: "English", flag: "🇺🇸" },
+  zh: { label: "Chinese", flag: "🇨🇳" },
+  nl: { label: "Dutch", flag: "🇳🇱" },
+  fr: { label: "French", flag: "🇫🇷" },
+  de: { label: "German", flag: "🇩🇪" },
+  it: { label: "Italian", flag: "🇮🇹" },
+  ja: { label: "Japanese", flag: "🇯🇵" },
+  ko: { label: "Korean", flag: "🇰🇷" },
+  pl: { label: "Polish", flag: "🇵🇱" },
+  pt: { label: "Portuguese", flag: "🇧🇷" },
+  es: { label: "Spanish", flag: "🇪🇸" },
+  ru: { label: "Russian", flag: "🇷🇺" },
+  hi: { label: "Hindi", flag: "🇮🇳" },
+};
+
+// Sorted by global speaker count
+const INWORLD_LANGUAGE_ORDER: InworldLanguageCode[] = ["en", "zh", "hi", "es", "fr", "pt", "ru", "ja", "de", "ko", "it", "pl", "nl"];
+
+export interface InworldVoice {
+  slug: string;
+  name: string;
+  lang: InworldLanguageCode;
+  description: string | null;
+}
+
+export interface InworldVoiceLanguageGroup {
+  language: InworldLanguageCode;
+  label: string;
+  flag: string;
+  voices: InworldVoice[];
+}
+
+// Group Inworld voices by language
+export function groupInworldVoicesByLanguage(voices: InworldVoice[]): InworldVoiceLanguageGroup[] {
+  const byLanguage = new Map<InworldLanguageCode, InworldVoice[]>();
+
+  for (const voice of voices) {
+    const list = byLanguage.get(voice.lang) ?? [];
+    list.push(voice);
+    byLanguage.set(voice.lang, list);
+  }
+
+  return INWORLD_LANGUAGE_ORDER
+    .filter(lang => byLanguage.has(lang))
+    .map(lang => {
+      const info = INWORLD_LANGUAGE_INFO[lang];
+      const langVoices = byLanguage.get(lang)!;
+      // Sort alphabetically by name
+      langVoices.sort((a, b) => a.name.localeCompare(b.name));
+      return {
+        language: lang,
+        label: info.label,
+        flag: info.flag,
+        voices: langVoices,
+      };
+    });
 }
 
 // Legacy function for backwards compatibility (deprecated)
