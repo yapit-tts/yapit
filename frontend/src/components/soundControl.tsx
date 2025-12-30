@@ -15,11 +15,17 @@ function useRepeatOnHold(callback: () => void, disabled?: boolean) {
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const currentDelayRef = useRef(400);
   const isActiveRef = useRef(false);
+  const callbackRef = useRef(callback);
+
+  // Keep callback ref up to date
+  useEffect(() => {
+    callbackRef.current = callback;
+  }, [callback]);
 
   const INITIAL_DELAY = 400; // Wait before starting to repeat
-  const START_INTERVAL = 400; // First repeat interval
-  const MIN_INTERVAL = 50; // Fastest repeat interval
-  const ACCELERATION = 0.85; // Multiply interval by this each repeat
+  const START_INTERVAL = 350; // First repeat interval
+  const MIN_INTERVAL = 75; // Fastest repeat interval
+  const ACCELERATION = 0.92; // Multiply interval by this each repeat (gentler ramp)
 
   const stop = useCallback(() => {
     isActiveRef.current = false;
@@ -39,29 +45,29 @@ function useRepeatOnHold(callback: () => void, disabled?: boolean) {
 
     const repeat = () => {
       if (!isActiveRef.current) return;
-      callback();
+      callbackRef.current(); // Use ref to always get latest callback
       currentDelayRef.current = Math.max(MIN_INTERVAL, currentDelayRef.current * ACCELERATION);
       intervalRef.current = setTimeout(repeat, currentDelayRef.current) as unknown as ReturnType<typeof setInterval>;
     };
 
     timeoutRef.current = setTimeout(repeat, INITIAL_DELAY);
-  }, [callback, disabled]);
+  }, [disabled]); // Remove callback from deps since we use ref
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     if (disabled) return;
     e.preventDefault();
     isActiveRef.current = true;
-    callback();
+    callbackRef.current(); // Use ref
     startRepeating();
-  }, [callback, disabled, startRepeating]);
+  }, [disabled, startRepeating]);
 
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
     if (disabled) return;
     e.preventDefault();
     isActiveRef.current = true;
-    callback();
+    callbackRef.current(); // Use ref
     startRepeating();
-  }, [callback, disabled, startRepeating]);
+  }, [disabled, startRepeating]);
 
   // Cleanup on unmount
   useEffect(() => stop, [stop]);
@@ -192,11 +198,12 @@ function SmoothProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
   const buildGradient = () => {
     if (numBlocks === 0) return 'transparent';
 
+    // State colors: pending=warm brown, cached=light green, current=solid green
     const stateToColor = (state: BlockState, isCurrent: boolean) => {
       if (isCurrent) return 'var(--primary)';
-      if (state === 'cached') return 'color-mix(in oklch, var(--primary) 60%, transparent)';
-      if (state === 'synthesizing') return 'oklch(0.75 0.15 85)'; // yellow
-      return 'color-mix(in oklch, var(--muted) 50%, transparent)'; // pending
+      if (state === 'cached') return 'var(--muted)'; // cached - light green
+      if (state === 'synthesizing') return 'oklch(0.85 0.12 90 / 0.5)'; // muted yellow
+      return 'color-mix(in oklch, var(--muted-warm) 50%, transparent)'; // pending - warm tan
     };
 
     const stops: string[] = [];
@@ -246,25 +253,25 @@ function SmoothProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
       aria-valuenow={currentBlock + 1}
       tabIndex={0}
     >
-      {/* Current position indicator - bright green */}
+      {/* Current position indicator - primary green */}
       <div
         className="absolute top-0 bottom-0 w-1 pointer-events-none"
         style={{
           left: `${currentPct}%`,
           transform: 'translateX(-50%)',
-          backgroundColor: 'oklch(0.55 0.15 145)',
-          boxShadow: '0 0 6px oklch(0.55 0.15 145 / 0.8)',
+          backgroundColor: 'var(--primary)',
+          boxShadow: '0 0 6px oklch(0.55 0.1 133.7 / 0.8)',
         }}
       />
-      {/* Seek position indicator - yellow/amber, only during drag */}
+      {/* Seek position indicator - green, same as current playing */}
       {seekPosition !== null && seekPosition !== currentBlock && (
         <div
           className="absolute top-0 bottom-0 w-1.5 pointer-events-none"
           style={{
             left: `${(seekPosition / numBlocks) * 100}%`,
             transform: 'translateX(-50%)',
-            backgroundColor: 'oklch(0.75 0.15 85)',
-            boxShadow: '0 0 8px oklch(0.75 0.15 85 / 0.9)',
+            backgroundColor: 'var(--primary)',
+            boxShadow: '0 0 8px oklch(0.55 0.1 133.7 / 0.9)',
           }}
         />
       )}
@@ -382,30 +389,29 @@ function BlockyProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
         const isCurrent = idx === currentBlock;
         const isSeekTarget = seekPosition === idx && seekPosition !== currentBlock;
 
-        // State-based colors
-        let bgColor = 'bg-muted/50'; // pending - subtle gray
-        if (state === 'synthesizing') bgColor = 'bg-yellow-500/70 animate-pulse';
-        else if (state === 'cached') bgColor = 'bg-primary/60';
+        // State-based colors: pending=warm brown, cached=light green, current=solid green
+        let bgColor = 'bg-muted-warm/50'; // pending - warm tan
+        if (state === 'synthesizing') bgColor = 'bg-yellow-500/40'; // muted yellow, no pulse
+        else if (state === 'cached') bgColor = 'bg-muted'; // cached - light green
 
-        // Current block is brighter with highlight
+        // Current block is solid green - the focal point
         if (isCurrent) {
           bgColor = 'bg-primary';
         }
 
-        // Seek target gets yellow highlight
+        // Seek target gets green highlight (same as current playing)
         if (isSeekTarget) {
-          bgColor = 'bg-yellow-400';
+          bgColor = 'bg-primary';
         }
 
         return (
           <div
             key={idx}
-            className={`h-full transition-colors duration-150 hover:brightness-110 ${bgColor}`}
+            className={`h-full transition-colors duration-150 ${bgColor}`}
             style={{
               flex: '1 1 0',
               minWidth: 0,
               borderRight: idx < numBlocks - 1 ? '1px solid rgba(0,0,0,0.1)' : 'none',
-              boxShadow: isSeekTarget ? 'inset 0 0 0 2px oklch(0.75 0.15 85)' : 'none',
             }}
             title={`Block ${idx + 1}: ${state}`}
           />

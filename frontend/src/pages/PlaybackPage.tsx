@@ -122,6 +122,9 @@ const PlaybackPage = () => {
   currentBlockRef.current = currentBlock; // Sync ref with state for use in callbacks
 	const audioBuffersRef = useRef<Map<number, AudioBufferData>>(new Map());
 	const synthesizingRef = useRef<Map<number, Promise<AudioBufferData | null>>>(new Map()); // Track in-progress synthesis promises
+	// Track blocks we've ever received audio for this session (for visual state only)
+	// Unlike audioBuffersRef which evicts old blocks, this persists to show accurate "cached" state
+	const cachedBlocksRef = useRef<Set<number>>(new Set());
 	const [audioProgress, setAudioProgress] = useState<number>(0);
 	const blockStartTimeRef = useRef<number>(0);
 	const [actualTotalDuration, setActualTotalDuration] = useState<number>(0);
@@ -356,18 +359,30 @@ const PlaybackPage = () => {
     });
   }, [currentBlock]); // Only depend on currentBlock - documentId comes from ref
 
-  // Live scroll tracking - keep current block visible during playback
-  useEffect(() => {
-    // Only scroll during active playback (not on restore or manual click)
-    if (currentBlock < 0 || !isPlayingRef.current || !settings.liveScrollTracking) return;
-
+  // Helper to scroll to a specific block
+  const scrollToBlock = useCallback((blockIdx: number, behavior: ScrollBehavior = "smooth") => {
+    if (blockIdx < 0 || !settings.liveScrollTracking) return;
     const blockElement = window.document.querySelector(
-      `[data-audio-block-idx="${currentBlock}"]`
+      `[data-audio-block-idx="${blockIdx}"]`
     );
     if (blockElement) {
-      blockElement.scrollIntoView({ behavior: "smooth", block: "center" });
+      blockElement.scrollIntoView({ behavior, block: "center" });
     }
-  }, [currentBlock, settings.liveScrollTracking]);
+  }, [settings.liveScrollTracking]);
+
+  // Live scroll tracking - keep current block visible during playback
+  useEffect(() => {
+    // Scroll when block changes during playback
+    if (currentBlock < 0 || !isPlayingRef.current || !settings.liveScrollTracking) return;
+    scrollToBlock(currentBlock);
+  }, [currentBlock, settings.liveScrollTracking, scrollToBlock]);
+
+  // Scroll to current block immediately when playback starts
+  useEffect(() => {
+    if (isPlaying && settings.liveScrollTracking && currentBlock >= 0) {
+      scrollToBlock(currentBlock);
+    }
+  }, [isPlaying, settings.liveScrollTracking, currentBlock, scrollToBlock]);
 
   // Derive block states from refs (browser mode) or WS (server mode)
   const isServerMode = isServerSideModel(voiceSelection.model);
@@ -379,8 +394,8 @@ const PlaybackPage = () => {
     }
 
     const states: BlockState[] = documentBlocks.map((block, idx) => {
-      // Local cache takes precedence (already fetched and ready to play)
-      if (audioBuffersRef.current.has(block.id)) return 'cached';
+      // Use cachedBlocksRef for visual state (persists even after buffer eviction)
+      if (cachedBlocksRef.current.has(block.id)) return 'cached';
 
       if (isServerMode) {
         // Server mode: use WS block states
@@ -477,6 +492,7 @@ const PlaybackPage = () => {
 
       // Cache locally
       audioBuffersRef.current.set(blockId, audioBufferData);
+      cachedBlocksRef.current.add(blockId);
 
       // Update duration correction
       const block = documentBlocks.find(b => b.id === blockId);
@@ -509,6 +525,7 @@ const PlaybackPage = () => {
 
     // Clear all cached audio (synthesized with old voice)
     audioBuffersRef.current.clear();
+    cachedBlocksRef.current.clear();
     synthesizingRef.current.clear();
     durationCorrectionsRef.current.clear();
     prefetchedUpToRef.current = -1; // Reset prefetch tracking
@@ -549,6 +566,7 @@ const PlaybackPage = () => {
       };
 
       audioBuffersRef.current.set(block.id, audioBufferData);
+      cachedBlocksRef.current.add(block.id);
 
       // Duration correction
       const correction = durationMs - (block.est_duration_ms || 0);
@@ -1128,11 +1146,13 @@ const PlaybackPage = () => {
       blockStartTimeRef.current = progressMs;
       setAudioProgress(progressMs);
       setCurrentBlock(newBlock);
+      scrollToBlock(newBlock);
     } else {
       // At first block (currentBlock === 0) - restart from beginning
       console.log('[SkipBack] At first block, restarting');
       blockStartTimeRef.current = 0;
       setAudioProgress(0);
+      scrollToBlock(0);
       if (isPlaying && documentBlocks.length > 0) {
         // Restart current block - directly play since effect won't re-trigger
         const blockId = documentBlocks[0].id;
@@ -1167,6 +1187,7 @@ const PlaybackPage = () => {
       blockStartTimeRef.current = progressMs;
       setAudioProgress(progressMs);
       setCurrentBlock(newBlock);
+      scrollToBlock(newBlock);
     }
   };
 

@@ -821,9 +821,9 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
           border-radius: 0.5rem;
         }
         .structured-content span[data-audio-block-idx] {
-          padding-left: 0.25rem;
-          padding-right: 0.25rem;
-          border-radius: 0.375rem;
+          padding-left: 0.0625rem;
+          padding-right: 0.0625rem;
+          border-radius: 0.125rem;
         }
 
         /* Active audio block highlighting - just toggle background */
