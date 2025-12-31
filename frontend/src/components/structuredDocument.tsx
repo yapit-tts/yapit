@@ -1,7 +1,11 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import DOMPurify from "dompurify";
 import katex from "katex";
 import { Copy, Download, Music, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
+
+// Sanitize HTML to prevent XSS attacks
+const sanitize = (html: string): string => DOMPurify.sanitize(html);
 
 // === Slug generation for heading anchors ===
 
@@ -173,7 +177,7 @@ function HeadingBlockView({ block, slugId }: { block: HeadingBlock; slugId?: str
   const props = {
     id: slugId,
     className,
-    dangerouslySetInnerHTML: { __html: block.html },
+    dangerouslySetInnerHTML: { __html: sanitize(block.html) },
   };
 
   switch (block.level) {
@@ -190,7 +194,7 @@ function ParagraphBlockView({ block }: { block: ParagraphBlock }) {
   return (
     <p
       className="my-3 py-1 leading-relaxed"
-      dangerouslySetInnerHTML={{ __html: block.html }}
+      dangerouslySetInnerHTML={{ __html: sanitize(block.html) }}
     />
   );
 }
@@ -208,7 +212,7 @@ function ListBlockView({ block }: { block: ListBlock }) {
         <li
           key={idx}
           className="my-1"
-          dangerouslySetInnerHTML={{ __html: item.html }}
+          dangerouslySetInnerHTML={{ __html: sanitize(item.html) }}
         />
       ))}
     </ListTag>
@@ -310,7 +314,7 @@ function TableBlockView({ block }: BlockProps & { block: TableBlock }) {
               <th
                 key={idx}
                 className="border border-border px-3 py-2 text-left font-medium"
-                dangerouslySetInnerHTML={{ __html: header }}
+                dangerouslySetInnerHTML={{ __html: sanitize(header) }}
               />
             ))}
           </tr>
@@ -322,7 +326,7 @@ function TableBlockView({ block }: BlockProps & { block: TableBlock }) {
                 <td
                   key={cellIdx}
                   className="border border-border px-3 py-2"
-                  dangerouslySetInnerHTML={{ __html: cell }}
+                  dangerouslySetInnerHTML={{ __html: sanitize(cell) }}
                 />
               ))}
             </tr>
@@ -422,7 +426,7 @@ function ParagraphGroupView({ blocks, onBlockClick }: ParagraphGroupViewProps) {
           >
             {/* Add space between consecutive spans (lost during sentence splitting) */}
             {idx > 0 && " "}
-            <span dangerouslySetInnerHTML={{ __html: block.html }} />
+            <span dangerouslySetInnerHTML={{ __html: sanitize(block.html) }} />
           </span>
         );
       })}

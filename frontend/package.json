@@ -28,6 +28,7 @@
     "axios": "^1.8.4",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "dompurify": "^3.3.1",
     "katex": "^0.16.27",
     "kokoro-js": "^1.2.1",
     "lucide-react": "^0.501.0",
@@ -43,6 +44,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.22.0",
+    "@types/dompurify": "^3.0.5",
     "@types/katex": "^0.16.7",
     "@types/node": "^22.14.1",
     "@types/react": "^19.0.10",
