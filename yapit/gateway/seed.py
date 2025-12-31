@@ -1,4 +1,4 @@
-"""Development database seeding."""
+"""Database seeding for models, voices, plans, etc."""
 
 import base64
 import json
@@ -6,6 +6,7 @@ from pathlib import Path
 
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from yapit.gateway.config import Settings
 from yapit.gateway.domain_models import DocumentProcessor, Filter, Plan, PlanTier, TTSModel, Voice
 
 
@@ -20,8 +21,8 @@ def load_voice_prompt(name: str) -> tuple[str, str]:
     )
 
 
-def create_dev_models() -> list[TTSModel]:
-    """Create development TTS models with voices."""
+def create_models() -> list[TTSModel]:
+    """Create TTS models with voices."""
     models = []
 
     kokoro = TTSModel(
@@ -138,7 +139,7 @@ def create_dev_models() -> list[TTSModel]:
     return models
 
 
-def create_dev_filters() -> list[Filter]:
+def create_filters() -> list[Filter]:
     """Create default filter presets."""
     presets_json = Path(__file__).parent.parent / "data/default_filters.json"
     defaults = json.loads(presets_json.read_text())
@@ -156,15 +157,15 @@ def create_dev_filters() -> list[Filter]:
     return filters
 
 
-def create_dev_document_processors() -> list[DocumentProcessor]:
-    """Create document processors for development."""
+def create_document_processors() -> list[DocumentProcessor]:
+    """Create document processors."""
     return [
         DocumentProcessor(slug="markitdown", name="Markitdown (Free)"),
         DocumentProcessor(slug="mistral-ocr", name="Mistral OCR"),
     ]
 
 
-def create_dev_plans() -> list[Plan]:
+def create_plans(settings: Settings) -> list[Plan]:
     """Create subscription plans.
 
     Pricing (EUR, tax-inclusive):
@@ -176,6 +177,8 @@ def create_dev_plans() -> list[Plan]:
     Premium voice characters: ~17 chars = 1 second of audio
     - 20 hrs = 72,000 seconds = 1,224,000 chars
     - 50 hrs = 180,000 seconds = 3,060,000 chars
+
+    Price IDs come from settings (env vars), different for test vs live Stripe.
     """
     return [
         Plan(
@@ -194,8 +197,8 @@ def create_dev_plans() -> list[Plan]:
             server_kokoro_characters=None,  # unlimited
             premium_voice_characters=0,
             ocr_pages=500,
-            stripe_price_id_monthly="price_1SkHX6IRF9ptKmcP7odpitIS",
-            stripe_price_id_yearly="price_1SkHX6IRF9ptKmcPjSYK5KtC",
+            stripe_price_id_monthly=settings.stripe_price_basic_monthly,
+            stripe_price_id_yearly=settings.stripe_price_basic_yearly,
             trial_days=3,
             price_cents_monthly=700,
             price_cents_yearly=7500,
@@ -206,8 +209,8 @@ def create_dev_plans() -> list[Plan]:
             server_kokoro_characters=None,  # unlimited
             premium_voice_characters=1_224_000,  # 20 hours
             ocr_pages=1500,
-            stripe_price_id_monthly="price_1SkHX7IRF9ptKmcPFxbC0ujk",
-            stripe_price_id_yearly="price_1SkHX7IRF9ptKmcPbt3JjxGN",
+            stripe_price_id_monthly=settings.stripe_price_plus_monthly,
+            stripe_price_id_yearly=settings.stripe_price_plus_yearly,
             trial_days=3,
             price_cents_monthly=2000,
             price_cents_yearly=19200,
@@ -218,8 +221,8 @@ def create_dev_plans() -> list[Plan]:
             server_kokoro_characters=None,  # unlimited
             premium_voice_characters=3_060_000,  # 50 hours
             ocr_pages=3000,
-            stripe_price_id_monthly="price_1SkHX8IRF9ptKmcPCPZe3dL8",
-            stripe_price_id_yearly="price_1SkHX8IRF9ptKmcPWcTZxJJp",
+            stripe_price_id_monthly=settings.stripe_price_max_monthly,
+            stripe_price_id_yearly=settings.stripe_price_max_yearly,
             trial_days=0,  # No trial for Max tier
             price_cents_monthly=4000,
             price_cents_yearly=24000,
@@ -227,18 +230,18 @@ def create_dev_plans() -> list[Plan]:
     ]
 
 
-async def seed_dev_database(db: AsyncSession) -> None:
-    """Seed development database with models, voices, filters, processors, and plans."""
-    for model in create_dev_models():
+async def seed_database(db: AsyncSession, settings: Settings) -> None:
+    """Seed database with models, voices, filters, processors, and plans."""
+    for model in create_models():
         db.add(model)
 
-    for filter_obj in create_dev_filters():
+    for filter_obj in create_filters():
         db.add(filter_obj)
 
-    for processor in create_dev_document_processors():
+    for processor in create_document_processors():
         db.add(processor)
 
-    for plan in create_dev_plans():
+    for plan in create_plans(settings):
         db.add(plan)
 
     await db.commit()

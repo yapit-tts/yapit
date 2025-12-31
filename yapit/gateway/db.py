@@ -70,11 +70,11 @@ async def close_db() -> None:
 
 
 async def _seed_db(settings: Settings) -> None:
-    """Development seed – only runs on an empty DB."""
-    from yapit.gateway.dev_seed import seed_dev_database
+    """Seed database with initial data (models, voices, plans, etc.)."""
+    from yapit.gateway.seed import seed_database
 
     async for db in create_session(settings):
-        await seed_dev_database(db)
+        await seed_database(db, settings)
         break  # only iterate once
 
 

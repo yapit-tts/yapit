@@ -148,14 +148,13 @@ def main():
                 price_ids[price["id"]] = price_id
 
     print(f"\n{'=' * 50}")
-    print("Price IDs for dev_seed.py:")
+    print("Price IDs for .env.dev / .env.prod:")
     print(f"{'=' * 50}")
     for lookup_key, stripe_id in sorted(price_ids.items()):
-        print(f'  "{lookup_key}": "{stripe_id}"')
+        env_var = lookup_key.upper().replace("YAPIT_", "STRIPE_PRICE_")
+        print(f"  {env_var}={stripe_id}")
 
-    print("\nUpdate yapit/gateway/dev_seed.py with these price IDs:")
-    print('  stripe_price_id_monthly="...",')
-    print('  stripe_price_id_yearly="...",')
+    print("\nAdd these to .env.dev (test) or .env.prod (live)")
 
 
 if __name__ == "__main__":

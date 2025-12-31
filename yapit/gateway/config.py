@@ -48,6 +48,15 @@ class Settings(BaseSettings):
     stripe_secret_key: str | None = None
     stripe_webhook_secret: str | None = None
 
+    # Stripe price IDs (from stripe_setup.py output)
+    # Test IDs go in .env.dev, live IDs go in .env.prod
+    stripe_price_basic_monthly: str | None = None
+    stripe_price_basic_yearly: str | None = None
+    stripe_price_plus_monthly: str | None = None
+    stripe_price_plus_yearly: str | None = None
+    stripe_price_max_monthly: str | None = None
+    stripe_price_max_yearly: str | None = None
+
     # Self-hosting: set False to disable subscription/usage limits entirely
     billing_enabled: bool
 
