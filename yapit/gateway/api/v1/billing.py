@@ -1,141 +1,192 @@
-from decimal import Decimal
-from enum import StrEnum, auto
+"""Subscription billing API endpoints."""
+
+import datetime as dt
+import logging
+from datetime import datetime
 
 import stripe
 from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlmodel import select
 
-from yapit.gateway.deps import (
-    AuthenticatedUser,
-    DbSession,
-    SettingsDep,
-    get_or_create_user_credits,
-)
+from yapit.gateway.deps import AuthenticatedUser, DbSession, SettingsDep
 from yapit.gateway.domain_models import (
-    CreditTransaction,
-    TransactionStatus,
-    TransactionType,
+    BillingInterval,
+    Plan,
+    PlanTier,
+    SubscriptionStatus,
+    UsagePeriod,
+    UserSubscription,
 )
+from yapit.gateway.usage import get_user_subscription
 
 router = APIRouter(prefix="/v1/billing", tags=["Billing"])
+log = logging.getLogger(__name__)
 
 
-class CreditPackId(StrEnum):
-    starter = auto()
-    standard = auto()
-    pro = auto()
+class PlanResponse(BaseModel):
+    """Public plan information."""
 
-
-class CreditPack(BaseModel):
-    id: CreditPackId
+    tier: PlanTier
     name: str
-    credits: int
-    price_cents: int
-    currency: str
+    server_kokoro_characters: int | None
+    premium_voice_characters: int | None
+    ocr_pages: int | None
+    price_cents_monthly: int
+    price_cents_yearly: int
+    trial_days: int
 
 
-CREDIT_PACKS: dict[CreditPackId, CreditPack] = {
-    CreditPackId.starter: CreditPack(
-        id=CreditPackId.starter,
-        name="Starter",
-        credits=5000,
-        price_cents=200,
-        currency="eur",
-    ),
-    CreditPackId.standard: CreditPack(
-        id=CreditPackId.standard,
-        name="Standard",
-        credits=15000,
-        price_cents=500,
-        currency="eur",
-    ),
-    CreditPackId.pro: CreditPack(
-        id=CreditPackId.pro,
-        name="Pro",
-        credits=50000,
-        price_cents=1200,
-        currency="eur",
-    ),
-}
+@router.get("/plans")
+async def list_plans(db: DbSession) -> list[PlanResponse]:
+    """List available subscription plans."""
+    result = await db.exec(select(Plan).where(Plan.is_active.is_(True)))
+    plans = result.all()
+    return [
+        PlanResponse(
+            tier=p.tier,
+            name=p.name,
+            server_kokoro_characters=p.server_kokoro_characters,
+            premium_voice_characters=p.premium_voice_characters,
+            ocr_pages=p.ocr_pages,
+            price_cents_monthly=p.price_cents_monthly,
+            price_cents_yearly=p.price_cents_yearly,
+            trial_days=p.trial_days,
+        )
+        for p in plans
+    ]
 
 
-class CheckoutRequest(BaseModel):
-    package_id: CreditPackId
+class SubscribeRequest(BaseModel):
+    """Request to create a subscription checkout."""
+
+    tier: PlanTier
+    interval: BillingInterval
 
 
 class CheckoutResponse(BaseModel):
+    """Response with Stripe checkout URL."""
+
     checkout_url: str
     session_id: str
 
 
-class CheckoutStatusResponse(BaseModel):
-    status: TransactionStatus
-    credits: int | None = None
-
-
-@router.get("/packages")
-async def list_packages() -> list[CreditPack]:
-    """List available credit packages."""
-    return list(CREDIT_PACKS.values())
-
-
-@router.post("/checkout")
-async def create_checkout_session(
-    request: CheckoutRequest,
+@router.post("/subscribe")
+async def create_subscription_checkout(
+    request: SubscribeRequest,
     http_request: Request,
     settings: SettingsDep,
     user: AuthenticatedUser,
+    db: DbSession,
 ) -> CheckoutResponse:
-    """Create a Stripe Checkout Session for credit purchase."""
+    """Create a Stripe Checkout Session for subscription using Managed Payments.
+
+    Managed Payments makes Stripe the merchant of record, handling VAT/tax globally.
+    Requires products with eligible tax codes set in Stripe Dashboard.
+    """
     if not settings.stripe_secret_key:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Billing is not configured")
+
+    result = await db.exec(select(Plan).where(Plan.tier == request.tier, Plan.is_active.is_(True)))
+    plan = result.first()
+    if not plan:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Plan {request.tier} not found")
+
+    if plan.tier == PlanTier.free:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot subscribe to free tier")
+
+    price_id = (
+        plan.stripe_price_id_monthly if request.interval == BillingInterval.monthly else plan.stripe_price_id_yearly
+    )
+    if not price_id:
         raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Billing is not configured",
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Price not configured for this plan/interval"
         )
 
-    pack = CREDIT_PACKS.get(request.package_id)
-    if not pack:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid package ID")
-
-    stripe.api_key = settings.stripe_secret_key
+    existing_sub = await get_user_subscription(user.id, db)
+    customer_id = existing_sub.stripe_customer_id if existing_sub else None
 
     origin = http_request.headers.get("origin", "").rstrip("/")
     if not origin:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing origin header")
-    success_url = f"{origin}/checkout/success?session_id={{CHECKOUT_SESSION_ID}}"
-    cancel_url = f"{origin}/checkout/cancel"
 
-    session = stripe.checkout.Session.create(
-        mode="payment",
-        line_items=[
-            {
-                "price_data": {
-                    "currency": pack.currency,
-                    "unit_amount": pack.price_cents,
-                    "product_data": {
-                        "name": f"Yapit Credits - {pack.name}",
-                        "description": f"{pack.credits:,} credits for TTS synthesis",
-                    },
-                },
-                "quantity": 1,
-            }
-        ],
-        success_url=success_url,
-        cancel_url=cancel_url,
-        customer_email=user.primary_email,
-        metadata={
-            "user_id": user.id,
-            "package_id": pack.id,
-            "package_name": pack.name,
-            "credits": str(pack.credits),
-            "price_cents": str(pack.price_cents),
-            "currency": pack.currency,
+    client = stripe.StripeClient(settings.stripe_secret_key)
+
+    checkout_params = {
+        "line_items": [{"price": price_id, "quantity": 1}],
+        "managed_payments": {"enabled": True},
+        "mode": "subscription",
+        "success_url": f"{origin}/checkout/success?session_id={{CHECKOUT_SESSION_ID}}",
+        "cancel_url": f"{origin}/checkout/cancel",
+        "metadata": {"user_id": user.id, "plan_tier": plan.tier, "interval": request.interval},
+        "subscription_data": {
+            "metadata": {"user_id": user.id, "plan_tier": plan.tier},
         },
+    }
+
+    if customer_id:
+        checkout_params["customer"] = customer_id
+    else:
+        checkout_params["customer_email"] = user.primary_email
+
+    if plan.trial_days > 0:
+        checkout_params["subscription_data"]["trial_period_days"] = plan.trial_days
+
+    session = client.v1.checkout.sessions.create(
+        checkout_params,
+        {"stripe_version": f"{stripe.api_version}; managed_payments_preview=v1"},
     )
 
     assert session.url is not None
     return CheckoutResponse(checkout_url=session.url, session_id=session.id)
+
+
+class PortalResponse(BaseModel):
+    """Response with Stripe billing portal URL."""
+
+    portal_url: str
+
+
+@router.post("/portal")
+async def create_billing_portal_session(
+    http_request: Request,
+    settings: SettingsDep,
+    user: AuthenticatedUser,
+    db: DbSession,
+) -> PortalResponse:
+    """Create a Stripe Billing Portal session for subscription management."""
+    if not settings.stripe_secret_key:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Billing is not configured")
+
+    subscription = await get_user_subscription(user.id, db)
+    if not subscription or not subscription.stripe_customer_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No active subscription")
+
+    origin = http_request.headers.get("origin", "").rstrip("/")
+    if not origin:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing origin header")
+
+    client = stripe.StripeClient(settings.stripe_secret_key)
+    session = client.v1.billing_portal.sessions.create(
+        {
+            "customer": subscription.stripe_customer_id,
+            "return_url": f"{origin}/settings",
+        }
+    )
+
+    return PortalResponse(portal_url=session.url)
+
+
+# Stripe webhook handling
+
+SUBSCRIPTION_EVENTS = {
+    "checkout.session.completed",
+    "customer.subscription.created",
+    "customer.subscription.updated",
+    "customer.subscription.deleted",
+    "invoice.payment_succeeded",
+    "invoice.payment_failed",
+}
 
 
 @router.post("/webhook")
@@ -144,7 +195,7 @@ async def stripe_webhook(
     settings: SettingsDep,
     db: DbSession,
 ) -> dict:
-    """Handle Stripe webhook events."""
+    """Handle Stripe webhook events for subscription lifecycle."""
     if not settings.stripe_secret_key or not settings.stripe_webhook_secret:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Billing is not configured")
 
@@ -158,70 +209,199 @@ async def stripe_webhook(
     except stripe.SignatureVerificationError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid signature")
 
-    if event["type"] in ("checkout.session.completed", "checkout.session.async_payment_succeeded"):
-        session = event["data"]["object"]
-        await _fulfill_credits(session, db)
+    event_type = event["type"]
+    log.info(f"Received Stripe webhook: {event_type}")
+
+    if event_type not in SUBSCRIPTION_EVENTS:
+        return {"status": "ignored", "event_type": event_type}
+
+    try:
+        if event_type == "checkout.session.completed":
+            await _handle_checkout_completed(event["data"]["object"], db)
+        elif event_type in ("customer.subscription.created", "customer.subscription.updated"):
+            await _handle_subscription_updated(event["data"]["object"], db)
+        elif event_type == "customer.subscription.deleted":
+            await _handle_subscription_deleted(event["data"]["object"], db)
+        elif event_type == "invoice.payment_succeeded":
+            await _handle_invoice_paid(event["data"]["object"], db)
+        elif event_type == "invoice.payment_failed":
+            await _handle_invoice_failed(event["data"]["object"], db)
+    except Exception as e:
+        log.error(f"Error handling webhook {event_type}: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Webhook handler error")
 
     return {"status": "ok"}
 
 
-async def _fulfill_credits(session: dict, db: DbSession) -> None:
-    """Add credits to user after successful payment."""
-    session_id = session["id"]
-    metadata = session.get("metadata", {})
-    credits = int(metadata.get("credits", 0))
-    user_id = metadata.get("user_id")
-    package_name = metadata.get("package_name", "Unknown")
-
-    if not credits or not user_id:
+async def _handle_checkout_completed(session: dict, db: DbSession) -> None:
+    """Handle successful checkout - create or update subscription."""
+    if session.get("mode") != "subscription":
         return
 
-    # Check if already processed (idempotency)
-    result = await db.exec(select(CreditTransaction).where(CreditTransaction.external_reference == session_id))
-    if result.first():
+    user_id = session.get("metadata", {}).get("user_id")
+    subscription_id = session.get("subscription")
+    customer_id = session.get("customer")
+
+    if not user_id or not subscription_id:
+        log.warning(f"Checkout completed but missing user_id or subscription_id: {session}")
         return
 
-    user_credits = await get_or_create_user_credits(user_id, db)
+    # Fetch subscription details from Stripe
+    stripe_sub = stripe.Subscription.retrieve(subscription_id)
+    plan_tier = stripe_sub.metadata.get("plan_tier")
 
-    # Create completed transaction
-    transaction = CreditTransaction(
-        user_id=user_id,
-        type=TransactionType.credit_purchase,
-        amount=Decimal(credits),
-        balance_before=user_credits.balance,
-        description=f"Credit purchase - {package_name}",
-        external_reference=session_id,
-        status=TransactionStatus.completed,
-    )
+    if not plan_tier:
+        log.warning(f"Subscription {subscription_id} missing plan_tier in metadata")
+        return
 
-    user_credits.balance += Decimal(credits)
-    user_credits.total_purchased += Decimal(credits)
-    transaction.balance_after = user_credits.balance
+    # Get plan from DB
+    result = await db.exec(select(Plan).where(Plan.tier == plan_tier))
+    plan = result.first()
+    if not plan:
+        log.error(f"Plan {plan_tier} not found in database")
+        return
 
-    db.add(transaction)
-    await db.commit()
+    # Create or update UserSubscription
+    existing = await db.get(UserSubscription, user_id)
+    now = datetime.now(tz=dt.UTC)
 
-
-@router.get("/checkout/{session_id}/status")
-async def get_checkout_status(
-    session_id: str,
-    db: DbSession,
-    user: AuthenticatedUser,
-) -> CheckoutStatusResponse:
-    """Check the status of a checkout session."""
-    result = await db.exec(
-        select(CreditTransaction).where(
-            CreditTransaction.external_reference == session_id,
-            CreditTransaction.user_id == user.id,
+    if existing:
+        existing.plan_id = plan.id
+        existing.status = _map_stripe_status(stripe_sub.status)
+        existing.stripe_customer_id = customer_id
+        existing.stripe_subscription_id = subscription_id
+        existing.current_period_start = datetime.fromtimestamp(stripe_sub.current_period_start, tz=dt.UTC)
+        existing.current_period_end = datetime.fromtimestamp(stripe_sub.current_period_end, tz=dt.UTC)
+        existing.cancel_at_period_end = stripe_sub.cancel_at_period_end
+        existing.updated = now
+    else:
+        subscription = UserSubscription(
+            user_id=user_id,
+            plan_id=plan.id,
+            status=_map_stripe_status(stripe_sub.status),
+            stripe_customer_id=customer_id,
+            stripe_subscription_id=subscription_id,
+            current_period_start=datetime.fromtimestamp(stripe_sub.current_period_start, tz=dt.UTC),
+            current_period_end=datetime.fromtimestamp(stripe_sub.current_period_end, tz=dt.UTC),
+            cancel_at_period_end=stripe_sub.cancel_at_period_end,
+            created=now,
+            updated=now,
         )
-    )
-    transaction = result.first()
+        db.add(subscription)
 
-    if not transaction:
-        # No transaction yet = webhook hasn't processed the payment
-        return CheckoutStatusResponse(status=TransactionStatus.pending)
+    await db.commit()
+    log.info(f"Created/updated subscription for user {user_id}: plan={plan_tier}")
 
-    return CheckoutStatusResponse(
-        status=transaction.status,
-        credits=int(transaction.amount) if transaction.status == TransactionStatus.completed else None,
-    )
+
+async def _handle_subscription_updated(stripe_sub: dict, db: DbSession) -> None:
+    """Handle subscription updates (plan change, status change, etc.)."""
+    subscription_id = stripe_sub["id"]
+
+    result = await db.exec(select(UserSubscription).where(UserSubscription.stripe_subscription_id == subscription_id))
+    subscription = result.first()
+
+    if not subscription:
+        log.warning(f"Subscription {subscription_id} not found in database")
+        return
+
+    now = datetime.now(tz=dt.UTC)
+    subscription.status = _map_stripe_status(stripe_sub["status"])
+    subscription.current_period_start = datetime.fromtimestamp(stripe_sub["current_period_start"], tz=dt.UTC)
+    subscription.current_period_end = datetime.fromtimestamp(stripe_sub["current_period_end"], tz=dt.UTC)
+    subscription.cancel_at_period_end = stripe_sub.get("cancel_at_period_end", False)
+
+    if stripe_sub.get("canceled_at"):
+        subscription.canceled_at = datetime.fromtimestamp(stripe_sub["canceled_at"], tz=dt.UTC)
+
+    subscription.updated = now
+    await db.commit()
+    log.info(f"Updated subscription {subscription_id}: status={subscription.status}")
+
+
+async def _handle_subscription_deleted(stripe_sub: dict, db: DbSession) -> None:
+    """Handle subscription deletion (fully canceled)."""
+    subscription_id = stripe_sub["id"]
+
+    result = await db.exec(select(UserSubscription).where(UserSubscription.stripe_subscription_id == subscription_id))
+    subscription = result.first()
+
+    if not subscription:
+        log.warning(f"Subscription {subscription_id} not found for deletion")
+        return
+
+    now = datetime.now(tz=dt.UTC)
+    subscription.status = SubscriptionStatus.canceled
+    subscription.canceled_at = now
+    subscription.updated = now
+
+    await db.commit()
+    log.info(f"Marked subscription {subscription_id} as canceled")
+
+
+async def _handle_invoice_paid(invoice: dict, db: DbSession) -> None:
+    """Handle successful invoice payment - reset usage on new billing period."""
+    billing_reason = invoice.get("billing_reason")
+    subscription_id = invoice.get("subscription")
+
+    # Only reset usage for subscription renewals
+    if billing_reason != "subscription_cycle" or not subscription_id:
+        return
+
+    result = await db.exec(select(UserSubscription).where(UserSubscription.stripe_subscription_id == subscription_id))
+    subscription = result.first()
+
+    if not subscription:
+        log.warning(f"Subscription {subscription_id} not found for invoice")
+        return
+
+    # Update period dates from invoice
+    period_start = invoice.get("period_start")
+    period_end = invoice.get("period_end")
+
+    if period_start and period_end:
+        subscription.current_period_start = datetime.fromtimestamp(period_start, tz=dt.UTC)
+        subscription.current_period_end = datetime.fromtimestamp(period_end, tz=dt.UTC)
+        subscription.updated = datetime.now(tz=dt.UTC)
+
+        # Create new usage period (old one is kept for history)
+        new_period = UsagePeriod(
+            user_id=subscription.user_id,
+            period_start=subscription.current_period_start,
+            period_end=subscription.current_period_end,
+        )
+        db.add(new_period)
+
+        await db.commit()
+        log.info(f"Created new usage period for subscription {subscription_id}")
+
+
+async def _handle_invoice_failed(invoice: dict, db: DbSession) -> None:
+    """Handle failed invoice payment."""
+    subscription_id = invoice.get("subscription")
+    if not subscription_id:
+        return
+
+    result = await db.exec(select(UserSubscription).where(UserSubscription.stripe_subscription_id == subscription_id))
+    subscription = result.first()
+
+    if not subscription:
+        return
+
+    subscription.status = SubscriptionStatus.past_due
+    subscription.updated = datetime.now(tz=dt.UTC)
+    await db.commit()
+    log.info(f"Marked subscription {subscription_id} as past_due due to failed payment")
+
+
+def _map_stripe_status(stripe_status: str) -> SubscriptionStatus:
+    """Map Stripe subscription status to our enum."""
+    mapping = {
+        "active": SubscriptionStatus.active,
+        "trialing": SubscriptionStatus.trialing,
+        "past_due": SubscriptionStatus.past_due,
+        "canceled": SubscriptionStatus.canceled,
+        "incomplete": SubscriptionStatus.incomplete,
+        "incomplete_expired": SubscriptionStatus.canceled,
+        "unpaid": SubscriptionStatus.past_due,
+    }
+    return mapping.get(stripe_status, SubscriptionStatus.incomplete)

@@ -2,12 +2,11 @@
 
 import base64
 import json
-from decimal import Decimal
 from pathlib import Path
 
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from yapit.gateway.domain_models import CreditPackage, DocumentProcessor, Filter, TTSModel, Voice
+from yapit.gateway.domain_models import DocumentProcessor, Filter, Plan, PlanTier, TTSModel, Voice
 
 
 def load_voice_prompt(name: str) -> tuple[str, str]:
@@ -28,7 +27,6 @@ def create_dev_models() -> list[TTSModel]:
     kokoro = TTSModel(
         slug="kokoro",
         name="Kokoro",
-        credits_per_sec=Decimal("1.0"),  # charged when synthesis_mode=server
         native_codec="pcm",
         sample_rate=24_000,
         channels=1,
@@ -38,7 +36,6 @@ def create_dev_models() -> list[TTSModel]:
     higgs = TTSModel(
         slug="higgs",
         name="HIGGS Audio V2",
-        credits_per_sec=Decimal("2.0"),
         native_codec="pcm",
         sample_rate=24_000,
         channels=1,
@@ -99,7 +96,6 @@ def create_dev_models() -> list[TTSModel]:
     inworld = TTSModel(
         slug="inworld",
         name="Inworld TTS-1",
-        credits_per_sec=Decimal("1.0"),  # ~$0.005/min at $5/1M chars
         native_codec="mp3",
         sample_rate=48_000,
         channels=1,
@@ -110,7 +106,6 @@ def create_dev_models() -> list[TTSModel]:
     inworld_max = TTSModel(
         slug="inworld-max",
         name="Inworld TTS-1-Max",
-        credits_per_sec=Decimal("2.0"),  # ~$0.01/min at $10/1M chars
         native_codec="mp3",
         sample_rate=48_000,
         channels=1,
@@ -140,20 +135,6 @@ def create_dev_models() -> list[TTSModel]:
         )
 
     models.extend([kokoro, higgs, inworld, inworld_max])
-
-    # Uncomment to add Dia model
-    # dia = TTSModel(
-    #     slug="dia",
-    #     name="Dia-1.6B",
-    #     credits_per_sec=Decimal("2.0"),
-    #     native_codec="pcm",
-    #     sample_rate=44_100,
-    #     channels=1,
-    #     sample_width=2,
-    # )
-    # dia.voices.append(Voice(slug="default", name="Dia", lang="en"))
-    # models.append(dia)
-
     return models
 
 
@@ -177,56 +158,87 @@ def create_dev_filters() -> list[Filter]:
 
 def create_dev_document_processors() -> list[DocumentProcessor]:
     """Create document processors for development."""
-    processors = [
-        DocumentProcessor(
-            slug="markitdown",
-            name="Markitdown (Free)",
-            credits_per_page=Decimal("0"),  # Free processor
-        ),
-        DocumentProcessor(
-            slug="mistral-ocr",
-            name="Mistral OCR",
-            credits_per_page=Decimal("10"),  # 10 credits per page
-        ),
+    return [
+        DocumentProcessor(slug="markitdown", name="Markitdown (Free)"),
+        DocumentProcessor(slug="mistral-ocr", name="Mistral OCR"),
     ]
-    return processors
 
 
-def create_dev_credit_packages() -> list[CreditPackage]:
-    """Create default credit packages for purchase."""
-    packages = [
-        CreditPackage(
-            provider_price_id="price_dev_starter",
-            credits=Decimal("10000"),
+def create_dev_plans() -> list[Plan]:
+    """Create subscription plans.
+
+    Pricing (EUR, tax-inclusive):
+    - Free: €0, browser Kokoro only
+    - Basic: €7/mo (€75/yr), unlimited server Kokoro, 500 OCR pages
+    - Plus: €20/mo (€192/yr), +20 hrs premium voice, 1500 OCR pages
+    - Max: €40/mo (€240/yr), +50 hrs premium voice, 3000 OCR pages
+
+    Premium voice characters: ~17 chars = 1 second of audio
+    - 20 hrs = 72,000 seconds = 1,224,000 chars
+    - 50 hrs = 180,000 seconds = 3,060,000 chars
+    """
+    return [
+        Plan(
+            tier=PlanTier.free,
+            name="Free",
+            server_kokoro_characters=0,
+            premium_voice_characters=0,
+            ocr_pages=0,
+            trial_days=0,
+            price_cents_monthly=0,
+            price_cents_yearly=0,
         ),
-        CreditPackage(
-            provider_price_id="price_dev_basic",
-            credits=Decimal("50000"),
+        Plan(
+            tier=PlanTier.basic,
+            name="Basic",
+            server_kokoro_characters=None,  # unlimited
+            premium_voice_characters=0,
+            ocr_pages=500,
+            stripe_price_id_monthly="price_1SkHX6IRF9ptKmcP7odpitIS",
+            stripe_price_id_yearly="price_1SkHX6IRF9ptKmcPjSYK5KtC",
+            trial_days=3,
+            price_cents_monthly=700,
+            price_cents_yearly=7500,
         ),
-        CreditPackage(
-            provider_price_id="price_dev_pro",
-            credits=Decimal("100000"),
+        Plan(
+            tier=PlanTier.plus,
+            name="Plus",
+            server_kokoro_characters=None,  # unlimited
+            premium_voice_characters=1_224_000,  # 20 hours
+            ocr_pages=1500,
+            stripe_price_id_monthly="price_1SkHX7IRF9ptKmcPFxbC0ujk",
+            stripe_price_id_yearly="price_1SkHX7IRF9ptKmcPbt3JjxGN",
+            trial_days=3,
+            price_cents_monthly=2000,
+            price_cents_yearly=19200,
+        ),
+        Plan(
+            tier=PlanTier.max,
+            name="Max",
+            server_kokoro_characters=None,  # unlimited
+            premium_voice_characters=3_060_000,  # 50 hours
+            ocr_pages=3000,
+            stripe_price_id_monthly="price_1SkHX8IRF9ptKmcPCPZe3dL8",
+            stripe_price_id_yearly="price_1SkHX8IRF9ptKmcPWcTZxJJp",
+            trial_days=0,  # No trial for Max tier
+            price_cents_monthly=4000,
+            price_cents_yearly=24000,
         ),
     ]
-    return packages
 
 
 async def seed_dev_database(db: AsyncSession) -> None:
-    """Seed development database with models, filters, document processors, and credit packages."""
-    # Add all TTS models
+    """Seed development database with models, voices, filters, processors, and plans."""
     for model in create_dev_models():
         db.add(model)
 
-    # Add default filters
     for filter_obj in create_dev_filters():
         db.add(filter_obj)
 
-    # Add document processors
     for processor in create_dev_document_processors():
         db.add(processor)
 
-    # Add credit packages
-    for package in create_dev_credit_packages():
-        db.add(package)
+    for plan in create_dev_plans():
+        db.add(plan)
 
     await db.commit()

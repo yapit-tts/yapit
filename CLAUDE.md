@@ -25,10 +25,54 @@ Note: We don't work heavily with GitHub issues (solo dev + claude for now -- the
   - If no dev user exists after startup (login fails), run `make dev-user` - there's a race condition where stack-auth health check sometimes fails before user creation runs
 - **CI timing**: Integration tests take 4-5 minutes (Docker build). Wait for all checks before merging PRs.
 
+## Database Migrations
+
+### Creating a New Migration (Dev)
+
+```bash
+make migration-new MSG="description of changes"
+```
+
+**Prerequisites:** Models in `domain_models.py` already updated, Python code is valid (imports work).
+
+**What it does:**
+1. Starts postgres if needed
+2. Drops DB, runs existing migrations to recreate "pre-change" state
+3. Generates migration from model diff
+4. Auto-fixes SQLModel quirks (`sqlmodel.sql.sqltypes.AutoString()` → `sa.String()`)
+5. Tests migration on fresh DB — if this fails, fix before committing
+
+**Always review the generated migration:**
+- Autogenerate can't detect renames (sees drop + create)
+- Data migrations must be added manually (e.g., populating new NOT NULL columns)
+- Operation ordering may need adjustment
+- Enum changes often need manual tweaks
+
+**After generating:** Run `make dev-cpu` to restart and apply migration + seed data.
+
+### Deploying to Prod
+
+**No special action.** Gateway runs `alembic upgrade head` on startup. Just `scripts/deploy.sh`.
+
+## Secrets Management
+
+**`.env.sops`** — encrypted secrets (age/sops). Contains both test and live values:
+- `STRIPE_SECRET_KEY_TEST`, `STRIPE_SECRET_KEY_LIVE`
+- `STRIPE_WEBHOOK_SECRET_TEST`, `STRIPE_WEBHOOK_SECRET_LIVE`
+- API keys (RUNPOD, MISTRAL, INWORLD, etc.)
+
+**For dev:** Run `make dev-env` — decrypts sops, transforms `*_TEST` → main var names, removes `*_LIVE` and `STACK_*`. Creates ready-to-use `.env`.
+
+**For prod:** Deploy script uses `*_LIVE` values.
+
+**`.env.dev`** — public (in git), non-secret dev config (ports, Stack Auth dev project, etc.)
+
 ## Agent Work Structure
 
 Task files live in `agent/tasks/`, persistent knowledge in `agent/knowledge/`.
 Queryable via grep "^status: active" agent/tasks/*.md
+
+**Wikilinks**: Use `[[task-name]]` (not `task-name.md`) when referencing other task/knowledge files. Enables backlink discovery in memex.
 
 **Master doc:**
 - `agent/knowledge/architecture.md` - Architecture, decisions, implementation details, known issues/tech debt

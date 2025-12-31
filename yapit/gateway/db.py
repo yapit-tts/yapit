@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from decimal import Decimal
 from pathlib import Path
 from typing import Any, AsyncIterator
 
@@ -11,7 +10,6 @@ from sqlmodel import SQLModel, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from yapit.gateway.config import Settings
-from yapit.gateway.domain_models import UserCredits
 from yapit.gateway.exceptions import ResourceNotFoundError
 
 ALEMBIC_INI = Path(__file__).parent / "alembic.ini"
@@ -93,16 +91,3 @@ async def get_by_slug_or_404[T: SQLModel](session: AsyncSession, model: type[T],
     if not item:
         raise ResourceNotFoundError(model.__name__, slug)
     return item
-
-
-async def get_or_create_user_credits(user_id: str, db: AsyncSession) -> UserCredits:
-    user_credits = await db.get(UserCredits, user_id)
-    if not user_credits:
-        user_credits = UserCredits(
-            user_id=user_id,
-            balance=Decimal("0"),
-            total_purchased=Decimal("0"),
-            total_used=Decimal("0"),
-        )
-        db.add(user_credits)
-    return user_credits

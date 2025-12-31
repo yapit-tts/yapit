@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     stripe_secret_key: str | None = None
     stripe_webhook_secret: str | None = None
 
+    # Self-hosting: set False to disable subscription/usage limits entirely
+    billing_enabled: bool
+
     model_config = SettingsConfigDict(
         env_prefix="",
         env_file=[os.getenv("ENV_FILE", ""), ".env"],

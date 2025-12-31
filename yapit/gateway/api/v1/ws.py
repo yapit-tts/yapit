@@ -27,10 +27,12 @@ from yapit.contracts import (
 from yapit.gateway.auth import authenticate_ws
 from yapit.gateway.cache import Cache
 from yapit.gateway.config import Settings, get_settings
-from yapit.gateway.deps import get_db_session, get_or_create_user_credits
-from yapit.gateway.domain_models import Block, BlockVariant, Document, TTSModel, Voice
+from yapit.gateway.deps import get_db_session
+from yapit.gateway.domain_models import Block, BlockVariant, Document, TTSModel, UsageType, Voice
+from yapit.gateway.exceptions import UsageLimitExceededError
 from yapit.gateway.processors.tts.manager import TTSProcessorManager
 from yapit.gateway.stack_auth.users import User
+from yapit.gateway.usage import check_usage_limit
 
 log = logging.getLogger(__name__)
 
@@ -249,14 +251,6 @@ async def _handle_synthesize(
             await ws.send_json({"type": "error", "error": str(e)})
             return
 
-        # Credit check for server-side synthesis (admins bypass)
-        is_admin = bool(user.server_metadata and user.server_metadata.is_admin)
-        if msg.synthesis_mode != "browser" and not is_admin:
-            user_credits = await get_or_create_user_credits(user.id, db)
-            if user_credits.balance <= 0:
-                await ws.send_json({"type": "error", "error": "Insufficient credits"})
-                return
-
         blocks = (
             await db.exec(
                 select(Block).where(Block.document_id == msg.document_id).where(col(Block.idx).in_(msg.block_indices))
@@ -264,6 +258,24 @@ async def _handle_synthesize(
         ).all()
 
         block_map = {b.idx: b for b in blocks}
+
+        # Usage limit check for server-side synthesis
+        is_admin = bool(user.server_metadata and user.server_metadata.is_admin)
+        if msg.synthesis_mode != "browser":
+            usage_type = UsageType.server_kokoro if model.slug.startswith("kokoro") else UsageType.premium_voice
+            total_chars = sum(len(b.text) for b in blocks)
+            try:
+                await check_usage_limit(
+                    user.id,
+                    usage_type,
+                    total_chars,
+                    db,
+                    is_admin=is_admin,
+                    billing_enabled=settings.billing_enabled,
+                )
+            except UsageLimitExceededError as e:
+                await ws.send_json({"type": "error", "error": str(e)})
+                return
 
         # Queue each block
         for idx in msg.block_indices:

@@ -25,7 +25,6 @@ class ModelRead(BaseModel):
     slug: str
     name: str
     description: str | None = None
-    credits_per_sec: float
     voices: list[VoiceRead] = []
 
 
@@ -41,7 +40,6 @@ async def list_models(
             slug=model.slug,
             name=model.name,
             description=model.description,
-            credits_per_sec=model.credits_per_sec,
             voices=[
                 VoiceRead(
                     id=voice.id,
@@ -67,7 +65,6 @@ async def read_model(
         slug=model.slug,
         name=model.name,
         description=model.description,
-        credits_per_sec=model.credits_per_sec,
         voices=[
             VoiceRead(
                 id=voice.id,

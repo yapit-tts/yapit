@@ -1,5 +1,4 @@
 from abc import abstractmethod
-from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -7,15 +6,9 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from yapit.gateway.cache import Cache
 from yapit.gateway.config import Settings
 from yapit.gateway.constants import SUPPORTED_DOCUMENT_MIME_TYPES
-from yapit.gateway.db import get_by_slug_or_404
-from yapit.gateway.domain_models import (
-    CreditTransaction,
-    DocumentMetadata,
-    DocumentProcessor,
-    TransactionType,
-    UserCredits,
-)
-from yapit.gateway.exceptions import InsufficientCreditsError, ResourceNotFoundError, ValidationError
+from yapit.gateway.domain_models import DocumentMetadata, UsageType
+from yapit.gateway.exceptions import ResourceNotFoundError, ValidationError
+from yapit.gateway.usage import check_usage_limit, record_usage
 
 
 class ExtractedPage(BaseModel):
@@ -76,6 +69,11 @@ class BaseDocumentProcessor:
     def max_file_size(self) -> int:
         """Maximum file size in bytes this processor can handle for uploads."""
 
+    @property
+    def is_paid(self) -> bool:
+        """Whether this processor requires usage tracking (counts against OCR limit)."""
+        return False
+
     @abstractmethod
     async def _extract(
         self,
@@ -116,7 +114,6 @@ class BaseDocumentProcessor:
     async def process_with_billing(
         self,
         user_id: str,
-        user_credits: UserCredits,
         cache_key: str,
         db: AsyncSession,
         cache: Cache,
@@ -125,15 +122,13 @@ class BaseDocumentProcessor:
         content: bytes | None = None,
         pages: list[int] | None = None,
     ) -> DocumentExtractionResult:
-        """Process document with caching and billing."""
+        """Process document with caching and usage tracking."""
         if url is None and content is None:
             raise ValidationError("At least one of 'url' or 'content' must be provided")
         if not self._is_supported(content_type):
             raise ValidationError(
                 f"Unsupported content type: {content_type}. Supported types: {self.supported_mime_types}"
             )
-
-        processor_model = await get_by_slug_or_404(db, DocumentProcessor, self._slug)
 
         cached_data = await cache.retrieve_data(cache_key)
         if not cached_data:
@@ -163,10 +158,15 @@ class BaseDocumentProcessor:
         if not uncached_pages:
             return self._filter_pages(cached_doc.extraction, requested_pages)
 
-        # Check credits
-        credits_needed = Decimal(len(uncached_pages)) * processor_model.credits_per_page
-        if user_credits.balance < credits_needed:
-            raise InsufficientCreditsError(required=credits_needed, available=user_credits.balance)
+        # Check usage limit before processing (only for paid processors like OCR)
+        if self.is_paid:
+            await check_usage_limit(
+                user_id,
+                UsageType.ocr,
+                len(uncached_pages),
+                db,
+                billing_enabled=self._settings.billing_enabled,
+            )
 
         # Process missing pages
         result = await self._extract(url=url, content=content, content_type=content_type, pages=list(uncached_pages))
@@ -181,10 +181,21 @@ class BaseDocumentProcessor:
             ttl_seconds=self._settings.document_cache_ttl_document,
         )
 
-        # Bill for processed pages
-        actual_credits = Decimal(len(result.pages)) * processor_model.credits_per_page
-        if actual_credits > 0:
-            await self._create_transaction(db, user_id, user_credits, actual_credits, result.pages, cache_key)
+        # Record usage for processed pages (only for paid processors)
+        if self.is_paid and result.pages:
+            await record_usage(
+                user_id=user_id,
+                usage_type=UsageType.ocr,
+                amount=len(result.pages),
+                db=db,
+                reference_id=cache_key,
+                description=f"Document processing: {len(result.pages)} pages with {self._slug}",
+                details={
+                    "processor": self._slug,
+                    "pages_processed": len(result.pages),
+                    "page_numbers": list(result.pages.keys()),
+                },
+            )
 
         return self._filter_pages(cached_doc.extraction, requested_pages)
 
@@ -195,34 +206,6 @@ class BaseDocumentProcessor:
             pages={idx: page for idx, page in extraction.pages.items() if idx in requested_pages},
             extraction_method=extraction.extraction_method,
         )
-
-    async def _create_transaction(
-        self,
-        db: AsyncSession,
-        user_id: str,
-        user_credits: UserCredits,
-        credits: Decimal,
-        processed_pages: dict[int, ExtractedPage],
-        cache_key: str,
-    ) -> None:
-        """Create billing transaction."""
-        transaction = CreditTransaction(
-            user_id=user_id,
-            type=TransactionType.usage_deduction,
-            amount=-credits,
-            balance_before=user_credits.balance,
-            balance_after=user_credits.balance - credits,
-            description=f"Document processing: {len(processed_pages)} pages with {self._slug}",
-            usage_reference=cache_key,
-            details={
-                "processor": self._slug,
-                "pages_processed": len(processed_pages),
-                "page_numbers": list(processed_pages.keys()),
-            },
-        )
-        db.add(transaction)
-        user_credits.balance -= credits
-        await db.commit()
 
     def _is_supported(self, mime_type: str) -> bool:
         """Check if this processor supports the given MIME type."""

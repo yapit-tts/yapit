@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from decimal import Decimal
 from typing import Annotated, AsyncIterator
 from uuid import UUID
 
@@ -13,16 +12,12 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from yapit.gateway.auth import authenticate
 from yapit.gateway.cache import Cache, CacheConfig, Caches, SqliteCache
 from yapit.gateway.config import Settings, get_settings
-from yapit.gateway.db import create_session, get_by_slug_or_404, get_or_404, get_or_create_user_credits
+from yapit.gateway.db import create_session, get_by_slug_or_404, get_or_404
 from yapit.gateway.domain_models import (
     Block,
     BlockVariant,
-    CreditTransaction,
     Document,
-    TransactionStatus,
-    TransactionType,
     TTSModel,
-    UserCredits,
     Voice,
 )
 from yapit.gateway.exceptions import ResourceNotFoundError
@@ -144,35 +139,6 @@ async def require_admin(is_admin: IsAdmin) -> None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
 
 
-async def _get_or_create_user_credits_dep_helper(user: AuthenticatedUser, db: DbSession) -> UserCredits:
-    return await get_or_create_user_credits(user.id, db)
-
-
-async def ensure_admin_credits(
-    user: AuthenticatedUser,
-    user_credits: AuthenticatedUserCredits,
-    db: DbSession,
-    is_admin: IsAdmin,
-) -> None:
-    """Ensure admin users have sufficient credits by topping up if needed (for testing/development/self-hosting)."""
-    min_balance = Decimal(1000)
-    top_up_amount = Decimal(10000)
-    if is_admin and user_credits.balance < min_balance:
-        balance_before = user_credits.balance
-        user_credits.balance += top_up_amount
-        transaction = CreditTransaction(
-            user_id=user.id,
-            type=TransactionType.credit_bonus,
-            status=TransactionStatus.completed,
-            amount=top_up_amount,
-            balance_before=balance_before,
-            balance_after=user_credits.balance,
-            description="Admin auto top-up",
-        )
-        db.add(transaction)
-        await db.commit()
-
-
 async def get_redis_client(request: Request) -> Redis:
     return request.app.state.redis_client
 
@@ -196,4 +162,3 @@ CurrentBlock = Annotated[Block, Depends(get_block)]
 CurrentBlockVariant = Annotated[BlockVariant, Depends(get_block_variant)]
 AuthenticatedUser = Annotated[User, Depends(authenticate)]
 IsAdmin = Annotated[bool, Depends(is_admin)]
-AuthenticatedUserCredits = Annotated[UserCredits, Depends(_get_or_create_user_credits_dep_helper)]

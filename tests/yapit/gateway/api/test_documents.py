@@ -1,4 +1,3 @@
-from decimal import Decimal
 from unittest.mock import patch
 
 import pytest
@@ -46,7 +45,6 @@ async def test_prepare_and_create_document_from_url(client, as_test_user, sessio
         assert prepare_data.metadata.content_type == "text/plain"
         assert prepare_data.metadata.total_pages == 1
         assert prepare_data.endpoint == "document"  # Not HTML, so not "website"
-        assert prepare_data.credit_cost == Decimal(0)  # No OCR processor requested
         assert prepare_data.uncached_pages == set()
 
         # Step 2: Try to create document (will fail without processor)
@@ -203,8 +201,8 @@ async def test_prepare_detects_html_with_charset_as_website(client, as_test_user
 
 
 @pytest.mark.asyncio
-async def test_prepare_website_returns_zero_cost(client, as_test_user):
-    """Test that preparing a website always returns zero cost and empty uncached pages."""
+async def test_prepare_website_returns_empty_uncached_pages(client, as_test_user):
+    """Test that preparing a website always returns empty uncached pages."""
     mock_html = b"<!DOCTYPE html><html><body>Test</body></html>"
 
     with patch("yapit.gateway.api.v1.documents._download_document") as mock_download:
@@ -215,7 +213,6 @@ async def test_prepare_website_returns_zero_cost(client, as_test_user):
         assert response.status_code == 200
         data = DocumentPrepareResponse.model_validate(response.json())
         assert data.endpoint == "website"
-        assert data.credit_cost == Decimal(0)
         assert data.uncached_pages == set()
 
         # Test even with processor_slug specified (should be ignored for websites)
@@ -225,26 +222,4 @@ async def test_prepare_website_returns_zero_cost(client, as_test_user):
         assert response.status_code == 200
         data = DocumentPrepareResponse.model_validate(response.json())
         assert data.endpoint == "website"
-        assert data.credit_cost == Decimal(0)
-        assert data.uncached_pages == set()
-
-
-@pytest.mark.asyncio
-async def test_prepare_document_without_processor_returns_zero_cost(client, as_test_user):
-    """Test that preparing a document without processor returns zero cost."""
-    mock_pdf = b"fake pdf content"
-
-    with (
-        patch("yapit.gateway.api.v1.documents._download_document") as mock_download,
-        patch("yapit.gateway.api.v1.documents._extract_document_info") as mock_extract,
-    ):
-        mock_download.return_value = (mock_pdf, "application/pdf")
-        mock_extract.return_value = (5, "Test Document")  # 5 pages, with title
-
-        # Prepare without processor_slug
-        response = await client.post("/v1/documents/prepare", json={"url": "https://example.com/doc.pdf"})
-        assert response.status_code == 200
-        data = DocumentPrepareResponse.model_validate(response.json())
-        assert data.endpoint == "document"
-        assert data.credit_cost == Decimal(0)
         assert data.uncached_pages == set()

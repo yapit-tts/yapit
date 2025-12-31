@@ -14,7 +14,6 @@ async def test_list_models(client, as_test_user, session):
     model = TTSModel(
         slug="test-model",
         name="Test Model",
-        credits_per_sec=0.01,
         description="A test model",
         sample_rate=24000,
         channels=1,
@@ -50,7 +49,6 @@ async def test_read_model(client, as_test_user, session):
     model = TTSModel(
         slug="test-model-read",
         name="Test Model Read",
-        credits_per_sec=0.02,
         sample_rate=24000,
         channels=1,
         sample_width=2,
@@ -65,7 +63,6 @@ async def test_read_model(client, as_test_user, session):
     model = ModelRead.model_validate(response.json())
     assert model.slug == "test-model-read"
     assert model.name == "Test Model Read"
-    assert float(model.credits_per_sec) == 0.02
 
 
 @pytest.mark.asyncio
@@ -81,7 +78,6 @@ async def test_list_voices(client, as_test_user, session):
     model = TTSModel(
         slug="voice-model",
         name="Voice Model",
-        credits_per_sec=0.01,
         sample_rate=24000,
         channels=1,
         sample_width=2,

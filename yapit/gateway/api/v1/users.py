@@ -2,19 +2,11 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
-from sqlmodel import col, select
+from sqlmodel import select
 
-from yapit.gateway.db import get_or_404
-from yapit.gateway.deps import (
-    AuthenticatedUser,
-    DbSession,
-)
-from yapit.gateway.domain_models import (
-    CreditTransaction,
-    Filter,
-    FilterConfig,
-    UserCredits,
-)
+from yapit.gateway.deps import AuthenticatedUser, DbSession
+from yapit.gateway.domain_models import Filter, FilterConfig
+from yapit.gateway.usage import get_usage_summary
 
 router = APIRouter(prefix="/v1/users", tags=["Users"])
 
@@ -28,32 +20,13 @@ class FilterRead(BaseModel):
     config: dict[str, Any]
 
 
-@router.get("/me/credits", response_model=UserCredits)
-async def get_my_credits(
+@router.get("/me/subscription")
+async def get_my_subscription(
     db: DbSession,
     auth_user: AuthenticatedUser,
-) -> UserCredits:
-    """Get current user's credit balance and statistics."""
-    user_credits = await get_or_404(db, UserCredits, auth_user.id)
-    return user_credits
-
-
-@router.get("/me/transactions")
-async def get_my_transactions(
-    db: DbSession,
-    auth_user: AuthenticatedUser,
-    limit: int = 50,
-    offset: int = 0,
-) -> list[CreditTransaction]:
-    """Get current user's credit transaction history."""
-    result = await db.exec(
-        select(CreditTransaction)
-        .where(CreditTransaction.user_id == auth_user.id)
-        .order_by(col(CreditTransaction.created).desc())
-        .limit(limit)
-        .offset(offset)
-    )
-    return result.all()
+) -> dict:
+    """Get current user's subscription and usage summary."""
+    return await get_usage_summary(auth_user.id, db)
 
 
 @router.get("/{user_id}/filters", response_model=list[FilterRead])

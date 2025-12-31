@@ -36,7 +36,6 @@ async def test_prepare_and_process_with_markitdown(admin_client):
     prepare_data = prepare_response.json()
 
     assert prepare_data["endpoint"] == "website"  # HTML content
-    assert prepare_data["credit_cost"] == "0"  # No cost calculation for websites
     assert prepare_data["uncached_pages"] == []
 
     # Create document
@@ -73,10 +72,6 @@ async def test_ocr_with_mistral_and_billing(admin_client):
 
     assert upload_response.status_code == 200
     upload_data = upload_response.json()
-
-    # Should show credit cost
-    assert upload_data["credit_cost"] is not None
-    assert float(upload_data["credit_cost"]) > 0  # 1 page * credits per page
 
     # Process with OCR
     create_response = await admin_client.post(

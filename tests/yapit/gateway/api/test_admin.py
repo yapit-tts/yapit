@@ -1,13 +1,10 @@
 """Test admin API endpoints."""
 
-from decimal import Decimal
-
 import pytest
 from fastapi import status
 from sqlmodel import select
 
-from yapit.gateway.auth import authenticate
-from yapit.gateway.domain_models import Filter, TTSModel, UserCredits, Voice
+from yapit.gateway.domain_models import Filter, TTSModel, Voice
 
 
 @pytest.mark.asyncio
@@ -24,7 +21,6 @@ async def test_admin_can_create_model(client, as_admin_user, session):
     model_data = {
         "slug": "test-model",
         "name": "Test Model",
-        "credits_per_sec": 2.0,
         "native_codec": "pcm",
         "sample_rate": 24000,
         "channels": 1,
@@ -41,7 +37,6 @@ async def test_admin_can_create_model(client, as_admin_user, session):
     # Verify in database
     db_model = (await session.exec(select(TTSModel).where(TTSModel.slug == "test-model"))).first()
     assert db_model is not None
-    assert float(db_model.credits_per_sec) == 2.0
 
 
 @pytest.mark.asyncio
@@ -51,7 +46,6 @@ async def test_admin_can_update_model(client, as_admin_user, session):
     model = TTSModel(
         slug="update-test",
         name="Original Name",
-        credits_per_sec=1.0,
         native_codec="pcm",
         sample_rate=24000,
         channels=1,
@@ -61,13 +55,12 @@ async def test_admin_can_update_model(client, as_admin_user, session):
     await session.commit()
 
     # Update it
-    update_data = {"name": "Updated Name", "credits_per_sec": 3.0}
+    update_data = {"name": "Updated Name"}
     response = await client.put(f"/v1/admin/models/{model.slug}", json=update_data)
     assert response.status_code == status.HTTP_200_OK
 
     updated_model = TTSModel.model_validate(response.json())
     assert updated_model.name == "Updated Name"
-    assert float(updated_model.credits_per_sec) == 3.0
 
 
 @pytest.mark.asyncio
@@ -77,7 +70,6 @@ async def test_admin_can_manage_voices(client, as_admin_user, session):
     model = TTSModel(
         slug="voice-test-model",
         name="Voice Test Model",
-        credits_per_sec=1.0,
         native_codec="pcm",
         sample_rate=24000,
         channels=1,
@@ -127,7 +119,6 @@ async def test_admin_voice_creation_duplicate_check(client, as_admin_user, sessi
     model = TTSModel(
         slug="duplicate-voice-test",
         name="Duplicate Voice Test",
-        credits_per_sec=1.0,
         native_codec="pcm",
         sample_rate=24000,
         channels=1,
@@ -160,7 +151,6 @@ async def test_admin_can_delete_model_with_voices(client, as_admin_user, session
     model = TTSModel(
         slug="delete-test",
         name="Delete Test",
-        credits_per_sec=1.0,
         native_codec="pcm",
         sample_rate=24000,
         channels=1,
@@ -225,63 +215,3 @@ async def test_admin_can_manage_system_filters(client, as_admin_user, session):
     # Delete filter
     response = await client.delete(f"/v1/admin/filters/{filter_id}")
     assert response.status_code == status.HTTP_204_NO_CONTENT
-
-
-# Credit Management Tests
-
-
-@pytest.mark.asyncio
-async def test_admin_can_grant_credits(client, app, admin_user, test_user, session):
-    """Test that admin can grant credits to a user."""
-    # Set admin auth
-    app.dependency_overrides[authenticate] = lambda: admin_user
-
-    # Grant credits
-    response = await client.post(
-        f"/v1/admin/users/{test_user.id}/credits",
-        json={"amount": "100.50", "description": "Test credit grant", "type": "credit_bonus"},
-    )
-    assert response.status_code == status.HTTP_200_OK
-
-    data = UserCredits.model_validate(response.json())
-    assert data.user_id == test_user.id
-    assert data.balance == Decimal("100.50")
-    assert data.total_purchased == Decimal("100.50")
-
-
-@pytest.mark.asyncio
-async def test_admin_can_deduct_credits(client, app, admin_user, test_user, session):
-    """Test that admin can deduct credits from a user."""
-    # Set admin auth
-    app.dependency_overrides[authenticate] = lambda: admin_user
-
-    # First grant some credits
-    user_credits = UserCredits(
-        user_id=test_user.id,
-        balance=Decimal("100"),
-        total_purchased=Decimal("100"),
-        total_used=Decimal("0"),
-    )
-    session.add(user_credits)
-    await session.commit()
-
-    # Deduct credits
-    response = await client.post(
-        f"/v1/admin/users/{test_user.id}/credits",
-        json={"amount": "-25.75", "description": "Manual deduction", "type": "credit_adjustment"},
-    )
-    assert response.status_code == status.HTTP_200_OK
-
-    data = UserCredits.model_validate(response.json())
-    assert data.balance == Decimal("74.25")
-
-
-@pytest.mark.asyncio
-async def test_regular_user_cannot_access_admin_credit_adjustment(client, as_test_user):
-    """Test that regular users cannot access admin credit adjustment endpoint."""
-    # Try to grant credits
-    response = await client.post(
-        f"/v1/admin/users/{as_test_user.id}/credits",
-        json={"amount": "100", "description": "Unauthorized attempt", "type": "credit_bonus"},
-    )
-    assert response.status_code == status.HTTP_403_FORBIDDEN

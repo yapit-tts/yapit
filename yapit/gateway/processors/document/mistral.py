@@ -59,6 +59,10 @@ class MistralOCRProcessor(BaseDocumentProcessor):
     def max_file_size(self) -> int:  # TODO use this to validate early
         return 50 * 1024 * 1024
 
+    @property
+    def is_paid(self) -> bool:
+        return True
+
     async def _extract(
         self,
         content_type: str,

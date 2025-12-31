@@ -82,36 +82,47 @@ test-inworld:
 	uv run --env-file=.env.dev --env-file=.env pytest tests/integration -v -m "inworld"
 
 # Database migrations (for prod schema changes)
-# Resets DB to migration state, then generates migration from model diff
-# Requires postgres to be running. Restart dev afterward to recreate tables.
+# Resets DB to migration state, generates migration, auto-fixes known issues, and tests it
 # Usage: make migration-new MSG="add user preferences"
 migration-new:
 ifndef MSG
 	$(error MSG is required. Usage: make migration-new MSG="description")
 endif
 	@docker compose -f docker-compose.yml -f docker-compose.dev.yml ps postgres --format '{{.Status}}' | grep -q "Up" || \
-		(echo "Error: postgres not running. Start with: make dev-cpu" && exit 1)
+		(echo "Starting postgres..." && docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres --wait)
 	@echo "Resetting database to migration state..."
 	@docker compose -f docker-compose.yml -f docker-compose.dev.yml exec -T postgres psql -U yapit -d yapit -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;" > /dev/null
 	@cd yapit/gateway && DATABASE_URL="postgresql://yapit:yapit@localhost:5432/yapit" uv run alembic upgrade head
 	@echo "Generating migration..."
 	@cd yapit/gateway && DATABASE_URL="postgresql://yapit:yapit@localhost:5432/yapit" uv run alembic revision --autogenerate -m "$(MSG)"
-	@echo "Done. Review migration in yapit/gateway/migrations/versions/"
-	@echo "Restart dev to recreate tables: make dev-cpu"
+	@echo "Auto-fixing sqlmodel types..."
+	@find yapit/gateway/migrations/versions -name "*.py" -exec sed -i 's/sqlmodel\.sql\.sqltypes\.AutoString()/sa.String()/g' {} \;
+	@echo "Testing migration on fresh DB..."
+	@docker compose -f docker-compose.yml -f docker-compose.dev.yml exec -T postgres psql -U yapit -d yapit -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;" > /dev/null
+	@cd yapit/gateway && DATABASE_URL="postgresql://yapit:yapit@localhost:5432/yapit" uv run alembic upgrade head
+	@echo "✓ Migration generated and verified"
+	@echo "Review: yapit/gateway/migrations/versions/"
+	@echo "Restart dev: make dev-cpu"
 
-# Decrypt .env.sops for dev (removes prod Stack Auth credentials)
-# Prefers YAPIT_SOPS_AGE_KEY_FILE over SOPS_AGE_KEY_FILE (yapit key may differ from global)
-env-dev:
+# Decrypt .env.sops for dev
+# - Removes STACK_* (dev uses separate Stack Auth via .env.dev)
+# - Transforms *_TEST vars to main var names (STRIPE_SECRET_KEY_TEST -> STRIPE_SECRET_KEY)
+# - Removes *_LIVE vars (not needed in dev)
+dev-env:
 	@if [ -z "$$YAPIT_SOPS_AGE_KEY_FILE" ]; then \
 		echo "Error: Set YAPIT_SOPS_AGE_KEY_FILE to the yapit age key path"; exit 1; \
 	fi
-	@SOPS_AGE_KEY_FILE=$$YAPIT_SOPS_AGE_KEY_FILE sops -d .env.sops | grep -v "^STACK_" > .env
-	@echo "Created .env (prod Stack Auth credentials removed)"
+	@SOPS_AGE_KEY_FILE=$$YAPIT_SOPS_AGE_KEY_FILE sops -d .env.sops \
+		| grep -v "^STACK_" \
+		| grep -v "_LIVE=" \
+		| sed 's/_TEST=/=/' \
+		> .env
+	@echo "Created .env (dev-ready: test keys, no prod Stack Auth)"
 
 check: check-backend check-frontend
 
 check-backend:
-	ty check yapit/gateway/
+	uvx ty@latest check yapit/gateway/
 
 check-frontend:
 	cd frontend && npm run lint && npx tsc --noEmit

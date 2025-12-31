@@ -1,14 +1,10 @@
 import asyncio
-import datetime as dt
 import logging
 import uuid
 from abc import abstractmethod
-from datetime import datetime
-from decimal import Decimal
 
 from redis.asyncio import Redis
-from sqlalchemy.orm import selectinload
-from sqlmodel import select, update
+from sqlmodel import update
 
 from yapit.contracts import (
     TTS_INFLIGHT,
@@ -22,14 +18,9 @@ from yapit.contracts import (
 )
 from yapit.gateway.cache import Cache
 from yapit.gateway.config import Settings
-from yapit.gateway.db import create_session, get_or_create_user_credits
-from yapit.gateway.domain_models import (
-    BlockVariant,
-    CreditTransaction,
-    TransactionStatus,
-    TransactionType,
-    UserUsageStats,
-)
+from yapit.gateway.db import create_session
+from yapit.gateway.domain_models import BlockVariant, UsageType
+from yapit.gateway.usage import record_usage
 
 log = logging.getLogger("processor")
 
@@ -142,60 +133,25 @@ class BaseTTSProcessor:
                     )
                 )
 
-                # Get model info for credit calculation
-                variant_result = await db.exec(
-                    select(BlockVariant)
-                    .where(BlockVariant.hash == job.variant_hash)
-                    .options(selectinload(BlockVariant.model))
-                )
-                variant = variant_result.one()
+                # Record usage (characters) for billing
+                # Kokoro models use server_kokoro, other models use premium_voice
+                model_slug = job.synthesis_parameters.model
+                usage_type = UsageType.server_kokoro if model_slug.startswith("kokoro") else UsageType.premium_voice
+                characters_used = len(job.synthesis_parameters.text)
 
-                # Calculate and deduct credits
-                duration_seconds = Decimal(result.duration_ms) / 1000
-                credits_to_deduct = duration_seconds * variant.model.credits_per_sec
-
-                user_credits = await get_or_create_user_credits(job.user_id, db)
-
-                # Update balance
-                balance_before = user_credits.balance
-                user_credits.balance -= credits_to_deduct
-                user_credits.total_used += credits_to_deduct
-
-                # Create transaction record
-                transaction = CreditTransaction(
+                await record_usage(
                     user_id=job.user_id,
-                    type=TransactionType.usage_deduction,
-                    status=TransactionStatus.completed,
-                    amount=-credits_to_deduct,
-                    balance_before=balance_before,
-                    balance_after=user_credits.balance,
-                    description=f"TTS synthesis: {duration_seconds:.2f}s × {variant.model.credits_per_sec} ({variant.model.name})",
+                    usage_type=usage_type,
+                    amount=characters_used,
+                    db=db,
+                    reference_id=job.variant_hash,
+                    description=f"TTS synthesis: {characters_used} chars ({model_slug})",
                     details={
-                        "variant_hash": variant.hash,
-                        "model_slug": variant.model.slug,
+                        "variant_hash": job.variant_hash,
+                        "model_slug": model_slug,
                         "duration_ms": result.duration_ms,
                     },
-                    usage_reference=variant.hash,
                 )
-                db.add(transaction)
-
-                # Update usage statistics
-                usage_stats = await db.get(UserUsageStats, job.user_id)
-                if not usage_stats:
-                    usage_stats = UserUsageStats(
-                        user_id=job.user_id,
-                        total_seconds_synthesized=Decimal("0"),
-                        total_characters_processed=0,
-                        total_requests=0,
-                    )
-                    db.add(usage_stats)
-
-                usage_stats.total_seconds_synthesized += duration_seconds
-                usage_stats.total_characters_processed += len(job.synthesis_parameters.text)
-                usage_stats.total_requests += 1
-                usage_stats.last_updated = datetime.now(tz=dt.UTC)
-
-                await db.commit()
                 break
 
             # Notify all subscribers that audio is cached

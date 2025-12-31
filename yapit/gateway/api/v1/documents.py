@@ -3,7 +3,6 @@ import io
 import logging
 import math
 import re
-from decimal import Decimal
 from email.message import EmailMessage
 from typing import Annotated, Literal
 from uuid import UUID
@@ -17,23 +16,15 @@ from sqlmodel import col, select
 
 from yapit.gateway.auth import authenticate
 from yapit.gateway.constants import SUPPORTED_WEB_MIME_TYPES
-from yapit.gateway.db import get_by_slug_or_404
 from yapit.gateway.deps import (
     AuthenticatedUser,
-    AuthenticatedUserCredits,
     CurrentDoc,
     DbSession,
     DocumentCache,
     DocumentProcessorManagerDep,
     SettingsDep,
-    ensure_admin_credits,
 )
-from yapit.gateway.domain_models import (
-    Block,
-    Document,
-    DocumentMetadata,
-    DocumentProcessor,
-)
+from yapit.gateway.domain_models import Block, Document, DocumentMetadata, DocumentProcessor
 from yapit.gateway.exceptions import ResourceNotFoundError
 from yapit.gateway.processors.document.base import (
     CachedDocument,
@@ -60,19 +51,17 @@ class DocumentPrepareRequest(BaseModel):
 
 
 class DocumentPrepareResponse(BaseModel):
-    """Response with document metadata and processing costs.
+    """Response with document metadata for preparation.
 
     Args:
         hash: SHA256 hash of the document content (for uploads) or url (for urls), used as cache key
         endpoint: Which API endpoint the client should use to create the document
-        credit_cost: Total credit cost for processing the document (None for websites/text and non-ocr processing)
-        uncached_pages: Set of page numbers that are not cached. cost_per_page = credit_cost / len(uncached_pages) (None for websites/text)
+        uncached_pages: Set of page numbers that need OCR processing (empty for websites/text)
     """
 
     hash: str
     metadata: DocumentMetadata
     endpoint: Literal["text", "website", "document"]
-    credit_cost: Decimal
     uncached_pages: set[int]
 
 
@@ -130,8 +119,6 @@ async def prepare_document(
     request: DocumentPrepareRequest,
     cache: DocumentCache,
     settings: SettingsDep,
-    db: DbSession,
-    document_processor_manager: DocumentProcessorManagerDep,
 ) -> DocumentPrepareResponse:
     """Prepare a document from URL for creation."""
     cache_key = hashlib.sha256(str(request.url).encode()).hexdigest()
@@ -139,15 +126,13 @@ async def prepare_document(
     if cached_data:
         cached_doc = CachedDocument.model_validate_json(cached_data)
         endpoint = _get_endpoint_type_from_content_type(cached_doc.metadata.content_type)
-
-        credit_cost, uncached_pages = await _calculate_document_credit_cost(
-            cached_doc, request.processor_slug if endpoint == "document" else None, None, db, document_processor_manager
+        uncached_pages = (
+            get_uncached_pages(cached_doc, None) if _needs_ocr_processing(cached_doc.metadata.content_type) else set()
         )
         return DocumentPrepareResponse(
             hash=cache_key,
             metadata=cached_doc.metadata,
             endpoint=endpoint,
-            credit_cost=credit_cost,
             uncached_pages=uncached_pages,
         )
 
@@ -164,26 +149,19 @@ async def prepare_document(
     )
 
     endpoint = _get_endpoint_type_from_content_type(content_type)
-    cached_doc = CachedDocument(content=content, metadata=metadata)  # Store content for both documents and websites
+    cached_doc = CachedDocument(content=content, metadata=metadata)
     ttl = settings.document_cache_ttl_webpage if endpoint == "website" else settings.document_cache_ttl_document
     await cache.store(cache_key, cached_doc.model_dump_json().encode(), ttl_seconds=ttl)
 
-    credit_cost, uncached_pages = await _calculate_document_credit_cost(
-        cached_doc, request.processor_slug if endpoint == "document" else None, None, db, document_processor_manager
-    )
-    return DocumentPrepareResponse(
-        hash=cache_key, metadata=metadata, endpoint=endpoint, credit_cost=credit_cost, uncached_pages=uncached_pages
-    )
+    uncached_pages = get_uncached_pages(cached_doc, None) if _needs_ocr_processing(content_type) else set()
+    return DocumentPrepareResponse(hash=cache_key, metadata=metadata, endpoint=endpoint, uncached_pages=uncached_pages)
 
 
 @router.post("/prepare/upload", response_model=DocumentPrepareResponse)
 async def prepare_document_upload(
     file: UploadFile,
     cache: DocumentCache,
-    db: DbSession,
     settings: SettingsDep,
-    document_processor_manager: DocumentProcessorManagerDep,
-    processor_slug: str | None = None,
 ) -> DocumentPrepareResponse:
     """Prepare a document from file upload."""
     content = await file.read()
@@ -194,15 +172,13 @@ async def prepare_document_upload(
     cached_data = await cache.retrieve_data(cache_key)
     if cached_data:
         cached_doc = CachedDocument.model_validate_json(cached_data)
-
-        credit_cost, uncached_pages = await _calculate_document_credit_cost(
-            cached_doc, processor_slug, None, db, document_processor_manager
+        uncached_pages = (
+            get_uncached_pages(cached_doc, None) if _needs_ocr_processing(cached_doc.metadata.content_type) else set()
         )
         return DocumentPrepareResponse(
             hash=cache_key,
             metadata=cached_doc.metadata,
             endpoint="document",
-            credit_cost=credit_cost,
             uncached_pages=uncached_pages,
         )
 
@@ -223,11 +199,9 @@ async def prepare_document_upload(
         cache_key, cached_doc.model_dump_json().encode(), ttl_seconds=settings.document_cache_ttl_document
     )
 
-    credit_cost, uncached_pages = await _calculate_document_credit_cost(
-        cached_doc, processor_slug, None, db, document_processor_manager
-    )
+    uncached_pages = get_uncached_pages(cached_doc, None) if _needs_ocr_processing(content_type) else set()
     return DocumentPrepareResponse(
-        hash=cache_key, metadata=metadata, endpoint="document", credit_cost=credit_cost, uncached_pages=uncached_pages
+        hash=cache_key, metadata=metadata, endpoint="document", uncached_pages=uncached_pages
     )
 
 
@@ -333,7 +307,6 @@ async def create_website_document(
     "/document",
     response_model=DocumentCreateResponse,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(ensure_admin_credits)],
 )
 async def create_document(
     req: DocumentCreateRequest,
@@ -341,7 +314,6 @@ async def create_document(
     cache: DocumentCache,
     settings: SettingsDep,
     user: AuthenticatedUser,
-    user_credits: AuthenticatedUserCredits,
     document_processor_manager: DocumentProcessorManagerDep,
 ) -> DocumentCreateResponse:
     """Create a document from a file (PDF, image, etc)."""
@@ -367,7 +339,6 @@ async def create_document(
 
     extraction_result = await processor.process_with_billing(
         user_id=user.id,
-        user_credits=user_credits,
         cache_key=req.hash,
         db=db,
         cache=cache,
@@ -579,46 +550,12 @@ def _get_endpoint_type_from_content_type(content_type: str | None) -> Literal["w
         return "document"
 
 
-async def _calculate_document_credit_cost(
-    cached_doc: CachedDocument,
-    processor_slug: str | None,
-    pages: list[int] | None,
-    db: DbSession,
-    document_processor_manager: DocumentProcessorManagerDep,
-) -> tuple[Decimal, set[int]]:
-    if not processor_slug:
-        return Decimal(0), set()  # No processor means no credit cost
-
-    processor_slug = processor_slug or "markitdown"  # TODO better way to handle default processor
-    processor = document_processor_manager.get_processor(processor_slug)
-    if not processor:
-        raise ResourceNotFoundError(DocumentProcessor.__name__, processor_slug)
-
-    processor_model = await get_by_slug_or_404(db, DocumentProcessor, processor_slug)
-
-    return _calculate_credit_cost(
-        cached_doc, processor_credits_per_page=processor_model.credits_per_page, requested_pages=pages
-    )
-
-
-def _calculate_credit_cost(
-    cached_doc: CachedDocument,
-    processor_credits_per_page: Decimal,
-    requested_pages: list[int] | None = None,
-) -> tuple[Decimal, set[int]]:
-    """Calculate credit cost for processing pages, accounting for cached pages.
-
-    Args:
-        cached_doc: The cached document with existing extraction results
-        processor_credits_per_page: Credits per page for the processor
-        requested_pages: Specific pages to process (None means all)
-
-    Returns:
-        Total credit cost for uncached pages and the set of missing pages
-    """
-    uncached_pages = get_uncached_pages(cached_doc, requested_pages)
-    credit_cost = Decimal(len(uncached_pages)) * processor_credits_per_page
-    return credit_cost, uncached_pages
+def _needs_ocr_processing(content_type: str | None) -> bool:
+    """Check if content type requires OCR processing (PDFs, images)."""
+    if not content_type:
+        return False
+    ct = content_type.lower()
+    return ct == "application/pdf" or ct.startswith("image/")
 
 
 async def _create_document_with_blocks(

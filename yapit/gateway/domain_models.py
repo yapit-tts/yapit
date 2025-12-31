@@ -2,13 +2,12 @@ import datetime as dt
 import hashlib
 import uuid
 from datetime import datetime
-from decimal import Decimal
 from enum import StrEnum, auto
 from typing import Any
 
 from pydantic import BaseModel as PydanticModel
 from pydantic import Field as PydanticField
-from sqlalchemy import DECIMAL, Index, UniqueConstraint
+from sqlalchemy import Index, UniqueConstraint
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.types import JSON
 from sqlmodel import TEXT, Column, DateTime, Field, Relationship, SQLModel
@@ -24,7 +23,6 @@ class TTSModel(SQLModel, table=True):
     slug: str = Field(unique=True, index=True)
     name: str
     description: str | None = Field(default=None)
-    credits_per_sec: Decimal = Field(sa_column=Column(DECIMAL(10, 4), nullable=False, default=1.0))
 
     sample_rate: int
     channels: int
@@ -174,7 +172,6 @@ class DocumentProcessor(SQLModel, table=True):
 
     slug: str = Field(primary_key=True)
     name: str
-    credits_per_page: Decimal = Field(sa_column=Column(DECIMAL(10, 4), nullable=False))
 
 
 class RegexRule(PydanticModel):
@@ -212,32 +209,74 @@ class Filter(SQLModel, table=True):
     )
 
 
-# Billing Models
+# Subscription Models
 
 
-class TransactionType(StrEnum):
-    credit_purchase = auto()  # User bought credits with real money
-    credit_bonus = auto()  # Free credits (sign-up bonus, promotions, admin top-up)
-    credit_refund = auto()  # Credits returned due to service issues
-    credit_adjustment = auto()  # Manual admin corrections (errors, compensation)
-    usage_deduction = auto()  # Credits consumed by TTS synthesis
+class PlanTier(StrEnum):
+    free = auto()
+    basic = auto()
+    plus = auto()
+    max = auto()
 
 
-class TransactionStatus(StrEnum):
-    pending = auto()
-    completed = auto()
-    failed = auto()
-    reversed = auto()
+class BillingInterval(StrEnum):
+    monthly = auto()
+    yearly = auto()
 
 
-class UserCredits(SQLModel, table=True):
-    """User's credit balance for TTS usage (in USD)."""
+class Plan(SQLModel, table=True):
+    """Available subscription plans."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    tier: PlanTier = Field(unique=True, index=True)
+    name: str
+
+    # Limits per billing period (None = unlimited, 0 = not available)
+    server_kokoro_characters: int | None = Field(default=None)
+    premium_voice_characters: int | None = Field(default=None)
+    ocr_pages: int | None = Field(default=None)
+
+    # Stripe price IDs (None for free tier)
+    stripe_price_id_monthly: str | None = Field(default=None)
+    stripe_price_id_yearly: str | None = Field(default=None)
+
+    # Trial period (card-required, usage limits still apply)
+    trial_days: int = Field(default=0)
+
+    # Display pricing (in cents)
+    price_cents_monthly: int = Field(default=0)
+    price_cents_yearly: int = Field(default=0)
+
+    is_active: bool = Field(default=True)
+
+
+class SubscriptionStatus(StrEnum):
+    active = auto()
+    trialing = auto()
+    past_due = auto()
+    canceled = auto()
+    incomplete = auto()
+
+
+class UserSubscription(SQLModel, table=True):
+    """User's active subscription."""
 
     user_id: str = Field(primary_key=True)  # Stack Auth user ID
-    balance: Decimal = Field(sa_column=Column(DECIMAL(19, 4), nullable=False))
+    plan_id: int = Field(foreign_key="plan.id")
 
-    total_purchased: Decimal = Field(sa_column=Column(DECIMAL(19, 4), nullable=False))
-    total_used: Decimal = Field(sa_column=Column(DECIMAL(19, 4), nullable=False))
+    status: SubscriptionStatus = Field(default=SubscriptionStatus.active)
+
+    # Stripe references
+    stripe_customer_id: str | None = Field(default=None, index=True)
+    stripe_subscription_id: str | None = Field(default=None, unique=True, index=True)
+
+    # Current billing period (for usage tracking)
+    current_period_start: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
+    current_period_end: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
+
+    # Cancellation
+    cancel_at_period_end: bool = Field(default=False)
+    canceled_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
 
     created: datetime = Field(
         default_factory=lambda: datetime.now(tz=dt.UTC),
@@ -248,64 +287,56 @@ class UserCredits(SQLModel, table=True):
         sa_column=Column(DateTime(timezone=True)),
     )
 
-    transactions: list["CreditTransaction"] = Relationship(back_populates="user_credits")
+    plan: Plan = Relationship()
 
 
-class CreditTransaction(SQLModel, table=True):
-    """Audit trail for all credit balance changes."""
+class UsagePeriod(SQLModel, table=True):
+    """Usage counters for a billing period."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    user_id: str = Field(index=True)
+
+    period_start: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
+    period_end: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
+
+    # Counters (characters for TTS, pages for OCR)
+    server_kokoro_characters: int = Field(default=0)
+    premium_voice_characters: int = Field(default=0)
+    ocr_pages: int = Field(default=0)
+
+    __table_args__ = (Index("idx_usage_period_user_period", "user_id", "period_start"),)
+
+
+class UsageType(StrEnum):
+    server_kokoro = auto()
+    premium_voice = auto()
+    ocr = auto()
+
+
+class UsageLog(SQLModel, table=True):
+    """Immutable audit log for usage events (characters for TTS, pages for OCR)."""
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    user_id: str = Field(foreign_key="usercredits.user_id", index=True)
+    user_id: str = Field(index=True)
 
-    type: TransactionType
-    status: TransactionStatus = Field(default=TransactionStatus.pending)
-
-    amount: Decimal = Field(sa_column=Column(DECIMAL(19, 4), nullable=False))
-    balance_before: Decimal = Field(sa_column=Column(DECIMAL(19, 4), nullable=False))
-    balance_after: Decimal = Field(sa_column=Column(DECIMAL(19, 4), nullable=False))
+    type: UsageType
+    amount: int  # characters for TTS, pages for OCR
 
     description: str | None = Field(default=None)
-    details: dict | None = Field(  # name `metadata` reserved by SQLModel
+    details: dict | None = Field(
         default=None,
         sa_column=Column(postgresql.JSONB(), nullable=True),
     )
 
-    # References to related records
-    external_reference: str | None = Field(default=None, index=True)  # e.g., stripe_invoice_id
-    usage_reference: str | None = Field(default=None, index=True)  # e.g., document_id or block_variant_hash
+    # Reference to what was used (variant_hash, cache_key, etc.)
+    reference_id: str | None = Field(default=None, index=True)
 
     created: datetime = Field(
         default_factory=lambda: datetime.now(tz=dt.UTC),
         sa_column=Column(DateTime(timezone=True)),
     )
 
-    user_credits: UserCredits = Relationship(back_populates="transactions")
-
     __table_args__ = (
-        Index("idx_credit_transaction_created", "created"),
-        Index("idx_credit_transaction_user_created", "user_id", "created"),
-    )
-
-
-class CreditPackage(SQLModel, table=True):
-    """Maps provider price IDs to credit amounts."""  # TODO do we even need this?
-
-    id: int | None = Field(default=None, primary_key=True)
-    provider_price_id: str = Field(unique=True, index=True)
-    credits: Decimal = Field(sa_column=Column(DECIMAL(19, 4), nullable=False))
-    is_active: bool = Field(default=True)
-
-
-class UserUsageStats(SQLModel, table=True):
-    """Aggregated usage statistics for each user."""
-
-    user_id: str = Field(primary_key=True, foreign_key="usercredits.user_id")
-
-    total_seconds_synthesized: Decimal = Field(sa_column=Column(DECIMAL(19, 4), nullable=False, default=0))
-    total_characters_processed: int = Field(default=0)
-    total_requests: int = Field(default=0)
-
-    last_updated: datetime = Field(
-        default_factory=lambda: datetime.now(tz=dt.UTC),
-        sa_column=Column(DateTime(timezone=True)),
+        Index("idx_usage_log_created", "created"),
+        Index("idx_usage_log_user_created", "user_id", "created"),
     )
