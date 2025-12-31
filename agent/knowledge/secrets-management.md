@@ -9,15 +9,31 @@ Dokploy clones fresh on each deploy, wiping manually created files. SOPS lets us
 - Decrypt at deploy time
 - Keep Dokploy's deployment features (zero-downtime, rollbacks, etc.)
 
+## Test vs Live Keys Pattern
+
+For services with test/live modes (Stripe), we store both variants in `.env.sops`:
+```
+STRIPE_SECRET_KEY_TEST=sk_test_...
+STRIPE_SECRET_KEY_LIVE=sk_live_...
+STRIPE_WEBHOOK_SECRET_TEST=whsec_...
+STRIPE_WEBHOOK_SECRET_LIVE=whsec_...
+```
+
+**For dev:** `make dev-env` transforms `*_TEST` → main var names, removes `*_LIVE`:
+- `STRIPE_SECRET_KEY_TEST` → `STRIPE_SECRET_KEY`
+- Removes `STRIPE_SECRET_KEY_LIVE`
+- Also removes `STACK_*` (Stack Auth prod config)
+
+**For prod:** Deploy script uses `*_LIVE` values directly.
+
 ## Key Locations
 
 | Location | Purpose |
 |----------|---------|
-| VPS: `/root/.age/yapit.txt` | Age private key (production) |
-| Local: `~/.config/sops/age/yapit.txt` | Age private key (development) |
+| Local: `~/.config/sops/age/yapit.txt` | Age private key (for decryption) |
 | Env var: `YAPIT_SOPS_AGE_KEY_FILE` | Points to key file |
 | Repo: `.env.sops` | Encrypted secrets (committed) |
-| Repo: `.env.template` | Shows what secrets are needed |
+| Repo: `.env.template` | Documents required secrets |
 
 ## Workflow
 
@@ -37,18 +53,15 @@ This syncs secrets to Dokploy (idempotent), then triggers deployment via API.
 ## File Organization
 
 ```
-.env.prod          # Non-sensitive config (committed)
-.env         # Decrypted secrets (gitignored)
-.env.sops    # Encrypted secrets (committed)
+.env.prod     # Non-sensitive prod config (committed)
+.env          # Decrypted secrets for local dev (gitignored)
+.env.sops     # Encrypted secrets (committed)
 .env.template # Documents required secrets
 ```
 
-`docker-compose.prod.yml` uses:
-```yaml
-env_file:
-  - .env        # Dokploy-injected secrets
-  - .env.prod   # Non-sensitive config
-```
+**Local dev:** `make dev-env` decrypts `.env.sops` → `.env`, which docker-compose reads.
+
+**Production (Dokploy):** `deploy.sh` automatically syncs secrets before deploying. It decrypts `.env.sops` locally and sends to Dokploy via SSH API. Dokploy stores them in its database and injects at runtime — no `.env` file exists on the VPS.
 
 ## Frontend Client Keys
 
