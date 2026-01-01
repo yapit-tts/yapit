@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { ChevronDown, Star, ChevronRight, Monitor, Server, Loader2 } from "lucide-react";
+import { ChevronDown, Star, ChevronRight, Monitor, Cloud, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -170,7 +170,7 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
 
   let modelLabel: string;
   if (isKokoroModel) {
-    modelLabel = `Kokoro${isKokoroServer ? " (Server)" : ""}`;
+    modelLabel = `Kokoro${isKokoroServer ? " (Cloud)" : ""}`;
   } else if (isInworldModel) {
     modelLabel = isInworldMax ? "Inworld Max" : "Inworld";
   } else {
@@ -188,50 +188,50 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <Button variant="ghost" size="sm" className="h-7 gap-1 text-xs text-muted-foreground hover:text-foreground">
+        <Button variant="ghost" size="sm" className="h-9 gap-1.5 text-sm text-muted-foreground hover:text-foreground">
           <span className="font-medium">{modelLabel}</span>
           <span className="text-muted-foreground">·</span>
           <span>{currentVoiceName}</span>
-          <ChevronDown className="h-3 w-3 ml-0.5" />
+          <ChevronDown className="h-4 w-4 ml-0.5" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-72 p-0" align="start">
+      <PopoverContent className="w-96 p-0" align="start">
         <Tabs value={activeTab} onValueChange={handleModelChange}>
-          <TabsList className="w-full rounded-none border-b">
-            <TabsTrigger value="kokoro" className="flex-1">Kokoro</TabsTrigger>
-            <TabsTrigger value="inworld" className="flex-1">Inworld</TabsTrigger>
-            <TabsTrigger value="higgs" className="flex-1">HIGGS</TabsTrigger>
+          <TabsList className="w-full h-11 rounded-none border-b">
+            <TabsTrigger value="kokoro" className="flex-1 text-sm py-2.5">Kokoro</TabsTrigger>
+            <TabsTrigger value="inworld" className="flex-1 text-sm py-2.5">Inworld</TabsTrigger>
+            <TabsTrigger value="higgs" className="flex-1 text-sm py-2.5">HIGGS</TabsTrigger>
           </TabsList>
 
-          <TabsContent value="kokoro" className="m-0 max-h-80 overflow-y-auto">
-            {/* Browser/Server toggle */}
-            <div className="flex items-center justify-between px-3 py-2 border-b bg-muted/30">
-              <span className="text-xs text-muted-foreground">Run on</span>
+          <TabsContent value="kokoro" className="m-0 max-h-[28rem] overflow-y-auto">
+            {/* Local/Cloud toggle */}
+            <div className="flex items-center justify-between px-4 py-3 border-b bg-muted/30">
+              <span className="text-sm text-muted-foreground">Run on</span>
               <div className="flex rounded-md border bg-background">
                 <button
                   onClick={() => isKokoroServer && handleKokoroSourceToggle()}
-                  className={`flex items-center gap-1 px-2 py-1 text-xs rounded-l-md transition-colors ${
+                  className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-l-md transition-colors ${
                     !isKokoroServer ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
                   }`}
                 >
-                  <Monitor className="h-3 w-3" />
-                  Browser
+                  <Monitor className="h-4 w-4" />
+                  Local
                 </button>
                 <button
                   onClick={() => !isKokoroServer && handleKokoroSourceToggle()}
-                  className={`flex items-center gap-1 px-2 py-1 text-xs rounded-r-md transition-colors ${
+                  className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-r-md transition-colors ${
                     isKokoroServer ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
                   }`}
                 >
-                  <Server className="h-3 w-3" />
-                  Server
+                  <Cloud className="h-4 w-4" />
+                  Cloud
                 </button>
               </div>
             </div>
             {/* Starred section */}
             {pinnedKokoro.length > 0 && (
               <div className="border-b">
-                <div className="px-3 py-1.5 text-xs font-medium text-muted-foreground">Starred</div>
+                <div className="px-4 py-2 text-sm font-medium text-muted-foreground">Starred</div>
                 {pinnedKokoro.map(voice => (
                   <VoiceRow
                     key={voice.index}
@@ -256,8 +256,8 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
                 onOpenChange={() => toggleKokoroLangExpanded(group.language)}
                 className="border-b last:border-b-0"
               >
-                <CollapsibleTrigger className="flex w-full items-center gap-2 px-3 py-2 text-xs font-medium hover:bg-accent">
-                  <ChevronRight className={`h-3 w-3 transition-transform ${expandedKokoroLangs.has(group.language) ? "rotate-90" : ""}`} />
+                <CollapsibleTrigger className="flex w-full items-center gap-2 px-4 py-2.5 text-sm font-medium hover:bg-accent">
+                  <ChevronRight className={`h-4 w-4 transition-transform ${expandedKokoroLangs.has(group.language) ? "rotate-90" : ""}`} />
                   <span>{group.flag}</span>
                   <span className="flex-1 text-left">{group.label}</span>
                   <span className="text-muted-foreground">({group.voices.length})</span>
@@ -280,14 +280,14 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
             ))}
           </TabsContent>
 
-          <TabsContent value="inworld" className="m-0 max-h-80 overflow-y-auto">
+          <TabsContent value="inworld" className="m-0 max-h-[28rem] overflow-y-auto">
             {/* Model toggle: inworld vs inworld-max */}
-            <div className="flex items-center justify-between px-3 py-2 border-b bg-muted/30">
-              <span className="text-xs text-muted-foreground">Quality</span>
+            <div className="flex items-center justify-between px-4 py-3 border-b bg-muted/30">
+              <span className="text-sm text-muted-foreground">Quality</span>
               <div className="flex rounded-md border bg-background">
                 <button
                   onClick={() => isInworldMax && handleInworldModelToggle()}
-                  className={`flex items-center gap-1 px-2 py-1 text-xs rounded-l-md transition-colors ${
+                  className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-l-md transition-colors ${
                     !isInworldMax ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
                   }`}
                 >
@@ -295,7 +295,7 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
                 </button>
                 <button
                   onClick={() => !isInworldMax && handleInworldModelToggle()}
-                  className={`flex items-center gap-1 px-2 py-1 text-xs rounded-r-md transition-colors ${
+                  className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-r-md transition-colors ${
                     isInworldMax ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
                   }`}
                 >
@@ -306,15 +306,15 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
 
             {inworldLoading ? (
               <div className="flex items-center justify-center py-8 text-muted-foreground">
-                <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                <span className="text-xs">Loading voices...</span>
+                <Loader2 className="h-5 w-5 animate-spin mr-2" />
+                <span className="text-sm">Loading voices...</span>
               </div>
             ) : (
               <>
                 {/* Starred section */}
                 {pinnedInworld.length > 0 && (
                   <div className="border-b">
-                    <div className="px-3 py-1.5 text-xs font-medium text-muted-foreground">Starred</div>
+                    <div className="px-4 py-2 text-sm font-medium text-muted-foreground">Starred</div>
                     {pinnedInworld.map(voice => (
                       <VoiceRow
                         key={voice.slug}
@@ -338,8 +338,8 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
                     onOpenChange={() => toggleInworldLangExpanded(group.language)}
                     className="border-b last:border-b-0"
                   >
-                    <CollapsibleTrigger className="flex w-full items-center gap-2 px-3 py-2 text-xs font-medium hover:bg-accent">
-                      <ChevronRight className={`h-3 w-3 transition-transform ${expandedInworldLangs.has(group.language) ? "rotate-90" : ""}`} />
+                    <CollapsibleTrigger className="flex w-full items-center gap-2 px-4 py-2.5 text-sm font-medium hover:bg-accent">
+                      <ChevronRight className={`h-4 w-4 transition-transform ${expandedInworldLangs.has(group.language) ? "rotate-90" : ""}`} />
                       <span>{group.flag}</span>
                       <span className="flex-1 text-left">{group.label}</span>
                       <span className="text-muted-foreground">({group.voices.length})</span>
@@ -363,11 +363,11 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
             )}
           </TabsContent>
 
-          <TabsContent value="higgs" className="m-0 max-h-80 overflow-y-auto">
+          <TabsContent value="higgs" className="m-0 max-h-[28rem] overflow-y-auto">
             {/* Pinned section */}
             {pinnedHiggs.length > 0 && (
               <div className="border-b">
-                <div className="px-3 py-1.5 text-xs font-medium text-muted-foreground">Pinned</div>
+                <div className="px-4 py-2 text-sm font-medium text-muted-foreground">Pinned</div>
                 {pinnedHiggs.map(preset => (
                   <VoiceRow
                     key={preset.slug}
@@ -384,7 +384,7 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
 
             {/* Presets */}
             <div className="border-b">
-              <div className="px-3 py-1.5 text-xs font-medium text-muted-foreground">Presets</div>
+              <div className="px-4 py-2 text-sm font-medium text-muted-foreground">Presets</div>
               {HIGGS_PRESETS.map(preset => (
                 <VoiceRow
                   key={preset.slug}
@@ -401,15 +401,15 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
             {/* Advanced settings */}
             <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
               <CollapsibleTrigger asChild>
-                <button className="flex w-full items-center gap-2 px-3 py-2 text-xs font-medium text-muted-foreground hover:bg-accent">
-                  <ChevronRight className={`h-3 w-3 transition-transform ${advancedOpen ? "rotate-90" : ""}`} />
+                <button className="flex w-full items-center gap-2 px-4 py-2.5 text-sm font-medium text-muted-foreground hover:bg-accent">
+                  <ChevronRight className={`h-4 w-4 transition-transform ${advancedOpen ? "rotate-90" : ""}`} />
                   Advanced Settings
                 </button>
               </CollapsibleTrigger>
-              <CollapsibleContent className="px-3 pb-3 space-y-3">
+              <CollapsibleContent className="px-4 pb-4 space-y-4">
                 {/* Temperature */}
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between text-xs">
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between text-sm">
                     <span className="text-muted-foreground">Temperature</span>
                     <span className="font-mono tabular-nums">{(value.temperature ?? 0.3).toFixed(1)}</span>
                   </div>
@@ -423,12 +423,12 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
                 </div>
 
                 {/* Scene */}
-                <div className="space-y-1.5">
-                  <span className="text-xs text-muted-foreground">Scene</span>
+                <div className="space-y-2">
+                  <span className="text-sm text-muted-foreground">Scene</span>
                   <select
                     value={value.scene ?? HIGGS_SCENES[0].value}
                     onChange={(e) => handleSceneChange(e.target.value)}
-                    className="w-full rounded-md border bg-background px-2 py-1 text-xs"
+                    className="w-full rounded-md border bg-background px-3 py-2 text-sm"
                   >
                     {HIGGS_SCENES.map(scene => (
                       <option key={scene.value} value={scene.value}>{scene.label}</option>
@@ -459,7 +459,7 @@ interface VoiceRowProps {
 function VoiceRow({ name, flag, detail, isHighQuality, gender, isPinned, isSelected, onSelect, onPinToggle }: VoiceRowProps) {
   return (
     <div
-      className={`flex items-center gap-2 px-3 py-1.5 cursor-pointer hover:bg-accent ${isSelected ? "bg-accent" : ""}`}
+      className={`flex items-center gap-3 px-4 py-2.5 cursor-pointer hover:bg-accent ${isSelected ? "bg-accent" : ""}`}
       onClick={onSelect}
     >
       <button
@@ -469,15 +469,15 @@ function VoiceRow({ name, flag, detail, isHighQuality, gender, isPinned, isSelec
         }}
         className="text-muted-foreground hover:text-foreground"
       >
-        <Star className={`h-3 w-3 ${isPinned ? "fill-current text-yellow-500" : ""}`} />
+        <Star className={`h-4 w-4 ${isPinned ? "fill-current text-yellow-500" : ""}`} />
       </button>
-      <span className="text-sm flex-1 flex items-center gap-1.5">
-        {flag && <span className="text-xs">{flag}</span>}
+      <span className="text-base flex-1 flex items-center gap-2">
+        {flag && <span className="text-sm">{flag}</span>}
         {name}
-        {isHighQuality && <span className="text-xs" title="High quality">✨</span>}
+        {isHighQuality && <span className="text-sm" title="High quality">✨</span>}
       </span>
-      {gender && <span className="text-xs text-muted-foreground">{gender === "Female" ? "♀" : "♂"}</span>}
-      {detail && <span className="text-xs text-muted-foreground">{detail}</span>}
+      {gender && <span className="text-sm text-muted-foreground">{gender === "Female" ? "♀" : "♂"}</span>}
+      {detail && <span className="text-sm text-muted-foreground">{detail}</span>}
     </div>
   );
 }
