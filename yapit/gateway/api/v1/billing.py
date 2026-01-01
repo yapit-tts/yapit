@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlmodel import select
 
+from yapit.gateway.config import Settings
 from yapit.gateway.deps import AuthenticatedUser, DbSession, SettingsDep
 from yapit.gateway.domain_models import (
     BillingInterval,
@@ -217,7 +218,7 @@ async def stripe_webhook(
 
     try:
         if event_type == "checkout.session.completed":
-            await _handle_checkout_completed(event["data"]["object"], db)
+            await _handle_checkout_completed(event["data"]["object"], db, settings)
         elif event_type in ("customer.subscription.created", "customer.subscription.updated"):
             await _handle_subscription_updated(event["data"]["object"], db)
         elif event_type == "customer.subscription.deleted":
@@ -233,7 +234,7 @@ async def stripe_webhook(
     return {"status": "ok"}
 
 
-async def _handle_checkout_completed(session: dict, db: DbSession) -> None:
+async def _handle_checkout_completed(session: dict, db: DbSession, settings: Settings) -> None:
     """Handle successful checkout - create or update subscription."""
     if session.get("mode") != "subscription":
         return
@@ -247,7 +248,8 @@ async def _handle_checkout_completed(session: dict, db: DbSession) -> None:
         return
 
     # Fetch subscription details from Stripe
-    stripe_sub = stripe.Subscription.retrieve(subscription_id)
+    client = stripe.StripeClient(settings.stripe_secret_key)
+    stripe_sub = client.v1.subscriptions.retrieve(subscription_id)
     plan_tier = stripe_sub.metadata.get("plan_tier")
 
     if not plan_tier:
@@ -261,6 +263,10 @@ async def _handle_checkout_completed(session: dict, db: DbSession) -> None:
         log.error(f"Plan {plan_tier} not found in database")
         return
 
+    first_item = stripe_sub["items"].data[0]
+    period_start = datetime.fromtimestamp(first_item.current_period_start, tz=dt.UTC)
+    period_end = datetime.fromtimestamp(first_item.current_period_end, tz=dt.UTC)
+
     # Create or update UserSubscription
     existing = await db.get(UserSubscription, user_id)
     now = datetime.now(tz=dt.UTC)
@@ -270,8 +276,8 @@ async def _handle_checkout_completed(session: dict, db: DbSession) -> None:
         existing.status = _map_stripe_status(stripe_sub.status)
         existing.stripe_customer_id = customer_id
         existing.stripe_subscription_id = subscription_id
-        existing.current_period_start = datetime.fromtimestamp(stripe_sub.current_period_start, tz=dt.UTC)
-        existing.current_period_end = datetime.fromtimestamp(stripe_sub.current_period_end, tz=dt.UTC)
+        existing.current_period_start = period_start
+        existing.current_period_end = period_end
         existing.cancel_at_period_end = stripe_sub.cancel_at_period_end
         existing.updated = now
     else:
@@ -281,8 +287,8 @@ async def _handle_checkout_completed(session: dict, db: DbSession) -> None:
             status=_map_stripe_status(stripe_sub.status),
             stripe_customer_id=customer_id,
             stripe_subscription_id=subscription_id,
-            current_period_start=datetime.fromtimestamp(stripe_sub.current_period_start, tz=dt.UTC),
-            current_period_end=datetime.fromtimestamp(stripe_sub.current_period_end, tz=dt.UTC),
+            current_period_start=period_start,
+            current_period_end=period_end,
             cancel_at_period_end=stripe_sub.cancel_at_period_end,
             created=now,
             updated=now,
@@ -304,10 +310,14 @@ async def _handle_subscription_updated(stripe_sub: dict, db: DbSession) -> None:
         log.warning(f"Subscription {subscription_id} not found in database")
         return
 
+    first_item = stripe_sub["items"]["data"][0]
+    period_start = first_item["current_period_start"]
+    period_end = first_item["current_period_end"]
+
     now = datetime.now(tz=dt.UTC)
     subscription.status = _map_stripe_status(stripe_sub["status"])
-    subscription.current_period_start = datetime.fromtimestamp(stripe_sub["current_period_start"], tz=dt.UTC)
-    subscription.current_period_end = datetime.fromtimestamp(stripe_sub["current_period_end"], tz=dt.UTC)
+    subscription.current_period_start = datetime.fromtimestamp(period_start, tz=dt.UTC)
+    subscription.current_period_end = datetime.fromtimestamp(period_end, tz=dt.UTC)
     subscription.cancel_at_period_end = stripe_sub.get("cancel_at_period_end", False)
 
     if stripe_sub.get("canceled_at"):

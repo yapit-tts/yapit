@@ -28,3 +28,11 @@ services:
       - "5432:5432"
     volumes:
       - "./dev/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql"
+
+  stripe-cli:
+    image: stripe/stripe-cli:latest
+    command: listen --forward-to http://gateway:8000/v1/billing/webhook --api-key ${STRIPE_SECRET_KEY}
+    env_file:
+      - ./.env
+    depends_on:
+      - gateway
