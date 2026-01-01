@@ -5,7 +5,7 @@ import math
 import re
 from email.message import EmailMessage
 from typing import Annotated, Literal
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 from uuid import UUID
 
 import httpx
@@ -633,17 +633,46 @@ def _resolve_relative_urls(markdown: str, base_url: str) -> str:
     like `/images/foo.png` would resolve to Yapit's domain when rendered in the browser.
     This function resolves them to absolute URLs using the source webpage's URL.
 
-    Also encodes spaces in URLs since markdown parsers don't handle unencoded spaces.
+    Also:
+    - Encodes spaces in URLs since markdown parsers don't handle unencoded spaces
+    - Converts same-page links (https://site.com/page/#section) to anchor links (#section)
     """
+    # Parse base URL to detect same-page anchors
+    parsed_base = urlparse(base_url)
+    base_without_fragment = f"{parsed_base.scheme}://{parsed_base.netloc}{parsed_base.path}"
+    # Normalize: remove trailing slash for comparison
+    base_normalized = base_without_fragment.rstrip("/")
 
     def make_resolver(is_image: bool):
         def resolve(match: re.Match) -> str:
             text, url = match.group(1), match.group(2)
-            # Encode spaces - markdown parsers choke on unencoded spaces in URLs
-            url = url.replace(" ", "%20")
-            if url.startswith(("http://", "https://", "#", "data:")):
-                return match.group(0).replace(" ", "%20")
-            resolved = urljoin(base_url, url)
+            # Encode spaces in URL - markdown parsers choke on unencoded spaces
+            url_encoded = url.replace(" ", "%20")
+
+            if url.startswith(("#", "data:")):
+                prefix = "!" if is_image else ""
+                return f"{prefix}[{text}]({url_encoded})"
+
+            # Check if it's an absolute URL pointing to same page with fragment
+            if url.startswith(("http://", "https://")):
+                parsed = urlparse(url)
+                url_without_fragment = f"{parsed.scheme}://{parsed.netloc}{parsed.path}".rstrip("/")
+                if url_without_fragment == base_normalized and parsed.fragment:
+                    # Same page anchor - convert to just the fragment
+                    return f"[{text}](#{parsed.fragment})"
+                # Different page - keep as external link
+                prefix = "!" if is_image else ""
+                return f"{prefix}[{text}]({url_encoded})"
+
+            # Relative URL - resolve against base
+            resolved = urljoin(base_url, url_encoded)
+            # Check if resolved URL points to same page (for relative anchors like /page/#section)
+            parsed_resolved = urlparse(resolved)
+            resolved_without_fragment = (
+                f"{parsed_resolved.scheme}://{parsed_resolved.netloc}{parsed_resolved.path}".rstrip("/")
+            )
+            if resolved_without_fragment == base_normalized and parsed_resolved.fragment:
+                return f"[{text}](#{parsed_resolved.fragment})"
             prefix = "!" if is_image else ""
             return f"{prefix}[{text}]({resolved})"
 

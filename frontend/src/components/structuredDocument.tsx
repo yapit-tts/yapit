@@ -11,6 +11,8 @@ const sanitize = (html: string): string => DOMPurify.sanitize(html);
 
 function generateSlug(text: string): string {
   return text
+    .normalize("NFD") // Decompose accented chars (é → e + combining accent)
+    .replace(/[\u0300-\u036f]/g, "") // Remove combining diacritical marks
     .toLowerCase()
     .trim()
     .replace(/[^\w\s-]/g, "") // Remove special chars except spaces and hyphens
@@ -794,12 +796,12 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
         .structured-content a[href^="http"]::after {
           content: "";
           display: inline-block;
-          width: 0.55em;
-          height: 0.55em;
-          margin-left: 0.1em;
-          vertical-align: -0.05em;
-          /* Arrow-up-right icon */
-          background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23588157' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M7 7h10v10'/%3E%3Cpath d='M7 17L17 7'/%3E%3C/svg%3E");
+          width: 0.5em;
+          height: 0.5em;
+          margin-left: 0.06em;
+          vertical-align: -0.1em;
+          /* Arrow-up-right icon - longer tail */
+          background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23588157' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9 5h10v10'/%3E%3Cpath d='M5 19L19 5'/%3E%3C/svg%3E");
           background-size: contain;
           background-repeat: no-repeat;
         }
@@ -847,13 +849,20 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
 
         /* Inline images (from dangerouslySetInnerHTML) */
         .structured-content img {
+          display: block;
           max-width: 100%;
           max-height: 24rem;
           width: auto;
           height: auto;
           object-fit: contain;
           border-radius: 0.25rem;
-          margin: 0.5rem 0;
+          margin: 0.75rem auto;
+        }
+
+        /* Embedded videos */
+        .structured-content video {
+          display: block;
+          margin: 0.75rem auto;
         }
 
         /* Block-level audio blocks - padding + negative margin keeps text position unchanged */
