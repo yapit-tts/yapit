@@ -98,6 +98,7 @@ const SubscriptionPage = () => {
 
   const handleSubscribe = async (tier: PlanTier) => {
     if (isAnonymous) {
+      localStorage.setItem("returnAfterSignIn", "/subscription");
       navigate("/handler/signin");
       return;
     }
