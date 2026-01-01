@@ -344,7 +344,7 @@ function ImageBlockView({ block }: BlockProps & { block: ImageBlock }) {
         src={block.src}
         alt={block.alt}
         title={block.title}
-        className="max-w-full h-auto rounded"
+        className="max-w-full max-h-96 h-auto object-contain rounded"
       />
       {block.alt && (
         <figcaption className="text-sm text-muted-foreground mt-2 text-center">
@@ -589,6 +589,27 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
     return () => clearTimeout(timeoutId);
   });
 
+  // Replace video links with embedded video players
+  useEffect(() => {
+    if (!contentRef.current) return;
+    const videoExtensions = /\.(mp4|webm|mov|ogg)$/i;
+    const videoLinks = contentRef.current.querySelectorAll('a[href]');
+
+    videoLinks.forEach((link) => {
+      const href = link.getAttribute("href");
+      if (!href || !videoExtensions.test(href)) return;
+      if (link.classList.contains("video-replaced")) return;
+
+      const video = document.createElement("video");
+      video.src = href;
+      video.controls = true;
+      video.className = "max-w-full max-h-96 rounded my-2";
+      video.preload = "metadata";
+
+      link.replaceWith(video);
+    });
+  }, [structuredContent]);
+
   // Handle clicks on links within document content
   const handleContentClick = useCallback((e: React.MouseEvent) => {
     const target = e.target as HTMLElement;
@@ -771,10 +792,16 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
           text-underline-offset: 2px;
         }
         .structured-content a[href^="http"]::after {
-          content: " ↗";
-          font-size: 0.7em;
-          text-decoration: none;
-          display: inline;
+          content: "";
+          display: inline-block;
+          width: 0.55em;
+          height: 0.55em;
+          margin-left: 0.1em;
+          vertical-align: -0.05em;
+          /* Arrow-up-right icon */
+          background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23588157' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M7 7h10v10'/%3E%3Cpath d='M7 17L17 7'/%3E%3C/svg%3E");
+          background-size: contain;
+          background-repeat: no-repeat;
         }
 
         /* Dead links - slightly muted, no underline */
@@ -816,6 +843,17 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
         }
         .structured-content li ol {
           list-style-type: decimal;
+        }
+
+        /* Inline images (from dangerouslySetInnerHTML) */
+        .structured-content img {
+          max-width: 100%;
+          max-height: 24rem;
+          width: auto;
+          height: auto;
+          object-fit: contain;
+          border-radius: 0.25rem;
+          margin: 0.5rem 0;
         }
 
         /* Block-level audio blocks - padding + negative margin keeps text position unchanged */

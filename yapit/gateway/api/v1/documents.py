@@ -5,6 +5,7 @@ import math
 import re
 from email.message import EmailMessage
 from typing import Annotated, Literal
+from urllib.parse import urljoin
 from uuid import UUID
 
 import httpx
@@ -22,6 +23,7 @@ from yapit.gateway.deps import (
     DbSession,
     DocumentCache,
     DocumentProcessorManagerDep,
+    IsAdmin,
     SettingsDep,
 )
 from yapit.gateway.domain_models import Block, Document, DocumentMetadata, DocumentProcessor
@@ -270,8 +272,11 @@ async def create_website_document(
 
     md = MarkItDown(enable_plugins=False)
     result = md.convert_stream(io.BytesIO(cached_doc.content))
+    markdown = result.markdown
+    if cached_doc.metadata.url:
+        markdown = _resolve_relative_urls(markdown, cached_doc.metadata.url)
     extraction_result = DocumentExtractionResult(
-        pages={0: ExtractedPage(markdown=result.markdown, images=[])},
+        pages={0: ExtractedPage(markdown=markdown, images=[])},
         extraction_method="markitdown",
     )
 
@@ -314,6 +319,7 @@ async def create_document(
     cache: DocumentCache,
     settings: SettingsDep,
     user: AuthenticatedUser,
+    is_admin: IsAdmin,
     document_processor_manager: DocumentProcessorManagerDep,
 ) -> DocumentCreateResponse:
     """Create a document from a file (PDF, image, etc)."""
@@ -346,6 +352,7 @@ async def create_document(
         content=cached_doc.content,
         content_type=cached_doc.metadata.content_type,
         pages=req.pages,
+        is_admin=is_admin,
     )
 
     extracted_text: str = "\n\n".join(page.markdown for page in extraction_result.pages.values())
@@ -617,3 +624,33 @@ def _validate_page_numbers(pages: list[int] | None, total_pages: int) -> None:
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Invalid page numbers: {invalid_pages!r}. Document has {total_pages} pages (0-indexed).",
         )
+
+
+def _resolve_relative_urls(markdown: str, base_url: str) -> str:
+    """Resolve relative URLs in markdown images and links to absolute URLs.
+
+    When converting webpages, MarkItDown preserves URLs as-is. Relative paths
+    like `/images/foo.png` would resolve to Yapit's domain when rendered in the browser.
+    This function resolves them to absolute URLs using the source webpage's URL.
+
+    Also encodes spaces in URLs since markdown parsers don't handle unencoded spaces.
+    """
+
+    def make_resolver(is_image: bool):
+        def resolve(match: re.Match) -> str:
+            text, url = match.group(1), match.group(2)
+            # Encode spaces - markdown parsers choke on unencoded spaces in URLs
+            url = url.replace(" ", "%20")
+            if url.startswith(("http://", "https://", "#", "data:")):
+                return match.group(0).replace(" ", "%20")
+            resolved = urljoin(base_url, url)
+            prefix = "!" if is_image else ""
+            return f"{prefix}[{text}]({resolved})"
+
+        return resolve
+
+    # Images: ![alt](url) - MarkItDown doesn't output titles, so just match to closing paren
+    markdown = re.sub(r"!\[([^\]]*)\]\(([^)]+)\)", make_resolver(True), markdown)
+    # Links: [text](url)
+    markdown = re.sub(r"(?<!!)\[([^\]]*)\]\(([^)]+)\)", make_resolver(False), markdown)
+    return markdown
