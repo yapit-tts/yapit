@@ -285,8 +285,8 @@ export function UnifiedInput() {
           onChange={(e) => setValue(e.target.value)}
           placeholder="Paste a URL, drop a file, or type text..."
           className={cn(
-            "min-h-[120px] pr-12 resize-none transition-all",
-            mode === "text" && "min-h-[200px]",
+            "min-h-[140px] pr-14 resize-none transition-all text-base",
+            mode === "text" && "min-h-[220px]",
             error && "border-destructive",
             isDragging && "border-primary border-2 border-dashed"
           )}
@@ -300,9 +300,9 @@ export function UnifiedInput() {
             size="icon"
             onClick={() => fileInputRef.current?.click()}
             disabled={isCreating || isLoadingUrl}
-            className="h-8 w-8"
+            className="h-10 w-10"
           >
-            <Paperclip className="h-4 w-4" />
+            <Paperclip className="h-5 w-5" />
           </Button>
         </div>
 
@@ -350,16 +350,17 @@ export function UnifiedInput() {
           onClick={handleTextSubmit}
           disabled={isCreating}
           variant="secondary"
+          size="lg"
           className="self-start"
         >
           {isCreating ? (
             <>
-              <Loader2 className="h-4 w-4 animate-spin" />
+              <Loader2 className="h-5 w-5 animate-spin" />
               Processing...
             </>
           ) : (
             <>
-              <Play className="h-4 w-4" />
+              <Play className="h-5 w-5" />
               Start Listening
             </>
           )}

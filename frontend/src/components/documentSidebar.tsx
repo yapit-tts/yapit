@@ -183,6 +183,7 @@ function DocumentSidebar() {
                     <SidebarMenuButton
                       onClick={() => handleDocumentClick(doc)}
                       isActive={documentId === doc.id}
+                      size="lg"
                     >
                       <FileText className="shrink-0" />
                       <span className="truncate" title={doc.title || "Untitled"}>
@@ -228,7 +229,7 @@ function DocumentSidebar() {
           <SidebarMenuItem>
             <Tooltip>
               <TooltipTrigger asChild>
-                <SidebarMenuButton onClick={() => navigate("/subscription")} className="h-auto py-2">
+                <SidebarMenuButton onClick={() => navigate("/subscription")} size="lg" className="h-auto py-3">
                   <div className="flex flex-col w-full gap-1">
                     <div className="flex items-center gap-2">
                       <CreditCard className="h-4 w-4 text-primary shrink-0" />
@@ -268,7 +269,7 @@ function DocumentSidebar() {
           <SidebarMenuItem>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <SidebarMenuButton>
+                <SidebarMenuButton size="lg">
                   <User2 />
                   <span className="truncate">
                     {user?.displayName || user?.primaryEmail || "Guest"}
@@ -280,7 +281,10 @@ function DocumentSidebar() {
                 side="top"
                 className="min-w-[var(--radix-popper-anchor-width)]"
               >
-                <DropdownMenuItem onClick={handleAuth}>
+                <DropdownMenuItem
+                  onClick={handleAuth}
+                  className={user ? "hover:bg-muted-warm focus:bg-muted-warm" : ""}
+                >
                   {user ? (
                     <>
                       <LogOut className="mr-2 h-4 w-4" />

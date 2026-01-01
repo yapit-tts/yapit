@@ -6,6 +6,8 @@ import AdminPanelPage from "@/pages/AdminPanelPage";
 import SubscriptionPage from "@/pages/SubscriptionPage";
 import CheckoutSuccessPage from "@/pages/CheckoutSuccessPage";
 import CheckoutCancelPage from "@/pages/CheckoutCancelPage";
+import SignInPage from "@/pages/auth/SignInPage";
+import SignUpPage from "@/pages/auth/SignUpPage";
 import { stackClientApp } from "@/auth";
 import { StackHandler } from "@stackframe/react";
 import { FC } from "react";
@@ -20,6 +22,8 @@ const AuthRoutes: FC = () => {
 
 const AppRoutes = () => (
 	<Routes>
+		<Route path="/handler/sign-in" element={<SignInPage />} />
+		<Route path="/handler/sign-up" element={<SignUpPage />} />
 		<Route path="/handler/*" element={<AuthRoutes />} />
 		<Route
 			path="/"
