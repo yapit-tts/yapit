@@ -6,10 +6,10 @@ import pytest
 
 
 @pytest.mark.asyncio
-async def test_submit_audio_and_retrieve(regular_client, regular_document):
+async def test_submit_audio_and_retrieve(regular_client, unique_document):
     """Test that browser-synthesized audio can be submitted and retrieved."""
-    document_id = regular_document["id"]
-    block_idx = regular_document["blocks"][0]["idx"]
+    document_id = unique_document["id"]
+    block_idx = unique_document["blocks"][0]["idx"]
 
     fake_audio = b"\x00\x01\x02\x03" * 250  # 1KB
     audio_b64 = base64.b64encode(fake_audio).decode()
