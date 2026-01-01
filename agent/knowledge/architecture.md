@@ -18,9 +18,10 @@ Open-source TTS platform for reading documents, web pages, and text with real-ti
 **Note**: Informal priority indicators, not tracked releases.
 
 - **v0** ✅: Basic working loop - audio plays, play/pause, block highlighting, click-to-jump
-- **v0.x** (current): Polish UX/UI, voice picker, speed control, position memory, model tuning
+- **v0.x** ✅:: Polish UX/UI, voice picker, speed control, position memory, model tuning
 - **v1**: All essential features + billing/Stripe, ready for beta testers
-- **Ship**: Dogfooding complete, proper deploy pipeline (Hetzner + Cloudflare + RunPod), monitoring
+- **v1.x**: add release workflow (main, dev), monitoring, admin panel, self-host docs
+- **Ship**: Dogfooding complete, proper deploy pipeline (Hetzner + Cloudflare + RunPod?)
 
 ---
 
@@ -34,6 +35,7 @@ These are TWO SEPARATE components:
 **Output**: Markdown text string
 **Location**: `yapit/gateway/processors/document/markitdown.py`
 **Status**: ✅ Working
+**Note**: Preserves URLs as-is (relative stays relative). We post-process with `_resolve_relative_urls()` in `documents.py` to resolve relative URLs and convert same-page anchors.
 
 ```
 PDF/DOCX/HTML  →  MarkItDown  →  Markdown string
@@ -118,17 +120,7 @@ Audio cache is a **session buffer**, not a permanent archive:
 - TTL: 7-14 days for untouched entries
 - Loss tolerance: High (audio can be regenerated)
 
-### Cost Estimates
-
-| Component | Cost |
-|-----------|------|
-| Hetzner VPS (4-16 vCPU) | €5-17/month |
-| Cloudflare | Free |
-| RunPod GPU (usage-based) | Variable, ~$0.20-0.50/hour when used |
-| Domain | ~$10-15/year |
-| **Total baseline** | **~€5-20/month** |
-
-### Free Tier Strategy: Batch Conversion
+### Free Tier Strategy: Batch Conversion (todo this is outdated)
 
 **Problem**: Browser TTS (Kokoro.js WASM) is slow and unreliable - some devices can't run WebGPU, inference takes 30s+ per block on CPU. But we want free tier to have zero marginal cost.
 
@@ -221,7 +213,7 @@ Audio cache is a **session buffer**, not a permanent archive:
 
 **DB stores models**, not deployment combinations:
 - One `TTSModel` entry per actual model (kokoro, higgs)
-- `credits_per_sec` is the server-side cost (browser mode = free)
+- `is_paid` property on processors determines if usage is metered (browser mode = always free)
 
 **Routing** is config-driven (`tts_processors.*.json`):
 ```json
@@ -279,6 +271,9 @@ Frontend                    Gateway                     Workers
 - Redis pubsub for worker → gateway notifications
 - Queue per model: `tts:queue:kokoro`, `tts:queue:higgs`
 
+**Block statuses:** `queued` → `processing` → `cached` | `skipped` | `error`
+- `skipped`: Block has unsynthesizable content (special chars like `❯`). Backend sends this instead of caching empty audio. Frontend treats skipped as resolved in buffer counting and auto-advances during playback.
+
 ### Browser TTS Flow (Free Tier)
 
 Browser mode bypasses WS entirely:
@@ -286,28 +281,32 @@ Browser mode bypasses WS entirely:
 2. Frontend calls `POST /v1/audio` to cache result
 3. Audio available at `GET /v1/audio/{hash}` for cross-device access
 
-No credits charged for browser mode (zero server cost).
+Browser mode is always free (zero server cost, no usage metering).
 
 ### Document Processors (`yapit/gateway/processors/document/`)
 
 | Processor | Purpose | Cost |
 |-----------|---------|------|
 | MarkitdownProcessor | PDF/DOCX/HTML → markdown | Free |
-| MistralOCRProcessor | Image/PDF OCR via Mistral API | ~$0.X per page (credits) |
+| MistralOCRProcessor | Image/PDF OCR via Mistral API | Metered (subscription limit) |
 
 ### Key Models (`yapit/gateway/domain_models.py`)
 
 - `Document` - Has `original_text`, `filtered_text`, `structured_content` (currently placeholder), `blocks`
 - `Block` - Text chunk, ~10-20 sec audio, has `variants` (different voice/model combos)
 - `BlockVariant` - Specific synthesis (hash-keyed), links to cached audio
-- `TTSModel` - Model config (sample_rate, channels, credits_per_sec)
+- `TTSModel` - Model config (sample_rate, channels)
 - `Voice` - Voice belonging to model, with parameters
-- `UserCredits` - Balance tracking
+- `Plan` - Subscription tier with usage limits (server_kokoro_characters, premium_voice_characters, ocr_pages)
+- `UserSubscription` - Links user to plan, tracks Stripe subscription state and billing period
+- `UsagePeriod` - Per-period usage counters, reset on subscription renewal
 
 ### Caching
 
 - **Audio cache**: SQLite, keyed by variant hash (text + model + voice + codec + params)
-- **Document cache**: SQLite, TTL-based, stores prepared documents before creation
+- **Document cache**: SQLite, TTL-based, stores prepared documents before creation (TODO: what is this?)
+- TODO OCR cache?
+- TODO Cache vacuuming not done yet.
 
 ---
 
@@ -365,11 +364,21 @@ While there are no real users, you can wipe yapit tables without touching Stack 
 ```bash
 ssh root@78.46.242.1
 docker exec <postgres-container> psql -U yapit -d yapit -c "
-DROP TABLE IF EXISTS blockvariants, blocks, documents, usercredits, ttsmodels, voices, alembic_version CASCADE;
+DROP TABLE IF EXISTS blockvariants, blocks, documents, plans, usersubscriptions, usageperiods, ttsmodels, voices, alembic_version CASCADE;
 "
 ```
 
 Then redeploy - alembic runs migrations on empty tables. Stack Auth project/users stay intact.
+
+### Migration Safety (Nice to Have)
+
+**Current gap**: Dev mode (`DB_DROP_AND_RECREATE=1`) uses `create_all()`, bypassing migrations entirely. A broken migration passes dev/tests but fails in prod.
+
+**Implemented**: `make migration-new` auto-fixes known issues and tests the migration immediately after generation.
+
+**Future improvements**:
+1. **Pre-deploy DB test** — Restore a prod backup locally, run migration against real data. Catches "works on empty DB, fails on prod data" issues. Ad-hoc, run before risky migrations.
+2. **Rollback plan** — Document the rollback procedure for migrations. Requires migrations to be reversible (downgrade works). Test downgrade path for complex migrations.
 
 ---
 
@@ -391,7 +400,7 @@ Then redeploy - alembic runs migrations on empty tables. Stack Auth project/user
 - Authentication via Stack-Auth
 - Audio controls: play/pause, volume, progress bar, speed slider, skip forward/back
 - Voice picker: Kokoro (28 voices) and HIGGS (2 voices) tabs, pinning, localStorage persistence
-- Model source toggle: Browser (free, WASM) or Server (credits, faster)
+- Model source toggle: Browser (free, WASM) or Server (subscription, faster)
 - Cancel synthesis: Hover spinner to reveal stop button
 - Playback position memory: Resumes from last block per document (localStorage)
 - MediaSession integration: Hardware media keys work and sync UI state
@@ -463,11 +472,10 @@ Then redeploy - alembic runs migrations on empty tables. Stack Auth project/user
 ### v1 (Later)
 - ~~Cloud storage~~ - Not needed (text in Postgres, audio cache on local SSD)
 - Admin frontend - Dashboard, settings
-- Billing - Stripe integration
+- ~~Billing - Stripe integration~~ ✅ Subscription system with Stripe Managed Payments
 - Rate limiting - Not urgent until public launch
 - Monitoring - See `monitoring-observability-logging.md` plan
 - OAuth providers (GitHub, Google) - create OAuth apps, configure in Stack Auth dashboard
-- New user onboarding: auto-grant starter credits (currently manual SQL insert)
 
 ---
 
@@ -520,7 +528,8 @@ make test-local
 
 ### Medium Priority
 - **URL structure review** - Current `/playback/{id}` works but consider alternatives: `/d/{id}` (shorter), `/documents/{id}` (RESTful), or `/listen/{id}` (action-oriented). Low priority but worth thinking about before public launch.
-- UI stuff for when you dont have engh credits, and so on. Generally the whole ui picker with isntead of "server / browser" have "free / pro/premium" and greying out voices you cant use, stuff like that.
+- UI for subscription limits (usage exceeded, upgrade prompts, greying out voices user can't access, etc.)
+- Instead of Browser/Server call it Local/Cloud or sth?
 
 ## This section is now todos
 
@@ -538,6 +547,7 @@ No limits on anonymous users currently. Add config-driven safeguards based on re
 - **No global document state** - Sidebar fetches documents independently. Fine for now, but if multiple components need document list, would need refetch or context.
 
 ### ~~Low Priority / Later~~ The actual, slightly random, todolist
+- **Cloudflare optimizations**: Review speed/security features at https://dash.cloudflare.com/58e2a94a0efae64b19d2bec84af0700d/yapit.md/speed/optimization/recommendations - lots of options beyond the quick toggles (Page Rules, caching config, WAF rules, etc.)
 - **Kokoro thread/replica tuning for prod**: Test T=8×2 vs T=4×4 on 16 vCPU. T=8×2 = lower latency per request; T=4×4 = better load distribution. Compare UX impact.
 - **Filter system** (contracts.py) - Partially implemented, ignoring for now.
 - **Admin panel** (#22, #25) - Stub - actually needed? E.g. for self-host, but what settings even?
@@ -550,7 +560,6 @@ No limits on anonymous users currently. Add config-driven safeguards based on re
 - Signup page buttons show permanent loading spinners (including sign up button, not just OAuth)
 - Tracking of the active / read out block. (toggleable)
 - which license? do we have any licensing issues with libs we use?
-- allow registered users to have 100 free ocr pages or sth like that + idk 15k credits, while we're scaling. And once we have steady income, we can like allow idk a steady but low amount for free per month.
 - mistral ocr is 50% off with batch requests (which ususally are not much slower) (and you can send single requests as batch of 1 document). Question is how to UX this best... (because it *might* still lead to a delay and yh idk maybe we just give the choice but yk how to ui/ux this).
 - backup strategy. rsync.net?
 - this text maybe doesnt belong here but I want to write downt he thought:
@@ -573,14 +582,15 @@ No limits on anonymous users currently. Add config-driven safeguards based on re
 - the way we're displaying HTML from websites... are we safe from xss attacks? like do we sanitize the html properly? etc. pp.
 - TODO: Considering adding  https://docs.inworld.ai/docs/quickstart-tts ... if higgs is making problems / if this is actually higher quality / faster / cheaper than higgs on runpod.
 - is the edge case of a block being sent to a server worker which for some reason fails to process it (worker crash / oom / whatever) handled properly? like is there a timeout after which we retry or sth? or do we just hang forever?
+- make the app responsive, even with the 1.8k pages rationality A to Z endboss book (62h of audio) - clicking on it in the sidebar has noticeable delay. Else it seems to work well?
+- convert guest user to registered user flow (when they sign up)!
+- proper error msg / UI for 402s
 
 
 ### Nice to Have / Future Enhancements
 - **Cross-device position sync**: Current position memory is localStorage only. Could add backend sync for resume across devices.
 - **ArXiv URL first-class support**: Detect ArXiv URLs and fetch paper title via ArXiv API
-- **Math rendering**: ✅ KaTeX for inline/display math (done)
 - **Code syntax highlighting**: Prism/Shiki for code blocks (deferred)
-- **Markdown export**: ✅ Download + copy buttons for markdown export (done)
 - **Full document audio download**: Batch synthesis entire document to single audio file (MP3/WAV) for offline listening
 - **Math-to-Speech for TTS**: Currently inline math is skipped for TTS. Options to consider:
   - Speech Rule Engine (SRE) / MathJax accessibility - converts MathML → speech strings

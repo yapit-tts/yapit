@@ -16,7 +16,7 @@ Note: We don't work heavily with GitHub issues (solo dev + claude for now -- the
 - **Docker operations**: Use `make` commands (e.g., `make dev-cpu`), NOT raw `docker compose` commands
     - Make commands handle env vars, build steps, and proper orchestration
     - **ALWAYS ask user before stopping/restarting Docker services** - they may be actively testing
-- **CRITICAL: Backend changes require restart** - If you modify any backend Python code (gateway, processors, models, etc.), you MUST tell the user to restart the backend. The running Docker container has the old code. Say explicitly: "Backend code changed - please restart with `make dev-cpu`". Don't keep debugging "why isn't it working" if you forgot this step!
+- **Backend hot reload in dev** - Code in `yapit/` is volume-mounted with `--reload`, so Python changes are picked up automatically. Still need `make dev-cpu` for: dependency changes, config files, anything outside `yapit/`. After significant changes, recommend `make dev-cpu` to verify from clean slate. Note: existing documents retain old processed content; create new document to use new processing logic.
 - Test workflow: `.github/workflows/`
 - No default values in Settings class - only defaults in `.env*` files
 - `make test-local` for basic tests, `make test` for full suite (needs API keys)
@@ -71,6 +71,7 @@ make migration-new MSG="description of changes"
 
 Task files live in `agent/tasks/`, persistent knowledge in `agent/knowledge/`.
 Queryable via grep "^status: active" agent/tasks/*.md
+Don't commit them with code changes - we'll batch add them later.
 
 **Wikilinks**: Use `[[task-name]]` (not `task-name.md`) when referencing other task/knowledge files. Enables backlink discovery in memex.
 
