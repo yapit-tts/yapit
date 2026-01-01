@@ -121,6 +121,7 @@ class BaseDocumentProcessor:
         url: str | None = None,
         content: bytes | None = None,
         pages: list[int] | None = None,
+        is_admin: bool = False,
     ) -> DocumentExtractionResult:
         """Process document with caching and usage tracking."""
         if url is None and content is None:
@@ -165,6 +166,7 @@ class BaseDocumentProcessor:
                 UsageType.ocr,
                 len(uncached_pages),
                 db,
+                is_admin=is_admin,
                 billing_enabled=self._settings.billing_enabled,
             )
 
