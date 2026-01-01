@@ -30,14 +30,25 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ChevronUp, FileText, Plus, Loader2, MoreHorizontal, User2, LogOut, LogIn, Trash2, Pencil, Settings, Coins } from "lucide-react";
+import { Progress } from "@/components/ui/progress";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
+import { ChevronUp, FileText, Plus, Loader2, MoreHorizontal, User2, LogOut, LogIn, Trash2, Pencil, CreditCard } from "lucide-react";
 import { useApi } from "@/api";
 import { useUser } from "@stackframe/react";
+
+const CHARS_PER_HOUR = 61200;
 
 interface DocumentItem {
   id: string;
   title: string | null;
   created: string;
+}
+
+interface SubscriptionSummary {
+  plan: { tier: string; name: string };
+  subscription: { status: string } | null;
+  limits: { premium_voice_characters: number | null; ocr_pages: number | null };
+  usage: { premium_voice_characters: number; ocr_pages: number };
 }
 
 function DocumentSidebar() {
@@ -46,7 +57,7 @@ function DocumentSidebar() {
   const [renameDoc, setRenameDoc] = useState<DocumentItem | null>(null);
   const [newTitle, setNewTitle] = useState("");
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
-  const [creditBalance, setCreditBalance] = useState<number | null>(null);
+  const [subscription, setSubscription] = useState<SubscriptionSummary | null>(null);
   const { api, isAuthReady, isAnonymous } = useApi();
   const navigate = useNavigate();
   const { documentId } = useParams();
@@ -67,18 +78,18 @@ function DocumentSidebar() {
       }
     };
 
-    const fetchCredits = async () => {
+    const fetchSubscription = async () => {
       if (isAnonymous) return;
       try {
-        const response = await api.get<{ balance: string }>("/v1/users/me/credits");
-        setCreditBalance(parseFloat(response.data.balance));
+        const response = await api.get<SubscriptionSummary>("/v1/users/me/subscription");
+        setSubscription(response.data);
       } catch {
-        // Credits not available (user may not have record yet)
+        // Subscription not available
       }
     };
 
     fetchDocuments();
-    fetchCredits();
+    fetchSubscription();
   }, [api, isAuthReady, isAnonymous, user, location.pathname]);
 
   const handleDocumentClick = (doc: DocumentItem) => {
@@ -213,14 +224,47 @@ function DocumentSidebar() {
 
       <SidebarFooter className="border-t border-sidebar-border">
         <SidebarMenu>
+          {/* Subscription / Plan button */}
           <SidebarMenuItem>
-            <SidebarMenuButton onClick={() => navigate("/credits")}>
-              <Coins className="text-primary" />
-              <span className="truncate">
-                {creditBalance !== null ? `${creditBalance.toLocaleString()} credits` : "Buy Credits"}
-              </span>
-            </SidebarMenuButton>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <SidebarMenuButton onClick={() => navigate("/subscription")} className="h-auto py-2">
+                  <div className="flex flex-col w-full gap-1">
+                    <div className="flex items-center gap-2">
+                      <CreditCard className="h-4 w-4 text-primary shrink-0" />
+                      <span className="truncate font-medium">
+                        {subscription?.plan.name ?? "Free"} Plan
+                      </span>
+                    </div>
+                    {subscription?.subscription && subscription.limits.premium_voice_characters !== null && subscription.limits.premium_voice_characters > 0 && (
+                      <div className="w-full pl-6">
+                        <Progress
+                          value={Math.min(100, (subscription.usage.premium_voice_characters / subscription.limits.premium_voice_characters) * 100)}
+                          className="h-1.5"
+                        />
+                      </div>
+                    )}
+                  </div>
+                </SidebarMenuButton>
+              </TooltipTrigger>
+              <TooltipContent side="right">
+                {subscription?.subscription ? (
+                  <div className="space-y-1">
+                    {subscription.limits.premium_voice_characters !== null && subscription.limits.premium_voice_characters > 0 && (
+                      <p>Premium Voice: ~{Math.round(subscription.usage.premium_voice_characters / CHARS_PER_HOUR)} / ~{Math.round(subscription.limits.premium_voice_characters / CHARS_PER_HOUR)} hrs</p>
+                    )}
+                    {subscription.limits.ocr_pages !== null && subscription.limits.ocr_pages > 0 && (
+                      <p>OCR: {subscription.usage.ocr_pages} / {subscription.limits.ocr_pages} pages</p>
+                    )}
+                  </div>
+                ) : (
+                  <p>Click to view plans</p>
+                )}
+              </TooltipContent>
+            </Tooltip>
           </SidebarMenuItem>
+
+          {/* User button */}
           <SidebarMenuItem>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -236,11 +280,6 @@ function DocumentSidebar() {
                 side="top"
                 className="min-w-[var(--radix-popper-anchor-width)]"
               >
-                <DropdownMenuItem disabled>
-                  <Settings className="mr-2 h-4 w-4" />
-                  Settings
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={handleAuth}>
                   {user ? (
                     <>

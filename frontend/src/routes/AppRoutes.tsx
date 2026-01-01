@@ -3,7 +3,7 @@ import MainLayout from "../layouts/MainLayout";
 import PlaybackPage from "../pages/PlaybackPage";
 import TextInputPage from "@/pages/TextInputPage";
 import AdminPanelPage from "@/pages/AdminPanelPage";
-import CreditsPage from "@/pages/CreditsPage";
+import SubscriptionPage from "@/pages/SubscriptionPage";
 import CheckoutSuccessPage from "@/pages/CheckoutSuccessPage";
 import CheckoutCancelPage from "@/pages/CheckoutCancelPage";
 import { stackClientApp } from "@/auth";
@@ -46,10 +46,10 @@ const AppRoutes = () => (
 			}
 		/>
 		<Route
-			path="/credits"
+			path="/subscription"
 			element={
 				<MainLayout>
-					<CreditsPage />
+					<SubscriptionPage />
 				</MainLayout>
 			}
 		/>

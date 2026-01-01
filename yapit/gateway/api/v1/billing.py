@@ -171,7 +171,7 @@ async def create_billing_portal_session(
     session = client.v1.billing_portal.sessions.create(
         {
             "customer": subscription.stripe_customer_id,
-            "return_url": f"{origin}/settings",
+            "return_url": f"{origin}/subscription",
         }
     )
 

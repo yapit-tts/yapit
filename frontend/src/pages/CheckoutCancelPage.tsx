@@ -18,8 +18,8 @@ const CheckoutCancelPage = () => {
             Your purchase was cancelled. No charges were made.
           </p>
           <div className="flex gap-4 justify-center">
-            <Button variant="outline" onClick={() => navigate("/settings")}>
-              Back to Settings
+            <Button variant="outline" onClick={() => navigate("/subscription")}>
+              Back
             </Button>
             <Button onClick={() => navigate("/")}>
               Continue
