@@ -594,22 +594,28 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
   // Replace video links with embedded video players
   useEffect(() => {
     if (!contentRef.current) return;
-    const videoExtensions = /\.(mp4|webm|mov|ogg)$/i;
-    const videoLinks = contentRef.current.querySelectorAll('a[href]');
 
-    videoLinks.forEach((link) => {
-      const href = link.getAttribute("href");
-      if (!href || !videoExtensions.test(href)) return;
-      if (link.classList.contains("video-replaced")) return;
+    // Defer to next tick to ensure DOM is painted (Firefox timing differs from Chromium)
+    const timeoutId = setTimeout(() => {
+      if (!contentRef.current) return;
+      const videoExtensions = /\.(mp4|webm|mov|ogg)$/i;
+      const videoLinks = contentRef.current.querySelectorAll('a[href]');
 
-      const video = document.createElement("video");
-      video.src = href;
-      video.controls = true;
-      video.className = "max-w-full max-h-96 rounded my-2";
-      video.preload = "metadata";
+      videoLinks.forEach((link) => {
+        const href = link.getAttribute("href");
+        if (!href || !videoExtensions.test(href)) return;
 
-      link.replaceWith(video);
-    });
+        const video = document.createElement("video");
+        video.src = href;
+        video.controls = true;
+        video.className = "max-w-full max-h-96 rounded my-2";
+        video.preload = "metadata";
+
+        link.replaceWith(video);
+      });
+    }, 0);
+
+    return () => clearTimeout(timeoutId);
   }, [structuredContent]);
 
   // Handle clicks on links within document content
