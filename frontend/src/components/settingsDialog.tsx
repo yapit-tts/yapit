@@ -34,14 +34,21 @@ function SettingRow({
   );
 }
 
-export function SettingsDialog() {
+interface SettingsDialogProps {
+  size?: "default" | "lg";
+}
+
+export function SettingsDialog({ size = "default" }: SettingsDialogProps) {
   const { settings, setSettings } = useSettings();
+
+  const buttonClass = size === "lg" ? "h-10 w-10" : "";
+  const iconClass = size === "lg" ? "h-5 w-5" : "h-4 w-4";
 
   return (
     <Dialog>
       <DialogTrigger asChild>
-        <Button variant="ghost" size="icon">
-          <Settings className="h-4 w-4" />
+        <Button variant="ghost" size="icon" className={buttonClass}>
+          <Settings className={iconClass} />
         </Button>
       </DialogTrigger>
       <DialogContent className="sm:max-w-md">

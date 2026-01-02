@@ -604,63 +604,63 @@ const SoundControl = ({
         </div>
       )}
 
-      {/* Mobile expanded: voice, speed, volume in vertical layout */}
+      {/* Mobile expanded: voice, speed, volume - aligned columns */}
       {isMobile && isMobileExpanded && (
-        <div className="mt-3 pt-3 border-t border-border/50 max-w-2xl mx-auto space-y-3">
-          <VoicePicker value={voiceSelection} onChange={onVoiceChange} />
-          <div className="flex items-center justify-between">
-            <span className="text-xs text-muted-foreground">Speed</span>
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-muted-foreground font-mono tabular-nums w-10">
-                {playbackSpeed.toFixed(1)}x
-              </span>
-              <Slider
-                value={[playbackSpeed]}
-                min={0.5}
-                max={3}
-                step={0.1}
-                onValueChange={(values) => onSpeedChange(values[0])}
-                className="w-32"
-              />
-            </div>
+        <div className="mt-3 pt-3 border-t border-border/50 max-w-2xl mx-auto space-y-4">
+          <div className="flex justify-center">
+            <VoicePicker value={voiceSelection} onChange={onVoiceChange} />
           </div>
-          <div className="flex items-center justify-between">
-            <span className="text-xs text-muted-foreground">Volume</span>
-            <div className="flex items-center gap-2">
-              <Volume2 className="h-4 w-4 text-muted-foreground" />
-              <Slider
-                value={[volume]}
-                max={100}
-                step={1}
-                onValueChange={(values) => onVolumeChange(values[0])}
-                className="w-32"
-              />
-            </div>
+          {/* All rows use same column widths: w-12 left, flex-1 middle, w-12 right */}
+          <div className="flex items-center gap-4">
+            <span className="text-sm text-muted-foreground font-mono tabular-nums w-12 text-right flex-shrink-0">
+              {playbackSpeed.toFixed(1)}x
+            </span>
+            <Slider
+              value={[playbackSpeed]}
+              min={0.5}
+              max={3}
+              step={0.1}
+              onValueChange={(values) => onSpeedChange(values[0])}
+              className="flex-1"
+            />
+            <div className="w-12 flex-shrink-0" />
           </div>
-          <div className="flex justify-end">
-            <SettingsDialog />
+          <div className="flex items-center gap-4">
+            <div className="w-12 flex-shrink-0 flex justify-end">
+              <Volume2 className="h-5 w-5 text-muted-foreground" />
+            </div>
+            <Slider
+              value={[volume]}
+              max={100}
+              step={1}
+              onValueChange={(values) => onVolumeChange(values[0])}
+              className="flex-1"
+            />
+            <div className="w-12 flex-shrink-0 flex justify-end">
+              <SettingsDialog size="lg" />
+            </div>
           </div>
         </div>
       )}
 
       {/* Desktop: horizontal layout with all controls */}
       {!isMobile && (
-        <div className="flex items-center justify-between mt-2 max-w-2xl mx-auto">
-          <div className="flex items-center gap-3">
+        <div className="flex items-center justify-between mt-3 max-w-2xl mx-auto">
+          <div className="flex items-center gap-4">
             <VoicePicker value={voiceSelection} onChange={onVoiceChange} />
-            <span className="text-xs text-muted-foreground">
+            <span className="text-sm text-muted-foreground">
               Block {blockNum} of {numBlocks}
             </span>
             {(isReconnecting || connectionError) && (
-              <span className={`flex items-center gap-1 text-xs ${connectionError ? 'text-destructive' : 'text-yellow-600'}`}>
-                <WifiOff className="h-3 w-3" />
+              <span className={`flex items-center gap-1.5 text-sm ${connectionError ? 'text-destructive' : 'text-yellow-600'}`}>
+                <WifiOff className="h-4 w-4" />
                 {connectionError || 'Reconnecting...'}
               </span>
             )}
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-5">
             <div className="flex items-center gap-2">
-              <span className="text-xs text-muted-foreground font-mono tabular-nums w-10">
+              <span className="text-sm text-muted-foreground font-mono tabular-nums w-12">
                 {playbackSpeed.toFixed(1)}x
               </span>
               <Slider
@@ -669,17 +669,17 @@ const SoundControl = ({
                 max={3}
                 step={0.1}
                 onValueChange={(values) => onSpeedChange(values[0])}
-                className="w-24"
+                className="w-32"
               />
             </div>
             <div className="flex items-center gap-2">
-              <Volume2 className="h-4 w-4 text-muted-foreground" />
+              <Volume2 className="h-5 w-5 text-muted-foreground" />
               <Slider
                 value={[volume]}
                 max={100}
                 step={1}
                 onValueChange={(values) => onVolumeChange(values[0])}
-                className="w-24"
+                className="w-32"
               />
             </div>
             <SettingsDialog />

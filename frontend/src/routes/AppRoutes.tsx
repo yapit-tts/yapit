@@ -6,6 +6,9 @@ import AdminPanelPage from "@/pages/AdminPanelPage";
 import SubscriptionPage from "@/pages/SubscriptionPage";
 import CheckoutSuccessPage from "@/pages/CheckoutSuccessPage";
 import CheckoutCancelPage from "@/pages/CheckoutCancelPage";
+import TermsPage from "@/pages/TermsPage";
+import PrivacyPage from "@/pages/PrivacyPage";
+import NotFoundPage from "@/pages/NotFoundPage";
 import SignInPage from "@/pages/auth/SignInPage";
 import SignUpPage from "@/pages/auth/SignUpPage";
 import { stackClientApp } from "@/auth";
@@ -73,6 +76,9 @@ const AppRoutes = () => (
 				</MainLayout>
 			}
 		/>
+		<Route path="/terms" element={<TermsPage />} />
+		<Route path="/privacy" element={<PrivacyPage />} />
+		<Route path="*" element={<NotFoundPage />} />
 	</Routes>
 );
 

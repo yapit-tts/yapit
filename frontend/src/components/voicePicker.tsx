@@ -1,5 +1,8 @@
 import { useState, useEffect } from "react";
 import { ChevronDown, Star, ChevronRight, Monitor, Cloud, Loader2 } from "lucide-react";
+
+// HIGGS backend is flaky and more expensive than Inworld - hide for now
+const SHOW_HIGGS_TAB = false;
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -200,7 +203,7 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
           <TabsList className="w-full h-11 rounded-none border-b">
             <TabsTrigger value="kokoro" className="flex-1 text-sm py-2.5">Kokoro</TabsTrigger>
             <TabsTrigger value="inworld" className="flex-1 text-sm py-2.5">Inworld</TabsTrigger>
-            <TabsTrigger value="higgs" className="flex-1 text-sm py-2.5">HIGGS</TabsTrigger>
+            {SHOW_HIGGS_TAB && <TabsTrigger value="higgs" className="flex-1 text-sm py-2.5">HIGGS</TabsTrigger>}
           </TabsList>
 
           <TabsContent value="kokoro" className="m-0 max-h-[28rem] overflow-y-auto">
@@ -363,81 +366,83 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
             )}
           </TabsContent>
 
-          <TabsContent value="higgs" className="m-0 max-h-[28rem] overflow-y-auto">
-            {/* Pinned section */}
-            {pinnedHiggs.length > 0 && (
+          {SHOW_HIGGS_TAB && (
+            <TabsContent value="higgs" className="m-0 max-h-[28rem] overflow-y-auto">
+              {/* Pinned section */}
+              {pinnedHiggs.length > 0 && (
+                <div className="border-b">
+                  <div className="px-4 py-2 text-sm font-medium text-muted-foreground">Pinned</div>
+                  {pinnedHiggs.map(preset => (
+                    <VoiceRow
+                      key={preset.slug}
+                      name={preset.name}
+                      detail={preset.description}
+                      isPinned={true}
+                      isSelected={value.voiceSlug === preset.slug}
+                      onSelect={() => handleVoiceSelect(preset.slug)}
+                      onPinToggle={() => handlePinToggle(preset.slug)}
+                    />
+                  ))}
+                </div>
+              )}
+
+              {/* Presets */}
               <div className="border-b">
-                <div className="px-4 py-2 text-sm font-medium text-muted-foreground">Pinned</div>
-                {pinnedHiggs.map(preset => (
+                <div className="px-4 py-2 text-sm font-medium text-muted-foreground">Presets</div>
+                {HIGGS_PRESETS.map(preset => (
                   <VoiceRow
                     key={preset.slug}
                     name={preset.name}
                     detail={preset.description}
-                    isPinned={true}
+                    isPinned={pinnedVoices.includes(preset.slug)}
                     isSelected={value.voiceSlug === preset.slug}
                     onSelect={() => handleVoiceSelect(preset.slug)}
                     onPinToggle={() => handlePinToggle(preset.slug)}
                   />
                 ))}
               </div>
-            )}
 
-            {/* Presets */}
-            <div className="border-b">
-              <div className="px-4 py-2 text-sm font-medium text-muted-foreground">Presets</div>
-              {HIGGS_PRESETS.map(preset => (
-                <VoiceRow
-                  key={preset.slug}
-                  name={preset.name}
-                  detail={preset.description}
-                  isPinned={pinnedVoices.includes(preset.slug)}
-                  isSelected={value.voiceSlug === preset.slug}
-                  onSelect={() => handleVoiceSelect(preset.slug)}
-                  onPinToggle={() => handlePinToggle(preset.slug)}
-                />
-              ))}
-            </div>
-
-            {/* Advanced settings */}
-            <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
-              <CollapsibleTrigger asChild>
-                <button className="flex w-full items-center gap-2 px-4 py-2.5 text-sm font-medium text-muted-foreground hover:bg-accent">
-                  <ChevronRight className={`h-4 w-4 transition-transform ${advancedOpen ? "rotate-90" : ""}`} />
-                  Advanced Settings
-                </button>
-              </CollapsibleTrigger>
-              <CollapsibleContent className="px-4 pb-4 space-y-4">
-                {/* Temperature */}
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-muted-foreground">Temperature</span>
-                    <span className="font-mono tabular-nums">{(value.temperature ?? 0.3).toFixed(1)}</span>
+              {/* Advanced settings */}
+              <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
+                <CollapsibleTrigger asChild>
+                  <button className="flex w-full items-center gap-2 px-4 py-2.5 text-sm font-medium text-muted-foreground hover:bg-accent">
+                    <ChevronRight className={`h-4 w-4 transition-transform ${advancedOpen ? "rotate-90" : ""}`} />
+                    Advanced Settings
+                  </button>
+                </CollapsibleTrigger>
+                <CollapsibleContent className="px-4 pb-4 space-y-4">
+                  {/* Temperature */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">Temperature</span>
+                      <span className="font-mono tabular-nums">{(value.temperature ?? 0.3).toFixed(1)}</span>
+                    </div>
+                    <Slider
+                      value={[value.temperature ?? 0.3]}
+                      min={0.1}
+                      max={1.0}
+                      step={0.1}
+                      onValueChange={([v]) => handleTemperatureChange(v)}
+                    />
                   </div>
-                  <Slider
-                    value={[value.temperature ?? 0.3]}
-                    min={0.1}
-                    max={1.0}
-                    step={0.1}
-                    onValueChange={([v]) => handleTemperatureChange(v)}
-                  />
-                </div>
 
-                {/* Scene */}
-                <div className="space-y-2">
-                  <span className="text-sm text-muted-foreground">Scene</span>
-                  <select
-                    value={value.scene ?? HIGGS_SCENES[0].value}
-                    onChange={(e) => handleSceneChange(e.target.value)}
-                    className="w-full rounded-md border bg-background px-3 py-2 text-sm"
-                  >
-                    {HIGGS_SCENES.map(scene => (
-                      <option key={scene.value} value={scene.value}>{scene.label}</option>
-                    ))}
-                  </select>
-                </div>
-              </CollapsibleContent>
-            </Collapsible>
-          </TabsContent>
+                  {/* Scene */}
+                  <div className="space-y-2">
+                    <span className="text-sm text-muted-foreground">Scene</span>
+                    <select
+                      value={value.scene ?? HIGGS_SCENES[0].value}
+                      onChange={(e) => handleSceneChange(e.target.value)}
+                      className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                    >
+                      {HIGGS_SCENES.map(scene => (
+                        <option key={scene.value} value={scene.value}>{scene.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                </CollapsibleContent>
+              </Collapsible>
+            </TabsContent>
+          )}
         </Tabs>
       </PopoverContent>
     </Popover>
@@ -457,9 +462,13 @@ interface VoiceRowProps {
 }
 
 function VoiceRow({ name, flag, detail, isHighQuality, gender, isPinned, isSelected, onSelect, onPinToggle }: VoiceRowProps) {
+  // Two-line layout for voices with descriptions (Inworld)
+  // Single-line layout for voices without descriptions (Kokoro)
+  const hasTwoLineLayout = !!detail;
+
   return (
     <div
-      className={`flex items-center gap-3 px-4 py-2.5 cursor-pointer hover:bg-accent ${isSelected ? "bg-accent" : ""}`}
+      className={`flex gap-3 px-4 py-2.5 cursor-pointer hover:bg-accent ${isSelected ? "bg-accent" : ""} ${hasTwoLineLayout ? "items-start" : "items-center"}`}
       onClick={onSelect}
     >
       <button
@@ -467,17 +476,28 @@ function VoiceRow({ name, flag, detail, isHighQuality, gender, isPinned, isSelec
           e.stopPropagation();
           onPinToggle();
         }}
-        className="text-muted-foreground hover:text-foreground"
+        className="text-muted-foreground hover:text-foreground flex-shrink-0 mt-0.5"
       >
         <Star className={`h-4 w-4 ${isPinned ? "fill-current text-yellow-500" : ""}`} />
       </button>
-      <span className="text-base flex-1 flex items-center gap-2">
-        {flag && <span className="text-sm">{flag}</span>}
-        {name}
-        {isHighQuality && <span className="text-sm" title="High quality">✨</span>}
-      </span>
-      {gender && <span className="text-sm text-muted-foreground">{gender === "Female" ? "♀" : "♂"}</span>}
-      {detail && <span className="text-sm text-muted-foreground">{detail}</span>}
+      {hasTwoLineLayout ? (
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            {flag && <span className="text-sm">{flag}</span>}
+            <span className="text-base font-medium">{name}</span>
+          </div>
+          <p className="text-sm text-muted-foreground mt-0.5 leading-snug">{detail}</p>
+        </div>
+      ) : (
+        <>
+          <span className="text-base flex-1 flex items-center gap-2">
+            {flag && <span className="text-sm">{flag}</span>}
+            {name}
+            {isHighQuality && <span className="text-sm" title="High quality">✨</span>}
+          </span>
+          {gender && <span className="text-sm text-muted-foreground">{gender === "Female" ? "♀" : "♂"}</span>}
+        </>
+      )}
     </div>
   );
 }

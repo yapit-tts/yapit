@@ -1252,11 +1252,11 @@ const PlaybackPage = () => {
   if (error) {
     if (error === "not_found") {
       return (
-        <div className="flex min-h-[80vh] flex-col items-center justify-center gap-4 text-muted-foreground">
-          <FileQuestion className="h-16 w-16" />
-          <h1 className="text-xl font-semibold">Document not found</h1>
-          <p className="text-sm">This document may have been deleted or the link is incorrect.</p>
-          <Link to="/" className="text-primary hover:underline">
+        <div className="flex min-h-[80vh] flex-col items-center justify-center gap-6 text-muted-foreground">
+          <FileQuestion className="h-20 w-20" />
+          <h1 className="text-2xl font-semibold text-foreground">Document not found</h1>
+          <p className="text-base">This document may have been deleted or the link is incorrect.</p>
+          <Link to="/" className="text-lg text-primary hover:underline">
             ← Back to home
           </Link>
         </div>
