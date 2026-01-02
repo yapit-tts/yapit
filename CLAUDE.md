@@ -27,6 +27,12 @@ Note: We don't work heavily with GitHub issues (solo dev + claude for now -- the
 
 ## Database Migrations
 
+**CRITICAL: Shared database with Stack Auth.** Yapit and Stack Auth share the same postgres database.
+- **Stack Auth tables use PascalCase** (e.g., `Project`, `ProjectUser`, `Team`) — NOT `stack_` prefix
+- **Yapit tables use snake_case** (e.g., `ttsmodel`, `usersubscription`, `document`)
+- **NEVER drop all tables blindly** — filter by naming convention or use explicit table lists
+- Stack Auth also creates enum types and `_prisma_migrations` table
+
 ### Creating a New Migration (Dev)
 
 ```bash
@@ -53,6 +59,8 @@ make migration-new MSG="description of changes"
 ### Deploying to Prod
 
 **No special action.** Gateway runs `alembic upgrade head` on startup. Just `scripts/deploy.sh`.
+
+Never run any destructive commands without getting explicit user approval for the exact command you're about to run.
 
 ## Secrets Management
 

@@ -552,14 +552,11 @@ No limits on anonymous users currently. Add config-driven safeguards based on re
 - **Filter system** (contracts.py) - Partially implemented, ignoring for now.
 - **Admin panel** (#22, #25) - Stub - actually needed? E.g. for self-host, but what settings even?
 - **Rate limiting** (#47) - Not urgent until public launch.
-- **Cache eviction / ...**
+- **Cache eviction** — LRU + TTL mechanism not implemented yet. Low priority for beta (small user count), needed before scale.
+- **RunPod overflow for Kokoro** — Currently no overflow endpoint configured. Add one, delete unused HIGGS endpoint. Storage cost ~few cents/month.
 - Hetzner backups + scaling + restore drill (verify the flow works before going live)
 - Auto-deploy webhook on merge to main
 - Production seed script (one-time seed for fresh deployments)
-- Favicon for frontend
-- Signup page buttons show permanent loading spinners (including sign up button, not just OAuth)
-- Tracking of the active / read out block. (toggleable)
-- which license? do we have any licensing issues with libs we use?
 - mistral ocr is 50% off with batch requests (which ususally are not much slower) (and you can send single requests as batch of 1 document). Question is how to UX this best... (because it *might* still lead to a delay and yh idk maybe we just give the choice but yk how to ui/ux this).
 - backup strategy. rsync.net?
 - this text maybe doesnt belong here but I want to write downt he thought:
@@ -573,14 +570,11 @@ No limits on anonymous users currently. Add config-driven safeguards based on re
   - or whether it's worth in general to like have a cache for ocred content.
   - wait -- since we store the ocr'd text (transformed document) in the db as part of the document model, we already have a cache for that, right? so we only need to make sure we don't re-ocr sth we already ocred! (unless msitral releases a bette rmodel again in which case we'd evict / relax that check -- but then we'd need to track the model version used for ocr per document - doable. currently it's just "mistral-ocr" bcs they auto-update. but yh we could like add an env var which we update)
 - also need to try updating the block size to say 200 or 250, and before that try better splitting algorithms already, taking into account that it's better to split at a "," in adition to "?!. ", and that being able to split at such a point is better than reaching excactly the limit. (so like a soft limit with preferred split points)
- - because yh smtms it's not the best flow still yk if the sentences are kinda split audibly unnaturally. at least with kokoro that's an issue - need to test whether higgs actually solves this with the audio context!
+ - because yh smtms it's not the best flow still yk if the sentences are kinda split audibly unnaturally.
  - i would however do this end-to-end, after we've test-deployed on the VPS, so we see how fast the real kokoro cpu inference is. + testing a bit more with laptops that actually have a functioning webgpu...
  - stress test document sidebar with 500+ documents (pagination working, implemented in FE, etc.?)
-- documnents with long titles not shown in sidebar (just cutoff with elipsis) - maybe display full on hover?
 - ~~Dokploy~~ - using it, see [[dokploy-operations]]
 - write a testimonial for "VibeTyper" The S2T software I use (the dev will give a backlink to yapit / + my personal site and test the product too - plus he said he uses dockploy for VibeTyper)
-- the way we're displaying HTML from websites... are we safe from xss attacks? like do we sanitize the html properly? etc. pp.
-- TODO: Considering adding  https://docs.inworld.ai/docs/quickstart-tts ... if higgs is making problems / if this is actually higher quality / faster / cheaper than higgs on runpod.
 - is the edge case of a block being sent to a server worker which for some reason fails to process it (worker crash / oom / whatever) handled properly? like is there a timeout after which we retry or sth? or do we just hang forever?
 - make the app responsive, even with the 1.8k pages rationality A to Z endboss book (62h of audio) - clicking on it in the sidebar has noticeable delay. Else it seems to work well?
 - convert guest user to registered user flow (when they sign up)!
@@ -590,7 +584,6 @@ No limits on anonymous users currently. Add config-driven safeguards based on re
 ### Nice to Have / Future Enhancements
 - **Cross-device position sync**: Current position memory is localStorage only. Could add backend sync for resume across devices.
 - **ArXiv URL first-class support**: Detect ArXiv URLs and fetch paper title via ArXiv API
-- **Code syntax highlighting**: Prism/Shiki for code blocks (deferred)
 - **Full document audio download**: Batch synthesis entire document to single audio file (MP3/WAV) for offline listening
 - **Math-to-Speech for TTS**: Currently inline math is skipped for TTS. Options to consider:
   - Speech Rule Engine (SRE) / MathJax accessibility - converts MathML → speech strings
@@ -599,7 +592,6 @@ No limits on anonymous users currently. Add config-driven safeguards based on re
   - Decision: Keep skipped for now, may revisit with LLM approach later
 - Vim-style keybindings for playback control (space/play/pause, j/k skip blocks, h/l speed up/down, sth to go to start/end, sth to create new doc, etc.)
 - being able to open things in/from the sidebar in a new tip tab (right click -> open in new tab on document in sidebar; should also work with control click and so on)
-- codeblock syntax highlighting (... do we actly need it?) i mean is a nice gimmick/detail. but only if not too complex or slow
 - when uploading a file, doc title could be prefilled from file name?
 - web agent that better fetches some images (https://www.anthropic.com/engineering/writing-tools-for-agents - here some graphs are not loaded for example) [the url of one of those images: https://www.anthropic.com/_next/image?url=https%3A%2F%2Fwww-cdn.anthropic.com%2Fimages%2F4zrzovbb%2Fwebsite%2Fcdc027ad2730e4732168bb198fc9363678544f99-1920x1080.png&w=1920&q=75]
 - clicking on the document title (when document is loaded), the behavior is a bit unintuitive? like a normal click opens in a new tab. but standard behaviorr is ctrl + click = open in new tab, normal click = open in same tab. so maybe we should change that?
