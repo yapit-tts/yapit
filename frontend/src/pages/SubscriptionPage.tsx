@@ -36,10 +36,13 @@ interface SubscriptionInfo {
   current_period_start: string;
   current_period_end: string;
   cancel_at_period_end: boolean;
+  grace_tier: PlanTier | null;
+  grace_until: string | null;
 }
 
 interface UsageSummary {
   plan: { tier: PlanTier; name: string };
+  subscribed_tier: PlanTier;
   subscription: SubscriptionInfo | null;
   limits: {
     server_kokoro_characters: number | null;
@@ -57,9 +60,9 @@ interface UsageSummary {
 const TIER_ORDER: PlanTier[] = ["free", "basic", "plus", "max"];
 
 const PLAN_FEATURES: Record<PlanTier, string[]> = {
-  free: ["Browser TTS (English)", "Unlimited documents"],
-  basic: ["Everything in Free", "Server Kokoro (all languages)", "500 OCR pages/month"],
-  plus: ["Everything in Basic", "~20 hrs premium voices/month", "1,500 OCR pages/month"],
+  free: ["Local TTS (English only)", "Unlimited documents"],
+  basic: ["Everything in Free", "Kokoro voices (all languages)", "500 OCR pages/month", "Cancel anytime during trial"],
+  plus: ["Everything in Basic", "~20 hrs premium voices/month", "1,500 OCR pages/month", "Cancel anytime during trial"],
   max: ["Everything in Plus", "~50 hrs premium voices/month", "3,000 OCR pages/month"],
 };
 
@@ -127,6 +130,20 @@ const SubscriptionPage = () => {
     }
   };
 
+  const handleDowngrade = async (tier: PlanTier) => {
+    setActionLoading(tier);
+    try {
+      await api.post("/v1/billing/downgrade", { tier });
+      // Refresh subscription data to show grace period
+      const subRes = await api.get<UsageSummary>("/v1/users/me/subscription");
+      setSubscription(subRes.data);
+    } catch (error) {
+      console.error("Failed to downgrade:", error);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
   const formatPrice = (cents: number) => {
     return new Intl.NumberFormat("en-US", {
       style: "currency",
@@ -165,10 +182,12 @@ const SubscriptionPage = () => {
     return Math.max(0, Math.ceil((end.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)));
   };
 
-  const currentTier = subscription?.plan.tier ?? "free";
-  const isSubscribed = subscription?.subscription !== null;
+  const currentTier = subscription?.subscribed_tier ?? "free";
+  const isSubscribed = !!subscription?.subscription;
   const isTrialing = subscription?.subscription?.status === "trialing";
   const isCanceling = subscription?.subscription?.cancel_at_period_end;
+  const graceTier = subscription?.subscription?.grace_tier;
+  const graceUntil = subscription?.subscription?.grace_until;
 
   if (isLoading) {
     return (
@@ -183,14 +202,14 @@ const SubscriptionPage = () => {
   );
 
   return (
-    <div className="container max-w-5xl mx-auto py-6 px-4">
-      <Button variant="ghost" className="mb-6" onClick={() => navigate(-1)}>
-        <ArrowLeft className="mr-2 h-4 w-4" />
+    <div className="container max-w-7xl mx-auto py-8 px-6">
+      <Button variant="ghost" className="mb-8" onClick={() => navigate(-1)}>
+        <ArrowLeft className="mr-2 h-5 w-5" />
         Back
       </Button>
 
-      <h1 className="text-3xl font-bold mb-1">Subscription</h1>
-      <p className="text-muted-foreground mb-6">
+      <h1 className="text-4xl font-bold mb-2">Subscription</h1>
+      <p className="text-lg text-muted-foreground mb-8">
         Manage your plan and usage
       </p>
 
@@ -201,7 +220,7 @@ const SubscriptionPage = () => {
             <div className="flex items-center justify-between">
               <div>
                 <CardTitle className="flex items-center gap-2">
-                  {subscription.plan.name} Plan
+                  {subscription.subscribed_tier.charAt(0).toUpperCase() + subscription.subscribed_tier.slice(1)} Plan
                   {isTrialing && (
                     <span className="text-sm font-normal text-primary bg-primary/10 px-2 py-0.5 rounded-full flex items-center gap-1">
                       <Clock className="h-3 w-3" />
@@ -213,6 +232,12 @@ const SubscriptionPage = () => {
                       Canceling
                     </span>
                   )}
+                  {graceTier && !isCanceling && (
+                    <span className="text-sm font-normal text-amber-600 bg-amber-100 dark:bg-amber-900/30 dark:text-amber-400 px-2 py-0.5 rounded-full flex items-center gap-1">
+                      <Clock className="h-3 w-3" />
+                      {graceTier.charAt(0).toUpperCase() + graceTier.slice(1)} access
+                    </span>
+                  )}
                 </CardTitle>
                 <CardDescription>
                   {subscription.subscription ? (
@@ -221,6 +246,8 @@ const SubscriptionPage = () => {
                         ? `Trial ends in ${getDaysRemaining(subscription.subscription.current_period_end)} days`
                         : isCanceling
                         ? `Access until ${new Date(subscription.subscription.current_period_end).toLocaleDateString()}`
+                        : graceTier && graceUntil
+                        ? `${graceTier.charAt(0).toUpperCase() + graceTier.slice(1)} access until ${new Date(graceUntil).toLocaleDateString()}`
                         : `Renews ${new Date(subscription.subscription.current_period_end).toLocaleDateString()}`}
                     </>
                   ) : (
@@ -294,26 +321,26 @@ const SubscriptionPage = () => {
       )}
 
       {/* Plan Selection */}
-      <div className="mb-4 flex items-center justify-between">
-        <h2 className="text-xl font-semibold">Available Plans</h2>
+      <div className="mb-6 flex items-center justify-between">
+        <h2 className="text-2xl font-semibold">Available Plans</h2>
         <Tabs value={interval} onValueChange={(v) => setInterval(v as BillingInterval)}>
           <TabsList>
             <TabsTrigger value="monthly">Monthly</TabsTrigger>
             <TabsTrigger value="yearly">
               Yearly
-              <span className="ml-1.5 text-xs text-primary">Save up to 50%</span>
+              <span className="ml-1.5 text-sm text-primary">Save up to 50%</span>
             </TabsTrigger>
           </TabsList>
         </Tabs>
       </div>
 
       {isAnonymous && (
-        <p className="text-sm text-muted-foreground mb-4">
+        <p className="text-muted-foreground mb-4">
           Sign in to subscribe to a plan
         </p>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         {sortedPlans.map((plan) => {
           const isCurrent = plan.tier === currentTier;
           const isUpgrade = TIER_ORDER.indexOf(plan.tier) > TIER_ORDER.indexOf(currentTier);
@@ -328,24 +355,24 @@ const SubscriptionPage = () => {
             >
               <CardHeader className="pb-4">
                 <div className="flex items-center justify-between">
-                  <CardTitle className="text-lg">{plan.name}</CardTitle>
+                  <CardTitle className="text-xl">{plan.name}</CardTitle>
                   {isCurrent && (
-                    <span className="text-xs bg-primary text-primary-foreground px-2 py-0.5 rounded-full">
+                    <span className="text-sm bg-primary text-primary-foreground px-2.5 py-1 rounded-full">
                       Current
                     </span>
                   )}
                 </div>
-                <div className="mt-2">
+                <div className="mt-3">
                   {price === 0 ? (
-                    <span className="text-3xl font-bold">Free</span>
+                    <span className="text-4xl font-bold">Free</span>
                   ) : (
                     <>
-                      <span className="text-3xl font-bold">{formatPrice(price)}</span>
-                      <span className="text-muted-foreground">
+                      <span className="text-4xl font-bold">{formatPrice(price)}</span>
+                      <span className="text-lg text-muted-foreground">
                         /{interval === "monthly" ? "mo" : "yr"}
                       </span>
                       {monthlyEquivalent && (
-                        <div className="text-sm text-muted-foreground mt-0.5">
+                        <div className="text-muted-foreground mt-1">
                           {formatPrice(monthlyEquivalent)}/mo equivalent
                         </div>
                       )}
@@ -355,10 +382,10 @@ const SubscriptionPage = () => {
               </CardHeader>
 
               <CardContent className="flex-1">
-                <ul className="space-y-2 text-sm">
+                <ul className="space-y-3">
                   {PLAN_FEATURES[plan.tier].map((feature, idx) => (
-                    <li key={idx} className="flex items-start gap-2">
-                      <Check className="h-4 w-4 text-primary shrink-0 mt-0.5" />
+                    <li key={idx} className="flex items-start gap-2.5">
+                      <Check className="h-5 w-5 text-primary shrink-0 mt-0.5" />
                       <span>{feature}</span>
                     </li>
                   ))}
@@ -378,19 +405,27 @@ const SubscriptionPage = () => {
                   <Button
                     className="w-full"
                     variant={isUpgrade ? "default" : "outline"}
-                    onClick={() => handleSubscribe(plan.tier)}
+                    onClick={() => {
+                      if (!isSubscribed) {
+                        handleSubscribe(plan.tier);
+                      } else if (isUpgrade) {
+                        handleManageSubscription();
+                      } else {
+                        handleDowngrade(plan.tier);
+                      }
+                    }}
                     disabled={actionLoading !== null}
                   >
-                    {actionLoading === plan.tier ? (
+                    {actionLoading === plan.tier || (isSubscribed && isUpgrade && actionLoading === "portal") ? (
                       <Loader2 className="h-4 w-4 animate-spin" />
                     ) : isUpgrade ? (
-                      plan.trial_days > 0 ? (
+                      plan.trial_days > 0 && !isSubscribed ? (
                         `Start ${plan.trial_days}-day trial`
                       ) : (
                         "Upgrade"
                       )
                     ) : (
-                      "Switch"
+                      "Downgrade"
                     )}
                   </Button>
                 )}
@@ -400,10 +435,10 @@ const SubscriptionPage = () => {
         })}
       </div>
 
-      {/* FAQ or additional info could go here */}
-      <div className="mt-6 text-center text-sm text-muted-foreground">
+      <div className="mt-8 text-center text-muted-foreground max-w-3xl mx-auto">
         <p>
-          Prices include VAT. Subscriptions can be canceled anytime from the billing portal.
+          Prices include VAT. Free trials can be canceled anytime without charge.
+          After trial, subscriptions can be canceled anytime, effective at the end of your billing period.
         </p>
       </div>
     </div>

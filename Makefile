@@ -84,6 +84,7 @@ test-inworld:
 # Database migrations (for prod schema changes)
 # Resets DB to migration state, generates migration, auto-fixes known issues, and tests it
 # Usage: make migration-new MSG="add user preferences"
+# Uses yapit_test database for final verification to avoid conflicts with Stack Auth tables
 migration-new:
 ifndef MSG
 	$(error MSG is required. Usage: make migration-new MSG="description")
@@ -97,9 +98,9 @@ endif
 	@cd yapit/gateway && DATABASE_URL="postgresql://yapit:yapit@localhost:5432/yapit" uv run alembic revision --autogenerate -m "$(MSG)"
 	@echo "Auto-fixing sqlmodel types..."
 	@find yapit/gateway/migrations/versions -name "*.py" -exec sed -i 's/sqlmodel\.sql\.sqltypes\.AutoString()/sa.String()/g' {} \;
-	@echo "Testing migration on fresh DB..."
-	@docker compose -f docker-compose.yml -f docker-compose.dev.yml exec -T postgres psql -U yapit -d yapit -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;" > /dev/null
-	@cd yapit/gateway && DATABASE_URL="postgresql://yapit:yapit@localhost:5432/yapit" uv run alembic upgrade head
+	@echo "Testing migration on fresh DB (yapit_test)..."
+	@docker compose -f docker-compose.yml -f docker-compose.dev.yml exec -T postgres psql -U yapit -d postgres -c "DROP DATABASE IF EXISTS yapit_test;" -c "CREATE DATABASE yapit_test;" > /dev/null
+	@cd yapit/gateway && DATABASE_URL="postgresql://yapit:yapit@localhost:5432/yapit_test" uv run alembic upgrade head
 	@echo "✓ Migration generated and verified"
 	@echo "Review: yapit/gateway/migrations/versions/"
 	@echo "Restart dev: make dev-cpu"

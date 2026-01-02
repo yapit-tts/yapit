@@ -7,6 +7,7 @@ from datetime import datetime
 import stripe
 from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel
+from sqlalchemy.orm import selectinload
 from sqlmodel import select
 
 from yapit.gateway.config import Settings
@@ -23,6 +24,14 @@ from yapit.gateway.usage import get_user_subscription
 
 router = APIRouter(prefix="/v1/billing", tags=["Billing"])
 log = logging.getLogger(__name__)
+
+# For trial eligibility: user can trial a tier only if they haven't experienced it or higher
+TIER_RANK: dict[PlanTier, int] = {
+    PlanTier.free: 0,
+    PlanTier.basic: 1,
+    PlanTier.plus: 2,
+    PlanTier.max: 3,
+}
 
 
 class PlanResponse(BaseModel):
@@ -123,6 +132,10 @@ async def create_subscription_checkout(
         "subscription_data": {
             "metadata": {"user_id": user.id, "plan_tier": plan.tier},
         },
+        # EU 14-day withdrawal waiver: ToS checkbox links to our terms which include the waiver
+        # Note: custom_text is NOT supported with Managed Payments, using default ToS checkbox
+        # Since Stripe is MoR, they handle most compliance; our ToS covers the rest
+        "consent_collection": {"terms_of_service": "required"},
     }
 
     if customer_id:
@@ -130,7 +143,18 @@ async def create_subscription_checkout(
     else:
         checkout_params["customer_email"] = user.primary_email
 
-    if plan.trial_days > 0:
+    # Trial eligibility: only offer trial if user hasn't experienced this tier or higher
+    trial_eligible = True
+    if existing_sub and existing_sub.highest_tier_subscribed:
+        highest_rank = TIER_RANK.get(existing_sub.highest_tier_subscribed, 0)
+        requested_rank = TIER_RANK.get(request.tier, 0)
+        if highest_rank >= requested_rank:
+            trial_eligible = False
+            log.info(
+                f"User {user.id} not eligible for {request.tier} trial (highest: {existing_sub.highest_tier_subscribed})"
+            )
+
+    if plan.trial_days > 0 and trial_eligible:
         checkout_params["subscription_data"]["trial_period_days"] = plan.trial_days
 
     session = client.v1.checkout.sessions.create(
@@ -146,6 +170,100 @@ class PortalResponse(BaseModel):
     """Response with Stripe billing portal URL."""
 
     portal_url: str
+
+
+class DowngradeRequest(BaseModel):
+    """Request to downgrade subscription."""
+
+    tier: PlanTier
+
+
+class DowngradeResponse(BaseModel):
+    """Response after downgrade."""
+
+    new_tier: PlanTier
+    grace_tier: PlanTier
+    grace_until: str
+
+
+@router.post("/downgrade")
+async def downgrade_subscription(
+    request: DowngradeRequest,
+    settings: SettingsDep,
+    user: AuthenticatedUser,
+    db: DbSession,
+) -> DowngradeResponse:
+    """Downgrade subscription to a lower tier.
+
+    Since Managed Payments doesn't support subscription schedules, we:
+    1. Update the Stripe subscription immediately (no proration)
+    2. Track grace period locally so user keeps higher-tier access until period end
+    """
+    if not settings.stripe_secret_key:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Billing is not configured")
+
+    subscription = await get_user_subscription(user.id, db)
+    if not subscription or not subscription.stripe_subscription_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No active subscription")
+
+    if subscription.status not in (SubscriptionStatus.active, SubscriptionStatus.trialing):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Subscription not active")
+
+    # Validate this is a downgrade
+    current_tier_rank = TIER_RANK.get(subscription.plan.tier, 0)
+    target_tier_rank = TIER_RANK.get(request.tier, 0)
+
+    if target_tier_rank >= current_tier_rank:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot downgrade to {request.tier} - use upgrade or portal for same/higher tiers",
+        )
+
+    if request.tier == PlanTier.free:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="To cancel, use the billing portal")
+
+    # Get the target plan
+    result = await db.exec(select(Plan).where(Plan.tier == request.tier, Plan.is_active.is_(True)))
+    target_plan = result.first()
+    if not target_plan:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Plan {request.tier} not found")
+
+    # Determine price ID based on current billing interval
+    # We need to check which price the current subscription uses to maintain the same interval
+    client = stripe.StripeClient(settings.stripe_secret_key)
+    stripe_sub = client.v1.subscriptions.retrieve(subscription.stripe_subscription_id)
+    current_price_id = stripe_sub["items"].data[0].price.id
+
+    # Check if current price is monthly or yearly
+    current_plan = subscription.plan
+    is_yearly = current_price_id == current_plan.stripe_price_id_yearly
+
+    target_price_id = target_plan.stripe_price_id_yearly if is_yearly else target_plan.stripe_price_id_monthly
+    if not target_price_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Price not configured for target plan")
+
+    # Update subscription in Stripe - no proration (user already paid for current period)
+    client.v1.subscriptions.update(
+        subscription.stripe_subscription_id,
+        {
+            "items": [
+                {
+                    "id": stripe_sub["items"].data[0].id,
+                    "price": target_price_id,
+                }
+            ],
+            "proration_behavior": "none",
+            "metadata": {"plan_tier": request.tier},
+        },
+    )
+
+    # The webhook will handle setting grace_tier and grace_until
+    # But we return the expected values immediately for UX
+    return DowngradeResponse(
+        new_tier=request.tier,
+        grace_tier=subscription.plan.tier,
+        grace_until=subscription.current_period_end.isoformat(),
+    )
 
 
 @router.post("/portal")
@@ -271,6 +389,9 @@ async def _handle_checkout_completed(session: dict, db: DbSession, settings: Set
     existing = await db.get(UserSubscription, user_id)
     now = datetime.now(tz=dt.UTC)
 
+    # Track highest tier for trial eligibility
+    new_tier_rank = TIER_RANK.get(plan.tier, 0)
+
     if existing:
         existing.plan_id = plan.id
         existing.status = _map_stripe_status(stripe_sub.status)
@@ -280,6 +401,12 @@ async def _handle_checkout_completed(session: dict, db: DbSession, settings: Set
         existing.current_period_end = period_end
         existing.cancel_at_period_end = stripe_sub.cancel_at_period_end
         existing.updated = now
+        # Update highest tier if this tier is higher
+        current_highest_rank = (
+            TIER_RANK.get(existing.highest_tier_subscribed, 0) if existing.highest_tier_subscribed else 0
+        )
+        if new_tier_rank > current_highest_rank:
+            existing.highest_tier_subscribed = plan.tier
     else:
         subscription = UserSubscription(
             user_id=user_id,
@@ -290,6 +417,7 @@ async def _handle_checkout_completed(session: dict, db: DbSession, settings: Set
             current_period_start=period_start,
             current_period_end=period_end,
             cancel_at_period_end=stripe_sub.cancel_at_period_end,
+            highest_tier_subscribed=plan.tier,
             created=now,
             updated=now,
         )
@@ -303,7 +431,11 @@ async def _handle_subscription_updated(stripe_sub: dict, db: DbSession) -> None:
     """Handle subscription updates (plan change, status change, etc.)."""
     subscription_id = stripe_sub["id"]
 
-    result = await db.exec(select(UserSubscription).where(UserSubscription.stripe_subscription_id == subscription_id))
+    result = await db.exec(
+        select(UserSubscription)
+        .where(UserSubscription.stripe_subscription_id == subscription_id)
+        .options(selectinload(UserSubscription.plan))
+    )
     subscription = result.first()
 
     if not subscription:
@@ -314,6 +446,10 @@ async def _handle_subscription_updated(stripe_sub: dict, db: DbSession) -> None:
     period_start = first_item["current_period_start"]
     period_end = first_item["current_period_end"]
 
+    # Get price ID (can be string or expanded object)
+    price = first_item.get("price")
+    price_id = price["id"] if isinstance(price, dict) else price
+
     now = datetime.now(tz=dt.UTC)
     subscription.status = _map_stripe_status(stripe_sub["status"])
     subscription.current_period_start = datetime.fromtimestamp(period_start, tz=dt.UTC)
@@ -322,6 +458,47 @@ async def _handle_subscription_updated(stripe_sub: dict, db: DbSession) -> None:
 
     if stripe_sub.get("canceled_at"):
         subscription.canceled_at = datetime.fromtimestamp(stripe_sub["canceled_at"], tz=dt.UTC)
+
+    # Update plan if price changed (handles upgrades/downgrades)
+    if price_id:
+        plan_result = await db.exec(
+            select(Plan).where((Plan.stripe_price_id_monthly == price_id) | (Plan.stripe_price_id_yearly == price_id))
+        )
+        new_plan = plan_result.first()
+        if new_plan and new_plan.id != subscription.plan_id:
+            old_tier = subscription.plan.tier
+            old_tier_rank = TIER_RANK.get(old_tier, 0)
+            new_tier_rank = TIER_RANK.get(new_plan.tier, 0)
+
+            # Detect downgrade: set grace period so user keeps higher-tier access until period end
+            if new_tier_rank < old_tier_rank:
+                # Preserve existing grace tier if it's higher (multiple downgrades: Max→Plus→Basic keeps Max grace)
+                existing_grace_rank = TIER_RANK.get(subscription.grace_tier, 0) if subscription.grace_tier else 0
+                if old_tier_rank > existing_grace_rank:
+                    subscription.grace_tier = old_tier
+                subscription.grace_until = subscription.current_period_end
+                log.info(
+                    f"Downgrade detected for {subscription_id}: {old_tier} -> {new_plan.tier}, grace_tier={subscription.grace_tier}, grace_until={subscription.grace_until}"
+                )
+            else:
+                # Upgrade: only clear grace if upgrading to or above grace tier
+                if subscription.grace_tier:
+                    grace_rank = TIER_RANK.get(subscription.grace_tier, 0)
+                    if new_tier_rank >= grace_rank:
+                        subscription.grace_tier = None
+                        subscription.grace_until = None
+                        log.info(f"Upgrade cleared grace period for {subscription_id}")
+
+            subscription.plan_id = new_plan.id
+
+            # Update highest tier if this is an upgrade
+            current_highest_rank = (
+                TIER_RANK.get(subscription.highest_tier_subscribed, 0) if subscription.highest_tier_subscribed else 0
+            )
+            if new_tier_rank > current_highest_rank:
+                subscription.highest_tier_subscribed = new_plan.tier
+
+            log.info(f"Plan changed for {subscription_id}: {old_tier} -> {new_plan.tier}")
 
     subscription.updated = now
     await db.commit()
@@ -348,10 +525,18 @@ async def _handle_subscription_deleted(stripe_sub: dict, db: DbSession) -> None:
     log.info(f"Marked subscription {subscription_id} as canceled")
 
 
+def _get_invoice_subscription_id(invoice: dict) -> str | None:
+    """Extract subscription ID from invoice (Stripe API 2025-03-31+)."""
+    if parent := invoice.get("parent"):
+        if sub_details := parent.get("subscription_details"):
+            return sub_details.get("subscription")
+    return None
+
+
 async def _handle_invoice_paid(invoice: dict, db: DbSession) -> None:
     """Handle successful invoice payment - reset usage on new billing period."""
     billing_reason = invoice.get("billing_reason")
-    subscription_id = invoice.get("subscription")
+    subscription_id = _get_invoice_subscription_id(invoice)
 
     # Only reset usage for subscription renewals
     if billing_reason != "subscription_cycle" or not subscription_id:
@@ -373,6 +558,12 @@ async def _handle_invoice_paid(invoice: dict, db: DbSession) -> None:
         subscription.current_period_end = datetime.fromtimestamp(period_end, tz=dt.UTC)
         subscription.updated = datetime.now(tz=dt.UTC)
 
+        # Clear grace period - new billing cycle means downgrade is now fully effective
+        if subscription.grace_tier:
+            log.info(f"Clearing grace period for {subscription_id} (was {subscription.grace_tier})")
+            subscription.grace_tier = None
+            subscription.grace_until = None
+
         # Create new usage period (old one is kept for history)
         new_period = UsagePeriod(
             user_id=subscription.user_id,
@@ -387,7 +578,7 @@ async def _handle_invoice_paid(invoice: dict, db: DbSession) -> None:
 
 async def _handle_invoice_failed(invoice: dict, db: DbSession) -> None:
     """Handle failed invoice payment."""
-    subscription_id = invoice.get("subscription")
+    subscription_id = _get_invoice_subscription_id(invoice)
     if not subscription_id:
         return
 

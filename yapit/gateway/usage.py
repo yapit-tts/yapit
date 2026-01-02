@@ -1,5 +1,8 @@
 """Subscription and usage tracking service."""
 
+import datetime as dt
+from datetime import datetime
+
 from sqlalchemy.orm import selectinload
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -38,11 +41,22 @@ async def get_user_subscription(user_id: str, db: AsyncSession) -> UserSubscript
     return result.first()
 
 
-def get_effective_plan(subscription: UserSubscription | None) -> Plan:
-    """Get the effective plan for a user, defaulting to free tier."""
-    if subscription and subscription.status in (SubscriptionStatus.active, SubscriptionStatus.trialing):
-        return subscription.plan
-    return FREE_PLAN
+async def get_effective_plan(subscription: UserSubscription | None, db: AsyncSession) -> Plan:
+    """Get the effective plan for a user, considering grace period after downgrade."""
+    if not subscription or subscription.status not in (SubscriptionStatus.active, SubscriptionStatus.trialing):
+        return FREE_PLAN
+
+    # Check if user has grace period access to a higher tier
+    if subscription.grace_tier and subscription.grace_until:
+        now = datetime.now(tz=dt.UTC)
+        if subscription.grace_until > now:
+            # Grace period active - use the higher tier's limits
+            result = await db.exec(select(Plan).where(Plan.tier == subscription.grace_tier))
+            grace_plan = result.first()
+            if grace_plan:
+                return grace_plan
+
+    return subscription.plan
 
 
 async def get_or_create_usage_period(
@@ -122,7 +136,7 @@ async def check_usage_limit(
         return
 
     subscription = await get_user_subscription(user_id, db)
-    plan = get_effective_plan(subscription)
+    plan = await get_effective_plan(subscription, db)
 
     limit = _get_limit_for_usage_type(plan, usage_type)
 
@@ -186,7 +200,7 @@ async def get_usage_summary(
 ) -> dict:
     """Get usage summary for current period."""
     subscription = await get_user_subscription(user_id, db)
-    plan = get_effective_plan(subscription)
+    plan = await get_effective_plan(subscription, db)
 
     # Get usage if subscribed
     usage = {"server_kokoro_characters": 0, "premium_voice_characters": 0, "ocr_pages": 0}
@@ -204,16 +218,23 @@ async def get_usage_summary(
             "end": usage_period.period_end.isoformat(),
         }
 
+    # plan = effective plan (for limits, considering grace period)
+    # subscribed_tier = actual subscription tier (for UI "Current" labels)
+    subscribed_tier = subscription.plan.tier if subscription else PlanTier.free
+
     return {
         "plan": {
             "tier": plan.tier,
             "name": plan.name,
         },
+        "subscribed_tier": subscribed_tier,
         "subscription": {
             "status": subscription.status,
             "current_period_start": subscription.current_period_start.isoformat(),
             "current_period_end": subscription.current_period_end.isoformat(),
             "cancel_at_period_end": subscription.cancel_at_period_end,
+            "grace_tier": subscription.grace_tier,
+            "grace_until": subscription.grace_until.isoformat() if subscription.grace_until else None,
         }
         if subscription
         else None,
