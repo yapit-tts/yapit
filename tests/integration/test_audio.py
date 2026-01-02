@@ -31,10 +31,14 @@ async def test_submit_audio_and_retrieve(regular_client, unique_document):
     assert "audio_url" in data
     assert data["audio_url"].startswith("/v1/audio/")
 
-    # Retrieve and verify
+    # Retrieve and verify - backend wraps PCM in WAV header with silence padding
     audio_response = await regular_client.get(data["audio_url"])
     assert audio_response.status_code == 200
-    assert audio_response.content == fake_audio
+    wav_data = audio_response.content
+    assert wav_data[:4] == b"RIFF"
+    assert wav_data[8:12] == b"WAVE"
+    # WAV header is 44 bytes, audio data follows (with silence padding appended)
+    assert wav_data[44 : 44 + len(fake_audio)] == fake_audio
 
 
 @pytest.mark.asyncio

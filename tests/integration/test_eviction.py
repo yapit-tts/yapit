@@ -1,6 +1,7 @@
 """Integration tests for TTS eviction (cursor_moved) behavior."""
 
 import asyncio
+import uuid
 
 import pytest
 
@@ -8,8 +9,9 @@ import pytest
 @pytest.fixture
 async def multi_block_document(admin_client):
     """Create a document with multiple blocks for eviction testing."""
-    # Each paragraph becomes a separate block
-    paragraphs = [f"This is test paragraph number {i}. It has enough words to be a block." for i in range(30)]
+    # Each paragraph becomes a separate block - unique ID prevents cache hits from previous runs
+    unique_id = uuid.uuid4().hex[:8]
+    paragraphs = [f"Test paragraph {unique_id} number {i}. It has enough words to be a block." for i in range(30)]
     content = "\n\n".join(paragraphs)
 
     response = await admin_client.post(
