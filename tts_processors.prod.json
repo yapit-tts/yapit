@@ -18,5 +18,21 @@
       "processor": "yapit.gateway.processors.tts.runpod.RunpodProcessor",
       "runpod_endpoint_id": "brqwsipekpok15"
     }
+  },
+  {
+    "model": "inworld",
+    "mode": "server",
+    "backend": {
+      "processor": "yapit.gateway.processors.tts.inworld.InworldProcessor",
+      "inworld_model": "inworld-tts-1"
+    }
+  },
+  {
+    "model": "inworld-max",
+    "mode": "server",
+    "backend": {
+      "processor": "yapit.gateway.processors.tts.inworld.InworldProcessor",
+      "inworld_model": "inworld-tts-1-max"
+    }
   }
 ]
