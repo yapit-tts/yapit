@@ -205,3 +205,5 @@ Don't be paranoid about this—just factor it in when planning longer debugging 
 - **Backwards compatibility is NEVER an issue** - This is a rapidly evolving codebase. Don't preserve old approaches alongside new ones. Replace, don't accumulate. If old code needs updating to match new patterns, update it. If old endpoints/configs are superseded, delete them.
 - **Critical logic requires edge case analysis first** — For billing, security, data integrity, and other high-stakes code: list edge cases before implementing. Write out "what if user does X then Y" scenarios. The implementation is usually straightforward once scenarios are clear; the bugs come from not thinking through all paths.
 - **Stripe Managed Payments has undocumented limitations** — `managed_payments_preview=v1` doesn't support subscription schedules. Test API assumptions before implementing features that depend on them.
+- Never use git add -u or git add . — we work with many parallel agents in the same repo.
+

@@ -27,13 +27,12 @@ Note: For documents with many blocks (100+), [[playbar-layout-redesign]] will im
 
 ## Current State
 
-The `BlockyProgressBar` component (`soundControl.tsx:17-62`) displays blocks with:
-- State colors: pending (gray), synthesizing (yellow pulse), cached (green/60), current (solid green)
+✅ **Complete.** Both progress bar components now support:
 - Click to jump to block
-- Hover brightness effect
-- Equal-width segments filling the bar
-
-Missing: drag/swipe interaction, document highlighting on hover.
+- Drag/swipe to seek (with visual indicator)
+- Hover highlighting (desktop: progress bar + document)
+- State colors for synthesis progress
+- Long-press acceleration on skip buttons
 
 ## Implemented Features
 
@@ -121,12 +120,11 @@ const handlePointerUp = (e: PointerEvent) => {
 };
 ```
 
-## Open Questions
+## Resolved Questions
 
-1. Touch target size on mobile—need to test what feels right
+1. **Touch target size on mobile** — h-10 (40px) works well, handled in [[playbar-layout-redesign]]
 
-2. Should hover highlight scroll document to show the hovered block?
-   - Probably not—too aggressive. Just highlight if visible.
+2. **Should hover highlight scroll document?** — No for hover (too aggressive), yes for drag (user is actively seeking)
 
 ## Related Files
 
@@ -138,45 +136,55 @@ const handlePointerUp = (e: PointerEvent) => {
 
 ## Work Log
 
-### 2025-12-29 - Implementation Complete
+### 2025-12-29 - Final Implementation
 
-Implemented both hover highlighting and drag/swipe seeking.
+**Summary:** All features implemented and deployed. Works well for documents with <100 blocks; usable but less precise for longer documents.
+
+**Final implementation details:**
+
+1. **Event handling:** Switched from pointer events to explicit mouse + touch events for better mobile compatibility
+   - `onMouseDown/Move/Up/Leave` for desktop
+   - `onTouchStart/Move/End/Cancel` for mobile
+   - Pointer events had inconsistent behavior across browsers/devices
+
+2. **Hover highlighting (desktop):**
+   - Yellow indicator on progress bar follows cursor
+   - Yellow highlight on document block
+   - NO document scrolling during hover
+   - Clears on mouse leave
+
+3. **Drag/swipe seeking:**
+   - Yellow indicator on progress bar + document highlight
+   - Document scrolls to follow (500ms throttle, instant scroll, only when off-screen)
+   - 5px threshold distinguishes click vs drag
+
+4. **Seek position indicator:**
+   - Visual feedback directly on progress bar showing where you're pointing
+   - SmoothProgressBar: yellow line indicator
+   - BlockyProgressBar: yellow highlight on target block
+
+5. **Skip button long-press acceleration:**
+   - `useRepeatOnHold` hook
+   - First press fires immediately
+   - After 400ms hold, starts repeating at 400ms intervals
+   - Accelerates to 50ms minimum (0.85x factor per repeat)
+
+**Key learnings:**
+- Pointer events are unreliable on mobile - use explicit touch events
+- `setPointerCapture` on `e.target` doesn't work reliably - use container ref
+- Smooth scroll (`behavior: "smooth"`) causes jitter when queued - use `"auto"` for instant scroll during drag
+- State in hooks can get stale - use refs (`isActiveRef`) for reliable tracking in async callbacks
+- Always clear visual indicators on mouse leave - easy to forget and causes sticky UI bugs
 
 **Files modified:**
-- `frontend/src/components/soundControl.tsx` - Both progress bar components now have:
-  - `onBlockHover` callback for hover/drag highlighting
-  - Pointer event handlers for unified touch/mouse drag
-  - `touch-none` CSS to prevent scroll during drag on mobile
-  - Changed from `<button>` to `<div>` for block segments (click handled at container level)
-- `frontend/src/pages/PlaybackPage.tsx` - Added:
-  - `hoveredBlock` state and `prevHoveredBlockRef` for DOM manipulation
-  - `useLayoutEffect` for hover highlighting (yellow, distinct from green active)
-  - `onBlockHover: setHoveredBlock` passed to SoundControl
-- `frontend/src/components/structuredDocument.tsx` - Added:
-  - CSS for `.audio-block-hovered` class (amber/yellow color)
+- `frontend/src/components/soundControl.tsx` - Progress bars with mouse/touch events, seek indicator, useRepeatOnHold hook
+- `frontend/src/pages/PlaybackPage.tsx` - hoveredBlock state, isDraggingProgressBar, scroll-during-drag effect, skip back fix
+- `frontend/src/components/structuredDocument.tsx` - CSS for `.audio-block-hovered`
 
-**Implementation details:**
-
-1. **Hover highlighting:**
-   - Progress bar reports hovered block via `onBlockHover`
-   - PlaybackPage tracks `hoveredBlock` state
-   - DOM manipulation adds `audio-block-hovered` class to document blocks
-   - Yellow highlight distinct from green active highlight
-   - Doesn't show hover on the currently active block (redundant)
-
-2. **Drag/swipe seeking:**
-   - Uses pointer events for unified touch/mouse handling
-   - 5px threshold to distinguish click from drag
-   - During drag: continuous hover updates (shows where you'd land)
-   - On release: commits position via `onBlockClick`
-   - `touch-none` prevents page scroll during mobile swipe
-   - Pointer capture ensures drag continues even if pointer leaves element
-
-**Build:** ✅ Passes
-
-**Testing needed:**
-- Desktop: hover highlighting, click to jump, drag to seek
-- Mobile: touch to jump, swipe to seek
+**Known limitations:**
+- For documents with 100+ blocks, drag seeking is imprecise (many blocks per pixel)
+- On very long documents, scrolling during drag can feel jumpy despite throttling
+- Most users will probably just scroll manually for long documents - this is fine
 
 ### 2025-12-29 - Analysis and Task Split
 
