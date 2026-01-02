@@ -116,6 +116,13 @@ async def create_subscription_checkout(
     existing_sub = await get_user_subscription(user.id, db)
     customer_id = existing_sub.stripe_customer_id if existing_sub else None
 
+    # Prevent creating duplicate subscriptions - user should use portal for plan changes
+    if existing_sub and existing_sub.status in (SubscriptionStatus.active, SubscriptionStatus.trialing):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Already have an active subscription. Use the billing portal to change plans.",
+        )
+
     origin = http_request.headers.get("origin", "").rstrip("/")
     if not origin:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing origin header")
@@ -136,6 +143,8 @@ async def create_subscription_checkout(
         # Note: custom_text is NOT supported with Managed Payments, using default ToS checkbox
         # Since Stripe is MoR, they handle most compliance; our ToS covers the rest
         "consent_collection": {"terms_of_service": "required"},
+        # Allow customers to enter promotion codes at checkout
+        "allow_promotion_codes": True,
     }
 
     if customer_id:
