@@ -68,15 +68,6 @@ interface AudioBufferData {
   duration_ms: number;
 }
 
-// Convert PCM Int16 bytes to Float32Array for Web Audio API
-function pcmToFloat32(pcmData: ArrayBuffer): Float32Array {
-  const int16View = new Int16Array(pcmData);
-  const float32 = new Float32Array(int16View.length);
-  for (let i = 0; i < int16View.length; i++) {
-    float32[i] = int16View[i] / 32768; // Normalize Int16 to [-1, 1]
-  }
-  return float32;
-}
 
 const PlaybackPage = () => {
   const { documentId } = useParams<{ documentId: string }>();
@@ -471,28 +462,10 @@ const PlaybackPage = () => {
 
     try {
       const response = await api.get(audioUrl, { responseType: "arraybuffer" });
-      const contentType = response.headers["content-type"] || "";
-      const isMP3 = contentType.includes("mp3");
-      const sampleRate = parseInt(response.headers["x-sample-rate"] || "24000", 10);
       const durationMs = parseInt(response.headers["x-duration-ms"] || "0", 10);
 
-      let audioBuffer: AudioBuffer;
-
-      if (isMP3) {
-        // MP3 (Inworld): use browser's built-in decoder
-        audioBuffer = await audioContextRef.current.decodeAudioData(response.data.slice(0));
-      } else {
-        // Raw PCM (wav): convert Int16 to Float32
-        const floatData = pcmToFloat32(response.data);
-        if (floatData.length === 0) {
-          const block = documentBlocks.find(b => b.id === blockId);
-          const blockText = block?.text ?? "(unknown)";
-          console.warn(`[Playback] Empty audio from cache for block ${blockId} - will be skipped. Content: "${blockText}"`);
-          return null;
-        }
-        audioBuffer = audioContextRef.current.createBuffer(1, floatData.length, sampleRate);
-        audioBuffer.getChannelData(0).set(floatData);
-      }
+      // decodeAudioData handles WAV, MP3, and other browser-supported formats
+      const audioBuffer = await audioContextRef.current.decodeAudioData(response.data.slice(0));
 
       const actualDurationMs = durationMs || Math.round(audioBuffer.duration * 1000);
       const audioBufferData: AudioBufferData = {
