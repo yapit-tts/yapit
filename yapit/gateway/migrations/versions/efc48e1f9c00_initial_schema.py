@@ -9,7 +9,6 @@ Create Date: 2025-12-25 17:44:00.079378
 from typing import Sequence, Union
 
 import sqlalchemy as sa
-import sqlmodel.sql.sqltypes
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
@@ -26,7 +25,7 @@ def upgrade() -> None:
     op.create_table(
         "creditpackage",
         sa.Column("id", sa.Integer(), nullable=False),
-        sa.Column("provider_price_id", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+        sa.Column("provider_price_id", sa.String(), nullable=False),
         sa.Column("credits", sa.DECIMAL(precision=19, scale=4), nullable=False),
         sa.Column("is_active", sa.Boolean(), nullable=False),
         sa.PrimaryKeyConstraint("id"),
@@ -35,8 +34,8 @@ def upgrade() -> None:
     op.create_table(
         "document",
         sa.Column("id", sa.Uuid(), nullable=False),
-        sa.Column("user_id", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
-        sa.Column("title", sqlmodel.sql.sqltypes.AutoString(), nullable=True),
+        sa.Column("user_id", sa.String(), nullable=False),
+        sa.Column("title", sa.String(), nullable=True),
         sa.Column("original_text", sa.TEXT(), nullable=True),
         sa.Column("filtered_text", sa.TEXT(), nullable=True),
         sa.Column(
@@ -44,7 +43,7 @@ def upgrade() -> None:
             sa.JSON().with_variant(postgresql.JSONB(astext_type=sa.Text()), "postgresql"),
             nullable=True,
         ),
-        sa.Column("extraction_method", sqlmodel.sql.sqltypes.AutoString(), nullable=True),
+        sa.Column("extraction_method", sa.String(), nullable=True),
         sa.Column("structured_content", sa.TEXT(), nullable=False),
         sa.Column("created", sa.DateTime(timezone=True), nullable=True),
         sa.Column(
@@ -54,17 +53,17 @@ def upgrade() -> None:
     )
     op.create_table(
         "documentprocessor",
-        sa.Column("slug", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
-        sa.Column("name", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+        sa.Column("slug", sa.String(), nullable=False),
+        sa.Column("name", sa.String(), nullable=False),
         sa.Column("credits_per_page", sa.DECIMAL(precision=10, scale=4), nullable=False),
         sa.PrimaryKeyConstraint("slug"),
     )
     op.create_table(
         "filter",
         sa.Column("id", sa.Integer(), nullable=False),
-        sa.Column("user_id", sqlmodel.sql.sqltypes.AutoString(), nullable=True),
-        sa.Column("name", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
-        sa.Column("description", sqlmodel.sql.sqltypes.AutoString(), nullable=True),
+        sa.Column("user_id", sa.String(), nullable=True),
+        sa.Column("name", sa.String(), nullable=False),
+        sa.Column("description", sa.String(), nullable=True),
         sa.Column(
             "config", sa.JSON().with_variant(postgresql.JSONB(astext_type=sa.Text()), "postgresql"), nullable=True
         ),
@@ -77,20 +76,20 @@ def upgrade() -> None:
     op.create_table(
         "ttsmodel",
         sa.Column("id", sa.Integer(), nullable=False),
-        sa.Column("slug", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
-        sa.Column("name", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
-        sa.Column("description", sqlmodel.sql.sqltypes.AutoString(), nullable=True),
+        sa.Column("slug", sa.String(), nullable=False),
+        sa.Column("name", sa.String(), nullable=False),
+        sa.Column("description", sa.String(), nullable=True),
         sa.Column("credits_per_sec", sa.DECIMAL(precision=10, scale=4), nullable=False),
         sa.Column("sample_rate", sa.Integer(), nullable=False),
         sa.Column("channels", sa.Integer(), nullable=False),
         sa.Column("sample_width", sa.Integer(), nullable=False),
-        sa.Column("native_codec", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+        sa.Column("native_codec", sa.String(), nullable=False),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index(op.f("ix_ttsmodel_slug"), "ttsmodel", ["slug"], unique=True)
     op.create_table(
         "usercredits",
-        sa.Column("user_id", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+        sa.Column("user_id", sa.String(), nullable=False),
         sa.Column("balance", sa.DECIMAL(precision=19, scale=4), nullable=False),
         sa.Column("total_purchased", sa.DECIMAL(precision=19, scale=4), nullable=False),
         sa.Column("total_used", sa.DECIMAL(precision=19, scale=4), nullable=False),
@@ -114,7 +113,7 @@ def upgrade() -> None:
     op.create_table(
         "credittransaction",
         sa.Column("id", sa.Uuid(), nullable=False),
-        sa.Column("user_id", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+        sa.Column("user_id", sa.String(), nullable=False),
         sa.Column(
             "type",
             sa.Enum(
@@ -133,10 +132,10 @@ def upgrade() -> None:
         sa.Column("amount", sa.DECIMAL(precision=19, scale=4), nullable=False),
         sa.Column("balance_before", sa.DECIMAL(precision=19, scale=4), nullable=False),
         sa.Column("balance_after", sa.DECIMAL(precision=19, scale=4), nullable=False),
-        sa.Column("description", sqlmodel.sql.sqltypes.AutoString(), nullable=True),
+        sa.Column("description", sa.String(), nullable=True),
         sa.Column("details", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
-        sa.Column("external_reference", sqlmodel.sql.sqltypes.AutoString(), nullable=True),
-        sa.Column("usage_reference", sqlmodel.sql.sqltypes.AutoString(), nullable=True),
+        sa.Column("external_reference", sa.String(), nullable=True),
+        sa.Column("usage_reference", sa.String(), nullable=True),
         sa.Column("created", sa.DateTime(timezone=True), nullable=True),
         sa.ForeignKeyConstraint(
             ["user_id"],
@@ -155,7 +154,7 @@ def upgrade() -> None:
     op.create_index(op.f("ix_credittransaction_user_id"), "credittransaction", ["user_id"], unique=False)
     op.create_table(
         "userusagestats",
-        sa.Column("user_id", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+        sa.Column("user_id", sa.String(), nullable=False),
         sa.Column("total_seconds_synthesized", sa.DECIMAL(precision=19, scale=4), nullable=False),
         sa.Column("total_characters_processed", sa.Integer(), nullable=False),
         sa.Column("total_requests", sa.Integer(), nullable=False),
@@ -170,10 +169,10 @@ def upgrade() -> None:
         "voice",
         sa.Column("id", sa.Integer(), nullable=False),
         sa.Column("model_id", sa.Integer(), nullable=False),
-        sa.Column("slug", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
-        sa.Column("name", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
-        sa.Column("lang", sqlmodel.sql.sqltypes.AutoString(), nullable=True),
-        sa.Column("description", sqlmodel.sql.sqltypes.AutoString(), nullable=True),
+        sa.Column("slug", sa.String(), nullable=False),
+        sa.Column("name", sa.String(), nullable=False),
+        sa.Column("lang", sa.String(), nullable=True),
+        sa.Column("description", sa.String(), nullable=True),
         sa.Column(
             "parameters", sa.JSON().with_variant(postgresql.JSONB(astext_type=sa.Text()), "postgresql"), nullable=False
         ),
@@ -186,12 +185,12 @@ def upgrade() -> None:
     )
     op.create_table(
         "blockvariant",
-        sa.Column("hash", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+        sa.Column("hash", sa.String(), nullable=False),
         sa.Column("block_id", sa.Integer(), nullable=False),
         sa.Column("model_id", sa.Integer(), nullable=False),
         sa.Column("voice_id", sa.Integer(), nullable=False),
         sa.Column("duration_ms", sa.Integer(), nullable=True),
-        sa.Column("cache_ref", sqlmodel.sql.sqltypes.AutoString(), nullable=True),
+        sa.Column("cache_ref", sa.String(), nullable=True),
         sa.Column("created", sa.DateTime(timezone=True), nullable=True),
         sa.ForeignKeyConstraint(
             ["block_id"],
