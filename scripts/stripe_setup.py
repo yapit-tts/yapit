@@ -21,6 +21,7 @@ WHAT THIS SCRIPT DOES:
     4. Creates/updates Coupons (discount definitions)
     5. Creates/updates Promo Codes (customer-facing codes)
     6. Creates/updates Portal Configuration (customer self-service portal)
+    7. Creates/updates Webhook Endpoint (billing webhook)
 
 VALIDATION (FAIL-FAST):
     Before making ANY changes, the script checks all existing resources.
@@ -151,8 +152,8 @@ PROMO_CODES = [
 PORTAL_CONFIG = {
     "business_profile": {
         "headline": "Manage your Yapit subscription",
-        # privacy_policy_url and terms_of_service_url are set in Stripe Dashboard
-        # under Settings > Public business information
+        "privacy_policy_url": "https://yapit.md/privacy",
+        "terms_of_service_url": "https://yapit.md/terms",
     },
     "features": {
         "customer_update": {
@@ -189,6 +190,17 @@ PORTAL_CONFIG = {
     },
     # default_return_url is set per-session in billing.py
 }
+
+# Webhook configuration
+WEBHOOK_URL = "https://yapit.md/v1/billing/webhook"
+WEBHOOK_EVENTS = [  # must match SUBSCRIPTION_EVENTS in billing.py
+    "checkout.session.completed",
+    "customer.subscription.created",
+    "customer.subscription.updated",
+    "customer.subscription.deleted",
+    "invoice.payment_succeeded",
+    "invoice.payment_failed",
+]
 
 
 # =============================================================================
@@ -498,13 +510,51 @@ def upsert_portal_config(
         return result.id
 
 
+def upsert_webhook(client: stripe.StripeClient) -> str | None:
+    """Create or update webhook endpoint. Returns webhook ID and prints secret on create."""
+    # Find existing webhook by URL
+    existing_webhooks = client.v1.webhook_endpoints.list({"limit": 100})
+    existing = None
+    for wh in existing_webhooks.data:
+        if wh.url == WEBHOOK_URL:
+            existing = wh
+            break
+
+    if existing:
+        # Update enabled_events if different
+        current_events = set(existing.enabled_events or [])
+        desired_events = set(WEBHOOK_EVENTS)
+
+        if current_events != desired_events:
+            client.v1.webhook_endpoints.update(
+                existing.id, {"enabled_events": WEBHOOK_EVENTS, "description": "Yapit billing webhook"}
+            )
+            print(f"  Updated webhook: {existing.id} (events updated)")
+        else:
+            print(f"  Webhook unchanged: {existing.id}")
+        return existing.id
+
+    # Create new webhook
+    result = client.v1.webhook_endpoints.create(
+        {
+            "url": WEBHOOK_URL,
+            "enabled_events": WEBHOOK_EVENTS,
+            "description": "Yapit billing webhook",
+        }
+    )
+    print(f"  Created webhook: {result.id}")
+    print("\n  ⚠️  WEBHOOK SECRET (add to .env):")
+    print(f"     STRIPE_WEBHOOK_SECRET={result.secret}")
+    return result.id
+
+
 # =============================================================================
 # MAIN
 # =============================================================================
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Stripe IaC - Products, Prices, Coupons, Promos, Portal")
+    parser = argparse.ArgumentParser(description="Stripe IaC - Products, Prices, Coupons, Promos, Portal, Webhooks")
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--test", action="store_true", help="Use test mode (STRIPE_SECRET_KEY from .env)")
     group.add_argument("--prod", action="store_true", help="Use production mode (STRIPE_SECRET_KEY_LIVE)")
@@ -575,6 +625,12 @@ def main():
 
     print("\n\nPortal Configuration:")
     upsert_portal_config(client, PORTAL_CONFIG, price_ids, secret_key)
+
+    if args.prod:
+        print("\n\nWebhook Endpoint:")
+        upsert_webhook(client)
+    else:
+        print("\n\nWebhook Endpoint: skipped (test mode uses stripe listen)")
 
     # Summary
     print(f"\n{'=' * 60}")
