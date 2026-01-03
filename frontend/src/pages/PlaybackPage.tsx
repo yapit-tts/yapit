@@ -147,6 +147,18 @@ const PlaybackPage = () => {
   type BlockState = 'pending' | 'synthesizing' | 'cached';
   const [blockStates, setBlockStates] = useState<BlockState[]>([]);
   const [blockStateVersion, setBlockStateVersion] = useState(0); // Trigger re-derive
+  const blockStateVersionTimeoutRef = useRef<number | null>(null); // Debounce version updates
+
+  // Debounced version increment - batches rapid completions into single update
+  const bumpBlockStateVersion = useCallback(() => {
+    if (blockStateVersionTimeoutRef.current) {
+      clearTimeout(blockStateVersionTimeoutRef.current);
+    }
+    blockStateVersionTimeoutRef.current = window.setTimeout(() => {
+      setBlockStateVersion(v => v + 1);
+      blockStateVersionTimeoutRef.current = null;
+    }, 50); // 50ms debounce - fast enough to feel responsive, slow enough to batch
+  }, []);
 
   // DOM-based active block highlighting - directly manipulate CSS classes
   // This runs synchronously before browser paint to avoid flicker
@@ -912,10 +924,10 @@ const PlaybackPage = () => {
       synthesizingRef.current.set(block.id, fetchPromise);
       fetchPromise.finally(() => {
         synthesizingRef.current.delete(block.id);
-        setBlockStateVersion(v => v + 1);
+        bumpBlockStateVersion();
       });
     }
-  }, [isServerMode, ttsWS.audioUrls, documentBlocks, fetchAudioFromUrl]);
+  }, [isServerMode, ttsWS.audioUrls, documentBlocks, fetchAudioFromUrl, bumpBlockStateVersion]);
 
   // Handle block changes and playback
   useEffect(() => {
