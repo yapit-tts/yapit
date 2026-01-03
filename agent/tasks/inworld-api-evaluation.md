@@ -75,6 +75,31 @@ Evaluate inworld.ai as potential premium TTS provider. Make informed decision on
 - Character counting: What exactly counts? Spaces? Punctuation? Unicode?
 - WebSocket gateway charge ($2/1M chars) - does this apply to REST streaming or only WebSocket?
 
+## Sources
+
+**Official Docs:**
+- https://docs.inworld.ai/docs/quickstart-tts - API quickstart
+- https://docs.inworld.ai/docs/realtime/connect/websocket - WebSocket protocol
+- https://docs.inworld.ai/api-reference/introduction - Auth methods
+- https://docs.inworld.ai/docs/tts/voice-cloning - Voice cloning requirements
+- https://docs.inworld.ai/docs/tts/best-practices/generating-speech - **summary**: recommends sentence-based chunking for latency; no specific char count
+- https://docs.inworld.ai/docs/resources/rate-limits - Rate limits (20 req/sec per workspace)
+
+**Marketing/Product:**
+- https://inworld.ai/pricing - Pricing page
+- https://inworld.ai/tts - Product landing page
+- https://inworld.ai/blog/introducing-inworld-tts - Launch blog
+- https://inworld.ai/blog/inworld-voice-2.0 - Voice 2.0 capabilities
+
+**Technical:**
+- https://arxiv.org/html/2507.21138v1 - **MUST READ** for audio architecture: TTS-1 technical report. Explains internal chunk consistency (decoder context extension), confirms no cross-request context mechanism. Also covers streaming latency, audio codec (X-codec2, 50 tokens/sec).
+- https://github.com/inworld-ai/tts - MIT licensed training code
+- https://inworld-ai.github.io/tts/ - Live demo with audio samples
+- https://docs.aimlapi.com/api-references/speech-models/text-to-speech/inworld/tts-1-max - **summary**: max 500k chars per request
+
+**Company Research:**
+- Crunchbase, Tracxn, PitchBook for funding data
+
 ## Notes / Findings
 
 ### API Design
@@ -130,6 +155,8 @@ Evaluate inworld.ai as potential premium TTS provider. Make informed decision on
 - **Delivery styles:** laughing, whispering
 - **Non-verbal:** breathe, cough, laugh, sigh, yawn
 - **Alignment:** Word-level and character-level timestamp support
+- **Text limits:** Max 500,000 characters per request; docs recommend sentence-based chunking for latency
+- **Cross-request context:** NOT supported. No API mechanism to pass audio tokens between requests for voice/prosody consistency (unlike HIGGS). Each request is independent. Internal chunk-to-chunk consistency (within single streaming request) is handled automatically via decoder context extension.
 
 ### Company Background
 
@@ -172,6 +199,7 @@ Evaluate inworld.ai as potential premium TTS provider. Make informed decision on
 - Voices may not fit "cozy reading" aesthetic (more gaming/character-focused)
 - 200ms latency is "median excluding networking" - actual E2E will be higher
 - No SLA or uptime guarantees documented
+- No cross-request audio context - each block synthesized independently (prosody won't "flow" between blocks like HIGGS context accumulation would enable)
 
 ---
 
@@ -189,25 +217,7 @@ Task created to do proper due diligence before committing to integration.
 
 ### 2025-12-29 - Documentation Research Complete
 
-**Sources reviewed:**
-- https://docs.inworld.ai/docs/quickstart-tts - API quickstart
-- https://docs.inworld.ai/docs/realtime/connect/websocket - WebSocket protocol
-- https://docs.inworld.ai/api-reference/introduction - Auth methods
-- https://docs.inworld.ai/docs/tts/voice-cloning - Voice cloning requirements
-- https://inworld.ai/pricing - Pricing page
-- https://inworld.ai/tts - Product landing page
-- https://inworld.ai/blog/introducing-inworld-tts - Launch blog
-- https://github.com/inworld-ai/tts - Open source training code
-- https://inworld-ai.github.io/tts/ - Live demo with audio samples
-- Company funding via Crunchbase, Tracxn, PitchBook
-
-**Key findings summarized in Notes/Findings above.**
-
-**Next steps to discuss with user:**
-1. API key needed to run test scripts
-2. Should we test now during free period, or is there more doc research needed?
-3. Voice cloning: relevant feature for Yapit or not?
-4. Primary concern: TTS is not their core product - acceptable risk?
+Sources reviewed and key findings summarized in Notes/Findings above. See Sources section for full list.
 
 ### 2025-12-29 - API Testing Complete
 

@@ -9,7 +9,9 @@ started: 2026-01-03
 
 1. **Default to cloud Kokoro for subscribers** — if user has active plan, default to Cloud; if no plan, grey out Cloud with tooltip
 
-2. **Info button for "Runs on" toggle** — explain Local (browser, slower on some devices) vs Cloud (server, faster, requires subscription). Similar to Inworld's Quality tooltip.
+2. **Inworld tab permissions** — entire Inworld tab should be disabled/greyed for free users (currently accessible)
+
+3. **Info button for "Runs on" toggle** — explain Local (browser, slower on some devices) vs Cloud (server, faster, requires subscription). Similar to Inworld's Quality tooltip.
 
 3. **Star button hitbox too small** — hard to tap on mobile
 

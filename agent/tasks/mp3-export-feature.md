@@ -25,3 +25,9 @@ Disabled placeholder button already exists ("Export as audio - coming soon"). Ne
 
 This is batch synthesis — will take time for long documents. Need progress indicator.
 should also make sure not to you know spam requests but send them in a reasonable frequency i mean it's probably overkill to check to like monitor the queue length and like whether there's high system load and i'm not sure i mean actually probably it's not it's not that hard actually  because yeah it's a back-end implementation right so we'd probably have a route for batch synthesis and then we can just ask query the redis queue and depending on the load like if it's very empty the workers aren't that busy then we can send a few more requests and otherwise we deprioritize the batch requests a little bit to have the real time take priority  I mean it's a different case for of course for example for the inworld TTS API but I think yeah I mean where we also you know there basically they can take infinite requests in theory but I mean there we also have rate limits but those I think we can easily increase yeah actually I think in the docs they say they can be increased at no additional charge so if we run into rate limits there.  yeah i can just increase them
+
+## Speculation: Inworld Coherence with Larger Chunks
+
+Inworld API supports up to 500k chars per request. Within a single streaming request, internal chunk-to-chunk consistency is handled automatically (decoder context extension). Cross-request context is NOT supported.
+
+Hypothesis: for MP3 export, sending larger chunks (up to 500k) instead of small blocks might yield better voice coherence. Worth testing.
