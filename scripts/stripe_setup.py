@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.12"
-# dependencies = ["stripe"]
+# dependencies = ["stripe", "requests"]
 # ///
 """Stripe Infrastructure as Code - Products, Prices, Coupons, Promos, Portal.
 
@@ -56,6 +56,7 @@ import argparse
 import os
 import sys
 
+import requests
 import stripe
 
 # =============================================================================
@@ -180,6 +181,9 @@ PORTAL_CONFIG = {
             "enabled": True,
             "default_allowed_updates": ["price"],
             "proration_behavior": "create_prorations",
+            # Note: schedule_at_period_end is cleared separately via raw HTTP
+            # because the Python SDK doesn't support clearing arrays properly.
+            # See _clear_portal_schedule_conditions() below.
             # products array is populated dynamically after creating prices
         },
     },
@@ -429,7 +433,23 @@ def upsert_promo_code(client: stripe.StripeClient, promo: dict) -> str | None:
     return result.id
 
 
-def upsert_portal_config(client: stripe.StripeClient, config: dict, price_ids: dict[str, str]) -> str | None:
+def _clear_portal_schedule_conditions(config_id: str, api_key: str) -> None:
+    """Clear schedule_at_period_end conditions so downgrades apply immediately.
+
+    The Stripe Python SDK doesn't support clearing arrays (empty [] is ignored).
+    We use raw HTTP to send the form-encoded empty value that Stripe expects.
+    """
+    response = requests.post(
+        f"https://api.stripe.com/v1/billing_portal/configurations/{config_id}",
+        auth=(api_key, ""),
+        data={"features[subscription_update][schedule_at_period_end][conditions]": ""},
+    )
+    response.raise_for_status()
+
+
+def upsert_portal_config(
+    client: stripe.StripeClient, config: dict, price_ids: dict[str, str], api_key: str
+) -> str | None:
     """Create or update portal configuration. Returns config ID."""
     # Build products array for subscription_update
     products_config = []
@@ -468,11 +488,13 @@ def upsert_portal_config(client: stripe.StripeClient, config: dict, price_ids: d
 
     if existing:
         client.v1.billing_portal.configurations.update(existing.id, portal_config)
-        print(f"  Updated portal config: {existing.id}")
+        _clear_portal_schedule_conditions(existing.id, api_key)
+        print(f"  Updated portal config: {existing.id} (downgrades: immediate)")
         return existing.id
     else:
         result = client.v1.billing_portal.configurations.create(portal_config)
-        print(f"  Created portal config: {result.id}")
+        _clear_portal_schedule_conditions(result.id, api_key)
+        print(f"  Created portal config: {result.id} (downgrades: immediate)")
         return result.id
 
 
@@ -552,7 +574,7 @@ def main():
         upsert_promo_code(client, promo)
 
     print("\n\nPortal Configuration:")
-    upsert_portal_config(client, PORTAL_CONFIG, price_ids)
+    upsert_portal_config(client, PORTAL_CONFIG, price_ids, secret_key)
 
     # Summary
     print(f"\n{'=' * 60}")
