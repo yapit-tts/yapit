@@ -130,20 +130,6 @@ const SubscriptionPage = () => {
     }
   };
 
-  const handleDowngrade = async (tier: PlanTier) => {
-    setActionLoading(tier);
-    try {
-      await api.post("/v1/billing/downgrade", { tier });
-      // Refresh subscription data to show grace period
-      const subRes = await api.get<UsageSummary>("/v1/users/me/subscription");
-      setSubscription(subRes.data);
-    } catch (error) {
-      console.error("Failed to downgrade:", error);
-    } finally {
-      setActionLoading(null);
-    }
-  };
-
   const formatPrice = (cents: number) => {
     return new Intl.NumberFormat("en-US", {
       style: "currency",
@@ -408,10 +394,8 @@ const SubscriptionPage = () => {
                     onClick={() => {
                       if (!isSubscribed) {
                         handleSubscribe(plan.tier);
-                      } else if (isUpgrade) {
-                        handleManageSubscription();
                       } else {
-                        handleDowngrade(plan.tier);
+                        handleManageSubscription();
                       }
                     }}
                     disabled={actionLoading !== null}
