@@ -16,7 +16,7 @@ Note: We don't work heavily with GitHub issues (solo dev + claude for now -- the
 - **Docker operations**: Use `make` commands (e.g., `make dev-cpu`), NOT raw `docker compose` commands
     - Make commands handle env vars, build steps, and proper orchestration
     - **ALWAYS ask user before stopping/restarting Docker services** - they may be actively testing
-- **Backend hot reload in dev** - Code in `yapit/` is volume-mounted with `--reload`, so Python changes are picked up automatically. Still need `make dev-cpu` for: dependency changes, config files, anything outside `yapit/`. After significant changes, recommend `make dev-cpu` to verify from clean slate. Note: existing documents retain old processed content; create new document to use new processing logic.
+- **CRITICAL: Backend changes require restart** - If you modify any backend Python code (gateway, processors, models, etc.), you MUST tell the user to restart the backend. The running Docker container has the old code. Say explicitly: "Backend code changed - please restart with `make dev-cpu`". Don't keep debugging "why isn't it working" if you forgot this step!
 - Test workflow: `.github/workflows/`
 - No default values in Settings class - only defaults in `.env*` files
 - `make test-local` for basic tests, `make test` for full suite (needs API keys)
@@ -24,6 +24,14 @@ Note: We don't work heavily with GitHub issues (solo dev + claude for now -- the
 - `make dev-cpu` to start backend (or `make dev-mac` on macOS)
   - If no dev user exists after startup (login fails), run `make dev-user` - there's a race condition where stack-auth health check sometimes fails before user creation runs
 - **CI timing**: Integration tests take 4-5 minutes (Docker build). Wait for all checks before merging PRs.
+
+## VPS / Production Debugging
+
+**Before debugging any VPS or production issues**, read these docs first:
+- `agent/knowledge/private/dokploy-operations.md` - API auth, Traefik recovery, nginx DNS caching gotcha, env injection
+- `agent/tasks/hetzner-deployment.md` - deployment architecture, Stack Auth setup, migration workflow
+
+Common gotchas documented there will save significant debugging time (e.g., nginx caches container IPs after redeploy → 502 errors even though containers are healthy).
 
 ## Database Migrations
 
@@ -146,12 +154,19 @@ Put less weight on these.
 
 ## Codebase Structure
 
-Run `tre -L 10` to get a gitignore-respecting tree view. Always use `-L 10` for full depth - if you want less output, scope to a specific directory instead of reducing depth (which hides files):
+**FIRST STEP FOR ANY AGENT:** Run `tre -L 10` to get a gitignore-respecting tree view.
+
+**This is mandatory when:**
+- Starting any task (for orientation)
+- Debugging general flows or cross-cutting concerns
+- Working on anything that touches more than 2-3 files
+- Looking for where something lives
+- After creating/moving files
+
+Always use `-L 10` for full depth - if you want less output, scope to a specific directory instead of reducing depth (which hides files):
 - Full repo: `tre -L 10`
 - Frontend only: `tre frontend -L 10`
 - Backend only: `tre yapit -L 10`
-
-Use liberally: at task start for orientation, when looking for where something lives, after creating/moving files.
 
 ## Memex MCP
 
