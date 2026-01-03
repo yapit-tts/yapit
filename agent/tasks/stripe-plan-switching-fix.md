@@ -1,9 +1,12 @@
 ---
-status: active
+status: done
 started: 2026-01-01
+completed: 2026-01-02
 ---
 
 # Task: Stripe Billing - Plan Switching, Trials, EU Consent
+
+Parent: [[stripe-integration]]
 
 ## Intent
 
@@ -95,7 +98,7 @@ See [[stripe-billing-e2e-testing]] for comprehensive test checklist.
 - EU waiver language needs to be in actual Terms of Service
 - **TODO:** Contact Stripe support to confirm refund handling with Managed Payments
 
-## Code Changes (Not Yet Committed)
+## Code Changes (Committed: 775c70a)
 
 **Backend:**
 - `yapit/gateway/api/v1/billing.py` — downgrade endpoint, grace period logic, `_get_invoice_subscription_id()` helper for Stripe API 2025-03-31

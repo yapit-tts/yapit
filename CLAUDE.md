@@ -219,6 +219,23 @@ Don't be paranoid about this—just factor it in when planning longer debugging 
 
 **If MCP won't connect:** Ask the user to close Chrome so MCP can launch a fresh instance.
 
+## Stripe MCP
+
+Stripe MCP provides direct API access and documentation search. Uses OAuth.
+
+**Currently authenticated:** Yapit Sandbox. Re-authenticate (`/mcp`) if switching to fresh sandbox or prod account.
+
+**When to use:**
+- Quick lookups: "list subscriptions for customer X", "what products exist"
+- Searching Stripe docs without leaving terminal
+- Ad-hoc operations during debugging
+
+**When NOT to use:**
+- IaC setup — use `scripts/stripe_setup.py` (has idempotent upserts, validation)
+- Anything you'd want reproducible — script it instead
+
+**Available tools:** `list_customers`, `list_subscriptions`, `list_products`, `list_prices`, `list_invoices`, `search_stripe_documentation`, `get_stripe_account_info`, and more. See [[stripe-integration]] for full list.
+
 ## Coding Conventions
 
 - No default values in Settings class - defaults in `.env*` files only

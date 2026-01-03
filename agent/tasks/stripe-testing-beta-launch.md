@@ -1,13 +1,16 @@
 ---
 status: active
+type: testing-session
 started: 2026-01-02
 ---
 
-# Task: Comprehensive Stripe Billing E2E Testing
+# Stripe Testing: Beta Launch
 
-## Intent
+Parent: [[stripe-e2e-testing]] | Meta: [[stripe-integration]]
 
-Thoroughly test all Stripe billing flows end-to-end using Chrome DevTools and Stripe test clocks. Document all observations, issues, and UX concerns. This is a checklist that can be worked through over multiple sessions.
+## Goal
+
+Comprehensive testing of all Stripe billing flows before beta launch. This is the first full testing session — documenting observations, issues, and fixes as we go.
 
 ## Prerequisites
 

@@ -1,11 +1,13 @@
 ---
-status: active
+status: done
 type: implementation
+completed: 2026-01-02
 ---
 
 # Task: Stripe IaC Improvements
 
-Related: [[stripe-promo-codes-and-seed-refactor]], [[subscription-frontend]]
+Parent: [[stripe-integration]]
+Related: [[stripe-promo-codes-and-seed-refactor]], [[stripe-iac-portal]]
 
 ## Goal
 
@@ -13,91 +15,39 @@ Make `stripe_setup.py` a true single source of truth by adding:
 1. Upsert pattern (create or update)
 2. Control over `active` state
 3. Customer portal configuration
+4. Fail-fast validation for immutable field drift
 
-Test by setting trial days to 5 or 7, and also trying to activate/deactivate promos.
+## Implementation Summary
 
-## Why
+**Completed 2026-01-02:**
 
-Current script is create-only — if something exists, it skips. This means:
-- Can't disable promos via script
-- Dashboard becomes competing source of truth
-- Documentation drifts from reality
+1. **Upsert pattern** for Products, Prices, Coupons, Promo Codes, Portal Config
+2. **Fail-fast validation**: Script checks all existing resources for immutable field drift BEFORE making any changes. If any drift detected, exits with error and changes nothing.
+3. **Portal configuration via API** including all settings (invoice history, customer info, payment methods, cancellation with reasons, plan switching with proration)
+4. **Portal downgrades set to "immediately"** to work with Managed Payments. Our webhook handler sets grace period automatically.
+5. **Comprehensive documentation** at top of script explaining mutable vs immutable fields, usage patterns
 
-## Next Steps
+## Key Decisions
 
-### 1. Add Upsert Pattern to stripe_setup.py
+- **No dry-run flag**: Upsert is safe, immutable fields validated upfront, errors recoverable via dashboard
+- **No local state tracking**: Always fetch from API (simpler than Terraform-style state files)
+- **Never delete, only deactivate**: Set `active: False` in config to deactivate resources
+- **Portal downgrades**: Use "immediately" mode so it works with Managed Payments. Webhook handler detects downgrade and sets grace_tier/grace_until.
 
-```python
-def upsert_promo(client, config):
-    existing = client.v1.promotion_codes.list({"code": config["code"], "limit": 1})
+## Files Changed
 
-    if existing.data:
-        # Update what we can (active, metadata, restrictions)
-        client.v1.promotion_codes.update(existing.data[0].id, {
-            "active": config.get("active", True),
-        })
-    else:
-        # Create new
-        client.v1.promotion_codes.create({...})
+- `scripts/stripe_setup.py` - Complete rewrite with validation, upserts, portal config
+- `yapit/gateway/api/v1/billing.py` - Added `allow_promotion_codes: True` to checkout, added defensive check for duplicate subscriptions
+
+## Test Results
+
+```
+uv run --env-file=.env scripts/stripe_setup.py --test
 ```
 
-Same pattern for coupons, prices, products.
-
-### 2. Handle Immutable Fields
-
-If immutable field changed (e.g., percent_off):
-- Warn: "Coupon X has different percent_off in Stripe vs script. Cannot update."
-- Option: `--recreate` flag to delete and recreate (dangerous if subscriptions reference it)
-
-### 3. Add Portal Configuration
-
-Stripe customer portal config — what users can do:
-- View invoices
-- Update payment method
-- Cancel subscription (immediate? end of period?)
-- Switch plans
-- Apply promo codes
-
-```python
-PORTAL_CONFIG = {
-    "business_profile": {"headline": "Yapit TTS"},
-    "features": {
-        "invoice_history": {"enabled": True},
-        "payment_method_update": {"enabled": True},
-        "subscription_cancel": {
-            "enabled": True,
-            "mode": "at_period_end",  # vs "immediately"
-        },
-        "subscription_update": {
-            "enabled": True,
-            "products": [...],  # which plans can switch between
-        },
-    },
-}
-```
-
-### 4. Deletion Strategy
-
-Decision: **Never delete, only deactivate**
-- `active: false` in script → calls update to deactivate
-- Keeps audit trail, no data loss
-- Can reactivate by setting `active: true`
-
-## Open Questions
-
-1. Should we add `--dry-run` flag to preview changes?
-2. Should we track state locally (like Terraform) or always fetch from API?
-3. What's the UX for portal — link in settings page? Auto-redirect after subscription?
-
-## Notes
-
-**Stripe fields that are updatable:**
-- Coupon: name, metadata (NOT percent_off, duration)
-- Promo Code: active, metadata, restrictions (NOT max_redemptions, code)
-- Price: active, metadata (NOT amount, currency)
-- Product: name, description, active, metadata
-
-**Stripe API docs:**
-- [Update coupon](https://docs.stripe.com/api/coupons/update)
-- [Update promotion code](https://docs.stripe.com/api/promotion_codes/update)
-- [Customer portal configuration](https://docs.stripe.com/api/customer_portal/configurations)
+- Validation passes ✓
+- Products/prices unchanged (already existed) ✓
+- Coupons created: beta_100, launch_basic_100, launch_plus_30 ✓
+- Promo codes created: BETA, LAUNCH, LAUNCHPLUS ✓
+- Portal config updated ✓
+- Idempotent on re-run ✓

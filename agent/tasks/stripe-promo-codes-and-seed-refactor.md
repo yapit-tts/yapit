@@ -1,18 +1,20 @@
 ---
-status: active
+status: done
 type: implementation
+completed: 2026-01-02
 ---
 
 # Task: Stripe Promo Codes & Seed Refactor
 
+Parent: [[stripe-integration]]
 Related: [[pricing-strategy-rethink]], [[subscription-backend-refactor]], [[stripe-iac-improvements]]
 
 ## Goal
 
-1. Rename `dev_seed.py` → `seed.py` (it's used in prod, naming is misleading)
-2. Move Stripe price IDs from hardcoded in seed to environment config
-3. Add promo code support to checkout and `stripe_setup.py`
-4. Configure trial periods per plan
+1. ~~Rename `dev_seed.py` → `seed.py`~~ ✅ (2025-12-31)
+2. ~~Move Stripe price IDs from hardcoded in seed to environment config~~ ✅ (2025-12-31)
+3. ~~Add promo code support to checkout and `stripe_setup.py`~~ ✅ (2026-01-02)
+4. ~~Configure trial periods per plan~~ ✅ (2025-12-31)
 
 ## Constraints / Design Decisions
 

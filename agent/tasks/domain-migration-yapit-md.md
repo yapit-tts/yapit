@@ -8,6 +8,7 @@ type: implementation
 ## Goal
 
 Consolidate everything to the new yapit.md domain. Replace all occurrences of yaptts.org, update infrastructure config.
+Furthermore, re-setup everything on a fresh VPS instance, and configure stack-auth for production mode
 
 ## Scope
 

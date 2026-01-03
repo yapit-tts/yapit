@@ -21,6 +21,9 @@ started: 2026-01-02
 - Cursor doesn't have to travel to the corner — middle-of-screen is more natural
 - More modern/polished feel
 
+Stripe's sidebar also does sth similar. They have a wobbly animation or like kinda like attraction and repulsion of the sidebar border by your mouse cursor, but it doesn't open on hover, but on click.
+The inworld tts console has one where it reveals on hover, but it's a bit janky. Like it starts in normal "attached" postition, then if you click a button you can basically get it into hidden mode, which activates the hover reveal, and it's like floating (not attached to the edge) and you can then toggle that again.. idk if I'm a fan of that..
+
 ## Design Considerations
 
 ### Desktop Behavior

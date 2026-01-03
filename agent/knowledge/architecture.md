@@ -579,6 +579,10 @@ No limits on anonymous users currently. Add config-driven safeguards based on re
 - make the app responsive, even with the 1.8k pages rationality A to Z endboss book (62h of audio) - clicking on it in the sidebar has noticeable delay. Else it seems to work well?
 - convert guest user to registered user flow (when they sign up)!
 - proper error msg / UI for 402s
+- increase hitbox/size of "star" button for voices
+- don't show languages other than the supported ones (english) for the kokoro local (WASM/WebGPU) model.
+- tooltip on the sidbar for /subscriptonns: if rounding of usage -> ~0 show instead "<1" to be less confusing
+- displaying hours in the /subcription (and sidebar pbar + tooltip) is kinda stupid. as if we think our users can't understand what chars are. But also like it's fundamentally stupid since it changes by up to 4x depending on your speed + max model or not... so if you listen 2x speed with max you'll have 5 hours on the plus plan instead of the advertised 20hours... nahbro. Should improve this.
 
 
 ### Nice to Have / Future Enhancements
