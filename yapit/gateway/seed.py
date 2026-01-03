@@ -111,6 +111,7 @@ def create_models() -> list[TTSModel]:
         sample_rate=48_000,
         channels=1,
         sample_width=2,
+        usage_multiplier=2.0,
     )
 
     # Load Inworld voices (shared between both models)

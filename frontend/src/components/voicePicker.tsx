@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { ChevronDown, Star, ChevronRight, Monitor, Cloud, Loader2 } from "lucide-react";
+import { ChevronDown, Star, ChevronRight, Monitor, Cloud, Loader2, Info } from "lucide-react";
 
 // HIGGS backend is flaky and more expensive than Inworld - hide for now
 const SHOW_HIGGS_TAB = false;
@@ -8,6 +8,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Slider } from "@/components/ui/slider";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   type VoiceSelection,
   type ModelType,
@@ -286,7 +287,19 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
           <TabsContent value="inworld" className="m-0 max-h-[28rem] overflow-y-auto">
             {/* Model toggle: inworld vs inworld-max */}
             <div className="flex items-center justify-between px-4 py-3 border-b bg-muted/30">
-              <span className="text-sm text-muted-foreground">Quality</span>
+              <div className="flex items-center gap-1.5">
+                <span className="text-sm text-muted-foreground">Quality</span>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button className="text-muted-foreground hover:text-foreground">
+                      <Info className="h-3.5 w-3.5" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="max-w-xs">
+                    <p>TTS-1-Max uses a larger model for more natural speech and better multilingual pronunciation. Uses 2× your voice quota.</p>
+                  </TooltipContent>
+                </Tooltip>
+              </div>
               <div className="flex rounded-md border bg-background">
                 <button
                   onClick={() => isInworldMax && handleInworldModelToggle()}

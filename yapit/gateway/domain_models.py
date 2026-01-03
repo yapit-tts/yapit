@@ -28,6 +28,7 @@ class TTSModel(SQLModel, table=True):
     channels: int
     sample_width: int
     native_codec: str
+    usage_multiplier: float = Field(default=1.0)
 
     voices: list["Voice"] = Relationship(
         back_populates="model",

@@ -62,8 +62,8 @@ const TIER_ORDER: PlanTier[] = ["free", "basic", "plus", "max"];
 const PLAN_FEATURES: Record<PlanTier, string[]> = {
   free: ["Local TTS (English only)", "Unlimited documents"],
   basic: ["Everything in Free", "Kokoro voices (all languages)", "500 OCR pages/month", "Cancel anytime during trial"],
-  plus: ["Everything in Basic", "~20 hrs premium voices/month", "1,500 OCR pages/month", "Cancel anytime during trial"],
-  max: ["Everything in Plus", "~50 hrs premium voices/month", "3,000 OCR pages/month"],
+  plus: ["Everything in Basic", "~20 hrs premium voices/month*", "1,500 OCR pages/month", "Cancel anytime during trial"],
+  max: ["Everything in Plus", "~50 hrs premium voices/month*", "3,000 OCR pages/month"],
 };
 
 const SubscriptionPage = () => {
@@ -435,7 +435,11 @@ const SubscriptionPage = () => {
         })}
       </div>
 
-      <div className="mt-8 text-center text-muted-foreground max-w-3xl mx-auto">
+      <div className="mt-8 text-center text-muted-foreground max-w-3xl mx-auto space-y-2">
+        <p className="text-sm">
+          *Premium voice limits: Plus includes 1.22M characters (~20 hrs), Max includes 3.06M characters (~50 hrs).
+          TTS-1-Max quality uses 2× quota.
+        </p>
         <p>
           Prices include VAT. Free trials can be canceled anytime without charge.
           After trial, subscriptions can be canceled anytime, effective at the end of your billing period.

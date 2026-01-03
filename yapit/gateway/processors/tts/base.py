@@ -4,7 +4,7 @@ import uuid
 from abc import abstractmethod
 
 from redis.asyncio import Redis
-from sqlmodel import update
+from sqlmodel import select, update
 
 from yapit.contracts import (
     TTS_INFLIGHT,
@@ -19,7 +19,7 @@ from yapit.contracts import (
 from yapit.gateway.cache import Cache
 from yapit.gateway.config import Settings
 from yapit.gateway.db import create_session
-from yapit.gateway.domain_models import BlockVariant, UsageType
+from yapit.gateway.domain_models import BlockVariant, TTSModel, UsageType
 from yapit.gateway.usage import record_usage
 
 log = logging.getLogger("processor")
@@ -134,10 +134,12 @@ class BaseTTSProcessor:
                 )
 
                 # Record usage (characters) for billing
-                # Kokoro models use server_kokoro, other models use premium_voice
                 model_slug = job.synthesis_parameters.model
                 usage_type = UsageType.server_kokoro if model_slug.startswith("kokoro") else UsageType.premium_voice
-                characters_used = len(job.synthesis_parameters.text)
+
+                model = (await db.exec(select(TTSModel).where(TTSModel.slug == model_slug))).one()
+                raw_chars = len(job.synthesis_parameters.text)
+                characters_used = int(raw_chars * model.usage_multiplier)
 
                 await record_usage(
                     user_id=job.user_id,
@@ -145,11 +147,12 @@ class BaseTTSProcessor:
                     amount=characters_used,
                     db=db,
                     reference_id=job.variant_hash,
-                    description=f"TTS synthesis: {characters_used} chars ({model_slug})",
+                    description=f"TTS synthesis: {raw_chars} chars ({model_slug})",
                     details={
                         "variant_hash": job.variant_hash,
                         "model_slug": model_slug,
                         "duration_ms": result.duration_ms,
+                        "usage_multiplier": model.usage_multiplier,
                     },
                 )
                 break

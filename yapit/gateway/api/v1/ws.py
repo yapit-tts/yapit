@@ -263,7 +263,7 @@ async def _handle_synthesize(
         is_admin = bool(user.server_metadata and user.server_metadata.is_admin)
         if msg.synthesis_mode != "browser":
             usage_type = UsageType.server_kokoro if model.slug.startswith("kokoro") else UsageType.premium_voice
-            total_chars = sum(len(b.text) for b in blocks)
+            total_chars = int(sum(len(b.text) for b in blocks) * model.usage_multiplier)
             try:
                 await check_usage_limit(
                     user.id,
