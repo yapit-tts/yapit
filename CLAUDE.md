@@ -154,19 +154,28 @@ Put less weight on these.
 
 ## Codebase Structure
 
-**FIRST STEP FOR ANY AGENT:** Run `tre -L 10` to get a gitignore-respecting tree view.
+**FIRST STEP FOR ANY AGENT — Preflight checklist:**
 
-**This is mandatory when:**
-- Starting any task (for orientation)
+1. `tre -L 10` — gitignore-respecting tree view for orientation
+2. `git log --oneline -30` — recent commits to understand current state, spot relevant changes, identify potential bug sources
+
+**When to run preflight:**
+- Starting any task (mandatory)
 - Debugging general flows or cross-cutting concerns
 - Working on anything that touches more than 2-3 files
 - Looking for where something lives
 - After creating/moving files
 
-Always use `-L 10` for full depth - if you want less output, scope to a specific directory instead of reducing depth (which hides files):
+**tre tips:** Always use `-L 10` for full depth. If you want less output, scope to a specific directory instead of reducing depth (which hides files):
 - Full repo: `tre -L 10`
 - Frontend only: `tre frontend -L 10`
 - Backend only: `tre yapit -L 10`
+
+`tre` respects `.gitignore` by default. Use `-e`/`--exclude` to additionally exclude:
+- Code only (no task files): `tre -e agent -L 10`
+- Wildcards work: `tre -e "*.log" -e test_*`
+
+Conversely, `tre agent -L 10` shows all task files including `private/` and `knowledge/` subdirs — useful when specifically looking for task/knowledge files.
 
 ## Memex MCP
 

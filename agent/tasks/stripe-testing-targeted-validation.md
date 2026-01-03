@@ -1,7 +1,8 @@
 ---
-status: active
+status: done
 type: testing-session
 started: 2026-01-02
+completed: 2026-01-03
 ---
 
 # Stripe Testing: Targeted Validation
@@ -161,7 +162,7 @@ Checkout has `allow_promotion_codes: True` enabled.
 | 2.2 Duplicate prevention (trialing) | ✅ PASS | Same behavior — buttons go to portal |
 | 2.3 Duplicate prevention (past_due) | ⏳ | Not tested |
 | 2.4 Canceled user can checkout | ⏳ | Not fully tested — user goes to portal, not checkout |
-| 3.1 BETA code | ✅ VERIFIED | Code exists in Stripe: 100% off once, max 10 redemptions |
+| 3.1 BETA code | ✅ PASS | Full E2E: Code accepted, 100% off shown, first invoice €0.00, subscription created (trialing), redemption count incremented to 1/10 |
 | 3.2 LAUNCH code | ✅ VERIFIED | Code exists in Stripe: 100% off once, max 300 redemptions |
 | 3.3 LAUNCHPLUS code (30% off) | ✅ VERIFIED | Code exists in Stripe: 30% off × 3mo, max 100 redemptions |
 | 3.4 Invalid code handling | ⏳ | Not tested |
@@ -186,18 +187,29 @@ Checkout has `allow_promotion_codes: True` enabled.
 - To check promo code redemption count: `stripe promotion_codes list --code=BETA`
 - Promo codes confirmed in Stripe: BETA (100% once), LAUNCH (100% once), LAUNCHPLUS (30% x3mo)
 - Stack Auth tables use different schema than Yapit tables — DB queries need correct table names
+- **Stripe CLI delete commands require `--confirm` flag** — `stripe customers delete <id>` prompts interactively; use `stripe customers delete <id> --confirm` for non-interactive execution
 
 ## Handoff
 
-**Session 2026-01-03 results:**
-- Test 1 (portal downgrade): ✅ PASSED — portal fix works, downgrades apply immediately, grace period set correctly
-- Test 2 (duplicate prevention): ✅ PASSED (from previous session)
-- Test 3 (promo codes): ✅ VERIFIED at infrastructure level — all three codes exist and are active in Stripe, promo code field visible in checkout
+**Session 2026-01-03 (continued) results:**
+- Test 3.1 BETA promo code: ✅ PASSED — Full end-to-end test completed
+  - Deleted Stripe customer `cus_Til2LOlkQv6b5U` to enable fresh checkout
+  - Cleared browser localStorage, logged in as dev@example.com
+  - Started Basic Monthly checkout, entered BETA code
+  - Verified: "100% off" shown, -€7.00 discount, Total €0.00
+  - Completed checkout with test card 4242...
+  - Subscription created: status=trialing, plan_id=2 (Basic)
+  - First invoice: €0.00 (paid)
+  - BETA redemption count: now 1/10
 
-**Remaining items:**
-- Test 2.3 (past_due) and 2.4 (canceled→checkout) not fully tested
-- Test 3.4 (invalid code rejection) not tested
-- Full end-to-end promo code entry test needs fresh Stripe customer
+**Cleanup done:**
+- Removed redundant `/v1/billing/downgrade` endpoint (backend + frontend)
+- Downgrades now go through portal exclusively, webhook handles grace period
+
+**Remaining for pre-launch E2E:**
+- Test 2.3 (past_due) and 2.4 (canceled→checkout) edge cases
+- Test 3.2 LAUNCH, 3.3 LAUNCHPLUS, 3.4 invalid code
+- Full checklist in [[stripe-e2e-testing]]
 
 ### How to Test Promo Codes End-to-End
 

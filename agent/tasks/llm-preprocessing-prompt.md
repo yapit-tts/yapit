@@ -11,6 +11,9 @@ Our philosophy: Yapit parses and transcribes, we don't transform content. OCR do
 
 For users with complex documents (LaTeX, heavy formatting, links, academic notation), we can provide a prompt they use with their own LLM to preprocess before uploading.
 
+"Rewrite an paper / document to be more tts friendly which we can provide to copy paste in our UI as templates."
+Maybe several different prompts for different use cases, or with toggles for choosing "I want math rewritten/skipped/..." vs "I want links removed" etc. for quick customization & copy paste.
+
 ## Use Cases
 
 - LaTeX/math notation → readable prose ("x squared" instead of "x^2")
@@ -47,3 +50,11 @@ Text to transform:
 - NOT integrating LLM into our pipeline (scope creep, cost, complexity)
 - NOT building a "transform" feature
 - Just providing a helpful prompt for power users
+
+Previous considerations
+- Math-to-Speech for TTS: Currently inline math is skipped for TTS. Options to consider:
+  - Speech Rule Engine (SRE) / MathJax accessibility - converts MathML → speech strings
+  - MathCAT - Rust-based alternative to SRE
+  - LLM transcription - use cheap model to convert LaTeX → readable text (more flexible, natural-sounding)
+  - Decision: Keep skipped for now
+

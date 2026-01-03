@@ -16,7 +16,7 @@ This file defines the **testing workflow** for Stripe billing features. Concrete
 | Session | Status | Notes |
 |---------|--------|-------|
 | [[stripe-testing-beta-launch]] | In Progress | Pre-beta comprehensive testing |
-| [[stripe-testing-targeted-validation]] | In Progress | Portal downgrade, duplicate prevention, promo codes |
+| [[stripe-testing-targeted-validation]] | ✅ Done | Portal downgrade, duplicate prevention, promo codes — all critical paths verified |
 
 ## Environment Setup
 
@@ -128,6 +128,48 @@ stripe test_helpers test_clocks delete clock_XXXXX --api-key="$STRIPE_SECRET_KEY
 
 **Gotcha:** Stripe checkout page has ~250 country options — snapshots are large (~10k tokens).
 
+## Gotchas & Learnings
+
+Collected from testing sessions — read these before starting:
+
+### Stripe CLI
+
+- **Delete commands require `--confirm` flag** — `stripe customers delete <id>` prompts interactively; use `--confirm` for non-interactive execution
+- **Promotion code inspection**: `stripe promotion_codes list --code=BETA` shows redemption count
+- **Subscription discount field** — "100% off once" type discounts are consumed on first invoice, then `subscription.discount` shows null (check invoice `discount_amounts` instead)
+
+### Testing Fresh Checkout
+
+To test checkout flow for a user who already has a Stripe customer record:
+
+```bash
+# 1. Delete the Stripe customer (test mode only!)
+stripe customers delete cus_XXXXX --confirm
+
+# 2. Clear browser localStorage (via Chrome DevTools MCP)
+# localStorage.clear() — must be on the app domain, not about:blank
+
+# 3. Log in and start checkout — will create fresh customer
+```
+
+### Stripe Checkout UI
+
+- **ToS checkbox required** — Stripe Checkout shows "I agree to Terms of Service" checkbox; must be checked before "Start trial" works
+- **Promo code field** — Look for "Add promotion code" link, not always visible initially
+- **Promo codes work across tier changes** — User on Basic can use a promo code when upgrading to Plus (expected Stripe behavior, promo codes apply to checkout sessions not specific products)
+
+### Portal vs Checkout
+
+- **Users with existing subscription** → UI shows "Upgrade/Downgrade" buttons that go to portal, NOT checkout
+- **Duplicate subscription prevention** — `billing.py:119-124` blocks checkout for users with active/trialing subscription; returns 400 error
+- **Portal downgrades** — Now work with "immediately" setting (fixed via `_clear_portal_schedule_conditions()`)
+
+### Database
+
+- **Stack Auth tables use PascalCase** (e.g., `User`, `Project`) — NOT `stack_` prefix
+- **Yapit tables use snake_case** (e.g., `usersubscription`, `ttsmodel`)
+- **Never drop all tables blindly** — filter by naming convention
+
 ## Test Categories
 
 ### 1. New Subscription Flows
@@ -140,8 +182,10 @@ stripe test_helpers test_clocks delete clock_XXXXX --api-key="$STRIPE_SECRET_KEY
 - Cross-tier + interval changes
 
 ### 3. Downgrade Flows (Grace Period)
-- Use `/v1/billing/downgrade` endpoint (NOT portal)
-- Verify grace_tier and grace_until set
+- Portal → select lower tier → Stripe applies immediately
+- Webhook `customer.subscription.updated` triggers grace period setup
+- Verify DB: `grace_tier` = old tier, `grace_until` = period_end
+- Verify `get_effective_plan()` returns old tier during grace
 - Verify grace clears on renewal
 
 ### 4. Cancel Flows
@@ -167,8 +211,10 @@ stripe test_helpers test_clocks delete clock_XXXXX --api-key="$STRIPE_SECRET_KEY
 - Declined card on upgrade
 
 ### 9. Promo Codes
-- Valid code applies discount
-- Invalid code shows error
+- See `scripts/stripe_setup.py` for current promo code definitions
+- Valid code applies discount (verify in checkout UI and on invoice)
+- Invalid code shows "promotional code is invalid" error
+- Check redemption counts: `stripe promotion_codes list --code=<CODE>`
 
 ## Creating a New Testing Session
 
