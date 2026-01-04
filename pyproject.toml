@@ -7,9 +7,14 @@ requires-python = "==3.12.*"
 authors = [
     {name = "Maximilian Wolf", email="max@mwolf.dev"},
 ]
-# TODO
-#license = ""
-#classifiers = []
+license = "AGPL-3.0-only"
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Web Environment",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+]
 
 # pip install yapit | (worker) contracts
 dependencies = ["pydantic~=2.11.3"]
