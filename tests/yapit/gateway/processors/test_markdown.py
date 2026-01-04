@@ -131,7 +131,7 @@ class TestTransformToDocument:
         assert doc.blocks[0].audio_block_idx is None
 
     def test_transform_unordered_list(self):
-        """Transform bullet list."""
+        """Transform bullet list. Each item is a separate audio block."""
         ast = parse_markdown("- Item 1\n- Item 2")
         doc = transform_to_document(ast)
 
@@ -141,7 +141,9 @@ class TestTransformToDocument:
         assert block.ordered is False
         assert len(block.items) == 2
         assert block.items[0].plain_text == "Item 1"
-        assert block.audio_block_idx == 0
+        assert block.audio_block_idx is None  # Container, no audio
+        assert block.items[0].audio_block_idx == 0
+        assert block.items[1].audio_block_idx == 1
 
     def test_transform_ordered_list(self):
         """Transform numbered list."""
@@ -152,6 +154,8 @@ class TestTransformToDocument:
         assert isinstance(block, ListBlock)
         assert block.ordered is True
         assert len(block.items) == 2
+        assert block.items[0].audio_block_idx == 0
+        assert block.items[1].audio_block_idx == 1
 
     def test_transform_blockquote(self):
         """Transform blockquote with nested content."""

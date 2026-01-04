@@ -83,10 +83,11 @@ class ListItem(BaseModel):
     html: str
     ast: list[InlineContent]
     plain_text: str
+    audio_block_idx: int | None = None
 
 
 class ListBlock(BaseModel):
-    """Ordered or unordered list. Has audio (flattened)."""
+    """Ordered or unordered list. Container for items which have their own audio."""
 
     type: Literal["list"] = "list"
     id: str
@@ -94,7 +95,7 @@ class ListBlock(BaseModel):
     start: int | None = None
     items: list[ListItem]
     plain_text: str
-    audio_block_idx: int | None = None
+    audio_block_idx: None = None
 
 
 class BlockquoteBlock(BaseModel):
@@ -192,8 +193,11 @@ class StructuredDocument(BaseModel):
         """Recursively collect audio blocks."""
         for block in blocks:
             if block.type == "blockquote":
-                # Recurse into blockquote's nested blocks
                 self._collect_audio_blocks(block.blocks, result)
+            elif block.type == "list":
+                for item in block.items:
+                    if item.audio_block_idx is not None:
+                        result.append(item.plain_text)
             elif block.audio_block_idx is not None:
                 result.append(block.plain_text)
 

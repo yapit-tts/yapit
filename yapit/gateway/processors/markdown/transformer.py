@@ -36,8 +36,15 @@ from yapit.gateway.processors.markdown.models import (
 class DocumentTransformer:
     """Transforms markdown AST to StructuredDocument."""
 
-    def __init__(self, max_block_chars: int = 150):
+    def __init__(
+        self,
+        max_block_chars: int,
+        soft_limit_mult: float,
+        min_chunk_size: int,
+    ):
         self.max_block_chars = max_block_chars
+        self.soft_limit_mult = soft_limit_mult
+        self.min_chunk_size = min_chunk_size
         self._block_counter = 0
         self._audio_idx_counter = 0
         self._visual_group_counter = 0
@@ -186,11 +193,25 @@ class DocumentTransformer:
 
         return blocks
 
+    # Pause pattern: clause separators optionally followed by closing quotes/parens
+    # This ensures we don't orphan closing punctuation at the start of the next chunk
+    # Includes straight quotes, curly quotes (U+201C/D, U+2018/9), parens, brackets
+    _PAUSE_PATTERN = re.compile(r"[,—:;][\"')\]\u201c\u201d\u2018\u2019]?")
+
     def _get_chunk_ranges(self, text: str) -> list[tuple[int, int]]:
-        """Get (start, end) character ranges for each chunk."""
+        """Get (start, end) character ranges for each chunk.
+
+        Splitting strategy (in order of preference):
+        1. Sentence boundaries (.!?)
+        2. Clause separators (,—:;) - when sentences are too long
+        3. Word boundaries - last resort for very long clauses
+        """
         sentences = re.split(r"(?<=[.!?])\s+", text)
 
-        ranges = []
+        soft_max = int(self.max_block_chars * self.soft_limit_mult)
+        min_chunk_size = self.min_chunk_size
+
+        ranges: list[tuple[int, int]] = []
         current_start = 0
         current_end = 0
 
@@ -206,28 +227,13 @@ class DocumentTransformer:
             sent_end = sent_start + len(sentence)
             pos = sent_end
 
-            # Check if this sentence alone exceeds limit
-            if len(sentence) > self.max_block_chars:
+            # Check if this sentence alone exceeds the soft limit
+            if len(sentence) > soft_max:
                 # Flush current chunk if any
                 if current_end > current_start:
                     ranges.append((current_start, current_end))
-                # Hard split the long sentence at word boundaries
-                chunk_pos = 0
-                while chunk_pos < len(sentence):
-                    chunk_start = sent_start + chunk_pos
-                    target_end = min(chunk_pos + self.max_block_chars, len(sentence))
-
-                    # Find word boundary before target_end
-                    if target_end < len(sentence):
-                        # Look backwards for a space
-                        boundary = sentence.rfind(" ", chunk_pos, target_end)
-                        if boundary > chunk_pos:
-                            target_end = boundary + 1  # Include the space
-
-                    chunk_end = sent_start + target_end
-                    ranges.append((chunk_start, chunk_end))
-                    chunk_pos = target_end
-
+                # Split the long sentence at natural pause points
+                self._split_long_sentence(sentence, sent_start, ranges, min_chunk_size)
                 current_start = sent_end
                 current_end = sent_end
                 continue
@@ -249,6 +255,78 @@ class DocumentTransformer:
             ranges.append((current_start, current_end))
 
         return ranges if ranges else [(0, len(text))]
+
+    def _split_long_sentence(
+        self, sentence: str, sent_start: int, ranges: list[tuple[int, int]], min_chunk_size: int
+    ) -> None:
+        """Split a long sentence at natural pause points, falling back to word boundaries."""
+        # Find all pause points (comma, m-dash, colon, semicolon)
+        pause_matches = list(self._PAUSE_PATTERN.finditer(sentence))
+        # Positions after the pause character (where next clause starts, after stripping space)
+        pause_positions = [m.end() for m in pause_matches]
+
+        chunk_pos = 0
+        while chunk_pos < len(sentence):
+            remaining = len(sentence) - chunk_pos
+            if remaining <= self.max_block_chars:
+                # Remaining text fits in one chunk
+                ranges.append((sent_start + chunk_pos, sent_start + len(sentence)))
+                break
+
+            # Look for a natural pause point
+            split_pos = self._find_pause_split(sentence, chunk_pos, pause_positions, min_chunk_size)
+
+            if split_pos is not None:
+                # Split at the pause point (include the pause char, trim trailing space)
+                ranges.append((sent_start + chunk_pos, sent_start + split_pos))
+                # Skip whitespace after the pause
+                chunk_pos = split_pos
+                while chunk_pos < len(sentence) and sentence[chunk_pos] == " ":
+                    chunk_pos += 1
+            else:
+                # Fall back to word boundary split
+                target_end = min(chunk_pos + self.max_block_chars, len(sentence))
+                if target_end < len(sentence):
+                    boundary = sentence.rfind(" ", chunk_pos, target_end)
+                    if boundary > chunk_pos:
+                        target_end = boundary + 1
+                ranges.append((sent_start + chunk_pos, sent_start + target_end))
+                chunk_pos = target_end
+
+    def _find_pause_split(
+        self, sentence: str, chunk_pos: int, pause_positions: list[int], min_chunk_size: int
+    ) -> int | None:
+        """Find the best pause point to split at, or None if none suitable.
+
+        Prefers pause points that:
+        1. Are within max_block_chars from chunk_pos
+        2. Leave at least min_chunk_size chars for the next chunk (avoid tiny orphans)
+        3. Are as late as possible (to keep more text together)
+        """
+        best_pos = None
+        remaining = len(sentence) - chunk_pos
+
+        for pos in pause_positions:
+            if pos <= chunk_pos:
+                continue
+            chunk_len = pos - chunk_pos
+            next_chunk_len = remaining - chunk_len
+
+            # Skip if this chunk would be too long
+            if chunk_len > self.max_block_chars:
+                continue
+
+            # Skip if this would leave a tiny orphan (unless it's the only option)
+            if next_chunk_len < min_chunk_size and next_chunk_len > 0:
+                # Only consider this if we have no better option
+                if best_pos is None:
+                    best_pos = pos
+                continue
+
+            # This is a valid split point - prefer later ones
+            best_pos = pos
+
+        return best_pos
 
     def _slice_ast(self, ast: list[InlineContent], start: int, end: int) -> list[InlineContent]:
         """Slice AST to extract content between character positions.
@@ -391,7 +469,7 @@ class DocumentTransformer:
         return chunks if chunks else [text]
 
     def _transform_list(self, node: SyntaxTreeNode) -> list[ListBlock]:
-        """Transform list (bullet or ordered) node."""
+        """Transform list (bullet or ordered) node. Each item gets its own audio index."""
         ordered = node.type == "ordered_list"
         start = cast(int | None, node.attrs.get("start")) if ordered else None
 
@@ -410,19 +488,20 @@ class DocumentTransformer:
                     item_ast.extend(self._transform_inline(inline))
                     item_plain_parts.append(self._extract_plain_text(inline))
                 elif child.type in ("bullet_list", "ordered_list"):
-                    # Nested list - render as HTML and extract plain text
                     nested_html, nested_plain = self._render_list_html(child)
                     item_html_parts.append(nested_html)
                     item_plain_parts.append(nested_plain)
 
+            item_plain_text = " ".join(item_plain_parts)
             items.append(
                 ListItem(
                     html=" ".join(item_html_parts),
                     ast=item_ast,
-                    plain_text=" ".join(item_plain_parts),
+                    plain_text=item_plain_text,
+                    audio_block_idx=self._next_audio_idx(item_plain_text),
                 )
             )
-            plain_texts.append(" ".join(item_plain_parts))
+            plain_texts.append(item_plain_text)
 
         combined_plain_text = " ".join(plain_texts)
         return [
@@ -432,7 +511,6 @@ class DocumentTransformer:
                 start=start,
                 items=items,
                 plain_text=combined_plain_text,
-                audio_block_idx=self._next_audio_idx(combined_plain_text),
             )
         ]
 
@@ -684,6 +762,15 @@ class DocumentTransformer:
             return node.content or ""
 
 
-def transform_to_document(ast: SyntaxTreeNode, **kwargs) -> StructuredDocument:
+def transform_to_document(
+    ast: SyntaxTreeNode,
+    max_block_chars: int = 150,
+    soft_limit_mult: float = 1.2,
+    min_chunk_size: int = 30,
+) -> StructuredDocument:
     """Transform markdown AST to StructuredDocument."""
-    return DocumentTransformer(**kwargs).transform(ast)
+    return DocumentTransformer(
+        max_block_chars=max_block_chars,
+        soft_limit_mult=soft_limit_mult,
+        min_chunk_size=min_chunk_size,
+    ).transform(ast)

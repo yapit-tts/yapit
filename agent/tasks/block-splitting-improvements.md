@@ -5,46 +5,80 @@ started: 2026-01-03
 
 # Task: Block Splitting Improvements
 
-Current issue: sometimes sentences are split audibly unnaturally.
+## Problem
 
-## Test Data
-
-Real-world test excerpt: `splitter-improvement-sample-text.txt` (root directory)
-
-## Problem Example
-
+Sentences were being split mid-phrase unnaturally:
 ```
-"When we look carefully at the quiescent period in the bff soup before tapes begin replicating, we notice a steady rise in the amount of computation [SPLIT] taking place."
+"...we notice a steady rise in the amount of computation [SPLIT] taking place."
 ```
 
-Split happens mid-sentence where it could easily have included a few more words. These bad splits hurt naturalness and voice consistency.
+## What Was Done
 
-## Goal
+### 1. Improved Splitting Algorithm (`transformer.py`)
 
-Keep sentences whole when possible. When splitting is necessary, prefer natural pause points:
-- Sentence enders: `.?!`
-- Clause separators: `,` `—` (m-dash) `:`
-- Avoid splitting mid-phrase when just a few more words would complete it
+**Three configurable parameters:**
+- `max_block_chars` - target max block size (default 150)
+- `soft_limit_mult` - how much overage allowed to keep sentences whole (default 1.2)
+- `min_chunk_size` - minimum chunk size to avoid tiny orphans (default 30)
 
-A block being slightly longer or shorter is fine — what matters is sounding natural.
+**Algorithm:**
+1. Split at sentence boundaries (`.!?`) first
+2. If sentence ≤ `max × soft_mult`, keep it whole
+3. If sentence exceeds soft limit, split at pause points: `,` `—` `:` `;`
+4. Pause regex includes optional closing quotes: `[,—:;]["')\]\u201c\u201d\u2018\u2019]?`
+5. `min_chunk_size` prevents tiny orphan chunks by preferring pause points that leave enough remaining
+6. Fallback: word boundary split if no good pause point
 
-## Approach
+### 2. List Items Now Separate Audio Blocks
 
-1. **First**: Improve splitting logic
-   - Soft limit with preferred split points
-   - Prefer natural pause punctuation over hard cutoff
-   - A few extra words to finish a sentence > exact character limit
+- Each list item gets its own `audio_block_idx`
+- `ListBlock` is now a container (like `BlockquoteBlock`)
+- Prevents 500+ char lists from being single audio blocks
 
-2. **Then**: Try increasing block size (200 or 250)
-   - Check: does this increase latency or introduce buffering?
-   - Probably fine due to markdown structure for most documents
+### 3. Interactive Visualization Tool
 
-## After Block Size Change
+`scripts/block_viz_server.py` - FastAPI server with sliders for all parameters, real-time updates.
 
-Test with functioning WebGPU devices to verify:
-- Reasonable loading times
-- No buffering issues
+```bash
+python scripts/block_viz_server.py whatisintelligencechap1.md
+```
 
-## Monitoring
+## Findings from Testing
 
-Monitor latencies before/after changes. Depends on [[monitoring-observability-logging]] for data-driven validation.
+Best results with `whatisintelligencechap1.md` (156K chars):
+- `max_block_chars=200`, `soft_limit_mult=1.5`, `min_chunk_size=80`
+- Most sentences stay coherent, avg block size ~126 chars
+- Even with 300 char soft limit, most blocks stay 150-160 chars (natural sentence lengths)
+- Reduces block count by ~200 blocks compared to max=150 (1130 → 915)
+- Potential latency benefit from fewer blocks (less hop overhead) - needs validation
+
+## Still TODO
+
+### Before Merging
+- [ ] Add settings to config (`MAX_BLOCK_CHARS`, `SOFT_LIMIT_MULT`, `MIN_CHUNK_SIZE`)
+- [ ] Test with actual TTS playback to validate quality improvement
+- [ ] Commit to feature branch
+
+### Follow-up (depends on [[monitoring-observability-logging]])
+- [ ] Measure latency impact of larger blocks (150 vs 200 vs 250)
+- [ ] Validate no buffering issues with WebGPU
+- [ ] Data-driven tuning of parameters
+
+### Edge Cases (low priority)
+- [ ] Very long headings (malformed docs) - currently not split
+- [ ] Very long list items - currently not split within item
+
+## Sources
+
+- `yapit/gateway/processors/markdown/transformer.py` - main splitting logic
+- `yapit/gateway/processors/markdown/models.py` - ListItem now has audio_block_idx
+- `scripts/block_viz_server.py` - interactive visualization
+- `whatisintelligencechap1.md` - test document (156K chars)
+
+## Handoff
+
+Algorithm is implemented and working. Next agent should:
+1. Add the three params to Settings class (with defaults from `.env`)
+2. Wire them through to where `transform_to_document` is called
+3. Test with real TTS playback
+4. Consider doing monitoring task first to get baseline metrics
