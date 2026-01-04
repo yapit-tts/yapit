@@ -162,6 +162,29 @@ export function useTTSWebSocket(): UseTTSWebSocketReturn {
         setIsConnected(true);
         setIsReconnecting(false);
         setConnectionError(null);
+
+        // Clear stale queued/processing states from before disconnect
+        // Keep 'cached' since we already fetched that audio locally
+        const staleIndices: number[] = [];
+        blockStatesRef.current.forEach((status, idx) => {
+          if (status === 'queued' || status === 'processing') {
+            staleIndices.push(idx);
+          }
+        });
+        if (staleIndices.length > 0) {
+          console.log(`[TTS WS] Clearing ${staleIndices.length} stale block states after reconnect`);
+          for (const idx of staleIndices) {
+            blockStatesRef.current.delete(idx);
+          }
+          setBlockStates((prev) => {
+            const next = new Map(prev);
+            for (const idx of staleIndices) {
+              next.delete(idx);
+            }
+            return next;
+          });
+        }
+
         reconnectAttemptsRef.current = 0;
       };
 
@@ -230,11 +253,9 @@ export function useTTSWebSocket(): UseTTSWebSocketReturn {
       return;
     }
 
-    // Mark blocks as pending immediately (before server response)
+    // Mark blocks as queued immediately (clears any previous error state)
     for (const idx of params.blockIndices) {
-      if (!blockStatesRef.current.has(idx)) {
-        blockStatesRef.current.set(idx, 'queued');
-      }
+      blockStatesRef.current.set(idx, 'queued');
     }
 
     const message = {
