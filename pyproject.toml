@@ -53,6 +53,7 @@ test = [
   "testcontainers==4.10.0",
   "httpx~=0.28.1",
   "PyMuPDF~=1.26.3",
+  "websockets~=15.0",
 ]
 
 dev = [
