@@ -17,17 +17,21 @@ prod-build:
 
 dev-cpu: down
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.kokoro-cpu.yml \
-	up -d --build --wait
+	--profile stripe up -d --build --wait
 	$(call create-dev-user)
 
 dev-gpu: down
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.kokoro-gpu.yml \
-	up -d --build
+	--profile stripe up -d --build
 
 dev-mac: down
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.kokoro-cpu.yml -f docker-compose.mac.yml \
-	up -d --build --wait
+	--profile stripe up -d --build --wait
 	$(call create-dev-user)
+
+dev-ci: down
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.kokoro-cpu.yml \
+	up -d --build --wait
 
 down:
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml down -v --remove-orphans

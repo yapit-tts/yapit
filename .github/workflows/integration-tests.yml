@@ -49,7 +49,7 @@ jobs:
           echo "TTS_PROCESSORS_FILE=tts_processors.ci.json" >> .env
 
       - name: Build
-        run: make dev-cpu
+        run: make dev-ci
 
       - name: Show container logs on failure
         if: ${{ failure() }}
