@@ -5,14 +5,14 @@ volumes:
   metrics:
 
 networks:
-  dokploy-network:
+  yapit-network:
     external: true
 
 services:
   frontend:
     image: ghcr.io/yapit-tts/frontend:${GIT_COMMIT}
     networks:
-      - dokploy-network
+      - yapit-network
     deploy:
       replicas: 1
       update_config:
@@ -20,9 +20,9 @@ services:
         failure_action: rollback
       labels:
         - "traefik.enable=true"
-        - "traefik.http.routers.yapit-frontend.rule=Host(`yaptts.org`)"
+        - "traefik.http.routers.yapit-frontend.rule=Host(`yapit.md`)"
         - "traefik.http.routers.yapit-frontend.entrypoints=websecure"
-        - "traefik.http.routers.yapit-frontend.tls.certresolver=letsencrypt"
+        - "traefik.http.routers.yapit-frontend.tls=true"
         - "traefik.http.services.yapit-frontend.loadbalancer.server.port=80"
 
   postgres:
@@ -33,7 +33,7 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     networks:
-      - dokploy-network
+      - yapit-network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-yapit}"]
       start_period: 30s
@@ -49,7 +49,7 @@ services:
   redis:
     image: redis:7-alpine
     networks:
-      - dokploy-network
+      - yapit-network
     deploy:
       replicas: 1
       update_config:
@@ -67,7 +67,7 @@ services:
       - document_cache:/data/document_cache
       - metrics:/data/metrics
     networks:
-      - dokploy-network
+      - yapit-network
     expose:
       - "8000"
     healthcheck:
@@ -84,9 +84,9 @@ services:
         failure_action: rollback
       labels:
         - "traefik.enable=true"
-        - "traefik.http.routers.yapit-gateway.rule=Host(`api.yaptts.org`)"
+        - "traefik.http.routers.yapit-gateway.rule=Host(`api.yapit.md`)"
         - "traefik.http.routers.yapit-gateway.entrypoints=websecure"
-        - "traefik.http.routers.yapit-gateway.tls.certresolver=letsencrypt"
+        - "traefik.http.routers.yapit-gateway.tls=true"
         - "traefik.http.services.yapit-gateway.loadbalancer.server.port=8000"
 
   stack-auth:
@@ -95,7 +95,7 @@ services:
       - ./.env
       - ./.env.prod
     networks:
-      - dokploy-network
+      - yapit-network
     healthcheck:
       test: ["CMD-SHELL", "curl -fs http://localhost:8101/health && curl -fs http://localhost:8102/health"]
       start_period: 80s
@@ -111,16 +111,16 @@ services:
       labels:
         - "traefik.enable=true"
         # API router (higher priority, matches /api paths)
-        - "traefik.http.routers.stack-auth-api.rule=Host(`auth.yaptts.org`) && PathPrefix(`/api`)"
+        - "traefik.http.routers.stack-auth-api.rule=Host(`auth.yapit.md`) && PathPrefix(`/api`)"
         - "traefik.http.routers.stack-auth-api.entrypoints=websecure"
-        - "traefik.http.routers.stack-auth-api.tls.certresolver=letsencrypt"
+        - "traefik.http.routers.stack-auth-api.tls=true"
         - "traefik.http.routers.stack-auth-api.priority=20"
         - "traefik.http.routers.stack-auth-api.service=stack-auth-api"
         - "traefik.http.services.stack-auth-api.loadbalancer.server.port=8102"
         # Dashboard router (lower priority, catches everything else)
-        - "traefik.http.routers.stack-auth-dashboard.rule=Host(`auth.yaptts.org`)"
+        - "traefik.http.routers.stack-auth-dashboard.rule=Host(`auth.yapit.md`)"
         - "traefik.http.routers.stack-auth-dashboard.entrypoints=websecure"
-        - "traefik.http.routers.stack-auth-dashboard.tls.certresolver=letsencrypt"
+        - "traefik.http.routers.stack-auth-dashboard.tls=true"
         - "traefik.http.routers.stack-auth-dashboard.priority=10"
         - "traefik.http.routers.stack-auth-dashboard.service=stack-auth-dashboard"
         - "traefik.http.services.stack-auth-dashboard.loadbalancer.server.port=8101"
@@ -130,11 +130,11 @@ services:
     command: python -m yapit.workers.kokoro
     environment:
       ADAPTER_CLASS: yapit.workers.adapters.kokoro.KokoroAdapter
-      OMP_NUM_THREADS: ${OMP_NUM_THREADS:-4}
+      OMP_NUM_THREADS: ${OMP_NUM_THREADS}
     networks:
-      - dokploy-network
+      - yapit-network
     deploy:
-      replicas: ${KOKORO_CPU_REPLICAS:-2}
+      replicas: ${KOKORO_CPU_REPLICAS}
       update_config:
         order: start-first
         failure_action: rollback

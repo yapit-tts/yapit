@@ -4,40 +4,29 @@ define create-dev-user
 	uv run --env-file=.env.dev python scripts/create_user.py
 endef
 
-build: build-cpu
-
-build-cpu:
-	docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.kokoro-cpu.yml build --parallel
-
-build-gpu:
-	docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.kokoro-gpu.yml build --parallel
-
-prod-build:
-	docker compose build --parallel
-
 dev-cpu: down
 	rm -f metrics/metrics.db
-	docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.kokoro-cpu.yml \
+	docker compose --env-file .env --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.kokoro-cpu.yml \
 	--profile stripe up -d --build
 	$(call create-dev-user)
 
 dev-gpu: down
 	rm -f metrics/metrics.db
-	docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.kokoro-gpu.yml \
+	docker compose --env-file .env --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.kokoro-gpu.yml \
 	--profile stripe up -d --build
 
 dev-mac: down
 	rm -f metrics/metrics.db
-	docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.kokoro-cpu.yml -f docker-compose.mac.yml \
+	docker compose --env-file .env --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.kokoro-cpu.yml -f docker-compose.mac.yml \
 	--profile stripe up -d --build
 	$(call create-dev-user)
 
 dev-ci: down
-	docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.kokoro-cpu.yml \
+	docker compose --env-file .env --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.kokoro-cpu.yml \
 	up -d --build --wait --wait-timeout 300
 
 down:
-	docker compose -f docker-compose.yml -f docker-compose.dev.yml down -v --remove-orphans
+	docker compose --env-file .env --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml down -v --remove-orphans
 
 dev-user:
 	$(call create-dev-user)
@@ -49,22 +38,6 @@ token: dev-user
 	  -H "X-Stack-Publishable-Client-Key: $$(grep STACK_AUTH_CLIENT_KEY .env.dev | cut -d= -f2)" \
 	  -H "Content-Type: application/json" \
 	  -d '{"email": "dev@example.com", "password": "dev-password-123"}' | jq -r '.access_token'
-
-# Production targets
-prod-up:
-	docker compose up -d
-
-prod-up-cpu:
-	docker compose -f docker-compose.yml -f docker-compose.kokoro-cpu.yml up -d
-
-prod-up-gpu:
-	docker compose -f docker-compose.yml -f docker-compose.kokoro-gpu.yml up -d
-
-prod-down:
-	docker compose down -v --remove-orphans
-
-logs:
-	docker compose logs -f
 
 test: test-unit test-integration
 
@@ -96,17 +69,17 @@ migration-new:
 ifndef MSG
 	$(error MSG is required. Usage: make migration-new MSG="description")
 endif
-	@docker compose -f docker-compose.yml -f docker-compose.dev.yml ps postgres --format '{{.Status}}' | grep -q "Up" || \
-		(echo "Starting postgres..." && docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres --wait)
+	@docker compose --env-file .env --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml ps postgres --format '{{.Status}}' | grep -q "Up" || \
+		(echo "Starting postgres..." && docker compose --env-file .env --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml up -d postgres --wait)
 	@echo "Resetting database to migration state..."
-	@docker compose -f docker-compose.yml -f docker-compose.dev.yml exec -T postgres psql -U yapit -d yapit -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;" > /dev/null
+	@docker compose --env-file .env --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml exec -T postgres psql -U yapit -d yapit -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;" > /dev/null
 	@cd yapit/gateway && DATABASE_URL="postgresql://yapit:yapit@localhost:5432/yapit" uv run alembic upgrade head
 	@echo "Generating migration..."
 	@cd yapit/gateway && DATABASE_URL="postgresql://yapit:yapit@localhost:5432/yapit" uv run alembic revision --autogenerate -m "$(MSG)"
 	@echo "Auto-fixing sqlmodel types..."
 	@find yapit/gateway/migrations/versions -name "*.py" -exec sed -i 's/sqlmodel\.sql\.sqltypes\.AutoString()/sa.String()/g' {} \;
 	@echo "Testing migration on fresh DB (yapit_test)..."
-	@docker compose -f docker-compose.yml -f docker-compose.dev.yml exec -T postgres psql -U yapit -d postgres -c "DROP DATABASE IF EXISTS yapit_test;" -c "CREATE DATABASE yapit_test;" > /dev/null
+	@docker compose --env-file .env --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml exec -T postgres psql -U yapit -d postgres -c "DROP DATABASE IF EXISTS yapit_test;" -c "CREATE DATABASE yapit_test;" > /dev/null
 	@cd yapit/gateway && DATABASE_URL="postgresql://yapit:yapit@localhost:5432/yapit_test" uv run alembic upgrade head
 	@echo "✓ Migration generated and verified"
 	@echo "Review: yapit/gateway/migrations/versions/"
@@ -163,7 +136,7 @@ deploy-higgs-runpod:
 	uv run --env-file=.env python infra/runpod/deploy.py higgs-native --image-tag $(HIGGS_TAG)
 
 # Metrics dashboard
-PROD_HOST := root@78.46.242.1
+PROD_HOST := root@46.224.195.97
 
 sync-metrics:
 	@mkdir -p metrics

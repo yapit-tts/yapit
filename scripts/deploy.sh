@@ -1,69 +1,59 @@
 #!/usr/bin/env bash
-# Deploy to production via Dokploy API
+# Deploy to production via Docker Stack
 #
 # Steps:
-#   1. Decrypt .env.sops and sync secrets to Dokploy
-#   2. Trigger Dokploy deployment
-#   3. Wait and verify health
+#   1. Decrypt .env.sops and transform for prod (LIVE → plain, remove TEST)
+#   2. Sync files to VPS
+#   3. Deploy stack
+#   4. Wait and verify health
 #
 # Environment variables:
 #   SOPS_AGE_KEY      - Age private key content (required)
-#   VPS_HOST          - SSH host (default: root@78.46.242.1)
+#   VPS_HOST          - SSH host (default: root@46.224.195.97)
 #   SKIP_VERIFY       - Set to 1 to skip post-deploy verification
 #   WAIT_TIME         - Seconds to wait before verifying (default: 120)
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-VPS_HOST="${VPS_HOST:-root@78.46.242.1}"
-PROD_URL="https://yaptts.org"
+VPS_HOST="${VPS_HOST:-root@46.224.195.97}"
+DEPLOY_DIR="/opt/yapit/deploy"
+STACK_NAME="yapit"
+PROD_URL="https://yapit.md"
 WAIT_TIME="${WAIT_TIME:-120}"
-COMPOSE_ID="Fmex638n6F7Nrw81Lubc_"
-DOKPLOY_API="http://localhost:3000/api/trpc"
 SOPS_FILE=".env.sops"
 
-GIT_COMMIT="${GIT_COMMIT:-$(git rev-parse --short HEAD)}"
+GIT_COMMIT="${GIT_COMMIT:-$(git rev-parse HEAD)}"
 
 log() { echo "==> $*"; }
 die() { echo "ERROR: $*" >&2; exit 1; }
 
-# --- Sync secrets ---
+# --- Decrypt and transform secrets ---
 [[ -z "${SOPS_AGE_KEY:-}" ]] && die "SOPS_AGE_KEY not set"
 
 log "Decrypting $SOPS_FILE..."
 RAW_ENV=$(SOPS_AGE_KEY="$SOPS_AGE_KEY" sops -d "$SOPS_FILE")
 
-# Transform for prod: *_LIVE → plain names, remove *_TEST, add GIT_COMMIT
+# Transform for prod: *_LIVE → plain names, remove *_TEST
 log "Transforming secrets (LIVE → plain, removing TEST)..."
 ENV_CONTENT=$(echo "$RAW_ENV" | grep -v "_TEST=" | sed 's/_LIVE=/=/')
-ENV_CONTENT="${ENV_CONTENT}
-GIT_COMMIT=${GIT_COMMIT}"
-ENV_ESCAPED=$(echo "$ENV_CONTENT" | jq -Rs .)
 
-log "Syncing secrets to Dokploy..."
-SYNC_RESULT=$(ssh "$VPS_HOST" "TOKEN=\$(cat /root/.dokploy-token); curl -sf -X POST \
-  -H \"x-api-key: \$TOKEN\" \
-  -H \"Content-Type: application/json\" \
-  \"$DOKPLOY_API/compose.update\" \
-  -d '{\"json\":{\"composeId\":\"$COMPOSE_ID\",\"env\":$ENV_ESCAPED}}'")
-echo "$SYNC_RESULT" | jq -r '.result.data.json.env | split("\n") | length | "  Synced \(.) env vars"'
+# Write temporary .env file
+echo "$ENV_CONTENT" > .env.deploy
+echo "GIT_COMMIT=${GIT_COMMIT}" >> .env.deploy
 
-# --- Trigger deploy ---
-log "Triggering deployment for commit: $GIT_COMMIT"
-ssh "$VPS_HOST" bash -s "$COMPOSE_ID" << 'EOF'
-  set -euo pipefail
-  COMPOSE_ID="$1"
-  TOKEN=$(cat /root/.dokploy-token)
-  API="http://localhost:3000/api/trpc"
+# --- Sync files to VPS ---
+log "Syncing files to VPS..."
+scp docker-compose.prod.yml "$VPS_HOST:$DEPLOY_DIR/"
+scp .env.deploy "$VPS_HOST:$DEPLOY_DIR/.env"
+scp .env.prod "$VPS_HOST:$DEPLOY_DIR/"
+scp tts_processors.prod.json "$VPS_HOST:$DEPLOY_DIR/"
+scp document_processors.prod.json "$VPS_HOST:$DEPLOY_DIR/"
+rm .env.deploy
 
-  RESULT=$(curl -sf -X POST \
-    -H "x-api-key: $TOKEN" \
-    -H "Content-Type: application/json" \
-    "$API/compose.deploy" \
-    -d "{\"json\":{\"composeId\":\"$COMPOSE_ID\"}}")
-
-  echo "$RESULT" | jq -r '.result.data.json | "  \(.message // "Deployment triggered")"'
-EOF
+# --- Deploy stack ---
+log "Deploying stack for commit: $GIT_COMMIT"
+ssh "$VPS_HOST" "cd $DEPLOY_DIR && set -a && source .env.prod && set +a && GIT_COMMIT=${GIT_COMMIT} docker stack deploy -c docker-compose.prod.yml $STACK_NAME --with-registry-auth"
 
 # --- Verify ---
 if [ "${SKIP_VERIFY:-0}" = "1" ]; then
@@ -75,18 +65,18 @@ log "Waiting ${WAIT_TIME}s for deployment..."
 sleep "$WAIT_TIME"
 
 log "Verifying..."
-if curl -sf "$PROD_URL/api/health" > /dev/null; then
-  echo "  ✓ /api/health OK"
+if curl -sf "https://api.yapit.md/health" > /dev/null; then
+  echo "  ✓ API healthy"
 else
-  echo "  ✗ /api/health FAILED"
+  echo "  ✗ API health check FAILED"
   exit 1
 fi
 
-DEPLOYED=$(curl -sf "$PROD_URL/api/version" | jq -r '.commit // "unknown"')
-if [ "$DEPLOYED" = "$GIT_COMMIT" ]; then
-  echo "  ✓ /api/version shows $DEPLOYED"
+if curl -sf "$PROD_URL" > /dev/null; then
+  echo "  ✓ Frontend OK"
 else
-  echo "  ⚠ /api/version shows $DEPLOYED (expected $GIT_COMMIT)"
+  echo "  ✗ Frontend FAILED"
+  exit 1
 fi
 
-log "Deploy complete!"
+log "Deploy complete: $GIT_COMMIT"

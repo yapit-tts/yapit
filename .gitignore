@@ -18,6 +18,7 @@
 *.jpg
 *.jpeg
 *.png
+!frontend/public/icon-*.png
 *.zip
 *.tar
 *.gz
@@ -202,3 +203,5 @@ cython_debug/
 
 # Private agent files (not for public commit)
 agent/*/private/
+scripts/tts_speed_benchmark/results/
+metrics/
