@@ -411,7 +411,7 @@ const PlaybackPage = () => {
       }
     });
     setBlockStates(states);
-  }, [documentBlocks, currentBlock, blockStateVersion, isServerMode, ttsWS.blockStates]);
+  }, [documentBlocks, blockStateVersion, isServerMode, ttsWS.blockStates]);
 
   // Refs for keyboard handler to avoid stale closures
   const handlePlayRef = useRef<() => void>(() => {});
