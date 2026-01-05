@@ -100,32 +100,26 @@ def filter_data(df: pd.DataFrame, date_range: tuple, models: list[str]) -> pd.Da
 
 
 def show_event_counts(df: pd.DataFrame):
-    """Event counts table."""
+    """Event counts bar chart."""
     counts = df["event_type"].value_counts()
 
-    col1, col2 = st.columns([1, 2])
-    with col1:
-        st.markdown("#### Event Counts")
-        for event, count in counts.items():
-            st.text(f"{event}: {count}")
-
-    with col2:
-        fig = px.bar(
-            x=counts.values,
-            y=counts.index,
-            orientation="h",
-            color=counts.values,
-            color_continuous_scale=[[0, COLORS["accent4"]], [1, COLORS["accent"]]],
-        )
-        fig.update_layout(
-            showlegend=False,
-            coloraxis_showscale=False,
-            margin=dict(l=0, r=0, t=0, b=0),
-            height=max(200, len(counts) * 30),
-            xaxis_title="Count",
-            yaxis_title="",
-        )
-        st.plotly_chart(fig, use_container_width=True)
+    st.markdown("#### Event Counts")
+    fig = px.bar(
+        x=counts.values,
+        y=counts.index,
+        orientation="h",
+        color=counts.values,
+        color_continuous_scale=[[0, COLORS["accent4"]], [1, COLORS["accent"]]],
+    )
+    fig.update_layout(
+        showlegend=False,
+        coloraxis_showscale=False,
+        margin=dict(l=0, r=10, t=0, b=0),
+        height=max(200, len(counts) * 28),
+        xaxis_title="",
+        yaxis_title="",
+    )
+    st.plotly_chart(fig, use_container_width=True)
 
 
 def show_latency_stats(df: pd.DataFrame):
@@ -162,29 +156,74 @@ def show_latency_stats(df: pd.DataFrame):
         st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
 
 
+def show_usage_stats(df: pd.DataFrame):
+    """Usage stats: characters and audio duration by model."""
+    # Get synthesis data - use complete for audio_duration, queued for text_length
+    complete = df[df["event_type"] == "synthesis_complete"]
+    queued = df[df["event_type"] == "synthesis_queued"]
+
+    if complete.empty and queued.empty:
+        return
+
+    st.markdown("#### Usage by Model")
+
+    rows = []
+    models = set()
+    if not complete.empty:
+        models.update(complete["model_slug"].dropna().unique())
+    if not queued.empty:
+        models.update(queued["model_slug"].dropna().unique())
+
+    for model in sorted(models):
+        model_complete = complete[complete["model_slug"] == model] if not complete.empty else pd.DataFrame()
+        model_queued = queued[queued["model_slug"] == model] if not queued.empty else pd.DataFrame()
+
+        # Characters from queued events (text_length)
+        chars = model_queued["text_length"].sum() if not model_queued.empty else 0
+
+        # Audio duration from complete events
+        audio_ms = model_complete["audio_duration_ms"].sum() if not model_complete.empty else 0
+        audio_min = audio_ms / 60000
+
+        # Synthesis count
+        synth_count = len(model_queued)
+
+        rows.append(
+            {
+                "Model": model,
+                "Blocks": synth_count,
+                "Characters": f"{chars:,}",
+                "Audio": f"{audio_min:.1f} min",
+            }
+        )
+
+    if rows:
+        st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+
+
 def show_queue_stats(df: pd.DataFrame):
     """Queue depth and overflow stats."""
     queued = df[df["event_type"] == "synthesis_queued"]
-    if queued.empty:
-        return
-
-    depths = queued["queue_depth"].dropna()
+    cache_hits = df[df["event_type"] == "cache_hit"]
 
     col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("Avg Queue Depth", f"{depths.mean():.1f}" if len(depths) > 0 else "-")
-    with col2:
-        st.metric("Max Queue Depth", f"{depths.max():.0f}" if len(depths) > 0 else "-")
-    with col3:
-        overflow = len(queued[queued["processor_route"] == "overflow"])
-        local = len(queued[queued["processor_route"] == "local"])
-        total = overflow + local
-        pct = overflow / total * 100 if total > 0 else 0
-        st.metric("Overflow", f"{overflow} ({pct:.1f}%)")
+
+    if not queued.empty:
+        depths = queued["queue_depth"].dropna()
+        with col1:
+            st.metric("Avg Queue Depth", f"{depths.mean():.1f}" if len(depths) > 0 else "-")
+        with col2:
+            st.metric("Max Queue Depth", f"{depths.max():.0f}" if len(depths) > 0 else "-")
+        with col3:
+            overflow = len(queued[queued["processor_route"] == "overflow"])
+            local = len(queued[queued["processor_route"] == "local"])
+            total = overflow + local
+            pct = overflow / total * 100 if total > 0 else 0
+            st.metric("Overflow", f"{overflow} ({pct:.1f}%)")
+
     with col4:
-        cache_hits = len(df[df["event_type"] == "cache_hit"])
-        total_req = len(queued) + cache_hits
-        rate = cache_hits / total_req * 100 if total_req > 0 else 0
+        total_req = len(queued) + len(cache_hits)
+        rate = len(cache_hits) / total_req * 100 if total_req > 0 else 0
         st.metric("Cache Hit Rate", f"{rate:.1f}%")
 
 
@@ -214,30 +253,30 @@ def chart_synthesis_scatter(df: pd.DataFrame) -> go.Figure | None:
 
     fig = make_subplots(rows=1, cols=2, subplot_titles=["Worker Time (color=text length)", "Text Length Over Time"])
 
-    # Left: worker time, color by text length
-    for model in synthesis["model_slug"].dropna().unique():
-        model_data = synthesis[synthesis["model_slug"] == model]
-        fig.add_trace(
-            go.Scatter(
-                x=model_data["local_time"],
-                y=model_data["worker_latency_ms"],
-                mode="markers",
-                name=model,
-                marker=dict(
-                    size=8,
-                    color=model_data["text_length"],
-                    colorscale=[[0, COLORS["accent4"]], [0.5, COLORS["accent2"]], [1, COLORS["accent3"]]],
-                    showscale=True,
-                    colorbar=dict(title="Text Len", x=0.45),
-                ),
-                hovertemplate="<b>%{y:.0f}ms</b><br>Text: %{marker.color:.0f} chars<br>%{x}<extra>%{fullData.name}</extra>",
-            ),
-            row=1,
-            col=1,
-        )
+    models = list(synthesis["model_slug"].dropna().unique())
 
-    # Right: text length over time
-    for model in synthesis["model_slug"].dropna().unique():
+    # Left: worker time, color by text length (no legend - colorscale doesn't match model colors)
+    fig.add_trace(
+        go.Scatter(
+            x=synthesis["local_time"],
+            y=synthesis["worker_latency_ms"],
+            mode="markers",
+            showlegend=False,
+            marker=dict(
+                size=8,
+                color=synthesis["text_length"],
+                colorscale=[[0, COLORS["accent4"]], [0.5, COLORS["accent2"]], [1, COLORS["accent3"]]],
+                showscale=True,
+                colorbar=dict(title="Text Len", x=0.45),
+            ),
+            hovertemplate="<b>%{y:.0f}ms</b><br>Text: %{marker.color:.0f} chars<br>%{x}<extra></extra>",
+        ),
+        row=1,
+        col=1,
+    )
+
+    # Right: text length over time (with legend, model colors)
+    for model in models:
         model_data = synthesis[synthesis["model_slug"] == model]
         fig.add_trace(
             go.Scatter(
@@ -246,7 +285,7 @@ def chart_synthesis_scatter(df: pd.DataFrame) -> go.Figure | None:
                 mode="markers",
                 name=model,
                 marker=dict(size=8, color=get_model_color(model)),
-                showlegend=False,
+                legendgroup=model,
             ),
             row=1,
             col=2,
@@ -261,7 +300,7 @@ def chart_synthesis_scatter(df: pd.DataFrame) -> go.Figure | None:
 
 
 def chart_synthesis_ratio(df: pd.DataFrame) -> go.Figure | None:
-    """Synthesis ratio (worker time / audio duration) - real-time factor."""
+    """Synthesis ratio: scatter over time + histogram distribution."""
     synthesis = df[df["event_type"] == "synthesis_complete"].copy()
     synthesis = synthesis.dropna(subset=["worker_latency_ms", "audio_duration_ms"])
     synthesis = synthesis[synthesis["audio_duration_ms"] > 0]
@@ -269,8 +308,16 @@ def chart_synthesis_ratio(df: pd.DataFrame) -> go.Figure | None:
         return None
 
     synthesis["ratio"] = synthesis["worker_latency_ms"] / synthesis["audio_duration_ms"]
+    median_ratio = synthesis["ratio"].median()
 
-    fig = go.Figure()
+    fig = make_subplots(
+        rows=1,
+        cols=2,
+        subplot_titles=["Synthesis Speed Over Time", "Synthesis Ratio Distribution"],
+        column_widths=[0.55, 0.45],
+    )
+
+    # Left: scatter over time
     for model in synthesis["model_slug"].dropna().unique():
         model_data = synthesis[synthesis["model_slug"] == model]
         fig.add_trace(
@@ -281,22 +328,55 @@ def chart_synthesis_ratio(df: pd.DataFrame) -> go.Figure | None:
                 name=model,
                 marker=dict(size=8, color=get_model_color(model)),
                 hovertemplate="<b>%{y:.2f}x</b><br>%{x}<extra>%{fullData.name}</extra>",
-            )
+            ),
+            row=1,
+            col=1,
         )
 
-    fig.add_hline(
-        y=1.0,
+    # Right: histogram
+    fig.add_trace(
+        go.Histogram(
+            x=synthesis["ratio"],
+            nbinsx=15,
+            marker_color=COLORS["accent4"],
+            showlegend=False,
+        ),
+        row=1,
+        col=2,
+    )
+
+    # Real-time threshold lines (both subplots)
+    fig.add_hline(y=1.0, line_dash="dash", line_color=COLORS["error"], row=1, col=1)
+    fig.add_vline(
+        x=1.0,
         line_dash="dash",
         line_color=COLORS["error"],
-        annotation_text="Real-time (1.0x)",
+        row=1,
+        col=2,
+        annotation_text="Real-time",
         annotation_position="top right",
     )
-    fig.update_layout(
-        title="Synthesis Ratio (< 1 = faster than real-time)",
-        height=350,
-        xaxis_title="Time",
-        yaxis_title="Ratio (worker / audio duration)",
+
+    # Median line on histogram
+    fig.add_vline(
+        x=median_ratio,
+        line_dash="solid",
+        line_color=COLORS["accent"],
+        row=1,
+        col=2,
+        annotation_text=f"Median: {median_ratio:.2f}",
+        annotation_position="top left",
     )
+
+    fig.update_layout(
+        title="Synthesis Speed (ratio < 1 = faster than real-time)",
+        height=380,
+        margin=dict(t=60),
+    )
+    fig.update_xaxes(title_text="Time", row=1, col=1)
+    fig.update_xaxes(title_text="Synthesis Ratio", row=1, col=2)
+    fig.update_yaxes(title_text="Ratio (worker / audio)", row=1, col=1)
+    fig.update_yaxes(title_text="Count", row=1, col=2)
     return fig
 
 
@@ -358,7 +438,7 @@ def chart_model_usage(df: pd.DataFrame) -> go.Figure | None:
     if queued.empty and cache_hits.empty:
         return None
 
-    fig = make_subplots(rows=1, cols=2, subplot_titles=["By Model", "By Route"])
+    fig = make_subplots(rows=1, cols=2, subplot_titles=["By Model", "By Route"], vertical_spacing=0.15)
 
     # Left: by model (synthesized vs cached)
     if not queued.empty:
@@ -412,9 +492,10 @@ def chart_model_usage(df: pd.DataFrame) -> go.Figure | None:
         )
 
     fig.update_layout(
-        height=350,
+        height=400,
         barmode="group",
         legend=dict(orientation="h", yanchor="bottom", y=1.02),
+        margin=dict(t=60),
     )
     return fig
 
@@ -546,11 +627,13 @@ def main():
 
     st.divider()
 
-    # Two columns: event counts + latency stats
-    col1, col2 = st.columns(2)
+    # Three columns: event counts, usage stats, latency stats
+    col1, col2, col3 = st.columns(3)
     with col1:
         show_event_counts(filtered)
     with col2:
+        show_usage_stats(filtered)
+    with col3:
         show_latency_stats(filtered)
 
     st.divider()
@@ -565,21 +648,17 @@ def main():
     else:
         st.caption("Synthesis scatter: no synthesis_complete data")
 
-    # Row 2: ratio + breakdown
-    col1, col2 = st.columns(2)
-    with col1:
-        fig = chart_synthesis_ratio(filtered)
-        if fig:
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.caption("Synthesis ratio: no data")
+    # Row 2: synthesis ratio (wide - has scatter + histogram)
+    fig = chart_synthesis_ratio(filtered)
+    if fig:
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.caption("Synthesis ratio: no synthesis_complete data")
 
-    with col2:
-        fig = chart_latency_breakdown(filtered)
-        if fig:
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.caption("Latency breakdown: no data")
+    # Row 3: latency breakdown (if data available)
+    fig = chart_latency_breakdown(filtered)
+    if fig:
+        st.plotly_chart(fig, use_container_width=True)
 
     # Row 3: model usage + queue metrics
     col1, col2 = st.columns(2)
