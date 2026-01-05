@@ -169,9 +169,10 @@ const SubscriptionPage = () => {
   };
 
   const currentTier = subscription?.subscribed_tier ?? "free";
-  const isSubscribed = !!subscription?.subscription;
+  const isCanceled = subscription?.subscription?.status === "canceled";
+  const isSubscribed = !!subscription?.subscription && !isCanceled;
   const isTrialing = subscription?.subscription?.status === "trialing";
-  const isCanceling = subscription?.subscription?.cancel_at_period_end;
+  const isCanceling = subscription?.subscription?.cancel_at_period_end && !isCanceled;
   const graceTier = subscription?.subscription?.grace_tier;
   const graceUntil = subscription?.subscription?.grace_until;
 
@@ -213,12 +214,12 @@ const SubscriptionPage = () => {
                       Trial
                     </span>
                   )}
-                  {isCanceling && (
+                  {(isCanceling || isCanceled) && (
                     <span className="text-sm font-normal text-destructive bg-destructive/10 px-2 py-0.5 rounded-full">
-                      Canceling
+                      {isCanceled ? "Canceled" : "Canceling"}
                     </span>
                   )}
-                  {graceTier && !isCanceling && (
+                  {graceTier && !isCanceling && !isCanceled && (
                     <span className="text-sm font-normal text-amber-600 bg-amber-100 dark:bg-amber-900/30 dark:text-amber-400 px-2 py-0.5 rounded-full flex items-center gap-1">
                       <Clock className="h-3 w-3" />
                       {graceTier.charAt(0).toUpperCase() + graceTier.slice(1)} access
