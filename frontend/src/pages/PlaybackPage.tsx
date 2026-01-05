@@ -698,7 +698,7 @@ const PlaybackPage = () => {
         if (!block) continue;
         if (audioBuffersRef.current.has(block.id)) continue;
         const wsStatus = ttsWS.getBlockStatus(idx);
-        if (wsStatus === 'cached' || wsStatus === 'queued' || wsStatus === 'processing') continue;
+        if (wsStatus === 'cached' || wsStatus === 'queued' || wsStatus === 'processing' || wsStatus === 'skipped') continue;
         indicesToRequest.push(idx);
       }
 
@@ -747,7 +747,7 @@ const PlaybackPage = () => {
       // For server mode, also count queued/processing from WS state
       if (isServer) {
         const wsStatus = ttsWS.getBlockStatus(idx);
-        if (wsStatus === 'queued' || wsStatus === 'processing' || wsStatus === 'cached') {
+        if (wsStatus === 'queued' || wsStatus === 'processing' || wsStatus === 'cached' || wsStatus === 'skipped') {
           readyAhead++;
           continue;
         }
@@ -768,7 +768,7 @@ const PlaybackPage = () => {
       for (let idx = currentBlockRef.current + 1; idx < documentBlocks.length; idx++) {
         const block = documentBlocks[idx];
         const isCached = audioBuffersRef.current.has(block.id);
-        const isQueued = isServer && ['queued', 'processing', 'cached'].includes(ttsWS.getBlockStatus(idx) || '');
+        const isQueued = isServer && ['queued', 'processing', 'cached', 'skipped'].includes(ttsWS.getBlockStatus(idx) || '');
         const isSynthesizing = !isServer && synthesizingRef.current.has(block.id);
         if (!isCached && !isQueued && !isSynthesizing) {
           firstUnreadyIdx = idx;
