@@ -126,16 +126,57 @@ const PlaybackPage = () => {
   // Track previous block for DOM-based highlighting (avoids React re-renders)
   const prevBlockIdxRef = useRef<number>(-1);
 
-  // Hover/drag highlighting state (progress bar → document)
-  const [hoveredBlock, setHoveredBlock] = useState<number | null>(null);
-  const [isDraggingProgressBar, setIsDraggingProgressBar] = useState(false);
-  const prevHoveredBlockRef = useRef<number | null>(null);
+  // Hover/drag highlighting - refs instead of state to avoid re-renders
+  // These drive purely imperative DOM updates (class manipulation + scroll)
+  const hoveredBlockRef = useRef<number | null>(null);
+  const isDraggingProgressBarRef = useRef(false);
   const lastHoverScrollTimeRef = useRef<number>(0);
 
-  // Handler for progress bar hover/drag - updates both hover position and drag state
+  // Handler for progress bar hover/drag - direct DOM manipulation, no state
   const handleBlockHover = useCallback((idx: number | null, isDragging: boolean) => {
-    setHoveredBlock(idx);
-    setIsDraggingProgressBar(isDragging);
+    const prevHovered = hoveredBlockRef.current;
+    hoveredBlockRef.current = idx;
+    isDraggingProgressBarRef.current = isDragging;
+
+    const HOVER_BLOCK_CLASS = "audio-block-hovered";
+
+    // Remove hover class from previous block
+    if (prevHovered !== null && prevHovered !== idx) {
+      window.document.querySelectorAll(`[data-audio-block-idx="${prevHovered}"]`)
+        .forEach(el => el.classList.remove(HOVER_BLOCK_CLASS));
+    }
+
+    // Add hover class to currently hovered block (if not same as active playing block)
+    if (idx !== null && idx !== currentBlockRef.current) {
+      window.document.querySelectorAll(`[data-audio-block-idx="${idx}"]`)
+        .forEach(el => el.classList.add(HOVER_BLOCK_CLASS));
+    }
+
+    // Clear hover class if hovering over the active block or leaving
+    if (idx === null || idx === currentBlockRef.current) {
+      if (prevHovered !== null) {
+        window.document.querySelectorAll(`[data-audio-block-idx="${prevHovered}"]`)
+          .forEach(el => el.classList.remove(HOVER_BLOCK_CLASS));
+      }
+    }
+
+    // Scroll to hovered block during drag (throttled, only when off-screen)
+    if (isDragging && idx !== null && idx !== currentBlockRef.current) {
+      const SCROLL_THROTTLE_MS = 500;
+      const now = Date.now();
+      if (now - lastHoverScrollTimeRef.current >= SCROLL_THROTTLE_MS) {
+        const element = window.document.querySelector(`[data-audio-block-idx="${idx}"]`);
+        if (element) {
+          const rect = element.getBoundingClientRect();
+          const margin = 50;
+          const isVisible = rect.top >= margin && rect.bottom <= window.innerHeight - margin;
+          if (!isVisible) {
+            element.scrollIntoView({ behavior: "auto", block: "center" });
+            lastHoverScrollTimeRef.current = now;
+          }
+        }
+      }
+    }
   }, []);
 
   // Parallel prefetch tracking
@@ -184,56 +225,6 @@ const PlaybackPage = () => {
 
     prevBlockIdxRef.current = currentBlock;
   }, [currentBlock]);
-
-  // DOM-based hover highlighting (progress bar → document block)
-  useLayoutEffect(() => {
-    const HOVER_BLOCK_CLASS = "audio-block-hovered";
-
-    // Remove hover class from previous block
-    if (prevHoveredBlockRef.current !== null) {
-      const prevElements = window.document.querySelectorAll(
-        `[data-audio-block-idx="${prevHoveredBlockRef.current}"]`
-      );
-      prevElements.forEach((el) => el.classList.remove(HOVER_BLOCK_CLASS));
-    }
-
-    // Add hover class to currently hovered block (if not same as active)
-    if (hoveredBlock !== null && hoveredBlock !== currentBlock) {
-      const hoveredElements = window.document.querySelectorAll(
-        `[data-audio-block-idx="${hoveredBlock}"]`
-      );
-      hoveredElements.forEach((el) => el.classList.add(HOVER_BLOCK_CLASS));
-    }
-
-    prevHoveredBlockRef.current = hoveredBlock;
-  }, [hoveredBlock, currentBlock]);
-
-  // Scroll to hovered block during drag (not hover) - throttled, only when off-screen
-  useEffect(() => {
-    // Only scroll when actively dragging, not on passive hover
-    if (!isDraggingProgressBar) return;
-    if (hoveredBlock === null || hoveredBlock === currentBlock) return;
-
-    const SCROLL_THROTTLE_MS = 500; // Higher = less jittery on fast drags
-    const now = Date.now();
-    if (now - lastHoverScrollTimeRef.current < SCROLL_THROTTLE_MS) return;
-
-    const element = window.document.querySelector(
-      `[data-audio-block-idx="${hoveredBlock}"]`
-    );
-    if (!element) return;
-
-    // Check if element is visible in viewport (with some margin)
-    const rect = element.getBoundingClientRect();
-    const margin = 50; // Don't scroll if block is near edge
-    const isVisible = rect.top >= margin && rect.bottom <= window.innerHeight - margin;
-
-    if (!isVisible) {
-      // Use instant scroll to avoid queuing animations
-      element.scrollIntoView({ behavior: "auto", block: "center" });
-      lastHoverScrollTimeRef.current = now;
-    }
-  }, [hoveredBlock, currentBlock, isDraggingProgressBar]);
 
   // Fetch document and blocks on mount (wait for auth to be ready)
   useEffect(() => {
@@ -397,12 +388,19 @@ const PlaybackPage = () => {
     }
 
     const states: BlockState[] = documentBlocks.map((block, idx) => {
-      // Use cachedBlocksRef for visual state (persists even after buffer eviction)
-      if (cachedBlocksRef.current.has(block.id)) return 'cached';
+      const wsStatus = isServerMode ? ttsWS.blockStates.get(idx) : undefined;
+
+      // Use cachedBlocksRef for visual state, but only if we still have access to audio.
+      // If backend evicted (wsStatus undefined), we need buffer locally to show as cached.
+      if (cachedBlocksRef.current.has(block.id)) {
+        if (audioBuffersRef.current.has(block.id) || wsStatus === 'cached') {
+          return 'cached';
+        }
+        // Backend evicted and no local buffer - fall through to pending
+      }
 
       if (isServerMode) {
         // Server mode: use WS block states
-        const wsStatus = ttsWS.blockStates.get(idx);
         if (wsStatus === 'cached') return 'cached';
         if (wsStatus === 'queued' || wsStatus === 'processing') return 'synthesizing';
         return 'pending';
@@ -1198,6 +1196,11 @@ const PlaybackPage = () => {
     console.log(`[Playback] Jumping to block ${newBlock}`);
     audioPlayerRef.current?.stop();
 
+    // Notify backend to evict blocks outside new cursor window
+    if (documentId && isServerSideModel(voiceSelection.model)) {
+      ttsWS.moveCursor(documentId, newBlock);
+    }
+
     // Calculate progress up to the new block
     let progressMs = 0;
     for (let i = 0; i < newBlock; i++) {
@@ -1210,7 +1213,7 @@ const PlaybackPage = () => {
 
     // If already playing, the useEffect will auto-play the new block
     // If paused, just set position (user can press play)
-  }, [documentBlocks]);
+  }, [documentBlocks, documentId, voiceSelection.model, ttsWS]);
 
   // Handle click on structured document block (by audio_block_idx)
   // Memoized to prevent StructuredDocumentView re-renders from audioProgress updates
