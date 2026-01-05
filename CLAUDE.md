@@ -96,13 +96,14 @@ Don't commit them with code changes - we'll batch add them later.
 
 ### Branch Strategy
 
-- `main` - stable, production-ready
-- `dev` - integration branch
-- Feature branches merge to `dev` via PR, then deleted
+- `main` - production (deploys on push)
+- `dev` - default working branch for batched/unrelated changes
+- Feature branches for larger isolated features
 
-**Merge vs Rebase**: We use merge commits (not rebase) for PRs. Merges preserve commit history which is valuable for `git bisect` when tracking down regressions.
-
-**Releases**: No tags or releases until actual deployment. Version numbers in docs (v0, v1, etc.) are informal priority indicators.
+**Workflow**: Push directly to `main` for small changes. Use `dev` for batched work, merge to `main` when ready:
+```bash
+git checkout main && git merge dev --ff-only && git push
+```
 
 ### Legacy Plans
 

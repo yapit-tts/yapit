@@ -142,6 +142,11 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan -H 78.46.242.1 >> ~/.ssh/known_hosts
 
+      - name: Install sops
+        run: |
+          curl -LO https://github.com/getsops/sops/releases/download/v3.9.4/sops-v3.9.4.linux.amd64
+          sudo install sops-v3.9.4.linux.amd64 /usr/local/bin/sops
+
       - name: Deploy
         run: ./scripts/deploy.sh
         env:
