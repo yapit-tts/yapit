@@ -17,7 +17,7 @@ Show plots (saved to metrics/plots/):
 import sqlite3
 import subprocess
 import sys
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import matplotlib
@@ -33,9 +33,9 @@ from rich.table import Table
 
 
 def parse_since(since: str) -> datetime:
-    """Parse relative or absolute time string."""
+    """Parse relative or absolute time string. Returns UTC for SQLite comparison."""
     since = since.strip().lower()
-    now = datetime.now()
+    now = datetime.now(UTC).replace(tzinfo=None)  # SQLite stores naive UTC timestamps
 
     if "hour" in since:
         hours = int(since.split()[0])
@@ -211,7 +211,7 @@ MARKERS = ["o", "s", "^", "D", "v", "p", "*", "h"]  # Distinct shapes for models
 
 
 def plot_synthesis_scatter(df: pd.DataFrame, output_dir: Path) -> Path | None:
-    """Scatter: text_length vs worker_time, colored by time, shaped by model."""
+    """Scatter plots for synthesis performance."""
     synthesis = df[df["event_type"] == "synthesis_complete"].copy()
     if synthesis.empty or len(synthesis) < 2:
         return None
@@ -220,28 +220,29 @@ def plot_synthesis_scatter(df: pd.DataFrame, output_dir: Path) -> Path | None:
     if synthesis.empty:
         return None
 
-    t_min = synthesis["timestamp"].min()
-    t_max = synthesis["timestamp"].max()
-    if t_min == t_max:
-        synthesis["time_norm"] = 0.5
+    # Normalize worker time for color mapping
+    w_min = synthesis["worker_latency_ms"].min()
+    w_max = synthesis["worker_latency_ms"].max()
+    if w_min == w_max:
+        synthesis["worker_norm"] = 0.5
     else:
-        synthesis["time_norm"] = (synthesis["timestamp"] - t_min) / (t_max - t_min)
+        synthesis["worker_norm"] = (synthesis["worker_latency_ms"] - w_min) / (w_max - w_min)
 
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-    fig.suptitle("Synthesis Performance (Worker Time = actual TTS processing)", fontsize=12)
+    fig.suptitle("Synthesis Performance", fontsize=12)
 
     models = list(synthesis["model_slug"].dropna().unique())
 
-    # Left: text_length vs worker_latency (color=time, marker=model)
+    # Left: time vs text_length (color=worker_time)
     scatter = None
     for i, model in enumerate(models):
         model_data = synthesis[synthesis["model_slug"] == model]
         marker = MARKERS[i % len(MARKERS)]
         scatter = axes[0].scatter(
+            model_data["local_time"],
             model_data["text_length"],
-            model_data["worker_latency_ms"],
-            c=model_data["time_norm"],
-            cmap="viridis",
+            c=model_data["worker_latency_ms"],
+            cmap="plasma",
             alpha=0.7,
             label=model,
             s=40,
@@ -250,16 +251,17 @@ def plot_synthesis_scatter(df: pd.DataFrame, output_dir: Path) -> Path | None:
             linewidths=0.5,
         )
 
-    axes[0].set_xlabel("Text Length (chars)")
-    axes[0].set_ylabel("Worker Time (ms)")
-    axes[0].set_title("Text Length vs Worker Time")
+    axes[0].set_xlabel("Time")
+    axes[0].set_ylabel("Text Length (chars)")
+    axes[0].set_title("Text Length Over Time (color = worker time)")
     axes[0].legend()
+    axes[0].tick_params(axis="x", rotation=45)
 
     if scatter:
         cbar = plt.colorbar(scatter, ax=axes[0])
-        cbar.set_label(f"Time ({t_min.strftime('%H:%M')} → {t_max.strftime('%H:%M')})")
+        cbar.set_label("Worker Time (ms)")
 
-    # Right: latency over time (marker=model, color=model for clarity here)
+    # Right: latency over time
     for i, model in enumerate(models):
         model_data = synthesis[synthesis["model_slug"] == model]
         marker = MARKERS[i % len(MARKERS)]
@@ -281,6 +283,103 @@ def plot_synthesis_scatter(df: pd.DataFrame, output_dir: Path) -> Path | None:
     plt.tight_layout()
 
     output_path = output_dir / "synthesis_scatter.png"
+    plt.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close()
+    return output_path
+
+
+def plot_synthesis_ratio(df: pd.DataFrame, output_dir: Path) -> Path | None:
+    """Plot synthesis ratio (worker_time / audio_duration) - shows real-time factor."""
+    synthesis = df[df["event_type"] == "synthesis_complete"].copy()
+    if synthesis.empty:
+        return None
+
+    synthesis = synthesis.dropna(subset=["worker_latency_ms", "audio_duration_ms"])
+    synthesis = synthesis[synthesis["audio_duration_ms"] > 0]
+    if synthesis.empty or len(synthesis) < 2:
+        return None
+
+    synthesis["ratio"] = synthesis["worker_latency_ms"] / synthesis["audio_duration_ms"]
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    fig.suptitle("Synthesis Speed (ratio < 1 = faster than real-time)", fontsize=12)
+
+    # Left: ratio over time
+    axes[0].scatter(synthesis["local_time"], synthesis["ratio"], alpha=0.6, s=30)
+    axes[0].axhline(y=1.0, color="red", linestyle="--", label="Real-time (1.0)")
+    axes[0].set_xlabel("Time")
+    axes[0].set_ylabel("Synthesis Ratio (worker / audio duration)")
+    axes[0].set_title("Synthesis Speed Over Time")
+    axes[0].legend()
+    axes[0].tick_params(axis="x", rotation=45)
+
+    # Right: ratio histogram
+    axes[1].hist(synthesis["ratio"], bins=20, edgecolor="white", alpha=0.7)
+    axes[1].axvline(x=1.0, color="red", linestyle="--", label="Real-time (1.0)")
+    axes[1].axvline(
+        x=synthesis["ratio"].median(), color="green", linestyle="-", label=f"Median: {synthesis['ratio'].median():.2f}"
+    )
+    axes[1].set_xlabel("Synthesis Ratio")
+    axes[1].set_ylabel("Count")
+    axes[1].set_title("Synthesis Ratio Distribution")
+    axes[1].legend()
+
+    plt.tight_layout()
+
+    output_path = output_dir / "synthesis_ratio.png"
+    plt.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close()
+    return output_path
+
+
+def plot_latency_breakdown(df: pd.DataFrame, output_dir: Path) -> Path | None:
+    """Stacked bar/area showing queue wait vs worker time."""
+    synthesis = df[df["event_type"] == "synthesis_complete"].copy()
+    queued = df[df["event_type"] == "synthesis_queued"].copy()
+    started = df[df["event_type"] == "synthesis_started"].copy()
+
+    if synthesis.empty or queued.empty or started.empty:
+        return None
+
+    # Calculate queue wait per job
+    qt = queued.set_index("variant_hash")["timestamp"]
+    st = started.set_index("variant_hash")["timestamp"]
+    common = qt.index.intersection(st.index)
+    if len(common) < 2:
+        return None
+
+    queue_wait = (st[common] - qt[common]).dt.total_seconds() * 1000
+    queue_wait_df = pd.DataFrame(
+        {
+            "variant_hash": list(common),
+            "calc_queue_wait_ms": queue_wait.values,
+        }
+    )
+
+    # Merge with synthesis data
+    merged = synthesis.merge(queue_wait_df, on="variant_hash", how="inner")
+    if merged.empty or "calc_queue_wait_ms" not in merged.columns:
+        return None
+
+    merged = merged.sort_values("local_time").reset_index(drop=True)
+
+    fig, ax = plt.subplots(figsize=(12, 5))
+
+    # Stacked area
+    queue_wait_vals = merged["calc_queue_wait_ms"].values
+    worker_vals = merged["worker_latency_ms"].values
+
+    ax.fill_between(range(len(merged)), 0, queue_wait_vals, alpha=0.7, label="Queue Wait")
+    ax.fill_between(range(len(merged)), queue_wait_vals, queue_wait_vals + worker_vals, alpha=0.7, label="Worker Time")
+
+    ax.set_xlabel("Request (chronological)")
+    ax.set_ylabel("Latency (ms)")
+    ax.set_title("Latency Breakdown: Queue Wait + Worker Time")
+    ax.legend()
+
+    plt.tight_layout()
+
+    output_path = output_dir / "latency_breakdown.png"
     plt.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.close()
     return output_path
@@ -394,6 +493,12 @@ def main(
 
         paths = []
         if p := plot_synthesis_scatter(df, output_dir):
+            paths.append(p)
+            console.print(f"  Saved: {p}")
+        if p := plot_synthesis_ratio(df, output_dir):
+            paths.append(p)
+            console.print(f"  Saved: {p}")
+        if p := plot_latency_breakdown(df, output_dir):
             paths.append(p)
             console.print(f"  Saved: {p}")
         if p := plot_queue_metrics(df, output_dir):

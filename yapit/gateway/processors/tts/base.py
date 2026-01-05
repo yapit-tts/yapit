@@ -222,22 +222,28 @@ class BaseTTSProcessor:
         """Main processing loop - pull jobs from Redis queue."""
         await self.initialize()
 
-        # Limit concurrent tasks to ensure pending checks happen just-in-time.
-        # Without this, all queued jobs would be popped instantly and check is_pending
-        # before cursor_moved eviction can arrive, defeating eviction.
+        # Limit concurrent jobs per worker. Acquire BEFORE popping so jobs
+        # stay in Redis queue until a slot is available. This ensures:
+        # 1. Queue depth reflects actual backlog (overflow works correctly)
+        # 2. Pending checks happen just-in-time (eviction works correctly)
         semaphore = asyncio.Semaphore(2)
 
-        async def process_with_limit(raw: bytes) -> None:
-            async with semaphore:
+        async def process_and_release(raw: bytes) -> None:
+            try:
                 await self._handle_job(raw)
+            finally:
+                semaphore.release()
 
         while True:
             try:
+                await semaphore.acquire()
                 _, raw = await self._redis.brpop([self._queue], timeout=0)
-                asyncio.create_task(process_with_limit(raw))
+                asyncio.create_task(process_and_release(raw))
             except ConnectionError as e:
+                semaphore.release()
                 logger.error(f"Redis connection error: {e}, retrying in 5s")
                 await asyncio.sleep(5)
             except Exception as e:
+                semaphore.release()
                 logger.error(f"Unexpected error in processor loop: {e}")
                 await asyncio.sleep(1)
