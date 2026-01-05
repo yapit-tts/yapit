@@ -59,8 +59,8 @@ jobs:
       - name: Show container logs on failure
         if: failure()
         run: |
-          docker compose logs gateway
-          docker compose logs stack-auth
-          docker compose logs kokoro-cpu
-          docker compose ps -a
+          docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.kokoro-cpu.yml logs gateway
+          docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.kokoro-cpu.yml logs stack-auth
+          docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.kokoro-cpu.yml logs kokoro-cpu
+          docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.kokoro-cpu.yml ps -a
 
