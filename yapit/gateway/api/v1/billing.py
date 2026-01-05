@@ -378,6 +378,7 @@ async def _handle_subscription_updated(stripe_sub: dict, db: DbSession) -> None:
     price_id = price["id"] if isinstance(price, dict) else price
 
     now = datetime.now(tz=dt.UTC)
+    old_status = subscription.status
     subscription.status = _map_stripe_status(stripe_sub["status"])
     subscription.current_period_start = datetime.fromtimestamp(period_start, tz=dt.UTC)
     subscription.current_period_end = datetime.fromtimestamp(period_end, tz=dt.UTC)
@@ -398,7 +399,8 @@ async def _handle_subscription_updated(stripe_sub: dict, db: DbSession) -> None:
             new_tier_rank = TIER_RANK.get(new_plan.tier, 0)
 
             # Detect downgrade: set grace period so user keeps higher-tier access until period end
-            if new_tier_rank < old_tier_rank:
+            # Skip grace period if downgrading from a trial (user never paid for the higher tier)
+            if new_tier_rank < old_tier_rank and old_status != SubscriptionStatus.trialing:
                 # Preserve existing grace tier if it's higher (multiple downgrades: Max→Plus→Basic keeps Max grace)
                 existing_grace_rank = TIER_RANK.get(subscription.grace_tier, 0) if subscription.grace_tier else 0
                 if old_tier_rank > existing_grace_rank:
@@ -406,6 +408,10 @@ async def _handle_subscription_updated(stripe_sub: dict, db: DbSession) -> None:
                 subscription.grace_until = subscription.current_period_end
                 logger.info(
                     f"Downgrade detected for {subscription_id}: {old_tier} -> {new_plan.tier}, grace_tier={subscription.grace_tier}, grace_until={subscription.grace_until}"
+                )
+            elif new_tier_rank < old_tier_rank:
+                logger.info(
+                    f"Downgrade from trial for {subscription_id}: {old_tier} -> {new_plan.tier}, no grace period"
                 )
             else:
                 # Upgrade: only clear grace if upgrading to or above grace tier
