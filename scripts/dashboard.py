@@ -124,10 +124,23 @@ def show_event_counts(df: pd.DataFrame):
 
 def show_latency_stats(df: pd.DataFrame):
     """Latency stats by model."""
-    synthesis = df[df["event_type"] == "synthesis_complete"]
+    synthesis = df[df["event_type"] == "synthesis_complete"].copy()
+    queued = df[df["event_type"] == "synthesis_queued"]
+    started = df[df["event_type"] == "synthesis_started"]
+
     if synthesis.empty:
         st.caption("No synthesis_complete events (latency data unavailable)")
         return
+
+    # Calculate queue_wait by joining queued and started events
+    queue_wait_by_hash = {}
+    if not queued.empty and not started.empty:
+        # Use first occurrence if duplicate hashes exist
+        qt = queued.drop_duplicates("variant_hash").set_index("variant_hash")["timestamp"]
+        st_times = started.drop_duplicates("variant_hash").set_index("variant_hash")["timestamp"]
+        common = qt.index.intersection(st_times.index)
+        for h in common:
+            queue_wait_by_hash[h] = (st_times[h] - qt[h]).total_seconds() * 1000
 
     st.markdown("#### Latency by Model")
     st.caption("Queue wait: time in Redis queue | Worker: TTS processing time")
@@ -136,7 +149,11 @@ def show_latency_stats(df: pd.DataFrame):
     for model in synthesis["model_slug"].dropna().unique():
         model_data = synthesis[synthesis["model_slug"] == model]
         worker = model_data["worker_latency_ms"].dropna()
-        queue = model_data["queue_wait_ms"].dropna()
+
+        # Get queue wait for this model's jobs
+        model_hashes = model_data["variant_hash"].dropna()
+        queue_waits = [queue_wait_by_hash[h] for h in model_hashes if h in queue_wait_by_hash]
+        queue = pd.Series(queue_waits) if queue_waits else pd.Series(dtype=float)
 
         if worker.empty:
             continue
@@ -383,7 +400,29 @@ def chart_synthesis_ratio(df: pd.DataFrame) -> go.Figure | None:
 def chart_latency_breakdown(df: pd.DataFrame) -> go.Figure | None:
     """Stacked bar: queue wait vs worker time over time."""
     synthesis = df[df["event_type"] == "synthesis_complete"].copy()
-    synthesis = synthesis.dropna(subset=["queue_wait_ms", "worker_latency_ms"])
+    queued = df[df["event_type"] == "synthesis_queued"].copy()
+    started = df[df["event_type"] == "synthesis_started"].copy()
+
+    if synthesis.empty or queued.empty or started.empty:
+        return None
+
+    synthesis = synthesis.dropna(subset=["worker_latency_ms"])
+    if synthesis.empty:
+        return None
+
+    # Calculate queue_wait by joining queued and started events on variant_hash
+    # Deduplicate to avoid Series vs scalar issues
+    qt = queued.drop_duplicates("variant_hash").set_index("variant_hash")["timestamp"]
+    st = started.drop_duplicates("variant_hash").set_index("variant_hash")["timestamp"]
+    common = qt.index.intersection(st.index)
+    if len(common) < 2:
+        return None
+
+    queue_wait_series = (st[common] - qt[common]).dt.total_seconds() * 1000
+    queue_wait_df = pd.DataFrame({"variant_hash": common, "calc_queue_wait_ms": queue_wait_series.values})
+
+    # Merge with synthesis data
+    synthesis = synthesis.merge(queue_wait_df, on="variant_hash", how="inner")
     if synthesis.empty:
         return None
 
@@ -392,9 +431,9 @@ def chart_latency_breakdown(df: pd.DataFrame) -> go.Figure | None:
     grouped = (
         synthesis.groupby("bin")
         .agg(
-            queue_wait=("queue_wait_ms", "mean"),
+            queue_wait=("calc_queue_wait_ms", "mean"),
             worker_time=("worker_latency_ms", "mean"),
-            count=("id", "count"),
+            count=("variant_hash", "count"),
         )
         .reset_index()
     )
@@ -503,7 +542,7 @@ def chart_model_usage(df: pd.DataFrame) -> go.Figure | None:
 def chart_queue_metrics(df: pd.DataFrame) -> go.Figure | None:
     """Queue depth and wait time over time."""
     queued = df[df["event_type"] == "synthesis_queued"]
-    complete = df[df["event_type"] == "synthesis_complete"]
+    started = df[df["event_type"] == "synthesis_started"]
 
     if queued.empty:
         return None
@@ -531,14 +570,20 @@ def chart_queue_metrics(df: pd.DataFrame) -> go.Figure | None:
             col=1,
         )
 
-    # Queue wait from complete events
-    if not complete.empty and "queue_wait_ms" in complete.columns:
-        wait_data = complete.dropna(subset=["queue_wait_ms"])
-        if not wait_data.empty:
+    # Queue wait: join queued and started events by variant_hash
+    if not started.empty:
+        qt = queued.drop_duplicates("variant_hash").set_index("variant_hash")
+        st = started.drop_duplicates("variant_hash").set_index("variant_hash")
+        common = qt.index.intersection(st.index)
+
+        if len(common) > 0:
+            wait_times = (st.loc[common, "timestamp"] - qt.loc[common, "timestamp"]).dt.total_seconds() * 1000
+            local_times = st.loc[common, "local_time"]
+
             fig.add_trace(
                 go.Scatter(
-                    x=wait_data["local_time"],
-                    y=wait_data["queue_wait_ms"],
+                    x=local_times,
+                    y=wait_times,
                     mode="markers",
                     marker=dict(size=6, color=COLORS["accent"]),
                     name="Wait Time",
