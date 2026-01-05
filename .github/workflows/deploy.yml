@@ -146,3 +146,4 @@ jobs:
         run: ./scripts/deploy.sh
         env:
           GIT_COMMIT: ${{ github.sha }}
+          SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}

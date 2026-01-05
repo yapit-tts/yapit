@@ -10,7 +10,7 @@ networks:
 
 services:
   frontend:
-    image: ghcr.io/yapit-tts/frontend:latest
+    image: ghcr.io/yapit-tts/frontend:${GIT_COMMIT}
     networks:
       - dokploy-network
     deploy:
@@ -56,7 +56,7 @@ services:
         order: stop-first
 
   gateway:
-    image: ghcr.io/yapit-tts/gateway:latest
+    image: ghcr.io/yapit-tts/gateway:${GIT_COMMIT}
     env_file:
       - ./.env
       - ./.env.prod
@@ -84,7 +84,7 @@ services:
         failure_action: rollback
 
   stack-auth:
-    image: ghcr.io/yapit-tts/stack-auth:latest
+    image: ghcr.io/yapit-tts/stack-auth:${GIT_COMMIT}
     env_file:
       - ./.env
       - ./.env.prod
@@ -120,7 +120,7 @@ services:
         - "traefik.http.services.stack-auth-dashboard.loadbalancer.server.port=8101"
 
   kokoro-cpu:
-    image: ghcr.io/yapit-tts/kokoro-cpu:latest
+    image: ghcr.io/yapit-tts/kokoro-cpu:${GIT_COMMIT}
     command: python -m yapit.workers.kokoro
     environment:
       ADAPTER_CLASS: yapit.workers.adapters.kokoro.KokoroAdapter
