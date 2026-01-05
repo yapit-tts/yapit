@@ -177,11 +177,18 @@ SQLite writes should not block request handling:
 - **Analysis tooling** (2025-01-05):
   - `scripts/analyze_metrics.py` — comprehensive analysis with sensible defaults, plots
   - `scripts/load_test.py` — simulate concurrent users for worker experiments
+- **Load test + metrics improvements** (2025-01-05):
+  - Load test playback simulation mode (mirrors frontend buffering behavior)
+  - Semaphore fix: jobs stay in Redis until worker ready, queue_depth accurate
+  - New charts: synthesis_ratio (real-time factor), latency_breakdown (queue vs worker)
+  - Model usage chart: server model breakdown + local/overflow split
+  - Overflow threshold set to 8
 
 **Pending work:**
+None — core infrastructure complete.
 
-**Needs discussion/design:**
-- CLAUDE.md documentation — what to include (deferred until we know what's useful)
+**Deferred:**
+- CLAUDE.md documentation — deferred until we know what's useful in practice
 
 ## Eviction Bug Fixes (2025-01-05 Investigation)
 
@@ -406,33 +413,26 @@ Workflow for worker experiments (2x8 vs 4x4 threads):
 
 ## Handoff
 
-Core metrics infrastructure is working. Events are being captured to SQLite. Analysis tooling created. Eviction bugs fixed.
+Core metrics infrastructure complete. Interactive Streamlit dashboard added.
 
-**To verify metrics:**
+**To run:**
 ```bash
-make dev-cpu  # Restart to pick up changes (also clears metrics.db)
-uv run scripts/analyze_metrics.py  # Comprehensive analysis
+make dashboard        # Sync from prod + open interactive dashboard
+make dashboard-local  # Use local metrics.db (from dev)
 ```
 
-**Session 2025-01-05 (continued) completed:**
-1. ✅ Added `block_idx` column to metrics schema
-2. ✅ Added `synthesis_started` event (measures queue wait vs worker time)
-3. ✅ Wired `block_idx` through all synthesis events
-4. ✅ `make dev-cpu` now auto-deletes metrics.db (fresh schema each restart)
-5. ✅ Created `scripts/analyze_metrics.py` — comprehensive analysis with plots
-6. ✅ Created `scripts/load_test.py` — simulate concurrent users for worker experiments
+**Dashboard features:**
+- Date range picker, model filters
+- Summary stats: queue depth, overflow %, cache hit rate, usage by model
+- Charts: synthesis scatter, ratio histogram with median, model usage, queue metrics
+- Sync from prod button (dynamic container discovery for Docker Swarm)
 
-**Files modified (this session):**
-- `Makefile` — added `rm -f metrics/metrics.db` to dev-cpu/dev-gpu/dev-mac
-- `yapit/gateway/metrics.py` — added block_idx column
-- `yapit/gateway/processors/tts/base.py` — added synthesis_started event, block_idx to all events
-- `yapit/gateway/api/v1/ws.py` — added block_idx to synthesis_queued and cache_hit
+**Recent commits:**
+- `dfd0c87` — Initial Streamlit dashboard
+- `380e69b` — Fixed legend colors, chart heights, added histogram distribution
 
-**New files:**
-- `scripts/analyze_metrics.py`
-- `scripts/load_test.py`
+**Known issues:**
+- `queue_wait_ms` is NULL for all synthesis_complete events — latency breakdown chart shows no data. Backend fix needed in `processors/tts/base.py` to log this field.
 
-**Next steps:**
-- Run analysis after generating some traffic to verify everything works
-- Worker experiments (2x8 vs 4x4 threads) using load test script
-- Block size experiments using before/after analysis
+**Semaphore explanation (for future reference):**
+The semaphore (limit 2 concurrent jobs) IS intentional — it's what makes eviction work. Without it, all queued jobs check is_pending before eviction arrives. The fix for throughput is more workers (replicas), not higher semaphore.

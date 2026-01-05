@@ -11,7 +11,9 @@ Related: [[monitoring-observability-logging]] — structured logging, metrics in
 
 Design stats/analytics approach for:
 1. User profile page (total audio synthesized, documents processed, etc.)
-2. Operational analytics (cache hit rates, synthesis latency, etc.)
+
+voice usage (self)
+voice usage (all, public voices)
 
 ## Context
 

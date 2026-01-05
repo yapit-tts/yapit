@@ -11,12 +11,45 @@ Parent: [[stripe-integration]]
 
 This file defines the **testing workflow** for Stripe billing features. Concrete testing sessions are separate task files that link here.
 
+## Agent Instructions
+
+When working through this test suite:
+
+**Test Execution:**
+- Work through sections 1-10 sequentially
+- Use Chrome DevTools MCP for UI interactions (login, checkout, portal)
+- Use CLI/API for verification (DB queries, Stripe CLI, webhook logs)
+
+**Recording Results:**
+- **Only mark a test ✅ PASS if 100% successful** — all expected behaviors verified
+- **If ANY issue:** Mark ❌ FAIL or ⚠️ PARTIAL, document exactly what went wrong
+- **Document workflow slowdowns:** If something took longer than expected or required workarounds, note it in Gotchas
+
+**After Each Section:**
+- Update the testing session file with results table
+- If issues found, add to "Issues Found" section with severity and reproduction steps
+- Commit progress periodically (don't batch everything to the end)
+
+**If Blocked:**
+- Document the blocker clearly
+- Check if it's a known issue in [[stripe-integration]] gotchas
+- Ask user before attempting workarounds that modify code
+
+**Test User:**
+- Use `dev@example.com` / `dev-password-123` for most tests
+- For promo code tests or resubscribe flows, may need to delete Stripe customer first:
+  ```bash
+  stripe customers list --email=dev@example.com
+  stripe customers delete cus_xxx --confirm
+  ```
+
 ## Testing Sessions
 
 | Session | Status | Notes |
 |---------|--------|-------|
-| [[stripe-testing-beta-launch]] | In Progress | Pre-beta comprehensive testing |
-| [[stripe-testing-targeted-validation]] | ✅ Done | Portal downgrade, duplicate prevention, promo codes — all critical paths verified |
+| [[stripe-testing-fresh-sandbox]] | 🔄 Active | Fresh sandbox full E2E validation (2026-01-05) |
+| [[stripe-testing-beta-launch]] | Reference | Pre-beta testing, detailed observations |
+| [[stripe-testing-targeted-validation]] | ✅ Done | Portal downgrade, duplicate prevention, promo codes verified |
 
 ## Environment Setup
 
@@ -200,21 +233,29 @@ stripe customers delete cus_XXXXX --confirm
 ### 6. Resubscribe Flows
 - After full cancel → new checkout
 - Trial eligibility based on highest_tier_subscribed
+- Resubscribe with promo code (fully canceled user should be able to use promo codes)
 
 ### 7. Edge Cases
 - Multiple downgrades in same period
 - Upgrade during grace period
 - Downgrade during trial
+- Grace expiry fallback: if `invoice.payment_succeeded` webhook delayed, verify `get_effective_plan()` checks `grace_until < now` (user loses grace access at correct time, not when webhook arrives)
 
 ### 8. Payment Failures
 - Declined card on renewal
 - Declined card on upgrade
+- Payment recovery: user `past_due` → updates card in portal → Stripe retries → `invoice.payment_succeeded` → status returns to `active`
+- Dunning exhaustion: Stripe gives up retrying → `customer.subscription.deleted` with `cancellation_details.reason = "payment_failed"` → handler marks as canceled
 
 ### 9. Promo Codes
 - See `scripts/stripe_setup.py` for current promo code definitions
 - Valid code applies discount (verify in checkout UI and on invoice)
 - Invalid code shows "promotional code is invalid" error
 - Check redemption counts: `stripe promotion_codes list --code=<CODE>`
+
+### 10. Webhook Reliability
+- Delayed webhook (simulate outage): webhook arrives hours after event → handlers still work (idempotent, set state from webhook data)
+- Webhook ordering: `subscription.updated` before `checkout.completed` → updated handler no-ops if subscription doesn't exist, checkout creates it later (self-corrects)
 
 ## Creating a New Testing Session
 

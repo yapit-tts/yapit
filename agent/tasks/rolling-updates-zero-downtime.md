@@ -1,6 +1,7 @@
 ---
-status: active
+status: done
 started: 2025-01-04
+completed: 2025-01-05
 ---
 
 # Task: Rolling Updates / Zero-Downtime Deployments
@@ -297,30 +298,113 @@ jobs:
 
 ### Files Changed
 - `docker-compose.prod.yml` - converted to Stack mode (images, deploy.labels, update_config)
-- `.github/workflows/deploy.yml` - new CI/CD workflow with build + deploy
+- `.github/workflows/deploy.yml` - consolidated CI/CD workflow (tests + build + deploy)
 - `scripts/deploy.sh` - simplified to SSH + tRPC API
 - `scripts/build-images.sh` - local image building (optional)
+- Deleted: `lint.yml`, `unit-tests.yml`, `integration-tests.yml` (consolidated)
 
 ### GitHub Secrets Needed
 - `VPS_SSH_KEY` - SSH private key for root@78.46.242.1
 
 ### Migration Steps
 
-1. **Add GitHub Secret**: `gh secret set VPS_SSH_KEY < ~/.ssh/your_deploy_key`
-2. **Merge dev → main**: Transition to main branch workflow
-3. **Switch Dokploy to Stack mode**:
-   ```bash
-   ssh root@78.46.242.1 'TOKEN=$(cat /root/.dokploy-token); \
-     curl -X POST -H "x-api-key: $TOKEN" -H "Content-Type: application/json" \
-     "http://localhost:3000/api/trpc/compose.update" \
-     -d "{\"json\":{\"composeId\":\"Fmex638n6F7Nrw81Lubc_\",\"composeType\":\"stack\"}}"'
-   ```
-4. **First deploy**: Push to main, CI builds images, deploys
-5. **Verify**: Check https://yaptts.org works, no 502s
+1. ✅ **Add GitHub Secret**: `gh secret set VPS_SSH_KEY < ~/.ssh/your_deploy_key`
+2. ✅ **Merge dev → main**: PR #53 merged
+3. ✅ **Switch Dokploy to Stack mode**: `composeType: "stack"`
+4. ✅ **Switch Dokploy branch to main**: `branch: "main"`
+5. ✅ **Make ghcr.io packages public**: https://github.com/orgs/yapit-tts/packages
+6. ✅ **Add api.yaptts.org DNS A record**: Points to VPS IP
+7. ✅ **Verify**: `curl https://api.yaptts.org/health` returns OK
 
 ### Quick Deploy (skip tests)
 ```bash
 gh workflow run deploy.yml -f skip_tests=true
+```
+
+## Stack Mode Env Var Gotchas (Resolved 2025-01-05)
+
+### Root Causes Found
+
+**1. Shell quotes passed literally**
+```bash
+# .env.prod had:
+CORS_ORIGINS='["https://yaptts.org"]'
+# Stack mode passes this literally, including the quotes → invalid JSON
+```
+Fix: Remove quotes → `CORS_ORIGINS=["https://yaptts.org"]`
+
+**2. ${VAR} interpolation doesn't work in env_file**
+```bash
+# .env.prod had:
+DATABASE_URL=postgresql+asyncpg://yapit_prod:${POSTGRES_PASSWORD}@postgres:5432/yapit_prod
+# Stack mode doesn't do shell expansion in env_file values
+```
+Fix: Move DATABASE_URL to .env.sops with actual password baked in
+
+**3. :latest image tags**
+```yaml
+# Docker Swarm sees same tag, thinks nothing changed, doesn't pull
+image: ghcr.io/yapit-tts/gateway:latest
+```
+Fix: Use `${GIT_COMMIT}` tag (no fallback - fail if not set)
+
+**4. docker/metadata-action uses short SHA by default**
+```yaml
+# Default type=sha,prefix= gives 7-char short SHA
+# But ${GIT_COMMIT} in compose is full 40-char SHA → manifest unknown
+```
+Fix: `type=sha,prefix=,format=long`
+
+**5. Traefik labels via Dokploy UI don't work in Stack mode**
+Stack mode requires `deploy.labels` in docker-compose.yml. UI-configured domains only work for Docker Compose mode.
+
+**6. DNS must exist before Traefik can get SSL cert**
+Traefik uses HTTP-01 challenge. If DNS doesn't resolve, ACME fails. Add A record, then restart Traefik.
+
+### Key Insight: How Dokploy + Stack Mode Works
+
+1. Dokploy stores env vars in its database (set via UI or `compose.update` API)
+2. Dokploy writes these to `.env` in compose directory
+3. Your compose file can also reference `.env.prod` (committed to git)
+4. When `docker stack deploy` runs, env_file values are read **literally** (no shell parsing)
+5. `${VAR}` in compose file IS expanded from the shell environment where deploy runs
+
+### Files Changed (PR #55)
+
+- `.env.prod` - Removed shell quotes from CORS_ORIGINS, removed DATABASE_URL
+- `.env.sops` - Added DATABASE_URL with actual password
+- `docker-compose.prod.yml` - Changed `:latest` to `${GIT_COMMIT}` for all custom images
+- `scripts/deploy.sh` - Merged sync-secrets logic (decrypt sops → sync to Dokploy → deploy)
+- `.github/workflows/deploy.yml` - Added sops install, SOPS_AGE_KEY env var
+- Deleted: `scripts/build-images.sh`, `scripts/sync-secrets-to-dokploy.sh`
+
+### Secrets Setup
+
+- `SOPS_AGE_KEY` - Age private key (set for production environment)
+- `VPS_SSH_KEY` - Dedicated CI deploy key (not user's laptop key)
+- Both set via `gh secret set --env production`
+- Public key added to VPS `~/.ssh/authorized_keys`
+
+### Current Status
+
+✅ **Complete** - Zero-downtime deployments working as of 2025-01-05.
+
+Final fixes applied:
+- `type=sha,prefix=,format=long` in workflow (full SHA, not short)
+- Added `deploy.labels` for gateway Traefik routing
+- Added `api.yaptts.org` DNS A record
+
+### Deploy Flow (New)
+
+```
+push to main
+  → CI: lint + test
+  → CI: build images, push to ghcr.io with sha tag
+  → CI: install sops, decrypt .env.sops
+  → CI: sync secrets to Dokploy via SSH
+  → CI: trigger Dokploy deploy
+  → Dokploy: docker stack deploy with ${GIT_COMMIT} from env
+  → Swarm: rolling update (start-first)
 ```
 
 ## Resource Considerations
