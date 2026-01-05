@@ -9,7 +9,7 @@ import time
 import requests
 
 
-def wait_for_stack_auth(api_host: str, max_attempts: int = 30):
+def wait_for_stack_auth(api_host: str, max_attempts: int = 120):
     """Wait for stack-auth to be ready."""
     print(f"Waiting for stack-auth at {api_host}...")
     for i in range(max_attempts):

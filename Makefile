@@ -18,7 +18,7 @@ prod-build:
 dev-cpu: down
 	rm -f metrics/metrics.db
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.kokoro-cpu.yml \
-	--profile stripe up -d --build --wait
+	--profile stripe up -d --build
 	$(call create-dev-user)
 
 dev-gpu: down
@@ -29,12 +29,12 @@ dev-gpu: down
 dev-mac: down
 	rm -f metrics/metrics.db
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.kokoro-cpu.yml -f docker-compose.mac.yml \
-	--profile stripe up -d --build --wait
+	--profile stripe up -d --build
 	$(call create-dev-user)
 
 dev-ci: down
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.kokoro-cpu.yml \
-	up -d --build --wait
+	up -d --build --wait --wait-timeout 300
 
 down:
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml down -v --remove-orphans
