@@ -95,3 +95,9 @@ markers = [
     "mistral: marks tests that require Mistral API integration",
     "inworld: marks tests that require Inworld API integration",
 ]
+
+[dependency-groups]
+dev = [
+    "plotly>=6.5.0",
+    "streamlit>=1.52.2",
+]

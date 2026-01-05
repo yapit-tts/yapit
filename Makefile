@@ -161,3 +161,22 @@ deploy-higgs-push:
 
 deploy-higgs-runpod:
 	uv run --env-file=.env python infra/runpod/deploy.py higgs-native --image-tag $(HIGGS_TAG)
+
+# Metrics dashboard
+PROD_HOST := root@78.46.242.1
+
+sync-metrics:
+	@mkdir -p metrics
+	@echo "Syncing metrics from prod..."
+	@ssh $(PROD_HOST) 'CONTAINER=$$(docker ps --filter "name=gateway" --format "{{.Names}}" | head -1) && docker cp $$CONTAINER:/data/metrics/metrics.db /tmp/metrics.db'
+	@rm -f metrics/metrics.db
+	@scp $(PROD_HOST):/tmp/metrics.db metrics/metrics.db
+	@ssh $(PROD_HOST) "rm /tmp/metrics.db"
+	@echo "Synced: $$(du -h metrics/metrics.db | cut -f1)"
+
+dashboard: sync-metrics
+	uv run streamlit run scripts/dashboard.py
+
+dashboard-local:
+	uv run streamlit run scripts/dashboard.py
+
