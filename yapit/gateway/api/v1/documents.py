@@ -1,6 +1,5 @@
 import hashlib
 import io
-import logging
 import math
 import re
 from email.message import EmailMessage
@@ -11,6 +10,7 @@ from uuid import UUID
 import httpx
 import pymupdf
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
+from loguru import logger
 from markitdown import MarkItDown
 from pydantic import BaseModel, HttpUrl, StringConstraints
 from sqlmodel import col, select
@@ -37,7 +37,6 @@ from yapit.gateway.processors.document.base import (
 from yapit.gateway.processors.markdown import parse_markdown, transform_to_document
 
 router = APIRouter(prefix="/v1/documents", tags=["Documents"], dependencies=[Depends(authenticate)])
-log = logging.getLogger(__name__)
 
 
 class DocumentPrepareRequest(BaseModel):
@@ -468,7 +467,7 @@ async def _download_document(url: HttpUrl, max_size: int) -> tuple[bytes, str]:
         try:
             head_response = await client.head(str(url))
             if head_response.status_code != 200:
-                log.debug(f"HEAD request failed with {head_response.status_code}, falling back to GET")
+                logger.debug(f"HEAD request failed with {head_response.status_code}, falling back to GET")
             else:
                 content_length = head_response.headers.get("content-length")
                 if content_length and int(content_length) > max_size:
@@ -527,7 +526,7 @@ def _extract_document_info(content: bytes, content_type: str) -> tuple[int, str 
         if title_match:
             title = title_match.group(1).strip()
         else:
-            log.warning(f"Failed to extract title from HTML content:\n{html_text}", exc_info=True)
+            logger.warning(f"Failed to extract title from HTML content:\n{html_text}")
     elif content_type.lower().startswith("text/"):
         total_pages = 1
     else:

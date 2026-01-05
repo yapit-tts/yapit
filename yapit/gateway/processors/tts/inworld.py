@@ -2,14 +2,12 @@
 
 import base64
 import json
-import logging
 
 import httpx
+from loguru import logger
 
 from yapit.contracts import SynthesisJob, SynthesisResult
 from yapit.gateway.processors.tts.base import BaseTTSProcessor
-
-log = logging.getLogger(__name__)
 
 INWORLD_API_BASE = "https://api.inworld.ai/tts/v1"
 
@@ -64,7 +62,7 @@ class InworldProcessor(BaseTTSProcessor):
                         if audio_b64:
                             audio_chunks.append(base64.b64decode(audio_b64))
                     except json.JSONDecodeError:
-                        log.warning(f"Failed to parse streaming response line: {line[:100]}")
+                        logger.warning(f"Failed to parse streaming response line: {line[:100]}")
 
             audio = b"".join(audio_chunks)
 
@@ -78,8 +76,8 @@ class InworldProcessor(BaseTTSProcessor):
             )
 
         except httpx.HTTPStatusError as e:
-            log.error(f"Inworld API error for job {job.job_id}: {e.response.status_code} {e.response.text[:200]}")
+            logger.error(f"Inworld API error for job {job.job_id}: {e.response.status_code} {e.response.text[:200]}")
             raise
         except httpx.RequestError as e:
-            log.error(f"Inworld request failed for job {job.job_id}: {e}")
+            logger.error(f"Inworld request failed for job {job.job_id}: {e}")
             raise

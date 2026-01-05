@@ -1,17 +1,14 @@
-import logging
 import time
 from typing import Annotated
 
 from fastapi import Depends, Header, HTTPException, Security, WebSocket, WebSocketException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from loguru import logger
 
 from yapit.gateway.config import Settings, get_settings
 from yapit.gateway.stack_auth import User, get_me
 
 bearer = HTTPBearer(auto_error=False)
-
-LOGGER = logging.getLogger("auth")
-LOGGER.setLevel(logging.DEBUG)
 
 ANONYMOUS_ID_PREFIX = "anon-"
 
@@ -38,7 +35,7 @@ async def authenticate(
         user = await get_me(settings, access_token=creds.credentials)
         if user is not None:
             return user
-        LOGGER.debug("Bearer token invalid or expired")
+        logger.debug("Bearer token invalid or expired")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="invalid or expired token",
@@ -47,11 +44,11 @@ async def authenticate(
 
     # Fall back to anonymous ID
     if x_anonymous_id is not None:
-        LOGGER.debug(f"Anonymous user: {x_anonymous_id[:8]}...")
+        logger.debug(f"Anonymous user: {x_anonymous_id[:8]}...")
         return create_anonymous_user(x_anonymous_id)
 
     # No auth at all
-    LOGGER.debug("no credentials provided")
+    logger.debug("no credentials provided")
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="not authenticated",
@@ -72,9 +69,9 @@ async def authenticate_ws(
             user = await get_me(settings, access_token=token)
             if user is not None:
                 return user
-            LOGGER.warning("WS auth: get_me returned None for token")
+            logger.warning("WS auth: get_me returned None for token")
         except Exception as e:
-            LOGGER.error(f"WS auth: get_me raised exception: {e}")
+            logger.error(f"WS auth: get_me raised exception: {e}")
         raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid token")
 
     if anonymous_id:

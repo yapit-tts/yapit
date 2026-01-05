@@ -42,6 +42,7 @@ gateway = [
   "markdown-it-py~=3.0",
   "mdit-py-plugins~=0.4",
   "stripe~=12.0",
+  "loguru~=0.7.3",
 ]
 
 test = [

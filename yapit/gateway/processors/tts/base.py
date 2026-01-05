@@ -1,8 +1,9 @@
 import asyncio
-import logging
+import time
 import uuid
 from abc import abstractmethod
 
+from loguru import logger
 from redis.asyncio import Redis
 from sqlmodel import select, update
 
@@ -20,9 +21,8 @@ from yapit.gateway.cache import Cache
 from yapit.gateway.config import Settings
 from yapit.gateway.db import create_session
 from yapit.gateway.domain_models import BlockVariant, TTSModel, UsageType
+from yapit.gateway.metrics import log_event
 from yapit.gateway.usage import record_usage
-
-log = logging.getLogger("processor")
 
 
 class BaseTTSProcessor:
@@ -41,7 +41,7 @@ class BaseTTSProcessor:
         self._redis = redis
         self._cache = cache
 
-        log.info(f"Processor for model={model} listening to queue: {self._queue}")
+        logger.info(f"Processor for model={model} listening to queue: {self._queue}")
 
     @abstractmethod
     async def initialize(self) -> None:
@@ -66,7 +66,7 @@ class BaseTTSProcessor:
             # Entry format: "user_id:doc_id:block_idx"
             parts = entry.decode().split(":")
             if len(parts) != 3:
-                log.warning(f"Invalid subscriber entry: {entry}")
+                logger.warning(f"Invalid subscriber entry: {entry}")
                 continue
 
             user_id, doc_id_str, block_idx_str = parts
@@ -95,6 +95,7 @@ class BaseTTSProcessor:
     async def _handle_job(self, raw: bytes) -> None:
         """Handle a single job from the queue."""
         job = None
+        start_time = time.time()
         try:
             job = SynthesisJob.model_validate_json(raw)
 
@@ -102,14 +103,33 @@ class BaseTTSProcessor:
             pending_key = f"tts:pending:{job.user_id}:{job.document_id}"
             is_pending = await self._redis.sismember(pending_key, job.block_idx)
             if not is_pending:
-                log.debug(f"Block {job.block_idx} evicted (not in pending set), skipping")
+                logger.debug(f"Block {job.block_idx} evicted (not in pending set), skipping")
+                await log_event(
+                    "eviction_skipped",
+                    variant_hash=job.variant_hash,
+                    model_slug=job.synthesis_parameters.model,
+                    user_id=job.user_id,
+                    document_id=str(job.document_id),
+                    block_idx=job.block_idx,
+                )
+                # Notify subscribers so they can re-request if still needed (fixes: block A and B share the same variant_hash, A gets evicted, B doesn't complete because it was waiting on A's result)
+                await self._notify_subscribers(job.variant_hash, status="skipped")
                 await self._redis.delete(TTS_INFLIGHT.format(hash=job.variant_hash))
                 return
 
+            await log_event(
+                "synthesis_started",
+                variant_hash=job.variant_hash,
+                model_slug=job.synthesis_parameters.model,
+                user_id=job.user_id,
+                document_id=str(job.document_id),
+                block_idx=job.block_idx,
+            )
             result = await self.process(job)
+            worker_latency_ms = int((time.time() - start_time) * 1000)
 
             if not result.audio:
-                log.info(f"Empty audio for variant {job.variant_hash}, marking all subscribers as skipped")
+                logger.info(f"Empty audio for variant {job.variant_hash}, marking all subscribers as skipped")
                 await self._notify_subscribers(job.variant_hash, status="skipped")
                 await self._redis.delete(TTS_INFLIGHT.format(hash=job.variant_hash))
                 return
@@ -157,6 +177,23 @@ class BaseTTSProcessor:
                 )
                 break
 
+            total_latency_ms = int((time.time() - start_time) * 1000)
+            await log_event(
+                "synthesis_complete",
+                variant_hash=job.variant_hash,
+                model_slug=job.synthesis_parameters.model,
+                voice_slug=job.synthesis_parameters.voice,
+                text_length=len(job.synthesis_parameters.text),
+                worker_latency_ms=worker_latency_ms,
+                total_latency_ms=total_latency_ms,
+                audio_duration_ms=result.duration_ms,
+                cache_hit=False,
+                processor_route="local",
+                user_id=job.user_id,
+                document_id=str(job.document_id),
+                block_idx=job.block_idx,
+            )
+
             # Notify all subscribers that audio is cached
             await self._notify_subscribers(
                 job.variant_hash,
@@ -166,8 +203,17 @@ class BaseTTSProcessor:
             await self._redis.delete(TTS_INFLIGHT.format(hash=job.variant_hash))
 
         except Exception as e:
-            log.error(f"Failed to process job: {e}", exc_info=True)
+            logger.exception(f"Failed to process job: {e}")
             if job:
+                await log_event(
+                    "synthesis_error",
+                    variant_hash=job.variant_hash,
+                    model_slug=job.synthesis_parameters.model,
+                    user_id=job.user_id,
+                    document_id=str(job.document_id),
+                    block_idx=job.block_idx,
+                    data={"error": str(e)},
+                )
                 await self._redis.delete(TTS_INFLIGHT.format(hash=job.variant_hash))
                 # Notify all subscribers of error so they don't hang waiting
                 await self._notify_subscribers(job.variant_hash, status="error", error=str(e))
@@ -175,13 +221,23 @@ class BaseTTSProcessor:
     async def run(self) -> None:
         """Main processing loop - pull jobs from Redis queue."""
         await self.initialize()
+
+        # Limit concurrent tasks to ensure pending checks happen just-in-time.
+        # Without this, all queued jobs would be popped instantly and check is_pending
+        # before cursor_moved eviction can arrive, defeating eviction.
+        semaphore = asyncio.Semaphore(2)
+
+        async def process_with_limit(raw: bytes) -> None:
+            async with semaphore:
+                await self._handle_job(raw)
+
         while True:
             try:
-                _, raw = await self._redis.brpop([self._queue], timeout=0)  # block indefinitely waiting for jobs
-                asyncio.create_task(self._handle_job(raw))
+                _, raw = await self._redis.brpop([self._queue], timeout=0)
+                asyncio.create_task(process_with_limit(raw))
             except ConnectionError as e:
-                log.error(f"Redis connection error: {e}, retrying in 5s")
+                logger.error(f"Redis connection error: {e}, retrying in 5s")
                 await asyncio.sleep(5)
             except Exception as e:
-                log.error(f"Unexpected error in processor loop: {e}")
+                logger.error(f"Unexpected error in processor loop: {e}")
                 await asyncio.sleep(1)

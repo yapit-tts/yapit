@@ -57,8 +57,9 @@ class Settings(BaseSettings):
     stripe_price_max_monthly: str | None = None
     stripe_price_max_yearly: str | None = None
 
-    # Self-hosting: set False to disable subscription/usage limits entirely
-    billing_enabled: bool
+    billing_enabled: bool  # Self-hosting: set False to disable subscription/usage limits
+
+    metrics_db_path: str
 
     model_config = SettingsConfigDict(
         env_prefix="",

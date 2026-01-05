@@ -1,11 +1,11 @@
 """Subscription billing API endpoints."""
 
 import datetime as dt
-import logging
 from datetime import datetime
 
 import stripe
 from fastapi import APIRouter, HTTPException, Request, status
+from loguru import logger
 from pydantic import BaseModel
 from sqlalchemy.orm import selectinload
 from sqlmodel import select
@@ -23,7 +23,6 @@ from yapit.gateway.domain_models import (
 from yapit.gateway.usage import get_user_subscription
 
 router = APIRouter(prefix="/v1/billing", tags=["Billing"])
-log = logging.getLogger(__name__)
 
 # For trial eligibility: user can trial a tier only if they haven't experienced it or higher
 TIER_RANK: dict[PlanTier, int] = {
@@ -159,7 +158,7 @@ async def create_subscription_checkout(
         requested_rank = TIER_RANK.get(request.tier, 0)
         if highest_rank >= requested_rank:
             trial_eligible = False
-            log.info(
+            logger.info(
                 f"User {user.id} not eligible for {request.tier} trial (highest: {existing_sub.highest_tier_subscribed})"
             )
 
@@ -244,7 +243,7 @@ async def stripe_webhook(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid signature")
 
     event_type = event["type"]
-    log.info(f"Received Stripe webhook: {event_type}")
+    logger.info(f"Received Stripe webhook: {event_type}")
 
     if event_type not in SUBSCRIPTION_EVENTS:
         return {"status": "ignored", "event_type": event_type}
@@ -261,7 +260,7 @@ async def stripe_webhook(
         elif event_type == "invoice.payment_failed":
             await _handle_invoice_failed(event["data"]["object"], db)
     except Exception as e:
-        log.error(f"Error handling webhook {event_type}: {e}", exc_info=True)
+        logger.exception(f"Error handling webhook {event_type}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Webhook handler error")
 
     return {"status": "ok"}
@@ -277,7 +276,7 @@ async def _handle_checkout_completed(session: dict, db: DbSession, settings: Set
     customer_id = session.get("customer")
 
     if not user_id or not subscription_id:
-        log.warning(f"Checkout completed but missing user_id or subscription_id: {session}")
+        logger.warning(f"Checkout completed but missing user_id or subscription_id: {session}")
         return
 
     # Fetch subscription details from Stripe
@@ -286,14 +285,14 @@ async def _handle_checkout_completed(session: dict, db: DbSession, settings: Set
     plan_tier = stripe_sub.metadata.get("plan_tier")
 
     if not plan_tier:
-        log.warning(f"Subscription {subscription_id} missing plan_tier in metadata")
+        logger.warning(f"Subscription {subscription_id} missing plan_tier in metadata")
         return
 
     # Get plan from DB
     result = await db.exec(select(Plan).where(Plan.tier == plan_tier))
     plan = result.first()
     if not plan:
-        log.error(f"Plan {plan_tier} not found in database")
+        logger.error(f"Plan {plan_tier} not found in database")
         return
 
     first_item = stripe_sub["items"].data[0]
@@ -339,7 +338,7 @@ async def _handle_checkout_completed(session: dict, db: DbSession, settings: Set
         db.add(subscription)
 
     await db.commit()
-    log.info(f"Created/updated subscription for user {user_id}: plan={plan_tier}")
+    logger.info(f"Created/updated subscription for user {user_id}: plan={plan_tier}")
 
 
 async def _handle_subscription_updated(stripe_sub: dict, db: DbSession) -> None:
@@ -354,7 +353,7 @@ async def _handle_subscription_updated(stripe_sub: dict, db: DbSession) -> None:
     subscription = result.first()
 
     if not subscription:
-        log.warning(f"Subscription {subscription_id} not found in database")
+        logger.warning(f"Subscription {subscription_id} not found in database")
         return
 
     first_item = stripe_sub["items"]["data"][0]
@@ -392,7 +391,7 @@ async def _handle_subscription_updated(stripe_sub: dict, db: DbSession) -> None:
                 if old_tier_rank > existing_grace_rank:
                     subscription.grace_tier = old_tier
                 subscription.grace_until = subscription.current_period_end
-                log.info(
+                logger.info(
                     f"Downgrade detected for {subscription_id}: {old_tier} -> {new_plan.tier}, grace_tier={subscription.grace_tier}, grace_until={subscription.grace_until}"
                 )
             else:
@@ -402,7 +401,7 @@ async def _handle_subscription_updated(stripe_sub: dict, db: DbSession) -> None:
                     if new_tier_rank >= grace_rank:
                         subscription.grace_tier = None
                         subscription.grace_until = None
-                        log.info(f"Upgrade cleared grace period for {subscription_id}")
+                        logger.info(f"Upgrade cleared grace period for {subscription_id}")
 
             subscription.plan_id = new_plan.id
 
@@ -413,11 +412,11 @@ async def _handle_subscription_updated(stripe_sub: dict, db: DbSession) -> None:
             if new_tier_rank > current_highest_rank:
                 subscription.highest_tier_subscribed = new_plan.tier
 
-            log.info(f"Plan changed for {subscription_id}: {old_tier} -> {new_plan.tier}")
+            logger.info(f"Plan changed for {subscription_id}: {old_tier} -> {new_plan.tier}")
 
     subscription.updated = now
     await db.commit()
-    log.info(f"Updated subscription {subscription_id}: status={subscription.status}")
+    logger.info(f"Updated subscription {subscription_id}: status={subscription.status}")
 
 
 async def _handle_subscription_deleted(stripe_sub: dict, db: DbSession) -> None:
@@ -428,7 +427,7 @@ async def _handle_subscription_deleted(stripe_sub: dict, db: DbSession) -> None:
     subscription = result.first()
 
     if not subscription:
-        log.warning(f"Subscription {subscription_id} not found for deletion")
+        logger.warning(f"Subscription {subscription_id} not found for deletion")
         return
 
     now = datetime.now(tz=dt.UTC)
@@ -437,7 +436,7 @@ async def _handle_subscription_deleted(stripe_sub: dict, db: DbSession) -> None:
     subscription.updated = now
 
     await db.commit()
-    log.info(f"Marked subscription {subscription_id} as canceled")
+    logger.info(f"Marked subscription {subscription_id} as canceled")
 
 
 def _get_invoice_subscription_id(invoice: dict) -> str | None:
@@ -461,7 +460,7 @@ async def _handle_invoice_paid(invoice: dict, db: DbSession) -> None:
     subscription = result.first()
 
     if not subscription:
-        log.warning(f"Subscription {subscription_id} not found for invoice")
+        logger.warning(f"Subscription {subscription_id} not found for invoice")
         return
 
     # Update period dates from invoice
@@ -475,7 +474,7 @@ async def _handle_invoice_paid(invoice: dict, db: DbSession) -> None:
 
         # Clear grace period - new billing cycle means downgrade is now fully effective
         if subscription.grace_tier:
-            log.info(f"Clearing grace period for {subscription_id} (was {subscription.grace_tier})")
+            logger.info(f"Clearing grace period for {subscription_id} (was {subscription.grace_tier})")
             subscription.grace_tier = None
             subscription.grace_until = None
 
@@ -488,7 +487,7 @@ async def _handle_invoice_paid(invoice: dict, db: DbSession) -> None:
         db.add(new_period)
 
         await db.commit()
-        log.info(f"Created new usage period for subscription {subscription_id}")
+        logger.info(f"Created new usage period for subscription {subscription_id}")
 
 
 async def _handle_invoice_failed(invoice: dict, db: DbSession) -> None:
@@ -506,7 +505,7 @@ async def _handle_invoice_failed(invoice: dict, db: DbSession) -> None:
     subscription.status = SubscriptionStatus.past_due
     subscription.updated = datetime.now(tz=dt.UTC)
     await db.commit()
-    log.info(f"Marked subscription {subscription_id} as past_due due to failed payment")
+    logger.info(f"Marked subscription {subscription_id} as past_due due to failed payment")
 
 
 def _map_stripe_status(stripe_status: str) -> SubscriptionStatus:

@@ -1,11 +1,11 @@
 import asyncio
 import base64
 import json
-import logging
 import pprint
 import time
 from typing import Literal
 
+from loguru import logger
 from mistralai import Mistral, OCRResponse
 from pydantic import BaseModel
 
@@ -14,8 +14,6 @@ from yapit.gateway.processors.document.base import (
     DocumentExtractionResult,
     ExtractedPage,
 )
-
-log = logging.getLogger(__name__)
 
 type URLType = Literal["image_url", "document_url"]
 
@@ -104,7 +102,7 @@ def _single_ocr(request: OCRRequest, model: str, client: Mistral) -> OCRResponse
         "include_image_base64": True,
         "pages": request.pages,
     }
-    log.info(f"Calling Mistral OCR API with params:\n{pprint.pformat(request_params)}")
+    logger.info(f"Calling Mistral OCR API with params:\n{pprint.pformat(request_params)}")
     return client.ocr.process(**request_params)  # ty: ignore[invalid-argument-type]
 
 
@@ -133,7 +131,7 @@ def _batch_ocr(batch: list[OCRRequest], client: Mistral, model: str) -> dict[str
         file={"file_name": "batch.jsonl", "content": batch_content.encode()}, purpose="batch"
     )
 
-    log.info(
+    logger.info(
         f"Calling Mistral OCR API with batch request {batch_file.id} (length {len(batch_requests)}):\n{pprint.pformat(batch_requests)}"
     )
     job = client.batch.jobs.create(input_files=[batch_file.id], model=model, endpoint="/v1/ocr")
