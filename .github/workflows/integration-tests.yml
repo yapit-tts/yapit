@@ -52,14 +52,14 @@ jobs:
       - name: Build
         run: make dev-ci
 
+      - name: Run integration tests
+        run: make test-integration-local
+
       - name: Show container logs on failure
-        if: ${{ failure() }}
+        if: failure()
         run: |
           docker compose logs gateway
           docker compose logs stack-auth
           docker compose logs kokoro-cpu
           docker compose ps -a
-
-      - name: Run integration tests
-        run: make test-integration-local # temporarily using local tests
 
