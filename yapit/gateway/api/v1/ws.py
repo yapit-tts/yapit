@@ -2,12 +2,13 @@ import asyncio
 import base64
 import io
 import json
-import logging
 import pickle
+import time
 import uuid
 
 import numpy as np
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
+from loguru import logger
 from pydantic import ValidationError
 from redis.asyncio import Redis
 from sqlmodel import col, select
@@ -30,11 +31,10 @@ from yapit.gateway.config import Settings, get_settings
 from yapit.gateway.deps import get_db_session
 from yapit.gateway.domain_models import Block, BlockVariant, Document, TTSModel, UsageType, Voice
 from yapit.gateway.exceptions import UsageLimitExceededError
+from yapit.gateway.metrics import log_event
 from yapit.gateway.processors.tts.manager import TTSProcessorManager
 from yapit.gateway.stack_auth.users import User
 from yapit.gateway.usage import check_usage_limit
-
-log = logging.getLogger(__name__)
 
 router = APIRouter(tags=["websocket"])
 
@@ -142,6 +142,15 @@ async def _queue_synthesis_job(
     # Check if audio is cached
     cached_data = await cache.retrieve_data(variant_hash)
     if cached_data is not None and variant is not None:
+        await log_event(
+            "cache_hit",
+            variant_hash=variant_hash,
+            model_slug=model.slug,
+            voice_slug=voice.slug,
+            user_id=user.id,
+            document_id=str(block.document_id),
+            block_idx=block.idx,
+        )
         # Link variant to this block if it exists for a different block
         if variant.block_id != block.id:
             await db.merge(
@@ -221,9 +230,24 @@ async def _queue_synthesis_job(
     threshold = settings.tts_overflow_queue_threshold
 
     if route.overflow and queue_depth > threshold:
-        await route.overflow.process(job)  # serverless
+        processor_route = "overflow"
+        await route.overflow.process(job)
     else:
-        await redis.lpush(get_queue_name(model.slug), job.model_dump_json())  # route to primary queue
+        processor_route = "local"
+        await redis.lpush(get_queue_name(model.slug), job.model_dump_json())
+
+    await log_event(
+        "synthesis_queued",
+        variant_hash=variant_hash,
+        model_slug=model.slug,
+        voice_slug=voice.slug,
+        text_length=len(block.text),
+        queue_depth=queue_depth,
+        processor_route=processor_route,
+        user_id=user.id,
+        document_id=str(block.document_id),
+        block_idx=block.idx,
+    )
 
     return variant_hash, False
 
@@ -281,7 +305,7 @@ async def _handle_synthesize(
         for idx in msg.block_indices:
             block = block_map.get(idx)
             if not block:
-                log.warning(f"Block {idx} not found in document {msg.document_id}")
+                logger.warning(f"Block {idx} not found in document {msg.document_id}")
                 await ws.send_json(
                     WSBlockStatus(
                         document_id=msg.document_id,
@@ -307,7 +331,7 @@ async def _handle_synthesize(
                     ).model_dump(mode="json")
                 )
             except Exception as e:
-                log.error(f"Failed to queue block {idx}: {e}")
+                logger.error(f"Failed to queue block {idx}: {e}")
                 await ws.send_json(
                     WSBlockStatus(
                         document_id=msg.document_id,
@@ -350,6 +374,18 @@ async def _handle_cursor_moved(
     # Remove from pending set
     await redis.srem(pending_key, *to_evict)
 
+    await log_event(
+        "eviction_triggered",
+        user_id=user.id,
+        document_id=str(msg.document_id),
+        data={
+            "cursor": msg.cursor,
+            "window": [min_idx, max_idx],
+            "evicted_indices": to_evict,
+            "evicted_count": len(to_evict),
+        },
+    )
+
     # Notify frontend
     await ws.send_json(
         WSEvicted(
@@ -357,7 +393,7 @@ async def _handle_cursor_moved(
             block_indices=to_evict,
         ).model_dump(mode="json")
     )
-    log.debug(f"Evicted {len(to_evict)} blocks outside window [{min_idx}, {max_idx}]")
+    logger.debug(f"Evicted {len(to_evict)} blocks outside window [{min_idx}, {max_idx}]")
 
 
 async def _pubsub_listener(ws: WebSocket, redis: Redis, user_id: str):
@@ -389,6 +425,8 @@ async def tts_websocket(
     processor_manager: TTSProcessorManager = ws.app.state.tts_processor_manager
 
     await ws.accept()
+    connect_time = time.time()
+    await log_event("ws_connect", user_id=user.id)
 
     pubsub_task = asyncio.create_task(_pubsub_listener(ws, redis, user.id))
 
@@ -414,7 +452,9 @@ async def tts_websocket(
                 await ws.send_json({"type": "error", "error": "Invalid JSON"})
 
     except WebSocketDisconnect:
-        log.info(f"WebSocket disconnected for user {user.id}")
+        session_duration_ms = int((time.time() - connect_time) * 1000)
+        await log_event("ws_disconnect", user_id=user.id, data={"session_duration_ms": session_duration_ms})
+        logger.info(f"WebSocket disconnected for user {user.id} after {session_duration_ms}ms")
     finally:
         pubsub_task.cancel()
         try:

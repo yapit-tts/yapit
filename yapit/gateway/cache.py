@@ -1,13 +1,10 @@
 import abc
-import logging
 import sqlite3
 import time
 from enum import StrEnum, auto
 from pathlib import Path
 
 from pydantic import BaseModel
-
-log = logging.getLogger(__name__)
 
 
 class Caches(StrEnum):

@@ -1,19 +1,17 @@
 import asyncio
 import importlib
 import json
-import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from loguru import logger
 from redis.asyncio import Redis
 
 from yapit.contracts import SynthesisMode, get_queue_name
 from yapit.gateway.cache import Cache
 from yapit.gateway.config import Settings
 from yapit.gateway.processors.tts.base import BaseTTSProcessor
-
-log = logging.getLogger("processor_manager")
 
 
 @dataclass
@@ -72,7 +70,7 @@ class TTSProcessorManager:
                 overflow=overflow,
             )
 
-        log.info(f"Loaded {len(self._routes)} synthesis route(s)")
+        logger.info(f"Loaded {len(self._routes)} synthesis route(s)")
 
     async def start(self, config_path: str) -> None:
         self._load_routes(config_path)
@@ -80,7 +78,7 @@ class TTSProcessorManager:
         for route in self._routes.values():
             self._tasks.append(asyncio.create_task(route.backend.run()))
 
-        log.info(f"Started {len(self._tasks)} TTS processor(s)")
+        logger.info(f"Started {len(self._tasks)} TTS processor(s)")
 
     async def stop(self) -> None:
         for task in self._tasks:
@@ -91,7 +89,7 @@ class TTSProcessorManager:
 
         self._routes.clear()
         self._tasks.clear()
-        log.info("All processors stopped")
+        logger.info("All processors stopped")
 
     def get_route(self, model: str, mode: SynthesisMode) -> SynthesisRoute | None:
         return self._routes.get((model, mode))

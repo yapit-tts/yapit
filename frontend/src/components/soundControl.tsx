@@ -1,7 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { Play, Pause, Volume2, SkipBack, SkipForward, Loader2, Square, WifiOff, ChevronUp } from "lucide-react";
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { VoicePicker } from "@/components/voicePicker";
 import { SettingsDialog } from "@/components/settingsDialog";
 import { type VoiceSelection } from "@/lib/voiceSelection";
@@ -155,6 +155,9 @@ function SmoothProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
     onBlockHover?.(null, false);
   };
 
+  // Track last hover position to avoid unnecessary updates
+  const lastHoverBlockRef = useRef<number | null>(null);
+
   // Mouse events
   const handleMouseDown = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -164,17 +167,21 @@ function SmoothProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
     if (dragStartXRef.current !== null) {
       handleMove(e.clientX);
     } else {
-      // Just hovering - show indicator but don't trigger drag behavior
+      // Just hovering - show indicator but only update if block changed
       const blockIdx = getBlockFromX(e.clientX);
-      setSeekPosition(blockIdx);
-      onBlockHover?.(blockIdx, false);
+      if (blockIdx !== lastHoverBlockRef.current) {
+        lastHoverBlockRef.current = blockIdx;
+        setSeekPosition(blockIdx);
+        onBlockHover?.(blockIdx, false);
+      }
     }
   };
   const handleMouseUp = (e: React.MouseEvent) => {
     handleEnd(e.clientX);
   };
   const handleMouseLeave = () => {
-    setSeekPosition(null); // Always clear indicator on leave
+    lastHoverBlockRef.current = null;
+    setSeekPosition(null);
     if (!isDragging) {
       onBlockHover?.(null, false);
     }
@@ -193,9 +200,8 @@ function SmoothProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
     handleEnd(getClientX(e));
   };
 
-  // Build CSS gradient from block states
-  // Group consecutive blocks with same state to reduce gradient complexity
-  const buildGradient = () => {
+  // Build CSS gradient from block states - memoized to avoid rebuilding on every hover
+  const gradient = useMemo(() => {
     if (numBlocks === 0) return 'transparent';
 
     // State colors: pending=warm brown, cached=light green, current=solid green
@@ -229,9 +235,8 @@ function SmoothProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
     }
 
     return `linear-gradient(to right, ${stops.join(', ')})`;
-  };
+  }, [blockStates, currentBlock, numBlocks]);
 
-  const gradient = buildGradient();
   const currentPct = numBlocks > 0 ? (currentBlock / numBlocks) * 100 : 0;
 
   return (
@@ -263,15 +268,15 @@ function SmoothProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
           boxShadow: '0 0 6px oklch(0.55 0.1 133.7 / 0.8)',
         }}
       />
-      {/* Seek position indicator - green, same as current playing */}
+      {/* Seek position indicator - same width as current position */}
       {seekPosition !== null && seekPosition !== currentBlock && (
         <div
-          className="absolute top-0 bottom-0 w-1.5 pointer-events-none"
+          className="absolute top-0 bottom-0 w-1 pointer-events-none"
           style={{
             left: `${(seekPosition / numBlocks) * 100}%`,
             transform: 'translateX(-50%)',
             backgroundColor: 'var(--primary)',
-            boxShadow: '0 0 8px oklch(0.55 0.1 133.7 / 0.9)',
+            boxShadow: '0 0 6px oklch(0.55 0.1 133.7 / 0.8)',
           }}
         />
       )}
@@ -407,7 +412,7 @@ function BlockyProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
         return (
           <div
             key={idx}
-            className={`h-full transition-colors duration-150 ${bgColor}`}
+            className={`h-full ${bgColor}`}
             style={{
               flex: '1 1 0',
               minWidth: 0,
@@ -499,6 +504,12 @@ const SoundControl = ({
   const skipBackProps = useRepeatOnHold(onSkipBack, (currentBlock ?? 0) <= 0 && !isPlaying);
   const skipForwardProps = useRepeatOnHold(onSkipForward, (currentBlock ?? 0) >= numBlocks - 1);
 
+  // Hover handlers for play button spinner (show stop icon on hover during buffering)
+  const handleSpinnerMouseEnter = useCallback(() => {
+    if (isBuffering || isSynthesizing) setIsHoveringSpinner(true);
+  }, [isBuffering, isSynthesizing]);
+  const handleSpinnerMouseLeave = useCallback(() => setIsHoveringSpinner(false), []);
+
   useEffect(() => {
     setProgressDisplay(msToTime(audioProgress));
   }, [audioProgress]);
@@ -531,8 +542,8 @@ const SoundControl = ({
           size="lg"
           className="rounded-full w-14 h-14"
           onClick={isBuffering || isSynthesizing ? onCancelSynthesis : isPlaying ? onPause : onPlay}
-          onMouseEnter={() => (isBuffering || isSynthesizing) && setIsHoveringSpinner(true)}
-          onMouseLeave={() => setIsHoveringSpinner(false)}
+          onMouseEnter={handleSpinnerMouseEnter}
+          onMouseLeave={handleSpinnerMouseLeave}
         >
           {isBuffering || isSynthesizing ? (
             isHoveringSpinner ? (

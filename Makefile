@@ -16,15 +16,18 @@ prod-build:
 	docker compose build --parallel
 
 dev-cpu: down
+	rm -f metrics/metrics.db
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.kokoro-cpu.yml \
 	--profile stripe up -d --build --wait
 	$(call create-dev-user)
 
 dev-gpu: down
+	rm -f metrics/metrics.db
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.kokoro-gpu.yml \
 	--profile stripe up -d --build
 
 dev-mac: down
+	rm -f metrics/metrics.db
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.kokoro-cpu.yml -f docker-compose.mac.yml \
 	--profile stripe up -d --build --wait
 	$(call create-dev-user)

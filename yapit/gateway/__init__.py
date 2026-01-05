@@ -1,4 +1,3 @@
-import logging
 import sys
 from contextlib import asynccontextmanager
 
@@ -6,29 +5,34 @@ import redis.asyncio as redis
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, ORJSONResponse
+from loguru import logger
 
 from yapit.gateway.api.v1 import routers as v1_routers
 from yapit.gateway.config import Settings, get_settings
 from yapit.gateway.db import close_db, prepare_database
 from yapit.gateway.deps import get_audio_cache
 from yapit.gateway.exceptions import APIError
+from yapit.gateway.metrics import init_metrics_db, start_metrics_writer, stop_metrics_writer
 from yapit.gateway.processors.document.manager import DocumentProcessorManager
 from yapit.gateway.processors.tts.manager import TTSProcessorManager
 
-# Configure root logger for application-wide logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
-    stream=sys.stdout,
+# Configure loguru for stdout
+logger.remove()  # Remove default handler
+logger.add(
+    sys.stdout,
+    format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
+    level="INFO",
+    colorize=True,
 )
-
-log = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = app.dependency_overrides[get_settings]()
     assert isinstance(settings, Settings)
+
+    init_metrics_db(settings.metrics_db_path)
+    await start_metrics_writer()
 
     await prepare_database(settings)
 
@@ -50,6 +54,7 @@ async def lifespan(app: FastAPI):
     yield
 
     await tts_processor_manager.stop()
+    await stop_metrics_writer()
     await close_db()
     await app.state.redis_client.aclose()
 
@@ -79,7 +84,7 @@ def create_app(
 
     @app.exception_handler(APIError)
     async def api_error_handler(request: Request, exc: APIError):
-        log.error(f"API error: {str(exc)}", exc_info=exc)
+        logger.exception(f"API error: {exc}")
         return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
 
     for r in v1_routers:
