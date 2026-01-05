@@ -1,57 +1,59 @@
 #!/usr/bin/env bash
-# Deploy to production: sync secrets + trigger Dokploy deployment
+# Deploy to production via Dokploy API
+#
+# Environment variables:
+#   VPS_HOST      - SSH host (default: root@78.46.242.1)
+#   SKIP_VERIFY   - Set to 1 to skip post-deploy verification
+#   WAIT_TIME     - Seconds to wait before verifying (default: 120)
 set -euo pipefail
 
-SCRIPT_DIR="$(dirname "$0")"
+cd "$(dirname "$0")/.."
 
-echo "==> Syncing secrets to Dokploy..."
-"$SCRIPT_DIR/sync-secrets-to-dokploy.sh"
-
-VPS_HOST="root@78.46.242.1"
-DOKPLOY_API="http://localhost:3000/api/trpc"
-COMPOSE_ID="Fmex638n6F7Nrw81Lubc_"
+VPS_HOST="${VPS_HOST:-root@78.46.242.1}"
 PROD_URL="https://yaptts.org"
+WAIT_TIME="${WAIT_TIME:-120}"
+COMPOSE_ID="Fmex638n6F7Nrw81Lubc_"
 
-GIT_COMMIT=$(git rev-parse --short HEAD)
-echo "==> Deploying commit: $GIT_COMMIT"
+GIT_COMMIT="${GIT_COMMIT:-$(git rev-parse --short HEAD)}"
 
-# Set GIT_COMMIT env var in Dokploy (for build arg)
-echo "==> Setting GIT_COMMIT=$GIT_COMMIT in Dokploy..."
-ssh "$VPS_HOST" "TOKEN=\$(cat /root/.dokploy-token); \
-  CURRENT_ENV=\$(curl -s -H \"x-api-key: \$TOKEN\" \
-    \"$DOKPLOY_API/compose.one?input=%7B%22json%22%3A%7B%22composeId%22%3A%22$COMPOSE_ID%22%7D%7D\" \
-    | jq -r '.result.data.json.env // \"\"'); \
-  FILTERED_ENV=\$(echo \"\$CURRENT_ENV\" | grep -v '^GIT_COMMIT=' || true); \
-  NEW_ENV=\"\${FILTERED_ENV}
-GIT_COMMIT=$GIT_COMMIT\"; \
-  curl -s -X POST -H \"x-api-key: \$TOKEN\" -H \"Content-Type: application/json\" \
-    \"$DOKPLOY_API/compose.update\" \
-    -d \"\$(jq -n --arg env \"\$NEW_ENV\" --arg id \"$COMPOSE_ID\" '{json: {composeId: \$id, env: \$env}}')\" > /dev/null"
+echo "==> Triggering deployment for commit: $GIT_COMMIT"
 
-# Trigger deployment
-echo "==> Triggering deployment..."
-ssh "$VPS_HOST" "TOKEN=\$(cat /root/.dokploy-token); curl -s -X POST \
-  -H \"x-api-key: \$TOKEN\" \
-  -H \"Content-Type: application/json\" \
-  \"$DOKPLOY_API/compose.deploy\" \
-  -d '{\"json\":{\"composeId\":\"$COMPOSE_ID\"}}'" | jq -r '.result.data.json | "Deployment: \(.message)"'
+ssh "$VPS_HOST" bash -s "$COMPOSE_ID" << 'EOF'
+  set -euo pipefail
+  COMPOSE_ID="$1"
+  TOKEN=$(cat /root/.dokploy-token)
+  API="http://localhost:3000/api/trpc"
 
-# Wait for deployment and run smoke tests
-echo "==> Waiting for deployment (90s)..."
-sleep 90
+  RESULT=$(curl -sf -X POST \
+    -H "x-api-key: $TOKEN" \
+    -H "Content-Type: application/json" \
+    "$API/compose.deploy" \
+    -d "{\"json\":{\"composeId\":\"$COMPOSE_ID\"}}")
 
-echo "==> Running smoke tests..."
+  echo "$RESULT" | jq -r '.result.data.json | "Deployment: \(.message // "triggered")"'
+EOF
+
+if [ "${SKIP_VERIFY:-0}" = "1" ]; then
+  echo "==> Skipping verification"
+  exit 0
+fi
+
+echo "==> Waiting ${WAIT_TIME}s for deployment..."
+sleep "$WAIT_TIME"
+
+echo "==> Verifying..."
 if curl -sf "$PROD_URL/api/health" > /dev/null; then
   echo "  ✓ /api/health OK"
 else
-  echo "  ✗ /api/health FAILED" && exit 1
+  echo "  ✗ /api/health FAILED"
+  exit 1
 fi
 
-VERSION=$(curl -sf "$PROD_URL/api/version" | jq -r '.commit')
-if [ "$VERSION" = "$GIT_COMMIT" ]; then
-  echo "  ✓ /api/version shows $VERSION"
+DEPLOYED=$(curl -sf "$PROD_URL/api/version" | jq -r '.commit // "unknown"')
+if [ "$DEPLOYED" = "$GIT_COMMIT" ]; then
+  echo "  ✓ /api/version shows $DEPLOYED"
 else
-  echo "  ⚠ /api/version shows $VERSION (expected $GIT_COMMIT)"
+  echo "  ⚠ /api/version shows $DEPLOYED (expected $GIT_COMMIT)"
 fi
 
 echo "==> Deploy complete!"
