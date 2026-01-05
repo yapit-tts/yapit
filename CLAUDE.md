@@ -23,7 +23,18 @@ Note: We don't work heavily with GitHub issues (solo dev + claude for now -- the
 - `make check` for type checking (backend: ty, frontend: tsc + eslint)
 - `make dev-cpu` to start backend (or `make dev-mac` on macOS)
   - If no dev user exists after startup (login fails), run `make dev-user` - there's a race condition where stack-auth health check sometimes fails before user creation runs
-- **CI timing**: Integration tests take 4-5 minutes (Docker build). Wait for all checks before merging PRs.
+- **CI timing**: Full CI (tests + build + deploy) takes ~10 minutes. Tests alone ~5 min, build+deploy ~5 min.
+- **Skip tests on deploy**: Add `[skip tests]` anywhere in commit message to skip CI tests and go straight to build+deploy. Use when you're confident in the change and want faster deploys.
+
+## Metrics (SQLite)
+
+Gateway logs metrics to `metrics.db` (SQLite). Useful for debugging performance, understanding usage patterns.
+
+**Table:** `metrics_event` — event_type, timestamp, model_slug, voice_slug, text_length, queue_wait_ms, worker_latency_ms, audio_duration_ms, cache_hit, processor_route, queue_depth, user_id, document_id, etc.
+
+**Event types:** `cache_hit`, `synthesis_queued`, `synthesis_started`, `synthesis_complete`, `synthesis_error`, `eviction_triggered`, `eviction_skipped`, `ws_connect`, `ws_disconnect`, `error`, `warning`
+
+See `yapit/gateway/metrics.py` for schema and query examples.
 
 ## VPS / Production Debugging
 
@@ -97,51 +108,22 @@ Don't commit them with code changes - we'll batch add them later.
 ### Branch Strategy
 
 - `main` - production (deploys on push)
-- `dev` - default working branch for batched/unrelated changes
-- Feature branches for larger isolated features
+- `dev` - for batching changes before deploy
+- Feature branches for larger isolated work
 
-**Workflow**: Push directly to `main` for small changes. Use `dev` for batched work, merge to `main` when ready:
+**Rapid iteration / fixes:** Work on main directly.
+
+**Batched work:** Use dev, merge to main when ready.
+
+**If branches diverge** (ff-only fails): Use `git cherry-pick <commit>` to move commits to main. Then sync dev:
 ```bash
-git checkout main && git merge dev --ff-only && git push
+git checkout dev && git merge main  # brings dev up to date with main
 ```
 
 ### Legacy Plans
 
 Old plan files live in `~/.claude/plans/` (searchable via memex). New work uses `agent/tasks/`.
-Put less weight on these.
-
-| File | Purpose | Status | Read When |
-|------|---------|--------|-----------|
-| `block-click-investigation.md` | Block click not working on some documents - investigated race condition and handler structure | Investigated | Block click issues, wrapper div onclick, documentBlocks race condition |
-| `playback-flicker-and-whitespace.md` | Fix playback flicker, block highlighting, list rendering, whitespace between spans | Done | Playback flicker, DOM-based highlighting, list CSS, paragraph group spacing |
-| `xml-support-and-biorxiv-403.md` | XML support evaluation, bioRxiv 403 investigation | Done | XML formats, JATS, bioRxiv access, User-Agent issues |
-| `ui-qol-improvements.md` | 404 page, MediaSession sync, hide new doc button on homepage | Done | 404 handling, hardware media keys, sidebar UX |
-| `document-qol-features.md` | Source URL clickable title + markdown export buttons | Done | Document export, source URL, copy/download markdown |
-| `visual-group-rendering.md` | Render split paragraphs as single `<p>` with `<span>`s to preserve original appearance | Done | Split paragraphs, visual_group_id, paragraph rendering |
-| `monitoring-observability-logging.md` | Structured logging with loguru: request tracing, synthesis timing, JSON output for Claude analysis | Ready to Implement | Logging, observability, performance debugging, loguru |
-| `in-document-anchor-links.md` | Make relative links like `#methods` scroll to headings | Done | Anchor links, in-doc navigation, heading IDs, link styling |
-| `playback-ux-improvements.md` | Position persistence fix, KaTeX rendering, auto-scroll, settings UI | Done | Playback UX, position restore, math rendering, scroll tracking |
-| `audio-speed-control.md` | Replace SoundTouchJS with browser native preservesPitch | Done | Audio speed control, playback bugs at high speed |
-| `kokoro-cpu-parallelism.md` | Docker replicas for kokoro-cpu, load balancing options, max_parallel removed | Done | Kokoro scaling, worker replicas, parallelism |
-| `runpod-cli-knowledge.md` | RunPod CLI reference: pod creation, SSH, file transfer, common issues | Reference | RunPod GPU pods, file transfer, SSH issues |
-| `reflective-hopping-pancake.md` | HIGGS voice consistency via context accumulation (pass audio tokens between blocks) | Phase 1: Testing | HIGGS voice consistency, audio tokens, context passing, long-form reading |
-| `kokoro-cpu-performance-subblocks.md` | Sub-block splitting for faster time-to-first-block, kokoro CPU perf analysis | Done | TTS latency, block splitting, sub-block highlighting, kokoro scaling |
-| `billing-pricing-strategy.md` | Stripe Managed Payments, credit pricing, competitor analysis, Austrian business setup | Decided | Billing integration, pricing, Stripe setup |
-| `cloud-storage-provider.md` | S3/R2 evaluation for audio cache and document storage | Decision: Not Needed | Cloud storage, caching strategy, infrastructure |
-| `runpod-infra-as-code.md` | RunPod IaC: native adapter, model caching, slim Docker, SDK deploy | Done | RunPod deployment, HIGGS worker, GitHub Actions, model caching |
-| `model-voice-picker.md` | Model/voice picker in playback controls | Done | VoicePicker component, voice state, localStorage persistence |
-| `plan-index-improvement.md` | Meta: improve plan index | Done | - |
-| `higgs-audio-investigation.md` | HIGGS model capabilities, voice params, vLLM vs native | Research Complete | HIGGS integration, voice config params, cold start issues |
-| `tts-performance-investigation.md` | Browser TTS perf, WASM slowness | In Progress | Slow synthesis, WASM debugging, prefetch timing |
-| `kokoro-js-frontend.md` | Browser TTS (Kokoro.js), anonymous auth | Phase 2 Done | useBrowserTTS hook, anonymous flow, browser TTS bugs |
-| `bugs-and-tech-debt.md` | Auth race conditions, dead code cleanup | Done | API provider patterns, isAuthReady, dropdown+dialog state |
-| `frontend-structured-document-rendering.md` | Block rendering, click-to-jump | Done | StructuredDocument component, block highlighting |
-| `markdown-parser-document-format.md` | Markdown parsing, JSON format | Done | StructuredDocument schema, audioBlockIdx, markdown-it-py |
-| `sidebar-polish-retrospective.md` | Rename/delete, theme, dropdowns | Done | Radix dropdown patterns, theme colors, controlled state |
-| `rustling-crafting-gosling.md` | SoundTouchJS speed control | Done | Sample rate issues (44100 vs 24000), AudioPlayer, pitch-preserving playback |
-| `ux-ui-strategy-session.md` | MVP feature planning | Done | Product direction, voice picker UX, anonymous flow decisions |
-| `yapit-browser-processor-review.md` | ClientProcessor backend | Done | ClientProcessor flow, job_id coordination, /tts/submit endpoint |
-| `yapit-project-review.md` | GitHub issue status review | Done | - |
+Put less weight on these. All of them are now marked as "done".
 
 ## Key Technical Decisions
 

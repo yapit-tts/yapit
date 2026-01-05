@@ -27,15 +27,16 @@ env:
 
 jobs:
   # === Tests (run in parallel) ===
+  # Skip with [skip tests] in commit message or workflow_dispatch skip_tests input
   lint:
-    if: ${{ !inputs.skip_tests }}
+    if: ${{ !inputs.skip_tests && !contains(github.event.head_commit.message, '[skip tests]') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/ruff-action@v3
 
   test-unit:
-    if: ${{ !inputs.skip_tests }}
+    if: ${{ !inputs.skip_tests && !contains(github.event.head_commit.message, '[skip tests]') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -47,7 +48,7 @@ jobs:
       - run: make test-unit
 
   test-integration:
-    if: ${{ !inputs.skip_tests }}
+    if: ${{ !inputs.skip_tests && !contains(github.event.head_commit.message, '[skip tests]') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -81,7 +82,7 @@ jobs:
     if: |
       always() &&
       github.ref == 'refs/heads/main' &&
-      (inputs.skip_tests || (needs.lint.result == 'success' && needs.test-unit.result == 'success' && needs.test-integration.result == 'success'))
+      (inputs.skip_tests || contains(github.event.head_commit.message, '[skip tests]') || (needs.lint.result == 'success' && needs.test-unit.result == 'success' && needs.test-integration.result == 'success'))
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -127,7 +128,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # === Deploy via SSH + Dokploy API ===
+  # === Deploy via SSH + Docker Stack ===
   deploy:
     needs: build-and-push
     runs-on: ubuntu-latest
@@ -140,7 +141,7 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -H 78.46.242.1 >> ~/.ssh/known_hosts
+          ssh-keyscan -H 46.224.195.97 >> ~/.ssh/known_hosts
 
       - name: Install sops
         run: |
