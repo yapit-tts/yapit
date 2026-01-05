@@ -1,3 +1,4 @@
+.env.local
 *repomix*.xml
 *.wav
 *.mp3
@@ -38,6 +39,7 @@ downloads/
 eggs/
 .eggs/
 lib/
+!frontend/src/lib/
 lib64/
 parts/
 sdist/
@@ -195,3 +197,8 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+.data/
+
+# Private agent files (not for public commit)
+agent/*/private/

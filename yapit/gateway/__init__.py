@@ -1,47 +1,79 @@
-import asyncio
-import contextlib
+import sys
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+import redis.asyncio as redis
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import ORJSONResponse
-from redis.asyncio import Redis
+from fastapi.responses import JSONResponse, ORJSONResponse
+from loguru import logger
 
 from yapit.gateway.api.v1 import routers as v1_routers
-from yapit.gateway.cache import get_cache_backend
-from yapit.gateway.cache_listener import run_cache_listener
-from yapit.gateway.config import get_settings
-from yapit.gateway.db import SessionLocal, close_db, get_db, prepare_database
-from yapit.gateway.redis_client import close_redis, get_redis
+from yapit.gateway.config import Settings, get_settings
+from yapit.gateway.db import close_db, prepare_database
+from yapit.gateway.deps import get_audio_cache
+from yapit.gateway.exceptions import APIError
+from yapit.gateway.metrics import init_metrics_db, start_metrics_writer, stop_metrics_writer
+from yapit.gateway.processors.document.manager import DocumentProcessorManager
+from yapit.gateway.processors.tts.manager import TTSProcessorManager
+
+# Configure loguru for stdout
+logger.remove()  # Remove default handler
+logger.add(
+    sys.stdout,
+    format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
+    level="INFO",
+    colorize=True,
+)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await prepare_database()
+    settings = app.dependency_overrides[get_settings]()
+    assert isinstance(settings, Settings)
 
-    redis: Redis = await get_redis()
-    cache_ = get_cache_backend()
-    db_ = await get_db().__anext__()
+    init_metrics_db(settings.metrics_db_path)
+    await start_metrics_writer()
 
-    listener_task = asyncio.create_task(run_cache_listener(redis, cache_, db_))
+    await prepare_database(settings)
+
+    app.state.redis_client = await redis.from_url(settings.redis_url, decode_responses=False)
+    app.state.audio_cache = get_audio_cache(settings)
+
+    document_processor_manager = DocumentProcessorManager(settings)
+    document_processor_manager.load_processors(settings.document_processors_file)
+    app.state.document_processor_manager = document_processor_manager
+
+    tts_processor_manager = TTSProcessorManager(
+        redis=app.state.redis_client,
+        cache=app.state.audio_cache,
+        settings=settings,
+    )
+    app.state.tts_processor_manager = tts_processor_manager
+    await tts_processor_manager.start(settings.tts_processors_file)
 
     yield
 
-    listener_task.cancel()
-    with contextlib.suppress(asyncio.CancelledError):
-        await listener_task
+    await tts_processor_manager.stop()
+    await stop_metrics_writer()
     await close_db()
-    await close_redis()
+    await app.state.redis_client.aclose()
 
 
-def create_app() -> FastAPI:
-    settings = get_settings()
+def create_app(
+    settings: Settings | None = None,
+) -> FastAPI:
+    if settings is None:
+        settings = Settings()  # type: ignore
+
     app = FastAPI(
         title="Yapit Gateway",
         version="0.1.0",
         default_response_class=ORJSONResponse,
         lifespan=lifespan,
     )
+
+    app.dependency_overrides[get_settings] = lambda: settings
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
@@ -49,9 +81,26 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.exception_handler(APIError)
+    async def api_error_handler(request: Request, exc: APIError):
+        logger.exception(f"API error: {exc}")
+        return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
+
     for r in v1_routers:
         app.include_router(r)
+
+    @app.get("/health")
+    async def health():
+        return {"status": "ok"}
+
+    @app.get("/version")
+    async def version():
+        try:
+            with open("/app/version.txt") as f:
+                commit = f.read().strip()
+        except FileNotFoundError:
+            commit = "unknown"
+        return {"commit": commit}
+
     return app
-
-
-app = create_app()

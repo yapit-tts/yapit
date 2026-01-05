@@ -1,38 +1,77 @@
-from functools import lru_cache
-from typing import Literal
+import os
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from yapit.gateway.cache import CacheConfig
-from yapit.gateway.domain_models import User
-from yapit.gateway.text_splitter import TextSplitterConfig
-
-ANON_USER = User(id="anonymous_user", email="anon@example.com", tier="free")
+from yapit.gateway.cache import CacheConfig, Caches
 
 
 class Settings(BaseSettings):
-    sqlalchemy_echo: bool = False
-    db_auto_create: bool = False
-    db_seed: bool = False
+    sqlalchemy_echo: bool
+    db_drop_and_recreate: bool  # If True: drops all tables and recreates (dev mode)
+    db_seed: bool
 
-    database_url: str = "postgresql+asyncpg://yapit:yapit@postgres:5432/yapit"
-    redis_url: str = "redis://redis:6379/0"
-    cors_origins: list[str] = ["http://localhost:5173"]
+    database_url: str
+    redis_url: str
+    cors_origins: list[str]
 
-    cache_type: Literal["noop", "filesystem", "s3"] = "noop"
-    splitter_type: Literal["dummy", "spacy"] = "dummy"
+    audio_cache_type: Caches
+    audio_cache_config: CacheConfig
 
-    splitter_config: TextSplitterConfig = TextSplitterConfig()
-    cache_config: CacheConfig = CacheConfig()
+    stack_auth_api_host: str
+    stack_auth_project_id: str
+    stack_auth_server_key: str
+
+    tts_processors_file: str
+    tts_overflow_queue_threshold: int  # jobs per worker before routing to overflow
+    runpod_api_key: str | None = None
+    runpod_request_timeout_seconds: int | None = None
+    inworld_api_key: str | None = None
+    client_request_timeout_seconds: int
+    synthesis_polling_timeout_seconds: int
+
+    document_cache_type: Caches
+    document_cache_config: CacheConfig
+    document_cache_ttl_webpage: int  # in seconds
+    document_cache_ttl_document: int  # in seconds
+
+    document_processors_file: str
+    mistral_api_key: str | None = None
+
+    document_max_download_size: int = 100 * 1024 * 1024  # 100MB default
+
+    max_block_chars: int
+
+    # TTS prefetch eviction window
+    tts_buffer_behind: int  # Blocks to keep behind cursor for skip-back
+    tts_buffer_ahead: int  # Prefetch window ahead of cursor
+
+    stripe_secret_key: str | None = None
+    stripe_webhook_secret: str | None = None
+
+    # Stripe price IDs (from stripe_setup.py output)
+    # Test IDs go in .env.dev, live IDs go in .env.prod
+    stripe_price_basic_monthly: str | None = None
+    stripe_price_basic_yearly: str | None = None
+    stripe_price_plus_monthly: str | None = None
+    stripe_price_plus_yearly: str | None = None
+    stripe_price_max_monthly: str | None = None
+    stripe_price_max_yearly: str | None = None
+
+    billing_enabled: bool  # Self-hosting: set False to disable subscription/usage limits
+
+    metrics_db_path: str
 
     model_config = SettingsConfigDict(
         env_prefix="",
-        env_file=".env",
+        env_file=[os.getenv("ENV_FILE", ""), ".env"],
         extra="ignore",
         env_nested_delimiter="__",
     )
 
 
-@lru_cache  # singleton factory
-def get_settings() -> Settings:  # di-friendly wrapper
-    return Settings()
+def get_settings() -> Settings:  # ty: ignore[invalid-return-type]
+    """This is only used for dependency references, see __init__.py:
+
+    app.dependency_overrides[get_settings] = lambda: Settings()  # type: ignore
+    """
+    ...

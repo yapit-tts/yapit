@@ -1,7 +1,41 @@
 services:
   gateway:
+    env_file:
+      - ./.env.prod
+      - ./.env.dev
+      - ./.env
+    environment:
+      ENV_FILE: .env.dev
     ports:
-      - "8000:8000" # todo maybe the other approach (without extra compose.dev) works again ..?
+      - "8000:8000"
+    volumes:
+      - "./tts_processors.dev.json:/app/tts_processors.dev.json"
+      - "./tts_processors.ci.json:/app/tts_processors.ci.json"
+      - "./document_processors.dev.json:/app/document_processors.dev.json"
+      - "./metrics:/app/metrics"
+
+  stack-auth:
+    env_file: ./.env.dev
+    ports:
+      - "8101:8101"
+      - "8102:8102"
+      
   redis:
     ports:
       - "6379:6379"
+      
+  postgres:
+    env_file: ./.env.dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - "./dev/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql"
+
+  stripe-cli:
+    profiles: ["stripe"]
+    image: stripe/stripe-cli:latest
+    command: listen --forward-to http://gateway:8000/v1/billing/webhook --api-key ${STRIPE_SECRET_KEY}
+    env_file:
+      - ./.env
+    depends_on:
+      - gateway

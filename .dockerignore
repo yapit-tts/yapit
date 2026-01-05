@@ -1,0 +1,91 @@
+# Git
+.git/
+.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+*.cover
+*.log
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+
+# Development artifacts
+notes/
+test_audio_cache/
+tests/
+repomix-output.xml
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.next/
+frontend/build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Build artifacts
+build/
+dist/
+*.egg
+eggs/
+.eggs/
+develop-eggs/
+downloads/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+
+# Media files
+*.wav
+*.mp3
+*.ogg
+*.flac
+*.m4a
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.bmp
+*.zip
+*.tar
+*.gz
+*.rar
+*.7z
+
+# Documentation
+docs/
+notes/
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+

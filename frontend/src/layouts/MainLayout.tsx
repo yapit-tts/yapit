@@ -1,13 +1,26 @@
-import { ReactNode } from 'react';
-import { Navbar } from "@/components/navbar";
+import { ReactNode, useEffect } from 'react';
+import { useNavigate } from 'react-router';
+import { useUser } from '@stackframe/react';
 import SidebarLayout from "@/layouts/SidebarLayout";
 
 const MainLayout = ({ children }: { children: ReactNode }) => {
+	const user = useUser();
+	const navigate = useNavigate();
+
+	useEffect(() => {
+		if (user) {
+			const returnTo = localStorage.getItem("returnAfterSignIn");
+			if (returnTo) {
+				localStorage.removeItem("returnAfterSignIn");
+				navigate(returnTo);
+			}
+		}
+	}, [user, navigate]);
+
 	return (
-		<div>
-			<Navbar />
-			<SidebarLayout><main>{children}</main></SidebarLayout>
-		</div>
+		<SidebarLayout>
+			<main>{children}</main>
+		</SidebarLayout>
 	)
 }
 

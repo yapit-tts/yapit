@@ -20,6 +20,9 @@
   --color-secondary-foreground: var(--secondary-foreground);
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
+  --color-muted-warm: var(--muted-warm);
+  --color-muted-brown: var(--muted-brown);
+  --color-muted-table: var(--muted-table);
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
@@ -45,18 +48,21 @@
   --radius: 0.625rem;
   --background: oklch(0.96 0.0267 97.61);
   --foreground: oklch(0.35 0.0355 43.21);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
+  --card: oklch(0.98 0.0178 97.61);
+  --card-foreground: oklch(0.35 0.0355 43.21);
+  --popover: oklch(0.98 0.0178 97.61);
+  --popover-foreground: oklch(0.35 0.0355 43.21);
   --primary: oklch(0.55 0.1 133.7);
   --primary-foreground: oklch(0.96 0.0267 97.61);
   --secondary: oklch(0.65 0.0841 83.58);
   --secondary-foreground: oklch(0.96 0.0267 97.61);
   --muted: oklch(0.86 0.0461 115.51);
   --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.76 0.0662 86.21);
-  --accent-foreground: oklch(0.205 0 0);
+  --muted-warm: oklch(0.88 0.035 85);
+  --muted-brown: oklch(0.9036 0.029 91.66);
+  --muted-table: oklch(0.82 0.04 75);
+  --accent: oklch(0.93 0.025 130);
+  --accent-foreground: oklch(0.30 0.04 130);
   --destructive: oklch(0.577 0.245 27.325);
   --border: oklch(0.76 0.0662 86.21);
   --input: oklch(0.922 0 0);
@@ -70,8 +76,8 @@
   --sidebar-foreground: oklch(0.35 0.0355 43.21);
   --sidebar-primary: oklch(0.55 0.1 133.7);
   --sidebar-primary-foreground: oklch(0.96 0.0267 97.61);
-  --sidebar-accent: oklch(0.76 0.0662 86.21);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-accent: oklch(0.93 0.025 130);
+  --sidebar-accent-foreground: oklch(0.30 0.04 130);
   --sidebar-border: oklch(0.76 0.0662 86.21);
   --sidebar-ring: oklch(0.708 0 0);
 }
@@ -113,6 +119,10 @@
 @layer base {
   * {
     @apply border-border outline-ring/50;
+  }
+  html {
+    /* Prevent layout shift when overlay scrollbar appears/disappears (macOS) */
+    scrollbar-gutter: stable;
   }
   body {
     @apply bg-background text-foreground;

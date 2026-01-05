@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- Yapit favicon: Solid tree-Y with sound waves -->
+
+  <defs>
+    <linearGradient id="treeGrad" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0%" stop-color="#5c4a3a"/>
+      <stop offset="40%" stop-color="#4a6840"/>
+      <stop offset="100%" stop-color="#3a8a4d"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Solid Y shape -->
+  <path
+    d="M2 2
+       L9 14
+       L9 29
+       L15 29
+       L15 14
+       L22 2
+       L17 2
+       L12 10
+       L7 2
+       Z"
+    fill="url(#treeGrad)"
+  />
+
+  <!-- Sound waves - shifted right to not touch the Y -->
+  <path
+    d="M20 11 Q23 13 23 16 Q23 19 20 21"
+    fill="none"
+    stroke="#3a8a4d"
+    stroke-width="2.5"
+    stroke-linecap="round"
+  />
+  <path
+    d="M24 9 Q28 12 28 16 Q28 20 24 23"
+    fill="none"
+    stroke="#5aa86a"
+    stroke-width="2"
+    stroke-linecap="round"
+    opacity="0.55"
+  />
+</svg>

@@ -1,90 +1,93 @@
-import json
-from collections.abc import AsyncIterator
+from __future__ import annotations
+
+import asyncio
 from pathlib import Path
+from typing import Any, AsyncIterator
 
 from alembic import command, config
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlmodel import SQLModel
+from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
+from sqlmodel import SQLModel, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from yapit.gateway.config import ANON_USER, get_settings
-from yapit.gateway.domain_models import Model, Voice
+from yapit.gateway.config import Settings
+from yapit.gateway.exceptions import ResourceNotFoundError
 
-settings = get_settings()
-engine = create_async_engine(
-    settings.database_url,
-    echo=settings.sqlalchemy_echo,
-    pool_pre_ping=True,
-)
-SessionLocal = async_sessionmaker(
-    engine,
-    expire_on_commit=False,
-    class_=AsyncSession,
-)
+ALEMBIC_INI = Path(__file__).parent / "alembic.ini"
+
+_engine: AsyncEngine | None = None
 
 
-async def get_db() -> AsyncIterator[AsyncSession]:
+def _get_engine(settings: Settings) -> AsyncEngine:
+    global _engine
+    if _engine is not None:
+        return _engine
+    _engine = create_async_engine(
+        settings.database_url,
+        echo=settings.sqlalchemy_echo,
+        pool_pre_ping=True,
+    )
+    return _engine
+
+
+async def create_session(settings: Settings) -> AsyncIterator[AsyncSession]:
+    engine = _get_engine(settings)
+
+    SessionLocal = async_sessionmaker(
+        engine,
+        expire_on_commit=False,
+        class_=AsyncSession,
+    )
     async with SessionLocal() as session:
         yield session
 
 
-async def prepare_database() -> None:
+async def prepare_database(settings: Settings) -> None:
     """Bring the schema to the requested state.
 
-    - DEV (DB_AUTO_CREATE=1):   create missing tables on the fly
-    - PROD (default):           run Alembic `upgrade head`
+    - DEV (DB_DROP_AND_RECREATE=1):   drop all tables and recreate from scratch
+    - PROD (default):                 run Alembic `upgrade head`
     """
-    if settings.db_auto_create:
+    engine = _get_engine(settings)
+    if settings.db_drop_and_recreate:
         async with engine.begin() as conn:
+            await conn.run_sync(SQLModel.metadata.drop_all)
             await conn.run_sync(SQLModel.metadata.create_all)
     else:
-        alembic_cfg = config.Config("alembic.ini")
-        command.upgrade(alembic_cfg, "head")
+        alembic_cfg = config.Config(str(ALEMBIC_INI))
+        # Set absolute path for migrations (relative path in ini doesn't work from /app)
+        alembic_cfg.set_main_option("script_location", str(ALEMBIC_INI.parent / "migrations"))
+        # Run in thread to avoid blocking event loop
+        await asyncio.to_thread(command.upgrade, alembic_cfg, "head")
     if settings.db_seed:
-        await _seed_db()
+        await _seed_db(settings)
 
 
 async def close_db() -> None:
-    await engine.dispose()
+    global _engine
+    if _engine is not None:
+        await _engine.dispose()
+        _engine = None
 
 
-async def _seed_db() -> None:
-    # dev db seed - populate empty db
-    async with SessionLocal() as db:
-        db.add(ANON_USER)
-        kokoro = Model(
-            slug="kokoro",
-            name="Kokoro",
-            price_sec=0.0,
-            native_codec="pcm",
-            sample_rate=24_000,
-            channels=1,
-            sample_width=2,
-        )
-        voices_json = Path(__file__).parent.parent / "workers/kokoro/voices.json"
-        for v in json.loads(voices_json.read_text()):
-            kokoro.voices.append(
-                Voice(
-                    slug=v["index"],
-                    name=v["name"],
-                    lang=v["language"],
-                    description=f"Quality grade {v['overallGrade']}",
-                )
-            )
-        # dia = Model(
-        #     slug="dia",
-        #     name="Dia-1.6B",
-        #     price_sec=0.0,
-        #     native_codec="pcm",
-        #     sample_rate=44_100,
-        #     channels=1,
-        #     sample_width=2,
-        # )
-        # dia.voices.append(Voice(slug="default", name="Dia", lang="en")
-        db.add_all(
-            [
-                kokoro,
-                # dia
-            ]
-        )
-        await db.commit()
+async def _seed_db(settings: Settings) -> None:
+    """Seed database with initial data (models, voices, plans, etc.)."""
+    from yapit.gateway.seed import seed_database
+
+    async for db in create_session(settings):
+        await seed_database(db, settings)
+        break  # only iterate once
+
+
+async def get_or_404[T: SQLModel](session: AsyncSession, model: type[T], id: Any, *, options: list | None = None) -> T:
+    result = await session.get(model, id, options=options or [])
+    if not result:
+        raise ResourceNotFoundError(model.__name__, id)
+    return result
+
+
+async def get_by_slug_or_404[T: SQLModel](session: AsyncSession, model: type[T], slug: str) -> T:
+    result = await session.exec(select(model).where(model.slug == slug))
+    item = result.first()
+    if not item:
+        raise ResourceNotFoundError(model.__name__, slug)
+    return item

@@ -1,0 +1,10 @@
+[
+  {
+    "model": "kokoro",
+    "mode": "server",
+    "backend": {
+      "processor": "yapit.gateway.processors.tts.local.LocalProcessor",
+      "worker_url": "http://kokoro-cpu:8000"
+    }
+  }
+]

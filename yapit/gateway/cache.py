@@ -1,16 +1,20 @@
 import abc
-import logging
 import sqlite3
 import time
+from enum import StrEnum, auto
 from pathlib import Path
 
 from pydantic import BaseModel
 
-log = logging.getLogger(__name__)
+
+class Caches(StrEnum):
+    SQLITE = auto()
 
 
 class CacheConfig(BaseModel):
-    dir: str | None = None  # only used if cache_type is fs or sqlite
+    path: Path | str | None = None  # only used if cache_type is fs or sqlite
+    max_size_mb: int | None = None
+    max_item_size_mb: int | None = None
 
 
 class Cache(abc.ABC):
@@ -18,8 +22,8 @@ class Cache(abc.ABC):
         self.config = config
 
     @abc.abstractmethod
-    async def store(self, key: str, data: bytes) -> str | None:
-        """Store `data` under `key`. Return cache_ref or None on failure."""
+    async def store(self, key: str, data: bytes, ttl_seconds: int | None = None) -> str | None:
+        """Store `data` under `key` with optional TTL. Return cache_ref or None on failure."""
 
     @abc.abstractmethod
     async def exists(self, key: str) -> bool:
@@ -38,27 +42,10 @@ class Cache(abc.ABC):
         """Delete `key`. Return True if deleted or not present, False on error."""
 
 
-class NoOpCache(Cache):
-    async def store(self, key: str, data: bytes) -> str | None:
-        return key
-
-    async def exists(self, key: str) -> bool:
-        return False
-
-    async def retrieve_ref(self, key: str) -> str | None:
-        return None
-
-    async def retrieve_data(self, key: str) -> bytes | None:
-        return None
-
-    async def delete(self, key: str) -> bool:
-        return True
-
-
 class SqliteCache(Cache):
-    def __init__(self, db_path: str, config: CacheConfig):
+    def __init__(self, config: CacheConfig):
         super().__init__(config)
-        self.db_path = Path(db_path) / "cache.db"
+        self.db_path = Path(config.path) / "cache.db"
         self._init_db()
 
     def _init_db(self) -> None:
@@ -69,29 +56,40 @@ class SqliteCache(Cache):
                 CREATE TABLE IF NOT EXISTS cache (
                     key TEXT PRIMARY KEY,
                     data BLOB NOT NULL,
-                    created_at INTEGER NOT NULL
+                    created_at REAL NOT NULL,
+                    expires_at REAL  -- NULL means no expiration
                 )
                 """
             )
+            db.execute("CREATE INDEX IF NOT EXISTS idx_cache_expires ON cache(expires_at)")
             db.execute("PRAGMA journal_mode=WAL")  # enable Write-Ahead Logging for better concurrency
 
-    async def store(self, key: str, data: bytes) -> str | None:
-        ts = int(time.time())
+    async def store(self, key: str, data: bytes, ttl_seconds: int | None = None) -> str | None:
+        ts = time.time()
+        expires_at = ts + ttl_seconds if ttl_seconds else None
         with sqlite3.connect(self.db_path) as db:
-            db.execute("REPLACE INTO cache(key,data,created_at) VALUES(?,?,?)", (key, data, ts))
+            db.execute(
+                "REPLACE INTO cache(key, data, created_at, expires_at) VALUES(?, ?, ?, ?)", (key, data, ts, expires_at)
+            )
         return key
 
     async def exists(self, key: str) -> bool:
+        current_time = time.time()
         with sqlite3.connect(self.db_path) as db:
-            row = db.execute("SELECT 1 FROM cache WHERE key=?", (key,)).fetchone()
+            row = db.execute(
+                "SELECT 1 FROM cache WHERE key=? AND (expires_at IS NULL OR expires_at > ?)", (key, current_time)
+            ).fetchone()
         return bool(row)
 
     async def retrieve_ref(self, key: str) -> str | None:
         return key if await self.exists(key) else None
 
     async def retrieve_data(self, key: str) -> bytes | None:
+        current_time = time.time()
         with sqlite3.connect(self.db_path) as db:
-            row = db.execute("SELECT data FROM cache WHERE key=?", (key,)).fetchone()
+            row = db.execute(
+                "SELECT data FROM cache WHERE key=? AND (expires_at IS NULL OR expires_at > ?)", (key, current_time)
+            ).fetchone()
         return row[0] if row else None
 
     async def delete(self, key: str) -> bool:
@@ -99,27 +97,17 @@ class SqliteCache(Cache):
             cur = db.execute("DELETE FROM cache WHERE key=?", (key,))
         return cur.rowcount > 0
 
+    # TODO: never called
     async def vacuum(self) -> None:
         """Reclaim free space and defragment the DB. Also checkpoints the WAL into the main file."""
         with sqlite3.connect(self.db_path) as db:
             db.execute("VACUUM")
             db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
 
-
-CACHE_BACKENDS: dict[str, type[Cache]] = {
-    "noop": NoOpCache,
-    "sqlite": SqliteCache,
-    # "filesystem": FileSystemCache,
-    # "s3": S3Cache,
-}
-
-
-def get_cache_backend() -> Cache:
-    from yapit.gateway.config import get_settings
-
-    settings = get_settings()
-    cache_type = settings.cache_type.lower()
-    backend = CACHE_BACKENDS.get(cache_type)
-    if backend:
-        return backend(settings.cache_config)
-    raise ValueError(f"Invalid cache backend type '{cache_type}'. Supported types: {', '.join(CACHE_BACKENDS.keys())}.")
+    # TODO: never called
+    async def cleanup_expired(self) -> int:
+        """Remove expired entries."""
+        current_time = time.time()
+        with sqlite3.connect(self.db_path) as db:
+            cur = db.execute("DELETE FROM cache WHERE expires_at IS NOT NULL AND expires_at < ?", (current_time,))
+        return cur.rowcount

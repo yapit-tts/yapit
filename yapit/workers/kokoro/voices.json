@@ -1,198 +1,56 @@
 [
-  {
-    "index": "af_heart",
-    "name": "Heart",
-    "language": "en-us",
-    "gender": "Female",
-    "overallGrade": "A"
-  },
-  {
-    "index": "af_alloy",
-    "name": "Alloy",
-    "language": "en-us",
-    "gender": "Female",
-    "overallGrade": "C"
-  },
-  {
-    "index": "af_aoede",
-    "name": "Aoede",
-    "language": "en-us",
-    "gender": "Female",
-    "overallGrade": "C+"
-  },
-  {
-    "index": "af_bella",
-    "name": "Bella",
-    "language": "en-us",
-    "gender": "Female",
-    "overallGrade": "A-"
-  },
-  {
-    "index": "af_jessica",
-    "name": "Jessica",
-    "language": "en-us",
-    "gender": "Female",
-    "overallGrade": "D"
-  },
-  {
-    "index": "af_kore",
-    "name": "Kore",
-    "language": "en-us",
-    "gender": "Female",
-    "overallGrade": "C+"
-  },
-  {
-    "index": "af_nicole",
-    "name": "Nicole",
-    "language": "en-us",
-    "gender": "Female",
-    "overallGrade": "B-"
-  },
-  {
-    "index": "af_nova",
-    "name": "Nova",
-    "language": "en-us",
-    "gender": "Female",
-    "overallGrade": "C"
-  },
-  {
-    "index": "af_river",
-    "name": "River",
-    "language": "en-us",
-    "gender": "Female",
-    "overallGrade": "D"
-  },
-  {
-    "index": "af_sarah",
-    "name": "Sarah",
-    "language": "en-us",
-    "gender": "Female",
-    "overallGrade": "C+"
-  },
-  {
-    "index": "af_sky",
-    "name": "Sky",
-    "language": "en-us",
-    "gender": "Female",
-    "overallGrade": "C-"
-  },
-  {
-    "index": "am_adam",
-    "name": "Adam",
-    "language": "en-us",
-    "gender": "Male",
-    "overallGrade": "F+"
-  },
-  {
-    "index": "am_echo",
-    "name": "Echo",
-    "language": "en-us",
-    "gender": "Male",
-    "overallGrade": "D"
-  },
-  {
-    "index": "am_eric",
-    "name": "Eric",
-    "language": "en-us",
-    "gender": "Male",
-    "overallGrade": "D"
-  },
-  {
-    "index": "am_fenrir",
-    "name": "Fenrir",
-    "language": "en-us",
-    "gender": "Male",
-    "overallGrade": "C+"
-  },
-  {
-    "index": "am_liam",
-    "name": "Liam",
-    "language": "en-us",
-    "gender": "Male",
-    "overallGrade": "D"
-  },
-  {
-    "index": "am_michael",
-    "name": "Michael",
-    "language": "en-us",
-    "gender": "Male",
-    "overallGrade": "C+"
-  },
-  {
-    "index": "am_onyx",
-    "name": "Onyx",
-    "language": "en-us",
-    "gender": "Male",
-    "overallGrade": "D"
-  },
-  {
-    "index": "am_puck",
-    "name": "Puck",
-    "language": "en-us",
-    "gender": "Male",
-    "overallGrade": "C+"
-  },
-  {
-    "index": "am_santa",
-    "name": "Santa",
-    "language": "en-us",
-    "gender": "Male",
-    "overallGrade": "D-"
-  },
-  {
-    "index": "bf_emma",
-    "name": "Emma",
-    "language": "en-gb",
-    "gender": "Female",
-    "overallGrade": "B-"
-  },
-  {
-    "index": "bf_isabella",
-    "name": "Isabella",
-    "language": "en-gb",
-    "gender": "Female",
-    "overallGrade": "C"
-  },
-  {
-    "index": "bm_george",
-    "name": "George",
-    "language": "en-gb",
-    "gender": "Male",
-    "overallGrade": "C"
-  },
-  {
-    "index": "bm_lewis",
-    "name": "Lewis",
-    "language": "en-gb",
-    "gender": "Male",
-    "overallGrade": "D+"
-  },
-  {
-    "index": "bf_alice",
-    "name": "Alice",
-    "language": "en-gb",
-    "gender": "Female",
-    "overallGrade": "D"
-  },
-  {
-    "index": "bf_lily",
-    "name": "Lily",
-    "language": "en-gb",
-    "gender": "Female",
-    "overallGrade": "D"
-  },
-  {
-    "index": "bm_daniel",
-    "name": "Daniel",
-    "language": "en-gb",
-    "gender": "Male",
-    "overallGrade": "D"
-  },
-  {
-    "index": "bm_fable",
-    "name": "Fable",
-    "language": "en-gb",
-    "gender": "Male",
-    "overallGrade": "C"
-  }
+  {"index": "af_heart", "name": "Heart", "language": "en-us", "gender": "Female", "overallGrade": "A"},
+  {"index": "af_bella", "name": "Bella", "language": "en-us", "gender": "Female", "overallGrade": "A-"},
+  {"index": "af_nicole", "name": "Nicole", "language": "en-us", "gender": "Female", "overallGrade": "B-"},
+  {"index": "af_aoede", "name": "Aoede", "language": "en-us", "gender": "Female", "overallGrade": "C+"},
+  {"index": "af_kore", "name": "Kore", "language": "en-us", "gender": "Female", "overallGrade": "C+"},
+  {"index": "af_sarah", "name": "Sarah", "language": "en-us", "gender": "Female", "overallGrade": "C+"},
+  {"index": "af_alloy", "name": "Alloy", "language": "en-us", "gender": "Female", "overallGrade": "C"},
+  {"index": "af_nova", "name": "Nova", "language": "en-us", "gender": "Female", "overallGrade": "C"},
+  {"index": "af_sky", "name": "Sky", "language": "en-us", "gender": "Female", "overallGrade": "C-"},
+  {"index": "af_jessica", "name": "Jessica", "language": "en-us", "gender": "Female", "overallGrade": "D"},
+  {"index": "af_river", "name": "River", "language": "en-us", "gender": "Female", "overallGrade": "D"},
+  {"index": "am_fenrir", "name": "Fenrir", "language": "en-us", "gender": "Male", "overallGrade": "C+"},
+  {"index": "am_michael", "name": "Michael", "language": "en-us", "gender": "Male", "overallGrade": "C+"},
+  {"index": "am_puck", "name": "Puck", "language": "en-us", "gender": "Male", "overallGrade": "C+"},
+  {"index": "am_echo", "name": "Echo", "language": "en-us", "gender": "Male", "overallGrade": "D"},
+  {"index": "am_eric", "name": "Eric", "language": "en-us", "gender": "Male", "overallGrade": "D"},
+  {"index": "am_liam", "name": "Liam", "language": "en-us", "gender": "Male", "overallGrade": "D"},
+  {"index": "am_onyx", "name": "Onyx", "language": "en-us", "gender": "Male", "overallGrade": "D"},
+  {"index": "am_santa", "name": "Santa", "language": "en-us", "gender": "Male", "overallGrade": "D-"},
+  {"index": "am_adam", "name": "Adam", "language": "en-us", "gender": "Male", "overallGrade": "F+"},
+  {"index": "bf_emma", "name": "Emma", "language": "en-gb", "gender": "Female", "overallGrade": "B-"},
+  {"index": "bf_isabella", "name": "Isabella", "language": "en-gb", "gender": "Female", "overallGrade": "C"},
+  {"index": "bf_alice", "name": "Alice", "language": "en-gb", "gender": "Female", "overallGrade": "D"},
+  {"index": "bf_lily", "name": "Lily", "language": "en-gb", "gender": "Female", "overallGrade": "D"},
+  {"index": "bm_george", "name": "George", "language": "en-gb", "gender": "Male", "overallGrade": "C"},
+  {"index": "bm_fable", "name": "Fable", "language": "en-gb", "gender": "Male", "overallGrade": "C"},
+  {"index": "bm_lewis", "name": "Lewis", "language": "en-gb", "gender": "Male", "overallGrade": "D+"},
+  {"index": "bm_daniel", "name": "Daniel", "language": "en-gb", "gender": "Male", "overallGrade": "D"},
+  {"index": "jf_alpha", "name": "Alpha", "language": "ja", "gender": "Female", "overallGrade": "C+"},
+  {"index": "jf_gongitsune", "name": "Gongitsune", "language": "ja", "gender": "Female", "overallGrade": "C"},
+  {"index": "jf_nezumi", "name": "Nezumi", "language": "ja", "gender": "Female", "overallGrade": "C-"},
+  {"index": "jf_tebukuro", "name": "Tebukuro", "language": "ja", "gender": "Female", "overallGrade": "C"},
+  {"index": "jm_kumo", "name": "Kumo", "language": "ja", "gender": "Male", "overallGrade": "C-"},
+  {"index": "zf_xiaobei", "name": "Xiaobei", "language": "zh", "gender": "Female", "overallGrade": "D"},
+  {"index": "zf_xiaoni", "name": "Xiaoni", "language": "zh", "gender": "Female", "overallGrade": "D"},
+  {"index": "zf_xiaoxiao", "name": "Xiaoxiao", "language": "zh", "gender": "Female", "overallGrade": "D"},
+  {"index": "zf_xiaoyi", "name": "Xiaoyi", "language": "zh", "gender": "Female", "overallGrade": "D"},
+  {"index": "zm_yunjian", "name": "Yunjian", "language": "zh", "gender": "Male", "overallGrade": "D"},
+  {"index": "zm_yunxi", "name": "Yunxi", "language": "zh", "gender": "Male", "overallGrade": "D"},
+  {"index": "zm_yunxia", "name": "Yunxia", "language": "zh", "gender": "Male", "overallGrade": "D"},
+  {"index": "zm_yunyang", "name": "Yunyang", "language": "zh", "gender": "Male", "overallGrade": "D"},
+  {"index": "ef_dora", "name": "Dora", "language": "es", "gender": "Female", "overallGrade": ""},
+  {"index": "em_alex", "name": "Alex", "language": "es", "gender": "Male", "overallGrade": ""},
+  {"index": "em_santa", "name": "Santa", "language": "es", "gender": "Male", "overallGrade": ""},
+  {"index": "ff_siwis", "name": "Siwis", "language": "fr", "gender": "Female", "overallGrade": "B-"},
+  {"index": "hf_alpha", "name": "Alpha", "language": "hi", "gender": "Female", "overallGrade": "C"},
+  {"index": "hf_beta", "name": "Beta", "language": "hi", "gender": "Female", "overallGrade": "C"},
+  {"index": "hm_omega", "name": "Omega", "language": "hi", "gender": "Male", "overallGrade": "C"},
+  {"index": "hm_psi", "name": "Psi", "language": "hi", "gender": "Male", "overallGrade": "C"},
+  {"index": "if_sara", "name": "Sara", "language": "it", "gender": "Female", "overallGrade": "C"},
+  {"index": "im_nicola", "name": "Nicola", "language": "it", "gender": "Male", "overallGrade": "C"},
+  {"index": "pf_dora", "name": "Dora", "language": "pt-br", "gender": "Female", "overallGrade": ""},
+  {"index": "pm_alex", "name": "Alex", "language": "pt-br", "gender": "Male", "overallGrade": ""},
+  {"index": "pm_santa", "name": "Santa", "language": "pt-br", "gender": "Male", "overallGrade": ""}
 ]
