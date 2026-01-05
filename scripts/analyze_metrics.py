@@ -220,28 +220,20 @@ def plot_synthesis_scatter(df: pd.DataFrame, output_dir: Path) -> Path | None:
     if synthesis.empty:
         return None
 
-    # Normalize worker time for color mapping
-    w_min = synthesis["worker_latency_ms"].min()
-    w_max = synthesis["worker_latency_ms"].max()
-    if w_min == w_max:
-        synthesis["worker_norm"] = 0.5
-    else:
-        synthesis["worker_norm"] = (synthesis["worker_latency_ms"] - w_min) / (w_max - w_min)
-
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
     fig.suptitle("Synthesis Performance", fontsize=12)
 
     models = list(synthesis["model_slug"].dropna().unique())
 
-    # Left: time vs text_length (color=worker_time)
+    # Left: worker time over time (color=text_length)
     scatter = None
     for i, model in enumerate(models):
         model_data = synthesis[synthesis["model_slug"] == model]
         marker = MARKERS[i % len(MARKERS)]
         scatter = axes[0].scatter(
             model_data["local_time"],
-            model_data["text_length"],
-            c=model_data["worker_latency_ms"],
+            model_data["worker_latency_ms"],
+            c=model_data["text_length"],
             cmap="plasma",
             alpha=0.7,
             label=model,
@@ -252,22 +244,22 @@ def plot_synthesis_scatter(df: pd.DataFrame, output_dir: Path) -> Path | None:
         )
 
     axes[0].set_xlabel("Time")
-    axes[0].set_ylabel("Text Length (chars)")
-    axes[0].set_title("Text Length Over Time (color = worker time)")
+    axes[0].set_ylabel("Worker Time (ms)")
+    axes[0].set_title("Worker Time Over Time (color = text length)")
     axes[0].legend()
     axes[0].tick_params(axis="x", rotation=45)
 
     if scatter:
         cbar = plt.colorbar(scatter, ax=axes[0])
-        cbar.set_label("Worker Time (ms)")
+        cbar.set_label("Text Length (chars)")
 
-    # Right: latency over time
+    # Right: text length over time
     for i, model in enumerate(models):
         model_data = synthesis[synthesis["model_slug"] == model]
         marker = MARKERS[i % len(MARKERS)]
         axes[1].scatter(
             model_data["local_time"],
-            model_data["worker_latency_ms"],
+            model_data["text_length"],
             alpha=0.7,
             label=model,
             s=40,
@@ -275,8 +267,8 @@ def plot_synthesis_scatter(df: pd.DataFrame, output_dir: Path) -> Path | None:
         )
 
     axes[1].set_xlabel("Time")
-    axes[1].set_ylabel("Worker Time (ms)")
-    axes[1].set_title("Worker Time Over Time")
+    axes[1].set_ylabel("Text Length (chars)")
+    axes[1].set_title("Text Length Over Time")
     axes[1].legend()
     axes[1].tick_params(axis="x", rotation=45)
 
@@ -380,6 +372,62 @@ def plot_latency_breakdown(df: pd.DataFrame, output_dir: Path) -> Path | None:
     plt.tight_layout()
 
     output_path = output_dir / "latency_breakdown.png"
+    plt.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close()
+    return output_path
+
+
+def plot_model_usage(df: pd.DataFrame, output_dir: Path) -> Path | None:
+    """Bar chart showing synthesis counts by model and route."""
+    # Get synthesis events (queued has model + route info)
+    queued = df[df["event_type"] == "synthesis_queued"].copy()
+    cache_hits = df[df["event_type"] == "cache_hit"].copy()
+
+    if queued.empty and cache_hits.empty:
+        return None
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    fig.suptitle("Model & Route Usage", fontsize=12)
+
+    # Left: by model
+    model_counts = queued["model_slug"].value_counts()
+    cache_by_model = cache_hits["model_slug"].value_counts()
+
+    if not model_counts.empty:
+        models = list(set(model_counts.index) | set(cache_by_model.index))
+        synth_vals = [model_counts.get(m, 0) for m in models]
+        cache_vals = [cache_by_model.get(m, 0) for m in models]
+
+        x = range(len(models))
+        width = 0.35
+        axes[0].bar([i - width / 2 for i in x], synth_vals, width, label="Synthesized")
+        axes[0].bar([i + width / 2 for i in x], cache_vals, width, label="Cache Hit")
+        axes[0].set_xticks(x)
+        axes[0].set_xticklabels(models, rotation=45, ha="right")
+        axes[0].set_ylabel("Count")
+        axes[0].set_title("Requests by Model")
+        axes[0].legend()
+
+    # Right: by route (local vs overflow)
+    route_counts = queued["processor_route"].value_counts()
+    if not route_counts.empty and route_counts.sum() > 0:
+        colors = ["#2ecc71" if r == "local" else "#e74c3c" for r in route_counts.index]
+        axes[1].bar(route_counts.index, route_counts.values, color=colors)
+        axes[1].set_ylabel("Count")
+        axes[1].set_title("Requests by Route (local vs overflow)")
+
+        # Add percentage labels
+        total = route_counts.sum()
+        for i, (route, count) in enumerate(route_counts.items()):
+            pct = count / total * 100
+            axes[1].text(i, count + 0.5, f"{pct:.1f}%", ha="center")
+    else:
+        axes[1].text(0.5, 0.5, "No route data", ha="center", va="center", transform=axes[1].transAxes)
+        axes[1].set_title("Requests by Route")
+
+    plt.tight_layout()
+
+    output_path = output_dir / "model_usage.png"
     plt.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.close()
     return output_path
@@ -499,6 +547,9 @@ def main(
             paths.append(p)
             console.print(f"  Saved: {p}")
         if p := plot_latency_breakdown(df, output_dir):
+            paths.append(p)
+            console.print(f"  Saved: {p}")
+        if p := plot_model_usage(df, output_dir):
             paths.append(p)
             console.print(f"  Saved: {p}")
         if p := plot_queue_metrics(df, output_dir):
