@@ -8,7 +8,7 @@
     },
     "overflow": {
       "processor": "yapit.gateway.processors.tts.runpod.RunpodProcessor",
-      "runpod_endpoint_id": "todo-add-kokoro-runpod-endpoint"
+      "runpod_endpoint_id": "g5k5k3kra9ejik"
     }
   },
   {
