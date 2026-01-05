@@ -165,10 +165,23 @@ async def create_subscription_checkout(
     if plan.trial_days > 0 and trial_eligible:
         checkout_params["subscription_data"]["trial_period_days"] = plan.trial_days
 
-    session = client.v1.checkout.sessions.create(
-        checkout_params,
-        {"stripe_version": f"{stripe.api_version}; managed_payments_preview=v1"},
-    )
+    try:
+        session = client.v1.checkout.sessions.create(
+            checkout_params,
+            {"stripe_version": f"{stripe.api_version}; managed_payments_preview=v1"},
+        )
+    except stripe.InvalidRequestError as e:
+        # Handle externally deleted Stripe customer (e.g., manual Dashboard deletion)
+        if "No such customer" in str(e) and customer_id:
+            logger.warning(f"Stripe customer {customer_id} not found, creating checkout with email instead")
+            del checkout_params["customer"]
+            checkout_params["customer_email"] = user.primary_email
+            session = client.v1.checkout.sessions.create(
+                checkout_params,
+                {"stripe_version": f"{stripe.api_version}; managed_payments_preview=v1"},
+            )
+        else:
+            raise
 
     assert session.url is not None
     return CheckoutResponse(checkout_url=session.url, session_id=session.id)
