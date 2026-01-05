@@ -114,7 +114,7 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/yapit-tts/${{ matrix.name }}
           tags: |
-            type=sha,prefix=
+            type=sha,prefix=,format=long
             type=raw,value=latest,enable={{is_default_branch}}
       - uses: docker/build-push-action@v6
         with:
