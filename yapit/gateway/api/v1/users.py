@@ -1,10 +1,9 @@
 import datetime as dt
 import hashlib
 from datetime import datetime
-from typing import Any
 
 import stripe
-from fastapi import APIRouter, Header, HTTPException, Request, status
+from fastapi import APIRouter, Header, Request, status
 from loguru import logger
 from pydantic import BaseModel
 from sqlalchemy import func, update
@@ -15,8 +14,6 @@ from yapit.gateway.deps import AuthenticatedUser, DbSession, SettingsDep
 from yapit.gateway.domain_models import (
     Block,
     Document,
-    Filter,
-    FilterConfig,
     SubscriptionStatus,
     UsageLog,
     UsagePeriod,
@@ -29,15 +26,6 @@ from yapit.gateway.usage import get_usage_summary, get_user_subscription
 router = APIRouter(prefix="/v1/users", tags=["Users"])
 
 
-class FilterRead(BaseModel):
-    """User filter response."""
-
-    id: int
-    name: str
-    description: str | None
-    config: dict[str, Any]
-
-
 @router.get("/me/subscription")
 async def get_my_subscription(
     db: DbSession,
@@ -45,28 +33,6 @@ async def get_my_subscription(
 ) -> dict:
     """Get current user's subscription and usage summary."""
     return await get_usage_summary(auth_user.id, db)
-
-
-@router.get("/{user_id}/filters", response_model=list[FilterRead])
-async def list_user_filters(
-    user_id: str,
-    db: DbSession,
-    auth_user: AuthenticatedUser,
-) -> list[FilterRead]:
-    """List filters for a specific user (own filters only)."""
-    if user_id != auth_user.id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cannot view other users' filters")
-    result = await db.exec(select(Filter).where(Filter.user_id == user_id))
-    filters = result.all()
-    return [
-        FilterRead(
-            id=f.id,
-            name=f.name,
-            description=f.description,
-            config=f.config.model_dump() if isinstance(f.config, FilterConfig) else f.config,
-        )
-        for f in filters
-    ]
 
 
 # Cross-device sync: User preferences
@@ -197,7 +163,6 @@ async def delete_account(
 
     This action is irreversible. Deletes:
     - All documents (cascades to blocks and block variants)
-    - All filters
     - User preferences
 
     Anonymizes (for aggregate analysis):
@@ -220,7 +185,6 @@ async def delete_account(
                 logger.warning(f"Failed to cancel Stripe subscription: {e}")
 
     # 2. Delete user-owned data (cascades handle blocks → block variants)
-    await db.exec(delete(Filter).where(Filter.user_id == user_id))
     await db.exec(delete(Document).where(Document.user_id == user_id))
     await db.exec(delete(UserPreferences).where(UserPreferences.user_id == user_id))
 

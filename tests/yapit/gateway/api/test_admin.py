@@ -4,15 +4,7 @@ import pytest
 from fastapi import status
 from sqlmodel import select
 
-from yapit.gateway.domain_models import Filter, TTSModel, Voice
-
-
-@pytest.mark.asyncio
-async def test_admin_access_denied_for_regular_user(client, as_test_user):
-    """Test that regular users cannot access admin endpoints."""
-    response = await client.get("/v1/admin/filters")
-    assert response.status_code == status.HTTP_403_FORBIDDEN
-    assert "Admin access required" in response.json()["detail"]
+from yapit.gateway.domain_models import TTSModel, Voice
 
 
 @pytest.mark.asyncio
@@ -178,40 +170,3 @@ async def test_admin_can_delete_model_with_voices(client, as_admin_user, session
 
     db_voice = (await session.exec(select(Voice).where(Voice.slug == "test-voice"))).first()
     assert db_voice is None
-
-
-@pytest.mark.asyncio
-async def test_admin_can_manage_system_filters(client, as_admin_user, session):
-    """Test admin can create, update, and delete system filters."""
-    # Create system filter
-    filter_data = {
-        "name": "Test System Filter",
-        "description": "A test filter",
-        "config": {"regex_rules": [{"pattern": "test", "replacement": "TEST"}], "llm": {}},
-    }
-
-    response = await client.post("/v1/admin/filters", json=filter_data)
-    assert response.status_code == status.HTTP_201_CREATED
-    created_filter = Filter.model_validate(response.json())
-    filter_id = created_filter.id
-
-    # List system filters
-    response = await client.get("/v1/admin/filters")
-    assert response.status_code == status.HTTP_200_OK
-    filters = [Filter.model_validate(f) for f in response.json()]
-    assert len(filters) > 0
-    # Find our filter
-    test_filter = next((f for f in filters if f.name == "Test System Filter"), None)
-    assert test_filter is not None
-    assert test_filter.id == filter_id
-
-    # Update filter
-    update_data = {"description": "Updated description"}
-    response = await client.put(f"/v1/admin/filters/{filter_id}", json=update_data)
-    assert response.status_code == status.HTTP_200_OK
-    updated_filter = Filter.model_validate(response.json())
-    assert updated_filter.description == "Updated description"
-
-    # Delete filter
-    response = await client.delete(f"/v1/admin/filters/{filter_id}")
-    assert response.status_code == status.HTTP_204_NO_CONTENT

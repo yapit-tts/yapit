@@ -20,11 +20,15 @@ Note: We don't work heavily with GitHub issues (solo dev + claude for now -- the
 - Test workflow: `.github/workflows/`
 - No default values in Settings class - only defaults in `.env*` files
 - `make test-local` for basic tests, `make test` for full suite (needs API keys)
+- **Running tests manually**: Use `uv run --env-file=.env.dev pytest ...` — NOT `source .venv/bin/activate && pytest`. The Settings class requires env vars from `.env.dev` to be loaded, and `uv run --env-file` handles this. Without it, you get pydantic validation errors for missing required fields.
+- **Unit tests** (`tests/yapit/`) use testcontainers — they're independent and don't need the backend running
+- **Integration tests** (`tests/integration/`) connect to localhost:8000 — they need `make dev-cpu` running
 - `make check` for type checking (backend: ty, frontend: tsc + eslint)
 - `make dev-cpu` to start backend (or `make dev-mac` on macOS)
   - If no dev user exists after startup (login fails), run `make dev-user` - there's a race condition where stack-auth health check sometimes fails before user creation runs
 - **CI timing**: Full CI (tests + build + deploy) takes ~10 minutes. Tests alone ~5 min, build+deploy ~5 min.
 - **Skip tests on deploy**: Add `[skip tests]` anywhere in commit message to skip CI tests and go straight to build+deploy. Use when you're confident in the change and want faster deploys.
+- Debugging: Use info logs or set log level to debug before restarting the backend.
 
 ## Metrics (SQLite)
 
@@ -69,6 +73,7 @@ make migration-new MSG="description of changes"
 
 **Always review the generated migration:**
 - Autogenerate can't detect renames (sees drop + create)
+- **Table drops require manual migration** — `env.py` filters to only include tables in current models (to avoid touching Stack Auth). When you delete a model, the table is no longer in `MANAGED_TABLES`, so alembic ignores it. Write the `op.drop_table()` manually.
 - Data migrations must be added manually (e.g., populating new NOT NULL columns)
 - Operation ordering may need adjustment
 - Enum changes often need manual tweaks

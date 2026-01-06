@@ -6,7 +6,6 @@ from enum import StrEnum, auto
 from typing import Any
 
 from pydantic import BaseModel as PydanticModel
-from pydantic import Field as PydanticField
 from sqlalchemy import Index, UniqueConstraint
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.types import JSON
@@ -180,41 +179,6 @@ class DocumentProcessor(SQLModel, table=True):
     slug: str = Field(primary_key=True)
     name: str
     is_active: bool = Field(default=True, index=True)
-
-
-class RegexRule(PydanticModel):
-    pattern: str
-    replacement: str
-
-
-class FilterConfig(PydanticModel):
-    regex_rules: list[RegexRule] = PydanticField(default_factory=list)
-    llm: dict[str, Any] = PydanticField(default_factory=dict)
-
-
-class Filter(SQLModel, table=True):
-    """User or system defined reusable text filter configuration."""
-
-    id: int | None = Field(default=None, primary_key=True)
-    user_id: str | None = Field(default=None, index=True)  # if null, readonly for non-admins
-
-    name: str = Field(index=True)
-    description: str | None = Field(default=None)
-    config: FilterConfig = Field(
-        sa_column=Column(
-            JSON().with_variant(postgresql.JSONB(), "postgresql"),
-        ),
-        default_factory=FilterConfig,
-    )
-
-    created: datetime = Field(
-        default_factory=lambda: datetime.now(tz=dt.UTC),
-        sa_column=Column(DateTime(timezone=True)),
-    )
-    updated: datetime = Field(
-        default_factory=lambda: datetime.now(tz=dt.UTC),
-        sa_column=Column(DateTime(timezone=True)),
-    )
 
 
 # Subscription Models

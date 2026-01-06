@@ -3,33 +3,7 @@
 import pytest
 from fastapi import status
 
-from yapit.gateway.auth import authenticate
 from yapit.gateway.domain_models import Block, Document
-
-
-@pytest.mark.asyncio
-async def test_user_cannot_view_other_users_filters(client, app, test_user, admin_user):
-    """Test that users cannot view other users' filters."""
-    # Set test user auth
-    app.dependency_overrides[authenticate] = lambda: test_user
-
-    # Try to get admin user's filters
-    response = await client.get(f"/v1/users/{admin_user.id}/filters")
-    assert response.status_code == status.HTTP_403_FORBIDDEN
-    assert "Cannot view other users' filters" in response.json()["detail"]
-
-
-@pytest.mark.asyncio
-async def test_user_can_view_own_filters(client, app, test_user):
-    """Test that users can view their own filters."""
-    # Set test user auth
-    app.dependency_overrides[authenticate] = lambda: test_user
-
-    # Get own filters (should be empty list)
-    response = await client.get(f"/v1/users/{test_user.id}/filters")
-    assert response.status_code == status.HTTP_200_OK
-    assert response.json() == []
-
 
 # Preferences tests
 

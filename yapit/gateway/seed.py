@@ -7,7 +7,7 @@ from pathlib import Path
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from yapit.gateway.config import Settings
-from yapit.gateway.domain_models import DocumentProcessor, Filter, Plan, PlanTier, TTSModel, Voice
+from yapit.gateway.domain_models import DocumentProcessor, Plan, PlanTier, TTSModel, Voice
 
 
 def load_voice_prompt(name: str) -> tuple[str, str]:
@@ -140,24 +140,6 @@ def create_models() -> list[TTSModel]:
     return models
 
 
-def create_filters() -> list[Filter]:
-    """Create default filter presets."""
-    presets_json = Path(__file__).parent.parent / "data/default_filters.json"
-    defaults = json.loads(presets_json.read_text())
-
-    filters = []
-    for p in defaults:
-        filters.append(
-            Filter(
-                name=p["name"],
-                description=p.get("description"),
-                config=p["config"],
-                user_id=None,  # system filters
-            )
-        )
-    return filters
-
-
 def create_document_processors() -> list[DocumentProcessor]:
     """Create document processors."""
     return [
@@ -232,12 +214,9 @@ def create_plans(settings: Settings) -> list[Plan]:
 
 
 async def seed_database(db: AsyncSession, settings: Settings) -> None:
-    """Seed database with models, voices, filters, processors, and plans."""
+    """Seed database with models, voices, processors, and plans."""
     for model in create_models():
         db.add(model)
-
-    for filter_obj in create_filters():
-        db.add(filter_obj)
 
     for processor in create_document_processors():
         db.add(processor)
