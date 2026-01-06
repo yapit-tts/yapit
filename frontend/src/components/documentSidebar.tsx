@@ -32,7 +32,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
-import { ChevronUp, FileText, Plus, Loader2, MoreHorizontal, User2, LogOut, LogIn, Trash2, Pencil, CreditCard } from "lucide-react";
+import { ChevronUp, FileText, Plus, Loader2, MoreHorizontal, User2, LogOut, LogIn, Trash2, Pencil, CreditCard, Lightbulb, Settings, Info } from "lucide-react";
 import { useApi } from "@/api";
 import { useUser } from "@stackframe/react";
 
@@ -265,6 +265,14 @@ function DocumentSidebar() {
             </Tooltip>
           </SidebarMenuItem>
 
+          {/* Tips button */}
+          <SidebarMenuItem>
+            <SidebarMenuButton onClick={() => navigate("/tips")} size="lg">
+              <Lightbulb className="h-4 w-4 text-muted-foreground" />
+              <span>Tips</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+
           {/* User button */}
           <SidebarMenuItem>
             <DropdownMenu>
@@ -281,6 +289,17 @@ function DocumentSidebar() {
                 side="top"
                 className="min-w-[var(--radix-popper-anchor-width)]"
               >
+                {user && (
+                  <DropdownMenuItem onClick={() => navigate("/account")}>
+                    <Settings className="mr-2 h-4 w-4" />
+                    Account
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenuItem onClick={() => navigate("/about")}>
+                  <Info className="mr-2 h-4 w-4" />
+                  About
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
                 <DropdownMenuItem
                   onClick={handleAuth}
                   className={user ? "hover:bg-muted-warm focus:bg-muted-warm" : ""}
