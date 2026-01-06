@@ -1,0 +1,9 @@
+FROM golang:1.23-alpine AS builder
+WORKDIR /build
+RUN go install github.com/stripe/smokescreen@a7fdfcb5b9301fefb4ecb0e65624551a2a2de2d6
+
+FROM alpine:3.21
+RUN apk add --no-cache ca-certificates
+COPY --from=builder /go/bin/smokescreen /usr/local/bin/
+EXPOSE 4750
+ENTRYPOINT ["smokescreen", "--listen-ip", "0.0.0.0"]

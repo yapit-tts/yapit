@@ -21,6 +21,12 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
 
+  smokescreen:
+    init: true
+    build:
+      dockerfile: ./docker/Dockerfile.smokescreen
+    restart: unless-stopped
+
   # -------- api-gateway
   gateway:
     init: true
@@ -39,6 +45,8 @@ services:
       postgres:
         condition: service_healthy
       stack-auth:
+        condition: service_started
+      smokescreen:
         condition: service_started
     restart: unless-stopped
     expose: ["8000"]

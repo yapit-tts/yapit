@@ -55,6 +55,16 @@ services:
       update_config:
         order: stop-first
 
+  smokescreen:
+    image: ghcr.io/yapit-tts/smokescreen:${GIT_COMMIT}
+    networks:
+      - yapit-network
+    deploy:
+      replicas: 1
+      update_config:
+        order: start-first
+        failure_action: rollback
+
   gateway:
     image: ghcr.io/yapit-tts/gateway:${GIT_COMMIT}
     env_file:
