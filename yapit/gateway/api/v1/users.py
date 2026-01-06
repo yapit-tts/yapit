@@ -4,12 +4,13 @@ from datetime import datetime
 from typing import Any
 
 import stripe
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, Header, HTTPException, Request, status
 from loguru import logger
 from pydantic import BaseModel
 from sqlalchemy import func, update
 from sqlmodel import delete, select
 
+from yapit.gateway.auth import ANONYMOUS_ID_PREFIX
 from yapit.gateway.deps import AuthenticatedUser, DbSession, SettingsDep
 from yapit.gateway.domain_models import (
     Block,
@@ -146,6 +147,40 @@ async def get_user_stats(
         total_characters=total_characters,
         document_count=document_count,
     )
+
+
+# Guest-to-registered conversion
+
+
+class ClaimResponse(BaseModel):
+    claimed_documents: int
+
+
+@router.post("/claim-anonymous", response_model=ClaimResponse)
+async def claim_anonymous_data(
+    auth_user: AuthenticatedUser,
+    db: DbSession,
+    x_anonymous_id: str | None = Header(None, alias="X-Anonymous-ID"),
+) -> ClaimResponse:
+    """Transfer documents from anonymous session to authenticated user.
+
+    Called by frontend after user signs up, to claim any data created while anonymous.
+    """
+    if auth_user.is_anonymous or not x_anonymous_id:
+        return ClaimResponse(claimed_documents=0)
+
+    anon_user_id = f"{ANONYMOUS_ID_PREFIX}{x_anonymous_id}"
+
+    doc_result = await db.exec(update(Document).where(Document.user_id == anon_user_id).values(user_id=auth_user.id))
+
+    await db.commit()
+
+    claimed_docs = doc_result.rowcount if doc_result.rowcount else 0
+
+    if claimed_docs:
+        logger.info(f"User {auth_user.id} claimed {claimed_docs} docs from {anon_user_id}")
+
+    return ClaimResponse(claimed_documents=claimed_docs)
 
 
 # Account deletion
