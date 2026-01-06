@@ -55,3 +55,15 @@ async def get_user(settings: Settings, access_token: str, user_id: str) -> User 
 
 async def get_me(settings: Settings, access_token: str) -> User | None:
     return await get_user(settings, access_token=access_token, user_id="me")
+
+
+async def delete_user(settings: Settings, access_token: str, user_id: str) -> bool:
+    """Delete a user from Stack Auth. Returns True if successful."""
+    url = f"{settings.stack_auth_api_host}/api/v1/users/{user_id}"
+    headers = build_headers(settings, access_token=access_token)
+
+    response = requests.delete(url, headers=headers)
+    if response.status_code == 404:
+        return False  # User already deleted
+    response.raise_for_status()
+    return True

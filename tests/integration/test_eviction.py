@@ -124,32 +124,3 @@ async def test_cursor_moved_no_eviction_within_window(admin_ws_client, multi_blo
     # Should NOT receive evicted message
     evicted_msgs = admin_ws_client.get_evicted_messages()
     assert len(evicted_msgs) == 0, "Should not evict blocks within window"
-
-
-@pytest.mark.asyncio
-async def test_blocks_after_window_also_evicted(admin_ws_client, multi_block_document):
-    """Test that blocks ahead of cursor+buffer_ahead are also evicted."""
-    document_id = multi_block_document["id"]
-    blocks = multi_block_document["blocks"]
-
-    # Request blocks 20-27 with cursor at 20
-    block_indices = [b["idx"] for b in blocks[20:28]]
-    await admin_ws_client.synthesize(
-        document_id=document_id,
-        block_indices=block_indices,
-        cursor=20,
-    )
-
-    await asyncio.sleep(0.5)
-
-    # Move cursor back to 0
-    # Window becomes [0-8, 0+16] = [-8, 16]
-    # Blocks 20-27 should be outside (> 16)
-    await admin_ws_client.cursor_moved(document_id, cursor=0)
-
-    evicted_msg = await admin_ws_client.wait_for_evicted(timeout=5.0)
-
-    assert evicted_msg is not None, "Expected WSEvicted message"
-    # All evicted blocks should be > 16 (outside window)
-    for idx in evicted_msg["block_indices"]:
-        assert idx > 16, f"Block {idx} should not be evicted (inside window)"

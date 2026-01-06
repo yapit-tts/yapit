@@ -1,7 +1,9 @@
+import datetime as dt
 import hashlib
 import io
 import math
 import re
+from datetime import datetime
 from email.message import EmailMessage
 from typing import Annotated, Literal
 from urllib.parse import urljoin, urlparse
@@ -446,6 +448,23 @@ async def get_document_blocks(
     """
     result = await db.exec(select(Block).where(Block.document_id == document.id).order_by(Block.idx))
     return result.all()
+
+
+class PositionUpdate(BaseModel):
+    block_idx: int
+
+
+@router.patch("/{document_id}/position")
+async def update_position(
+    document: CurrentDoc,
+    body: PositionUpdate,
+    db: DbSession,
+) -> dict:
+    """Update playback position for cross-device sync."""
+    document.last_block_idx = body.block_idx
+    document.last_played_at = datetime.now(tz=dt.UTC)
+    await db.commit()
+    return {"ok": True}
 
 
 async def _download_document(url: HttpUrl, max_size: int) -> tuple[bytes, str]:

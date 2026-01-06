@@ -29,6 +29,7 @@ class TTSModel(SQLModel, table=True):
     sample_width: int
     native_codec: str
     usage_multiplier: float = Field(default=1.0)
+    is_active: bool = Field(default=True, index=True)
 
     voices: list["Voice"] = Relationship(
         back_populates="model",
@@ -50,6 +51,7 @@ class Voice(SQLModel, table=True):
     name: str
     lang: str | None  # None -> multilingual
     description: str | None = Field(default=None)
+    is_active: bool = Field(default=True, index=True)
 
     parameters: dict[str, Any] = Field(
         default_factory=dict, sa_column=Column(JSON().with_variant(postgresql.JSONB(), "postgresql"), nullable=False)
@@ -91,6 +93,10 @@ class Document(SQLModel, table=True):
     extraction_method: str | None = Field(default=None)  # processor slug used for extraction
     # Structured content for frontend display (XML with block tags, images, tables, etc.)
     structured_content: str = Field(sa_column=Column(TEXT, nullable=False))
+
+    # Cross-device sync: playback position
+    last_block_idx: int | None = Field(default=None)
+    last_played_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
 
     created: datetime = Field(
         default_factory=lambda: datetime.now(tz=dt.UTC),
@@ -173,6 +179,7 @@ class DocumentProcessor(SQLModel, table=True):
 
     slug: str = Field(primary_key=True)
     name: str
+    is_active: bool = Field(default=True, index=True)
 
 
 class RegexRule(PydanticModel):
@@ -347,4 +354,23 @@ class UsageLog(SQLModel, table=True):
     __table_args__ = (
         Index("idx_usage_log_created", "created"),
         Index("idx_usage_log_user_created", "user_id", "created"),
+    )
+
+
+class UserPreferences(SQLModel, table=True):
+    """User-synced preferences (cross-device)."""
+
+    user_id: str = Field(primary_key=True)
+    pinned_voices: list[str] = Field(
+        default_factory=list,
+        sa_column=Column(JSON().with_variant(postgresql.JSONB(), "postgresql"), nullable=False),
+    )
+
+    created: datetime = Field(
+        default_factory=lambda: datetime.now(tz=dt.UTC),
+        sa_column=Column(DateTime(timezone=True)),
+    )
+    updated: datetime = Field(
+        default_factory=lambda: datetime.now(tz=dt.UTC),
+        sa_column=Column(DateTime(timezone=True)),
     )

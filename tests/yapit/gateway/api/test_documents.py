@@ -223,3 +223,36 @@ async def test_prepare_website_returns_empty_uncached_pages(client, as_test_user
         data = DocumentPrepareResponse.model_validate(response.json())
         assert data.endpoint == "website"
         assert data.uncached_pages == set()
+
+
+# Position update tests
+
+
+@pytest.mark.asyncio
+async def test_update_position(client, as_test_user):
+    """Test updating document playback position."""
+    # Create a document first
+    r = await client.post("/v1/documents/text", json={"content": "Test content for position"})
+    assert r.status_code == 201
+    doc = DocumentCreateResponse.model_validate(r.json())
+
+    # Update position
+    r = await client.patch(f"/v1/documents/{doc.id}/position", json={"block_idx": 5})
+    assert r.status_code == 200
+    assert r.json() == {"ok": True}
+
+    # Verify position was saved
+    r = await client.get(f"/v1/documents/{doc.id}")
+    assert r.status_code == 200
+    assert r.json()["last_block_idx"] == 5
+    assert r.json()["last_played_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_update_position_not_found(client, as_test_user):
+    """Test updating position for non-existent document."""
+    r = await client.patch(
+        "/v1/documents/00000000-0000-0000-0000-000000000000/position",
+        json={"block_idx": 0},
+    )
+    assert r.status_code == 404

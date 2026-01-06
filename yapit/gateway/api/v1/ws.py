@@ -230,8 +230,13 @@ async def _queue_synthesis_job(
     threshold = settings.tts_overflow_queue_threshold
 
     if route.overflow and queue_depth > threshold:
-        processor_route = "overflow"
-        await route.overflow.process(job)
+        try:
+            processor_route = "overflow"
+            await route.overflow.process(job)
+        except Exception as e:
+            logger.warning(f"Overflow processor failed, falling back to local queue: {e}")
+            processor_route = "local"
+            await redis.lpush(get_queue_name(model.slug), job.model_dump_json())
     else:
         processor_route = "local"
         await redis.lpush(get_queue_name(model.slug), job.model_dump_json())
