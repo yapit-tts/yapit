@@ -651,48 +651,59 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
     }
   }, []);
 
+  // Action buttons toolbar - always rendered
+  const ActionButtons = () => (
+    <div className="flex items-center gap-1 shrink-0">
+      <button
+        onClick={handleCopyMarkdown}
+        disabled={!markdownContent}
+        className="p-2 rounded hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+        title={copied ? "Copied!" : "Copy markdown"}
+      >
+        {copied ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4 text-muted-foreground" />}
+      </button>
+      <button
+        onClick={handleDownloadMarkdown}
+        disabled={!markdownContent}
+        className="p-2 rounded hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+        title="Download markdown"
+      >
+        <Download className="h-4 w-4 text-muted-foreground" />
+      </button>
+      <button
+        disabled
+        className="p-2 rounded opacity-40 cursor-not-allowed"
+        title="Export as audio (coming soon)"
+      >
+        <Music className="h-4 w-4 text-muted-foreground" />
+      </button>
+    </div>
+  );
+
+  // Responsive margins: larger on desktop, smaller on mobile
+  const containerClass = "flex flex-col overflow-y-auto px-4 sm:px-[8%] md:px-[10%] pt-4 sm:pt-[4%] pb-4";
+
   // Fallback to plain text rendering
   if (!doc || !doc.blocks || doc.blocks.length === 0) {
     return (
-      <div className="flex flex-col overflow-y-auto m-[10%] mt-[4%]">
-        {title && (
-          <div className="flex items-center justify-between mb-[4%] border-b border-b-border pb-2">
+      <div className={containerClass}>
+        <div className={cn(
+          "flex items-center mb-4 pb-2",
+          title ? "justify-between border-b border-b-border" : "justify-end"
+        )}>
+          {title && (
             <p
               className={cn(
-                "text-4xl font-bold",
+                "text-4xl font-bold mr-4",
                 sourceUrl && "cursor-pointer hover:opacity-80"
               )}
               onClick={sourceUrl ? handleTitleClick : undefined}
             >
               {title}
             </p>
-            <div className="flex items-center gap-1 ml-4">
-              <button
-                onClick={handleCopyMarkdown}
-                disabled={!markdownContent}
-                className="p-2 rounded hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                title={copied ? "Copied!" : "Copy markdown"}
-              >
-                {copied ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4 text-muted-foreground" />}
-              </button>
-              <button
-                onClick={handleDownloadMarkdown}
-                disabled={!markdownContent}
-                className="p-2 rounded hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                title="Download markdown"
-              >
-                <Download className="h-4 w-4 text-muted-foreground" />
-              </button>
-              <button
-                disabled
-                className="p-2 rounded opacity-40 cursor-not-allowed"
-                title="Export as audio (coming soon)"
-              >
-                <Music className="h-4 w-4 text-muted-foreground" />
-              </button>
-            </div>
-          </div>
-        )}
+          )}
+          <ActionButtons />
+        </div>
         <pre className="whitespace-pre-wrap break-words w-full">
           {fallbackContent || "No content available"}
         </pre>
@@ -704,45 +715,24 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
   const groupedBlocks = groupBlocks(doc.blocks);
 
   return (
-    <article className="flex flex-col overflow-y-auto m-[10%] mt-[4%] prose-container">
-      {title && (
-        <div className="flex items-center justify-between mb-6 border-b border-b-border pb-2">
+    <article className={cn(containerClass, "prose-container")}>
+      <div className={cn(
+        "flex items-center mb-6 pb-2",
+        title ? "justify-between border-b border-b-border" : "justify-end"
+      )}>
+        {title && (
           <h1
             className={cn(
-              "text-4xl font-bold",
+              "text-4xl font-bold mr-4",
               sourceUrl && "cursor-pointer hover:opacity-80"
             )}
             onClick={sourceUrl ? handleTitleClick : undefined}
           >
             {title}
           </h1>
-          <div className="flex items-center gap-1 ml-4">
-            <button
-              onClick={handleCopyMarkdown}
-              disabled={!markdownContent}
-              className="p-2 rounded hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-              title={copied ? "Copied!" : "Copy markdown"}
-            >
-              {copied ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4 text-muted-foreground" />}
-            </button>
-            <button
-              onClick={handleDownloadMarkdown}
-              disabled={!markdownContent}
-              className="p-2 rounded hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-              title="Download markdown"
-            >
-              <Download className="h-4 w-4 text-muted-foreground" />
-            </button>
-            <button
-              disabled
-              className="p-2 rounded opacity-40 cursor-not-allowed"
-              title="Export as audio (coming soon)"
-            >
-              <Music className="h-4 w-4 text-muted-foreground" />
-            </button>
-          </div>
-        </div>
-      )}
+        )}
+        <ActionButtons />
+      </div>
       <div ref={contentRef} className="structured-content px-3" onClick={handleContentClick}>
         {groupedBlocks.map((grouped) => {
           if (grouped.kind === "paragraph-group") {

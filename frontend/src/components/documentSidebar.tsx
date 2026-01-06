@@ -35,6 +35,7 @@ import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip
 import { ChevronUp, FileText, Plus, Loader2, MoreHorizontal, User2, LogOut, LogIn, Trash2, Pencil, CreditCard, Lightbulb, Settings, Info } from "lucide-react";
 import { useApi } from "@/api";
 import { useUser } from "@stackframe/react";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 const CHARS_PER_HOUR = 61200;
 
@@ -63,6 +64,7 @@ function DocumentSidebar() {
   const { documentId } = useParams();
   const location = useLocation();
   const user = useUser();
+  const isMobile = useIsMobile();
 
   useEffect(() => {
     if (!isAuthReady) return;
@@ -248,7 +250,7 @@ function DocumentSidebar() {
                   </div>
                 </SidebarMenuButton>
               </TooltipTrigger>
-              <TooltipContent side="right">
+              <TooltipContent side="right" hidden={isMobile}>
                 {subscription?.subscription ? (
                   <div className="space-y-1">
                     {subscription.limits.premium_voice_characters !== null && subscription.limits.premium_voice_characters > 0 && (
