@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { ChevronDown, Star, ChevronRight, Monitor, Cloud, Loader2, Info } from "lucide-react";
 
 // HIGGS backend is flaky and more expensive than Inworld - hide for now
@@ -23,10 +23,9 @@ import {
   groupInworldVoicesByLanguage,
   isHighQualityVoice,
   setVoiceSelection,
-  getPinnedVoices,
-  togglePinnedVoice,
 } from "@/lib/voiceSelection";
 import { useInworldVoices } from "@/hooks/useInworldVoices";
+import { useUserPreferences } from "@/hooks/useUserPreferences";
 
 interface VoicePickerProps {
   value: VoiceSelection;
@@ -35,7 +34,6 @@ interface VoicePickerProps {
 
 export function VoicePicker({ value, onChange }: VoicePickerProps) {
   const [open, setOpen] = useState(false);
-  const [pinnedVoices, setPinnedVoices] = useState<string[]>([]);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   // Track which language sections are expanded (user manages, we just remember)
   const [expandedKokoroLangs, setExpandedKokoroLangs] = useState<Set<KokoroLanguageCode>>(new Set(["a"]));
@@ -44,9 +42,8 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
   // Fetch Inworld voices from API
   const { voices: inworldVoices, isLoading: inworldLoading } = useInworldVoices();
 
-  useEffect(() => {
-    setPinnedVoices(getPinnedVoices());
-  }, []);
+  // Use synced preferences (cross-device sync for authenticated users)
+  const { pinnedVoices, togglePinnedVoice } = useUserPreferences();
 
   const toggleKokoroLangExpanded = (lang: KokoroLanguageCode) => {
     setExpandedKokoroLangs(prev => {
@@ -70,11 +67,6 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
       }
       return next;
     });
-  };
-
-  const handlePinToggle = (slug: string) => {
-    const newPinned = togglePinnedVoice(slug);
-    setPinnedVoices(newPinned);
   };
 
   // Track model type for tab logic
@@ -246,7 +238,7 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
                     isPinned={true}
                     isSelected={value.voiceSlug === voice.index}
                     onSelect={() => handleVoiceSelect(voice.index)}
-                    onPinToggle={() => handlePinToggle(voice.index)}
+                    onPinToggle={() => togglePinnedVoice(voice.index)}
                   />
                 ))}
               </div>
@@ -276,7 +268,7 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
                       isPinned={pinnedVoices.includes(voice.index)}
                       isSelected={value.voiceSlug === voice.index}
                       onSelect={() => handleVoiceSelect(voice.index)}
-                      onPinToggle={() => handlePinToggle(voice.index)}
+                      onPinToggle={() => togglePinnedVoice(voice.index)}
                     />
                   ))}
                 </CollapsibleContent>
@@ -340,7 +332,7 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
                         isPinned={true}
                         isSelected={value.voiceSlug === voice.slug}
                         onSelect={() => handleVoiceSelect(voice.slug)}
-                        onPinToggle={() => handlePinToggle(voice.slug)}
+                        onPinToggle={() => togglePinnedVoice(voice.slug)}
                       />
                     ))}
                   </div>
@@ -369,7 +361,7 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
                           isPinned={pinnedVoices.includes(voice.slug)}
                           isSelected={value.voiceSlug === voice.slug}
                           onSelect={() => handleVoiceSelect(voice.slug)}
-                          onPinToggle={() => handlePinToggle(voice.slug)}
+                          onPinToggle={() => togglePinnedVoice(voice.slug)}
                         />
                       ))}
                     </CollapsibleContent>
@@ -393,7 +385,7 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
                       isPinned={true}
                       isSelected={value.voiceSlug === preset.slug}
                       onSelect={() => handleVoiceSelect(preset.slug)}
-                      onPinToggle={() => handlePinToggle(preset.slug)}
+                      onPinToggle={() => togglePinnedVoice(preset.slug)}
                     />
                   ))}
                 </div>
@@ -410,7 +402,7 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
                     isPinned={pinnedVoices.includes(preset.slug)}
                     isSelected={value.voiceSlug === preset.slug}
                     onSelect={() => handleVoiceSelect(preset.slug)}
-                    onPinToggle={() => handlePinToggle(preset.slug)}
+                    onPinToggle={() => togglePinnedVoice(preset.slug)}
                   />
                 ))}
               </div>

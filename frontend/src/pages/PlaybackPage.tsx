@@ -61,6 +61,7 @@ interface DocumentResponse {
   filtered_text: string | null;
   structured_content: string | null;
   metadata_dict: DocumentMetadata | null;
+  last_block_idx: number | null;
 }
 
 interface AudioBufferData {
@@ -74,7 +75,7 @@ const PlaybackPage = () => {
   const { state } = useLocation();
   const initialTitle: string | undefined = state?.documentTitle;
 
-  const { api, isAuthReady } = useApi();
+  const { api, isAuthReady, isAnonymous } = useApi();
   const browserTTS = useBrowserTTS();
   const { settings } = useSettings();
   const ttsWS = useTTSWebSocket();
@@ -314,21 +315,42 @@ const PlaybackPage = () => {
     }
   }, [documentBlocks, estimated_ms]);
 
-  // Restore playback position from localStorage when document loads
+  // Restore playback position when document loads
+  // For authenticated users: prefer server's last_block_idx for cross-device sync
+  // For anonymous users: use localStorage
   useEffect(() => {
-    if (!documentId || documentBlocks.length === 0) return;
+    if (!documentId || documentBlocks.length === 0 || !document) return;
 
-    const saved = getPlaybackPosition(documentId);
-    if (saved && saved.block >= 0 && saved.block < documentBlocks.length) {
-      setCurrentBlock(saved.block);
-      setAudioProgress(saved.progressMs);
-      blockStartTimeRef.current = saved.progressMs;
+    // Prefer server position for authenticated users (cross-device sync)
+    const serverBlock = document.last_block_idx;
+    const localSaved = getPlaybackPosition(documentId);
+
+    // Use server position if authenticated and server has a saved position
+    // Otherwise fall back to localStorage
+    let restoreBlock: number | null = null;
+    let restoreProgressMs = 0;
+
+    if (!isAnonymous && serverBlock !== null && serverBlock >= 0 && serverBlock < documentBlocks.length) {
+      restoreBlock = serverBlock;
+      // Estimate progress to this block for display
+      for (let i = 0; i < serverBlock; i++) {
+        restoreProgressMs += documentBlocks[i].est_duration_ms || 0;
+      }
+    } else if (localSaved && localSaved.block >= 0 && localSaved.block < documentBlocks.length) {
+      restoreBlock = localSaved.block;
+      restoreProgressMs = localSaved.progressMs;
+    }
+
+    if (restoreBlock !== null) {
+      setCurrentBlock(restoreBlock);
+      setAudioProgress(restoreProgressMs);
+      blockStartTimeRef.current = restoreProgressMs;
 
       // Scroll to restored block after React renders the blocks
       if (settings.scrollOnRestore) {
         setTimeout(() => {
           const blockElement = window.document.querySelector(
-            `[data-audio-block-idx="${saved.block}"]`
+            `[data-audio-block-idx="${restoreBlock}"]`
           );
           if (blockElement) {
             blockElement.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -336,22 +358,36 @@ const PlaybackPage = () => {
         }, 100);
       }
     }
-  }, [documentId, documentBlocks.length, settings.scrollOnRestore]);
+  }, [documentId, documentBlocks, document, isAnonymous, settings.scrollOnRestore]);
 
   // Ref to track documentId for position saving (avoids saving old position to new doc on navigation)
   const documentIdRef = useRef(documentId);
   documentIdRef.current = documentId;
+
+  // Track isAnonymous via ref to avoid re-triggering on auth changes
+  const isAnonymousRef = useRef(isAnonymous);
+  isAnonymousRef.current = isAnonymous;
 
   // Save playback position when currentBlock changes
   // Uses ref for documentId so navigating to a new doc doesn't save old position to new doc's key
   useEffect(() => {
     if (!documentIdRef.current || currentBlock < 0) return;
 
+    // Always save to localStorage (instant, serves as fallback if server sync fails)
     setPlaybackPosition(documentIdRef.current, {
       block: currentBlock,
       progressMs: blockStartTimeRef.current,
     });
-  }, [currentBlock]); // Only depend on currentBlock - documentId comes from ref
+
+    // Sync to server for authenticated users (cross-device sync)
+    if (!isAnonymousRef.current) {
+      api.patch(`/v1/documents/${documentIdRef.current}/position`, {
+        block_idx: currentBlock,
+      }).catch(() => {
+        // Silently ignore sync failures - localStorage is the fallback
+      });
+    }
+  }, [currentBlock, api]); // Only depend on currentBlock - documentId and isAnonymous come from refs
 
   // Helper to scroll to a specific block
   const scrollToBlock = useCallback((blockIdx: number, behavior: ScrollBehavior = "smooth") => {
