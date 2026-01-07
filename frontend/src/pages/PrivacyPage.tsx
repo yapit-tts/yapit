@@ -21,7 +21,7 @@ const PrivacyPage = () => {
 
           <h3 className="text-lg font-medium mt-4 mb-2">Account information</h3>
           <ul className="list-disc pl-6 space-y-1">
-            <li>Email address (via Stack Auth)</li>
+            <li>Email address</li>
             <li>Display name (if provided)</li>
           </ul>
 
@@ -93,13 +93,12 @@ const PrivacyPage = () => {
           </ul>
           <p className="mb-4">These APIs process your content to provide the service. They may process data in the United States. We don't control their data retention policies — refer to their respective privacy policies for details.</p>
 
-          <h3 className="text-lg font-medium mt-4 mb-2">Your account/payment data is handled by:</h3>
+          <h3 className="text-lg font-medium mt-4 mb-2">Payment processing:</h3>
           <ul className="list-disc pl-6 space-y-1">
-            <li><strong>Stack Auth</strong>: Authentication (email, profile data)</li>
             <li><strong>Stripe</strong>: Payment processing as merchant of record (payment details, billing address)</li>
           </ul>
 
-          <h3 className="text-lg font-medium mt-4 mb-2">Email delivery (via Stack Auth):</h3>
+          <h3 className="text-lg font-medium mt-4 mb-2">Email delivery:</h3>
           <ul className="list-disc pl-6 space-y-1">
             <li><strong>Resend</strong>: Delivers verification and notification emails. Your email address is sent to Resend for delivery. Data stored in the US with GDPR-compliant safeguards (Standard Contractual Clauses, SOC 2 Type II, ISO 27001). See <a href="https://resend.com/legal/privacy-policy" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">Resend Privacy Policy</a>.</li>
             <li><strong>Freestyle.sh</strong>: Renders email templates (no user data stored, just template processing).</li>
@@ -144,13 +143,13 @@ const PrivacyPage = () => {
             <li>Permanently deletes your preferences</li>
             <li>Anonymizes usage records (user ID replaced with hash, data patterns preserved for analytics)</li>
             <li>Cancels any active subscription</li>
-            <li>Requests deletion from Stack Auth</li>
+            <li>Deletes your authentication data</li>
           </ul>
         </section>
 
         <section>
           <h2 className="text-2xl font-semibold mb-3">Cookies</h2>
-          <p className="mb-3">We use <strong>only authentication cookies</strong> (via Stack Auth) to keep you logged in. These are strictly necessary for the service to function.</p>
+          <p className="mb-3">We use <strong>only authentication cookies</strong> to keep you logged in. These are strictly necessary for the service to function.</p>
           <p className="mb-2"><strong>We do NOT use:</strong></p>
           <ul className="list-disc pl-6 space-y-1 mb-3">
             <li>Analytics cookies</li>
