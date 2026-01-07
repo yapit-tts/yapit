@@ -5,6 +5,7 @@ import { useIsMobile } from "@/hooks/use-mobile";
 const EDGE_WIDTH = 60; // Trigger zone width (px)
 const SWIPE_THRESHOLD = 50; // Mobile swipe distance to trigger (px)
 const REVEAL_DELAY = 150; // ms cursor must stay in zone before reveal
+const MOBILE_EDGE_INSET = 20; // Mobile: inset from edge to avoid browser back gesture
 
 export function SidebarEdgeTrigger() {
   const { toggleSidebar, open } = useSidebar();
@@ -73,7 +74,10 @@ export function SidebarEdgeTrigger() {
 
   const handleTouchStart = useCallback((e: TouchEvent) => {
     const touch = e.touches[0];
-    if (touch.clientX <= EDGE_WIDTH) {
+    // Inset from edge to avoid triggering browser back gesture
+    const inSwipeZone = touch.clientX >= MOBILE_EDGE_INSET &&
+                        touch.clientX <= MOBILE_EDGE_INSET + EDGE_WIDTH;
+    if (inSwipeZone) {
       touchStartX.current = touch.clientX;
       touchStartY.current = touch.clientY;
     }
@@ -112,19 +116,21 @@ export function SidebarEdgeTrigger() {
     };
   }, [isMobile, handleTouchStart, handleTouchMove, handleTouchEnd]);
 
-  // Mobile: subtle notch in thumb zone (lower on screen)
-  // Swipe gesture is primary; this is just for discoverability
+  // Mobile: visible button in thumb zone since swipe may conflict with browser gestures
   if (isMobile) {
     return (
       <button
         onClick={toggleSidebar}
         className="fixed left-0 z-20
-          w-1.5 h-10 flex items-center justify-center
-          bg-muted-foreground/20 rounded-r-full
-          active:bg-muted-foreground/40 transition-colors"
+          w-5 h-11 flex items-center justify-center
+          bg-background/60 backdrop-blur-sm
+          border-y border-r border-border/50 rounded-r-lg
+          active:bg-muted/80 transition-colors"
         style={{ top: '65%' }}
         aria-label="Toggle sidebar"
-      />
+      >
+        <span className="text-muted-foreground text-sm font-light">›</span>
+      </button>
     );
   }
 
