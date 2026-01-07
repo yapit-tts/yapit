@@ -87,6 +87,7 @@ endif
 
 # Decrypt .env.sops for dev
 # - Removes STACK_* (dev uses separate Stack Auth via .env.dev)
+# - Removes DATABASE_URL and POSTGRES_PASSWORD (dev uses public creds from .env.dev)
 # - Transforms *_TEST vars to main var names (STRIPE_SECRET_KEY_TEST -> STRIPE_SECRET_KEY)
 # - Removes *_LIVE vars (not needed in dev)
 dev-env:
@@ -95,6 +96,8 @@ dev-env:
 	fi
 	@SOPS_AGE_KEY_FILE=$$YAPIT_SOPS_AGE_KEY_FILE sops -d .env.sops \
 		| grep -v "^STACK_" \
+		| grep -v "^DATABASE_URL=" \
+		| grep -v "^POSTGRES_PASSWORD=" \
 		| grep -v "_LIVE=" \
 		| sed 's/_TEST=/=/' \
 		> .env
