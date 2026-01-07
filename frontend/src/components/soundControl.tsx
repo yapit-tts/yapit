@@ -1,7 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { Play, Pause, Volume2, SkipBack, SkipForward, Loader2, Square, WifiOff, ChevronUp } from "lucide-react";
-import { useEffect, useState, useRef, useCallback, useMemo } from "react";
+import { useEffect, useState, useRef, useCallback, useMemo, memo } from "react";
 import { VoicePicker } from "@/components/voicePicker";
 import { SettingsDialog } from "@/components/settingsDialog";
 import { type VoiceSelection } from "@/lib/voiceSelection";
@@ -469,7 +469,7 @@ function msToTime(duration: number | undefined): string {
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 }
 
-const SoundControl = ({
+const SoundControl = memo(function SoundControl({
   isPlaying,
   isBuffering,
   isSynthesizing,
@@ -487,7 +487,7 @@ const SoundControl = ({
   onSpeedChange,
   voiceSelection,
   onVoiceChange,
-}: Props) => {
+}: Props) {
   const { estimated_ms, numberOfBlocks, currentBlock, setCurrentBlock, onBlockHover, audioProgress, blockStates } = progressBarValues;
   const [progressDisplay, setProgressDisplay] = useState("0:00");
   const [durationDisplay, setDurationDisplay] = useState("0:00");
@@ -706,6 +706,6 @@ const SoundControl = ({
       )}
     </div>
   );
-};
+});
 
 export { SoundControl };

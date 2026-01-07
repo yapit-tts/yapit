@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useUser } from "@stackframe/react";
 import { getOrCreateAnonymousId } from "@/lib/anonymousId";
 
@@ -308,7 +308,7 @@ export function useTTSWebSocket(): UseTTSWebSocketReturn {
     return blockStatesRef.current.get(blockIdx);
   }, []);
 
-  return {
+  return useMemo(() => ({
     isConnected,
     isReconnecting,
     connectionError,
@@ -320,5 +320,17 @@ export function useTTSWebSocket(): UseTTSWebSocketReturn {
     checkConnected,
     getAudioUrl,
     getBlockStatus,
-  };
+  }), [
+    isConnected,
+    isReconnecting,
+    connectionError,
+    blockStates,
+    audioUrls,
+    synthesize,
+    moveCursor,
+    reset,
+    checkConnected,
+    getAudioUrl,
+    getBlockStatus,
+  ]);
 }

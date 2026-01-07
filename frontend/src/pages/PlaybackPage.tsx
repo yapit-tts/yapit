@@ -1,7 +1,7 @@
 import { SoundControl } from '@/components/soundControl';
 import { StructuredDocumentView } from '@/components/structuredDocument';
 import { useParams, useLocation, Link } from "react-router";
-import { useRef, useState, useEffect, useLayoutEffect, useCallback } from "react";
+import { useRef, useState, useEffect, useLayoutEffect, useCallback, useMemo } from "react";
 import { useApi } from '@/api';
 import { Loader2, FileQuestion } from "lucide-react";
 import { AxiosError } from "axios";
@@ -1222,6 +1222,8 @@ const PlaybackPage = () => {
 
   // Memoized to prevent StructuredDocumentView re-renders from audioProgress updates
   // Uses currentBlockRef instead of currentBlock to keep callback stable
+  // Note: Uses ttsWS.moveCursor directly (stable ref) instead of ttsWS object to prevent
+  // cascading re-renders when WS state (blockStates/audioUrls) changes during playback
   const handleBlockChange = useCallback((newBlock: number) => {
     if (newBlock === currentBlockRef.current) return;
     if (!documentBlocks || newBlock < 0 || newBlock >= documentBlocks.length) {
@@ -1249,7 +1251,7 @@ const PlaybackPage = () => {
 
     // If already playing, the useEffect will auto-play the new block
     // If paused, just set position (user can press play)
-  }, [documentBlocks, documentId, voiceSelection.model, ttsWS]);
+  }, [documentBlocks, documentId, voiceSelection.model, ttsWS.moveCursor]);
 
   // Handle click on structured document block (by audio_block_idx)
   // Memoized to prevent StructuredDocumentView re-renders from audioProgress updates
@@ -1257,13 +1259,13 @@ const PlaybackPage = () => {
     handleBlockChange(audioBlockIdx);
   }, [handleBlockChange]);
 
-  const handleVolumeChange = (newVolume: number) => {
+  const handleVolumeChange = useCallback((newVolume: number) => {
     setVolume(newVolume);
-  };
+  }, []);
 
-  const handleSpeedChange = (newSpeed: number) => {
+  const handleSpeedChange = useCallback((newSpeed: number) => {
     setPlaybackSpeed(newSpeed);
-  };
+  }, []);
 
   const handleTitleChange = useCallback(async (newTitle: string) => {
     if (!documentId) return;
@@ -1284,6 +1286,17 @@ const PlaybackPage = () => {
       alert(errorMessage);
     }
   }, [api, documentId]);
+
+  // Memoize progressBarValues to prevent SoundControl re-renders when unrelated state changes
+  const progressBarValues = useMemo(() => ({
+    estimated_ms: actualTotalDuration > 0 ? actualTotalDuration : estimated_ms,
+    numberOfBlocks,
+    currentBlock: currentBlock >= 0 ? currentBlock : 0,
+    setCurrentBlock: handleBlockChange,
+    onBlockHover: handleBlockHover,
+    audioProgress,
+    blockStates,
+  }), [actualTotalDuration, estimated_ms, numberOfBlocks, currentBlock, handleBlockChange, handleBlockHover, audioProgress, blockStates]);
 
   if (isLoading) {
     return (
@@ -1335,15 +1348,7 @@ const PlaybackPage = () => {
         onCancelSynthesis={handleCancelSynthesis}
         onSkipBack={handleSkipBack}
         onSkipForward={handleSkipForward}
-        progressBarValues={{
-          estimated_ms: actualTotalDuration > 0 ? actualTotalDuration : estimated_ms,
-          numberOfBlocks,
-          currentBlock: currentBlock >= 0 ? currentBlock : 0,
-          setCurrentBlock: handleBlockChange,
-          onBlockHover: handleBlockHover,
-          audioProgress,
-          blockStates,
-        }}
+        progressBarValues={progressBarValues}
         volume={volume}
         onVolumeChange={handleVolumeChange}
         playbackSpeed={playbackSpeed}

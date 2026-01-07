@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, memo } from "react";
+import { useState, useEffect, useMemo, memo, startTransition } from "react";
 import { ChevronDown, Star, ChevronRight, Monitor, Cloud, Loader2, Info, Lock } from "lucide-react";
 
 // HIGGS backend is flaky and more expensive than Inworld - hide for now
@@ -154,7 +154,10 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
       model: newModel,
       voiceSlug,
     };
-    onChange(newSelection);
+    // Mark as non-urgent transition so UI stays responsive during cache clearing
+    startTransition(() => {
+      onChange(newSelection);
+    });
     setVoiceSelection(newSelection);
   };
 

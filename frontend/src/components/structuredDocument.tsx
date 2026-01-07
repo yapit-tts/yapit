@@ -614,7 +614,7 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
     }, 0);
 
     return () => clearTimeout(timeoutId);
-  });
+  }, [doc]);
 
   // Replace video links with embedded video players
   useEffect(() => {
