@@ -14,7 +14,7 @@ import pymupdf
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
 from loguru import logger
 from markitdown import MarkItDown
-from pydantic import BaseModel, HttpUrl, StringConstraints
+from pydantic import BaseModel, Field, HttpUrl, StringConstraints
 from sqlmodel import col, select
 
 from yapit.gateway.auth import authenticate
@@ -409,7 +409,7 @@ async def get_document(document: CurrentDoc) -> Document:
 
 
 class DocumentUpdateRequest(BaseModel):
-    title: str | None = None
+    title: str | None = Field(default=None, max_length=500)
 
 
 @router.patch("/{document_id}", response_model=DocumentCreateResponse)

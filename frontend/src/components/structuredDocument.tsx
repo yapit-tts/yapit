@@ -757,7 +757,7 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
         >
           <h1
             className={cn(
-              "text-4xl font-bold sm:mr-4",
+              "text-4xl font-bold sm:mr-4 inline",
               sourceUrl && "cursor-pointer hover:opacity-80"
             )}
             onClick={(e) => {
@@ -786,6 +786,7 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
             }}
             onBlur={saveTitle}
             autoFocus
+            maxLength={500}
             className="flex-1 text-4xl font-bold bg-transparent border-none outline-none sm:mr-4"
           />
           <div className="flex justify-end mt-2 sm:mt-0">
@@ -806,6 +807,7 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
                 }}
                 onBlur={saveTitle}
                 autoFocus
+                maxLength={500}
                 placeholder="Enter title..."
                 className="flex-1 text-2xl font-bold bg-transparent border-none outline-none placeholder:text-muted-foreground/40"
               />

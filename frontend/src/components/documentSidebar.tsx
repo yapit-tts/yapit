@@ -140,6 +140,7 @@ function DocumentSidebar() {
       setRenameDoc(null);
     } catch (error) {
       console.error("Failed to rename document:", error);
+      alert("Failed to rename document");
     }
   };
 
@@ -343,6 +344,7 @@ function DocumentSidebar() {
             value={newTitle}
             onChange={(e) => setNewTitle(e.target.value)}
             placeholder="Document title"
+            maxLength={500}
             onKeyDown={(e) => e.key === "Enter" && handleRenameDocument()}
           />
           <DialogFooter>

@@ -1276,6 +1276,12 @@ const PlaybackPage = () => {
       }));
     } catch (err) {
       console.error("Failed to update title:", err);
+      // Revert to original title on error
+      setDocument(prev => prev ? { ...prev } : prev);
+      const errorMessage = err instanceof AxiosError && err.response?.status === 422
+        ? "Title is too long (max 500 characters)"
+        : "Failed to update title";
+      alert(errorMessage);
     }
   }, [api, documentId]);
 

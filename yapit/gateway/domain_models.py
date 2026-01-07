@@ -67,9 +67,9 @@ class DocumentMetadata(PydanticModel):
 
     content_type: str  # MIME type
     total_pages: int  # 1 for websites and text
-    title: str | None = None  # Document title if we can extract it
-    url: str | None = None  # Original URL if from web
-    file_name: str | None = None  # Original filename
+    title: str | None = Field(default=None, max_length=500)
+    url: str | None = Field(default=None, max_length=2000)
+    file_name: str | None = Field(default=None, max_length=255)
     file_size: float | None = None  # Content size in bytes
 
 
@@ -77,7 +77,7 @@ class Document(SQLModel, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     user_id: str = Field()
 
-    title: str | None = Field(default=None)
+    title: str | None = Field(default=None, max_length=500)
 
     original_text: str = Field(sa_column=Column(TEXT))
     filtered_text: str | None = Field(default=None, sa_column=Column(TEXT, nullable=True))
