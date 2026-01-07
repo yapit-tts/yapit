@@ -104,12 +104,6 @@ function DocumentSidebar() {
     return () => window.removeEventListener('document-title-changed', handleTitleChanged);
   }, []);
 
-  const handleDocumentClick = (doc: DocumentItem) => {
-    navigate(`/playback/${doc.id}`, {
-      state: { documentTitle: doc.title },
-    });
-  };
-
   const handleDeleteDocument = async (e: React.MouseEvent, docId: string) => {
     e.stopPropagation();
     try {
@@ -194,14 +188,16 @@ function DocumentSidebar() {
                 documents.map((doc) => (
                   <SidebarMenuItem key={doc.id}>
                     <SidebarMenuButton
-                      onClick={() => handleDocumentClick(doc)}
+                      asChild
                       isActive={documentId === doc.id}
                       size="lg"
                     >
-                      <FileText className="shrink-0" />
-                      <span className="truncate" title={doc.title || "Untitled"}>
-                        {doc.title || "Untitled"}
-                      </span>
+                      <Link to={`/playback/${doc.id}`} state={{ documentTitle: doc.title }}>
+                        <FileText className="shrink-0" />
+                        <span className="truncate" title={doc.title || "Untitled"}>
+                          {doc.title || "Untitled"}
+                        </span>
+                      </Link>
                     </SidebarMenuButton>
                     <DropdownMenu
                       open={openMenuId === doc.id}

@@ -757,15 +757,15 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
         >
           <h1 className="text-4xl font-bold sm:mr-4 break-all min-w-0 flex-1">
             {sourceUrl ? (
-              <span
-                className="cursor-pointer hover:opacity-80"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleTitleClick();
-                }}
+              <a
+                href={sourceUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="hover:opacity-80"
+                onClick={(e) => e.stopPropagation()}
               >
                 {title}
-              </span>
+              </a>
             ) : (
               title
             )}
