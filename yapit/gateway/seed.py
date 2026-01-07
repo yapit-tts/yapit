@@ -182,7 +182,7 @@ def create_plans(settings: Settings) -> list[Plan]:
             ocr_pages=500,
             stripe_price_id_monthly=settings.stripe_price_basic_monthly,
             stripe_price_id_yearly=settings.stripe_price_basic_yearly,
-            trial_days=3,
+            trial_days=7,
             price_cents_monthly=700,
             price_cents_yearly=7500,
         ),
@@ -190,11 +190,11 @@ def create_plans(settings: Settings) -> list[Plan]:
             tier=PlanTier.plus,
             name="Plus",
             server_kokoro_characters=None,  # unlimited
-            premium_voice_characters=1_224_000,  # 20 hours
+            premium_voice_characters=1_200_000,  # ~20 hours
             ocr_pages=1500,
             stripe_price_id_monthly=settings.stripe_price_plus_monthly,
             stripe_price_id_yearly=settings.stripe_price_plus_yearly,
-            trial_days=3,
+            trial_days=7,
             price_cents_monthly=2000,
             price_cents_yearly=19200,
         ),
@@ -202,7 +202,7 @@ def create_plans(settings: Settings) -> list[Plan]:
             tier=PlanTier.max,
             name="Max",
             server_kokoro_characters=None,  # unlimited
-            premium_voice_characters=3_060_000,  # 50 hours
+            premium_voice_characters=3_000_000,  # ~50 hours
             ocr_pages=3000,
             stripe_price_id_monthly=settings.stripe_price_max_monthly,
             stripe_price_id_yearly=settings.stripe_price_max_yearly,

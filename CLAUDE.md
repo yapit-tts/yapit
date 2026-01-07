@@ -227,7 +227,20 @@ element (Xpx) → parent (Ypx) → grandparent (Zpx) → ...
 ```
 Find which ancestor is the constraint, fix there. Flex containers especially: children don't auto-stretch width in flex-row parents without `w-full`.
 
-## Stripe MCP
+## Stripe Operations
+
+**⚠️ CRITICAL: Before ANY Stripe API operations (CLI, SDK, MCP, scripts):**
+
+1. **Verify test keys in .env:** Run `grep STRIPE_SECRET_KEY .env | cut -d'=' -f2 | cut -c1-8` — must show `sk_test_`
+2. **Verify CLI auth:** Run `stripe config --list` or `stripe whoami` — CLI has its own auth, separate from .env. It may point to a different Stripe account entirely.
+3. **If live keys:** Run `make dev-env` to switch .env to test keys
+4. **Inform user and wait for consent:** Tell the user which Stripe operations you're about to perform and confirm they haven't run `make prod-env` themselves
+
+**The SDK (.env) and CLI can be authenticated to different Stripe accounts!** Always verify both before mixing commands.
+
+This prevents accidentally creating/modifying/deleting resources in production Stripe.
+
+### Stripe MCP
 
 Stripe MCP provides direct API access and documentation search. Uses OAuth.
 
