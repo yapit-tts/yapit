@@ -97,7 +97,7 @@ function SmoothProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
   const barRef = useRef<HTMLDivElement>(null);
   const numBlocks = blockStates.length;
 
-  // Drag state
+  // Drag state (local)
   const [isDragging, setIsDragging] = useState(false);
   const [seekPosition, setSeekPosition] = useState<number | null>(null); // Block index being seeked to
   const dragStartXRef = useRef<number | null>(null);
@@ -418,7 +418,6 @@ function BlockyProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
               minWidth: 0,
               borderRight: idx < numBlocks - 1 ? '1px solid rgba(0,0,0,0.1)' : 'none',
             }}
-            title={`Block ${idx + 1}: ${state}`}
           />
         );
       })}
@@ -494,6 +493,17 @@ const SoundControl = ({
   const [durationDisplay, setDurationDisplay] = useState("0:00");
   const [isHoveringSpinner, setIsHoveringSpinner] = useState(false);
   const [isMobileExpanded, setIsMobileExpanded] = useState(false);
+  const [isHoveringProgressBar, setIsHoveringProgressBar] = useState(false);
+  const [hoveredBlock, setHoveredBlock] = useState<number | null>(null);
+  const [isDraggingProgressBar, setIsDraggingProgressBar] = useState(false);
+
+  // Wrap onBlockHover to track hover state locally for display swap
+  const handleBlockHover = useCallback((idx: number | null, isDragging: boolean) => {
+    setHoveredBlock(idx);
+    setIsHoveringProgressBar(idx !== null);
+    setIsDraggingProgressBar(isDragging);
+    onBlockHover?.(idx, isDragging);
+  }, [onBlockHover]);
 
   // Get sidebar state for responsive positioning
   const { state: sidebarState, isMobile } = useSidebar();
@@ -568,36 +578,36 @@ const SoundControl = ({
       </div>
 
       {/* Progress bar - smooth gradient for large docs, blocky for smaller ones */}
+      {/* On hover: swap time displays with block numbers (current / total) */}
       <div className="flex items-center gap-4 max-w-2xl mx-auto">
         <span className="text-sm text-muted-foreground w-12 text-right tabular-nums">
-          {progressDisplay}
+          {isHoveringProgressBar
+            ? (isDraggingProgressBar && hoveredBlock !== null ? hoveredBlock + 1 : blockNum)
+            : progressDisplay}
         </span>
         {blockStates.length > SMOOTH_THRESHOLD ? (
           <SmoothProgressBar
             blockStates={blockStates}
             currentBlock={currentBlock ?? 0}
             onBlockClick={setCurrentBlock}
-            onBlockHover={onBlockHover}
+            onBlockHover={handleBlockHover}
           />
         ) : (
           <BlockyProgressBar
             blockStates={blockStates}
             currentBlock={currentBlock ?? 0}
             onBlockClick={setCurrentBlock}
-            onBlockHover={onBlockHover}
+            onBlockHover={handleBlockHover}
           />
         )}
         <span className="text-sm text-muted-foreground w-12 tabular-nums">
-          {durationDisplay}
+          {isHoveringProgressBar ? numBlocks : durationDisplay}
         </span>
       </div>
 
-      {/* Mobile: block info + expand toggle (always visible) */}
+      {/* Mobile: connection status + expand toggle */}
       {isMobile && (
-        <div className="flex items-center justify-between mt-2 max-w-2xl mx-auto">
-          <span className="text-xs text-muted-foreground">
-            Block {blockNum} of {numBlocks}
-          </span>
+        <div className="flex items-center justify-end gap-2 mt-2 max-w-2xl mx-auto">
           {(isReconnecting || connectionError) && (
             <span className={`flex items-center gap-1 text-xs ${connectionError ? 'text-destructive' : 'text-yellow-600'}`}>
               <WifiOff className="h-3 w-3" />
@@ -656,12 +666,9 @@ const SoundControl = ({
 
       {/* Desktop: horizontal layout with all controls */}
       {!isMobile && (
-        <div className="flex items-center justify-between mt-3 max-w-2xl mx-auto">
+        <div className="flex items-center justify-between mt-3 max-w-xl mx-auto">
           <div className="flex items-center gap-4">
             <VoicePicker value={voiceSelection} onChange={onVoiceChange} />
-            <span className="text-sm text-muted-foreground">
-              Block {blockNum} of {numBlocks}
-            </span>
             {(isReconnecting || connectionError) && (
               <span className={`flex items-center gap-1.5 text-sm ${connectionError ? 'text-destructive' : 'text-yellow-600'}`}>
                 <WifiOff className="h-4 w-4" />
