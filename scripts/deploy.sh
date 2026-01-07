@@ -79,4 +79,17 @@ else
   exit 1
 fi
 
+# Verify expected commit is actually running (not rolled back)
+log "Verifying deployed images..."
+SERVICES="gateway stack-auth frontend"
+for svc in $SERVICES; do
+  RUNNING=$(ssh "$VPS_HOST" "docker service inspect ${STACK_NAME}_${svc} --format '{{.Spec.TaskTemplate.ContainerSpec.Image}}'" 2>/dev/null | grep -oE ':[a-f0-9]{40}' | cut -c2- || echo "")
+  if [ "$RUNNING" != "$GIT_COMMIT" ]; then
+    echo "  ✗ ${svc}: expected $GIT_COMMIT but running ${RUNNING:-unknown}"
+    echo "    Docker may have rolled back due to container crash. Check: docker service ps ${STACK_NAME}_${svc}"
+    exit 1
+  fi
+  echo "  ✓ ${svc}: $GIT_COMMIT"
+done
+
 log "Deploy complete: $GIT_COMMIT"
