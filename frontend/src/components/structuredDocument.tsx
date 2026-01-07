@@ -746,17 +746,47 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
 
   return (
     <article className={cn(containerClass, "prose-container")}>
-      {title ? (
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-6 pb-2 border-b border-b-border">
+      {title && !isEditingTitle ? (
+        <div
+          className={cn(
+            "flex flex-col sm:flex-row sm:items-center sm:justify-between mb-6 pb-2 border-b border-b-border",
+            onTitleChange && "cursor-text"
+          )}
+          onClick={onTitleChange ? () => { setEditedTitle(title); setIsEditingTitle(true); } : undefined}
+        >
           <h1
             className={cn(
               "text-4xl font-bold sm:mr-4",
               sourceUrl && "cursor-pointer hover:opacity-80"
             )}
-            onClick={sourceUrl ? handleTitleClick : undefined}
+            onClick={(e) => {
+              if (sourceUrl) {
+                e.stopPropagation(); // Don't trigger edit when clicking title with URL
+                handleTitleClick();
+              }
+              // If no sourceUrl, let it bubble to parent for editing
+            }}
           >
             {title}
           </h1>
+          <div className="flex justify-end mt-2 sm:mt-0" onClick={(e) => e.stopPropagation()}>
+            <ActionButtons />
+          </div>
+        </div>
+      ) : title && isEditingTitle ? (
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-6 pb-2 border-b border-b-border">
+          <input
+            type="text"
+            value={editedTitle}
+            onChange={(e) => setEditedTitle(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") saveTitle();
+              if (e.key === "Escape") cancelEditingTitle();
+            }}
+            onBlur={saveTitle}
+            autoFocus
+            className="flex-1 text-4xl font-bold bg-transparent border-none outline-none sm:mr-4"
+          />
           <div className="flex justify-end mt-2 sm:mt-0">
             <ActionButtons />
           </div>

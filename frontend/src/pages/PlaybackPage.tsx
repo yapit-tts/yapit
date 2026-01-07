@@ -1270,6 +1270,10 @@ const PlaybackPage = () => {
     try {
       await api.patch(`/v1/documents/${documentId}`, { title: newTitle });
       setDocument(prev => prev ? { ...prev, title: newTitle } : prev);
+      // Notify sidebar to update its document list
+      window.dispatchEvent(new CustomEvent('document-title-changed', {
+        detail: { documentId, title: newTitle }
+      }));
     } catch (err) {
       console.error("Failed to update title:", err);
     }

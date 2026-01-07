@@ -94,6 +94,16 @@ function DocumentSidebar() {
     fetchSubscription();
   }, [api, isAuthReady, isAnonymous, user, location.pathname]);
 
+  // Listen for title changes from PlaybackPage
+  useEffect(() => {
+    const handleTitleChanged = (e: Event) => {
+      const { documentId: docId, title } = (e as CustomEvent).detail;
+      setDocuments(prev => prev.map(d => d.id === docId ? { ...d, title } : d));
+    };
+    window.addEventListener('document-title-changed', handleTitleChanged);
+    return () => window.removeEventListener('document-title-changed', handleTitleChanged);
+  }, []);
+
   const handleDocumentClick = (doc: DocumentItem) => {
     navigate(`/playback/${doc.id}`, {
       state: { documentTitle: doc.title },
