@@ -128,7 +128,7 @@ export function SidebarEdgeTrigger() {
     );
   }
 
-  // Desktop: when sidebar is open, show a close button at the edge of the sidebar
+  // Desktop: when sidebar is open, show close button that slides with sidebar
   if (open) {
     return (
       <button
@@ -137,8 +137,13 @@ export function SidebarEdgeTrigger() {
           w-6 h-16 flex items-center justify-center
           bg-background/70 backdrop-blur-sm
           border-y border-r border-border rounded-r-lg
-          shadow-sm hover:bg-muted/80 transition-colors"
-        style={{ left: 'var(--sidebar-width, 256px)' }}
+          shadow-sm hover:bg-muted/80
+          transition-[left] duration-200 ease-out"
+        style={{
+          left: 'var(--sidebar-width, 256px)',
+          // Start from 0 and animate to sidebar width via CSS
+          animation: 'slideToSidebarEdge 200ms ease-out forwards'
+        }}
         aria-label="Close sidebar"
       >
         <span className="text-muted-foreground text-xl font-light">
