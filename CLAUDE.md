@@ -28,6 +28,7 @@ Note: We don't work heavily with GitHub issues (solo dev + claude for now -- the
   - If no dev user exists after startup (login fails), run `make dev-user` - there's a race condition where stack-auth health check sometimes fails before user creation runs
 - **CI timing**: Full CI (tests + build + deploy) takes ~10 minutes. Tests alone ~5 min, build+deploy ~5 min.
 - **Skip tests on deploy**: Add `[skip tests]` anywhere in commit message to skip CI tests and go straight to build+deploy. Use when you're confident in the change and want faster deploys.
+- **New Docker images**: After adding a new image to CI, set its ghcr.io package visibility to public (defaults to private).
 - Debugging: Use info logs or set log level to debug before restarting the backend.
 
 ## Metrics (SQLite)
@@ -41,6 +42,8 @@ Gateway logs metrics to `metrics.db` (SQLite). Useful for debugging performance,
 See `yapit/gateway/metrics.py` for schema and query examples.
 
 ## VPS / Production Debugging
+
+**Prod server:** `root@46.224.195.97`
 
 **Before debugging any VPS or production issues**, read these docs first:
 - `agent/knowledge/private/dokploy-operations.md` - API auth, Traefik recovery, nginx DNS caching gotcha, env injection
@@ -204,17 +207,25 @@ Use Chrome DevTools MCP to visually verify changes, test user flows, and debug i
 - User flow testing (login → input → playback → controls)
 - Edge case verification without manual testing
 
-**Context awareness:**
-Action tools (click, wait_for, fill, etc.) automatically return a full page snapshot. On complex documents this can be ~10k tokens per interaction. This is fine—just be aware:
+**⚠️ CONTEXT WARNING — Large Snapshots:**
+Action tools (click, fill, hover, etc.) automatically return full page snapshots. On complex documents this can be **30k+ tokens per interaction** — enough to consume most remaining context in one call.
 
-- **Screenshots for visual debugging** - when you need to see the actual rendered UI
-- **Document size varies** - test documents might be large; if debugging a specific bug on a known large document, that's unavoidable
-- **Before a debugging session** - if you're about to do multiple DevTools interactions on a potentially large page, update your plan file first with current goal and next steps. That way if context gets consumed quickly, you don't lose track of what you were doing
-- **Consider test documents** - if testing generic UI behavior (not a specific bug), you can create/use a simple test document to keep snapshots small
+**Before any DevTools interaction:**
+1. **Create your own small test document** — don't use pre-existing documents in the sidebar, they're often huge (real webpages, long docs). Type a few lines of test content yourself.
+2. **Sync task file first if context < 50%** — write current findings and next steps before the snapshot might consume remaining context
+3. **Prefer screenshots for visual checks** — `take_screenshot` is much smaller than snapshots
 
-Don't be paranoid about this—just factor it in when planning longer debugging sessions.
+**Exceptions:**
+- If debugging a specific bug on a known large document, the large snapshot is unavoidable — just be handoff-ready first.
+- For many bugs, screenshots lack precision — DevTools snapshots let you inspect element UIDs, exact positioning, and DOM structure. When you need that accuracy, the snapshot cost is worth it.
 
 **If MCP won't connect:** Ask the user to close Chrome so MCP can launch a fresh instance.
+
+**CSS debugging pattern:** When a style isn't applying, don't keep trying fixes at the same DOM level. Immediately trace upward:
+```
+element (Xpx) → parent (Ypx) → grandparent (Zpx) → ...
+```
+Find which ancestor is the constraint, fix there. Flex containers especially: children don't auto-stretch width in flex-row parents without `w-full`.
 
 ## Stripe MCP
 

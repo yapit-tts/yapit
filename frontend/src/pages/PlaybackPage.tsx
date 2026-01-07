@@ -1265,6 +1265,16 @@ const PlaybackPage = () => {
     setPlaybackSpeed(newSpeed);
   };
 
+  const handleTitleChange = useCallback(async (newTitle: string) => {
+    if (!documentId) return;
+    try {
+      await api.patch(`/v1/documents/${documentId}`, { title: newTitle });
+      setDocument(prev => prev ? { ...prev, title: newTitle } : prev);
+    } catch (err) {
+      console.error("Failed to update title:", err);
+    }
+  }, [api, documentId]);
+
   if (isLoading) {
     return (
       <div className="flex grow items-center justify-center">
@@ -1302,6 +1312,7 @@ const PlaybackPage = () => {
         markdownContent={markdownContent}
         onBlockClick={handleDocumentBlockClick}
         fallbackContent={fallbackContent}
+        onTitleChange={handleTitleChange}
       />
       <SoundControl
         isPlaying={isPlaying}

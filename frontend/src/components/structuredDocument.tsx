@@ -483,6 +483,7 @@ interface StructuredDocumentViewProps {
   markdownContent?: string | null;
   onBlockClick?: (audioIdx: number) => void;
   fallbackContent?: string;
+  onTitleChange?: (newTitle: string) => void;
 }
 
 // Memoized to prevent re-renders from parent's audioProgress updates
@@ -493,9 +494,12 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
   markdownContent,
   onBlockClick,
   fallbackContent,
+  onTitleChange,
 }: StructuredDocumentViewProps) {
   const contentRef = useRef<HTMLDivElement>(null);
   const [copied, setCopied] = useState(false);
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [editedTitle, setEditedTitle] = useState("");
 
   // Copy markdown to clipboard
   const handleCopyMarkdown = useCallback(async () => {
@@ -530,6 +534,27 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
       window.open(sourceUrl, "_blank", "noopener,noreferrer");
     }
   }, [sourceUrl]);
+
+  // Inline title editing (for no-title documents)
+  const startEditingTitle = useCallback(() => {
+    if (!title && onTitleChange) {
+      setEditedTitle("");
+      setIsEditingTitle(true);
+    }
+  }, [title, onTitleChange]);
+
+  const saveTitle = useCallback(() => {
+    if (editedTitle.trim() && onTitleChange) {
+      onTitleChange(editedTitle.trim());
+    }
+    setIsEditingTitle(false);
+    setEditedTitle("");
+  }, [editedTitle, onTitleChange]);
+
+  const cancelEditingTitle = useCallback(() => {
+    setIsEditingTitle(false);
+    setEditedTitle("");
+  }, []);
 
   // Parse structured content
   const doc = useMemo(() => {
@@ -681,29 +706,34 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
   );
 
   // Responsive margins: larger on desktop, smaller on mobile
-  const containerClass = "flex flex-col overflow-y-auto px-4 sm:px-[8%] md:px-[10%] pt-4 sm:pt-[4%] pb-4";
+  const containerClass = "w-full flex flex-col overflow-y-auto px-4 sm:px-[8%] md:px-[10%] pt-4 sm:pt-[4%] pb-4";
 
   // Fallback to plain text rendering
   if (!doc || !doc.blocks || doc.blocks.length === 0) {
     return (
       <div className={containerClass}>
-        <div className={cn(
-          "flex items-center mb-4 pb-2",
-          title ? "justify-between border-b border-b-border" : "justify-end"
-        )}>
-          {title && (
+        {title ? (
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-4 pb-2 border-b border-b-border">
             <p
               className={cn(
-                "text-4xl font-bold mr-4",
+                "text-4xl font-bold sm:mr-4",
                 sourceUrl && "cursor-pointer hover:opacity-80"
               )}
               onClick={sourceUrl ? handleTitleClick : undefined}
             >
               {title}
             </p>
-          )}
-          <ActionButtons />
-        </div>
+            <div className="flex justify-end mt-2 sm:mt-0">
+              <ActionButtons />
+            </div>
+          </div>
+        ) : (
+          <div className="-mx-4 px-4 sm:-mx-[8%] sm:px-[8%] md:-mx-[10%] md:px-[10%] mb-4 pb-2 border-b border-b-border">
+            <div className="w-full flex justify-end">
+              <ActionButtons />
+            </div>
+          </div>
+        )}
         <pre className="whitespace-pre-wrap break-words w-full">
           {fallbackContent || "No content available"}
         </pre>
@@ -716,23 +746,51 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
 
   return (
     <article className={cn(containerClass, "prose-container")}>
-      <div className={cn(
-        "flex items-center mb-6 pb-2",
-        title ? "justify-between border-b border-b-border" : "justify-end"
-      )}>
-        {title && (
+      {title ? (
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-6 pb-2 border-b border-b-border">
           <h1
             className={cn(
-              "text-4xl font-bold mr-4",
+              "text-4xl font-bold sm:mr-4",
               sourceUrl && "cursor-pointer hover:opacity-80"
             )}
             onClick={sourceUrl ? handleTitleClick : undefined}
           >
             {title}
           </h1>
-        )}
-        <ActionButtons />
-      </div>
+          <div className="flex justify-end mt-2 sm:mt-0">
+            <ActionButtons />
+          </div>
+        </div>
+      ) : (
+        <div className="-mx-4 px-4 sm:-mx-[8%] sm:px-[8%] md:-mx-[10%] md:px-[10%] mb-6 pb-2 border-b border-b-border">
+          <div className="w-full flex items-center justify-between gap-4">
+            {isEditingTitle ? (
+              <input
+                type="text"
+                value={editedTitle}
+                onChange={(e) => setEditedTitle(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") saveTitle();
+                  if (e.key === "Escape") cancelEditingTitle();
+                }}
+                onBlur={saveTitle}
+                autoFocus
+                placeholder="Enter title..."
+                className="flex-1 text-2xl font-bold bg-transparent border-none outline-none placeholder:text-muted-foreground/40"
+              />
+            ) : onTitleChange ? (
+              <div
+                onClick={startEditingTitle}
+                className="flex-1 h-8 cursor-text"
+                title="Click to add title"
+              />
+            ) : (
+              <div className="flex-1" />
+            )}
+            <ActionButtons />
+          </div>
+        </div>
+      )}
       <div ref={contentRef} className="structured-content px-3" onClick={handleContentClick}>
         {groupedBlocks.map((grouped) => {
           if (grouped.kind === "paragraph-group") {
