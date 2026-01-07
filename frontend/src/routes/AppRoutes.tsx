@@ -6,6 +6,7 @@ import AdminPanelPage from "@/pages/AdminPanelPage";
 import SubscriptionPage from "@/pages/SubscriptionPage";
 import TipsPage from "@/pages/TipsPage";
 import AccountPage from "@/pages/AccountPage";
+import AccountSettingsPage from "@/pages/AccountSettingsPage";
 import AboutPage from "@/pages/AboutPage";
 import CheckoutSuccessPage from "@/pages/CheckoutSuccessPage";
 import CheckoutCancelPage from "@/pages/CheckoutCancelPage";
@@ -76,6 +77,14 @@ const AppRoutes = () => (
 			element={
 				<MainLayout>
 					<AccountPage />
+				</MainLayout>
+			}
+		/>
+		<Route
+			path="/account/settings"
+			element={
+				<MainLayout>
+					<AccountSettingsPage />
 				</MainLayout>
 			}
 		/>

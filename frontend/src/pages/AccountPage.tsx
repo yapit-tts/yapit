@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router";
+import { useUser } from "@stackframe/react";
 import { useApi } from "@/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,7 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Loader2, ArrowLeft, FileText, Clock, Type, Trash2, AlertTriangle } from "lucide-react";
+import { Loader2, ArrowLeft, FileText, Clock, Type, Trash2, AlertTriangle, Mail, Settings } from "lucide-react";
 
 // LOTR trilogy stats for comparisons (Rob Inglis unabridged, trilogy only)
 const LOTR_TRILOGY_MS = 194_400_000; // ~54 hours
@@ -26,6 +27,7 @@ interface UserStats {
 const AccountPage = () => {
   const { api, isAuthReady, isAnonymous } = useApi();
   const navigate = useNavigate();
+  const user = useUser();
 
   const [stats, setStats] = useState<UserStats | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -190,6 +192,28 @@ const AccountPage = () => {
       <h1 className="text-4xl font-bold mb-2">Account</h1>
       <p className="text-lg text-muted-foreground mb-8">Your listening journey so far</p>
 
+      {/* Profile Section */}
+      <Card className="mb-8">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Mail className="h-5 w-5" />
+            Profile
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-muted-foreground">Email</p>
+              <p className="font-medium">{user?.primaryEmail ?? "—"}</p>
+            </div>
+            <Button variant="outline" onClick={() => navigate("/account/settings")}>
+              <Settings className="h-4 w-4 mr-2" />
+              Manage
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
       {/* Stats Section */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
         <Card>
@@ -305,6 +329,7 @@ const AccountPage = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
     </div>
   );
 };
