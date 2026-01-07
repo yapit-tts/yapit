@@ -116,10 +116,10 @@ const AccountPage = () => {
   const getDocumentComparison = (count: number): string | null => {
     if (count === 0) return null;
     if (count === 1) return "Your first scroll";
-    if (count < 5) return "A hobbit's reading list";
-    if (count < 15) return "Bilbo's study";
-    if (count < 30) return "A corner of Rivendell's library";
-    if (count < 50) return "The library of Rivendell";
+    if (count < 10) return "A hobbit's reading list";
+    if (count < 30) return "Bilbo's study";
+    if (count < 50) return "A corner of Rivendell's library";
+    if (count < 100) return "The library of Rivendell";
     return "The archives of Minas Tirith";
   };
 
