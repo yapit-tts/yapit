@@ -13,6 +13,8 @@ const AccountSettingsPage = () => {
         Back to Account
       </Button>
 
+      {/* Hide profile image section - no S3 configured, upload causes 500 error */}
+      <style>{`div.flex.flex-col.sm\\:flex-row.gap-2:has(span.rounded-full) { display: none; }`}</style>
       <AccountSettings />
     </div>
   );
