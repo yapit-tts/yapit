@@ -824,7 +824,7 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
           </div>
         </div>
       )}
-      <div ref={contentRef} className="structured-content px-3" onClick={handleContentClick}>
+      <div ref={contentRef} className="structured-content px-3 break-words" onClick={handleContentClick}>
         {groupedBlocks.map((grouped) => {
           if (grouped.kind === "paragraph-group") {
             return (
