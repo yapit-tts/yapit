@@ -750,27 +750,27 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
       {title && !isEditingTitle ? (
         <div
           className={cn(
-            "flex flex-col sm:flex-row sm:items-center sm:justify-between mb-6 pb-2 border-b border-b-border",
+            "flex flex-col sm:flex-row sm:items-center sm:justify-between mb-6 pb-2 border-b border-b-border overflow-hidden",
             onTitleChange && "cursor-text"
           )}
           onClick={onTitleChange ? () => { setEditedTitle(title); setIsEditingTitle(true); } : undefined}
         >
-          <h1
-            className={cn(
-              "text-4xl font-bold sm:mr-4 inline",
-              sourceUrl && "cursor-pointer hover:opacity-80"
+          <h1 className="text-4xl font-bold sm:mr-4 break-all min-w-0 flex-1">
+            {sourceUrl ? (
+              <span
+                className="cursor-pointer hover:opacity-80"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleTitleClick();
+                }}
+              >
+                {title}
+              </span>
+            ) : (
+              title
             )}
-            onClick={(e) => {
-              if (sourceUrl) {
-                e.stopPropagation(); // Don't trigger edit when clicking title with URL
-                handleTitleClick();
-              }
-              // If no sourceUrl, let it bubble to parent for editing
-            }}
-          >
-            {title}
           </h1>
-          <div className="flex justify-end mt-2 sm:mt-0" onClick={(e) => e.stopPropagation()}>
+          <div className="flex justify-end mt-2 sm:mt-0 shrink-0" onClick={(e) => e.stopPropagation()}>
             <ActionButtons />
           </div>
         </div>
