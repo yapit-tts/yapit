@@ -86,6 +86,7 @@ endif
 	@echo "Restart dev: make dev-cpu"
 
 # Decrypt .env.sops for dev
+# - Removes comments and _PREFIXED vars (safekeeping, not active)
 # - Removes STACK_* (dev uses separate Stack Auth via .env.dev)
 # - Removes DATABASE_URL and POSTGRES_PASSWORD (dev uses public creds from .env.dev)
 # - Transforms *_TEST vars to main var names (STRIPE_SECRET_KEY_TEST -> STRIPE_SECRET_KEY)
@@ -95,6 +96,8 @@ dev-env:
 		echo "Error: Set YAPIT_SOPS_AGE_KEY_FILE to the yapit age key path"; exit 1; \
 	fi
 	@SOPS_AGE_KEY_FILE=$$YAPIT_SOPS_AGE_KEY_FILE sops -d .env.sops \
+		| grep -v "^#" \
+		| grep -v "^_" \
 		| grep -v "^STACK_" \
 		| grep -v "^DATABASE_URL=" \
 		| grep -v "^POSTGRES_PASSWORD=" \
