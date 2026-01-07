@@ -47,32 +47,42 @@ When working through this test suite:
 
 | Session | Status | Notes |
 |---------|--------|-------|
-| [[stripe-testing-fresh-sandbox]] | 🔄 Active | Fresh sandbox full E2E validation (2026-01-05) |
+| [[stripe-testing-fresh-sandbox]] | ✅ Done | Fresh sandbox full E2E validation (2026-01-05). All sections complete. |
 | [[stripe-testing-beta-launch]] | Reference | Pre-beta testing, detailed observations |
 | [[stripe-testing-targeted-validation]] | ✅ Done | Portal downgrade, duplicate prevention, promo codes verified |
 
 ## Environment Setup
 
 ```bash
-# 1. Start dev environment
+# 1. Start dev environment (includes stripe-cli for webhook forwarding)
 make dev-cpu
 
-# 2. Forward webhooks (in separate terminal)
-stripe listen --forward-to localhost:8000/v1/billing/webhook
+# 2. IMPORTANT: Verify stripe-cli is running and forwarding webhooks
+docker ps | grep stripe  # Should show yapit-stripe-cli-1
+docker logs yapit-stripe-cli-1 --tail 5  # Look for "Ready!" message
 
-# 3. Verify webhook forwarding works
-# Look for "Ready!" message and note the webhook signing secret
+# 3. If stripe-cli is missing or exited, restart it:
+docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile stripe up stripe-cli -d
 ```
+
+**GOTCHA:** Before testing any flows, always verify `yapit-stripe-cli-1` is running. If webhook forwarding isn't active, checkout/portal events will be lost and you'll need to resend them manually.
 
 ## Test Card Numbers
 
 | Card | Use Case |
 |------|----------|
 | `4242 4242 4242 4242` | Successful payment |
-| `4000 0000 0000 0002` | Card declined |
+| `4000 0000 0000 0002` | Card declined (fails immediately) |
+| `4000 0000 0000 0341` | Attaches OK but fails on charge (for renewal failure tests) |
 | `4000 0000 0000 3220` | 3D Secure required |
 
 Expiry: any future date, CVC: any 3 digits
+
+**Testing renewal failures with 0341 card:**
+1. Use SETUP mode checkout (no immediate charge): `stripe checkout sessions create --customer=cus_xxx --mode=setup ...`
+2. Complete checkout with card 4000000000000341 in browser
+3. Create subscription with trial: `stripe subscriptions create ... -d 'trial_period_days=1'`
+4. Advance test clock past trial → invoice.payment_failed fires
 
 ## DB Verification Commands
 
@@ -194,6 +204,7 @@ stripe customers delete cus_XXXXX --confirm
 ### Portal vs Checkout
 
 - **Users with existing subscription** → UI shows "Upgrade/Downgrade" buttons that go to portal, NOT checkout
+- **Canceled users must go to Checkout** — Portal can't resubscribe; must use Checkout with existing customer ID. Frontend fixed in commit `675521a` to detect `status === "canceled"` and route to checkout.
 - **Duplicate subscription prevention** — `billing.py:119-124` blocks checkout for users with active/trialing subscription; returns 400 error
 - **Portal downgrades** — Now work with "immediately" setting (fixed via `_clear_portal_schedule_conditions()`)
 

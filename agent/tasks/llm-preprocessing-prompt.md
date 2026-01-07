@@ -1,6 +1,6 @@
 ---
-status: idea
-type: documentation
+status: active
+started: 2025-01-06
 ---
 
 # LLM Preprocessing Prompt for Users
@@ -13,6 +13,33 @@ For users with complex documents (LaTeX, heavy formatting, links, academic notat
 
 "Rewrite an paper / document to be more tts friendly which we can provide to copy paste in our UI as templates."
 Maybe several different prompts for different use cases, or with toggles for choosing "I want math rewritten/skipped/..." vs "I want links removed" etc. for quick customization & copy paste.
+
+## Decisions
+
+### Integration approach: Copy-paste (not OAuth/BYOK)
+
+Considered alternatives:
+- **OAuth to Claude/OpenAI** — Doesn't exist. Consumer subscriptions (Claude.ai, ChatGPT) are separate from API access. No OAuth flow to tap into user's credits.
+- **BYOK (Bring Your Own Key)** — Possible but adds complexity: key storage security, validation, error handling, support burden. Benefit is saving ~3 clicks per document.
+
+**Decision:** Copy-paste is the right tradeoff. Zero integration maintenance, works with any LLM (including local), ships immediately.
+
+### UI placement: Help page with sidebar link
+
+```
+Sidebar footer:
+│ 📋 Basic Plan   │  → /subscription
+│ ❓ Help         │  → /help (new)
+│ 👤 user@...   ▼ │  → Account (new), Sign out
+```
+
+Help page contains:
+1. **Getting Started** — basic workflow
+2. **Document Preprocessing** — prompt templates (this feature)
+3. **FAQ**
+4. **Tips** for different content types
+
+This also addresses the need for a general help/onboarding page.
 
 ## Use Cases
 

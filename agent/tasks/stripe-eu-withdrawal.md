@@ -29,6 +29,8 @@ EU consumers have a 14-day right to withdraw from online purchases without givin
 - User must check ToS box before paying
 - Our ToS needs to include waiver language (placeholder pages exist)
 
+Preliminary decision: It seems disputes are handled on a case-by case basis anyways, and since we're properly disclosing in ToS & collecting consent, it should be fine. Else we can correct after first actual incident...
+
 ## Action Items
 
 - [x] Ask Stripe support (sent 2025-01-02)

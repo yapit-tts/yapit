@@ -209,6 +209,30 @@ labels:
 
 Without `tls=true`, the router won't match HTTPS requests.
 
+## Database Seeding (One-Time)
+
+After first deploy, tables exist but are empty. Run once:
+
+```bash
+ssh root@46.224.195.97 'docker exec $(docker ps -qf "name=yapit_gateway") python -c "
+import asyncio
+from yapit.gateway.seed import seed_database
+from yapit.gateway.db import create_session
+from yapit.gateway.config import Settings
+
+async def seed():
+    settings = Settings()
+    async for db in create_session(settings):
+        await seed_database(db, settings)
+        print(\"Seeded!\")
+        break
+
+asyncio.run(seed())
+"'
+```
+
+This seeds: TTS models, voices, document processors, subscription plans.
+
 ## Stack Auth Setup
 
 Fresh install = new project credentials. After first deploy:
@@ -221,7 +245,20 @@ Fresh install = new project credentials. After first deploy:
 6. Configure project settings:
    - **Domains** → Add `https://yapit.md` as trusted domain
    - **Development Settings** → Disable "Allow all localhost callbacks"
-7. Redeploy
+7. **Google OAuth** → Add `https://auth.yapit.md/api/v1/auth/oauth/callback/google` to authorized redirect URIs in Google Cloud Console
+8. Redeploy
+
+### Security Hardening
+
+After initial setup:
+
+1. **Enable production mode** in Stack Auth dashboard:
+   - Project Settings → scroll to bottom → Enable "Production Mode"
+   - Disables unsafe development features
+
+2. **Disable dashboard signups** - prevent others from creating admin accounts:
+   - Set `STACK_SEED_INTERNAL_PROJECT_SIGN_UP_ENABLED=false` in env
+   - Or disable via dashboard after creating your admin account
 
 ## Operations
 

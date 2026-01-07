@@ -142,12 +142,55 @@ Then update `.env.prod` with the price IDs from the output (or they're already s
 
 ## TODOs
 
-- [ ] **Add test cases to [[stripe-e2e-testing]]:**
-  - Portal downgrade with "immediately" — verify webhook fires → grace period set. If works, delete `/v1/billing/downgrade` endpoint
-  - Duplicate subscription prevention — user with active sub tries checkout → should get 400 error
-  - Promo codes at checkout — BETA, LAUNCH, LAUNCHPLUS codes work
-- [ ] **Refine testing workflow** — [[stripe-e2e-testing]] needs more detail on exact steps, expected outcomes, and parallel testing options
-- [ ] **Send EU withdrawal email** — Draft in [[stripe-eu-withdrawal]]
+- [x] **Add test cases to [[stripe-e2e-testing]]:** All covered in [[stripe-testing-fresh-sandbox]] (2026-01-05)
+- [x] **Refine testing workflow** — [[stripe-e2e-testing]] updated with gotchas, environment setup, test clock workflow
+- [x] **Send EU withdrawal email** — Draft in [[stripe-eu-withdrawal]] (decided it's prlly fine - see file for details)
+- [x] **Run IaC in prod** — See Prod Launch Checklist below
+- [ ] **Fix IaC prod issues** — See "Current Prod Issues" section below
+
+## Prod Launch Checklist
+
+```bash
+# 1. Temporarily allow your IP in Stripe Dashboard (if live key is IP-restricted)
+#    Settings → API Keys → Restricted keys → Edit → Add your IP
+
+# 2. Switch to prod keys locally
+make prod-env
+
+# 3. Run IaC setup (creates products, prices, promos, portal config)
+uv run --env-file=.env python scripts/stripe_setup.py --prod
+
+# 4. Switch back to dev keys
+make dev-env
+
+# 5. Remove your IP from Stripe Dashboard (if added in step 1)
+```
+
+**Verify in Stripe Dashboard (live mode):**
+- [ ] Products exist (Basic, Plus, Max)
+- [ ] Prices exist (monthly + yearly for each)
+- [ ] Promo codes exist (BETA, LAUNCH, LAUNCHPLUS)
+- [ ] Portal configured (cancellation, plan switching)
+- [x] Webhook configured (`https://api.yapit.md/v1/billing/webhook`, secret in sops)
+
+**Post-launch monitoring:**
+- Check gateway logs for webhook errors
+- Verify DB has subscription records after first signup
+- Test your own trial → paid flow
+
+## Resolved Prod Issues (2026-01-07)
+
+**Issue 1: Coupon `applies_to` drift — FALSE POSITIVE (fixed)**
+
+Root cause: Stripe API doesn't return `applies_to` in coupon retrieve responses — it's write-only. Script compared `[]` (missing field) vs config value, falsely detecting drift.
+
+Fix: Removed `applies_to` validation from `validate_coupons()`. Can't validate what API doesn't return. Coupons in Dashboard were correctly configured all along.
+
+**Issue 2: Product descriptions not updated — DOWNSTREAM (fixed)**
+
+Root cause: Issue 1 caused validation to fail with `sys.exit(1)` before reaching product upserts.
+
+Fix: With Issue 1 fixed, script now reaches product updates. Re-run `stripe_setup.py --prod` to apply descriptions.
 
 ## Open Questions
 
@@ -160,6 +203,7 @@ Then update `.env.prod` with the price IDs from the output (or they're already s
 ## Gotchas (High-Level)
 
 ### Stripe API / SDK Quirks
+- **Coupon `applies_to` is write-only** — Set on create, but NOT returned in retrieve/list responses. Can't validate via API. Verify in Dashboard if needed.
 - **Python SDK ignores empty arrays** — `{"conditions": []}` doesn't clear existing conditions. Must use raw HTTP with form-encoded empty value: `data={'field[nested][array]': ''}`. See `_clear_portal_schedule_conditions()` in `stripe_setup.py`. Source: discovered via testing, confirmed by [SDK releases](https://github.com/stripe/stripe-python/releases) mentioning "emptyable" array types.
 - **Promo code API structure** — Creating promo codes requires `{"promotion": {"type": "coupon", "coupon": "coupon_id"}}`, not top-level `coupon` field. Retrieving uses `promotion.coupon` not `coupon.id`.
 - **Invoice subscription ID moved** — API 2025-03-31 changed `invoice.subscription` to `invoice.parent.subscription_details.subscription`

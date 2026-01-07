@@ -903,7 +903,7 @@ Created `scripts/stripe_setup.py`:
 **Stripe test environment configured:**
 - Ran `scripts/stripe_setup.py --test` — created products/prices
 - Updated `dev_seed.py` with test price IDs
-- Production webhook configured at `https://yapit.md/v1/billing/webhook` (6 events)
+- Production webhook configured at `https://api.yapit.md/v1/billing/webhook` (6 events)
 - Webhook secret saved to `.env.sops`
 
 **All tests passing.**

@@ -1,5 +1,5 @@
 ---
-status: active
+status: done
 type: implementation
 started: 2026-01-05
 ---

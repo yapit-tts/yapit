@@ -298,7 +298,7 @@ Alembic's `include_object` filter ignores Stack Auth tables (shared database). O
 While there are no real users, you can wipe yapit tables without touching Stack Auth:
 
 ```bash
-ssh root@78.46.242.1
+ssh root@46.224.195.97
 docker exec <postgres-container> psql -U yapit -d yapit -c "
 DROP TABLE IF EXISTS blockvariants, blocks, documents, plans, usersubscriptions, usageperiods, ttsmodels, voices, alembic_version CASCADE;
 "

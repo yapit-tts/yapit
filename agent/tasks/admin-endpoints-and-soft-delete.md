@@ -1,5 +1,5 @@
 ---
-status: active
+status: done
 type: implementation
 started: 2026-01-05
 ---
@@ -53,6 +53,14 @@ make migration-new MSG="add soft delete and user preferences"
 - `yapit/gateway/domain_models.py` — model definitions
 - `yapit/gateway/api/v1/` — endpoints that query models/voices
 
-## Open Questions
+## Admin Endpoints — Skipped
 
-None — implementation is straightforward.
+Not building admin endpoints or dashboard. Everything is handled by:
+- **Model/voice/plan changes:** Migrations (version controlled)
+- **Stripe config:** IaC script (version controlled)
+- **User management:** Stack Auth dashboard
+- **Subscription edge cases:** Stripe dashboard
+- **Metrics:** Streamlit dashboard
+- **Self-hosters:** Edit config files + restart
+
+No use case for custom admin GUI. If this changes, revisit here.

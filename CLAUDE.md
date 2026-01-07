@@ -89,6 +89,14 @@ make migration-new MSG="description of changes"
 
 Never run any destructive commands without getting explicit user approval for the exact command you're about to run.
 
+## Dependency Update Checklists
+
+When updating pinned dependencies, check these version-specific integrations:
+
+### Stack Auth (`docker/Dockerfile.stackauth`)
+
+- [ ] Profile image section still hidden in AccountSettings — we use CSS selector `div.flex.flex-col.sm\:flex-row.gap-2:has(span.rounded-full)` to hide it (no S3 configured).
+
 ## Secrets Management
 
 **`.env.sops`** — encrypted secrets (age/sops). Contains both test and live values:

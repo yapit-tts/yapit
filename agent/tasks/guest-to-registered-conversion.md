@@ -1,7 +1,8 @@
 ---
-status: active
+status: done
 type: implementation
 started: 2026-01-05
+completed: 2026-01-06
 ---
 
 # Task: Guest to Registered User Conversion
@@ -21,56 +22,16 @@ When anonymous user signs up, transfer their documents to the new account. Curre
 
 **Gap:** No mechanism to transfer docs from anon → real user.
 
-## Implementation
+## Implementation (Done)
 
-### Backend: Claim Endpoint
+Backend: `yapit/gateway/api/v1/users.py:160-185` — `POST /v1/users/claim-anonymous`
+- Transfers documents only (filters skipped — anon users can't create them)
+- Returns `{ claimed_documents: int }`
 
-`POST /v1/users/claim-anonymous`
-
-```python
-@router.post("/users/claim-anonymous")
-async def claim_anonymous_data(
-    user: User = Depends(require_auth),  # Real authenticated user
-    anon_id: str | None = Header(None, alias="X-Anonymous-ID"),
-    db: AsyncSession = Depends(get_db),
-):
-    if not anon_id or user.is_anonymous:
-        return {"claimed": 0}
-
-    anon_user_id = f"anon-{anon_id}"
-
-    # Transfer documents
-    doc_result = await db.exec(
-        update(Document)
-        .where(Document.user_id == anon_user_id)
-        .values(user_id=user.id)
-    )
-
-    # Transfer filters (if any)
-    filter_result = await db.exec(
-        update(Filter)
-        .where(Filter.user_id == anon_user_id)
-        .values(user_id=user.id)
-    )
-
-    await db.commit()
-    return {"claimed_documents": doc_result.rowcount, "claimed_filters": filter_result.rowcount}
-```
-
-### Frontend: Call on First Authenticated Load
-
-In auth context or app initialization:
-
-```typescript
-// After successful login/signup
-const anonId = localStorage.getItem('yapit_anonymous_id');
-if (anonId && isAuthenticated) {
-  await api.post('/v1/users/claim-anonymous', null, {
-    headers: { 'X-Anonymous-ID': anonId }
-  });
-  localStorage.removeItem('yapit_anonymous_id');
-}
-```
+Frontend: `frontend/src/api.tsx:96-108`
+- Calls claim endpoint after successful auth if localStorage has anonymous ID
+- Clears localStorage on success
+- Uses `claimAttempted` ref to prevent duplicate calls
 
 ## Edge Cases
 

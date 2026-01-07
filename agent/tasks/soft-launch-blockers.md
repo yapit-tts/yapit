@@ -22,10 +22,10 @@ NOT public launch (HN, ToS, privacy policy, EU withdrawal). Just "10-20 friends 
 
 | Task | Status | Notes |
 |------|--------|-------|
-| [[admin-endpoints-and-soft-delete]] | 🔲 TODO | `is_active` on TTSModel, Voice, DocumentProcessor |
-| [[guest-to-registered-conversion]] | 🔲 TODO | Claim endpoint + frontend flow |
-| [[cross-device-sync]] | 🔲 TODO | Playback position on Document, UserPreferences table |
-| [[account-management]] | 🔲 TODO | Deletion endpoint, user stats, settings page |
+| [[admin-endpoints-and-soft-delete]] | ✅ DONE | `is_active` on TTSModel, Voice, DocumentProcessor |
+| [[guest-to-registered-conversion]] | ✅ DONE | Claim endpoint + frontend flow |
+| [[cross-device-sync]] | ✅ DONE | Playback position on Document, UserPreferences table |
+| [[account-management]] | ✅ DONE | Deletion endpoint, user stats, settings page |
 
 **Implementation note:** Schema changes from all four tasks should be batched into ONE migration. Backend endpoints can follow. Frontend work can be parallel or after endpoints.
 
@@ -33,7 +33,7 @@ NOT public launch (HN, ToS, privacy policy, EU withdrawal). Just "10-20 friends 
 
 | Task | Status | Notes |
 |------|--------|-------|
-| [[xss-security-audit]] | ⚠️ PARTIAL | SSRF fix pending |
+| [[xss-security-audit]] | ✅ DONE | XSS (DOMPurify) + SSRF fix complete |
 | [[beta-launch-security-checklist]] | 🔲 TODO | 10-item checklist |
 
 ### Billing & Auth
@@ -41,15 +41,15 @@ NOT public launch (HN, ToS, privacy policy, EU withdrawal). Just "10-20 friends 
 | Task | Status | Notes |
 |------|--------|-------|
 | [[stripe-testing-fresh-sandbox]] | 🔄 IN PROGRESS | E2E validation |
-| [[oauth-providers-setup]] | ⚠️ PARTIAL | Configured, needs testing |
+| [[oauth-providers-setup]] | ✅ DONE | GitHub + Google configured and tested |
 
 ### Ops
 
 | Task | Status | Notes |
 |------|--------|-------|
-| [[hetzner-backups-restore]] | 🔲 TODO | Backup/restore procedures |
+| [[hetzner-backups-restore]] | ✅ DONE | Documented in [[backup-rollback]] |
 | [[self-hosting]] | 🔲 TODO | make target, docs, testing |
-| Rollback strategy | 🔲 TODO | Document procedure |
+| Rollback strategy | ✅ DONE | Documented in [[backup-rollback]] |
 
 ## High-Level Decisions
 
@@ -61,16 +61,16 @@ NOT public launch (HN, ToS, privacy policy, EU withdrawal). Just "10-20 friends 
 
 ## Completion Criteria
 
-- [ ] Schema migration deployed
-- [ ] Guest claim endpoint working
-- [ ] Account deletion working
-- [ ] User stats page working
+- [x] Schema migration deployed
+- [x] Guest claim endpoint working
+- [x] Account deletion working
+- [x] User stats page working
 - [ ] Security checklist complete
-- [ ] SSRF fix deployed
-- [ ] OAuth tested in prod
+- [x] SSRF fix deployed
+- [x] OAuth tested in prod
 - [ ] Stripe tested in prod
-- [ ] Backup/restore documented
-- [ ] Rollback documented
+- [x] Backup/restore documented
+- [x] Rollback documented
 - [ ] Self-hosting documented + tested
 
 ## Public Launch Blockers (NOT soft launch)

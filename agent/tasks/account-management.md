@@ -1,7 +1,8 @@
 ---
-status: active
+status: done
 type: implementation
 started: 2026-01-05
+completed: 2026-01-07
 ---
 
 # Task: Account Management
@@ -152,21 +153,32 @@ async def delete_account(
 
 ### UX
 
-- Password confirmation modal
+- Confirmation dialog with document count warning (no password required)
 - Immediate deletion (no grace period)
 - Clear warning: "This action is irreversible"
 
+### Implementation Notes
+
+- `metrics_event` (SQLite): user_id becomes untraceable once Stack Auth user is deleted - effectively anonymous.
+- Password confirmation not needed - confirmation dialog with document count is sufficient.
+
 ## Email/Password Change
 
-**NEEDS RESEARCH:** How does Stack Auth handle this?
+**IMPLEMENTED** via Stack Auth's `<AccountSettings />` component.
 
-Questions to answer:
-1. Does Stack Auth have a hosted account settings page we can link to?
-2. If user changes email there, how do we get notified? Webhook?
-3. Is it cleaner to use their API from our own UI?
-4. How to verify current password for deletion confirmation?
+Answers to research questions:
+1. **Hosted account settings?** → Yes, `<AccountSettings />` component renders full settings UI
+2. **Email change webhook?** → Not needed - we don't store email in our DB, only Stack Auth user ID
+3. **Their API or our UI?** → Use their component - handles email verification flow, password validation, etc.
+4. **Password verification for deletion?** → Not implemented (would need Stack Auth API call). Current delete is one-click with confirmation dialog.
 
-Check Stack Auth docs: https://docs.stack-auth.com/
+**Implementation:**
+- `/account` - Shows email (read-only), usage stats, custom delete button
+- `/account/settings` - Stack Auth's AccountSettings for email/password changes
+
+**Known issues:**
+- Profile image upload hidden via CSS (`div.flex.flex-col.sm\\:flex-row.gap-2:has(span.rounded-full)`) - no S3 configured, would cause 500 error. **Check this selector still works after Stack Auth version upgrades.**
+- Delete section in AccountSettings won't show if `clientUserDeletionEnabled` is disabled in Stack Auth project settings (which it should be - we handle deletion ourselves)
 
 ## Frontend
 
