@@ -706,7 +706,8 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
   );
 
   // Responsive margins: larger on desktop, smaller on mobile
-  const containerClass = "w-full flex flex-col overflow-y-auto px-4 sm:px-[8%] md:px-[10%] pt-4 sm:pt-[4%] pb-4";
+  // pb-52 (208px) provides clearance above the fixed SoundControl bar (~177px)
+  const containerClass = "w-full flex flex-col overflow-y-auto px-4 sm:px-[8%] md:px-[10%] pt-4 sm:pt-[4%] pb-52";
 
   // Fallback to plain text rendering
   if (!doc || !doc.blocks || doc.blocks.length === 0) {

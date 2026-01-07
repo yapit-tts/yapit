@@ -1308,7 +1308,7 @@ const PlaybackPage = () => {
   }
 
   return (
-    <div className="flex grow pb-32">
+    <div className="flex grow">
       <StructuredDocumentView
         structuredContent={structuredContent}
         title={documentTitle}
