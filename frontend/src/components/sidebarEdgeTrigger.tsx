@@ -7,7 +7,7 @@ const SWIPE_THRESHOLD = 50; // Mobile swipe distance to trigger (px)
 const REVEAL_DELAY = 150; // ms cursor must stay in zone before reveal
 
 export function SidebarEdgeTrigger() {
-  const { toggleSidebar, open, openMobile } = useSidebar();
+  const { toggleSidebar, open } = useSidebar();
   const isMobile = useIsMobile();
   const [revealed, setRevealed] = useState(false);
   const revealTimeoutRef = useRef<number | null>(null);
