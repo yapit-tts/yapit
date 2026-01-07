@@ -53,7 +53,7 @@ rm .env.deploy
 
 # --- Deploy stack ---
 log "Deploying stack for commit: $GIT_COMMIT"
-ssh "$VPS_HOST" "cd $DEPLOY_DIR && set -a && source .env.prod && set +a && GIT_COMMIT=${GIT_COMMIT} docker stack deploy -c docker-compose.prod.yml $STACK_NAME --with-registry-auth"
+ssh "$VPS_HOST" "cd $DEPLOY_DIR && set -a && source .env && source .env.prod && set +a && GIT_COMMIT=${GIT_COMMIT} docker stack deploy -c docker-compose.prod.yml $STACK_NAME --with-registry-auth"
 
 # --- Verify ---
 if [ "${SKIP_VERIFY:-0}" = "1" ]; then
