@@ -100,6 +100,22 @@ dev-env:
 		> .env
 	@echo "Created .env (dev-ready: test keys, no prod Stack Auth)"
 
+# Decrypt .env.sops for prod operations (e.g., stripe_setup.py --prod)
+# - Transforms *_LIVE vars to main var names (STRIPE_SECRET_KEY_LIVE -> STRIPE_SECRET_KEY)
+# - Removes *_TEST vars
+# - Keeps STACK_* (prod Stack Auth)
+# WARNING: Run `make dev-env` after you're done with prod operations!
+prod-env:
+	@if [ -z "$$YAPIT_SOPS_AGE_KEY_FILE" ]; then \
+		echo "Error: Set YAPIT_SOPS_AGE_KEY_FILE to the yapit age key path"; exit 1; \
+	fi
+	@SOPS_AGE_KEY_FILE=$$YAPIT_SOPS_AGE_KEY_FILE sops -d .env.sops \
+		| grep -v "_TEST=" \
+		| sed 's/_LIVE=/=/' \
+		> .env
+	@echo "⚠️  Created .env with PROD keys - run 'make dev-env' when done!"
+	@echo "You can now run: uv run --env-file=.env python scripts/stripe_setup.py --prod"
+
 check: check-backend check-frontend
 
 check-backend:

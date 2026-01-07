@@ -70,7 +70,7 @@ PRODUCTS = [
     {
         "id": "yapit_basic",
         "name": "Yapit Basic",
-        "description": "Unlimited server Kokoro, 500 OCR pages/month",
+        "description": "Unlimited Kokoro TTS (all languages), 500 OCR pages/month",
         "active": True,
         "prices": [
             {"id": "yapit_basic_monthly", "amount": 700, "interval": "month"},
@@ -80,7 +80,7 @@ PRODUCTS = [
     {
         "id": "yapit_plus",
         "name": "Yapit Plus",
-        "description": "Everything in Basic + 20 hrs premium voice, 1500 OCR pages/month",
+        "description": "Premium voices (1.2M chars/mo), 1,500 OCR pages/month",
         "active": True,
         "prices": [
             {"id": "yapit_plus_monthly", "amount": 2000, "interval": "month"},
@@ -90,7 +90,7 @@ PRODUCTS = [
     {
         "id": "yapit_max",
         "name": "Yapit Max",
-        "description": "Everything in Plus + 50 hrs premium voice, 3000 OCR pages/month",
+        "description": "Premium voices (3M chars/mo), 3,000 OCR pages/month",
         "active": True,
         "prices": [
             {"id": "yapit_max_monthly", "amount": 4000, "interval": "month"},
@@ -113,14 +113,15 @@ COUPONS = [
         "name": "Launch - Free Basic Month",
         "percent_off": 100,
         "duration": "once",
+        "applies_to": ["yapit_basic"],
         "active": True,
     },
     {
-        "id": "launch_plus_30",
-        "name": "Launch Plus 30% Off",
-        "percent_off": 30,
-        "duration": "repeating",
-        "duration_in_months": 3,
+        "id": "launch_plus_50",
+        "name": "Launch Plus 50% Off",
+        "percent_off": 50,
+        "duration": "once",
+        "applies_to": ["yapit_plus"],
         "active": True,
     },
 ]
@@ -140,7 +141,7 @@ PROMO_CODES = [
         "active": True,
     },
     {
-        "coupon": "launch_plus_30",
+        "coupon": "launch_plus_50",
         "code": "LAUNCHPLUS",
         "max_redemptions": 100,
         "active": True,
@@ -402,6 +403,8 @@ def upsert_coupon(client: stripe.StripeClient, coupon: dict) -> str:
                 create_params["currency"] = coupon.get("currency", "eur")
             if coupon.get("duration") == "repeating":
                 create_params["duration_in_months"] = coupon.get("duration_in_months", 1)
+            if coupon.get("applies_to"):
+                create_params["applies_to"] = {"products": coupon["applies_to"]}
 
             client.v1.coupons.create(create_params)
             print(f"  Created coupon: {coupon_id}")
