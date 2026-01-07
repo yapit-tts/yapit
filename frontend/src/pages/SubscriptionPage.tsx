@@ -461,6 +461,8 @@ const SubscriptionPage = () => {
 
       <p className="mt-8 text-center text-sm text-muted-foreground">
         *~20 hrs at 1× listening speed. TTS-1-Max uses 2× quota. Prices <em>include</em> VAT.
+        <br />
+        Paid subscriptions are non-refundable after service begins. See <a href="/terms" className="underline hover:text-foreground">Terms</a>.
       </p>
     </div>
   );
