@@ -151,21 +151,16 @@ deploy-higgs-push:
 deploy-higgs-runpod:
 	uv run --env-file=.env python infra/runpod/deploy.py higgs-native --image-tag $(HIGGS_TAG)
 
-# Metrics dashboard
+# Metrics dashboard (runs on prod via SSH tunnel)
+# One-time setup: ssh $(PROD_HOST) 'mkdir -p /opt/yapit-dashboard && (command -v ~/.local/bin/uv || curl -LsSf https://astral.sh/uv/install.sh | sh)'
 PROD_HOST := root@46.224.195.97
 
-sync-metrics:
-	@mkdir -p metrics
-	@echo "Syncing metrics from prod..."
-	@ssh $(PROD_HOST) 'CONTAINER=$$(docker ps --filter "name=gateway" --format "{{.Names}}" | head -1) && docker cp $$CONTAINER:/data/metrics/metrics.db /tmp/metrics.db'
-	@rm -f metrics/metrics.db
-	@scp $(PROD_HOST):/tmp/metrics.db metrics/metrics.db
-	@ssh $(PROD_HOST) "rm /tmp/metrics.db"
-	@echo "Synced: $$(du -h metrics/metrics.db | cut -f1)"
-
-dashboard: sync-metrics
-	uv run streamlit run scripts/dashboard.py
-
-dashboard-local:
-	uv run streamlit run scripts/dashboard.py
+dashboard:
+	@echo "Syncing dashboard.py to prod..."
+	@scp scripts/dashboard.py $(PROD_HOST):/opt/yapit-dashboard/
+	@echo "Starting dashboard on prod (Ctrl+C to stop)..."
+	@(sleep 3 && xdg-open http://localhost:8502 2>/dev/null || open http://localhost:8502 2>/dev/null || true) &
+	@ssh -t -L 8502:localhost:8502 $(PROD_HOST) '\
+		METRICS_DB=$$(docker inspect $$(docker ps -qf name=gateway) --format '\''{{range .Mounts}}{{if eq .Destination "/data/metrics"}}{{.Source}}{{end}}{{end}}'\'')/metrics.db \
+		~/.local/bin/uv run --with streamlit,pandas,plotly streamlit run /opt/yapit-dashboard/dashboard.py --server.port 8502 --server.headless true'
 

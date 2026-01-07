@@ -1,13 +1,9 @@
 #!/usr/bin/env python3
-"""Metrics dashboard for Yapit TTS.
+"""Metrics dashboard for Yapit TTS. Run via: make dashboard"""
 
-Usage:
-    make dashboard        # sync from prod + open
-    make dashboard-local  # use local metrics.db
-"""
-
+import json
+import os
 import sqlite3
-import subprocess
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -17,10 +13,8 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-# Config
-LOCAL_DB = Path("metrics/metrics.db")
-PROD_HOST = "root@78.46.242.1"
-PROD_DB_PATH = "/data/metrics/metrics.db"
+# Config - METRICS_DB env var set by make dashboard (runs on prod via SSH tunnel)
+LOCAL_DB = Path(os.environ.get("METRICS_DB", "metrics/metrics.db"))
 
 # Color palette - warm, readable
 COLORS = {
@@ -37,39 +31,23 @@ COLORS = {
     "overflow": "#e17055",  # coral for overflow
 }
 
-MODEL_COLORS = {
-    "kokoro": "#00b894",
-    "kokoro-cpu": "#00b894",
-    "inworld-max": "#74b9ff",
-    "higgs": "#e17055",
+MODEL_STYLES = {
+    "kokoro": {"color": "#00b894", "symbol": "circle"},
+    "higgs": {"color": "#e17055", "symbol": "diamond-wide"},
+    "inworld-max": {"color": "#74b9ff", "symbol": "star"},
+    "inworld": {"color": "#9b59b6", "symbol": "cross"},
 }
 
-
-def get_model_color(model: str) -> str:
-    for key, color in MODEL_COLORS.items():
-        if key in model.lower():
-            return color
-    return COLORS["secondary"]
+MARKER_SIZE = 12  # Larger for visibility
 
 
-def sync_from_prod() -> tuple[bool, str]:
-    """Sync metrics.db from production."""
-    LOCAL_DB.parent.mkdir(exist_ok=True)
-    tmp_path = f"/tmp/metrics-{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
-
-    try:
-        cmd = f'CONTAINER=$(docker ps --filter "name=gateway" --format "{{{{.Names}}}}" | head -1) && docker cp $CONTAINER:{PROD_DB_PATH} {tmp_path}'
-        subprocess.run(["ssh", PROD_HOST, cmd], check=True, capture_output=True, timeout=30)
-        LOCAL_DB.unlink(missing_ok=True)
-        subprocess.run(["scp", f"{PROD_HOST}:{tmp_path}", str(LOCAL_DB)], check=True, capture_output=True, timeout=30)
-        subprocess.run(["ssh", PROD_HOST, f"rm {tmp_path}"], capture_output=True, timeout=10)
-        return True, f"Synced {LOCAL_DB.stat().st_size / 1024:.1f} KB"
-    except subprocess.TimeoutExpired:
-        return False, "Timeout"
-    except subprocess.CalledProcessError as e:
-        return False, e.stderr.decode() if e.stderr else str(e)
-    except Exception as e:
-        return False, str(e)
+def get_model_style(model: str) -> dict:
+    """Get color and symbol for a model. Checks inworld-max before inworld."""
+    model_lower = model.lower()
+    for key in ["inworld-max", "kokoro", "higgs", "inworld"]:  # order matters
+        if key in model_lower:
+            return MODEL_STYLES[key]
+    return {"color": COLORS["secondary"], "symbol": "circle"}
 
 
 @st.cache_data(ttl=60)
@@ -83,6 +61,8 @@ def load_data(db_path: str) -> pd.DataFrame:
     if not df.empty:
         df["timestamp"] = pd.to_datetime(df["timestamp"])
         df["local_time"] = pd.to_datetime(df["local_time"])
+        # Parse JSON data column
+        df["data"] = df["data"].apply(lambda x: json.loads(x) if isinstance(x, str) and x else {})
     return df
 
 
@@ -259,56 +239,192 @@ def show_eviction_stats(df: pd.DataFrame):
         st.metric("Jobs Skipped", skipped)
 
 
+def show_error_stats(df: pd.DataFrame):
+    """Error and failure metrics."""
+    errors = df[df["event_type"] == "synthesis_error"]
+    total_complete = len(df[df["event_type"] == "synthesis_complete"])
+    total_queued = len(df[df["event_type"] == "synthesis_queued"])
+
+    if errors.empty and total_queued == 0:
+        return
+
+    st.markdown("#### Errors & Failures")
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Synthesis Errors", len(errors))
+    with col2:
+        error_rate = len(errors) / (total_complete + len(errors)) * 100 if (total_complete + len(errors)) > 0 else 0
+        st.metric("Error Rate", f"{error_rate:.1f}%")
+    with col3:
+        # Incomplete: queued but never completed or errored
+        queued_hashes = set(df[df["event_type"] == "synthesis_queued"]["variant_hash"].dropna())
+        completed_hashes = set(df[df["event_type"] == "synthesis_complete"]["variant_hash"].dropna())
+        errored_hashes = set(errors["variant_hash"].dropna())
+        skipped_hashes = set(df[df["event_type"] == "eviction_skipped"]["variant_hash"].dropna())
+        incomplete = queued_hashes - completed_hashes - errored_hashes - skipped_hashes
+        st.metric("Incomplete Jobs", len(incomplete), help="Queued but never completed/errored/skipped")
+
+    # Recent errors table
+    if not errors.empty:
+        st.markdown("##### Recent Errors")
+        recent = errors.nlargest(10, "timestamp")[["local_time", "model_slug", "variant_hash", "data"]].copy()
+        recent["error"] = recent["data"].apply(
+            lambda x: x.get("error", "Unknown") if isinstance(x, dict) else "Unknown"
+        )
+        recent = recent.drop(columns=["data"])
+        recent["variant_hash"] = recent["variant_hash"].str[:12] + "..."
+        st.dataframe(recent, hide_index=True, use_container_width=True)
+
+
+def chart_errors_timeline(df: pd.DataFrame) -> go.Figure | None:
+    """Errors over time by model."""
+    errors = df[df["event_type"] == "synthesis_error"]
+    if errors.empty:
+        return None
+
+    # Bin by hour
+    errors = errors.copy()
+    errors["hour"] = errors["local_time"].dt.floor("h")
+
+    fig = go.Figure()
+
+    for model in errors["model_slug"].dropna().unique():
+        model_errors = errors[errors["model_slug"] == model]
+        hourly = model_errors.groupby("hour").size().reset_index(name="count")
+        style = get_model_style(model)
+        fig.add_trace(
+            go.Scatter(
+                x=hourly["hour"],
+                y=hourly["count"],
+                mode="lines+markers",
+                name=model,
+                line=dict(color=style["color"]),
+                marker=dict(symbol=style["symbol"], size=MARKER_SIZE),
+            )
+        )
+
+    fig.update_layout(
+        title="Synthesis Errors Over Time",
+        height=300,
+        xaxis_title="Time",
+        yaxis_title="Error Count",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+    )
+    return fig
+
+
+def chart_incomplete_jobs(df: pd.DataFrame) -> go.Figure | None:
+    """Show incomplete jobs (queued but never finished) over time."""
+    queued = df[df["event_type"] == "synthesis_queued"].copy()
+    completed = df[df["event_type"] == "synthesis_complete"]
+    errored = df[df["event_type"] == "synthesis_error"]
+    skipped = df[df["event_type"] == "eviction_skipped"]
+
+    if queued.empty:
+        return None
+
+    completed_hashes = set(completed["variant_hash"].dropna())
+    errored_hashes = set(errored["variant_hash"].dropna())
+    skipped_hashes = set(skipped["variant_hash"].dropna())
+    finished_hashes = completed_hashes | errored_hashes | skipped_hashes
+
+    queued["incomplete"] = ~queued["variant_hash"].isin(finished_hashes)
+    incomplete = queued[queued["incomplete"]]
+
+    if incomplete.empty:
+        return None
+
+    # Bin by hour
+    incomplete["hour"] = incomplete["local_time"].dt.floor("h")
+
+    fig = go.Figure()
+
+    for model in incomplete["model_slug"].dropna().unique():
+        model_incomplete = incomplete[incomplete["model_slug"] == model]
+        hourly = model_incomplete.groupby("hour").size().reset_index(name="count")
+        style = get_model_style(model)
+        fig.add_trace(
+            go.Scatter(
+                x=hourly["hour"],
+                y=hourly["count"],
+                mode="lines+markers",
+                name=model,
+                line=dict(color=style["color"]),
+                marker=dict(symbol=style["symbol"], size=MARKER_SIZE),
+            )
+        )
+
+    fig.update_layout(
+        title="Incomplete Jobs Over Time (queued but never finished)",
+        height=300,
+        xaxis_title="Time",
+        yaxis_title="Incomplete Count",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+    )
+    return fig
+
+
 # === Charts ===
 
 
 def chart_synthesis_scatter(df: pd.DataFrame) -> go.Figure | None:
-    """Worker time over time, colored by text length."""
+    """Worker time (color=text length, shape=model) and text length over time."""
     synthesis = df[df["event_type"] == "synthesis_complete"].dropna(subset=["worker_latency_ms", "text_length"])
     if synthesis.empty:
         return None
 
-    fig = make_subplots(rows=1, cols=2, subplot_titles=["Worker Time (color=text length)", "Text Length Over Time"])
+    fig = make_subplots(rows=1, cols=2, subplot_titles=["Worker Time (color=text length)", "Text Length by Model"])
 
     models = list(synthesis["model_slug"].dropna().unique())
 
-    # Left: worker time, color by text length (no legend - colorscale doesn't match model colors)
-    fig.add_trace(
-        go.Scatter(
-            x=synthesis["local_time"],
-            y=synthesis["worker_latency_ms"],
-            mode="markers",
-            showlegend=False,
-            marker=dict(
-                size=8,
-                color=synthesis["text_length"],
-                colorscale=[[0, COLORS["accent4"]], [0.5, COLORS["accent2"]], [1, COLORS["accent3"]]],
-                showscale=True,
-                colorbar=dict(title="Text Len", x=0.45),
-            ),
-            hovertemplate="<b>%{y:.0f}ms</b><br>Text: %{marker.color:.0f} chars<br>%{x}<extra></extra>",
-        ),
-        row=1,
-        col=1,
-    )
-
-    # Right: text length over time (with legend, model colors)
+    # Left chart: worker time, color by text_length, shape by model
     for model in models:
         model_data = synthesis[synthesis["model_slug"] == model]
+        style = get_model_style(model)
+
+        fig.add_trace(
+            go.Scatter(
+                x=model_data["local_time"],
+                y=model_data["worker_latency_ms"],
+                mode="markers",
+                name=model,
+                legendgroup=model,
+                marker=dict(
+                    size=MARKER_SIZE,
+                    symbol=style["symbol"],
+                    color=model_data["text_length"],
+                    colorscale=[[0, COLORS["accent4"]], [0.5, COLORS["accent2"]], [1, COLORS["accent3"]]],
+                    showscale=(model == models[0]),  # Only show colorbar once
+                    colorbar=dict(title="Text Len", x=0.45) if model == models[0] else None,
+                    line=dict(width=1, color="white"),
+                ),
+                hovertemplate=f"<b>{model}</b><br>%{{y:.0f}}ms<br>Text: %{{marker.color:.0f}} chars<br>%{{x}}<extra></extra>",
+            ),
+            row=1,
+            col=1,
+        )
+
+    # Right chart: text length, color and shape by model
+    for model in models:
+        model_data = synthesis[synthesis["model_slug"] == model]
+        style = get_model_style(model)
+
         fig.add_trace(
             go.Scatter(
                 x=model_data["local_time"],
                 y=model_data["text_length"],
                 mode="markers",
                 name=model,
-                marker=dict(size=8, color=get_model_color(model)),
                 legendgroup=model,
+                showlegend=False,
+                marker=dict(size=MARKER_SIZE, color=style["color"], symbol=style["symbol"]),
             ),
             row=1,
             col=2,
         )
 
-    fig.update_layout(height=400, margin=dict(t=40, b=40))
+    fig.update_layout(height=400, margin=dict(t=40, b=40), legend=dict(orientation="h", yanchor="bottom", y=1.02))
     fig.update_xaxes(title_text="Time", row=1, col=1)
     fig.update_xaxes(title_text="Time", row=1, col=2)
     fig.update_yaxes(title_text="Worker Time (ms)", row=1, col=1)
@@ -337,13 +453,14 @@ def chart_synthesis_ratio(df: pd.DataFrame) -> go.Figure | None:
     # Left: scatter over time
     for model in synthesis["model_slug"].dropna().unique():
         model_data = synthesis[synthesis["model_slug"] == model]
+        style = get_model_style(model)
         fig.add_trace(
             go.Scatter(
                 x=model_data["local_time"],
                 y=model_data["ratio"],
                 mode="markers",
                 name=model,
-                marker=dict(size=8, color=get_model_color(model)),
+                marker=dict(size=MARKER_SIZE, color=style["color"], symbol=style["symbol"]),
                 hovertemplate="<b>%{y:.2f}x</b><br>%{x}<extra>%{fullData.name}</extra>",
             ),
             row=1,
@@ -487,7 +604,7 @@ def chart_model_usage(df: pd.DataFrame) -> go.Figure | None:
 
         synth_vals = [model_counts.get(m, 0) for m in models]
         cache_vals = [cache_by_model.get(m, 0) for m in models]
-        colors = [get_model_color(m) for m in models]
+        colors = [get_model_style(m)["color"] for m in models]
 
         fig.add_trace(
             go.Bar(
@@ -609,21 +726,8 @@ def main():
 
     # Sidebar
     with st.sidebar:
-        st.header("Controls")
-
-        if st.button("🔄 Sync from Prod", use_container_width=True):
-            with st.spinner("Syncing..."):
-                ok, msg = sync_from_prod()
-                if ok:
-                    st.success(msg)
-                    st.cache_data.clear()
-                else:
-                    st.error(msg)
-
-        st.divider()
-
         if not LOCAL_DB.exists():
-            st.warning("No metrics.db - click Sync")
+            st.error(f"Database not found: {LOCAL_DB}")
             return
 
         st.caption(f"DB: {LOCAL_DB.stat().st_size / 1024:.1f} KB")
@@ -669,6 +773,7 @@ def main():
     st.header("Summary")
     show_queue_stats(filtered)
     show_eviction_stats(filtered)
+    show_error_stats(filtered)
 
     st.divider()
 
@@ -720,6 +825,24 @@ def main():
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.caption("Queue metrics: no data")
+
+    # Errors and failures (only show if there are issues)
+    errors_fig = chart_errors_timeline(filtered)
+    incomplete_fig = chart_incomplete_jobs(filtered)
+    if errors_fig or incomplete_fig:
+        st.divider()
+        st.header("Errors & Failures")
+        col1, col2 = st.columns(2)
+        with col1:
+            if errors_fig:
+                st.plotly_chart(errors_fig, use_container_width=True)
+            else:
+                st.caption("No synthesis errors")
+        with col2:
+            if incomplete_fig:
+                st.plotly_chart(incomplete_fig, use_container_width=True)
+            else:
+                st.caption("No incomplete jobs")
 
     # Raw data
     with st.expander("Raw Data"):
