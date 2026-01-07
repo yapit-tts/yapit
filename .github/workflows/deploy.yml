@@ -156,3 +156,27 @@ jobs:
         env:
           GIT_COMMIT: ${{ github.sha }}
           SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
+
+  # === Notify ===
+  notify:
+    needs: [deploy]
+    if: always() && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send ntfy notification
+        run: |
+          STATUS="${{ needs.deploy.result }}"
+          if [ "$STATUS" = "success" ]; then
+            ICON="✅"
+            PRIORITY="default"
+          else
+            ICON="❌"
+            PRIORITY="high"
+          fi
+          curl -s \
+            -H "Title: ${ICON} yapit deploy: ${STATUS}" \
+            -H "Priority: ${PRIORITY}" \
+            -H "Tags: rocket" \
+            -H "Click: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            -d "Commit: ${{ github.event.head_commit.message }}" \
+            https://ntfy.sh/yapit-tts-deploy
