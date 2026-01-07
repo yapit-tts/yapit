@@ -230,31 +230,53 @@ async def _queue_synthesis_job(
     threshold = settings.tts_overflow_queue_threshold
 
     if route.overflow and queue_depth > threshold:
+        processor_route = "overflow"
+        await log_event(
+            "synthesis_queued",
+            variant_hash=variant_hash,
+            model_slug=model.slug,
+            voice_slug=voice.slug,
+            text_length=len(block.text),
+            queue_depth=queue_depth,
+            processor_route=processor_route,
+            user_id=user.id,
+            document_id=str(block.document_id),
+            block_idx=block.idx,
+        )
         try:
-            processor_route = "overflow"
-            await route.overflow.process(job)
+            await log_event(
+                "synthesis_started",
+                variant_hash=variant_hash,
+                model_slug=model.slug,
+                user_id=user.id,
+                document_id=str(block.document_id),
+                block_idx=block.idx,
+            )
+            start_time = time.time()
+            result = await route.overflow.process(job)
+            worker_latency_ms = int((time.time() - start_time) * 1000)
+            await route.overflow.finalize_synthesis(job, result, worker_latency_ms, processor_route="overflow")
         except Exception as e:
             logger.warning(f"Overflow processor failed, falling back to local queue: {e}")
-            processor_route = "local"
+            # Fall back to local queue - will be logged as queued again with local route
             await redis.lpush(get_queue_name(model.slug), job.model_dump_json())
+        return variant_hash, False
     else:
         processor_route = "local"
         await redis.lpush(get_queue_name(model.slug), job.model_dump_json())
-
-    await log_event(
-        "synthesis_queued",
-        variant_hash=variant_hash,
-        model_slug=model.slug,
-        voice_slug=voice.slug,
-        text_length=len(block.text),
-        queue_depth=queue_depth,
-        processor_route=processor_route,
-        user_id=user.id,
-        document_id=str(block.document_id),
-        block_idx=block.idx,
-    )
-
-    return variant_hash, False
+        await log_event(
+            "synthesis_queued",
+            variant_hash=variant_hash,
+            model_slug=model.slug,
+            voice_slug=voice.slug,
+            text_length=len(block.text),
+            queue_depth=queue_depth,
+            processor_route=processor_route,
+            user_id=user.id,
+            document_id=str(block.document_id),
+            block_idx=block.idx,
+        )
+        return variant_hash, False
 
 
 async def _handle_synthesize(

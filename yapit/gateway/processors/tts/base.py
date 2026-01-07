@@ -92,6 +92,99 @@ class BaseTTSProcessor:
         # Clean up subscribers set
         await self._redis.delete(subscriber_key)
 
+    async def finalize_synthesis(
+        self,
+        job: SynthesisJob,
+        result: SynthesisResult,
+        worker_latency_ms: int,
+        processor_route: str = "local",
+    ) -> None:
+        """Store synthesis result in cache, update DB, notify subscribers, log metrics.
+
+        Called after process() completes successfully. Used by both queue workers
+        and direct overflow calls.
+
+        Args:
+            worker_latency_ms: Time spent in synthesis (process() call duration)
+        """
+        finalize_start = time.time()
+
+        if not result.audio:
+            logger.info(f"Empty audio for variant {job.variant_hash}, marking all subscribers as skipped")
+            await self._notify_subscribers(job.variant_hash, status="skipped")
+            await self._redis.delete(TTS_INFLIGHT.format(hash=job.variant_hash))
+            return
+
+        cache_ref = await self._cache.store(job.variant_hash, result.audio)
+        if cache_ref is None:
+            raise RuntimeError(f"Cache write failed for {job.variant_hash}")
+
+        # Cache audio tokens for context accumulation (HIGGS native adapter)
+        if result.audio_tokens:
+            await self._cache.store(f"{job.variant_hash}:tokens", result.audio_tokens.encode("utf-8"))
+
+        async for db in create_session(self._settings):
+            # Update block variant with duration and cache reference
+            await db.exec(
+                update(BlockVariant)
+                .where(BlockVariant.hash == job.variant_hash)
+                .values(
+                    duration_ms=result.duration_ms,
+                    cache_ref=cache_ref,
+                )
+            )
+
+            # Record usage (characters) for billing
+            model_slug = job.synthesis_parameters.model
+            usage_type = UsageType.server_kokoro if model_slug.startswith("kokoro") else UsageType.premium_voice
+
+            model = (await db.exec(select(TTSModel).where(TTSModel.slug == model_slug))).one()
+            raw_chars = len(job.synthesis_parameters.text)
+            characters_used = int(raw_chars * model.usage_multiplier)
+
+            await record_usage(
+                user_id=job.user_id,
+                usage_type=usage_type,
+                amount=characters_used,
+                db=db,
+                reference_id=job.variant_hash,
+                description=f"TTS synthesis: {raw_chars} chars ({model_slug})",
+                details={
+                    "variant_hash": job.variant_hash,
+                    "model_slug": model_slug,
+                    "duration_ms": result.duration_ms,
+                    "usage_multiplier": model.usage_multiplier,
+                },
+            )
+            break
+
+        finalize_time_ms = int((time.time() - finalize_start) * 1000)
+        total_latency_ms = worker_latency_ms + finalize_time_ms
+
+        await log_event(
+            "synthesis_complete",
+            variant_hash=job.variant_hash,
+            model_slug=job.synthesis_parameters.model,
+            voice_slug=job.synthesis_parameters.voice,
+            text_length=len(job.synthesis_parameters.text),
+            worker_latency_ms=worker_latency_ms,
+            total_latency_ms=total_latency_ms,
+            audio_duration_ms=result.duration_ms,
+            cache_hit=False,
+            processor_route=processor_route,
+            user_id=job.user_id,
+            document_id=str(job.document_id),
+            block_idx=job.block_idx,
+        )
+
+        # Notify all subscribers that audio is cached
+        await self._notify_subscribers(
+            job.variant_hash,
+            status="cached",
+            audio_url=f"/v1/audio/{job.variant_hash}",
+        )
+        await self._redis.delete(TTS_INFLIGHT.format(hash=job.variant_hash))
+
     async def _handle_job(self, raw: bytes) -> None:
         """Handle a single job from the queue."""
         job = None
@@ -128,79 +221,7 @@ class BaseTTSProcessor:
             result = await self.process(job)
             worker_latency_ms = int((time.time() - start_time) * 1000)
 
-            if not result.audio:
-                logger.info(f"Empty audio for variant {job.variant_hash}, marking all subscribers as skipped")
-                await self._notify_subscribers(job.variant_hash, status="skipped")
-                await self._redis.delete(TTS_INFLIGHT.format(hash=job.variant_hash))
-                return
-
-            cache_ref = await self._cache.store(job.variant_hash, result.audio)
-            if cache_ref is None:
-                raise RuntimeError(f"Cache write failed for {job.variant_hash}")
-
-            # Cache audio tokens for context accumulation (HIGGS native adapter)
-            if result.audio_tokens:
-                await self._cache.store(f"{job.variant_hash}:tokens", result.audio_tokens.encode("utf-8"))
-
-            async for db in create_session(self._settings):
-                # Update block variant with duration and cache reference
-                await db.exec(
-                    update(BlockVariant)
-                    .where(BlockVariant.hash == job.variant_hash)
-                    .values(
-                        duration_ms=result.duration_ms,
-                        cache_ref=cache_ref,
-                    )
-                )
-
-                # Record usage (characters) for billing
-                model_slug = job.synthesis_parameters.model
-                usage_type = UsageType.server_kokoro if model_slug.startswith("kokoro") else UsageType.premium_voice
-
-                model = (await db.exec(select(TTSModel).where(TTSModel.slug == model_slug))).one()
-                raw_chars = len(job.synthesis_parameters.text)
-                characters_used = int(raw_chars * model.usage_multiplier)
-
-                await record_usage(
-                    user_id=job.user_id,
-                    usage_type=usage_type,
-                    amount=characters_used,
-                    db=db,
-                    reference_id=job.variant_hash,
-                    description=f"TTS synthesis: {raw_chars} chars ({model_slug})",
-                    details={
-                        "variant_hash": job.variant_hash,
-                        "model_slug": model_slug,
-                        "duration_ms": result.duration_ms,
-                        "usage_multiplier": model.usage_multiplier,
-                    },
-                )
-                break
-
-            total_latency_ms = int((time.time() - start_time) * 1000)
-            await log_event(
-                "synthesis_complete",
-                variant_hash=job.variant_hash,
-                model_slug=job.synthesis_parameters.model,
-                voice_slug=job.synthesis_parameters.voice,
-                text_length=len(job.synthesis_parameters.text),
-                worker_latency_ms=worker_latency_ms,
-                total_latency_ms=total_latency_ms,
-                audio_duration_ms=result.duration_ms,
-                cache_hit=False,
-                processor_route="local",
-                user_id=job.user_id,
-                document_id=str(job.document_id),
-                block_idx=job.block_idx,
-            )
-
-            # Notify all subscribers that audio is cached
-            await self._notify_subscribers(
-                job.variant_hash,
-                status="cached",
-                audio_url=f"/v1/audio/{job.variant_hash}",
-            )
-            await self._redis.delete(TTS_INFLIGHT.format(hash=job.variant_hash))
+            await self.finalize_synthesis(job, result, worker_latency_ms, processor_route="local")
 
         except Exception as e:
             logger.exception(f"Failed to process job: {e}")
