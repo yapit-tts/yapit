@@ -152,7 +152,7 @@ export function UnifiedInput() {
 
       const response = await api.post<DocumentCreateResponse>(endpoint, body);
 
-      navigate(`/playback/${response.data.id}`, {
+      navigate(`/listen/${response.data.id}`, {
         state: { documentTitle: response.data.title }
       });
     } catch (err) {
@@ -169,7 +169,7 @@ export function UnifiedInput() {
       const response = await api.post<DocumentCreateResponse>("/v1/documents/text", {
         content: value.trim(),
       });
-      navigate(`/playback/${response.data.id}`, {
+      navigate(`/listen/${response.data.id}`, {
         state: { documentTitle: response.data.title }
       });
     } catch (err) {
@@ -203,7 +203,7 @@ export function UnifiedInput() {
           pages: null,
           processor_slug: "markitdown",
         });
-        navigate(`/playback/${docResponse.data.id}`, {
+        navigate(`/listen/${docResponse.data.id}`, {
           state: { documentTitle: docResponse.data.title }
         });
       } else {

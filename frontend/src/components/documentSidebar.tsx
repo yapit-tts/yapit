@@ -192,7 +192,7 @@ function DocumentSidebar() {
                       isActive={documentId === doc.id}
                       size="lg"
                     >
-                      <Link to={`/playback/${doc.id}`} state={{ documentTitle: doc.title }}>
+                      <Link to={`/listen/${doc.id}`} state={{ documentTitle: doc.title }}>
                         <FileText className="shrink-0" />
                         <span className="truncate" title={doc.title || "Untitled"}>
                           {doc.title || "Untitled"}
