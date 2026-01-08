@@ -80,6 +80,7 @@ make migration-new MSG="description of changes"
 - Data migrations must be added manually (e.g., populating new NOT NULL columns)
 - Operation ordering may need adjustment
 - Enum changes often need manual tweaks
+- **Column constraints need prod data check** — Adding length limits (VARCHAR(N)) or NOT NULL fails if existing prod data violates the constraint. Check prod data before deploying: `SELECT id, length(col) FROM table WHERE length(col) > N;`
 
 **After generating:** Run `make dev-cpu` to restart and apply migration + seed data.
 
@@ -264,6 +265,16 @@ Stripe MCP provides direct API access and documentation search. Uses OAuth.
 - Anything you'd want reproducible — script it instead
 
 **Available tools:** `list_customers`, `list_subscriptions`, `list_products`, `list_prices`, `list_invoices`, `search_stripe_documentation`, `get_stripe_account_info`, and more. See [[stripe-integration]] for full list.
+
+### Webhook Secret (Dev)
+
+The `stripe-cli` container generates a webhook signing secret on startup. Get it and put it in `.env`:
+
+```bash
+docker logs yapit-stripe-cli-1 2>&1 | grep -o "whsec_[a-f0-9]*"
+```
+
+This changes when the container restarts. Not stored in `.env.sops` — just update `.env` directly.
 
 ## Coding Conventions
 

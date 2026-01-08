@@ -1,5 +1,5 @@
 ---
-status: active
+status: done
 type: workflow
 ---
 
@@ -276,7 +276,7 @@ stripe customers delete cus_XXXXX --confirm
 
 ```markdown
 ---
-status: active
+status: done
 started: YYYY-MM-DD
 ---
 

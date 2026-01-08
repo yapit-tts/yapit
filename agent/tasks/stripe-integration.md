@@ -1,5 +1,5 @@
 ---
-status: active
+status: done
 type: tracking
 started: 2026-01-02
 ---
@@ -96,7 +96,7 @@ Best handled by one agent sequentially (all touch `stripe_setup.py`, share conte
 - [[stripe-testing-beta-launch]] — Current testing session (renamed from stripe-billing-e2e-testing)
 
 ### Research
-- [[stripe-eu-withdrawal]] — EU 14-day withdrawal research (blocking for public launch)
+- [[stripe-eu-withdrawal]] — EU 14-day withdrawal research ✅ (resolved 2026-01-07, see file for Stripe support response)
 
 ### Validation
 - [[stripe-sandbox-validation]] — Fresh sandbox test with IaC-only setup
@@ -144,9 +144,9 @@ Then update `.env.prod` with the price IDs from the output (or they're already s
 
 - [x] **Add test cases to [[stripe-e2e-testing]]:** All covered in [[stripe-testing-fresh-sandbox]] (2026-01-05)
 - [x] **Refine testing workflow** — [[stripe-e2e-testing]] updated with gotchas, environment setup, test clock workflow
-- [x] **Send EU withdrawal email** — Draft in [[stripe-eu-withdrawal]] (decided it's prlly fine - see file for details)
+- [x] **Send EU withdrawal email** — Response received 2026-01-07, ToS updated with two-step waiver language per [[stripe-eu-withdrawal]]
 - [x] **Run IaC in prod** — See Prod Launch Checklist below
-- [ ] **Fix IaC prod issues** — See "Current Prod Issues" section below
+- [x] **Fix IaC prod issues** — See "Current Prod Issues" section below
 
 ## Prod Launch Checklist
 
@@ -167,10 +167,10 @@ make dev-env
 ```
 
 **Verify in Stripe Dashboard (live mode):**
-- [ ] Products exist (Basic, Plus, Max)
-- [ ] Prices exist (monthly + yearly for each)
-- [ ] Promo codes exist (BETA, LAUNCH, LAUNCHPLUS)
-- [ ] Portal configured (cancellation, plan switching)
+- [x] Products exist (Basic, Plus, Max)
+- [x] Prices exist (monthly + yearly for each)
+- [x] Promo codes exist (BETA, LAUNCH, LAUNCHPLUS)
+- [x] Portal configured (cancellation, plan switching)
 - [x] Webhook configured (`https://api.yapit.md/v1/billing/webhook`, secret in sops)
 
 **Post-launch monitoring:**
