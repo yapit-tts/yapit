@@ -238,23 +238,30 @@ function DocumentSidebar() {
           <SidebarMenuItem>
             <Tooltip>
               <TooltipTrigger asChild>
-                <SidebarMenuButton onClick={() => navigate("/subscription")} size="lg" className="h-auto py-3">
-                  <div className="flex flex-col w-full gap-1">
-                    <div className="flex items-center gap-2">
-                      <CreditCard className="h-4 w-4 text-primary shrink-0" />
-                      <span className="truncate font-medium">
-                        {subscription?.plan.name ?? "Free"} Plan
-                      </span>
-                    </div>
-                    {subscription?.subscription && subscription.limits.premium_voice_characters !== null && subscription.limits.premium_voice_characters > 0 && (
-                      <div className="w-full pl-6">
-                        <Progress
-                          value={Math.min(100, (subscription.usage.premium_voice_characters / subscription.limits.premium_voice_characters) * 100)}
-                          className="h-1.5"
-                        />
+                <SidebarMenuButton asChild size="lg" className="h-auto py-3">
+                  <Link to="/subscription">
+                    <div className="flex flex-col w-full gap-1">
+                      <div className="flex items-center gap-2">
+                        <CreditCard className="h-4 w-4 text-primary shrink-0" />
+                        <span className="truncate font-medium">
+                          {subscription?.plan.name ?? "Free"} Plan
+                        </span>
                       </div>
-                    )}
-                  </div>
+                      {subscription?.subscription && subscription.limits.premium_voice_characters !== null && subscription.limits.premium_voice_characters > 0 && (() => {
+                        const usagePct = (subscription.usage.premium_voice_characters / subscription.limits.premium_voice_characters) * 100;
+                        const isNearLimit = usagePct >= 95;
+                        return (
+                          <div className="w-full pl-6">
+                            <Progress
+                              value={Math.min(100, usagePct)}
+                              className="h-1.5"
+                              indicatorClassName={isNearLimit ? "bg-[oklch(0.7_0.12_70)]" : undefined}
+                            />
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  </Link>
                 </SidebarMenuButton>
               </TooltipTrigger>
               <TooltipContent side="right" hidden={isMobile}>
@@ -276,9 +283,11 @@ function DocumentSidebar() {
 
           {/* Tips button */}
           <SidebarMenuItem>
-            <SidebarMenuButton onClick={() => navigate("/tips")} size="lg">
-              <Lightbulb className="h-4 w-4 text-muted-foreground" />
-              <span>Tips</span>
+            <SidebarMenuButton asChild size="lg">
+              <Link to="/tips">
+                <Lightbulb className="h-4 w-4 text-muted-foreground" />
+                <span>Tips</span>
+              </Link>
             </SidebarMenuButton>
           </SidebarMenuItem>
 

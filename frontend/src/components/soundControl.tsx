@@ -1,10 +1,17 @@
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Play, Pause, Volume2, SkipBack, SkipForward, Loader2, Square, WifiOff, ChevronUp } from "lucide-react";
 import { useEffect, useState, useRef, useCallback, useMemo, memo } from "react";
+import { useNavigate } from "react-router";
 import { VoicePicker } from "@/components/voicePicker";
 import { SettingsDialog } from "@/components/settingsDialog";
-import { type VoiceSelection } from "@/lib/voiceSelection";
+import { type VoiceSelection, setVoiceSelection } from "@/lib/voiceSelection";
 import { useSidebar } from "@/components/ui/sidebar";
 
 type BlockState = 'pending' | 'synthesizing' | 'cached';
@@ -496,6 +503,48 @@ const SoundControl = memo(function SoundControl({
   const [isHoveringProgressBar, setIsHoveringProgressBar] = useState(false);
   const [hoveredBlock, setHoveredBlock] = useState<number | null>(null);
   const [isDraggingProgressBar, setIsDraggingProgressBar] = useState(false);
+  const navigate = useNavigate();
+
+  // Detect quota exceeded error
+  const isQuotaExceeded = connectionError?.includes("Usage limit exceeded");
+  const isUsingInworld = voiceSelection.model === "inworld" || voiceSelection.model === "inworld-max";
+
+  // Show modal when quota exceeded on Inworld
+  const [quotaDismissed, setQuotaDismissed] = useState(false);
+
+  // Reset dismissed when switching TO Inworld or starting new synthesis
+  const prevIsInworld = useRef(isUsingInworld);
+  useEffect(() => {
+    if (isUsingInworld && !prevIsInworld.current) {
+      setQuotaDismissed(false);
+    }
+    prevIsInworld.current = isUsingInworld;
+  }, [isUsingInworld]);
+
+  const showQuotaModal = isQuotaExceeded && isUsingInworld && !quotaDismissed;
+
+  // Wrap onPlay to reset dismissed state (so modal shows again on retry)
+  const handlePlay = useCallback(() => {
+    setQuotaDismissed(false);
+    onPlay();
+  }, [onPlay]);
+
+  const handleContinueWithKokoro = useCallback(() => {
+    const newSelection: VoiceSelection = {
+      ...voiceSelection,
+      model: "kokoro-server",
+      voiceSlug: "af_heart",
+    };
+    onVoiceChange(newSelection);
+    setVoiceSelection(newSelection);
+    setQuotaDismissed(true);
+    onPlay();
+  }, [voiceSelection, onVoiceChange, onPlay]);
+
+  const handleUpgradePlan = useCallback(() => {
+    setQuotaDismissed(true);
+    navigate("/subscription");
+  }, [navigate]);
 
   // Wrap onBlockHover to track hover state locally for display swap
   const handleBlockHover = useCallback((idx: number | null, isDragging: boolean) => {
@@ -551,7 +600,7 @@ const SoundControl = memo(function SoundControl({
           variant="secondary"
           size="lg"
           className="rounded-full w-14 h-14"
-          onClick={isBuffering || isSynthesizing ? onCancelSynthesis : isPlaying ? onPause : onPlay}
+          onClick={isBuffering || isSynthesizing ? onCancelSynthesis : isPlaying ? onPause : handlePlay}
           onMouseEnter={handleSpinnerMouseEnter}
           onMouseLeave={handleSpinnerMouseLeave}
         >
@@ -608,7 +657,7 @@ const SoundControl = memo(function SoundControl({
       {/* Mobile: connection status + expand toggle */}
       {isMobile && (
         <div className="flex items-center justify-end gap-2 mt-2 max-w-2xl mx-auto">
-          {(isReconnecting || connectionError) && (
+          {(isReconnecting || (connectionError && !isQuotaExceeded)) && (
             <span className={`flex items-center gap-1 text-xs ${connectionError ? 'text-destructive' : 'text-yellow-600'}`}>
               <WifiOff className="h-3 w-3" />
               {connectionError || 'Reconnecting...'}
@@ -669,7 +718,7 @@ const SoundControl = memo(function SoundControl({
         <div className="flex items-center justify-between mt-3 max-w-xl mx-auto">
           <div className="flex items-center gap-4">
             <VoicePicker value={voiceSelection} onChange={onVoiceChange} />
-            {(isReconnecting || connectionError) && (
+            {(isReconnecting || (connectionError && !isQuotaExceeded)) && (
               <span className={`flex items-center gap-1.5 text-sm ${connectionError ? 'text-destructive' : 'text-yellow-600'}`}>
                 <WifiOff className="h-4 w-4" />
                 {connectionError || 'Reconnecting...'}
@@ -704,6 +753,23 @@ const SoundControl = memo(function SoundControl({
           </div>
         </div>
       )}
+
+      {/* Quota exceeded modal */}
+      <Dialog open={showQuotaModal} onOpenChange={(open) => !open && setQuotaDismissed(true)}>
+        <DialogContent showCloseButton={false} className="max-w-md">
+          <DialogHeader className="text-center">
+            <DialogTitle>You've reached your Cloud voice quota for this month.</DialogTitle>
+          </DialogHeader>
+          <div className="flex justify-center gap-3 pt-2">
+            <Button variant="outline" onClick={handleContinueWithKokoro}>
+              Continue with Kokoro
+            </Button>
+            <Button onClick={handleUpgradePlan}>
+              Upgrade Plan
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 });
