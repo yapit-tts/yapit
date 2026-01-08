@@ -49,6 +49,9 @@ const ACCEPTED_FILE_TYPES = [
   "application/epub+zip",
 ];
 
+const MAX_FILE_SIZE_MB = 50;
+const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
+
 export function UnifiedInput() {
   const [value, setValue] = useState("");
   const [mode, setMode] = useState<InputMode>("idle");
@@ -180,9 +183,16 @@ export function UnifiedInput() {
 
   const uploadFile = useCallback(async (file: File) => {
     setMode("file");
-    setUrlState("loading");
     setError(null);
     setValue(file.name);
+
+    if (file.size > MAX_FILE_SIZE_BYTES) {
+      setUrlState("error");
+      setError(`File too large (${(file.size / 1024 / 1024).toFixed(1)} MB). Maximum size is ${MAX_FILE_SIZE_MB} MB.`);
+      return;
+    }
+
+    setUrlState("loading");
 
     try {
       const formData = new FormData();
@@ -213,7 +223,17 @@ export function UnifiedInput() {
     } catch (err) {
       setUrlState("error");
       setIsCreating(false);
-      setError(err instanceof Error ? err.message : "Failed to upload file");
+      if (err instanceof AxiosError) {
+        if (err.response?.status === 413) {
+          setError(`File too large. Maximum size is ${MAX_FILE_SIZE_MB} MB.`);
+        } else if (err.response?.data?.detail) {
+          setError(err.response.data.detail);
+        } else {
+          setError(err.message);
+        }
+      } else {
+        setError(err instanceof Error ? err.message : "Failed to upload file");
+      }
     }
   }, [api, navigate]);
 
