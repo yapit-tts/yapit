@@ -51,7 +51,8 @@ def get_model_style(model: str) -> dict:
 
 
 @st.cache_data(ttl=60)
-def load_data(db_path: str) -> pd.DataFrame:
+def load_data(db_path: str) -> tuple[pd.DataFrame, str]:
+    """Load data and return (dataframe, load_timestamp)."""
     conn = sqlite3.connect(db_path)
     df = pd.read_sql_query(
         "SELECT *, datetime(timestamp, 'localtime') as local_time FROM metrics_event ORDER BY timestamp",
@@ -61,9 +62,9 @@ def load_data(db_path: str) -> pd.DataFrame:
     if not df.empty:
         df["timestamp"] = pd.to_datetime(df["timestamp"])
         df["local_time"] = pd.to_datetime(df["local_time"])
-        # Parse JSON data column
         df["data"] = df["data"].apply(lambda x: json.loads(x) if isinstance(x, str) and x else {})
-    return df
+    loaded_at = datetime.now().strftime("%H:%M:%S")
+    return df, loaded_at
 
 
 def filter_data(df: pd.DataFrame, date_range: tuple, models: list[str]) -> pd.DataFrame:
@@ -731,9 +732,15 @@ def main():
             return
 
         st.caption(f"DB: {LOCAL_DB.stat().st_size / 1024:.1f} KB")
-        st.caption(f"Modified: {datetime.fromtimestamp(LOCAL_DB.stat().st_mtime).strftime('%m-%d %H:%M')}")
+        st.caption(f"File modified: {datetime.fromtimestamp(LOCAL_DB.stat().st_mtime).strftime('%m-%d %H:%M')} UTC")
 
-        df = load_data(str(LOCAL_DB))
+        df, loaded_at = load_data(str(LOCAL_DB))
+        st.caption(f"Data loaded: {loaded_at}")
+
+        if st.button("🔄 Refresh"):
+            load_data.clear()
+            st.rerun()
+
         if df.empty:
             st.warning("Empty database")
             return
