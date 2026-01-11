@@ -7,6 +7,10 @@
 This is the single source of truth for Stripe configuration. Running this script
 applies the configuration to your Stripe account (test or live).
 
+WARNING: Use amount_off coupons, NOT percent_off. Percent-off coupons apply to
+the full billing cycle, so a "free first month" coupon on a yearly plan gives
+a free year. Amount-off caps the discount regardless of interval.
+
 USAGE:
     # Test mode (reads STRIPE_SECRET_KEY from .env after make dev-env)
     uv run --env-file=.env scripts/stripe_setup.py --test
@@ -100,26 +104,50 @@ PRODUCTS = [
 ]
 
 # Coupons define the discount. Promo codes are customer-facing codes that reference coupons.
+# Using amount_off (not percent_off) to cap discount value regardless of billing interval.
 COUPONS = [
+    # === OLD PERCENT-OFF COUPONS (deactivated) ===
+    # These gave full discount on yearly plans when users switched intervals.
+    # Keeping for reference, but inactive.
     {
         "id": "beta_100",
-        "name": "Beta - Free First Month",
+        "name": "Beta - Free First Month (DEPRECATED)",
         "percent_off": 100,
         "duration": "once",
-        "active": True,
+        "active": False,
     },
     {
         "id": "launch_basic_100",
-        "name": "Launch - Free Basic Month",
+        "name": "Launch - Free Basic Month (DEPRECATED)",
         "percent_off": 100,
+        "duration": "once",
+        "applies_to": ["yapit_basic"],
+        "active": False,
+    },
+    {
+        "id": "launch_plus_50",
+        "name": "Launch Plus 50% Off (DEPRECATED)",
+        "percent_off": 50,
+        "duration": "once",
+        "applies_to": ["yapit_plus"],
+        "active": False,
+    },
+    # === NEW AMOUNT-OFF COUPONS ===
+    # Fixed euro amounts - safe regardless of billing interval.
+    {
+        "id": "yapit_7_off",
+        "name": "€7 Off Basic",
+        "amount_off": 700,
+        "currency": "eur",
         "duration": "once",
         "applies_to": ["yapit_basic"],
         "active": True,
     },
     {
-        "id": "launch_plus_50",
-        "name": "Launch Plus 50% Off",
-        "percent_off": 50,
+        "id": "yapit_10_off",
+        "name": "€10 Off Plus",
+        "amount_off": 1000,
+        "currency": "eur",
         "duration": "once",
         "applies_to": ["yapit_plus"],
         "active": True,
@@ -128,22 +156,36 @@ COUPONS = [
 
 # Promo codes are what customers enter at checkout
 PROMO_CODES = [
+    # === OLD PROMO CODES (deactivated) ===
     {
         "coupon": "beta_100",
         "code": "BETA",
         "max_redemptions": 10,
-        "active": True,  # Set False to deactivate at launch
+        "active": False,
     },
     {
         "coupon": "launch_basic_100",
         "code": "LAUNCH",
         "max_redemptions": 300,
-        "active": True,
+        "active": False,
     },
     {
         "coupon": "launch_plus_50",
         "code": "LAUNCHPLUS",
         "max_redemptions": 100,
+        "active": False,
+    },
+    # === NEW PROMO CODES ===
+    {
+        "coupon": "yapit_7_off",
+        "code": "YAPIT7",
+        "max_redemptions": 500,
+        "active": True,
+    },
+    {
+        "coupon": "yapit_10_off",
+        "code": "YAPIT10",
+        "max_redemptions": 200,
         "active": True,
     },
 ]
@@ -193,7 +235,7 @@ PORTAL_CONFIG = {
 }
 
 # Webhook configuration
-WEBHOOK_URL = "https://yapit.md/v1/billing/webhook"
+WEBHOOK_URL = "https://api.yapit.md/v1/billing/webhook"
 WEBHOOK_EVENTS = [  # must match SUBSCRIPTION_EVENTS in billing.py
     "checkout.session.completed",
     "customer.subscription.created",
@@ -560,7 +602,7 @@ def main():
     parser = argparse.ArgumentParser(description="Stripe IaC - Products, Prices, Coupons, Promos, Portal, Webhooks")
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--test", action="store_true", help="Use test mode (STRIPE_SECRET_KEY from .env)")
-    group.add_argument("--prod", action="store_true", help="Use production mode (STRIPE_SECRET_KEY_LIVE)")
+    group.add_argument("--prod", action="store_true", help="Use production mode (run `make prod-env` first)")
     args = parser.parse_args()
 
     secret_key = os.environ.get("STRIPE_SECRET_KEY")
