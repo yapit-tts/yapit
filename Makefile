@@ -86,11 +86,7 @@ endif
 	@echo "Restart dev: make dev-cpu"
 
 # Decrypt .env.sops for dev
-# - Removes comments and _PREFIXED vars (safekeeping, not active)
-# - Removes STACK_* (dev uses separate Stack Auth via .env.dev)
-# - Removes DATABASE_URL and POSTGRES_PASSWORD (dev uses public creds from .env.dev)
-# - Transforms *_TEST vars to main var names (STRIPE_SECRET_KEY_TEST -> STRIPE_SECRET_KEY)
-# - Removes *_LIVE vars (not needed in dev)
+# Convention: DEV_* → dev only, PROD_* → prod only, _* → never, no prefix → shared
 dev-env:
 	@if [ -z "$$YAPIT_SOPS_AGE_KEY_FILE" ]; then \
 		echo "Error: Set YAPIT_SOPS_AGE_KEY_FILE to the yapit age key path"; exit 1; \
@@ -98,26 +94,22 @@ dev-env:
 	@SOPS_AGE_KEY_FILE=$$YAPIT_SOPS_AGE_KEY_FILE sops -d .env.sops \
 		| grep -v "^#" \
 		| grep -v "^_" \
-		| grep -v "^STACK_" \
-		| grep -v "^DATABASE_URL=" \
-		| grep -v "^POSTGRES_PASSWORD=" \
-		| grep -v "_LIVE=" \
-		| sed 's/_TEST=/=/' \
+		| grep -v "^PROD_" \
+		| sed 's/^DEV_//' \
 		> .env
-	@echo "Created .env (dev-ready: test keys, no prod Stack Auth)"
+	@echo "Created .env for dev"
 
 # Decrypt .env.sops for prod operations (e.g., stripe_setup.py --prod)
-# - Transforms *_LIVE vars to main var names (STRIPE_SECRET_KEY_LIVE -> STRIPE_SECRET_KEY)
-# - Removes *_TEST vars
-# - Keeps STACK_* (prod Stack Auth)
 # WARNING: Run `make dev-env` after you're done with prod operations!
 prod-env:
 	@if [ -z "$$YAPIT_SOPS_AGE_KEY_FILE" ]; then \
 		echo "Error: Set YAPIT_SOPS_AGE_KEY_FILE to the yapit age key path"; exit 1; \
 	fi
 	@SOPS_AGE_KEY_FILE=$$YAPIT_SOPS_AGE_KEY_FILE sops -d .env.sops \
-		| grep -v "_TEST=" \
-		| sed 's/_LIVE=/=/' \
+		| grep -v "^#" \
+		| grep -v "^_" \
+		| grep -v "^DEV_" \
+		| sed 's/^PROD_//' \
 		> .env
 	@echo "⚠️  Created .env with PROD keys - run 'make dev-env' when done!"
 	@echo "You can now run: uv run --env-file=.env python scripts/stripe_setup.py --prod"

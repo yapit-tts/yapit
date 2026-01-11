@@ -34,9 +34,9 @@ die() { echo "ERROR: $*" >&2; exit 1; }
 log "Decrypting $SOPS_FILE..."
 RAW_ENV=$(SOPS_AGE_KEY="$SOPS_AGE_KEY" sops -d "$SOPS_FILE")
 
-# Transform for prod: *_LIVE → plain names, remove *_TEST
-log "Transforming secrets (LIVE → plain, removing TEST)..."
-ENV_CONTENT=$(echo "$RAW_ENV" | grep -v "_TEST=" | sed 's/_LIVE=/=/')
+# Convention: DEV_* → dev only, PROD_* → prod only, _* → never, no prefix → shared
+log "Transforming secrets for prod..."
+ENV_CONTENT=$(echo "$RAW_ENV" | grep -v "^#" | grep -v "^_" | grep -v "^DEV_" | sed 's/^PROD_//')
 
 # Write temporary .env file
 echo "$ENV_CONTENT" > .env.deploy

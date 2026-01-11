@@ -45,50 +45,24 @@ See `yapit/gateway/metrics.py` for schema and query examples.
 
 **Prod server:** `root@46.224.195.97`
 
-**Before debugging any VPS or production issues**, read these docs first:
-- `agent/knowledge/private/dokploy-operations.md` - API auth, Traefik recovery, nginx DNS caching gotcha, env injection
-- `agent/tasks/hetzner-deployment.md` - deployment architecture, Stack Auth setup, migration workflow
-
 Common gotchas documented there will save significant debugging time (e.g., nginx caches container IPs after redeploy → 502 errors even though containers are healthy).
 
-## Database Migrations
+### VPS SSH Permissions
 
-**CRITICAL: Shared database with Stack Auth.** Yapit and Stack Auth share the same postgres database.
-- **Stack Auth tables use PascalCase** (e.g., `Project`, `ProjectUser`, `Team`) — NOT `stack_` prefix
-- **Yapit tables use snake_case** (e.g., `ttsmodel`, `usersubscription`, `document`)
-- **NEVER drop all tables blindly** — filter by naming convention or use explicit table lists
-- Stack Auth also creates enum types and `_prisma_migrations` table
+Read-only commands are auto-approved: `docker ps`, `docker logs`, `docker inspect`, `docker stats`, `curl localhost:*`, `sqlite3 ... SELECT ...`.
 
-### Creating a New Migration (Dev)
+**⚠️ CRITICAL: Destructive operations on prod require explicit user confirmation.**
 
-```bash
-make migration-new MSG="description of changes"
-```
+Before running ANY of these on the prod VPS, get a literal "YES" from the user:
+- `docker stop/restart/rm/kill`
+- `docker exec` (can modify container state)
+- Any file writes (`rm`, `mv`, `echo >`, etc.)
+- Database modifications (anything other than SELECT)
+- Service restarts, config changes
 
-**Prerequisites:** Models in `domain_models.py` already updated, Python code is valid (imports work).
+Ask explicitly: "I need to run `[exact command]` on prod. This will [effect]. Type YES to confirm."
 
-**What it does:**
-1. Starts postgres if needed
-2. Drops DB, runs existing migrations to recreate "pre-change" state
-3. Generates migration from model diff
-4. Auto-fixes SQLModel quirks (`sqlmodel.sql.sqltypes.AutoString()` → `sa.String()`)
-5. Tests migration on fresh DB — if this fails, fix before committing
-
-**Always review the generated migration:**
-- Autogenerate can't detect renames (sees drop + create)
-- **Table drops require manual migration** — `env.py` filters to only include tables in current models (to avoid touching Stack Auth). When you delete a model, the table is no longer in `MANAGED_TABLES`, so alembic ignores it. Write the `op.drop_table()` manually.
-- Data migrations must be added manually (e.g., populating new NOT NULL columns)
-- Operation ordering may need adjustment
-- Enum changes often need manual tweaks
-- **Column constraints need prod data check** — Adding length limits (VARCHAR(N)) or NOT NULL fails if existing prod data violates the constraint. Check prod data before deploying: `SELECT id, length(col) FROM table WHERE length(col) > N;`
-
-**After generating:** Run `make dev-cpu` to restart and apply migration + seed data.
-
-### Deploying to Prod
-
-**No special action.** Gateway runs `alembic upgrade head` on startup. Just `scripts/deploy.sh`.
-
-Never run any destructive commands without getting explicit user approval for the exact command you're about to run.
+Do NOT assume approval from vague statements like "fix it" or "go ahead". Prod is prod.
 
 ## Dependency Update Checklists
 
@@ -100,27 +74,105 @@ When updating pinned dependencies, check these version-specific integrations:
 
 ## Secrets Management
 
-**`.env.sops`** — encrypted secrets (age/sops). Contains both test and live values:
-- `STRIPE_SECRET_KEY_TEST`, `STRIPE_SECRET_KEY_LIVE`
-- `STRIPE_WEBHOOK_SECRET_TEST`, `STRIPE_WEBHOOK_SECRET_LIVE`
-- API keys (RUNPOD, MISTRAL, INWORLD, etc.)
+**`.env.sops`** — encrypted secrets (age/sops). Naming convention:
+- `DEV_*` → dev only (prefix stripped by `make dev-env`)
+- `PROD_*` → prod only (prefix stripped by `make prod-env` / deploy)
+- `_*` → never copied (reference/inactive)
+- No prefix → shared (copied to both)
 
-**For dev:** Run `make dev-env` — decrypts sops, transforms `*_TEST` → main var names, removes `*_LIVE` and `STACK_*`. Creates ready-to-use `.env`.
+**For dev:** Run `make dev-env` — decrypts sops, applies convention, creates `.env`.
 
-**For prod:** Deploy script uses `*_LIVE` values.
+**For prod:** Deploy script applies same convention for prod.
 
 **`.env.dev`** — public (in git), non-secret dev config (ports, Stack Auth dev project, etc.)
 
-## Agent Work Structure
+## Agent Workflow
 
-Task files live in `agent/tasks/`, persistent knowledge in `agent/knowledge/`.
-Queryable via grep "^status: active" agent/tasks/*.md
-Don't commit them with code changes - we'll batch add them later.
+You are an agent in a multi-session workflow. Your job is to execute your current task well. The workflow commands (`/task`, `/handoff`, `/pickup`, etc.) are invoked by the user to orchestrate work across sessions.
 
-**Wikilinks**: Use `[[task-name]]` (not `task-name.md`) when referencing other task/knowledge files. Enables backlink discovery in memex.
+### Always Explore the Knowledge Base
 
-**Master doc:**
-- `agent/knowledge/architecture.md` - Architecture, decisions, implementation details, known issues/tech debt
+**This is non-negotiable.** Before doing any significant work:
+
+1. Always start from `agent/knowledge/overview` and branch out to relevant topics
+2. Use memex `explore` to follow wikilinks — outlinks show what a note references, backlinks show what references it
+3. Navigate progressively: overview → domain topics → specific topics → concrete content
+4. Follow links until you reach the knowledge relevant to your task - read the content of every file on your path (memex verbose mode helps)
+
+The knowledge base is organized as a graph, not a tree. Files are flat but connected via `[[wikilinks]]`. Progressive disclosure: you don't load everything, you navigate to what you need with increasing detail.
+
+### The Three-Way Split
+
+| Type | Location | Purpose | 
+|------|----------|---------|
+| **Tasks** | `agent/tasks/` | Intent, goals, assumptions, brainstorming, planning |
+| **Handoffs** | `agent/handoffs/` | Session continuation, implementation details, detailed state |
+| **Knowledge** | `agent/knowledge/` | Persistent reference docs |
+
+**Tasks** = source of truth for user intent. Not implementation logs (that's git), not code snippets (that's code), not gotchas (that's knowledge).
+
+**Handoffs** = session state for another agent to continue. Created via `/handoff`, resumed via `/pickup`. Marked `consumed: true` after pickup.
+
+**Knowledge** = how things work. Updated via `/distill` (periodic, code-grounded) or `/learnings` (session-grounded).
+
+### Stop Hook
+
+An alignment check fires periodically. It reads the task file + recent session and checks:
+- Intent clarity
+- Unvalidated assumptions worth checking
+- Whether scope expansion warrants splitting into separate tasks
+- Mental model match between agent and user
+
+If concerns: it blocks and injects clarifying questions you must address. This is automatic.
+
+### Asking Questions
+
+Ask questions (for non-trivial decisions, or matters of personal preference).
+
+*Beforehand*:
+- **Do 90% of the thinking** — analyze options, evaluate trade-offs, form a recommendation
+- **Present full analysis** — show your reasoning, not just options
+
+**Then ask what you genuinely need** — questions should emerge from analysis, not replace it
+- Use the AskUserQuestion tool.
+
+### Wiki-Links
+
+Use `[[name]]` (not `name.md`) for task/knowledge references.
+
+*Rough* direction:
+- Tasks → Knowledge (task references what it needs)
+- Handoffs → Tasks (handoff belongs to a task)
+- Knowledge ↔ Knowledge (cross-links for small-world topology)
+- Knowledge → Tasks (historical reasoning trails, "tracking-issues" style; rarer for higher level top knowledge files or workflows/skills)
+
+**Hierarchy from links, not folders.** Files are flat but connected via wikilinks. Use memex `explore` to follow outlinks/backlinks.
+
+### Task File Structure
+
+Created by `/task`. Includes:
+- Intent (what user wants, their mental model, the why)
+- Explicit assumptions
+- Sources (knowledge files, results from search)
+- Definition of done, if helpful
+- Considered & rejected approaches 
+- Discussion history (clarifications, approaches explored, decisions, mental model evolution)
+
+Update task file when understanding changes — clarifications, decisions, validated assumptions. Not for implementation progress (that's git).
+
+**NOT in task files:** Implementation logs, code snippets, gotchas, current state/progress.
+
+### Handoff File Structure
+
+Created by `/handoff`. Includes:
+- Purpose (user-specified, required)
+- Intent & context
+- Technical state (files, decisions)
+- Gotchas discovered
+- Next step (aligned with purpose)
+- Sources (task files, knowledge, external docs)
+
+Frontmatter: `consumed: false` → `consumed: true` immediately after pickup.
 
 ### Branch Strategy
 
@@ -136,21 +188,6 @@ Don't commit them with code changes - we'll batch add them later.
 ```bash
 git checkout dev && git merge main  # brings dev up to date with main
 ```
-
-### Legacy Plans
-
-Old plan files live in `~/.claude/plans/` (searchable via memex). New work uses `agent/tasks/`.
-Put less weight on these. All of them are now marked as "done".
-
-## Key Technical Decisions
-
-- **Structured content format**: JSON (not XML) - native to React frontend, Pydantic backend
-- **Markdown parsing**: Backend (Python), not frontend
-- **Block highlighting MVP**: Highlight current block only (no character/sentence level)
-- **Block splitting priority**: Markdown structure → paragraphs → sentence stoppers → hard cutoff
-- **Anonymous sessions**: Yes, generate UUID for free browser TTS, claim account later
-- **Design philosophy**: Iterate by doing, don't over-plan upfront
-- **Theme**: Light/cozy Ghibli aesthetic (warm cream, green primary)
 
 ## Codebase Structure
 
@@ -179,111 +216,39 @@ Conversely, `tre agent -L 10` shows all task files including `private/` and `kno
 
 ## Memex MCP
 
-You have access to markdown vaults via memex. Use them to find past work, discover connections, and document knowledge that helps future sessions.
+You have access to markdown vaults via memex. The primary value is **wikilink navigation** — the `explore` tool for following outlinks, backlinks, and discovering connections.
 
 Vaults:
-- /home/max/repos/github/MaxWolf-01/claude-global-knowledge — Your global knowledge: cross-project learnings, user preferences, workflow insights
-- ./agent — Project-specific: tasks, architecture decisions, conventions, debugging patterns
-- ~/.claude/plans — Legacy plan files (see table above)
+- `./agent` — Project-specific: tasks, knowledge, handoffs
 
-Search tips:
-- Use 1-3 sentence questions, not keywords: "How does the auth flow handle token refresh?" beats "auth token refresh"
-- Mention key terms explicitly in your query
-- For exact term lookup, use keywords parameter with a focused query
-- For precise "find this exact file/string" needs, use grep/rg instead — memex is for exploration
+**Workflow:**
+1. Start from a known file (task file, or `[[overview]]` for knowledge)
+2. Use `explore` to follow wikilinks — outlinks, backlinks, similar notes
+3. Build context through navigation, not just search
+4. `rename` for renaming files that already have outlinks or backlinks
 
-Workflow: Search to find entry points → Explore to follow connections (outlinks, backlinks, similar notes) → Build context before implementation.
+**Search tips (when needed):**
+- Use 1-3 sentence questions, not keywords
+- For exact term lookup, use `keywords` parameter
+- For "find this exact file/string", use grep instead
 
-## Frontend Development (Chrome DevTools MCP)
-
-Use Chrome DevTools MCP to visually verify changes, test user flows, and debug issues.
-
-**Dev account:** `dev@example.com` / `dev-password-123` (from `scripts/create_user.py`)
-- MCP browser has separate session - login required on first use
-- Login: navigate to localhost:5173 → click Login → fill form → Sign In
-
-**Key commands:**
-- `take_screenshot` — see rendered UI
-- `take_snapshot` — get DOM tree with element UIDs
-- `click`, `fill`, `fill_form` — interact using UIDs from snapshot
-- `list_console_messages` — check for JS errors/warnings
-- `resize_page` — test responsive (375x812 for mobile, 1280x800 for desktop)
-
-**Use for:**
-- Visual verification after UI changes
-- Console error checking (React errors, failed requests)
-- Mobile/responsive layout testing
-- User flow testing (login → input → playback → controls)
-- Edge case verification without manual testing
-
-**⚠️ CONTEXT WARNING — Large Snapshots:**
-Action tools (click, fill, hover, etc.) automatically return full page snapshots. On complex documents this can be **30k+ tokens per interaction** — enough to consume most remaining context in one call.
-
-**Before any DevTools interaction:**
-1. **Create your own small test document** — don't use pre-existing documents in the sidebar, they're often huge (real webpages, long docs). Type a few lines of test content yourself.
-2. **Sync task file first if context < 50%** — write current findings and next steps before the snapshot might consume remaining context
-3. **Prefer screenshots for visual checks** — `take_screenshot` is much smaller than snapshots
-
-**Exceptions:**
-- If debugging a specific bug on a known large document, the large snapshot is unavoidable — just be handoff-ready first.
-- For many bugs, screenshots lack precision — DevTools snapshots let you inspect element UIDs, exact positioning, and DOM structure. When you need that accuracy, the snapshot cost is worth it.
-
-**If MCP won't connect:** Ask the user to close Chrome so MCP can launch a fresh instance.
-
-**CSS debugging pattern:** When a style isn't applying, don't keep trying fixes at the same DOM level. Immediately trace upward:
-```
-element (Xpx) → parent (Ypx) → grandparent (Zpx) → ...
-```
-Find which ancestor is the constraint, fix there. Flex containers especially: children don't auto-stretch width in flex-row parents without `w-full`.
-
-## Stripe Operations
-
-**⚠️ CRITICAL: Before ANY Stripe API operations (CLI, SDK, MCP, scripts):**
-
-1. **Verify test keys in .env:** Run `grep STRIPE_SECRET_KEY .env | cut -d'=' -f2 | cut -c1-8` — must show `sk_test_`
-2. **Verify CLI auth:** Run `stripe config --list` or `stripe whoami` — CLI has its own auth, separate from .env. It may point to a different Stripe account entirely.
-3. **If live keys:** Run `make dev-env` to switch .env to test keys
-4. **Inform user and wait for consent:** Tell the user which Stripe operations you're about to perform and confirm they haven't run `make prod-env` themselves
-
-**The SDK (.env) and CLI can be authenticated to different Stripe accounts!** Always verify both before mixing commands.
-
-This prevents accidentally creating/modifying/deleting resources in production Stripe.
-
-### Stripe MCP
-
-Stripe MCP provides direct API access and documentation search. Uses OAuth.
-
-**Currently authenticated:** Yapit Sandbox. Re-authenticate (`/mcp`) if switching to fresh sandbox or prod account.
-
-**When to use:**
-- Quick lookups: "list subscriptions for customer X", "what products exist"
-- Searching Stripe docs without leaving terminal
-- Ad-hoc operations during debugging
-
-**When NOT to use:**
-- IaC setup — use `scripts/stripe_setup.py` (has idempotent upserts, validation)
-- Anything you'd want reproducible — script it instead
-
-**Available tools:** `list_customers`, `list_subscriptions`, `list_products`, `list_prices`, `list_invoices`, `search_stripe_documentation`, `get_stripe_account_info`, and more. See [[stripe-integration]] for full list.
-
-### Webhook Secret (Dev)
-
-The `stripe-cli` container generates a webhook signing secret on startup. Get it and put it in `.env`:
-
-```bash
-docker logs yapit-stripe-cli-1 2>&1 | grep -o "whsec_[a-f0-9]*"
-```
-
-This changes when the container restarts. Not stored in `.env.sops` — just update `.env` directly.
+**Semantic search is secondary.** The structure comes from intentional wikilinks. If you find what you need through links, that's preferred over search — it means the knowledge structure is working.
 
 ## Coding Conventions
 
-- No default values in Settings class - defaults in `.env*` files only
-- Follow existing patterns in codebase
-- **No architectural discussions in code comments** - those belong in the architecture doc
+- No default values in Settings class - all configs and defaults in `.env*` files only - single source of truth.
+- Follow existing patterns in codebase 
+- **No architectural discussions in code comments** - these should be resolved and clear long before code is written - and documented (by the distillation agent) AFTER the code is done and tested.
 - **No useless comments**: Don't add inline comments that restate what code does, don't add untested metrics/claims, don't add "LLM-style" explanatory comments. Comments should only explain non-obvious "why" - if you feel a comment is needed, the code probably needs refactoring instead.
 - **Backwards compatibility is NEVER an issue** - This is a rapidly evolving codebase. Don't preserve old approaches alongside new ones. Replace, don't accumulate. If old code needs updating to match new patterns, update it. If old endpoints/configs are superseded, delete them.
 - **Critical logic requires edge case analysis first** — For billing, security, data integrity, and other high-stakes code: list edge cases before implementing. Write out "what if user does X then Y" scenarios. The implementation is usually straightforward once scenarios are clear; the bugs come from not thinking through all paths.
-- **Stripe Managed Payments has undocumented limitations** — `managed_payments_preview=v1` doesn't support subscription schedules. Test API assumptions before implementing features that depend on them.
+- Test API assumptions before implementing features that depend on them.
 - Never use git add -u or git add . — we work with many parallel agents in the same repo.
+
+## Legacy Workflow Notes
+
+You might occasionaly stumble upon referencse to
+- `~/.claude/plans/` - Old plan files - the very first iteration of the workflow (all marked done, now obsolete and can be ignored)
+- `architecture.md` - An old "god document" for architecture and todos, that has been replaced by our current workflow.
+- Task files that do not follow naming conventions or the structure / content guidelines of the new workflow - Some of these still contain useful context or historical reasoning trails, but are not up to date with our current practices. We keep them for reference; those that are valuable will be wikilinked (more often), naturally. The others can be ignored for almost all purposes.
 
