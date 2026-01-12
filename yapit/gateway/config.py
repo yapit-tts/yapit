@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     document_cache_ttl_webpage: int  # in seconds
     document_cache_ttl_document: int  # in seconds
 
+    extraction_cache_type: Caches
+    extraction_cache_config: CacheConfig
+
     document_processors_file: str
     google_api_key: str | None = None
     images_dir: str
@@ -60,7 +63,7 @@ class Settings(BaseSettings):
 
     billing_enabled: bool  # Self-hosting: set False to disable subscription/usage limits
 
-    metrics_database_url: str
+    metrics_database_url: str | None
     log_dir: str
 
     model_config = SettingsConfigDict(

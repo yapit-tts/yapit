@@ -46,9 +46,11 @@ _write_queue: asyncio.Queue[dict[str, Any]] | None = None
 _writer_task: asyncio.Task[None] | None = None
 
 
-async def init_metrics_db(database_url: str) -> None:
+async def init_metrics_db(database_url: str | None) -> None:
     """Initialize metrics database connection pool. Call once on startup."""
     global _pool
+    if not database_url:
+        return
     _pool = await asyncpg.create_pool(
         database_url,
         min_size=1,
