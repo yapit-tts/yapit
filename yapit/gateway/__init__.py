@@ -1,3 +1,4 @@
+import asyncio
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -9,9 +10,10 @@ from fastapi.responses import JSONResponse, ORJSONResponse
 from loguru import logger
 
 from yapit.gateway.api.v1 import routers as v1_routers
+from yapit.gateway.cache import Cache
 from yapit.gateway.config import Settings, get_settings
 from yapit.gateway.db import close_db, prepare_database
-from yapit.gateway.deps import get_audio_cache
+from yapit.gateway.deps import create_cache
 from yapit.gateway.exceptions import APIError
 from yapit.gateway.metrics import init_metrics_db, start_metrics_writer, stop_metrics_writer
 from yapit.gateway.processors.document.manager import DocumentProcessorManager
@@ -51,7 +53,9 @@ async def lifespan(app: FastAPI):
     await prepare_database(settings)
 
     app.state.redis_client = await redis.from_url(settings.redis_url, decode_responses=False)
-    app.state.audio_cache = get_audio_cache(settings)
+    app.state.audio_cache = create_cache(settings.audio_cache_type, settings.audio_cache_config)
+    app.state.document_cache = create_cache(settings.document_cache_type, settings.document_cache_config)
+    app.state.extraction_cache = create_cache(settings.extraction_cache_type, settings.extraction_cache_config)
 
     document_processor_manager = DocumentProcessorManager(settings)
     document_processor_manager.load_processors(settings.document_processors_file)
@@ -65,12 +69,32 @@ async def lifespan(app: FastAPI):
     app.state.tts_processor_manager = tts_processor_manager
     await tts_processor_manager.start(settings.tts_processors_file)
 
+    all_caches = [app.state.audio_cache, app.state.document_cache, app.state.extraction_cache]
+    maintenance_task = asyncio.create_task(_cache_maintenance_task(all_caches))
+
     yield
 
+    maintenance_task.cancel()
+    try:
+        await maintenance_task
+    except asyncio.CancelledError:
+        pass
     await tts_processor_manager.stop()
     await stop_metrics_writer()
     await close_db()
     await app.state.redis_client.aclose()
+
+
+async def _cache_maintenance_task(caches: list[Cache]) -> None:
+    """Background task to vacuum caches if bloated."""
+    await asyncio.sleep(60)
+    while True:
+        for cache in caches:
+            try:
+                await cache.vacuum_if_needed(bloat_threshold=2.0)
+            except Exception as e:
+                logger.exception(f"Cache vacuum failed: {e}")
+        await asyncio.sleep(86400)
 
 
 def create_app(

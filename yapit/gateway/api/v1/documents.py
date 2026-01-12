@@ -165,8 +165,7 @@ async def prepare_document(
 
     endpoint = _get_endpoint_type_from_content_type(content_type)
     cached_doc = CachedDocument(content=content, metadata=metadata)
-    ttl = settings.document_cache_ttl_webpage if endpoint == "website" else settings.document_cache_ttl_document
-    await file_cache.store(url_hash, cached_doc.model_dump_json().encode(), ttl_seconds=ttl)
+    await file_cache.store(url_hash, cached_doc.model_dump_json().encode())
 
     content_hash = hashlib.sha256(content).hexdigest()
     uncached_pages = (
@@ -229,9 +228,7 @@ async def prepare_document_upload(
     )
 
     cached_doc = CachedDocument(metadata=metadata, content=content)
-    await file_cache.store(
-        cache_key, cached_doc.model_dump_json().encode(), ttl_seconds=settings.document_cache_ttl_document
-    )
+    await file_cache.store(cache_key, cached_doc.model_dump_json().encode())
 
     uncached_pages = (
         await _get_uncached_pages(

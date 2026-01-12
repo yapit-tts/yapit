@@ -28,22 +28,23 @@ from yapit.gateway.stack_auth.users import User
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 
 
-def _get_cache(cache_type: Caches, config: CacheConfig) -> Cache:
+def create_cache(cache_type: Caches, config: CacheConfig) -> Cache:
+    """Create a new cache instance. Used during app startup."""
     match cache_type:
         case Caches.SQLITE:
             return SqliteCache(config)
 
 
-def get_audio_cache(settings: SettingsDep) -> Cache:
-    return _get_cache(settings.audio_cache_type, settings.audio_cache_config)
+async def get_audio_cache(request: Request) -> Cache:
+    return request.app.state.audio_cache
 
 
-def get_document_cache(settings: SettingsDep) -> Cache:
-    return _get_cache(settings.document_cache_type, settings.document_cache_config)
+async def get_document_cache(request: Request) -> Cache:
+    return request.app.state.document_cache
 
 
-def get_extraction_cache(settings: SettingsDep) -> Cache:
-    return _get_cache(settings.extraction_cache_type, settings.extraction_cache_config)
+async def get_extraction_cache(request: Request) -> Cache:
+    return request.app.state.extraction_cache
 
 
 async def get_db_session(settings: Settings = Depends(get_settings)) -> AsyncIterator[AsyncSession]:

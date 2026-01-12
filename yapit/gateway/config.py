@@ -31,8 +31,6 @@ class Settings(BaseSettings):
 
     document_cache_type: Caches
     document_cache_config: CacheConfig
-    document_cache_ttl_webpage: int  # in seconds
-    document_cache_ttl_document: int  # in seconds
 
     extraction_cache_type: Caches
     extraction_cache_config: CacheConfig
