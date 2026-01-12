@@ -87,6 +87,9 @@ services:
       dockerfile: ./docker/Dockerfile.stackauth
     restart: unless-stopped
     env_file: ./.env.prod
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
        test: ["CMD-SHELL",
          "curl -fs http://localhost:8101/health && \
