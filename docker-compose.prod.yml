@@ -2,7 +2,7 @@ volumes:
   pgdata:
   audio_cache:
   document_cache:
-  metrics:
+  gateway-data:
 
 networks:
   yapit-network:
@@ -76,7 +76,7 @@ services:
       - ./document_processors.prod.json:/app/document_processors.prod.json:ro
       - audio_cache:/data/audio_cache
       - document_cache:/data/document_cache
-      - metrics:/data/metrics
+      - gateway-data:/data/gateway
     networks:
       - yapit-network
     expose:

@@ -5,18 +5,18 @@ define create-dev-user
 endef
 
 dev-cpu: down
-	rm -f metrics/metrics.db
+	rm -f gateway-data/metrics.db
 	docker compose --env-file .env --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.kokoro-cpu.yml \
 	--profile stripe up -d --build
 	$(call create-dev-user)
 
 dev-gpu: down
-	rm -f metrics/metrics.db
+	rm -f gateway-data/metrics.db
 	docker compose --env-file .env --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.kokoro-gpu.yml \
 	--profile stripe up -d --build
 
 dev-mac: down
-	rm -f metrics/metrics.db
+	rm -f gateway-data/metrics.db
 	docker compose --env-file .env --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.kokoro-cpu.yml -f docker-compose.mac.yml \
 	--profile stripe up -d --build
 	$(call create-dev-user)
@@ -159,6 +159,6 @@ dashboard:
 	@echo "Starting dashboard on prod (Ctrl+C to stop)..."
 	@(sleep 3 && xdg-open http://localhost:8502 2>/dev/null || open http://localhost:8502 2>/dev/null || true) &
 	@ssh -t -L 8502:localhost:8502 $(PROD_HOST) '\
-		METRICS_DB=$$(docker inspect $$(docker ps -qf name=gateway) --format '\''{{range .Mounts}}{{if eq .Destination "/data/metrics"}}{{.Source}}{{end}}{{end}}'\'')/metrics.db \
+		METRICS_DB=$$(docker inspect $$(docker ps -qf name=gateway) --format '\''{{range .Mounts}}{{if eq .Destination "/data/gateway"}}{{.Source}}{{end}}{{end}}'\'')/metrics.db \
 		~/.local/bin/uv run --with streamlit,pandas,plotly streamlit run /opt/yapit-dashboard/dashboard.py --server.port 8502 --server.headless true'
 

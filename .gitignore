@@ -205,4 +205,4 @@ cython_debug/
 agent/*/private/
 agent/handoffs
 scripts/tts_speed_benchmark/results/
-metrics/
+gateway-data/

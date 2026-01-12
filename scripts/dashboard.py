@@ -14,7 +14,7 @@ import streamlit as st
 from plotly.subplots import make_subplots
 
 # Config - METRICS_DB env var set by make dashboard (runs on prod via SSH tunnel)
-LOCAL_DB = Path(os.environ.get("METRICS_DB", "metrics/metrics.db"))
+LOCAL_DB = Path(os.environ.get("METRICS_DB", "gateway-data/metrics.db"))
 
 # Color palette - warm, readable
 COLORS = {
