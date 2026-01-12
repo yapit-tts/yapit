@@ -46,6 +46,15 @@ class BaseDocumentProcessor:
         self._slug = slug
 
     @property
+    def _extraction_key_prefix(self) -> str | None:
+        """Return prefix for extraction cache keys, or None to disable extraction caching.
+
+        Format: "{processor}:{config_that_affects_output}"
+        Full key will be: "{content_hash}:{prefix}:{page_idx}"
+        """
+        return None
+
+    @property
     @abstractmethod
     def _processor_supported_mime_types(self) -> set[str]:
         """Return set of MIME types this processor can handle.
@@ -74,17 +83,10 @@ class BaseDocumentProcessor:
         self,
         content: bytes,
         content_type: str,
-        cache_key: str,
+        content_hash: str,
         pages: list[int] | None = None,
     ) -> DocumentExtractionResult:
-        """Extract text from document.
-
-        Args:
-            content: Raw bytes of the document
-            content_type: MIME type of the document
-            cache_key: Document content hash, used for image storage paths
-            pages: Specific pages to process (None = all)
-        """
+        """Extract text from document."""
 
     @property
     def supported_mime_types(self) -> set[str]:
@@ -106,12 +108,17 @@ class BaseDocumentProcessor:
 
         return supported
 
+    def _extraction_cache_key(self, content_hash: str, page_idx: int) -> str:
+        """Build extraction cache key for a page."""
+        return f"{content_hash}:{self._extraction_key_prefix}:{page_idx}"
+
     async def process_with_billing(
         self,
         user_id: str,
-        cache_key: str,
+        content_hash: str,
         db: AsyncSession,
-        cache: Cache,
+        file_cache: Cache,
+        extraction_cache: Cache,
         content_type: str,
         content: bytes,
         pages: list[int] | None = None,
@@ -123,10 +130,10 @@ class BaseDocumentProcessor:
                 f"Unsupported content type: {content_type}. Supported types: {self.supported_mime_types}"
             )
 
-        cached_data = await cache.retrieve_data(cache_key)
+        cached_data = await file_cache.retrieve_data(content_hash)
         if not cached_data:
             raise ResourceNotFoundError(
-                CachedDocument.__name__, cache_key, message=f"Document with key {cache_key!r} not found in cache"
+                CachedDocument.__name__, content_hash, message=f"Document with key {content_hash!r} not found in cache"
             )
         cached_doc = CachedDocument.model_validate_json(cached_data)
 
@@ -139,19 +146,27 @@ class BaseDocumentProcessor:
                 f"Document size {cached_doc.metadata.file_size}MB exceeds the maximum allowed size of {self.max_file_size}MB."
             )
 
-        # Initialize extraction if needed
-        if not cached_doc.extraction:
-            cached_doc.extraction = DocumentExtractionResult(pages={}, extraction_method=self._slug)
-
-        # Determine what pages to process
-        uncached_pages = get_uncached_pages(cached_doc, pages)
         requested_pages = set(pages) if pages else set(range(cached_doc.metadata.total_pages))
+        cached_pages: dict[int, ExtractedPage] = {}
+        uncached_pages: set[int] = set()
 
-        # If all pages are cached, return them
+        # Check extraction cache for each requested page
+        if self._extraction_key_prefix:
+            for page_idx in requested_pages:
+                cache_key = self._extraction_cache_key(content_hash, page_idx)
+                data = await extraction_cache.retrieve_data(cache_key)
+                if data:
+                    cached_pages[page_idx] = ExtractedPage.model_validate_json(data)
+                else:
+                    uncached_pages.add(page_idx)
+        else:
+            uncached_pages = requested_pages
+
+        # All pages cached — return immediately
         if not uncached_pages:
-            return self._filter_pages(cached_doc.extraction, requested_pages)
+            return DocumentExtractionResult(pages=cached_pages, extraction_method=self._slug)
 
-        # Check usage limit before processing (only for paid processors like OCR)
+        # Check usage limit before processing (only for paid processors)
         if self.is_paid:
             await check_usage_limit(
                 user_id,
@@ -166,19 +181,15 @@ class BaseDocumentProcessor:
         result = await self._extract(
             content=content,
             content_type=content_type,
-            cache_key=cache_key,
+            content_hash=content_hash,
             pages=list(uncached_pages),
         )
 
-        # Merge results
-        cached_doc.extraction.pages.update(result.pages)
-
-        # Update cache
-        await cache.store(
-            cache_key,
-            cached_doc.model_dump_json().encode(),
-            ttl_seconds=self._settings.document_cache_ttl_document,
-        )
+        # Store new pages in extraction cache
+        if self._extraction_key_prefix:
+            for page_idx, page in result.pages.items():
+                cache_key = self._extraction_cache_key(content_hash, page_idx)
+                await extraction_cache.store(cache_key, page.model_dump_json().encode())
 
         # Record usage for processed pages (only for paid processors)
         if self.is_paid and result.pages:
@@ -187,7 +198,7 @@ class BaseDocumentProcessor:
                 usage_type=UsageType.ocr,
                 amount=len(result.pages),
                 db=db,
-                reference_id=cache_key,
+                reference_id=content_hash,
                 description=f"Document processing: {len(result.pages)} pages with {self._slug}",
                 details={
                     "processor": self._slug,
@@ -196,34 +207,9 @@ class BaseDocumentProcessor:
                 },
             )
 
-        return self._filter_pages(cached_doc.extraction, requested_pages)
-
-    @staticmethod
-    def _filter_pages(extraction: DocumentExtractionResult, requested_pages: set[int]) -> DocumentExtractionResult:
-        """Filter extraction result to only include requested pages."""
-        return DocumentExtractionResult(
-            pages={idx: page for idx, page in extraction.pages.items() if idx in requested_pages},
-            extraction_method=extraction.extraction_method,
-        )
+        all_pages = {**cached_pages, **result.pages}
+        return DocumentExtractionResult(pages=all_pages, extraction_method=self._slug)
 
     def _is_supported(self, mime_type: str) -> bool:
         """Check if this processor supports the given MIME type."""
         return mime_type in self.supported_mime_types
-
-
-def get_uncached_pages(
-    cached_doc: CachedDocument,
-    requested_pages: list[int] | None = None,
-) -> set[int]:
-    """Get pages that need processing.
-
-    Args:
-        cached_doc: The cached document with existing extraction results
-        requested_pages: Specific pages to process (None or empty means all)
-
-    Returns:
-        Set of page numbers that need processing
-    """
-    existing_pages = set(cached_doc.extraction.pages.keys()) if cached_doc.extraction else set()
-    pages_to_process = set(requested_pages) if requested_pages else set(range(cached_doc.metadata.total_pages))
-    return pages_to_process - existing_pages

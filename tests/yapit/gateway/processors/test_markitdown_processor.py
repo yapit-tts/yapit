@@ -12,18 +12,20 @@ class TestMarkitdownProcessor:
     @pytest.fixture
     def processor(self):
         """Create a markitdown processor instance."""
-        # Create a mock settings object with only the attribute we need
         mock_settings = Mock()
-        mock_settings.document_cache_max_file_size = 100 * 1024 * 1024  # 100MB
-
-        return MarkitdownProcessor(slug="markitdown", settings=mock_settings)
+        return MarkitdownProcessor(
+            slug="markitdown",
+            settings=mock_settings,
+            max_pages=1000,
+            max_file_size=100 * 1024 * 1024,  # 100MB
+        )
 
     @pytest.mark.asyncio
     async def test_extract_text_file(self, processor):
         """Test extracting from a text file."""
         test_content = b"This is a test text file.\nWith multiple lines."
 
-        result = await processor._extract(content=test_content, content_type="text/plain")
+        result = await processor._extract(content=test_content, content_type="text/plain", content_hash="test-hash")
 
         assert result.extraction_method == "markitdown"
         assert len(result.pages) == 1
@@ -37,7 +39,7 @@ class TestMarkitdownProcessor:
         with open(fixtures_dir / "test.html", "rb") as f:
             content = f.read()
 
-        result = await processor._extract(content=content, content_type="text/html")
+        result = await processor._extract(content=content, content_type="text/html", content_hash="test-hash")
 
         assert result.extraction_method == "markitdown"
         assert len(result.pages) == 1
@@ -52,16 +54,10 @@ class TestMarkitdownProcessor:
         with open(fixtures_dir / "minimal.pdf", "rb") as f:
             content = f.read()
 
-        result = await processor._extract(content=content, content_type="application/pdf")
+        result = await processor._extract(content=content, content_type="application/pdf", content_hash="test-hash")
 
         assert result.extraction_method == "markitdown"
         assert len(result.pages) == 1
         assert 0 in result.pages
         # Should contain the PDF text
         assert "Test PDF Document" in result.pages[0].markdown
-
-    @pytest.mark.asyncio
-    async def test_extract_no_content(self, processor):
-        """Test that extraction fails without content."""
-        with pytest.raises(ValueError, match="Content must be provided"):
-            await processor._extract(content=None, content_type="text/plain")

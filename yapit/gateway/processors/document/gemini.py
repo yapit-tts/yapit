@@ -52,8 +52,10 @@ class GeminiProcessor(BaseDocumentProcessor):
 
         self._client = genai.Client(api_key=self._settings.google_api_key)
         self._model = model
+        self._resolution_str = resolution
         self._resolution = RESOLUTION_MAP[resolution]
         self._max_concurrent = max_concurrent
+        self._prompt_version = prompt_version
         self._prompt = load_prompt(prompt_version)
         self._max_pages = max_pages
         self._max_file_size = max_file_size
@@ -62,6 +64,10 @@ class GeminiProcessor(BaseDocumentProcessor):
     @property
     def _processor_supported_mime_types(self) -> set[str]:
         return self.SUPPORTED_MIME_TYPES
+
+    @property
+    def _extraction_key_prefix(self) -> str:
+        return f"{self._slug}:{self._resolution_str}:{self._prompt_version}"
 
     @property
     def max_pages(self) -> int:
@@ -79,13 +85,13 @@ class GeminiProcessor(BaseDocumentProcessor):
         self,
         content: bytes,
         content_type: str,
-        cache_key: str,
+        content_hash: str,
         pages: list[int] | None = None,
     ) -> DocumentExtractionResult:
         if content_type.startswith("image/"):
             return await self._extract_image(content, content_type)
 
-        return await self._extract_pdf(content, pages, cache_key)
+        return await self._extract_pdf(content, pages, content_hash)
 
     async def _extract_image(self, content: bytes, content_type: str) -> DocumentExtractionResult:
         """Extract text from a single image."""
@@ -111,7 +117,7 @@ class GeminiProcessor(BaseDocumentProcessor):
         self,
         content: bytes,
         pages: list[int] | None,
-        doc_hash: str,
+        content_hash: str,
     ) -> DocumentExtractionResult:
         """Extract text from PDF with parallel page processing."""
         pdf_reader = PdfReader(io.BytesIO(content))
@@ -128,13 +134,11 @@ class GeminiProcessor(BaseDocumentProcessor):
 
         # Store images and get URLs
         page_image_urls: dict[int, list[str]] = {}
-        img_idx = 0
         for page_idx in sorted(pages_to_process):
             urls = []
-            for img in page_images[page_idx]:
-                url = store_image(img.data, img.format, self._images_dir, doc_hash, img_idx)
+            for img_idx, img in enumerate(page_images[page_idx]):
+                url = store_image(img.data, img.format, self._images_dir, content_hash, page_idx, img_idx)
                 urls.append(url)
-                img_idx += 1
             page_image_urls[page_idx] = urls
 
         # Process pages with concurrency limit

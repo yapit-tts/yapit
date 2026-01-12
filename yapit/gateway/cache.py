@@ -46,6 +46,7 @@ class SqliteCache(Cache):
     def __init__(self, config: CacheConfig):
         super().__init__(config)
         self.db_path = Path(config.path) / "cache.db"
+        self._max_size_bytes = config.max_size_mb * 1024 * 1024 if config.max_size_mb else None
         self._init_db()
 
     def _init_db(self) -> None:
@@ -56,21 +57,28 @@ class SqliteCache(Cache):
                 CREATE TABLE IF NOT EXISTS cache (
                     key TEXT PRIMARY KEY,
                     data BLOB NOT NULL,
+                    size INTEGER NOT NULL,
                     created_at REAL NOT NULL,
+                    last_accessed REAL NOT NULL,
                     expires_at REAL  -- NULL means no expiration
                 )
                 """
             )
             db.execute("CREATE INDEX IF NOT EXISTS idx_cache_expires ON cache(expires_at)")
-            db.execute("PRAGMA journal_mode=WAL")  # enable Write-Ahead Logging for better concurrency
+            db.execute("CREATE INDEX IF NOT EXISTS idx_cache_last_accessed ON cache(last_accessed)")
+            db.execute("PRAGMA journal_mode=WAL")
 
     async def store(self, key: str, data: bytes, ttl_seconds: int | None = None) -> str | None:
         ts = time.time()
         expires_at = ts + ttl_seconds if ttl_seconds else None
+        size = len(data)
         with sqlite3.connect(self.db_path) as db:
             db.execute(
-                "REPLACE INTO cache(key, data, created_at, expires_at) VALUES(?, ?, ?, ?)", (key, data, ts, expires_at)
+                "REPLACE INTO cache(key, data, size, created_at, last_accessed, expires_at) VALUES(?, ?, ?, ?, ?, ?)",
+                (key, data, size, ts, ts, expires_at),
             )
+        if self._max_size_bytes:
+            await self._enforce_max_size()
         return key
 
     async def exists(self, key: str) -> bool:
@@ -90,12 +98,42 @@ class SqliteCache(Cache):
             row = db.execute(
                 "SELECT data FROM cache WHERE key=? AND (expires_at IS NULL OR expires_at > ?)", (key, current_time)
             ).fetchone()
+            if row:
+                db.execute("UPDATE cache SET last_accessed=? WHERE key=?", (current_time, key))
         return row[0] if row else None
 
     async def delete(self, key: str) -> bool:
         with sqlite3.connect(self.db_path) as db:
             cur = db.execute("DELETE FROM cache WHERE key=?", (key,))
         return cur.rowcount > 0
+
+    async def _enforce_max_size(self) -> int:
+        """Evict oldest entries (by last_accessed) until total size is under max_size_bytes.
+
+        Returns number of entries evicted.
+        """
+        if not self._max_size_bytes:
+            return 0
+
+        with sqlite3.connect(self.db_path) as db:
+            total_size = db.execute("SELECT COALESCE(SUM(size), 0) FROM cache").fetchone()[0]
+
+            if total_size <= self._max_size_bytes:
+                return 0
+
+            # Delete oldest entries until under limit
+            # Fetch all entries ordered by last_accessed, delete until we're under
+            rows = db.execute("SELECT key, size FROM cache ORDER BY last_accessed ASC").fetchall()
+
+            evicted = 0
+            for key, size in rows:
+                if total_size <= self._max_size_bytes:
+                    break
+                db.execute("DELETE FROM cache WHERE key=?", (key,))
+                total_size -= size
+                evicted += 1
+
+            return evicted
 
     # TODO: never called
     async def vacuum(self) -> None:

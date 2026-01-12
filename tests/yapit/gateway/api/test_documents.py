@@ -59,9 +59,8 @@ async def test_prepare_and_create_document_from_url(client, as_test_user, sessio
         )
 
         # Should fail because no processors are loaded in unit test config
-        if create_response.status_code != 404:
-            print(f"Status: {create_response.status_code}, Body: {create_response.json()}")
-        assert create_response.status_code == 404
+        assert create_response.status_code == 503
+        assert "No extraction processor configured" in create_response.json()["detail"]
 
 
 @pytest.mark.asyncio

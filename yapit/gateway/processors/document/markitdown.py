@@ -46,7 +46,7 @@ class MarkitdownProcessor(BaseDocumentProcessor):
         self,
         content: bytes,
         content_type: str,
-        cache_key: str,
+        content_hash: str,
         pages: list[int] | None = None,
     ) -> DocumentExtractionResult:
         md = MarkItDown(enable_plugins=False)

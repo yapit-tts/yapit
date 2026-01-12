@@ -90,6 +90,7 @@ class Document(SQLModel, table=True):
     )
 
     extraction_method: str | None = Field(default=None)  # processor slug used for extraction
+    content_hash: str | None = Field(default=None, index=True)  # SHA256 of source content, for image cleanup
     # Structured content for frontend display (XML with block tags, images, tables, etc.)
     structured_content: str = Field(sa_column=Column(TEXT, nullable=False))
 

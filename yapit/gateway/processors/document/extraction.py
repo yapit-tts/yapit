@@ -11,19 +11,15 @@ PROMPTS_DIR = Path(__file__).parent / "prompts"
 IMAGE_PLACEHOLDER = "![](detected-image)"
 
 
-def store_image(data: bytes, format: str, images_dir: Path, doc_hash: str, idx: int) -> str:
-    """Store image to filesystem and return URL path.
-
-    Storage: {images_dir}/{doc_hash}/{idx}.{format}
-    URL: /images/{doc_hash}/{idx}.{format}
-    """
-    doc_dir = images_dir / doc_hash
+def store_image(data: bytes, format: str, images_dir: Path, content_hash: str, page_idx: int, img_idx: int) -> str:
+    """Store image to filesystem and return URL path."""
+    doc_dir = images_dir / content_hash
     doc_dir.mkdir(parents=True, exist_ok=True)
 
-    filename = f"{idx}.{format}"
+    filename = f"{page_idx}_{img_idx}.{format}"
     (doc_dir / filename).write_bytes(data)
 
-    return f"/images/{doc_hash}/{idx}.{format}"
+    return f"/images/{content_hash}/{filename}"
 
 
 @dataclass

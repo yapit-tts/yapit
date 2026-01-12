@@ -3,8 +3,10 @@ import hashlib
 import io
 import math
 import re
+import shutil
 from datetime import datetime
 from email.message import EmailMessage
+from pathlib import Path
 from typing import Annotated, Literal
 from urllib.parse import urljoin, urlparse
 from uuid import UUID
@@ -18,6 +20,7 @@ from pydantic import BaseModel, Field, HttpUrl, StringConstraints
 from sqlmodel import col, select
 
 from yapit.gateway.auth import authenticate
+from yapit.gateway.cache import Cache
 from yapit.gateway.constants import SUPPORTED_WEB_MIME_TYPES
 from yapit.gateway.deps import (
     AuthenticatedUser,
@@ -25,16 +28,17 @@ from yapit.gateway.deps import (
     DbSession,
     DocumentCache,
     DocumentProcessorManagerDep,
+    ExtractionCache,
     IsAdmin,
     SettingsDep,
 )
 from yapit.gateway.domain_models import Block, Document, DocumentMetadata, UserPreferences
 from yapit.gateway.exceptions import ResourceNotFoundError
 from yapit.gateway.processors.document.base import (
+    BaseDocumentProcessor,
     CachedDocument,
     DocumentExtractionResult,
     ExtractedPage,
-    get_uncached_pages,
 )
 from yapit.gateway.processors.markdown import parse_markdown, transform_to_document
 
@@ -115,20 +119,33 @@ class DocumentCreateResponse(BaseModel):
 @router.post("/prepare", response_model=DocumentPrepareResponse)
 async def prepare_document(
     request: DocumentPrepareRequest,
-    cache: DocumentCache,
+    file_cache: DocumentCache,
+    extraction_cache: ExtractionCache,
     settings: SettingsDep,
+    document_processor_manager: DocumentProcessorManagerDep,
 ) -> DocumentPrepareResponse:
     """Prepare a document from URL for creation."""
-    cache_key = hashlib.sha256(str(request.url).encode()).hexdigest()
-    cached_data = await cache.retrieve_data(cache_key)
+    url_hash = hashlib.sha256(str(request.url).encode()).hexdigest()
+
+    # Check URL cache first (same URL within TTL = no download needed)
+    cached_data = await file_cache.retrieve_data(url_hash)
     if cached_data:
         cached_doc = CachedDocument.model_validate_json(cached_data)
         endpoint = _get_endpoint_type_from_content_type(cached_doc.metadata.content_type)
+        # Compute content_hash for extraction cache lookup
+        content_hash = hashlib.sha256(cached_doc.content).hexdigest() if cached_doc.content else url_hash
         uncached_pages = (
-            get_uncached_pages(cached_doc, None) if _needs_ocr_processing(cached_doc.metadata.content_type) else set()
+            await _get_uncached_pages(
+                content_hash,
+                cached_doc.metadata.total_pages,
+                extraction_cache,
+                document_processor_manager.get_extraction_processor(),
+            )
+            if _needs_ocr_processing(cached_doc.metadata.content_type)
+            else set()
         )
         return DocumentPrepareResponse(
-            hash=cache_key,
+            hash=url_hash,
             metadata=cached_doc.metadata,
             endpoint=endpoint,
             uncached_pages=uncached_pages,
@@ -149,17 +166,29 @@ async def prepare_document(
     endpoint = _get_endpoint_type_from_content_type(content_type)
     cached_doc = CachedDocument(content=content, metadata=metadata)
     ttl = settings.document_cache_ttl_webpage if endpoint == "website" else settings.document_cache_ttl_document
-    await cache.store(cache_key, cached_doc.model_dump_json().encode(), ttl_seconds=ttl)
+    await file_cache.store(url_hash, cached_doc.model_dump_json().encode(), ttl_seconds=ttl)
 
-    uncached_pages = get_uncached_pages(cached_doc, None) if _needs_ocr_processing(content_type) else set()
-    return DocumentPrepareResponse(hash=cache_key, metadata=metadata, endpoint=endpoint, uncached_pages=uncached_pages)
+    content_hash = hashlib.sha256(content).hexdigest()
+    uncached_pages = (
+        await _get_uncached_pages(
+            content_hash,
+            metadata.total_pages,
+            extraction_cache,
+            document_processor_manager.get_extraction_processor(),
+        )
+        if _needs_ocr_processing(content_type)
+        else set()
+    )
+    return DocumentPrepareResponse(hash=url_hash, metadata=metadata, endpoint=endpoint, uncached_pages=uncached_pages)
 
 
 @router.post("/prepare/upload", response_model=DocumentPrepareResponse)
 async def prepare_document_upload(
     file: UploadFile,
-    cache: DocumentCache,
+    file_cache: DocumentCache,
+    extraction_cache: ExtractionCache,
     settings: SettingsDep,
+    document_processor_manager: DocumentProcessorManagerDep,
 ) -> DocumentPrepareResponse:
     """Prepare a document from file upload."""
     content = await file.read()
@@ -167,11 +196,18 @@ async def prepare_document_upload(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Empty file")
 
     cache_key = hashlib.sha256(content).hexdigest()
-    cached_data = await cache.retrieve_data(cache_key)
+    cached_data = await file_cache.retrieve_data(cache_key)
     if cached_data:
         cached_doc = CachedDocument.model_validate_json(cached_data)
         uncached_pages = (
-            get_uncached_pages(cached_doc, None) if _needs_ocr_processing(cached_doc.metadata.content_type) else set()
+            await _get_uncached_pages(
+                cache_key,
+                cached_doc.metadata.total_pages,
+                extraction_cache,
+                document_processor_manager.get_extraction_processor(),
+            )
+            if _needs_ocr_processing(cached_doc.metadata.content_type)
+            else set()
         )
         return DocumentPrepareResponse(
             hash=cache_key,
@@ -193,11 +229,20 @@ async def prepare_document_upload(
     )
 
     cached_doc = CachedDocument(metadata=metadata, content=content)
-    await cache.store(
+    await file_cache.store(
         cache_key, cached_doc.model_dump_json().encode(), ttl_seconds=settings.document_cache_ttl_document
     )
 
-    uncached_pages = get_uncached_pages(cached_doc, None) if _needs_ocr_processing(content_type) else set()
+    uncached_pages = (
+        await _get_uncached_pages(
+            cache_key,
+            metadata.total_pages,
+            extraction_cache,
+            document_processor_manager.get_extraction_processor(),
+        )
+        if _needs_ocr_processing(content_type)
+        else set()
+    )
     return DocumentPrepareResponse(
         hash=cache_key, metadata=metadata, endpoint="document", uncached_pages=uncached_pages
     )
@@ -243,13 +288,13 @@ async def create_text_document(
 async def create_website_document(
     req: WebsiteDocumentCreateRequest,
     db: DbSession,
-    cache: DocumentCache,
+    file_cache: DocumentCache,
     settings: SettingsDep,
     user: AuthenticatedUser,
 ) -> DocumentCreateResponse:
     """Create a document from a live website."""
     prefs = await db.get(UserPreferences, user.id)
-    cached_data = await cache.retrieve_data(req.hash)
+    cached_data = await file_cache.retrieve_data(req.hash)
     if not cached_data:
         raise ResourceNotFoundError(
             CachedDocument.__name__,
@@ -277,13 +322,6 @@ async def create_website_document(
     extraction_result = DocumentExtractionResult(
         pages={0: ExtractedPage(markdown=markdown, images=[])},
         extraction_method="markitdown",
-    )
-
-    cached_doc.extraction = extraction_result
-    await cache.store(
-        req.hash,
-        cached_doc.model_dump_json().encode(),
-        ttl_seconds=settings.document_cache_ttl_webpage,
     )
 
     extracted_text = extraction_result.pages[0].markdown  # website are just a single page
@@ -315,7 +353,8 @@ async def create_website_document(
 async def create_document(
     req: DocumentCreateRequest,
     db: DbSession,
-    cache: DocumentCache,
+    file_cache: DocumentCache,
+    extraction_cache: ExtractionCache,
     settings: SettingsDep,
     user: AuthenticatedUser,
     is_admin: IsAdmin,
@@ -323,7 +362,7 @@ async def create_document(
 ) -> DocumentCreateResponse:
     """Create a document from a file (PDF, image, etc)."""
     prefs = await db.get(UserPreferences, user.id)
-    cached_data = await cache.retrieve_data(req.hash)
+    cached_data = await file_cache.retrieve_data(req.hash)
     if not cached_data:
         raise ResourceNotFoundError(
             CachedDocument.__name__,
@@ -351,11 +390,13 @@ async def create_document(
             detail="Cached document has no content",
         )
 
+    content_hash = hashlib.sha256(cached_doc.content).hexdigest()
     extraction_result = await processor.process_with_billing(
         user_id=user.id,
-        cache_key=req.hash,
+        content_hash=content_hash,
         db=db,
-        cache=cache,
+        file_cache=file_cache,
+        extraction_cache=extraction_cache,
         content=cached_doc.content,
         content_type=cached_doc.metadata.content_type,
         pages=req.pages,
@@ -379,6 +420,7 @@ async def create_document(
         extraction_method=extraction_result.extraction_method,
         text_blocks=text_blocks,
         is_public=prefs.default_documents_public if prefs else False,
+        content_hash=content_hash,
     )
     return DocumentCreateResponse(id=doc.id, title=doc.title)
 
@@ -449,10 +491,21 @@ async def update_document(
 async def delete_document(
     document: CurrentDoc,
     db: DbSession,
+    settings: SettingsDep,
 ) -> None:
-    """Delete a document and all its blocks."""
+    """Delete a document and all its blocks. Cleans up images if last doc with this content."""
+    content_hash = document.content_hash
+
     await db.delete(document)
     await db.commit()
+
+    # Clean up images if no other documents use this content
+    if content_hash:
+        other_docs = await db.exec(select(Document).where(Document.content_hash == content_hash).limit(1))
+        if not other_docs.first():
+            images_dir = Path(settings.images_dir) / content_hash
+            if images_dir.exists():
+                shutil.rmtree(images_dir)
 
 
 @router.get("/{document_id}/blocks")
@@ -710,6 +763,24 @@ def _needs_ocr_processing(content_type: str | None) -> bool:
     return ct == "application/pdf" or ct.startswith("image/")
 
 
+async def _get_uncached_pages(
+    content_hash: str,
+    total_pages: int,
+    extraction_cache: Cache,
+    processor: BaseDocumentProcessor | None,
+) -> set[int]:
+    """Query extraction cache to find which pages need processing."""
+    if not processor or not processor._extraction_key_prefix:
+        return set(range(total_pages))
+
+    uncached = set()
+    for page_idx in range(total_pages):
+        key = f"{content_hash}:{processor._extraction_key_prefix}:{page_idx}"
+        if not await extraction_cache.exists(key):
+            uncached.add(page_idx)
+    return uncached
+
+
 async def _create_document_with_blocks(
     db: DbSession,
     user_id: str,
@@ -720,6 +791,7 @@ async def _create_document_with_blocks(
     extraction_method: str | None,
     text_blocks: list[str],
     is_public: bool,
+    content_hash: str | None = None,
 ) -> Document:
     doc = Document(
         user_id=user_id,
@@ -727,6 +799,7 @@ async def _create_document_with_blocks(
         title=title,
         original_text=original_text,
         extraction_method=extraction_method,
+        content_hash=content_hash,
         structured_content=structured_content,
         metadata_dict=metadata.model_dump(),
     )

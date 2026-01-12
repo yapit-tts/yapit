@@ -13,7 +13,10 @@ async def test_get_preferences_empty(client, as_test_user):
     """Test getting preferences when none exist."""
     response = await client.get("/v1/users/me/preferences")
     assert response.status_code == status.HTTP_200_OK
-    assert response.json() == {"pinned_voices": []}
+    data = response.json()
+    assert data["pinned_voices"] == []
+    assert data["auto_import_shared_documents"] is False
+    assert data["default_documents_public"] is False
 
 
 @pytest.mark.asyncio

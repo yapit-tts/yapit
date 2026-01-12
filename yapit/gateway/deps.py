@@ -42,6 +42,10 @@ def get_document_cache(settings: SettingsDep) -> Cache:
     return _get_cache(settings.document_cache_type, settings.document_cache_config)
 
 
+def get_extraction_cache(settings: SettingsDep) -> Cache:
+    return _get_cache(settings.extraction_cache_type, settings.extraction_cache_config)
+
+
 async def get_db_session(settings: Settings = Depends(get_settings)) -> AsyncIterator[AsyncSession]:
     async for session in create_session(settings):
         yield session
@@ -156,6 +160,7 @@ TTSProcessorManagerDep = Annotated[TTSProcessorManager, Depends(get_tts_processo
 DocumentProcessorManagerDep = Annotated[DocumentProcessorManager, Depends(get_document_processor_manager)]
 AudioCache = Annotated[Cache, Depends(get_audio_cache)]
 DocumentCache = Annotated[Cache, Depends(get_document_cache)]
+ExtractionCache = Annotated[Cache, Depends(get_extraction_cache)]
 CurrentDoc = Annotated[Document, Depends(get_doc)]
 CurrentVoice = Annotated[Voice, Depends(get_voice)]
 CurrentBlock = Annotated[Block, Depends(get_block)]
