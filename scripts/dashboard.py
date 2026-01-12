@@ -3,18 +3,18 @@
 
 import json
 import os
-import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import duckdb
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-# Config - METRICS_DB env var set by make dashboard (runs on prod via SSH tunnel)
-LOCAL_DB = Path(os.environ.get("METRICS_DB", "gateway-data/metrics.db"))
+# Config - synced from prod via make sync-metrics
+LOCAL_DB = Path(os.environ.get("METRICS_DB", "gateway-data/metrics.duckdb"))
 
 # Color palette - warm, readable
 COLORS = {
@@ -53,15 +53,14 @@ def get_model_style(model: str) -> dict:
 @st.cache_data(ttl=60)
 def load_data(db_path: str) -> tuple[pd.DataFrame, str]:
     """Load data and return (dataframe, load_timestamp)."""
-    conn = sqlite3.connect(db_path)
-    df = pd.read_sql_query(
-        "SELECT *, datetime(timestamp, 'localtime') as local_time FROM metrics_event ORDER BY timestamp",
-        conn,
-    )
+    conn = duckdb.connect(db_path, read_only=True)
+    df = conn.execute("SELECT * FROM metrics_event ORDER BY timestamp").fetchdf()
     conn.close()
     if not df.empty:
-        df["timestamp"] = pd.to_datetime(df["timestamp"])
-        df["local_time"] = pd.to_datetime(df["local_time"])
+        df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+        # Convert UTC to local timezone for display
+        local_tz = datetime.now().astimezone().tzinfo
+        df["local_time"] = df["timestamp"].dt.tz_convert(local_tz).dt.tz_localize(None)
         df["data"] = df["data"].apply(lambda x: json.loads(x) if isinstance(x, str) and x else {})
     loaded_at = datetime.now().strftime("%H:%M:%S")
     return df, loaded_at

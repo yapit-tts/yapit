@@ -2,7 +2,9 @@ volumes:
   pgdata:
   audio_cache:
   document_cache:
+  images:
   gateway-data:
+  metricsdata:
 
 networks:
   yapit-network:
@@ -66,6 +68,29 @@ services:
         order: start-first
         failure_action: rollback
 
+  metrics-db:
+    image: timescale/timescaledb:latest-pg16
+    environment:
+      POSTGRES_USER: ${METRICS_DB_USER}
+      POSTGRES_PASSWORD: ${METRICS_DB_PASSWORD}
+      POSTGRES_DB: metrics
+    volumes:
+      - metricsdata:/var/lib/postgresql/data
+      - ./docker/metrics-init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - yapit-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${METRICS_DB_USER:-metrics}"]
+      start_period: 30s
+      start_interval: 1s
+      interval: 30s
+      timeout: 3s
+      retries: 10
+    deploy:
+      replicas: 1
+      update_config:
+        order: stop-first
+
   gateway:
     image: ghcr.io/yapit-tts/gateway:${GIT_COMMIT}
     env_file:
@@ -76,6 +101,7 @@ services:
       - ./document_processors.prod.json:/app/document_processors.prod.json:ro
       - audio_cache:/data/audio_cache
       - document_cache:/data/document_cache
+      - images:/data/images
       - gateway-data:/data/gateway
     networks:
       - yapit-network

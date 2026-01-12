@@ -5,19 +5,16 @@ define create-dev-user
 endef
 
 dev-cpu: down
-	rm -f gateway-data/metrics.db
-	docker compose --env-file .env --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.kokoro-cpu.yml \
+		docker compose --env-file .env --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.kokoro-cpu.yml \
 	--profile stripe up -d --build
 	$(call create-dev-user)
 
 dev-gpu: down
-	rm -f gateway-data/metrics.db
-	docker compose --env-file .env --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.kokoro-gpu.yml \
+		docker compose --env-file .env --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.kokoro-gpu.yml \
 	--profile stripe up -d --build
 
 dev-mac: down
-	rm -f gateway-data/metrics.db
-	docker compose --env-file .env --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.kokoro-cpu.yml -f docker-compose.mac.yml \
+		docker compose --env-file .env --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.kokoro-cpu.yml -f docker-compose.mac.yml \
 	--profile stripe up -d --build
 	$(call create-dev-user)
 
@@ -149,16 +146,47 @@ deploy-higgs-push:
 deploy-higgs-runpod:
 	uv run --env-file=.env python infra/runpod/deploy.py higgs-native --image-tag $(HIGGS_TAG)
 
-# Metrics dashboard (runs on prod via SSH tunnel)
-# One-time setup: ssh $(PROD_HOST) 'mkdir -p /opt/yapit-dashboard && (command -v ~/.local/bin/uv || curl -LsSf https://astral.sh/uv/install.sh | sh)'
+# Metrics
 PROD_HOST := root@46.224.195.97
 
-dashboard:
-	@echo "Syncing dashboard.py to prod..."
-	@scp scripts/dashboard.py $(PROD_HOST):/opt/yapit-dashboard/
-	@echo "Starting dashboard on prod (Ctrl+C to stop)..."
-	@(sleep 3 && xdg-open http://localhost:8502 2>/dev/null || open http://localhost:8502 2>/dev/null || true) &
-	@ssh -t -L 8502:localhost:8502 $(PROD_HOST) '\
-		METRICS_DB=$$(docker inspect $$(docker ps -qf name=gateway) --format '\''{{range .Mounts}}{{if eq .Destination "/data/gateway"}}{{.Source}}{{end}}{{end}}'\'')/metrics.db \
-		~/.local/bin/uv run --with streamlit,pandas,plotly streamlit run /opt/yapit-dashboard/dashboard.py --server.port 8502 --server.headless true'
+# Sync metrics from prod TimescaleDB to local DuckDB
+sync-metrics:
+	@echo "Exporting metrics from prod..."
+	@ssh $(PROD_HOST) 'docker exec $$(docker ps -qf name=metrics-db) \
+		psql -U metrics -d metrics -c "COPY (SELECT * FROM metrics_event ORDER BY timestamp DESC LIMIT 100000) TO STDOUT WITH CSV HEADER"' \
+		> gateway-data/metrics_raw.csv
+	@echo "Exporting hourly aggregates..."
+	@ssh $(PROD_HOST) 'docker exec $$(docker ps -qf name=metrics-db) \
+		psql -U metrics -d metrics -c "COPY (SELECT * FROM metrics_hourly ORDER BY bucket DESC) TO STDOUT WITH CSV HEADER"' \
+		> gateway-data/metrics_hourly.csv
+	@echo "Exporting daily aggregates..."
+	@ssh $(PROD_HOST) 'docker exec $$(docker ps -qf name=metrics-db) \
+		psql -U metrics -d metrics -c "COPY (SELECT * FROM metrics_daily ORDER BY bucket DESC) TO STDOUT WITH CSV HEADER"' \
+		> gateway-data/metrics_daily.csv
+	@echo "Converting to DuckDB..."
+	@uv run --with duckdb python -c "\
+import duckdb; \
+conn = duckdb.connect('gateway-data/metrics.duckdb'); \
+conn.execute('DROP TABLE IF EXISTS metrics_event'); \
+conn.execute('DROP TABLE IF EXISTS metrics_hourly'); \
+conn.execute('DROP TABLE IF EXISTS metrics_daily'); \
+conn.execute(\"CREATE TABLE metrics_event AS SELECT * FROM read_csv('gateway-data/metrics_raw.csv', auto_detect=true)\"); \
+conn.execute(\"CREATE TABLE metrics_hourly AS SELECT * FROM read_csv('gateway-data/metrics_hourly.csv', auto_detect=true)\"); \
+conn.execute(\"CREATE TABLE metrics_daily AS SELECT * FROM read_csv('gateway-data/metrics_daily.csv', auto_detect=true)\"); \
+print(f'Synced: {conn.execute(\"SELECT COUNT(*) FROM metrics_event\").fetchone()[0]} raw events'); \
+conn.close()"
+	@rm -f gateway-data/metrics_raw.csv gateway-data/metrics_hourly.csv gateway-data/metrics_daily.csv
+	@echo "✓ Metrics synced to gateway-data/metrics.duckdb"
+
+# Run local dashboard (syncs first)
+dashboard: sync-metrics
+	@echo "Starting dashboard..."
+	@(sleep 2 && xdg-open http://localhost:8502 2>/dev/null || open http://localhost:8502 2>/dev/null || true) &
+	@uv run --with streamlit,pandas,plotly,duckdb streamlit run scripts/dashboard.py --server.port 8502
+
+# Dashboard without sync (use existing local data)
+dashboard-local:
+	@echo "Starting dashboard with local data..."
+	@(sleep 2 && xdg-open http://localhost:8502 2>/dev/null || open http://localhost:8502 2>/dev/null || true) &
+	@uv run --with streamlit,pandas,plotly,duckdb streamlit run scripts/dashboard.py --server.port 8502
 

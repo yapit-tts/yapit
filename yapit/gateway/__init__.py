@@ -1,5 +1,6 @@
 import sys
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import redis.asyncio as redis
 from fastapi import FastAPI, Request
@@ -16,8 +17,7 @@ from yapit.gateway.metrics import init_metrics_db, start_metrics_writer, stop_me
 from yapit.gateway.processors.document.manager import DocumentProcessorManager
 from yapit.gateway.processors.tts.manager import TTSProcessorManager
 
-# Configure loguru for stdout
-logger.remove()  # Remove default handler
+logger.remove()
 logger.add(
     sys.stdout,
     format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
@@ -26,12 +26,26 @@ logger.add(
 )
 
 
+def _configure_file_logging(log_dir: Path) -> None:
+    """Add persistent JSON log file with rotation (50MB x 20 files = 1GB max)."""
+    log_dir.mkdir(parents=True, exist_ok=True)
+    logger.add(
+        log_dir / "gateway.jsonl",
+        format="{message}",
+        level="INFO",
+        serialize=True,
+        rotation="50 MB",
+        retention=20,
+        compression="gz",
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = app.dependency_overrides[get_settings]()
     assert isinstance(settings, Settings)
 
-    init_metrics_db(settings.metrics_db_path)
+    await init_metrics_db(settings.metrics_database_url)
     await start_metrics_writer()
 
     await prepare_database(settings)
@@ -64,6 +78,8 @@ def create_app(
 ) -> FastAPI:
     if settings is None:
         settings = Settings()  # type: ignore
+
+    _configure_file_logging(Path(settings.log_dir))
 
     app = FastAPI(
         title="Yapit Gateway",

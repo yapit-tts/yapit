@@ -35,7 +35,8 @@ class Settings(BaseSettings):
     document_cache_ttl_document: int  # in seconds
 
     document_processors_file: str
-    mistral_api_key: str | None = None
+    google_api_key: str | None = None
+    images_dir: str
 
     document_max_download_size: int = 100 * 1024 * 1024  # 100MB default
 
@@ -59,7 +60,8 @@ class Settings(BaseSettings):
 
     billing_enabled: bool  # Self-hosting: set False to disable subscription/usage limits
 
-    metrics_db_path: str
+    metrics_database_url: str
+    log_dir: str
 
     model_config = SettingsConfigDict(
         env_prefix="",

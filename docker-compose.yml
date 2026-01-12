@@ -1,5 +1,6 @@
 volumes:
   pgdata:
+  metricsdata:
 
 services:
   # -------- database
@@ -9,6 +10,26 @@ services:
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-yapit}"]
+      start_period: 30s
+      start_interval: 1s
+      interval: 30s
+      timeout: 3s
+      retries: 10
+
+  # -------- metrics (separate from main postgres for isolation)
+  metrics-db:
+    init: true
+    image: timescale/timescaledb:latest-pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: metrics
+      POSTGRES_PASSWORD: metrics
+      POSTGRES_DB: metrics
+    volumes:
+      - metricsdata:/var/lib/postgresql/data
+      - ./docker/metrics-init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U metrics"]
       start_period: 30s
       start_interval: 1s
       interval: 30s
@@ -43,6 +64,8 @@ services:
       redis:
         condition: service_started
       postgres:
+        condition: service_healthy
+      metrics-db:
         condition: service_healthy
       stack-auth:
         condition: service_started
