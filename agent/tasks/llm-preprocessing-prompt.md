@@ -85,7 +85,6 @@ TODO: Calculate actual expected costs before finalizing.
 - Math → LaTeX (katex renders it)
 - Inline spoken math ("x squared") = future toggle, not base prompt
 - Reference-only pages → maybe "References skipped"
-- User presets/templates for document types (arXiv, textbook, etc.)
 
 **Integration thoughts:**
 - Probably replace Mistral entirely (less moving parts)
@@ -94,9 +93,9 @@ TODO: Calculate actual expected costs before finalizing.
 - Page breaks in sentences: handle via prompting or post-processing
 
 **Frontend ideas:**
-- User-editable prompt templates
-- Presets for document types
-- Security if user prompts allowed
+- 1-3 in-house templates (presets for document types)
+- Toggles for specific options (remove references, etc.)
+- NO user-editable prompts (see Non-goals)
 
 ## Original Context
 

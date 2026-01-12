@@ -126,7 +126,7 @@ Then update `.env.prod` with the price IDs from the output (or they're already s
 - [x] **Branding** — Colors (`primary_color`, `secondary_color`) are IaC-able via Account API `settings.branding`. Logo/icon require file upload first (`stripe.File.create()` with purpose), adds complexity. Colors are trivial to add.
 
 **Dashboard only:**
-- [ ] **Email settings** — No API for receipt/email configuration. Dashboard only at https://dashboard.stripe.com/settings/emails. Can only set `receipt_email` per-charge, not account-wide.
+- [x] **Email settings** — No API for receipt/email configuration. Dashboard only at https://dashboard.stripe.com/settings/emails. Can only set `receipt_email` per-charge, not account-wide.
 
 ## Completed Work
 
@@ -194,11 +194,7 @@ Fix: With Issue 1 fixed, script now reaches product updates. Re-run `stripe_setu
 
 ## Open Questions
 
-1. **EU 14-day withdrawal** — Can this be waived via ToS with Managed Payments? What if customer claims refund every billing cycle? Ask Stripe support.
-
-2. **Subscription schedules ETA** — Stripe is working on it. Check changelog periodically.
-
-3. **Interval switching (Monthly ↔ Yearly)** — Portal may not support same-plan interval switch. Lower priority, workaround exists (cancel + resubscribe).
+- **Subscription schedules ETA** — Stripe is working on it. Check changelog periodically. But is it worth switching?
 
 ## Gotchas (High-Level)
 
@@ -213,6 +209,7 @@ Fix: With Issue 1 fixed, script now reaches product updates. Re-run `stripe_setu
 ### Portal Configuration
 - **Portal downgrades with "schedule at period end"** — uses subscription schedules, which don't work with Managed Payments. We set `schedule_at_period_end.conditions` to empty array for immediate downgrades.
 - **Verify portal config via CLI** — Dashboard may cache old values. Use `stripe billing_portal configurations retrieve <id> | jq '.features.subscription_update.schedule_at_period_end'` to confirm.
+- (TODO) **Interval switching (Monthly ↔ Yearly)** — Portal does support inteveral switch, you simply pay yearly from the start of the next period, or from TODAY (at least in the trial that was the behavior). Need to verify behavior outside of trial, but either way prlly fine, since worst case you just cancel or wait until the end of your billing period to switch. But it's not as clean as idk, prorating the difference immediately. Hmm.
 
 ### Testing
 - **Test clock webhooks don't forward** — `stripe listen` doesn't catch them, use manual event resend
@@ -238,3 +235,44 @@ Fix: With Issue 1 fixed, script now reaches product updates. Re-run `stripe_setu
 - [[billing-pricing-strategy]] — Pricing decisions (legacy plan file)
 - [Stripe Python SDK](https://github.com/stripe/stripe-python) — SDK source for debugging
 - [Stripe Python SDK Releases](https://github.com/stripe/stripe-python/releases) — changelog for "emptyable" types
+
+## Stripe Operations
+
+**⚠️ CRITICAL: Before ANY Stripe API operations (CLI, SDK, MCP, scripts):**
+
+1. **Verify test keys in .env:** Run `grep STRIPE_SECRET_KEY .env | cut -d'=' -f2 | cut -c1-8` — must show `sk_test_`
+2. **Verify CLI auth:** Run `stripe config --list` or `stripe whoami` — CLI has its own auth, separate from .env. It may point to a different Stripe account entirely.
+3. **If live keys:** Run `make dev-env` to switch .env to test keys
+4. **Inform user and wait for consent:** Tell the user which Stripe operations you're about to perform and confirm they haven't run `make prod-env` themselves
+
+**The SDK (.env) and CLI can be authenticated to different Stripe accounts!** Always verify both before mixing commands.
+
+This prevents accidentally creating/modifying/deleting resources in production Stripe.
+
+### Stripe MCP
+
+Stripe MCP provides direct API access and documentation search. Uses OAuth.
+
+**Currently authenticated:** Yapit Sandbox. Re-authenticate (`/mcp`) if switching to fresh sandbox or prod account.
+
+**When to use:**
+- Quick lookups: "list subscriptions for customer X", "what products exist"
+- Searching Stripe docs without leaving terminal
+- Ad-hoc operations during debugging
+
+**When NOT to use:**
+- IaC setup — use `scripts/stripe_setup.py` (has idempotent upserts, validation)
+- Anything you'd want reproducible — script it instead
+
+**Available tools:** `list_customers`, `list_subscriptions`, `list_products`, `list_prices`, `list_invoices`, `search_stripe_documentation`, `get_stripe_account_info`, and more. See [[stripe-integration]] for full list.
+
+### Webhook Secret (Dev)
+
+The `stripe-cli` container generates a webhook signing secret on startup. Get it and put it in `.env`:
+
+```bash
+docker logs yapit-stripe-cli-1 2>&1 | grep -o "whsec_[a-f0-9]*"
+```
+
+This changes when the container restarts. Not stored in `.env.sops` — just update `.env` directly.
+

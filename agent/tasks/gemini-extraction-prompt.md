@@ -36,9 +36,10 @@ Future vision (not first iteration):
 - `experiments/gemini-flash-doc-transform/` — working code, current prompt, sample outputs
 
 **Research (prompting best practices):**
-- Anthropic prompt guide: https://docs.anthropic.com/en/docs/build-with-claude/prompt-engineering/overview
-- Google Gemini docs (document processing): https://ai.google.dev/gemini-api/docs/document-processing
-- Google Gemini docs (prompting): https://ai.google.dev/gemini-api/docs/prompting-strategies
+- [Google Gemini Prompting Strategies](https://ai.google.dev/gemini-api/docs/prompting-strategies)
+- [Gemini 3 Prompting Guide (Vertex AI)](https://docs.cloud.google.com/vertex-ai/generative-ai/docs/start/gemini-3-prompting-guide)
+- [Claude 4 Best Practices](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/claude-4-best-practices)
+- [Google Document Processing](https://ai.google.dev/gemini-api/docs/document-processing)
 
 ## Output Format Requirements (from codebase analysis)
 
@@ -160,27 +161,105 @@ Output only the markdown, no commentary or explanations.
 
 **Verdict:** v1 extraction-focused prompt works well. Math properly formatted with dollar signs for katex. Original content preserved accurately.
 
+## Prompt v2 (with image placeholders)
+
+Location: `experiments/gemini-flash-doc-transform/prompts/v2.txt`
+
+Adds image placeholder handling for figure extraction. See [[gemini-integration-exploration]] for the full pipeline with PyMuPDF image extraction.
+
+## Prompting Research Findings
+
+Key insights relevant to document extraction:
+
+**1. Few-shot examples strongly recommended**
+- Google: "Prompts without few-shot examples are likely to be less effective"
+- 2-5 varied examples, show positive patterns (what TO do)
+- **For now:** Wait until we see actual edge cases before adding
+
+**2. Say what TO do, not what NOT to do**
+- Gemini 3: "Providing open-ended system instructions like 'do not infer' may cause the model to over-index"
+- Instead of "do not paraphrase" → "preserve the original text exactly"
+- Our v1/v2 prompts already follow this pattern
+
+**3. Add context explaining WHY**
+- Anthropic: "Providing context or motivation behind your instructions can help"
+- Example: "Your response will be read aloud by a text-to-speech engine, so..."
+- **TODO for v3:** Add TTS context to help model understand the use case
+
+**4. Place critical constraints at END**
+- Gemini 3: Complex requests may cause model to "drop negative constraints appearing too early"
+- Our prompt already puts output instruction last
+
+**5. Grounding instruction**
+- Google: "You are a strictly grounded assistant limited to the information provided"
+- Could add: "Extract only what's present in the document"
+
+**6. Temperature**
+- Gemini 3 recommends default 1.0, warns lowering can cause issues for reasoning tasks
+- For pure extraction: unknown whether lower helps. Start with default, test if needed.
+
+## Known Issues (v2)
+
+**Inconsistent inline math LaTeX:**
+- Example: "length penalty α = 0.6 [38]" — should be `$\alpha = 0.6$`
+- Model sometimes uses unicode symbols instead of LaTeX
+- Also: `d_k` should be `$d_k$`
+
+**Symbols without pronunciation:**
+- Daggers (†, ‡) for author affiliations — could be LaTeX `$\dagger$`, `$\ddagger$`
+- These have no TTS pronunciation, so visual-only rendering makes sense
+
+**Citations [38]:**
+- Currently preserved — could be toggleable (remove references toggle)
+
+## Future Ideas
+
+### Inline math with spoken alternative
+
+**Problem:** Inline math like `$d_k$` renders visually but creates gaps in TTS audio (transformer returns empty string for `math_inline`).
+
+**Idea:** Have Gemini output both render format AND spoken text:
+```
+$d_k${d sub k}
+$\alpha = 0.6${alpha equals 0.6}
+```
+
+**Implementation would require:**
+1. New format in prompt (braces won't conflict with real content)
+2. New `InlineMathContent` model with `latex` and `spoken` fields
+3. Transformer changes to parse format and keep spoken text in `plain_text`
+
+**Decision:** Keep simple for now. Just use consistent LaTeX. Add spoken alternative later if the gaps become annoying. This is a toggleable feature for the future.
+
+### Image storage
+
+**Problem:** Base64 data URLs in markdown are terrible for export (copy/download).
+
+**Solution:** Store extracted images at `yapit.md/images/{doc-id}/{img-index}.png`
+- Real URLs work everywhere (copy, export, share)
+- No frontend filtering needed
+- Images deleted when document is deleted
+- Could be CDN-cached for performance
+
+## v3 Prompt Direction
+
+Focus for next iteration:
+1. **TTS context** — explain the markdown will be rendered and only text content read aloud
+2. **Consistent LaTeX** — emphasize using LaTeX for ALL mathematical notation, symbols without pronunciation
+3. **Specific examples** — only if edge cases emerge from more testing
+
 ## Gotchas
 
 - The key instruction: "Preserve the original text exactly — do not paraphrase, interpret, or rewrite"
 - Model ID is `gemini-3-flash-preview` (may change)
-- Low resolution (~$0.0028/page) is sufficient for text-heavy academic papers
-
-## Next Steps
-
-1. **Test on more document types** — textbooks, web articles, documents with heavy tables
-2. **Test reference pages** — do they get extracted cleanly or need special handling?
-3. **Integration** — create a Gemini document processor similar to `mistral.py`
-4. **Consider prompt variations** for future toggles:
-   - `v2-no-references.txt` — skip references section
-   - `v2-math-spoken.txt` — expand math to spoken form
+- Low resolution (~$0.0028/page) sufficient for text-heavy papers, medium may be better (see [[gemini-integration-exploration]])
 
 ## Handoff
 
-Prompt v1 is ready for integration. Run with:
+Run experiments with:
 ```bash
 cd experiments/gemini-flash-doc-transform
-GOOGLE_API_KEY=... uv run process_pdf.py -v v1 --pages 1-10 --resolution low
+GOOGLE_API_KEY=... uv run process_pdf.py -v v2 --pages 1-10 --resolution medium
 ```
 
-Output: `experiments/gemini-flash-doc-transform/output/v1/{doc}.md`
+Output: `experiments/gemini-flash-doc-transform/output/{version}/{doc}.md`

@@ -3,18 +3,17 @@
     "chrome-devtools": {
       "type": "stdio",
       "command": "npx",
-      "args": [
-        "-y",
-        "chrome-devtools-mcp@latest"
-      ],
+      "args": ["-y", "chrome-devtools-mcp@latest"],
       "env": {}
     },
     "memex": {
       "command": "uvx",
       "args": ["memex-md-mcp@latest"],
       "env": {
-        "MEMEX_VAULTS": "/home/max/repos/github/MaxWolf-01/claude-global-knowledge:/home/max/repos/code/yapit-tts/yapit/agent:/home/max/.claude/plans"
+        "MEMEX_VAULTS": "/home/max/repos/code/yapit-tts/yapit/agent:/home/max/.claude/plans",
+        "MEMEX_DISABLE_SEMANTIC": "1"
       }
     }
   }
 }
+

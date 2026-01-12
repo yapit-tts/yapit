@@ -154,6 +154,10 @@ docker run -d \
 
 ## Gotchas
 
+### Container IP caching after redeploy
+
+Traefik/nginx can cache container IPs. After redeploy, you might get 502 errors even though containers are healthy. Usually resolves after a minute, or restart Traefik.
+
 ### Docker Swarm env_file not re-read on update
 
 `docker stack deploy` and `docker service update --force` do NOT re-read `env_file:` - env vars are baked in at initial deployment.
