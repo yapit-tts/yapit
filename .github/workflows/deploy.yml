@@ -64,6 +64,7 @@ jobs:
           RUNPOD_API_KEY=${{ secrets.RUNPOD_API_KEY }}
           MISTRAL_API_KEY=${{ secrets.MISTRAL_API_KEY }}
           TTS_PROCESSORS_FILE=tts_processors.ci.json
+          DOCUMENT_PROCESSORS_FILE=document_processors.ci.json
           KOKORO_CPU_REPLICAS=1
           EOF
       - run: make dev-ci
