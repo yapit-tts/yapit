@@ -40,10 +40,14 @@ async def get_my_subscription(
 
 class PreferencesResponse(BaseModel):
     pinned_voices: list[str]
+    auto_import_shared_documents: bool
+    default_documents_public: bool
 
 
 class PreferencesUpdate(BaseModel):
     pinned_voices: list[str] | None = None
+    auto_import_shared_documents: bool | None = None
+    default_documents_public: bool | None = None
 
 
 @router.get("/me/preferences", response_model=PreferencesResponse)
@@ -54,8 +58,16 @@ async def get_preferences(
     """Get user preferences for cross-device sync."""
     prefs = await db.get(UserPreferences, auth_user.id)
     if not prefs:
-        return PreferencesResponse(pinned_voices=[])
-    return PreferencesResponse(pinned_voices=prefs.pinned_voices)
+        return PreferencesResponse(
+            pinned_voices=[],
+            auto_import_shared_documents=False,
+            default_documents_public=False,
+        )
+    return PreferencesResponse(
+        pinned_voices=prefs.pinned_voices,
+        auto_import_shared_documents=prefs.auto_import_shared_documents,
+        default_documents_public=prefs.default_documents_public,
+    )
 
 
 @router.patch("/me/preferences", response_model=PreferencesResponse)
@@ -72,11 +84,19 @@ async def update_preferences(
 
     if body.pinned_voices is not None:
         prefs.pinned_voices = body.pinned_voices
+    if body.auto_import_shared_documents is not None:
+        prefs.auto_import_shared_documents = body.auto_import_shared_documents
+    if body.default_documents_public is not None:
+        prefs.default_documents_public = body.default_documents_public
     prefs.updated = datetime.now(tz=dt.UTC)
 
     await db.commit()
     await db.refresh(prefs)
-    return PreferencesResponse(pinned_voices=prefs.pinned_voices)
+    return PreferencesResponse(
+        pinned_voices=prefs.pinned_voices,
+        auto_import_shared_documents=prefs.auto_import_shared_documents,
+        default_documents_public=prefs.default_documents_public,
+    )
 
 
 # User stats

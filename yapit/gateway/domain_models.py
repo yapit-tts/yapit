@@ -76,11 +76,11 @@ class DocumentMetadata(PydanticModel):
 class Document(SQLModel, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     user_id: str = Field()
+    is_public: bool = Field(default=False)
 
     title: str | None = Field(default=None, max_length=500)
 
     original_text: str = Field(sa_column=Column(TEXT))
-    filtered_text: str | None = Field(default=None, sa_column=Column(TEXT, nullable=True))
     last_applied_filter_config: dict | None = Field(
         default=None,
         sa_column=Column(
@@ -329,6 +329,9 @@ class UserPreferences(SQLModel, table=True):
         default_factory=list,
         sa_column=Column(JSON().with_variant(postgresql.JSONB(), "postgresql"), nullable=False),
     )
+
+    auto_import_shared_documents: bool = Field(default=False)  # skip banner, auto-clone on visit
+    default_documents_public: bool = Field(default=False)  # new docs created with is_public=True
 
     created: datetime = Field(
         default_factory=lambda: datetime.now(tz=dt.UTC),

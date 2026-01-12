@@ -5,22 +5,34 @@ import { getPinnedVoices, setPinnedVoices as setLocalPinnedVoices } from "@/lib/
 interface UserPreferences {
   pinnedVoices: string[];
   togglePinnedVoice: (slug: string) => string[];
+  autoImportSharedDocuments: boolean;
+  setAutoImportSharedDocuments: (value: boolean) => void;
+  defaultDocumentsPublic: boolean;
+  setDefaultDocumentsPublic: (value: boolean) => void;
   isLoading: boolean;
 }
 
 const UserPreferencesContext = createContext<UserPreferences>({
   pinnedVoices: [],
   togglePinnedVoice: () => [],
+  autoImportSharedDocuments: false,
+  setAutoImportSharedDocuments: () => {},
+  defaultDocumentsPublic: false,
+  setDefaultDocumentsPublic: () => {},
   isLoading: true,
 });
 
 interface PreferencesResponse {
   pinned_voices: string[];
+  auto_import_shared_documents: boolean;
+  default_documents_public: boolean;
 }
 
 export const UserPreferencesProvider: FC<PropsWithChildren> = ({ children }) => {
   const { api, isAuthReady, isAnonymous } = useApi();
   const [pinnedVoices, setPinnedVoices] = useState<string[]>(() => getPinnedVoices());
+  const [autoImportSharedDocuments, setAutoImportSharedDocumentsState] = useState(false);
+  const [defaultDocumentsPublic, setDefaultDocumentsPublicState] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const hasFetched = useRef(false);
 
@@ -52,6 +64,10 @@ export const UserPreferencesProvider: FC<PropsWithChildren> = ({ children }) => 
         const merged = [...new Set([...serverPinned, ...localPinned])];
         setPinnedVoices(merged);
         setLocalPinnedVoices(merged);
+
+        // Set sharing preferences from server
+        setAutoImportSharedDocumentsState(response.data.auto_import_shared_documents);
+        setDefaultDocumentsPublicState(response.data.default_documents_public);
 
         // Sync merged list back to server if local had additions
         if (localPinned.some(v => !serverPinned.includes(v))) {
@@ -90,8 +106,30 @@ export const UserPreferencesProvider: FC<PropsWithChildren> = ({ children }) => 
     return newPinned;
   }, [pinnedVoices, api]);
 
+  const setAutoImportSharedDocuments = useCallback((value: boolean) => {
+    setAutoImportSharedDocumentsState(value);
+    if (!isAnonymousRef.current) {
+      api.patch("/v1/users/me/preferences", { auto_import_shared_documents: value }).catch(() => {});
+    }
+  }, [api]);
+
+  const setDefaultDocumentsPublic = useCallback((value: boolean) => {
+    setDefaultDocumentsPublicState(value);
+    if (!isAnonymousRef.current) {
+      api.patch("/v1/users/me/preferences", { default_documents_public: value }).catch(() => {});
+    }
+  }, [api]);
+
   return (
-    <UserPreferencesContext.Provider value={{ pinnedVoices, togglePinnedVoice, isLoading }}>
+    <UserPreferencesContext.Provider value={{
+      pinnedVoices,
+      togglePinnedVoice,
+      autoImportSharedDocuments,
+      setAutoImportSharedDocuments,
+      defaultDocumentsPublic,
+      setDefaultDocumentsPublic,
+      isLoading,
+    }}>
       {children}
     </UserPreferencesContext.Provider>
   );

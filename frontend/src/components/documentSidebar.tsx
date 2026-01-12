@@ -32,7 +32,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
-import { ChevronUp, FileText, Plus, Loader2, MoreHorizontal, User2, LogOut, LogIn, Trash2, Pencil, CreditCard, Lightbulb, Settings, Info } from "lucide-react";
+import { ChevronUp, FileText, Plus, Loader2, MoreHorizontal, User2, LogOut, LogIn, Trash2, Pencil, CreditCard, Lightbulb, Settings, Info, Link2, Check } from "lucide-react";
 import { useApi } from "@/api";
 import { useUser } from "@stackframe/react";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -43,6 +43,7 @@ interface DocumentItem {
   id: string;
   title: string | null;
   created: string;
+  is_public: boolean;
 }
 
 interface SubscriptionSummary {
@@ -59,6 +60,7 @@ function DocumentSidebar() {
   const [newTitle, setNewTitle] = useState("");
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [subscription, setSubscription] = useState<SubscriptionSummary | null>(null);
+  const [justSharedId, setJustSharedId] = useState<string | null>(null);
   const { api, isAuthReady, isAnonymous } = useApi();
   const navigate = useNavigate();
   const { documentId } = useParams();
@@ -138,6 +140,25 @@ function DocumentSidebar() {
     }
   };
 
+  const handleShareToggle = async (e: React.MouseEvent, doc: DocumentItem) => {
+    e.stopPropagation();
+    const newIsPublic = !doc.is_public;
+    try {
+      await api.patch(`/v1/documents/${doc.id}`, { is_public: newIsPublic });
+      setDocuments(prev =>
+        prev.map(d => (d.id === doc.id ? { ...d, is_public: newIsPublic } : d))
+      );
+      if (newIsPublic) {
+        const url = `${window.location.origin}/listen/${doc.id}`;
+        await navigator.clipboard.writeText(url);
+        setJustSharedId(doc.id);
+        setTimeout(() => setJustSharedId(null), 2000);
+      }
+    } catch (error) {
+      console.error("Failed to update sharing:", error);
+    }
+  };
+
   const handleAuth = () => {
     if (user) {
       user.signOut();
@@ -213,6 +234,24 @@ function DocumentSidebar() {
                         <DropdownMenuItem onClick={(e) => openRenameDialog(e, doc)}>
                           <Pencil className="mr-2 h-4 w-4" />
                           Rename
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={(e) => handleShareToggle(e, doc)}
+                          onSelect={(e) => e.preventDefault()}
+                        >
+                          {doc.is_public ? (
+                            <>
+                              <Check className="mr-2 h-4 w-4 text-primary" />
+                              <span className="text-primary">
+                                {justSharedId === doc.id ? "Link copied!" : "Shared"}
+                              </span>
+                            </>
+                          ) : (
+                            <>
+                              <Link2 className="mr-2 h-4 w-4" />
+                              Share...
+                            </>
+                          )}
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
                         <DropdownMenuItem

@@ -12,7 +12,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Loader2, ArrowLeft, FileText, Clock, Type, Trash2, AlertTriangle, Mail, Settings } from "lucide-react";
+import { Loader2, ArrowLeft, FileText, Clock, Type, Trash2, AlertTriangle, Mail, Settings, Share2 } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
+import { useUserPreferences } from "@/hooks/useUserPreferences";
 
 // LOTR trilogy stats for comparisons (Rob Inglis unabridged, trilogy only)
 const LOTR_TRILOGY_MS = 194_400_000; // ~54 hours
@@ -28,6 +30,12 @@ const AccountPage = () => {
   const { api, isAuthReady, isAnonymous } = useApi();
   const navigate = useNavigate();
   const user = useUser();
+  const {
+    autoImportSharedDocuments,
+    setAutoImportSharedDocuments,
+    defaultDocumentsPublic,
+    setDefaultDocumentsPublic,
+  } = useUserPreferences();
 
   const [stats, setStats] = useState<UserStats | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -210,6 +218,43 @@ const AccountPage = () => {
               <Settings className="h-4 w-4 mr-2" />
               Manage
             </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Sharing Preferences */}
+      <Card className="mb-8">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Share2 className="h-5 w-5" />
+            Sharing
+          </CardTitle>
+          <CardDescription>Control how documents are shared</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <div className="flex items-center justify-between">
+            <div className="space-y-0.5">
+              <p className="font-medium">Auto-import shared documents</p>
+              <p className="text-sm text-muted-foreground">
+                Automatically add shared documents to your library when you open them
+              </p>
+            </div>
+            <Switch
+              checked={autoImportSharedDocuments}
+              onCheckedChange={setAutoImportSharedDocuments}
+            />
+          </div>
+          <div className="flex items-center justify-between">
+            <div className="space-y-0.5">
+              <p className="font-medium">Make new documents shareable by default</p>
+              <p className="text-sm text-muted-foreground">
+                New documents will be shareable via link when created
+              </p>
+            </div>
+            <Switch
+              checked={defaultDocumentsPublic}
+              onCheckedChange={setDefaultDocumentsPublic}
+            />
           </div>
         </CardContent>
       </Card>

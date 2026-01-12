@@ -28,7 +28,7 @@ from yapit.gateway.deps import (
     IsAdmin,
     SettingsDep,
 )
-from yapit.gateway.domain_models import Block, Document, DocumentMetadata
+from yapit.gateway.domain_models import Block, Document, DocumentMetadata, UserPreferences
 from yapit.gateway.exceptions import ResourceNotFoundError
 from yapit.gateway.processors.document.base import (
     CachedDocument,
@@ -39,6 +39,7 @@ from yapit.gateway.processors.document.base import (
 from yapit.gateway.processors.markdown import parse_markdown, transform_to_document
 
 router = APIRouter(prefix="/v1/documents", tags=["Documents"], dependencies=[Depends(authenticate)])
+public_router = APIRouter(prefix="/v1/documents", tags=["Documents"])
 
 
 class DocumentPrepareRequest(BaseModel):
@@ -210,6 +211,8 @@ async def create_text_document(
     user: AuthenticatedUser,
 ) -> DocumentCreateResponse:
     """Create a document from direct text input."""
+    prefs = await db.get(UserPreferences, user.id)
+
     ast = parse_markdown(req.content)
     structured_doc = transform_to_document(ast, max_block_chars=settings.max_block_chars)
     structured_content = structured_doc.model_dump_json()
@@ -220,7 +223,6 @@ async def create_text_document(
         user_id=user.id,
         title=req.title,
         original_text=req.content,
-        filtered_text=None,  # No filtering for direct text input
         structured_content=structured_content,
         metadata=DocumentMetadata(
             content_type="text/plain",
@@ -232,6 +234,7 @@ async def create_text_document(
         ),
         extraction_method=None,
         text_blocks=text_blocks,
+        is_public=prefs.default_documents_public if prefs else False,
     )
     return DocumentCreateResponse(id=doc.id, title=doc.title)
 
@@ -245,6 +248,7 @@ async def create_website_document(
     user: AuthenticatedUser,
 ) -> DocumentCreateResponse:
     """Create a document from a live website."""
+    prefs = await db.get(UserPreferences, user.id)
     cached_data = await cache.retrieve_data(req.hash)
     if not cached_data:
         raise ResourceNotFoundError(
@@ -294,11 +298,11 @@ async def create_website_document(
         user_id=user.id,
         title=cached_doc.metadata.title or req.title,
         original_text=extracted_text,
-        filtered_text=None,  # TODO: Implement filtering
         structured_content=structured_content,
         metadata=cached_doc.metadata,
         extraction_method=extraction_result.extraction_method,
         text_blocks=text_blocks,
+        is_public=prefs.default_documents_public if prefs else False,
     )
     return DocumentCreateResponse(id=doc.id, title=doc.title)
 
@@ -318,6 +322,7 @@ async def create_document(
     document_processor_manager: DocumentProcessorManagerDep,
 ) -> DocumentCreateResponse:
     """Create a document from a file (PDF, image, etc)."""
+    prefs = await db.get(UserPreferences, user.id)
     cached_data = await cache.retrieve_data(req.hash)
     if not cached_data:
         raise ResourceNotFoundError(
@@ -369,11 +374,11 @@ async def create_document(
         user_id=user.id,
         title=cached_doc.metadata.title or req.title,
         original_text=extracted_text,
-        filtered_text=None,  # TODO: Implement filtering
         structured_content=structured_content,
         metadata=cached_doc.metadata,
         extraction_method=extraction_result.extraction_method,
         text_blocks=text_blocks,
+        is_public=prefs.default_documents_public if prefs else False,
     )
     return DocumentCreateResponse(id=doc.id, title=doc.title)
 
@@ -384,6 +389,7 @@ class DocumentListItem(BaseModel):
     id: UUID
     title: str | None
     created: str  # ISO format
+    is_public: bool
 
 
 @router.get("")
@@ -401,7 +407,10 @@ async def list_documents(
         .offset(offset)
         .limit(limit)
     )
-    return [DocumentListItem(id=doc.id, title=doc.title, created=doc.created.isoformat()) for doc in result.all()]
+    return [
+        DocumentListItem(id=doc.id, title=doc.title, created=doc.created.isoformat(), is_public=doc.is_public)
+        for doc in result.all()
+    ]
 
 
 @router.get("/{document_id}")
@@ -411,20 +420,29 @@ async def get_document(document: CurrentDoc) -> Document:
 
 class DocumentUpdateRequest(BaseModel):
     title: str | None = Field(default=None, max_length=500)
+    is_public: bool | None = Field(default=None)
 
 
-@router.patch("/{document_id}", response_model=DocumentCreateResponse)
+class DocumentUpdateResponse(BaseModel):
+    id: UUID
+    title: str | None
+    is_public: bool
+
+
+@router.patch("/{document_id}", response_model=DocumentUpdateResponse)
 async def update_document(
     document: CurrentDoc,
     request: DocumentUpdateRequest,
     db: DbSession,
-) -> DocumentCreateResponse:
-    """Update document properties (currently just title)."""
+) -> DocumentUpdateResponse:
+    """Update document properties."""
     if request.title is not None:
         document.title = request.title
+    if request.is_public is not None:
+        document.is_public = request.is_public
     await db.commit()
     await db.refresh(document)
-    return DocumentCreateResponse(id=document.id, title=document.title)
+    return DocumentUpdateResponse(id=document.id, title=document.title, is_public=document.is_public)
 
 
 @router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -466,6 +484,109 @@ async def update_position(
     document.last_played_at = datetime.now(tz=dt.UTC)
     await db.commit()
     return {"ok": True}
+
+
+# Public document access (no auth required)
+
+
+class PublicDocumentResponse(BaseModel):
+    """Public document data for viewing shared documents."""
+
+    id: UUID
+    title: str | None
+    structured_content: str
+    original_text: str
+    metadata_dict: dict | None
+    block_count: int
+
+
+@public_router.get("/{document_id}/public", response_model=PublicDocumentResponse)
+async def get_public_document(
+    document_id: UUID,
+    db: DbSession,
+) -> PublicDocumentResponse:
+    """Get a public document without authentication.
+
+    Returns document data if is_public=True, otherwise 404.
+    """
+    result = await db.exec(select(Document).where(Document.id == document_id, Document.is_public.is_(True)))
+    document = result.first()
+    if not document:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    block_count = (await db.exec(select(Block).where(Block.document_id == document_id))).all()
+    return PublicDocumentResponse(
+        id=document.id,
+        title=document.title,
+        structured_content=document.structured_content,
+        original_text=document.original_text,
+        metadata_dict=document.metadata_dict,
+        block_count=len(block_count),
+    )
+
+
+@public_router.get("/{document_id}/public/blocks")
+async def get_public_document_blocks(
+    document_id: UUID,
+    db: DbSession,
+) -> list[Block]:
+    """Get blocks for a public document without authentication."""
+    result = await db.exec(select(Document).where(Document.id == document_id, Document.is_public.is_(True)))
+    document = result.first()
+    if not document:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    result = await db.exec(select(Block).where(Block.document_id == document_id).order_by(Block.idx))
+    return result.all()
+
+
+class DocumentImportResponse(BaseModel):
+    """Response after importing a public document."""
+
+    id: UUID
+    title: str | None
+
+
+@router.post("/{document_id}/import", response_model=DocumentImportResponse, status_code=status.HTTP_201_CREATED)
+async def import_document(
+    document_id: UUID,
+    db: DbSession,
+    user: AuthenticatedUser,
+) -> DocumentImportResponse:
+    """Import (clone) a public document to the authenticated user's library."""
+    result = await db.exec(select(Document).where(Document.id == document_id, Document.is_public.is_(True)))
+    source_doc = result.first()
+    if not source_doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    # Clone the document
+    new_doc = Document(
+        user_id=user.id,
+        is_public=False,
+        title=source_doc.title,
+        original_text=source_doc.original_text,
+        extraction_method=source_doc.extraction_method,
+        structured_content=source_doc.structured_content,
+        metadata_dict=source_doc.metadata_dict,
+    )
+    db.add(new_doc)
+
+    # Clone the blocks
+    source_blocks = await db.exec(select(Block).where(Block.document_id == document_id).order_by(Block.idx))
+    db.add_all(
+        [
+            Block(
+                document=new_doc,
+                idx=block.idx,
+                text=block.text,
+                est_duration_ms=block.est_duration_ms,
+            )
+            for block in source_blocks.all()
+        ]
+    )
+
+    await db.commit()
+    return DocumentImportResponse(id=new_doc.id, title=new_doc.title)
 
 
 async def _download_document(url: HttpUrl, max_size: int) -> tuple[bytes, str]:
@@ -594,17 +715,17 @@ async def _create_document_with_blocks(
     user_id: str,
     title: str | None,
     original_text: str,
-    filtered_text: str | None,
     structured_content: str,
     metadata: DocumentMetadata,
     extraction_method: str | None,
     text_blocks: list[str],
+    is_public: bool,
 ) -> Document:
     doc = Document(
         user_id=user_id,
+        is_public=is_public,
         title=title,
         original_text=original_text,
-        filtered_text=filtered_text,
         extraction_method=extraction_method,
         structured_content=structured_content,
         metadata_dict=metadata.model_dump(),

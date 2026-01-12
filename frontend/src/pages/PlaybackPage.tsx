@@ -1,14 +1,15 @@
 import { SoundControl } from '@/components/soundControl';
 import { StructuredDocumentView } from '@/components/structuredDocument';
-import { useParams, useLocation, Link } from "react-router";
+import { useParams, useLocation, Link, useNavigate } from "react-router";
 import { useRef, useState, useEffect, useLayoutEffect, useCallback, useMemo } from "react";
 import { useApi } from '@/api';
-import { Loader2, FileQuestion } from "lucide-react";
+import { Loader2, FileQuestion, Download, X } from "lucide-react";
 import { AxiosError } from "axios";
 import { AudioPlayer } from '@/lib/audio';
 import { useBrowserTTS } from '@/lib/browserTTS';
 import { type VoiceSelection, getVoiceSelection, getBackendModelSlug, isServerSideModel } from '@/lib/voiceSelection';
 import { useSettings } from '@/hooks/useSettings';
+import { useUserPreferences } from '@/hooks/useUserPreferences';
 import { useTTSWebSocket } from '@/hooks/useTTSWebSocket';
 
 // Playback position persistence
@@ -58,10 +59,18 @@ interface DocumentResponse {
   id: string;
   title: string | null;
   original_text: string;
-  filtered_text: string | null;
   structured_content: string | null;
   metadata_dict: DocumentMetadata | null;
   last_block_idx: number | null;
+}
+
+interface PublicDocumentResponse {
+  id: string;
+  title: string | null;
+  original_text: string;
+  structured_content: string;
+  metadata_dict: DocumentMetadata | null;
+  block_count: number;
 }
 
 interface AudioBufferData {
@@ -73,11 +82,13 @@ interface AudioBufferData {
 const PlaybackPage = () => {
   const { documentId } = useParams<{ documentId: string }>();
   const { state } = useLocation();
+  const navigate = useNavigate();
   const initialTitle: string | undefined = state?.documentTitle;
 
   const { api, isAuthReady, isAnonymous } = useApi();
   const browserTTS = useBrowserTTS();
   const { settings } = useSettings();
+  const { autoImportSharedDocuments } = useUserPreferences();
   const ttsWS = useTTSWebSocket();
 
   // Document data fetched from API
@@ -86,12 +97,17 @@ const PlaybackPage = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Public document viewing (ephemeral access before import)
+  const [isPublicView, setIsPublicView] = useState(false);
+  const [showImportBanner, setShowImportBanner] = useState(true);
+  const [isImporting, setIsImporting] = useState(false);
+
   // Derived state
   const documentTitle = document?.title ?? initialTitle;
   const structuredContent = document?.structured_content ?? null;
-  const fallbackContent = document?.filtered_text ?? document?.original_text ?? "";
+  const fallbackContent = document?.original_text ?? "";
   const sourceUrl = document?.metadata_dict?.url ?? null;
-  const markdownContent = document?.filtered_text ?? document?.original_text ?? null;
+  const markdownContent = document?.original_text ?? null;
   const numberOfBlocks = documentBlocks.length;
   const estimated_ms = documentBlocks.reduce((sum, b) => sum + (b.est_duration_ms || 0), 0);
 
@@ -245,8 +261,32 @@ const PlaybackPage = () => {
         ]);
         setDocument(docResponse.data);
         setDocumentBlocks(blocksResponse.data);
+        setIsPublicView(false);
       } catch (err) {
-        if (err instanceof AxiosError && (err.response?.status === 404 || err.response?.status === 422)) {
+        if (err instanceof AxiosError && err.response?.status === 403) {
+          // 403 = not owner, try public endpoint
+          try {
+            const [publicDocResponse, publicBlocksResponse] = await Promise.all([
+              api.get<PublicDocumentResponse>(`/v1/documents/${documentId}/public`),
+              api.get<Block[]>(`/v1/documents/${documentId}/public/blocks`),
+            ]);
+            // Convert public response to document response format
+            setDocument({
+              id: publicDocResponse.data.id,
+              title: publicDocResponse.data.title,
+              original_text: publicDocResponse.data.original_text,
+              structured_content: publicDocResponse.data.structured_content,
+              metadata_dict: publicDocResponse.data.metadata_dict,
+              last_block_idx: null, // No saved position for public docs
+            });
+            setDocumentBlocks(publicBlocksResponse.data);
+            setIsPublicView(true);
+            setShowImportBanner(true);
+          } catch {
+            // Public endpoint also failed - doc is private or doesn't exist
+            setError("not_found");
+          }
+        } else if (err instanceof AxiosError && (err.response?.status === 404 || err.response?.status === 422)) {
           // 404 = doc doesn't exist, 422 = invalid UUID format (same user experience)
           setError("not_found");
         } else {
@@ -1287,6 +1327,28 @@ const PlaybackPage = () => {
     }
   }, [api, documentId]);
 
+  // Import public document to user's library
+  const handleImportDocument = useCallback(async () => {
+    if (!documentId || isImporting) return;
+    setIsImporting(true);
+    try {
+      const response = await api.post<{ id: string; title: string | null }>(`/v1/documents/${documentId}/import`);
+      // Navigate to the new document (user's copy)
+      navigate(`/listen/${response.data.id}`, { replace: true });
+    } catch (err) {
+      console.error("Failed to import document:", err);
+      alert("Failed to add document to library");
+      setIsImporting(false);
+    }
+  }, [api, documentId, isImporting, navigate]);
+
+  // Auto-import if preference is enabled
+  useEffect(() => {
+    if (isPublicView && autoImportSharedDocuments && !isImporting) {
+      handleImportDocument();
+    }
+  }, [isPublicView, autoImportSharedDocuments, isImporting, handleImportDocument]);
+
   // Memoize progressBarValues to prevent SoundControl re-renders when unrelated state changes
   const progressBarValues = useMemo(() => ({
     estimated_ms: actualTotalDuration > 0 ? actualTotalDuration : estimated_ms,
@@ -1327,35 +1389,70 @@ const PlaybackPage = () => {
   }
 
   return (
-    <div className="flex grow">
-      <StructuredDocumentView
-        structuredContent={structuredContent}
-        title={documentTitle}
-        sourceUrl={sourceUrl}
-        markdownContent={markdownContent}
-        onBlockClick={handleDocumentBlockClick}
-        fallbackContent={fallbackContent}
-        onTitleChange={handleTitleChange}
-      />
-      <SoundControl
-        isPlaying={isPlaying}
-        isBuffering={isBuffering}
-        isSynthesizing={isSynthesizing}
-        isReconnecting={ttsWS.isReconnecting}
-        connectionError={ttsWS.connectionError}
-        onPlay={handlePlay}
-        onPause={handlePause}
-        onCancelSynthesis={handleCancelSynthesis}
-        onSkipBack={handleSkipBack}
-        onSkipForward={handleSkipForward}
-        progressBarValues={progressBarValues}
-        volume={volume}
-        onVolumeChange={handleVolumeChange}
-        playbackSpeed={playbackSpeed}
-        onSpeedChange={handleSpeedChange}
-        voiceSelection={voiceSelection}
-        onVoiceChange={setVoiceSelection}
-      />
+    <div className="flex grow flex-col">
+      {/* Public document import banner */}
+      {isPublicView && showImportBanner && (
+        <div className="flex items-center justify-between gap-4 bg-muted px-4 py-2 border-b border-border">
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Download className="h-4 w-4" />
+            <span>Shared document</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleImportDocument}
+              disabled={isImporting}
+              className="flex items-center gap-1.5 rounded bg-primary px-3 py-1 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+            >
+              {isImporting ? (
+                <>
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Adding...
+                </>
+              ) : (
+                "Add to Library"
+              )}
+            </button>
+            <button
+              onClick={() => setShowImportBanner(false)}
+              className="p-1 text-muted-foreground hover:text-foreground"
+              title="Dismiss"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="flex grow">
+        <StructuredDocumentView
+          structuredContent={structuredContent}
+          title={documentTitle}
+          sourceUrl={sourceUrl}
+          markdownContent={markdownContent}
+          onBlockClick={handleDocumentBlockClick}
+          fallbackContent={fallbackContent}
+          onTitleChange={isPublicView ? undefined : handleTitleChange}
+        />
+        <SoundControl
+          isPlaying={isPlaying}
+          isBuffering={isBuffering}
+          isSynthesizing={isSynthesizing}
+          isReconnecting={ttsWS.isReconnecting}
+          connectionError={ttsWS.connectionError}
+          onPlay={handlePlay}
+          onPause={handlePause}
+          onCancelSynthesis={handleCancelSynthesis}
+          onSkipBack={handleSkipBack}
+          onSkipForward={handleSkipForward}
+          progressBarValues={progressBarValues}
+          volume={volume}
+          onVolumeChange={handleVolumeChange}
+          playbackSpeed={playbackSpeed}
+          onSpeedChange={handleSpeedChange}
+          voiceSelection={voiceSelection}
+          onVoiceChange={setVoiceSelection}
+        />
+      </div>
     </div>
   );
 };

@@ -11,6 +11,8 @@ import { Slider } from "@/components/ui/slider";
 import { Button } from "@/components/ui/button";
 import { Settings } from "lucide-react";
 import { useSettings } from "@/hooks/useSettings";
+import { useUserPreferences } from "@/hooks/useUserPreferences";
+import { useApi } from "@/api";
 
 function SettingRow({
   label,
@@ -40,6 +42,13 @@ interface SettingsDialogProps {
 
 export function SettingsDialog({ size = "default" }: SettingsDialogProps) {
   const { settings, setSettings } = useSettings();
+  const { isAnonymous } = useApi();
+  const {
+    autoImportSharedDocuments,
+    setAutoImportSharedDocuments,
+    defaultDocumentsPublic,
+    setDefaultDocumentsPublic,
+  } = useUserPreferences();
 
   const buttonClass = size === "lg" ? "h-10 w-10" : "";
   const iconClass = size === "lg" ? "h-5 w-5" : "h-4 w-4";
@@ -94,6 +103,35 @@ export function SettingsDialog({ size = "default" }: SettingsDialogProps) {
               step={0.1}
             />
           </SettingRow>
+
+          {/* Sharing settings - only for signed-in users */}
+          {!isAnonymous && (
+            <>
+              <div className="mt-4 mb-2 text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                Sharing
+              </div>
+
+              <SettingRow
+                label="Auto-import shared documents"
+                description="Add to library automatically when opening"
+              >
+                <Switch
+                  checked={autoImportSharedDocuments}
+                  onCheckedChange={setAutoImportSharedDocuments}
+                />
+              </SettingRow>
+
+              <SettingRow
+                label="New documents shareable"
+                description="Make new documents shareable by default"
+              >
+                <Switch
+                  checked={defaultDocumentsPublic}
+                  onCheckedChange={setDefaultDocumentsPublic}
+                />
+              </SettingRow>
+            </>
+          )}
         </div>
       </DialogContent>
     </Dialog>
