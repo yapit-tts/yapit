@@ -12,6 +12,7 @@ services:
       - "./tts_processors.dev.json:/app/tts_processors.dev.json"
       - "./tts_processors.ci.json:/app/tts_processors.ci.json"
       - "./document_processors.dev.json:/app/document_processors.dev.json"
+      - "./document_processors.ci.json:/app/document_processors.ci.json"
       - "./gateway-data:/app/gateway"
       - "./images:/data/images"
 
