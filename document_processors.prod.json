@@ -1,11 +1,18 @@
-[
-  {
-    "slug": "mistral-ocr",
-    "processor": "yapit.gateway.processors.document.mistral.MistralOCRProcessor",
-    "model": "mistral-ocr-latest"
-  },
-  {
+{
+  "text": {
     "slug": "markitdown",
-    "processor": "yapit.gateway.processors.document.markitdown.MarkitdownProcessor"
+    "processor": "yapit.gateway.processors.document.markitdown.MarkitdownProcessor",
+    "max_pages": 10000,
+    "max_file_size": 104857600
+  },
+  "extraction": {
+    "slug": "gemini",
+    "processor": "yapit.gateway.processors.document.gemini.GeminiProcessor",
+    "model": "gemini-3-flash-preview",
+    "resolution": "high",
+    "max_concurrent": 20,
+    "prompt_version": "v1",
+    "max_pages": 10000,
+    "max_file_size": 104857600
   }
-]
+}

@@ -6,50 +6,52 @@ from yapit.gateway.processors.document.base import BaseDocumentProcessor, Docume
 
 
 class MarkitdownProcessor(BaseDocumentProcessor):
+    SUPPORTED_MIME_TYPES = {
+        "text/html",
+        "text/plain",
+        "text/markdown",
+        "text/x-markdown",
+        "text/csv",
+        "text/xml",
+        "application/xml",
+        "application/json",
+        "application/rss+xml",
+        "application/atom+xml",
+        "application/zip",
+        "application/epub+zip",
+        "application/x-epub+zip",
+        "application/pdf",
+        "application/x-pdf",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    }
+
+    def __init__(self, max_pages: int, max_file_size: int, **kwargs):
+        super().__init__(**kwargs)
+        self._max_pages = max_pages
+        self._max_file_size = max_file_size
+
     @property
     def _processor_supported_mime_types(self) -> set[str]:
-        return {
-            # default text formats
-            "text/html",
-            "text/plain",
-            "text/markdown",
-            "text/x-markdown",
-            "text/csv",
-            "text/xml",
-            "application/xml",
-            "application/json",
-            "application/rss+xml",
-            "application/atom+xml",
-            "application/zip",
-            "application/epub+zip",
-            "application/x-epub+zip",
-            # optional dependency [pdf]
-            "application/pdf",
-            "application/x-pdf",
-            # optional dependency [docx]
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        }
+        return self.SUPPORTED_MIME_TYPES
 
     @property
     def max_pages(self) -> int:
-        return 10_000  # markitdown does not specify a limit
+        return self._max_pages
 
     @property
     def max_file_size(self) -> int:
-        return self._settings.document_max_download_size  # markitdown does not specify a limit
+        return self._max_file_size
 
     async def _extract(
         self,
+        content: bytes,
         content_type: str,
-        url: str | None = None,
-        content: bytes | None = None,
+        cache_key: str,
         pages: list[int] | None = None,
     ) -> DocumentExtractionResult:
-        if not content:
-            raise ValueError("Content must be provided")
         md = MarkItDown(enable_plugins=False)
         result = md.convert_stream(io.BytesIO(content))
         return DocumentExtractionResult(
             extraction_method=self._slug,
-            pages={0: ExtractedPage(markdown=result.markdown, images=[])},  # markitdown doesnt return pages or images
+            pages={0: ExtractedPage(markdown=result.markdown, images=[])},
         )

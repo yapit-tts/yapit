@@ -38,11 +38,12 @@ gateway = [
   "PyMuPDF~=1.26.3",
   "httpx~=0.28.1",  # only needed for LocalProcessor
   "runpod~=1.7.12",  # only needed for RunpodProcessor
-  "mistralai~=1.9.2",  # only needed for MistralOCRProcessor
   "markdown-it-py~=3.0",
   "mdit-py-plugins~=0.4",
   "stripe~=12.0",
   "loguru~=0.7.3",
+  "pypdf~=6.6",
+  "google-genai~=1.57",
 ]
 
 test = [

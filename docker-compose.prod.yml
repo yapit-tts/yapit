@@ -121,10 +121,16 @@ services:
         failure_action: rollback
       labels:
         - "traefik.enable=true"
+        # Main API on api.yapit.md
         - "traefik.http.routers.yapit-gateway.rule=Host(`api.yapit.md`)"
         - "traefik.http.routers.yapit-gateway.entrypoints=websecure"
         - "traefik.http.routers.yapit-gateway.tls=true"
         - "traefik.http.services.yapit-gateway.loadbalancer.server.port=8000"
+        # Images served from main domain (yapit.md/images/*)
+        - "traefik.http.routers.yapit-images.rule=Host(`yapit.md`) && PathPrefix(`/images`)"
+        - "traefik.http.routers.yapit-images.entrypoints=websecure"
+        - "traefik.http.routers.yapit-images.tls=true"
+        - "traefik.http.routers.yapit-images.service=yapit-gateway"
 
   stack-auth:
     image: ghcr.io/yapit-tts/stack-auth:${GIT_COMMIT}

@@ -28,7 +28,7 @@ from yapit.gateway.deps import (
     IsAdmin,
     SettingsDep,
 )
-from yapit.gateway.domain_models import Block, Document, DocumentMetadata, DocumentProcessor
+from yapit.gateway.domain_models import Block, Document, DocumentMetadata
 from yapit.gateway.exceptions import ResourceNotFoundError
 from yapit.gateway.processors.document.base import (
     CachedDocument,
@@ -95,15 +95,9 @@ class BasePreparedDocumentCreateRequest(BaseDocumentCreateRequest):
 
 
 class DocumentCreateRequest(BasePreparedDocumentCreateRequest):
-    """Create a document from a standard document or image file.
+    """Create a document from a standard document or image file."""
 
-    Args:
-        pages (list[int] | None): Specific pages to process (None means all).
-        processor_slug (str | None): Slug of the document processor to use (None means default docling processor, non-ocr).
-    """
-
-    pages: list[int] | None
-    processor_slug: str | None = None
+    pages: list[int] | None = None
 
 
 class WebsiteDocumentCreateRequest(BasePreparedDocumentCreateRequest):
@@ -340,16 +334,23 @@ async def create_document(
         )
     _validate_page_numbers(req.pages, cached_doc.metadata.total_pages)
 
-    processor = document_processor_manager.get_processor(req.processor_slug)
+    processor = document_processor_manager.get_extraction_processor()
     if not processor:
-        raise ResourceNotFoundError(DocumentProcessor.__name__, req.processor_slug)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="No extraction processor configured",
+        )
+    if not cached_doc.content:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Cached document has no content",
+        )
 
     extraction_result = await processor.process_with_billing(
         user_id=user.id,
         cache_key=req.hash,
         db=db,
         cache=cache,
-        url=cached_doc.metadata.url,
         content=cached_doc.content,
         content_type=cached_doc.metadata.content_type,
         pages=req.pages,

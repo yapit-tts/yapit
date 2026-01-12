@@ -12,15 +12,10 @@ from yapit.gateway.usage import check_usage_limit, record_usage
 
 
 class ExtractedPage(BaseModel):
-    """Single page extraction result.
-
-    Args:
-        markdown: Full markdown content of the page, including tables and image placeholders if available: [img-<idx>.jpeg](img-<idx>.jpeg)
-        images: List of base64 encoded images extracted from the page.
-    """
+    """Single page extraction result."""
 
     markdown: str
-    images: list[str]
+    images: list[str]  # URLs to stored images (e.g., /images/{hash}/0.png)
 
 
 class DocumentExtractionResult(BaseModel):
@@ -77,18 +72,18 @@ class BaseDocumentProcessor:
     @abstractmethod
     async def _extract(
         self,
+        content: bytes,
         content_type: str,
-        url: str | None = None,
-        content: bytes | None = None,
+        cache_key: str,
         pages: list[int] | None = None,
     ) -> DocumentExtractionResult:
-        """Extract text from document. Always includes images if available.
+        """Extract text from document.
 
         Args:
+            content: Raw bytes of the document
             content_type: MIME type of the document
-            url: URL of the document to process (optional)
-            content: Raw bytes of the document (optional)
-            pages: Specific pages to process (optional)
+            cache_key: Document content hash, used for image storage paths
+            pages: Specific pages to process (None = all)
         """
 
     @property
@@ -118,14 +113,11 @@ class BaseDocumentProcessor:
         db: AsyncSession,
         cache: Cache,
         content_type: str,
-        url: str | None = None,
-        content: bytes | None = None,
+        content: bytes,
         pages: list[int] | None = None,
         is_admin: bool = False,
     ) -> DocumentExtractionResult:
         """Process document with caching and usage tracking."""
-        if url is None and content is None:
-            raise ValidationError("At least one of 'url' or 'content' must be provided")
         if not self._is_supported(content_type):
             raise ValidationError(
                 f"Unsupported content type: {content_type}. Supported types: {self.supported_mime_types}"
@@ -171,7 +163,12 @@ class BaseDocumentProcessor:
             )
 
         # Process missing pages
-        result = await self._extract(url=url, content=content, content_type=content_type, pages=list(uncached_pages))
+        result = await self._extract(
+            content=content,
+            content_type=content_type,
+            cache_key=cache_key,
+            pages=list(uncached_pages),
+        )
 
         # Merge results
         cached_doc.extraction.pages.update(result.pages)
