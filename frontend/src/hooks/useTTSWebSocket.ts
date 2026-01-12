@@ -6,6 +6,13 @@ const WS_BASE_URL = import.meta.env.VITE_WS_BASE_URL;
 
 export type BlockStatus = "pending" | "queued" | "processing" | "cached" | "skipped" | "error";
 
+export interface BlockStateEntry {
+  status: BlockStatus;
+  model_slug?: string;
+  voice_slug?: string;
+  audio_url?: string;
+}
+
 interface WSBlockStatusMessage {
   type: "status";
   document_id: string;
@@ -13,6 +20,8 @@ interface WSBlockStatusMessage {
   status: "queued" | "processing" | "cached" | "skipped" | "error";
   audio_url?: string;
   error?: string;
+  model_slug?: string;
+  voice_slug?: string;
 }
 
 interface WSEvictedMessage {
@@ -40,7 +49,7 @@ export interface UseTTSWebSocketReturn {
   isConnected: boolean;
   isReconnecting: boolean;
   connectionError: string | null;
-  blockStates: Map<number, BlockStatus>;
+  blockStates: Map<number, BlockStateEntry>;
   audioUrls: Map<number, string>;
   synthesize: (params: SynthesizeParams) => void;
   moveCursor: (documentId: string, cursor: number) => void;
@@ -48,6 +57,7 @@ export interface UseTTSWebSocketReturn {
   checkConnected: () => boolean;
   getAudioUrl: (blockIdx: number) => string | undefined;
   getBlockStatus: (blockIdx: number) => BlockStatus | undefined;
+  getBlockState: (blockIdx: number) => BlockStateEntry | undefined;
 }
 
 export function useTTSWebSocket(): UseTTSWebSocketReturn {
@@ -61,12 +71,12 @@ export function useTTSWebSocket(): UseTTSWebSocketReturn {
   const [isConnected, setIsConnected] = useState(false);
   const [isReconnecting, setIsReconnecting] = useState(false);
   const [connectionError, setConnectionError] = useState<string | null>(null);
-  const [blockStates, setBlockStates] = useState<Map<number, BlockStatus>>(new Map());
+  const [blockStates, setBlockStates] = useState<Map<number, BlockStateEntry>>(new Map());
   const [audioUrls, setAudioUrls] = useState<Map<number, string>>(new Map());
 
   // Refs for accessing current values in async code (avoids stale closure issues)
   const isConnectedRef = useRef(false);
-  const blockStatesRef = useRef<Map<number, BlockStatus>>(new Map());
+  const blockStatesRef = useRef<Map<number, BlockStateEntry>>(new Map());
   const audioUrlsRef = useRef<Map<number, string>>(new Map());
 
   // Build WS URL with auth query params
@@ -96,11 +106,18 @@ export function useTTSWebSocket(): UseTTSWebSocketReturn {
 
       if (data.type === "status") {
         const msg = data as WSBlockStatusMessage;
-        console.log(`[TTS WS] Block ${msg.block_idx} status: ${msg.status}${msg.audio_url ? ` (url: ${msg.audio_url})` : ''}`);
-        blockStatesRef.current.set(msg.block_idx, msg.status);
+        console.log(`[TTS WS] Block ${msg.block_idx} status: ${msg.status}${msg.audio_url ? ` (url: ${msg.audio_url})` : ''}${msg.voice_slug ? ` [${msg.model_slug}/${msg.voice_slug}]` : ''}`);
+
+        const entry: BlockStateEntry = {
+          status: msg.status,
+          model_slug: msg.model_slug,
+          voice_slug: msg.voice_slug,
+          audio_url: msg.audio_url,
+        };
+        blockStatesRef.current.set(msg.block_idx, entry);
         setBlockStates((prev) => {
           const next = new Map(prev);
-          next.set(msg.block_idx, msg.status);
+          next.set(msg.block_idx, entry);
           return next;
         });
 
@@ -166,8 +183,8 @@ export function useTTSWebSocket(): UseTTSWebSocketReturn {
         // Clear stale queued/processing states from before disconnect
         // Keep 'cached' since we already fetched that audio locally
         const staleIndices: number[] = [];
-        blockStatesRef.current.forEach((status, idx) => {
-          if (status === 'queued' || status === 'processing') {
+        blockStatesRef.current.forEach((entry, idx) => {
+          if (entry.status === 'queued' || entry.status === 'processing') {
             staleIndices.push(idx);
           }
         });
@@ -254,8 +271,13 @@ export function useTTSWebSocket(): UseTTSWebSocketReturn {
     }
 
     // Mark blocks as queued immediately (clears any previous error state)
+    // Include model/voice so we know what we requested
     for (const idx of params.blockIndices) {
-      blockStatesRef.current.set(idx, 'queued');
+      blockStatesRef.current.set(idx, {
+        status: 'queued',
+        model_slug: params.model,
+        voice_slug: params.voice,
+      });
     }
 
     const message = {
@@ -305,6 +327,10 @@ export function useTTSWebSocket(): UseTTSWebSocketReturn {
   }, []);
 
   const getBlockStatus = useCallback((blockIdx: number) => {
+    return blockStatesRef.current.get(blockIdx)?.status;
+  }, []);
+
+  const getBlockState = useCallback((blockIdx: number) => {
     return blockStatesRef.current.get(blockIdx);
   }, []);
 
@@ -320,6 +346,7 @@ export function useTTSWebSocket(): UseTTSWebSocketReturn {
     checkConnected,
     getAudioUrl,
     getBlockStatus,
+    getBlockState,
   }), [
     isConnected,
     isReconnecting,
@@ -332,5 +359,6 @@ export function useTTSWebSocket(): UseTTSWebSocketReturn {
     checkConnected,
     getAudioUrl,
     getBlockStatus,
+    getBlockState,
   ]);
 }

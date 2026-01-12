@@ -338,6 +338,8 @@ async def _handle_synthesize(
                         document_id=msg.document_id,
                         block_idx=idx,
                         status="skipped",
+                        model_slug=model.slug,
+                        voice_slug=voice.slug,
                     ).model_dump(mode="json")
                 )
                 continue
@@ -355,6 +357,8 @@ async def _handle_synthesize(
                         block_idx=idx,
                         status=status,
                         audio_url=audio_url,
+                        model_slug=model.slug,
+                        voice_slug=voice.slug,
                     ).model_dump(mode="json")
                 )
             except Exception as e:
@@ -365,6 +369,8 @@ async def _handle_synthesize(
                         block_idx=idx,
                         status="error",
                         error=str(e),
+                        model_slug=model.slug,
+                        voice_slug=voice.slug,
                     ).model_dump(mode="json")
                 )
         break

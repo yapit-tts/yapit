@@ -57,6 +57,8 @@ class BaseTTSProcessor:
         status: BlockStatus,
         audio_url: str | None = None,
         error: str | None = None,
+        model_slug: str | None = None,
+        voice_slug: str | None = None,
     ) -> None:
         """Notify all blocks subscribed to this variant hash."""
         subscriber_key = TTS_SUBSCRIBERS.format(hash=variant_hash)
@@ -86,6 +88,8 @@ class BaseTTSProcessor:
                     status=status,
                     audio_url=audio_url,
                     error=error,
+                    model_slug=model_slug,
+                    voice_slug=voice_slug,
                 ).model_dump_json(),
             )
 
@@ -111,7 +115,12 @@ class BaseTTSProcessor:
 
         if not result.audio:
             logger.info(f"Empty audio for variant {job.variant_hash}, marking all subscribers as skipped")
-            await self._notify_subscribers(job.variant_hash, status="skipped")
+            await self._notify_subscribers(
+                job.variant_hash,
+                status="skipped",
+                model_slug=job.synthesis_parameters.model,
+                voice_slug=job.synthesis_parameters.voice,
+            )
             await self._redis.delete(TTS_INFLIGHT.format(hash=job.variant_hash))
             return
 
@@ -182,6 +191,8 @@ class BaseTTSProcessor:
             job.variant_hash,
             status="cached",
             audio_url=f"/v1/audio/{job.variant_hash}",
+            model_slug=job.synthesis_parameters.model,
+            voice_slug=job.synthesis_parameters.voice,
         )
         await self._redis.delete(TTS_INFLIGHT.format(hash=job.variant_hash))
 
@@ -206,7 +217,12 @@ class BaseTTSProcessor:
                     block_idx=job.block_idx,
                 )
                 # Notify subscribers so they can re-request if still needed (fixes: block A and B share the same variant_hash, A gets evicted, B doesn't complete because it was waiting on A's result)
-                await self._notify_subscribers(job.variant_hash, status="skipped")
+                await self._notify_subscribers(
+                    job.variant_hash,
+                    status="skipped",
+                    model_slug=job.synthesis_parameters.model,
+                    voice_slug=job.synthesis_parameters.voice,
+                )
                 await self._redis.delete(TTS_INFLIGHT.format(hash=job.variant_hash))
                 return
 
@@ -237,7 +253,13 @@ class BaseTTSProcessor:
                 )
                 await self._redis.delete(TTS_INFLIGHT.format(hash=job.variant_hash))
                 # Notify all subscribers of error so they don't hang waiting
-                await self._notify_subscribers(job.variant_hash, status="error", error=str(e))
+                await self._notify_subscribers(
+                    job.variant_hash,
+                    status="error",
+                    error=str(e),
+                    model_slug=job.synthesis_parameters.model,
+                    voice_slug=job.synthesis_parameters.voice,
+                )
 
     async def run(self) -> None:
         """Main processing loop - pull jobs from Redis queue."""

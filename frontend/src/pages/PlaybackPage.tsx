@@ -464,7 +464,8 @@ const PlaybackPage = () => {
     }
 
     const states: BlockState[] = documentBlocks.map((block, idx) => {
-      const wsStatus = isServerMode ? ttsWS.blockStates.get(idx) : undefined;
+      const wsState = isServerMode ? ttsWS.blockStates.get(idx) : undefined;
+      const wsStatus = wsState?.status;
 
       // Use cachedBlocksRef for visual state, but only if we still have access to audio.
       // If backend evicted (wsStatus undefined), we need buffer locally to show as cached.
@@ -769,12 +770,17 @@ const PlaybackPage = () => {
       }
 
       const indicesToRequest: number[] = [];
+      const currentVoice = voiceSelection.voiceSlug;
       for (let idx = fromIdx; idx <= toIdx; idx++) {
         const block = documentBlocks[idx];
         if (!block) continue;
         if (audioBuffersRef.current.has(block.id)) continue;
-        const wsStatus = ttsWS.getBlockStatus(idx);
-        if (wsStatus === 'cached' || wsStatus === 'queued' || wsStatus === 'processing' || wsStatus === 'skipped') continue;
+        const wsState = ttsWS.getBlockState(idx);
+        // Only skip if status is terminal AND voice matches current selection
+        // If voice doesn't match, we need to re-request with new voice
+        if (wsState && wsState.voice_slug === currentVoice) {
+          if (wsState.status === 'cached' || wsState.status === 'queued' || wsState.status === 'processing' || wsState.status === 'skipped') continue;
+        }
         indicesToRequest.push(idx);
       }
 
@@ -960,7 +966,7 @@ const PlaybackPage = () => {
     let cachedAhead = 0;
     for (let idx = startBlock; idx < documentBlocks.length; idx++) {
       const block = documentBlocks[idx];
-      const isSkipped = ttsWS.blockStates.get(idx) === "skipped";
+      const isSkipped = ttsWS.blockStates.get(idx)?.status === "skipped";
       if (audioBuffersRef.current.has(block.id) || isSkipped) {
         cachedAhead++;
       } else {
@@ -1033,7 +1039,7 @@ const PlaybackPage = () => {
       }
 
       // Auto-advance if this block is marked as skipped (empty audio)
-      if (ttsWS.blockStates.get(currentBlock) === "skipped") {
+      if (ttsWS.blockStates.get(currentBlock)?.status === "skipped") {
         console.log(`[Playback] Block ${currentBlock} is skipped, advancing to next`);
         playingBlockRef.current = currentBlock;
         setCurrentBlock(prev => {
@@ -1107,7 +1113,7 @@ const PlaybackPage = () => {
     let count = 0;
     for (let idx = fromIdx; idx < documentBlocks.length; idx++) {
       const block = documentBlocks[idx];
-      const isSkipped = ttsWS.blockStates.get(idx) === "skipped";
+      const isSkipped = ttsWS.blockStates.get(idx)?.status === "skipped";
       if (audioBuffersRef.current.has(block.id) || isSkipped) {
         count++;
       } else {
