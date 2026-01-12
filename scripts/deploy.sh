@@ -49,6 +49,8 @@ scp .env.deploy "$VPS_HOST:$DEPLOY_DIR/.env"
 scp .env.prod "$VPS_HOST:$DEPLOY_DIR/"
 scp tts_processors.prod.json "$VPS_HOST:$DEPLOY_DIR/"
 scp document_processors.prod.json "$VPS_HOST:$DEPLOY_DIR/"
+ssh "$VPS_HOST" "mkdir -p $DEPLOY_DIR/docker"
+scp docker/metrics-init.sql "$VPS_HOST:$DEPLOY_DIR/docker/"
 rm .env.deploy
 
 # --- Deploy stack ---
