@@ -47,43 +47,23 @@ async def app(postgres_container, redis_container) -> FastAPI:
     shutil.rmtree("test_audio_cache", ignore_errors=True)
     shutil.rmtree("test_document_cache", ignore_errors=True)
 
-    # Self-contained test settings - don't rely on env vars loading in CI
+    # Override only test-specific values; everything else comes from .env.dev via uv run --env-file
     settings = Settings(
-        # Test containers
+        # Test containers (must override)
         database_url=postgres_container.get_connection_url(),
         redis_url=f"redis://{redis_container.get_container_host_ip()}:{redis_container.get_exposed_port(6379)}",
-        # Database
-        sqlalchemy_echo=False,
-        db_drop_and_recreate=True,
-        db_seed=False,
-        # API
-        cors_origins=["http://test"],
-        # Auth (mocked)
+        # Test-specific cache paths (avoid conflicts with dev)
+        audio_cache_config=CacheConfig(path="test_audio_cache"),
+        document_cache_config=CacheConfig(path="test_document_cache"),
+        # Auth (mocked in tests)
         stack_auth_api_host="",
         stack_auth_project_id="",
         stack_auth_server_key="",
-        # Caches
-        audio_cache_type="sqlite",
-        audio_cache_config=CacheConfig(path="test_audio_cache"),
-        document_cache_type="sqlite",
-        document_cache_config=CacheConfig(path="test_document_cache"),
-        extraction_cache_type="sqlite",
-        extraction_cache_config=CacheConfig(path="test_extraction_cache"),
-        # TTS
+        # Processor configs
         tts_processors_file="tests/empty_processors.json",
-        tts_overflow_queue_threshold=10,
-        client_request_timeout_seconds=30,
-        synthesis_polling_timeout_seconds=60,
-        tts_buffer_behind=3,
-        tts_buffer_ahead=5,
-        # Documents
-        ai_processor=None,  # Don't use Gemini in tests (needs API key)
-        images_dir="test_images",
-        max_block_chars=150,
-        # Billing/metrics (disabled for tests)
-        billing_enabled=False,
+        ai_processor=None,  # Disable Gemini (needs API key)
+        # Disable metrics (no TimescaleDB in tests)
         metrics_database_url=None,
-        log_dir="test_logs",
     )
 
     app = create_app(settings)
