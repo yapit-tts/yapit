@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { useNavigate } from "react-router";
-import { Paperclip, Loader2, AlertCircle, Play } from "lucide-react";
+import { useNavigate, Link } from "react-router";
+import { Paperclip, Loader2, AlertCircle, Play, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { MetadataBanner } from "@/components/metadataBanner";
@@ -64,6 +64,7 @@ export function UnifiedInput() {
     const stored = localStorage.getItem(AI_TRANSFORM_STORAGE_KEY);
     return stored !== null ? stored === "true" : true;
   });
+  const [usageLimitExceeded, setUsageLimitExceeded] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragCounterRef = useRef(0);
@@ -145,12 +146,13 @@ export function UnifiedInput() {
         ? "/v1/documents/website"
         : "/v1/documents/document";
 
+      const isImage = data.metadata.content_type?.startsWith("image/") ?? false;
       const body = data.endpoint === "website"
         ? { hash: data.hash }
         : {
             hash: data.hash,
             pages: pages,
-            ai_transform: aiTransformEnabled,
+            ai_transform: isImage || aiTransformEnabled,
           };
 
       const response = await api.post<DocumentCreateResponse>(endpoint, body);
@@ -160,7 +162,13 @@ export function UnifiedInput() {
       });
     } catch (err) {
       setIsCreating(false);
-      setError(err instanceof Error ? err.message : "Failed to create document");
+      if (err instanceof AxiosError && err.response?.status === 402) {
+        setAiTransformEnabled(false);
+        setUsageLimitExceeded(true);
+        setError(null);
+      } else {
+        setError(err instanceof Error ? err.message : "Failed to create document");
+      }
     }
   };
 
@@ -287,6 +295,13 @@ export function UnifiedInput() {
     await uploadFile(file);
   }, [uploadFile]);
 
+  const handleAiTransformToggle = useCallback((enabled: boolean) => {
+    setAiTransformEnabled(enabled);
+    if (enabled) {
+      setUsageLimitExceeded(false);
+    }
+  }, []);
+
   const showMetadataBanner = (mode === "url" || mode === "file") && urlState === "ready" && prepareData?.endpoint === "document";
   const showTextMode = mode === "text" || mode === "idle";
   const isLoadingUrl = (mode === "url" || mode === "file") && (urlState === "loading" || urlState === "detecting");
@@ -354,11 +369,23 @@ export function UnifiedInput() {
         </div>
       )}
 
+      {usageLimitExceeded && (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Info className="h-4 w-4 shrink-0" />
+          <span>
+            AI Transform limit reached.{" "}
+            <Link to="/subscription" className="text-primary hover:underline">
+              Upgrade plan
+            </Link>
+          </span>
+        </div>
+      )}
+
       {showMetadataBanner && prepareData && (
         <MetadataBanner
           metadata={prepareData.metadata}
           aiTransformEnabled={aiTransformEnabled}
-          onAiTransformToggle={setAiTransformEnabled}
+          onAiTransformToggle={handleAiTransformToggle}
           onConfirm={(pages) => createDocument(prepareData, pages)}
           isLoading={isCreating}
         />

@@ -206,4 +206,6 @@ class BaseDocumentProcessor:
 
     def _is_supported(self, mime_type: str) -> bool:
         """Check if this processor supports the given MIME type."""
-        return mime_type in self.supported_mime_types
+        # Strip parameters (e.g., "image/jpeg; qs=0.8" -> "image/jpeg")
+        base_type = mime_type.split(";")[0].strip()
+        return base_type in self.supported_mime_types

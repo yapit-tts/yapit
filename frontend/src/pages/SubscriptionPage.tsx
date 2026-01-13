@@ -61,9 +61,9 @@ const TIER_ORDER: PlanTier[] = ["free", "basic", "plus", "max"];
 
 const PLAN_FEATURES: Record<PlanTier, string[]> = {
   free: ["Local TTS (English only)", "Unlimited documents"],
-  basic: ["Everything in Free", "Unlimited Kokoro (all languages)", "500 OCR pages/month", "Cancel anytime during trial"],
-  plus: ["Everything in Basic", "~20 hrs premium voices/month*", "1,500 OCR pages/month", "Cancel anytime during trial"],
-  max: ["Everything in Plus", "~50 hrs premium voices/month*", "3,000 OCR pages/month"],
+  basic: ["Everything in Free", "Unlimited Kokoro (all languages)", "500 AI Transform pages/month", "Cancel anytime during trial"],
+  plus: ["Everything in Basic", "~20 hrs premium voices/month*", "1,500 AI Transform pages/month", "Cancel anytime during trial"],
+  max: ["Everything in Plus", "~50 hrs premium voices/month*", "3,000 AI Transform pages/month"],
 };
 
 const SubscriptionPage = () => {
@@ -189,7 +189,7 @@ const SubscriptionPage = () => {
   );
 
   return (
-    <div className="container max-w-7xl mx-auto py-8 px-6">
+    <div className="max-w-[1400px] mx-auto py-8 px-6">
       <Button variant="ghost" className="mb-8" onClick={() => navigate(-1)}>
         <ArrowLeft className="mr-2 h-5 w-5" />
         Back
@@ -280,7 +280,7 @@ const SubscriptionPage = () => {
               {subscription.limits.ocr_pages !== null && subscription.limits.ocr_pages > 0 && (
                 <div>
                   <div className="flex justify-between text-sm mb-1.5">
-                    <span>OCR Pages</span>
+                    <span>AI Transform</span>
                     <span className="text-muted-foreground">
                       {subscription.usage.ocr_pages.toLocaleString()} /{" "}
                       {subscription.limits.ocr_pages.toLocaleString()}
@@ -316,7 +316,7 @@ const SubscriptionPage = () => {
         </p>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-6">
         {sortedPlans.map((plan) => {
           const isCurrent = plan.tier === currentTier;
           const isUpgrade = TIER_ORDER.indexOf(plan.tier) > TIER_ORDER.indexOf(currentTier);

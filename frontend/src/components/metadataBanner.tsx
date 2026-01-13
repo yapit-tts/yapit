@@ -122,7 +122,10 @@ export function MetadataBanner({
 
   const title = metadata.title || metadata.file_name || "Untitled Document";
   const isPdf = metadata.content_type === "application/pdf";
+  const isImage = metadata.content_type?.startsWith("image/") ?? false;
   const isMultiPage = metadata.total_pages > 1;
+  const requiresAiTransform = isImage;
+  const showAiToggle = isPdf || isImage;
 
   const selectedPages = useMemo(
     () => parsePageRanges(pageRangeInput, metadata.total_pages),
@@ -187,12 +190,13 @@ export function MetadataBanner({
         </a>
 
         <div className="flex items-center gap-4">
-          {isPdf && (
+          {showAiToggle && (
             <div className="flex items-center gap-2">
               <Switch
                 id="ai-transform-toggle"
-                checked={aiTransformEnabled}
+                checked={requiresAiTransform || aiTransformEnabled}
                 onCheckedChange={onAiTransformToggle}
+                disabled={requiresAiTransform}
               />
               <Label htmlFor="ai-transform-toggle" className="text-sm cursor-pointer">
                 AI Transform
