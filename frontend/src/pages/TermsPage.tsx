@@ -13,7 +13,7 @@ const TermsPage = () => {
       </Button>
 
       <h1 className="text-4xl font-bold mb-2">Terms of Service</h1>
-      <p className="text-muted-foreground mb-8">Last updated: January 7, 2026</p>
+      <p className="text-muted-foreground mb-8">Last updated: January 8, 2026</p>
 
       <div className="prose prose-neutral dark:prose-invert max-w-none space-y-8">
         <section>
@@ -117,6 +117,16 @@ const TermsPage = () => {
             <li>Consistent speed or output quality</li>
             <li>That specific voices will always be available</li>
           </ul>
+
+          <h3 className="text-lg font-medium mt-4 mb-2">Document Processing</h3>
+          <p className="mb-3">We use AI models to extract and transform text from uploaded documents (PDFs, images). These models may:</p>
+          <ul className="list-disc pl-6 space-y-1 mb-3">
+            <li>Introduce minor errors or inaccuracies</li>
+            <li>Imperfectly render mathematical notation, tables, or complex layouts</li>
+            <li>Occasionally misinterpret or omit content</li>
+            <li>Adapt visual layouts to improve readability</li>
+          </ul>
+          <p>While we strive for accuracy, the extracted text may not be identical to the original document. For critical content, verify against your source material.</p>
         </section>
 
         <section>

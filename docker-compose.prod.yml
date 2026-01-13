@@ -99,7 +99,6 @@ services:
       - ./.env.prod
     volumes:
       - ./tts_processors.prod.json:/app/tts_processors.prod.json:ro
-      - ./document_processors.prod.json:/app/document_processors.prod.json:ro
       - audio_cache:/data/audio_cache
       - document_cache:/data/document_cache
       - extraction_cache:/data/extraction_cache
