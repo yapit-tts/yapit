@@ -61,8 +61,10 @@ async def app(postgres_container, redis_container) -> FastAPI:
         stack_auth_server_key="",
         # Test-specific processor configs
         tts_processors_file="tests/empty_processors.json",
-        # Disable metrics for unit tests
+        # Disable metrics/billing for unit tests
         metrics_database_url=None,
+        billing_enabled=False,
+        log_dir="test_logs",
     )
 
     app = create_app(settings)
