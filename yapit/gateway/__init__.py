@@ -16,7 +16,8 @@ from yapit.gateway.db import close_db, prepare_database
 from yapit.gateway.deps import create_cache
 from yapit.gateway.exceptions import APIError
 from yapit.gateway.metrics import init_metrics_db, start_metrics_writer, stop_metrics_writer
-from yapit.gateway.processors.document.manager import DocumentProcessorManager
+from yapit.gateway.processors.document.gemini import GeminiProcessor
+from yapit.gateway.processors.document.markitdown import MarkitdownProcessor
 from yapit.gateway.processors.tts.manager import TTSProcessorManager
 
 logger.remove()
@@ -57,9 +58,13 @@ async def lifespan(app: FastAPI):
     app.state.document_cache = create_cache(settings.document_cache_type, settings.document_cache_config)
     app.state.extraction_cache = create_cache(settings.extraction_cache_type, settings.extraction_cache_config)
 
-    document_processor_manager = DocumentProcessorManager(settings)
-    document_processor_manager.load_processors(settings.document_processors_file)
-    app.state.document_processor_manager = document_processor_manager
+    # Document processors
+    app.state.free_processor = MarkitdownProcessor(settings=settings)
+    if settings.ai_processor == "gemini":
+        app.state.ai_processor = GeminiProcessor(settings=settings)
+        logger.info("AI processor: gemini")
+    else:
+        app.state.ai_processor = None
 
     tts_processor_manager = TTSProcessorManager(
         redis=app.state.redis_client,

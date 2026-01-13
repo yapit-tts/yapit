@@ -1,8 +1,0 @@
-{
-  "text": {
-    "slug": "markitdown",
-    "processor": "yapit.gateway.processors.document.markitdown.MarkitdownProcessor",
-    "max_pages": 10000,
-    "max_file_size": 104857600
-  }
-}

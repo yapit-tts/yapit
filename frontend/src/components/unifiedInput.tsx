@@ -11,7 +11,7 @@ import { AxiosError } from "axios";
 
 // Match URLs with at least a domain and TLD (e.g., example.com, not just http://a)
 const URL_REGEX = /^https?:\/\/[^\s.]+\.[^\s]{2,}/i;
-const OCR_STORAGE_KEY = "yapit-ocr-enabled";
+const AI_TRANSFORM_STORAGE_KEY = "yapit-ai-transform-enabled";
 
 interface DocumentMetadata {
   content_type: string;
@@ -60,8 +60,8 @@ export function UnifiedInput() {
   const [error, setError] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
-  const [ocrEnabled, setOcrEnabled] = useState(() => {
-    const stored = localStorage.getItem(OCR_STORAGE_KEY);
+  const [aiTransformEnabled, setAiTransformEnabled] = useState(() => {
+    const stored = localStorage.getItem(AI_TRANSFORM_STORAGE_KEY);
     return stored !== null ? stored === "true" : true;
   });
 
@@ -133,12 +133,12 @@ export function UnifiedInput() {
     fetchMetadata();
   }, [debouncedValue, mode, isUrl, api]);
 
-  // Save OCR preference
+  // Save AI Transform preference
   useEffect(() => {
-    localStorage.setItem(OCR_STORAGE_KEY, String(ocrEnabled));
-  }, [ocrEnabled]);
+    localStorage.setItem(AI_TRANSFORM_STORAGE_KEY, String(aiTransformEnabled));
+  }, [aiTransformEnabled]);
 
-  const createDocument = async (data: PrepareResponse) => {
+  const createDocument = async (data: PrepareResponse, pages: number[] | null = null) => {
     setIsCreating(true);
     try {
       const endpoint = data.endpoint === "website"
@@ -149,8 +149,8 @@ export function UnifiedInput() {
         ? { hash: data.hash }
         : {
             hash: data.hash,
-            pages: null, // all pages
-            processor_slug: ocrEnabled ? "mistral-ocr" : "markitdown",
+            pages: pages,
+            ai_transform: aiTransformEnabled,
           };
 
       const response = await api.post<DocumentCreateResponse>(endpoint, body);
@@ -357,10 +357,9 @@ export function UnifiedInput() {
       {showMetadataBanner && prepareData && (
         <MetadataBanner
           metadata={prepareData.metadata}
-          creditCost={prepareData.credit_cost}
-          ocrEnabled={ocrEnabled}
-          onOcrToggle={setOcrEnabled}
-          onConfirm={() => createDocument(prepareData)}
+          aiTransformEnabled={aiTransformEnabled}
+          onAiTransformToggle={setAiTransformEnabled}
+          onConfirm={(pages) => createDocument(prepareData, pages)}
           isLoading={isCreating}
         />
       )}

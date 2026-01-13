@@ -21,7 +21,7 @@ from yapit.gateway.domain_models import (
     Voice,
 )
 from yapit.gateway.exceptions import ResourceNotFoundError
-from yapit.gateway.processors.document.manager import DocumentProcessorManager
+from yapit.gateway.processors.document.base import BaseDocumentProcessor
 from yapit.gateway.processors.tts.manager import TTSProcessorManager
 from yapit.gateway.stack_auth.users import User
 
@@ -148,8 +148,12 @@ async def get_redis_client(request: Request) -> Redis:
     return request.app.state.redis_client
 
 
-async def get_document_processor_manager(request: Request) -> DocumentProcessorManager:
-    return request.app.state.document_processor_manager
+async def get_free_processor(request: Request) -> BaseDocumentProcessor:
+    return request.app.state.free_processor
+
+
+async def get_ai_processor(request: Request) -> BaseDocumentProcessor | None:
+    return request.app.state.ai_processor
 
 
 async def get_tts_processor_manager(request: Request) -> TTSProcessorManager:
@@ -158,7 +162,8 @@ async def get_tts_processor_manager(request: Request) -> TTSProcessorManager:
 
 RedisClient = Annotated[Redis, Depends(get_redis_client)]
 TTSProcessorManagerDep = Annotated[TTSProcessorManager, Depends(get_tts_processor_manager)]
-DocumentProcessorManagerDep = Annotated[DocumentProcessorManager, Depends(get_document_processor_manager)]
+FreeProcessorDep = Annotated[BaseDocumentProcessor, Depends(get_free_processor)]
+AiProcessorDep = Annotated[BaseDocumentProcessor | None, Depends(get_ai_processor)]
 AudioCache = Annotated[Cache, Depends(get_audio_cache)]
 DocumentCache = Annotated[Cache, Depends(get_document_cache)]
 ExtractionCache = Annotated[Cache, Depends(get_extraction_cache)]

@@ -47,20 +47,19 @@ async def test_prepare_and_create_document_from_url(client, as_test_user, sessio
         assert prepare_data.endpoint == "document"  # Not HTML, so not "website"
         assert prepare_data.uncached_pages == set()
 
-        # Step 2: Try to create document (will fail without processor)
+        # Step 2: Create document with free processor (ai_transform=False)
         create_response = await client.post(
             "/v1/documents/document",
             json={
                 "hash": prepare_data.hash,
                 "title": "Test Document",
-                "processor_slug": "markitdown",
-                "pages": None,  # Process all pages
+                "ai_transform": False,
             },
         )
 
-        # Should fail because no processors are loaded in unit test config
-        assert create_response.status_code == 503
-        assert "No extraction processor configured" in create_response.json()["detail"]
+        assert create_response.status_code == 201
+        doc = DocumentCreateResponse.model_validate(create_response.json())
+        assert doc.title == "Test Document"
 
 
 @pytest.mark.asyncio
@@ -131,7 +130,7 @@ async def test_document_create_invalid_page_numbers(client, as_test_user):
             json={
                 "hash": prepare_data["hash"],
                 "title": "Test Document",
-                "processor_slug": "markitdown",
+                "ai_transform": False,
                 "pages": [1, 5, 10],  # Pages 5 and 10 don't exist (0-indexed, so valid are 0,1,2)
             },
         )

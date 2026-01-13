@@ -23,12 +23,13 @@ from yapit.gateway.auth import authenticate
 from yapit.gateway.cache import Cache
 from yapit.gateway.constants import SUPPORTED_WEB_MIME_TYPES
 from yapit.gateway.deps import (
+    AiProcessorDep,
     AuthenticatedUser,
     CurrentDoc,
     DbSession,
     DocumentCache,
-    DocumentProcessorManagerDep,
     ExtractionCache,
+    FreeProcessorDep,
     IsAdmin,
     SettingsDep,
 )
@@ -100,9 +101,15 @@ class BasePreparedDocumentCreateRequest(BaseDocumentCreateRequest):
 
 
 class DocumentCreateRequest(BasePreparedDocumentCreateRequest):
-    """Create a document from a standard document or image file."""
+    """Create a document from a standard document or image file.
+
+    Args:
+        pages: List of page indices to process (0-indexed). None = all pages.
+        ai_transform: Use AI-powered extraction (requires subscription). False = free markitdown.
+    """
 
     pages: list[int] | None = None
+    ai_transform: bool = False
 
 
 class WebsiteDocumentCreateRequest(BasePreparedDocumentCreateRequest):
@@ -122,7 +129,7 @@ async def prepare_document(
     file_cache: DocumentCache,
     extraction_cache: ExtractionCache,
     settings: SettingsDep,
-    document_processor_manager: DocumentProcessorManagerDep,
+    ai_processor: AiProcessorDep,
 ) -> DocumentPrepareResponse:
     """Prepare a document from URL for creation."""
     url_hash = hashlib.sha256(str(request.url).encode()).hexdigest()
@@ -139,7 +146,7 @@ async def prepare_document(
                 content_hash,
                 cached_doc.metadata.total_pages,
                 extraction_cache,
-                document_processor_manager.get_extraction_processor(),
+                ai_processor,
             )
             if _needs_ocr_processing(cached_doc.metadata.content_type)
             else set()
@@ -173,7 +180,7 @@ async def prepare_document(
             content_hash,
             metadata.total_pages,
             extraction_cache,
-            document_processor_manager.get_extraction_processor(),
+            ai_processor,
         )
         if _needs_ocr_processing(content_type)
         else set()
@@ -186,8 +193,7 @@ async def prepare_document_upload(
     file: UploadFile,
     file_cache: DocumentCache,
     extraction_cache: ExtractionCache,
-    settings: SettingsDep,
-    document_processor_manager: DocumentProcessorManagerDep,
+    ai_processor: AiProcessorDep,
 ) -> DocumentPrepareResponse:
     """Prepare a document from file upload."""
     content = await file.read()
@@ -203,7 +209,7 @@ async def prepare_document_upload(
                 cache_key,
                 cached_doc.metadata.total_pages,
                 extraction_cache,
-                document_processor_manager.get_extraction_processor(),
+                ai_processor,
             )
             if _needs_ocr_processing(cached_doc.metadata.content_type)
             else set()
@@ -235,7 +241,7 @@ async def prepare_document_upload(
             cache_key,
             metadata.total_pages,
             extraction_cache,
-            document_processor_manager.get_extraction_processor(),
+            ai_processor,
         )
         if _needs_ocr_processing(content_type)
         else set()
@@ -355,7 +361,8 @@ async def create_document(
     settings: SettingsDep,
     user: AuthenticatedUser,
     is_admin: IsAdmin,
-    document_processor_manager: DocumentProcessorManagerDep,
+    free_processor: FreeProcessorDep,
+    ai_processor: AiProcessorDep,
 ) -> DocumentCreateResponse:
     """Create a document from a file (PDF, image, etc)."""
     prefs = await db.get(UserPreferences, user.id)
@@ -375,12 +382,15 @@ async def create_document(
         )
     _validate_page_numbers(req.pages, cached_doc.metadata.total_pages)
 
-    processor = document_processor_manager.get_extraction_processor()
-    if not processor:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="No extraction processor configured",
-        )
+    if req.ai_transform:
+        if not ai_processor:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="AI transform not configured on this server",
+            )
+        processor = ai_processor
+    else:
+        processor = free_processor
     if not cached_doc.content:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -392,10 +402,11 @@ async def create_document(
         user_id=user.id,
         content_hash=content_hash,
         db=db,
-        file_cache=file_cache,
         extraction_cache=extraction_cache,
         content=cached_doc.content,
         content_type=cached_doc.metadata.content_type,
+        total_pages=cached_doc.metadata.total_pages,
+        file_size=cached_doc.metadata.file_size,
         pages=req.pages,
         is_admin=is_admin,
     )

@@ -93,8 +93,8 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 markers = [
     "runpod: marks tests that require RunPod integration",
-    "mistral: marks tests that require Mistral API integration",
     "inworld: marks tests that require Inworld API integration",
+    "gemini: marks tests that require Google Gemini API integration",
 ]
 
 [dependency-groups]

@@ -7,7 +7,7 @@ from yapit.gateway.cache import Cache
 from yapit.gateway.config import Settings
 from yapit.gateway.constants import SUPPORTED_DOCUMENT_MIME_TYPES
 from yapit.gateway.domain_models import DocumentMetadata, UsageType
-from yapit.gateway.exceptions import ResourceNotFoundError, ValidationError
+from yapit.gateway.exceptions import ValidationError
 from yapit.gateway.usage import check_usage_limit, record_usage
 
 
@@ -117,10 +117,11 @@ class BaseDocumentProcessor:
         user_id: str,
         content_hash: str,
         db: AsyncSession,
-        file_cache: Cache,
         extraction_cache: Cache,
         content_type: str,
         content: bytes,
+        total_pages: int,
+        file_size: int | None = None,
         pages: list[int] | None = None,
         is_admin: bool = False,
     ) -> DocumentExtractionResult:
@@ -130,23 +131,16 @@ class BaseDocumentProcessor:
                 f"Unsupported content type: {content_type}. Supported types: {self.supported_mime_types}"
             )
 
-        cached_data = await file_cache.retrieve_data(content_hash)
-        if not cached_data:
-            raise ResourceNotFoundError(
-                CachedDocument.__name__, content_hash, message=f"Document with key {content_hash!r} not found in cache"
-            )
-        cached_doc = CachedDocument.model_validate_json(cached_data)
-
-        if cached_doc.metadata.total_pages > self.max_pages:
+        if total_pages > self.max_pages:
             raise ValidationError(
-                f"Document has {cached_doc.metadata.total_pages} pages, but this processor supports a maximum of {self.max_pages} pages."
+                f"Document has {total_pages} pages, but this processor supports a maximum of {self.max_pages} pages."
             )
-        if cached_doc.metadata.file_size and cached_doc.metadata.file_size > self.max_file_size:
+        if file_size and file_size > self.max_file_size:
             raise ValidationError(
-                f"Document size {cached_doc.metadata.file_size}MB exceeds the maximum allowed size of {self.max_file_size}MB."
+                f"Document size {file_size}MB exceeds the maximum allowed size of {self.max_file_size}MB."
             )
 
-        requested_pages = set(pages) if pages else set(range(cached_doc.metadata.total_pages))
+        requested_pages = set(pages) if pages else set(range(total_pages))
         cached_pages: dict[int, ExtractedPage] = {}
         uncached_pages: set[int] = set()
 

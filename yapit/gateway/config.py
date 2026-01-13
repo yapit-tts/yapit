@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     extraction_cache_type: Caches
     extraction_cache_config: CacheConfig
 
-    document_processors_file: str
+    ai_processor: str | None = None
     google_api_key: str | None = None
     images_dir: str
 

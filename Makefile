@@ -41,22 +41,22 @@ test: test-unit test-integration
 test-local: test-unit test-integration-local
 
 test-unit:
-	uv run --env-file=.env.dev pytest tests --ignore=tests/integration -v -m "not mistral and not runpod and not inworld"
+	uv run --env-file=.env.dev pytest tests --ignore=tests/integration -v -m "not runpod and not inworld and not gemini"
 
 test-integration:
 	uv run --env-file=.env.dev --env-file=.env pytest tests/integration -v
 
 test-integration-local:
-	uv run --env-file=.env.dev pytest tests/integration -v -m "not runpod and not mistral and not inworld"
+	uv run --env-file=.env.dev pytest tests/integration -v -m "not runpod and not inworld and not gemini"
 
 test-runpod:
 	uv run --env-file=.env.dev --env-file=.env pytest tests/integration -v -m "runpod"
 
-test-mistral:
-	uv run --env-file=.env.dev --env-file=.env pytest tests -v -m "mistral"
-
 test-inworld:
 	uv run --env-file=.env.dev --env-file=.env pytest tests/integration -v -m "inworld"
+
+test-gemini:
+	uv run --env-file=.env.dev --env-file=.env pytest tests -v -m "gemini"
 
 # Database migrations (for prod schema changes)
 # Resets DB to migration state, generates migration, auto-fixes known issues, and tests it

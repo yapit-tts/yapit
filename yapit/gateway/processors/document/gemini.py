@@ -37,15 +37,15 @@ class GeminiProcessor(BaseDocumentProcessor):
 
     def __init__(
         self,
-        model: str,
-        resolution: str,
-        max_concurrent: int,
-        prompt_version: str,
-        max_pages: int,
-        max_file_size: int,
+        model: str = "gemini-3-flash-preview",
+        resolution: str = "high",
+        max_concurrent: int = 20,
+        prompt_version: str = "v1",
+        max_pages: int = 10000,
+        max_file_size: int = 100 * 1024 * 1024,  # 100MB
         **kwargs,
     ):
-        super().__init__(**kwargs)
+        super().__init__(slug="gemini", **kwargs)
 
         if not self._settings.google_api_key:
             raise ValueError("GOOGLE_API_KEY is required for Gemini processor")

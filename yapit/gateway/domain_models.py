@@ -70,7 +70,7 @@ class DocumentMetadata(PydanticModel):
     title: str | None = Field(default=None, max_length=500)
     url: str | None = Field(default=None, max_length=2000)
     file_name: str | None = Field(default=None, max_length=255)
-    file_size: float | None = None  # Content size in bytes
+    file_size: int | None = None  # Content size in bytes
 
 
 class Document(SQLModel, table=True):

@@ -13,12 +13,7 @@ class TestMarkitdownProcessor:
     def processor(self):
         """Create a markitdown processor instance."""
         mock_settings = Mock()
-        return MarkitdownProcessor(
-            slug="markitdown",
-            settings=mock_settings,
-            max_pages=1000,
-            max_file_size=100 * 1024 * 1024,  # 100MB
-        )
+        return MarkitdownProcessor(settings=mock_settings)
 
     @pytest.mark.asyncio
     async def test_extract_text_file(self, processor):

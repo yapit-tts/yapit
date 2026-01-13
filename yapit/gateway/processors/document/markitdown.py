@@ -25,8 +25,13 @@ class MarkitdownProcessor(BaseDocumentProcessor):
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     }
 
-    def __init__(self, max_pages: int, max_file_size: int, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(
+        self,
+        max_pages: int = 10000,
+        max_file_size: int = 100 * 1024 * 1024,  # 100MB
+        **kwargs,
+    ):
+        super().__init__(slug="markitdown", **kwargs)
         self._max_pages = max_pages
         self._max_file_size = max_file_size
 
