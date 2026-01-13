@@ -36,6 +36,7 @@ make migration-new MSG="description"
 | Data migrations missing | Autogenerate only handles schema | Add manual data migration code |
 | Enum changes broken | Postgres enum handling is tricky | Manual enum ops |
 | Column constraint fails on prod | Existing data may violate new constraint | Check prod data first: `SELECT ... WHERE length(col) > N` |
+| NOT NULL column on existing table | Prod has rows, can't add NOT NULL without default | Use `server_default=sa.false()` then `op.alter_column(..., server_default=None)` |
 
 After generating: `make dev-cpu` to restart and apply.
 

@@ -14,7 +14,7 @@ Yapit is an open-source TTS platform for reading documents and web pages.
 - [[vps-setup]] — Production server
 - [[infrastructure]] — Deployment, monitoring, Docker
 - [[env-config]] — Everything about our env variable management
-- [[dev-setup]] — Running the project locally and other important info for development
+- [[dev-setup]] — Running and testing the project locally and other important info for development
 - [[dependency-updates]] — Check when updating/adding dependencies (version-specific gotchas + license checks)
 - [[metrics]] — TBD
 - [[logging]] — TBD

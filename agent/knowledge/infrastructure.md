@@ -45,6 +45,19 @@ Skip tests: `[skip tests]` in commit message.
 
 See [[migrations]] for Alembic workflow, gotchas, shared-DB (with StackAuth) caveats.
 
+## Adding New Config Files
+
+When adding config files (processor configs, init scripts, etc.), check:
+
+| File needs to be... | Update |
+|---------------------|--------|
+| Mounted in dev containers | `docker-compose.dev.yml` volumes |
+| Mounted in prod containers | `docker-compose.prod.yml` volumes |
+| Copied to VPS on deploy | `scripts/deploy.sh` (scp commands) |
+| Available in CI | Create `.ci.json` variant or add to workflow env |
+
+Example: `document_processors.prod.json` needs entries in all four places.
+
 ## Key Files
 
 | Path | Purpose |

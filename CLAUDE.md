@@ -38,7 +38,8 @@ This project uses a multi-session workflow with task files, handoffs, and a pers
 
 **This is non-negotiable.** Before doing any significant work:
 
-1. Start from `agent/knowledge/overview` and branch out to relevant topics
+0. YOU READ `agent/knowledge/overview` ALWAYS. REGARDLESS OF WHETHER YOU ARE CREATING A TASK, OR PICKING UP A HANDOFF, OR DOING KNOWLEDGE DISTILLATION.
+1. From there, branch out to relevant topics
 2. Use memex `explore` to follow wikilinks — outlinks show what a note references, backlinks show what references it
 3. Navigate progressively: overview → domain topics → specific topics → concrete content
 4. **Follow references in knowledge files** — when a knowledge file points to code files, external docs, or says "see X", read those too when relevant to your task
@@ -82,7 +83,11 @@ Link directions:
 
 **Hierarchy from links, not folders.** Use memex `explore` to follow outlinks/backlinks.
 
-### Branch Strategy
+### Notes
+
+Do not commit ./agent/* files together with code changes. They  are commited by the distillation agent or the user separately.
+
+## Branch Strategy
 
 - `main` - production (deploys on push)
 - `dev` - for batching changes before deploy
@@ -125,6 +130,7 @@ Conversely, `tre agent -L 10` shows all task files including `private/` and `kno
 ## Memex MCP
 
 You have access to markdown vaults via memex. The primary value is **wikilink navigation** — the `explore` tool for following outlinks, backlinks, and discovering connections.
+Semantic search is disabled. Wikilinks provide the necessary structure for this project.
 
 Vaults:
 - `./agent` — Project-specific: tasks, knowledge, handoffs
@@ -132,15 +138,7 @@ Vaults:
 **Workflow:**
 1. Start from a known file (task file, or `[[overview]]` for knowledge)
 2. Use `explore` to follow wikilinks — outlinks, backlinks, similar notes
-3. Build context through navigation, not just search
-4. `rename` for renaming files that already have outlinks or backlinks
-
-**Search tips (when needed):**
-- Use 1-3 sentence questions, not keywords
-- For exact term lookup, use `keywords` parameter
-- For "find this exact file/string", use grep instead
-
-**Semantic search is secondary.** The structure comes from intentional wikilinks. If you find what you need through links, that's preferred over search — it means the knowledge structure is working.
+3. `rename` for renaming files that already have outlinks or backlinks
 
 ## Coding Conventions
 

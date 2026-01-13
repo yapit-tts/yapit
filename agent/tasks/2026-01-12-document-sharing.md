@@ -1,6 +1,7 @@
 ---
-status: active
+status: done
 started: 2026-01-12
+completed: 2026-01-12
 ---
 
 # Task: Document Sharing via Clone/Import

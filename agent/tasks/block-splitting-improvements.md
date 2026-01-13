@@ -5,46 +5,70 @@ started: 2026-01-03
 
 # Task: Block Splitting Improvements
 
-Current issue: sometimes sentences are split audibly unnaturally.
+## Problem
 
-## Test Data
-
-Real-world test excerpt: `splitter-improvement-sample-text.txt` (root directory)
-
-## Problem Example
-
+Sentences split mid-phrase unnaturally, hurting TTS quality:
 ```
-"When we look carefully at the quiescent period in the bff soup before tapes begin replicating, we notice a steady rise in the amount of computation [SPLIT] taking place."
+"...we notice a steady rise in the amount of computation [SPLIT] taking place."
 ```
 
-Split happens mid-sentence where it could easily have included a few more words. These bad splits hurt naturalness and voice consistency.
+Also: lists weren't split at all, creating huge 500+ char audio blocks.
 
-## Goal
+## Branch Status
 
-Keep sentences whole when possible. When splitting is necessary, prefer natural pause points:
-- Sentence enders: `.?!`
-- Clause separators: `,` `—` (m-dash) `:`
-- Avoid splitting mid-phrase when just a few more words would complete it
+**Branch:** `feat/block-splitting-improvements`
 
-A block being slightly longer or shorter is fine — what matters is sounding natural.
+**Implemented:**
+- Smarter splitting algorithm with three params: `max_block_chars`, `soft_limit_mult`, `min_chunk_size`
+- Split priority: sentence boundaries → clause separators (`,—:;`) → word boundaries
+- List items now get individual `audio_block_idx` (container has none)
+- Interactive visualization tool: `scripts/block_viz_server.py`
 
-## Approach
+**Remaining:**
+- [ ] Parameter tuning via systematic analysis
+- [ ] Add env vars to Settings class
+- [ ] Wire params to `transform_to_document` calls
+- [ ] Validate with real TTS playback
 
-1. **First**: Improve splitting logic
-   - Soft limit with preferred split points
-   - Prefer natural pause punctuation over hard cutoff
-   - A few extra words to finish a sentence > exact character limit
+## Parameter Analysis Plan
 
-2. **Then**: Try increasing block size (200 or 250)
-   - Check: does this increase latency or introduce buffering?
-   - Probably fine due to markdown structure for most documents
+### Parameter Space (64 combinations)
+```
+max_block_chars: [150, 200, 250, 300]
+soft_limit_mult: [1.0, 1.3, 1.7, 2.0]
+min_chunk_size:  [20, 40, 60, 80]
+```
 
-## After Block Size Change
+### Constraints
+- **Latency safe zone:** median ~200-250 chars, absolute max <350
+- Prefetch algorithm: 4 blocks before playback starts
+- Start higher (better splitting), easy to shrink if latency issues
 
-Test with functioning WebGPU devices to verify:
-- Reasonable loading times
-- No buffering issues
+### Evaluation Approach
+1. Run all parameter combinations on test corpus
+2. Collect stats: block count, median, p95, max, size distribution
+3. **Qualitative analysis**: Read actual splits, judge if they'd sound natural spoken aloud
+4. Identify which combinations produce "reasonable" splitting across all text types
 
-## Monitoring
+### Test Corpus
+`scripts/block-splitter-test-corpus.md` — ~5 pages of varied content:
+1. Dense academic prose (long sentences, multiple clauses)
+2. Conversational web article (shorter, casual)
+3. Technical documentation (lists, code refs)
+4. Mixed list content (long list items)
+5. Narrative with dialogue (quotes, pauses)
+6. Dense technical explanation
+7. Parenthetical/quote heavy
 
-Monitor latencies before/after changes. Depends on [[monitoring-observability-logging]] for data-driven validation.
+## Key Questions
+
+1. At what `max_block_chars` do we catch "almost all" cases with reasonable splits?
+2. How do `soft_limit_mult` and `min_chunk_size` interact with max size?
+3. What's the actual max block size produced for each config?
+4. Which configs keep median ~200 while avoiding forced word-boundary splits?
+
+## Sources
+
+- `yapit/gateway/processors/markdown/transformer.py` — splitting logic
+- `scripts/block_viz_server.py` — interactive visualization
+- [[document-processing]] — how blocks flow through the system
