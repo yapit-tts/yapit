@@ -47,23 +47,41 @@ async def app(postgres_container, redis_container) -> FastAPI:
     shutil.rmtree("test_audio_cache", ignore_errors=True)
     shutil.rmtree("test_document_cache", ignore_errors=True)
 
-    # Only override test-specific values, let everything else come from .env.dev
+    # Self-contained test settings - don't rely on env vars loading in CI
     settings = Settings(
-        # Test container URLs (must override)
+        # Test containers
         database_url=postgres_container.get_connection_url(),
         redis_url=f"redis://{redis_container.get_container_host_ip()}:{redis_container.get_exposed_port(6379)}",
-        # Test-specific cache paths (must override to avoid conflicts)
-        audio_cache_config=CacheConfig(path="test_audio_cache"),
-        document_cache_config=CacheConfig(path="test_document_cache"),
-        # Empty auth for tests (auth is mocked)
+        # Database
+        sqlalchemy_echo=False,
+        db_drop_and_recreate=True,
+        db_seed=False,
+        # API
+        cors_origins=["http://test"],
+        # Auth (mocked)
         stack_auth_api_host="",
         stack_auth_project_id="",
         stack_auth_server_key="",
-        # Test-specific processor configs
+        # Caches
+        audio_cache_type="sqlite",
+        audio_cache_config=CacheConfig(path="test_audio_cache"),
+        document_cache_type="sqlite",
+        document_cache_config=CacheConfig(path="test_document_cache"),
+        extraction_cache_type="sqlite",
+        extraction_cache_config=CacheConfig(path="test_extraction_cache"),
+        # TTS
         tts_processors_file="tests/empty_processors.json",
-        # Disable metrics/billing for unit tests
-        metrics_database_url=None,
+        tts_overflow_queue_threshold=10,
+        client_request_timeout_seconds=30,
+        synthesis_polling_timeout_seconds=60,
+        tts_buffer_behind=3,
+        tts_buffer_ahead=5,
+        # Documents
+        images_dir="test_images",
+        max_block_chars=150,
+        # Billing/metrics (disabled for tests)
         billing_enabled=False,
+        metrics_database_url=None,
         log_dir="test_logs",
     )
 
