@@ -61,6 +61,8 @@ async def init_metrics_db(database_url: str | None) -> None:
 async def start_metrics_writer() -> None:
     """Start background writer task. Call after init_metrics_db."""
     global _write_queue, _writer_task
+    if not _pool:
+        return  # No metrics DB configured, skip writer
     _write_queue = asyncio.Queue()
     _writer_task = asyncio.create_task(_writer_loop())
 
