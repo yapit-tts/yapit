@@ -4,7 +4,10 @@ RUN rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY pyproject.toml README.md ./
-RUN pip install uv --no-cache-dir  && uv pip install ".[gateway]" --no-cache-dir --system
+RUN pip install uv --no-cache-dir && uv pip install ".[gateway]" --no-cache-dir --system
+
+# Install Playwright browser and its system dependencies
+RUN playwright install --with-deps chromium
 
 COPY yapit/ /app/yapit
 

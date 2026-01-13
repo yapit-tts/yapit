@@ -17,7 +17,9 @@ classifiers = [
 ]
 
 # pip install yapit | (worker) contracts
-dependencies = ["pydantic~=2.11.3"]
+dependencies = [
+    "pydantic~=2.11.3",
+]
 
 [project.optional-dependencies]
 
@@ -44,6 +46,7 @@ gateway = [
   "loguru~=0.7.3",
   "pypdf~=6.6",
   "google-genai~=1.57",
+  "playwright~=1.57",
 ]
 
 test = [

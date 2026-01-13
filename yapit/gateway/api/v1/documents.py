@@ -41,6 +41,7 @@ from yapit.gateway.processors.document.base import (
     DocumentExtractionResult,
     ExtractedPage,
 )
+from yapit.gateway.processors.document.playwright_renderer import render_with_js
 from yapit.gateway.processors.markdown import parse_markdown, transform_to_document
 
 router = APIRouter(prefix="/v1/documents", tags=["Documents"], dependencies=[Depends(authenticate)])
@@ -320,6 +321,13 @@ async def create_website_document(
     md = MarkItDown(enable_plugins=False)
     result = md.convert_stream(io.BytesIO(cached_doc.content))
     markdown = result.markdown
+
+    if cached_doc.metadata.url and _needs_js_rendering(cached_doc.content, markdown):
+        logger.info(f"JS rendering detected, using Playwright for {cached_doc.metadata.url}")
+        rendered_html = await render_with_js(cached_doc.metadata.url)
+        result = md.convert_stream(io.BytesIO(rendered_html.encode("utf-8")))
+        markdown = result.markdown
+
     if cached_doc.metadata.url:
         markdown = _resolve_relative_urls(markdown, cached_doc.metadata.url)
     extraction_result = DocumentExtractionResult(
@@ -693,13 +701,15 @@ async def _download_document(url: HttpUrl, max_size: int) -> tuple[bytes, str]:
                         detail=f"File too large: downloaded {downloaded} bytes exceeds maximum of {max_size} bytes",
                     )
                 content.write(chunk)
-            content_type = response.headers.get("content-type", "application/octet-stream")
-            return content.getvalue(), content_type
+            content_bytes = content.getvalue()
+            header_type = response.headers.get("content-type", "application/octet-stream")
+            sniffed_type = _sniff_content_type(content_bytes)
+            # Trust magic bytes over header if we can detect the type
+            content_type = sniffed_type if sniffed_type else header_type
+            return content_bytes, content_type
         except httpx.HTTPStatusError as e:
-            if e.response.status_code == 407:
-                detail = "URL points to a blocked destination"
-            else:
-                detail = f"URL returned error: HTTP {e.response.status_code}"
+            code = e.response.status_code
+            detail = _get_http_error_message(code)
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=detail)
         except httpx.RequestError:
             raise HTTPException(
@@ -909,3 +919,88 @@ def _resolve_relative_urls(markdown: str, base_url: str) -> str:
     # Links: [text](url)
     markdown = re.sub(r"(?<!!)\[([^\]]*)\]\(([^)]+)\)", make_resolver(False), markdown)
     return markdown
+
+
+def _sniff_content_type(content: bytes) -> str | None:
+    """Detect content type from magic bytes. Returns None if unknown."""
+    if content.startswith(b"%PDF"):
+        return "application/pdf"
+    if content.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if content.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if content.startswith(b"GIF87a") or content.startswith(b"GIF89a"):
+        return "image/gif"
+    if content.startswith(b"RIFF") and content[8:12] == b"WEBP":
+        return "image/webp"
+    # HTML detection (check first 1KB for common patterns)
+    head = content[:1024].lstrip()
+    if head.startswith(b"<!DOCTYPE") or head.startswith(b"<html") or head.startswith(b"<HTML"):
+        return "text/html"
+    return None
+
+
+def _get_http_error_message(status_code: int) -> str:
+    """Return a user-friendly error message for HTTP status codes."""
+    messages = {
+        300: "Document has multiple versions - try a more specific URL",
+        301: "Page has moved permanently",
+        302: "Page has moved temporarily",
+        400: "Invalid request to the website",
+        401: "This page requires authentication",
+        403: "Access to this page is forbidden",
+        404: "Page not found - check the URL",
+        407: "URL points to a blocked destination",
+        408: "Request timed out - the website took too long to respond",
+        410: "This page no longer exists",
+        429: "Site is rate limiting requests - try again later",
+        451: "Content unavailable for legal reasons",
+        500: "The target website is having internal issues - try again later",
+        502: "The target website's server is not responding - try again later",
+        503: "The target website is temporarily unavailable - try again later",
+        504: "The target website took too long to respond - try again later",
+    }
+    if status_code in messages:
+        return messages[status_code]
+    if 400 <= status_code < 500:
+        return f"Website returned client error (HTTP {status_code})"
+    if 500 <= status_code < 600:
+        return f"Website returned server error (HTTP {status_code})"
+    return f"URL returned unexpected status: HTTP {status_code}"
+
+
+_JS_RENDERING_PATTERNS = [
+    r"marked\.parse",  # marked.js
+    r"markdown-it",  # markdown-it
+    r"renderMarkdown",  # custom pattern like k-a.in
+    r"ReactDOM\.render",  # React (legacy)
+    r"createRoot",  # React 18+
+    r"createApp\s*\(",  # Vue 3
+    r"ng-app",  # Angular
+    r"\.mount\s*\(",  # Vue mount
+]
+_JS_PATTERN_REGEX = re.compile("|".join(_JS_RENDERING_PATTERNS), re.IGNORECASE)
+
+
+def _needs_js_rendering(html: bytes, markdown: str) -> bool:
+    """Detect if a page likely needs JavaScript rendering.
+
+    Uses two heuristics:
+    1. Content sniffing: look for known JS rendering patterns in HTML
+    2. Size heuristic: large HTML but tiny markdown output suggests JS-loaded content
+
+    Returns True if either heuristic triggers.
+    """
+    html_str = html.decode("utf-8", errors="ignore")
+
+    # Content sniffing: detect known JS rendering frameworks
+    if _JS_PATTERN_REGEX.search(html_str):
+        logger.debug("JS rendering pattern detected in HTML")
+        return True
+
+    # Size heuristic: big HTML (>5KB) but tiny markdown (<500 chars)
+    if len(html) > 5000 and len(markdown) < 500:
+        logger.debug(f"Size heuristic triggered: {len(html)} bytes HTML -> {len(markdown)} chars markdown")
+        return True
+
+    return False
