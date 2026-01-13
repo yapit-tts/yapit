@@ -77,6 +77,7 @@ async def app(postgres_container, redis_container) -> FastAPI:
         tts_buffer_behind=3,
         tts_buffer_ahead=5,
         # Documents
+        ai_processor=None,  # Don't use Gemini in tests (needs API key)
         images_dir="test_images",
         max_block_chars=150,
         # Billing/metrics (disabled for tests)
