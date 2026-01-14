@@ -31,6 +31,7 @@ Currently synthesis-focused. Add:
 - [ ] HTTP request latencies (general, not just synthesis)
 - [ ] Billing/Stripe events (webhook activity, failures)
 - [ ] Document processing events (parallel task may cover this)
+- [ ] Playwright usage (how often fallback to browser fetch is needed)
 
 ### 3. Infra Metrics
 
@@ -58,7 +59,7 @@ Design decisions:
 - **Allow tool calls optionally** — if deeper digging needed
 - **Run in sandbox mode** — safe to give full permissions on local copy
 - **Model choice** — Sonnet for cost, Opus if prompts need more intelligence
-- **Output** — Private Discord webhook (not public ntfy)
+- **Output** — Private Discord webhook, always fires (✓ nominal / ⚠ issues found). No message = script broken.
 
 Sync mechanism:
 - Metrics: `make sync-metrics` already exists (→ DuckDB)

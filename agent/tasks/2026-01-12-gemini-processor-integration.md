@@ -149,6 +149,10 @@ Standard markdown image syntax. LLM outputs naturally, regex matches easily. Pos
 - [ ] Figure captions
 - [ ] TOC links support
 
+### Supporting Webpages / Text input
+
+> For websites, I have to think about how I handle them. Right now, if you paste a website, it instantly fetches it and presents you with the Yapit page. I need to consider the UX: for 95 % of web pages that’s fine, but for the one you sent that contains math, it’s problematic. The question is how to feed that to Gemini. I can feed Gemini just the text without the image. And how do I build that as pages? I could split it into pages of about 2 000 tokens each. But what’s the UI for that? We still keep it as an instant load, but perhaps add a button to retry with AI transformation. That will only work for web pages, because for documents we need the original content. which we don't have or save actually except that we do we do have a file cache wait I can just increase the TTL of that file cache to like one hour and then that button would be available with like okay in the case that you use the free processor and it's still in the file cache you can retry it with text transformation and this way you can you know always try mark it down and then you see you know the difference to Gemini also I think that's a smart choice maybe potentially
+
 ## Priority
 
 1. **Frontend 402 UX** — Nicer error handling when usage limits exceeded

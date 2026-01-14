@@ -62,13 +62,13 @@ Then MarkItDown produces 15,516 chars instead of ~200.
 
 ## Done When
 
-- [ ] JS-rendered pages like k-a.in/DDL.html produce full content
-- [ ] Static sites remain fast (no Playwright overhead)
-- [ ] Docker image builds with Playwright browser
-- [ ] No external API dependencies
-- [ ] HTTP errors show user-friendly messages (not just "HTTP 4xx")
-- [ ] Cloudflare/paywall detection with clear error messages
-- [ ] Content-type sniffing handles misconfigured servers
+- [x] JS-rendered pages like k-a.in/DDL.html produce full content
+- [x] Static sites remain fast (no Playwright overhead)
+- [x] Docker image builds with Playwright browser
+- [x] No external API dependencies
+- [x] HTTP errors show user-friendly messages (not just "HTTP 4xx")
+- [x] Content-type sniffing handles misconfigured servers
+- [ ] ~~Cloudflare/paywall detection~~ — Skipped: blocking doesn't add value without ability to circumvent
 
 ## Implementation Plan
 
@@ -133,19 +133,7 @@ Improve error messages in `_download_document()` for common status codes:
 | 451 | "HTTP 451" | "Content unavailable for legal reasons" |
 | 500-504 | "HTTP 5xx" | "The website is having issues - try again later" |
 
-### 6. Content Protection Detection
-
-After fetching (with or without Playwright), detect protected content and give clear errors:
-
-**Cloudflare/bot protection:**
-- Simple JS challenges: Playwright solves these automatically (free win)
-- CAPTCHA challenges: Detect challenge page patterns, error: "This site has bot protection - try downloading the file manually"
-
-**Paywalls/login walls:**
-- Detect patterns: "subscribe", "sign in to continue", login form elements
-- Error: "This content appears to be behind a paywall" or "This page requires login"
-
-### 7. Content-Type Sniffing
+### 6. Content-Type Sniffing
 
 Don't trust `Content-Type` header blindly. Verify with magic bytes:
 
@@ -158,9 +146,9 @@ Don't trust `Content-Type` header blindly. Verify with magic bytes:
 
 If header and content mismatch, trust actual content. Adds robustness against misconfigured servers.
 
-### 8. Testing
+### 7. Testing
 
-1. Test with k-a.in/DDL.html - should produce full content
+1. Test with k-a.in/DDL.html - should produce full content ✅
 2. Test with static site (news article) - should remain fast, no Playwright triggered
 3. Test edge cases: timeouts, failed renders, concurrent requests
 4. Test HTTP error cases - verify user-friendly messages

@@ -45,18 +45,22 @@ Skip tests: `[skip tests]` in commit message.
 
 See [[migrations]] for Alembic workflow, gotchas, shared-DB (with StackAuth) caveats.
 
-## Adding New Config Files
+## Config Change Checklist
 
-When adding config files (processor configs, init scripts, etc.), check:
+When **adding or removing** config files or Settings fields, check ALL of these:
 
-| File needs to be... | Update |
-|---------------------|--------|
-| Mounted in dev containers | `docker-compose.dev.yml` volumes |
-| Mounted in prod containers | `docker-compose.prod.yml` volumes |
-| Copied to VPS on deploy | `scripts/deploy.sh` (scp commands) |
-| Available in CI | Create `.ci.json` variant or add to workflow env |
+| What | Where to update |
+|------|-----------------|
+| Settings fields | `yapit/gateway/config.py` |
+| Environment variables | `.env.dev`, `.env.prod`, `.env.template` |
+| Docker volume mounts (dev) | `docker-compose.dev.yml` |
+| Docker volume mounts (prod) | `docker-compose.prod.yml` |
+| Deploy file transfers | `scripts/deploy.sh` (scp commands) |
+| **Test fixtures** | `tests/yapit/gateway/api/conftest.py` |
 
-Example: `document_processors.prod.json` needs entries in all four places.
+**Critical:** When removing files/config, search the codebase for all references. Stale docker-compose mounts for deleted files cause Docker to create empty directories owned by root.
+
+**Test fixtures:** The test fixture in conftest.py relies on env vars from `.env.dev` (via `uv run --env-file`). Only override what truly differs: testcontainer URLs, cache paths, disabled auth. If a field triggers API-key-dependent initialization (e.g., `ai_processor=gemini`), explicitly set it to None.
 
 ## Key Files
 
