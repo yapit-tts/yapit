@@ -1,15 +1,21 @@
-"""Integration tests for GeminiProcessor.
+"""Tests for GeminiProcessor.
 
-Requires GOOGLE_API_KEY. Run with: make test-gemini
+Integration tests require GOOGLE_API_KEY. Run with: make test-gemini
+Unit tests for retry logic run without API key.
 """
 
+import asyncio
 import os
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+from google.genai import errors as genai_errors
 
-from yapit.gateway.processors.document.gemini import GeminiProcessor
+from yapit.gateway.processors.document.gemini import (
+    MAX_RETRIES,
+    GeminiProcessor,
+)
 
 FIXTURES_DIR = Path("tests/fixtures/documents")
 
@@ -75,3 +81,231 @@ async def test_extract_image(processor):
     )
 
     assert 0 in result.pages
+
+
+# --- Unit tests for retry logic (no API key required) ---
+
+
+@pytest.fixture
+def mock_processor(tmp_path):
+    """Create a GeminiProcessor with mocked client for unit testing."""
+    mock_settings = Mock()
+    mock_settings.google_api_key = "fake-key-for-testing"
+    mock_settings.images_dir = str(tmp_path / "images")
+
+    with patch("yapit.gateway.processors.document.gemini.genai.Client"):
+        processor = GeminiProcessor(settings=mock_settings, resolution="low")
+    return processor
+
+
+class TestRetryBehavior:
+    """Tests for retry logic on API errors."""
+
+    @pytest.mark.asyncio
+    async def test_retries_on_429_rate_limit(self, mock_processor):
+        """Should retry on 429 rate limit and succeed on subsequent attempt."""
+        mock_response = Mock()
+        mock_response.text = "Extracted text"
+
+        # Fail twice with 429, then succeed
+        mock_processor._client.models.generate_content = Mock(
+            side_effect=[
+                genai_errors.APIError(code=429, response_json={"error": {"message": "Rate limit"}}),
+                genai_errors.APIError(code=429, response_json={"error": {"message": "Rate limit"}}),
+                mock_response,
+            ]
+        )
+
+        semaphore = asyncio.Semaphore(1)
+        mock_pdf_reader = Mock()
+
+        with (
+            patch(
+                "yapit.gateway.processors.document.gemini.extract_single_page_pdf",
+                return_value=b"fake-pdf-bytes",
+            ),
+            patch(
+                "yapit.gateway.processors.document.gemini.asyncio.sleep",
+                new_callable=AsyncMock,
+            ) as mock_sleep,
+        ):
+            page_idx, result = await mock_processor._process_page(
+                pdf_reader=mock_pdf_reader,
+                page_idx=0,
+                images=[],
+                image_urls=[],
+                semaphore=semaphore,
+            )
+
+        assert result is not None
+        assert result.markdown == "Extracted text"
+        assert mock_processor._client.models.generate_content.call_count == 3
+        assert mock_sleep.call_count == 2  # Slept between retries
+
+    @pytest.mark.asyncio
+    async def test_retries_on_server_errors(self, mock_processor):
+        """Should retry on 500, 503, 504 server errors."""
+        mock_response = Mock()
+        mock_response.text = "Success after errors"
+
+        for error_code in [500, 503, 504]:
+            mock_processor._client.models.generate_content = Mock(
+                side_effect=[
+                    genai_errors.APIError(code=error_code, response_json={"error": {"message": "Server error"}}),
+                    mock_response,
+                ]
+            )
+
+            semaphore = asyncio.Semaphore(1)
+            with (
+                patch(
+                    "yapit.gateway.processors.document.gemini.extract_single_page_pdf",
+                    return_value=b"fake-pdf-bytes",
+                ),
+                patch(
+                    "yapit.gateway.processors.document.gemini.asyncio.sleep",
+                    new_callable=AsyncMock,
+                ),
+            ):
+                page_idx, result = await mock_processor._process_page(
+                    pdf_reader=Mock(),
+                    page_idx=0,
+                    images=[],
+                    image_urls=[],
+                    semaphore=semaphore,
+                )
+
+            assert result is not None, f"Should succeed after {error_code} retry"
+
+    @pytest.mark.asyncio
+    async def test_no_retry_on_400_bad_request(self, mock_processor):
+        """Should NOT retry on 400 bad request - fails immediately."""
+        mock_processor._client.models.generate_content = Mock(
+            side_effect=genai_errors.APIError(code=400, response_json={"error": {"message": "Bad request"}})
+        )
+
+        semaphore = asyncio.Semaphore(1)
+        with patch(
+            "yapit.gateway.processors.document.gemini.extract_single_page_pdf",
+            return_value=b"fake-pdf-bytes",
+        ):
+            page_idx, result = await mock_processor._process_page(
+                pdf_reader=Mock(),
+                page_idx=0,
+                images=[],
+                image_urls=[],
+                semaphore=semaphore,
+            )
+
+        assert result is None
+        assert mock_processor._client.models.generate_content.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_no_retry_on_403_forbidden(self, mock_processor):
+        """Should NOT retry on 403 forbidden - fails immediately."""
+        mock_processor._client.models.generate_content = Mock(
+            side_effect=genai_errors.APIError(code=403, response_json={"error": {"message": "Forbidden"}})
+        )
+
+        semaphore = asyncio.Semaphore(1)
+        with patch(
+            "yapit.gateway.processors.document.gemini.extract_single_page_pdf",
+            return_value=b"fake-pdf-bytes",
+        ):
+            page_idx, result = await mock_processor._process_page(
+                pdf_reader=Mock(),
+                page_idx=0,
+                images=[],
+                image_urls=[],
+                semaphore=semaphore,
+            )
+
+        assert result is None
+        assert mock_processor._client.models.generate_content.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_no_retry_on_404_not_found(self, mock_processor):
+        """Should NOT retry on 404 not found - fails immediately."""
+        mock_processor._client.models.generate_content = Mock(
+            side_effect=genai_errors.APIError(code=404, response_json={"error": {"message": "Not found"}})
+        )
+
+        semaphore = asyncio.Semaphore(1)
+        with patch(
+            "yapit.gateway.processors.document.gemini.extract_single_page_pdf",
+            return_value=b"fake-pdf-bytes",
+        ):
+            page_idx, result = await mock_processor._process_page(
+                pdf_reader=Mock(),
+                page_idx=0,
+                images=[],
+                image_urls=[],
+                semaphore=semaphore,
+            )
+
+        assert result is None
+        assert mock_processor._client.models.generate_content.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_fails_after_max_retries_exhausted(self, mock_processor):
+        """Should return None after all retries exhausted."""
+        mock_processor._client.models.generate_content = Mock(
+            side_effect=genai_errors.APIError(code=503, response_json={"error": {"message": "Unavailable"}})
+        )
+
+        semaphore = asyncio.Semaphore(1)
+        with (
+            patch(
+                "yapit.gateway.processors.document.gemini.extract_single_page_pdf",
+                return_value=b"fake-pdf-bytes",
+            ),
+            patch(
+                "yapit.gateway.processors.document.gemini.asyncio.sleep",
+                new_callable=AsyncMock,
+            ),
+        ):
+            page_idx, result = await mock_processor._process_page(
+                pdf_reader=Mock(),
+                page_idx=0,
+                images=[],
+                image_urls=[],
+                semaphore=semaphore,
+            )
+
+        assert result is None
+        assert mock_processor._client.models.generate_content.call_count == MAX_RETRIES
+
+    @pytest.mark.asyncio
+    async def test_retries_on_unexpected_exceptions(self, mock_processor):
+        """Should retry on unexpected exceptions (network errors, etc.)."""
+        mock_response = Mock()
+        mock_response.text = "Success"
+
+        mock_processor._client.models.generate_content = Mock(
+            side_effect=[
+                ConnectionError("Network failed"),
+                mock_response,
+            ]
+        )
+
+        semaphore = asyncio.Semaphore(1)
+        with (
+            patch(
+                "yapit.gateway.processors.document.gemini.extract_single_page_pdf",
+                return_value=b"fake-pdf-bytes",
+            ),
+            patch(
+                "yapit.gateway.processors.document.gemini.asyncio.sleep",
+                new_callable=AsyncMock,
+            ),
+        ):
+            page_idx, result = await mock_processor._process_page(
+                pdf_reader=Mock(),
+                page_idx=0,
+                images=[],
+                image_urls=[],
+                semaphore=semaphore,
+            )
+
+        assert result is not None
+        assert mock_processor._client.models.generate_content.call_count == 2

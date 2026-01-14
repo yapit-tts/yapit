@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { FileText, Loader2 } from "lucide-react";
+import { FileText, Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
@@ -20,7 +20,9 @@ interface MetadataBannerProps {
   aiTransformEnabled: boolean;
   onAiTransformToggle: (enabled: boolean) => void;
   onConfirm: (pages: number[] | null) => void;
+  onCancel?: () => void;
   isLoading: boolean;
+  completedPages?: number[];
   className?: string;
 }
 
@@ -77,35 +79,53 @@ function parsePageRanges(input: string, totalPages: number): number[] | null {
 }
 
 /**
- * Visual bar showing selected pages.
- * Read-only, just reflects the current selection.
+ * Visual bar showing selected pages and extraction progress.
+ * During extraction, completed pages turn green.
  */
 function PageSelectionBar({
   selectedPages,
-  totalPages
+  totalPages,
+  completedPages = [],
+  isProcessing = false,
 }: {
   selectedPages: number[] | null;
   totalPages: number;
+  completedPages?: number[];
+  isProcessing?: boolean;
 }) {
   const selectedSet = useMemo(
     () => new Set(selectedPages ?? Array.from({ length: totalPages }, (_, i) => i)),
     [selectedPages, totalPages]
   );
+  const completedSet = useMemo(() => new Set(completedPages), [completedPages]);
 
   return (
     <div className="flex h-2 rounded-sm overflow-hidden bg-muted/30">
-      {Array.from({ length: totalPages }, (_, i) => (
-        <div
-          key={i}
-          className={cn(
-            "flex-1 min-w-0",
-            selectedSet.has(i) ? "bg-primary/60" : "bg-muted/20"
-          )}
-          style={{
-            borderRight: i < totalPages - 1 ? "1px solid rgba(0,0,0,0.05)" : "none",
-          }}
-        />
-      ))}
+      {Array.from({ length: totalPages }, (_, i) => {
+        const isSelected = selectedSet.has(i);
+        const isCompleted = completedSet.has(i);
+
+        let bgClass: string;
+        if (!isSelected) {
+          bgClass = "bg-muted/20";
+        } else if (isProcessing && isCompleted) {
+          bgClass = "bg-primary";
+        } else if (isProcessing) {
+          bgClass = "bg-primary/30"; // Selected but not yet completed
+        } else {
+          bgClass = "bg-primary/60"; // Pre-processing state
+        }
+
+        return (
+          <div
+            key={i}
+            className={cn("flex-1 min-w-0 transition-colors duration-300", bgClass)}
+            style={{
+              borderRight: i < totalPages - 1 ? "1px solid rgba(0,0,0,0.05)" : "none",
+            }}
+          />
+        );
+      })}
     </div>
   );
 }
@@ -115,7 +135,9 @@ export function MetadataBanner({
   aiTransformEnabled,
   onAiTransformToggle,
   onConfirm,
+  onCancel,
   isLoading,
+  completedPages = [],
   className,
 }: MetadataBannerProps) {
   const [pageRangeInput, setPageRangeInput] = useState("");
@@ -176,7 +198,12 @@ export function MetadataBanner({
               className="h-8 text-sm"
             />
           </div>
-          <PageSelectionBar selectedPages={selectedPages} totalPages={metadata.total_pages} />
+          <PageSelectionBar
+            selectedPages={selectedPages}
+            totalPages={metadata.total_pages}
+            completedPages={completedPages}
+            isProcessing={isLoading}
+          />
         </div>
       )}
 
@@ -204,16 +231,21 @@ export function MetadataBanner({
             </div>
           )}
 
-          <Button onClick={handleConfirm} disabled={isLoading} size="sm">
-            {isLoading ? (
-              <>
+          {isLoading ? (
+            <div className="flex items-center gap-2">
+              <Button variant="ghost" size="sm" onClick={onCancel} className="h-8 w-8 p-0">
+                <X className="h-4 w-4" />
+              </Button>
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <Loader2 className="h-4 w-4 animate-spin" />
                 Processing...
-              </>
-            ) : (
-              "GO"
-            )}
-          </Button>
+              </div>
+            </div>
+          ) : (
+            <Button onClick={handleConfirm} size="sm">
+              GO
+            </Button>
+          )}
         </div>
       </div>
     </div>

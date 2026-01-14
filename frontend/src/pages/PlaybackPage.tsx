@@ -84,6 +84,7 @@ const PlaybackPage = () => {
   const { state } = useLocation();
   const navigate = useNavigate();
   const initialTitle: string | undefined = state?.documentTitle;
+  const failedPages: number[] | undefined = state?.failedPages;
 
   const { api, isAuthReady, isAnonymous } = useApi();
   const browserTTS = useBrowserTTS();
@@ -100,6 +101,7 @@ const PlaybackPage = () => {
   // Public document viewing (ephemeral access before import)
   const [isPublicView, setIsPublicView] = useState(false);
   const [showImportBanner, setShowImportBanner] = useState(true);
+  const [showFailedPagesBanner, setShowFailedPagesBanner] = useState(true);
   const [isImporting, setIsImporting] = useState(false);
 
   // Derived state
@@ -1426,6 +1428,25 @@ const PlaybackPage = () => {
               <X className="h-4 w-4" />
             </button>
           </div>
+        </div>
+      )}
+
+      {/* Failed pages warning banner */}
+      {failedPages && failedPages.length > 0 && showFailedPagesBanner && (
+        <div className="flex items-center justify-between gap-4 bg-destructive/10 px-4 py-3 border-b border-destructive/20">
+          <p className="text-destructive">
+            {failedPages.length === 1
+              ? `Page ${failedPages[0] + 1} failed to extract.`
+              : `Pages ${failedPages.map(p => p + 1).join(", ")} failed to extract.`}
+            {" "}Try again later — successfully extracted pages are cached and won't count toward your usage again.
+          </p>
+          <button
+            onClick={() => setShowFailedPagesBanner(false)}
+            className="shrink-0 p-1 text-destructive/70 hover:text-destructive"
+            title="Dismiss"
+          >
+            <X className="h-4 w-4" />
+          </button>
         </div>
       )}
 

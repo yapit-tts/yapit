@@ -1,12 +1,16 @@
 import asyncio
 import io
+import random
 from pathlib import Path
 
 import pymupdf
 from google import genai
+from google.genai import errors as genai_errors
 from google.genai import types
+from loguru import logger
 from pypdf import PdfReader
 
+from yapit.gateway.cache import Cache
 from yapit.gateway.processors.document.base import (
     BaseDocumentProcessor,
     DocumentExtractionResult,
@@ -27,6 +31,12 @@ RESOLUTION_MAP = {
     "medium": types.MediaResolution.MEDIA_RESOLUTION_MEDIUM,
     "high": types.MediaResolution.MEDIA_RESOLUTION_HIGH,
 }
+
+# Retryable HTTP status codes (transient errors)
+RETRYABLE_STATUS_CODES = {429, 500, 503, 504}
+MAX_RETRIES = 3
+BASE_DELAY_SECONDS = 1.0
+MAX_DELAY_SECONDS = 8.0
 
 
 class GeminiProcessor(BaseDocumentProcessor):
@@ -86,12 +96,17 @@ class GeminiProcessor(BaseDocumentProcessor):
         content: bytes,
         content_type: str,
         content_hash: str,
+        extraction_cache: Cache,
         pages: list[int] | None = None,
     ) -> DocumentExtractionResult:
         if content_type.startswith("image/"):
-            return await self._extract_image(content, content_type)
+            result = await self._extract_image(content, content_type)
+            # Cache the single image page
+            cache_key = self._extraction_cache_key(content_hash, 0)
+            await extraction_cache.store(cache_key, result.pages[0].model_dump_json().encode())
+            return result
 
-        return await self._extract_pdf(content, pages, content_hash)
+        return await self._extract_pdf(content, pages, content_hash, extraction_cache)
 
     async def _extract_image(self, content: bytes, content_type: str) -> DocumentExtractionResult:
         """Extract text from a single image."""
@@ -118,8 +133,9 @@ class GeminiProcessor(BaseDocumentProcessor):
         content: bytes,
         pages: list[int] | None,
         content_hash: str,
+        extraction_cache: Cache,
     ) -> DocumentExtractionResult:
-        """Extract text from PDF with parallel page processing."""
+        """Extract text from PDF with parallel page processing, caching each page as it completes."""
         pdf_reader = PdfReader(io.BytesIO(content))
         total_pages = len(pdf_reader.pages)
 
@@ -141,17 +157,33 @@ class GeminiProcessor(BaseDocumentProcessor):
                 urls.append(url)
             page_image_urls[page_idx] = urls
 
-        # Process pages with concurrency limit
+        # Process pages with concurrency limit, caching each as it completes
         semaphore = asyncio.Semaphore(self._max_concurrent)
-        tasks = [
-            self._process_page(pdf_reader, page_idx, page_images[page_idx], page_image_urls[page_idx], semaphore)
-            for page_idx in sorted(pages_to_process)
-        ]
+
+        async def process_and_cache(page_idx: int) -> tuple[int, ExtractedPage | None]:
+            page_idx, page = await self._process_page(
+                pdf_reader, page_idx, page_images[page_idx], page_image_urls[page_idx], semaphore
+            )
+            # Only cache successful extractions
+            if page is not None:
+                cache_key = self._extraction_cache_key(content_hash, page_idx)
+                await extraction_cache.store(cache_key, page.model_dump_json().encode())
+            return page_idx, page
+
+        tasks = [process_and_cache(page_idx) for page_idx in sorted(pages_to_process)]
         results = await asyncio.gather(*tasks)
 
+        # Separate successful and failed pages
+        successful_pages = {page_idx: page for page_idx, page in results if page is not None}
+        failed_pages = [page_idx for page_idx, page in results if page is None]
+
+        if failed_pages:
+            logger.error(f"Extraction completed with {len(failed_pages)} failed pages: {sorted(failed_pages)}")
+
         return DocumentExtractionResult(
-            pages={page_idx: page for page_idx, page in results},
+            pages=successful_pages,
             extraction_method=self._slug,
+            failed_pages=failed_pages,
         )
 
     async def _process_page(
@@ -161,27 +193,68 @@ class GeminiProcessor(BaseDocumentProcessor):
         images: list[ExtractedImage],
         image_urls: list[str],
         semaphore: asyncio.Semaphore,
-    ) -> tuple[int, ExtractedPage]:
-        """Process a single PDF page."""
+    ) -> tuple[int, ExtractedPage | None]:
+        """Process a single PDF page with retry logic.
+
+        Returns (page_idx, ExtractedPage) on success, (page_idx, None) on failure after all retries.
+        """
         async with semaphore:
             page_bytes = extract_single_page_pdf(pdf_reader, page_idx)
             prompt = build_prompt_with_image_count(self._prompt, len(images))
-
             config = types.GenerateContentConfig(media_resolution=self._resolution)
 
-            response = await asyncio.to_thread(
-                self._client.models.generate_content,
-                model=self._model,
-                contents=[
-                    types.Part.from_bytes(data=page_bytes, mime_type="application/pdf"),
-                    prompt,
-                ],
-                config=config,
-            )
+            last_error: Exception | None = None
+            for attempt in range(MAX_RETRIES):
+                try:
+                    response = await asyncio.to_thread(
+                        self._client.models.generate_content,
+                        model=self._model,
+                        contents=[
+                            types.Part.from_bytes(data=page_bytes, mime_type="application/pdf"),
+                            prompt,
+                        ],
+                        config=config,
+                    )
 
-            text = (response.text or "").strip()
+                    text = (response.text or "").strip()
+                    if image_urls:
+                        text = substitute_image_placeholders(text, image_urls)
 
-            if image_urls:
-                text = substitute_image_placeholders(text, image_urls)
+                    if attempt > 0:
+                        logger.info(f"Page {page_idx} succeeded after {attempt + 1} attempts")
 
-            return page_idx, ExtractedPage(markdown=text, images=image_urls)
+                    return page_idx, ExtractedPage(markdown=text, images=image_urls)
+
+                except genai_errors.APIError as e:
+                    last_error = e
+                    is_retryable = e.code in RETRYABLE_STATUS_CODES
+
+                    if not is_retryable:
+                        logger.error(f"Page {page_idx} failed with non-retryable error: {e.code} {e.message}")
+                        return page_idx, None
+
+                    if attempt < MAX_RETRIES - 1:
+                        delay = min(BASE_DELAY_SECONDS * (2**attempt), MAX_DELAY_SECONDS)
+                        jitter = random.uniform(0, delay * 0.5)
+                        wait_time = delay + jitter
+                        logger.warning(
+                            f"Page {page_idx} attempt {attempt + 1}/{MAX_RETRIES} failed "
+                            f"({e.code}), retrying in {wait_time:.1f}s"
+                        )
+                        await asyncio.sleep(wait_time)
+
+                except Exception as e:
+                    # Unexpected errors (network issues, etc.) - also retry
+                    last_error = e
+                    if attempt < MAX_RETRIES - 1:
+                        delay = min(BASE_DELAY_SECONDS * (2**attempt), MAX_DELAY_SECONDS)
+                        jitter = random.uniform(0, delay * 0.5)
+                        wait_time = delay + jitter
+                        logger.warning(
+                            f"Page {page_idx} attempt {attempt + 1}/{MAX_RETRIES} failed "
+                            f"with unexpected error: {e}, retrying in {wait_time:.1f}s"
+                        )
+                        await asyncio.sleep(wait_time)
+
+            logger.error(f"Page {page_idx} failed after {MAX_RETRIES} attempts. Last error: {last_error}")
+            return page_idx, None

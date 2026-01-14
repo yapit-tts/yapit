@@ -2,7 +2,12 @@ import io
 
 from markitdown import MarkItDown
 
-from yapit.gateway.processors.document.base import BaseDocumentProcessor, DocumentExtractionResult, ExtractedPage
+from yapit.gateway.cache import Cache
+from yapit.gateway.processors.document.base import (
+    BaseDocumentProcessor,
+    DocumentExtractionResult,
+    ExtractedPage,
+)
 
 
 class MarkitdownProcessor(BaseDocumentProcessor):
@@ -52,11 +57,17 @@ class MarkitdownProcessor(BaseDocumentProcessor):
         content: bytes,
         content_type: str,
         content_hash: str,
+        extraction_cache: Cache,
         pages: list[int] | None = None,
     ) -> DocumentExtractionResult:
         md = MarkItDown(enable_plugins=False)
         result = md.convert_stream(io.BytesIO(content))
+        page = ExtractedPage(markdown=result.markdown, images=[])
+        # Cache the single page (MarkItDown treats all content as one page)
+        if self._extraction_key_prefix:
+            cache_key = self._extraction_cache_key(content_hash, 0)
+            await extraction_cache.store(cache_key, page.model_dump_json().encode())
         return DocumentExtractionResult(
             extraction_method=self._slug,
-            pages={0: ExtractedPage(markdown=result.markdown, images=[])},
+            pages={0: page},
         )

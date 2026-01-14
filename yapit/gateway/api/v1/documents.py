@@ -65,11 +65,13 @@ class DocumentPrepareResponse(BaseModel):
 
     Args:
         hash: SHA256 hash of the document content (for uploads) or url (for urls), used as cache key
+        content_hash: SHA256 hash of actual content (for extraction progress tracking)
         endpoint: Which API endpoint the client should use to create the document
         uncached_pages: Set of page numbers that need OCR processing (empty for websites/text)
     """
 
     hash: str
+    content_hash: str
     metadata: DocumentMetadata
     endpoint: Literal["text", "website", "document"]
     uncached_pages: set[int]
@@ -122,6 +124,49 @@ class DocumentCreateResponse(BaseModel):
 
     id: UUID
     title: str | None
+    failed_pages: list[int] = []  # Pages that failed extraction (0-indexed)
+
+
+class ExtractionStatusResponse(BaseModel):
+    """Progress of an ongoing extraction."""
+
+    total_pages: int
+    completed_pages: list[int]
+    status: Literal["processing", "complete", "not_found"]
+
+
+class ExtractionStatusRequest(BaseModel):
+    """Request for extraction status check."""
+
+    content_hash: str
+    processor_slug: str
+    pages: list[int]
+
+
+@router.post("/extraction/status", response_model=ExtractionStatusResponse)
+async def get_extraction_status(
+    req: ExtractionStatusRequest,
+    extraction_cache: ExtractionCache,
+    ai_processor: AiProcessorDep,
+    free_processor: FreeProcessorDep,
+) -> ExtractionStatusResponse:
+    """Get progress of an ongoing document extraction by checking cache directly."""
+    processor = ai_processor if req.processor_slug == "gemini" else free_processor
+    if not processor or not processor._extraction_key_prefix:
+        return ExtractionStatusResponse(total_pages=len(req.pages), completed_pages=[], status="not_found")
+
+    completed = []
+    for page_idx in req.pages:
+        cache_key = processor._extraction_cache_key(req.content_hash, page_idx)
+        if await extraction_cache.exists(cache_key):
+            completed.append(page_idx)
+
+    is_complete = len(completed) >= len(req.pages)
+    return ExtractionStatusResponse(
+        total_pages=len(req.pages),
+        completed_pages=completed,
+        status="complete" if is_complete else "processing",
+    )
 
 
 @router.post("/prepare", response_model=DocumentPrepareResponse)
@@ -154,6 +199,7 @@ async def prepare_document(
         )
         return DocumentPrepareResponse(
             hash=url_hash,
+            content_hash=content_hash,
             metadata=cached_doc.metadata,
             endpoint=endpoint,
             uncached_pages=uncached_pages,
@@ -167,7 +213,7 @@ async def prepare_document(
         total_pages=page_count,
         title=title,
         url=str(request.url),
-        file_name=request.url.path,
+        file_name=Path(request.url.path).name or None,
         file_size=len(content),
     )
 
@@ -186,7 +232,9 @@ async def prepare_document(
         if _needs_ocr_processing(content_type)
         else set()
     )
-    return DocumentPrepareResponse(hash=url_hash, metadata=metadata, endpoint=endpoint, uncached_pages=uncached_pages)
+    return DocumentPrepareResponse(
+        hash=url_hash, content_hash=content_hash, metadata=metadata, endpoint=endpoint, uncached_pages=uncached_pages
+    )
 
 
 @router.post("/prepare/upload", response_model=DocumentPrepareResponse)
@@ -217,6 +265,7 @@ async def prepare_document_upload(
         )
         return DocumentPrepareResponse(
             hash=cache_key,
+            content_hash=cache_key,
             metadata=cached_doc.metadata,
             endpoint="document",
             uncached_pages=uncached_pages,
@@ -248,7 +297,7 @@ async def prepare_document_upload(
         else set()
     )
     return DocumentPrepareResponse(
-        hash=cache_key, metadata=metadata, endpoint="document", uncached_pages=uncached_pages
+        hash=cache_key, content_hash=cache_key, metadata=metadata, endpoint="document", uncached_pages=uncached_pages
     )
 
 
@@ -345,7 +394,7 @@ async def create_website_document(
     doc = await _create_document_with_blocks(
         db=db,
         user_id=user.id,
-        title=cached_doc.metadata.title or req.title,
+        title=cached_doc.metadata.title or req.title or cached_doc.metadata.file_name,
         original_text=extracted_text,
         structured_content=structured_content,
         metadata=cached_doc.metadata,
@@ -419,6 +468,13 @@ async def create_document(
         is_admin=is_admin,
     )
 
+    # If all pages failed, return error
+    if not extraction_result.pages:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Document extraction failed. Please try again later.",
+        )
+
     extracted_text: str = "\n\n".join(page.markdown for page in extraction_result.pages.values())
 
     ast = parse_markdown(extracted_text)
@@ -429,7 +485,7 @@ async def create_document(
     doc = await _create_document_with_blocks(
         db=db,
         user_id=user.id,
-        title=cached_doc.metadata.title or req.title,
+        title=cached_doc.metadata.title or req.title or cached_doc.metadata.file_name,
         original_text=extracted_text,
         structured_content=structured_content,
         metadata=cached_doc.metadata,
@@ -438,7 +494,7 @@ async def create_document(
         is_public=prefs.default_documents_public if prefs else False,
         content_hash=content_hash,
     )
-    return DocumentCreateResponse(id=doc.id, title=doc.title)
+    return DocumentCreateResponse(id=doc.id, title=doc.title, failed_pages=extraction_result.failed_pages)
 
 
 class DocumentListItem(BaseModel):

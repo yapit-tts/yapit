@@ -24,15 +24,23 @@ interface DocumentMetadata {
 
 interface PrepareResponse {
   hash: string;
+  content_hash: string;
   metadata: DocumentMetadata;
   endpoint: "text" | "website" | "document";
   credit_cost: string;
   uncached_pages: number[];
 }
 
+interface ExtractionStatusResponse {
+  total_pages: number;
+  completed_pages: number[];
+  status: "processing" | "complete" | "not_found";
+}
+
 interface DocumentCreateResponse {
   id: string;
   title: string | null;
+  failed_pages: number[];  // 0-indexed pages that failed extraction
 }
 
 type InputMode = "idle" | "text" | "url" | "file";
@@ -65,9 +73,11 @@ export function UnifiedInput() {
     return stored !== null ? stored === "true" : true;
   });
   const [usageLimitExceeded, setUsageLimitExceeded] = useState(false);
+  const [completedPages, setCompletedPages] = useState<number[]>([]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragCounterRef = useRef(0);
+  const abortControllerRef = useRef<AbortController | null>(null);
   const navigate = useNavigate();
   const { api } = useApi();
 
@@ -75,9 +85,11 @@ export function UnifiedInput() {
 
   const isUrl = useCallback((text: string) => URL_REGEX.test(text.trim()), []);
 
-  // Detect input type and update mode (skip if in file mode - file uploads manage their own state)
+  // Detect input type and update mode
   useEffect(() => {
-    if (mode === "file") return;
+    // Don't change mode while processing or loading
+    if (isCreating) return;
+    if (urlState === "loading" || urlState === "ready") return;
 
     const trimmed = value.trim();
     if (!trimmed) {
@@ -87,6 +99,9 @@ export function UnifiedInput() {
       return;
     }
 
+    // If in file mode, only reset if value is completely cleared (handled above)
+    if (mode === "file") return;
+
     if (isUrl(trimmed)) {
       setMode("url");
       setUrlState("detecting");
@@ -95,7 +110,7 @@ export function UnifiedInput() {
       setPrepareData(null);
       setError(null);
     }
-  }, [value, isUrl, mode]);
+  }, [value, isUrl, mode, isCreating, urlState]);
 
   // Fetch metadata when URL is detected (debounced)
   useEffect(() => {
@@ -141,27 +156,74 @@ export function UnifiedInput() {
 
   const createDocument = async (data: PrepareResponse, pages: number[] | null = null) => {
     setIsCreating(true);
+    setCompletedPages([]);
+
+    // Create abort controller for this request
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+
+    const endpoint = data.endpoint === "website"
+      ? "/v1/documents/website"
+      : "/v1/documents/document";
+
+    const isImage = data.metadata.content_type?.startsWith("image/") ?? false;
+    const useAiTransform = isImage || aiTransformEnabled;
+    const body = data.endpoint === "website"
+      ? { hash: data.hash }
+      : {
+          hash: data.hash,
+          pages: pages,
+          ai_transform: useAiTransform,
+        };
+
+    // Start polling for progress (only for documents with AI transform)
+    let pollInterval: ReturnType<typeof setInterval> | null = null;
+    if (data.endpoint === "document" && useAiTransform) {
+      const requestedPages = pages ?? Array.from({ length: data.metadata.total_pages }, (_, i) => i);
+      const processorSlug = useAiTransform ? "gemini" : "markitdown";
+
+      pollInterval = setInterval(async () => {
+        try {
+          const statusResponse = await api.post<ExtractionStatusResponse>("/v1/documents/extraction/status", {
+            content_hash: data.content_hash,
+            processor_slug: processorSlug,
+            pages: requestedPages,
+          });
+          setCompletedPages(statusResponse.data.completed_pages);
+        } catch (err) {
+          // Log but don't fail — polling is just for UI feedback, main POST handles real errors
+          console.warn("Extraction status poll failed (non-critical):", err);
+        }
+      }, 1500);
+    }
+
     try {
-      const endpoint = data.endpoint === "website"
-        ? "/v1/documents/website"
-        : "/v1/documents/document";
+      const response = await api.post<DocumentCreateResponse>(endpoint, body, {
+        signal: abortController.signal,
+      });
 
-      const isImage = data.metadata.content_type?.startsWith("image/") ?? false;
-      const body = data.endpoint === "website"
-        ? { hash: data.hash }
-        : {
-            hash: data.hash,
-            pages: pages,
-            ai_transform: isImage || aiTransformEnabled,
-          };
+      if (pollInterval) clearInterval(pollInterval);
+      abortControllerRef.current = null;
 
-      const response = await api.post<DocumentCreateResponse>(endpoint, body);
-
+      // Pass failed pages info to the listen page if any
+      const failedPages = response.data.failed_pages ?? [];
       navigate(`/listen/${response.data.id}`, {
-        state: { documentTitle: response.data.title }
+        state: {
+          documentTitle: response.data.title,
+          failedPages: failedPages.length > 0 ? failedPages : undefined,
+        }
       });
     } catch (err) {
+      if (pollInterval) clearInterval(pollInterval);
+      abortControllerRef.current = null;
       setIsCreating(false);
+      setCompletedPages([]);
+
+      // Don't show error if user cancelled
+      if (err instanceof AxiosError && err.code === "ERR_CANCELED") {
+        return;
+      }
+
       if (err instanceof AxiosError && err.response?.status === 402) {
         setAiTransformEnabled(false);
         setUsageLimitExceeded(true);
@@ -171,6 +233,13 @@ export function UnifiedInput() {
       }
     }
   };
+
+  const cancelExtraction = useCallback(() => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+  }, []);
 
   const handleTextSubmit = async () => {
     if (!value.trim()) return;
@@ -387,7 +456,9 @@ export function UnifiedInput() {
           aiTransformEnabled={aiTransformEnabled}
           onAiTransformToggle={handleAiTransformToggle}
           onConfirm={(pages) => createDocument(prepareData, pages)}
+          onCancel={cancelExtraction}
           isLoading={isCreating}
+          completedPages={completedPages}
         />
       )}
 

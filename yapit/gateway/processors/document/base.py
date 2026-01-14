@@ -23,6 +23,7 @@ class DocumentExtractionResult(BaseModel):
 
     pages: dict[int, ExtractedPage]
     extraction_method: str
+    failed_pages: list[int] = []  # Pages that failed after all retries
 
 
 class CachedDocument(BaseModel):
@@ -84,9 +85,10 @@ class BaseDocumentProcessor:
         content: bytes,
         content_type: str,
         content_hash: str,
+        extraction_cache: Cache,
         pages: list[int] | None = None,
     ) -> DocumentExtractionResult:
-        """Extract text from document."""
+        """Extract text from document, caching pages as they complete."""
 
     @property
     def supported_mime_types(self) -> set[str]:
@@ -171,35 +173,30 @@ class BaseDocumentProcessor:
                 billing_enabled=self._settings.billing_enabled,
             )
 
-        # Process missing pages
+        # Record usage BEFORE extraction to prevent cancel-exploit
+        if self.is_paid:
+            await record_usage(
+                user_id=user_id,
+                usage_type=UsageType.ocr,
+                amount=len(uncached_pages),
+                db=db,
+                reference_id=content_hash,
+                description=f"Document processing: {len(uncached_pages)} pages with {self._slug}",
+                details={
+                    "processor": self._slug,
+                    "pages_requested": len(uncached_pages),
+                    "page_numbers": sorted(uncached_pages),
+                },
+            )
+
+        # Process missing pages (processor caches each page as it completes)
         result = await self._extract(
             content=content,
             content_type=content_type,
             content_hash=content_hash,
+            extraction_cache=extraction_cache,
             pages=list(uncached_pages),
         )
-
-        # Store new pages in extraction cache
-        if self._extraction_key_prefix:
-            for page_idx, page in result.pages.items():
-                cache_key = self._extraction_cache_key(content_hash, page_idx)
-                await extraction_cache.store(cache_key, page.model_dump_json().encode())
-
-        # Record usage for processed pages (only for paid processors)
-        if self.is_paid and result.pages:
-            await record_usage(
-                user_id=user_id,
-                usage_type=UsageType.ocr,
-                amount=len(result.pages),
-                db=db,
-                reference_id=content_hash,
-                description=f"Document processing: {len(result.pages)} pages with {self._slug}",
-                details={
-                    "processor": self._slug,
-                    "pages_processed": len(result.pages),
-                    "page_numbers": list(result.pages.keys()),
-                },
-            )
 
         all_pages = {**cached_pages, **result.pages}
         return DocumentExtractionResult(pages=all_pages, extraction_method=self._slug)
