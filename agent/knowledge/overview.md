@@ -7,6 +7,7 @@ Yapit is an open-source TTS platform for reading documents and web pages.
 - [[tts-flow]] — How audio synthesis works
 - [[document-processing]] — How content becomes blocks
 - [[frontend]] — Big picture overview of the frontend, and instructions for chrome devtools MCP, workflows, etc.
+- [[features]] — User-facing capabilities (sharing, JS rendering, etc.)
 
 ## Operations
 
@@ -16,8 +17,8 @@ Yapit is an open-source TTS platform for reading documents and web pages.
 - [[env-config]] — Everything about our env variable management
 - [[dev-setup]] — Running and testing the project locally and other important info for development
 - [[dependency-updates]] — Check when updating/adding dependencies (version-specific gotchas + license checks)
-- [[metrics]] — TBD
-- [[logging]] — TBD
+- [[metrics]] — TimescaleDB metrics pipeline
+- [[logging]] — Loguru JSON logging
 
 ## Auth
 

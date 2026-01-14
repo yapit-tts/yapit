@@ -1,6 +1,7 @@
 ---
-status: active
+status: done
 started: 2026-01-13
+completed: 2026-01-13
 ---
 
 # Task: Robust URL Fetching (Playwright + Error Handling)

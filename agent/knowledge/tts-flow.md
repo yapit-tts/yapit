@@ -123,3 +123,4 @@ Current models: kokoro, higgs, inworld, inworld-max.
 - **Variant sharing:** Two users requesting same text+model+voice share the cached audio. Good for efficiency, but means cache eviction affects everyone.
 - **Empty audio:** Some blocks produce empty audio (whitespace-only). Marked as "skipped", frontend auto-advances.
 - **Usage multiplier:** Different models have different character costs. `TTSModel.usage_multiplier` in database.
+- **Voice change race condition:** WebSocket status messages include `model_slug` and `voice_slug` to prevent stale cache hits when user changes voice mid-playback. Without this, status messages from old voice arriving after reset would incorrectly mark blocks as cached. See `WSBlockStatus` in `contracts.py`.

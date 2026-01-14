@@ -9,7 +9,7 @@ Three ways content enters the system:
 | Endpoint | Input | Processing |
 |----------|-------|------------|
 | `POST /v1/documents/text` | Direct text/markdown | Parse directly |
-| `POST /v1/documents/website` | URL | Download → MarkItDown → Parse |
+| `POST /v1/documents/website` | URL | Download → (Playwright) → MarkItDown → Parse |
 | `POST /v1/documents/document` | File upload | OCR/extraction → Parse |
 
 For URLs and files, there's a **prepare → create** pattern:
@@ -17,6 +17,17 @@ For URLs and files, there's a **prepare → create** pattern:
 2. `POST /<endpoint>` — Uses hash to retrieve cached content, creates document
 
 This allows showing page count, title, OCR cost estimate before committing.
+
+## URL Fetching & JS Rendering
+
+For URL inputs, the system first downloads HTML via httpx. If the page appears to be JS-rendered (detected via content sniffing for React/Vue/marked.js patterns, or size heuristic when large HTML yields tiny markdown), Playwright renders it in a headless browser first.
+
+`yapit/gateway/processors/document/playwright_renderer.py`
+
+- Lazy-loaded on first use to avoid import cost for static pages
+- Browser pooling: single Chromium instance, new page per request
+- Semaphore at 100 concurrent renders (defense in depth)
+- Falls back gracefully if rendering fails
 
 ## Markdown Parsing
 
@@ -131,5 +142,4 @@ The `StructuredDocumentView` component:
 | `gateway/processors/markdown/transformer.py` | AST → StructuredDocument |
 | `gateway/processors/markdown/models.py` | Block type definitions |
 | `frontend/src/components/structuredDocument.tsx` | Render structured content |
-
-For PDF/image extraction: [[document-extraction]].
+| `gateway/processors/document/` | PDF/image extraction (Gemini, MarkItDown) |
