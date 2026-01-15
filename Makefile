@@ -23,7 +23,7 @@ dev-ci: down
 	up -d --build --wait --wait-timeout 300
 
 down:
-	docker compose --env-file .env --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml down -v --remove-orphans
+	docker compose --env-file .env --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml --profile stripe down -v --remove-orphans
 
 dev-user:
 	$(call create-dev-user)
