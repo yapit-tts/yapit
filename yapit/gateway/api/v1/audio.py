@@ -59,7 +59,6 @@ async def get_audio(
     return Response(
         content=audio_data,
         media_type=content_type,
-        headers={"X-Duration-Ms": str(variant.duration_ms or 0)},
     )
 
 

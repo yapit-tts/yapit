@@ -551,12 +551,12 @@ const PlaybackPage = () => {
 
     try {
       const response = await api.get(audioUrl, { responseType: "arraybuffer" });
-      const durationMs = parseInt(response.headers["x-duration-ms"] || "0", 10);
 
       // decodeAudioData handles WAV, MP3, and other browser-supported formats
       const audioBuffer = await audioContextRef.current.decodeAudioData(response.data.slice(0));
 
-      const actualDurationMs = durationMs || Math.round(audioBuffer.duration * 1000);
+      // Always use decoded buffer duration - accurate regardless of audio format
+      const actualDurationMs = Math.round(audioBuffer.duration * 1000);
       const audioBufferData: AudioBufferData = {
         buffer: audioBuffer,
         duration_ms: actualDurationMs,
