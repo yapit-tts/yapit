@@ -298,7 +298,7 @@ Alembic's `include_object` filter ignores Stack Auth tables (shared database). O
 While there are no real users, you can wipe yapit tables without touching Stack Auth:
 
 ```bash
-ssh root@78.46.242.1
+ssh root@46.224.195.97
 docker exec <postgres-container> psql -U yapit -d yapit -c "
 DROP TABLE IF EXISTS blockvariants, blocks, documents, plans, usersubscriptions, usageperiods, ttsmodels, voices, alembic_version CASCADE;
 "
@@ -365,4 +365,8 @@ make test-local
 - **Inconsistent API call patterns** - Some components check `isAuthReady`, some don't need to. Pattern could be standardized with a wrapper hook that handles waiting internally.
 - **Dropdown+dialog state coordination** - The pattern of closing dropdown before opening dialog (sidebar rename) is easy to forget and caused a freeze bug. Consider a utility or clearer pattern.
 - **No global document state** - Sidebar fetches documents independently. Fine for now, but if multiple components need document list, would need refetch or context.
+
+## Quick todo list 
+
+- can we parse footnotes from text from html/markdown? example from here: https://whatisintelligence.antikythera.org/chapter-01/#
 

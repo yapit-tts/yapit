@@ -9,3 +9,13 @@ repos:
       # format
       - id: ruff-format
         types_or: [ python ]
+
+  - repo: local
+    hooks:
+      - id: frontend-build
+        name: frontend build
+        entry: bash -c 'cd frontend && npm run build'
+        language: system
+        files: ^frontend/
+        types_or: [ts, tsx]
+        pass_filenames: false

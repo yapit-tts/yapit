@@ -32,8 +32,8 @@ class ModelRead(BaseModel):
 async def list_models(
     db: DbSession,
 ) -> List[ModelRead]:
-    """Get all available TTS models with their voices."""
-    models = (await db.exec(select(TTSModel))).all()
+    """Get all available TTS models with their voices (only active ones)."""
+    models = (await db.exec(select(TTSModel).where(TTSModel.is_active.is_(True)))).all()
     return [
         ModelRead(
             id=model.id,
@@ -49,6 +49,7 @@ async def list_models(
                     description=voice.description,
                 )
                 for voice in model.voices
+                if voice.is_active
             ],
         )
         for model in models
@@ -59,7 +60,7 @@ async def list_models(
 async def read_model(
     model: CurrentTTSModel,
 ) -> ModelRead:
-    """Get a specific TTS model by slug."""
+    """Get a specific TTS model by slug (active voices only)."""
     return ModelRead(
         id=model.id,
         slug=model.slug,
@@ -74,6 +75,7 @@ async def read_model(
                 description=voice.description,
             )
             for voice in model.voices
+            if voice.is_active
         ],
     )
 
@@ -83,7 +85,7 @@ async def list_voices(
     model_slug: str,
     db: DbSession,
 ) -> List[VoiceRead]:
-    """Get all voices available for a specific model."""
+    """Get all active voices available for a specific model."""
     model = await get_by_slug_or_404(db, TTSModel, model_slug)
 
     return [
@@ -95,4 +97,5 @@ async def list_voices(
             description=voice.description,
         )
         for voice in model.voices
+        if voice.is_active
     ]

@@ -7,78 +7,88 @@ started: 2026-01-03
 
 ## Problem
 
-Sentences were being split mid-phrase unnaturally:
+Sentences split mid-phrase unnaturally, hurting TTS quality:
 ```
 "...we notice a steady rise in the amount of computation [SPLIT] taking place."
 ```
 
-## What Was Done
+Also: lists weren't split at all, creating huge 500+ char audio blocks.
 
-### 1. Improved Splitting Algorithm (`transformer.py`)
+## Branch Status
 
-**Three configurable parameters:**
-- `max_block_chars` - target max block size (default 150)
-- `soft_limit_mult` - how much overage allowed to keep sentences whole (default 1.2)
-- `min_chunk_size` - minimum chunk size to avoid tiny orphans (default 30)
+**Branch:** `feat/block-splitting-improvements`
 
-**Algorithm:**
-1. Split at sentence boundaries (`.!?`) first
-2. If sentence ≤ `max × soft_mult`, keep it whole
-3. If sentence exceeds soft limit, split at pause points: `,` `—` `:` `;`
-4. Pause regex includes optional closing quotes: `[,—:;]["')\]\u201c\u201d\u2018\u2019]?`
-5. `min_chunk_size` prevents tiny orphan chunks by preferring pause points that leave enough remaining
-6. Fallback: word boundary split if no good pause point
+**Implemented:**
+- Smarter splitting algorithm with three params: `max_block_chars`, `soft_limit_mult`, `min_chunk_size`
+- Split priority: sentence boundaries → clause separators (`,—:;`) → word boundaries
+- List items now get individual `audio_block_idx` (container has none)
+- Interactive visualization tool: `scripts/block_viz_server.py`
 
-### 2. List Items Now Separate Audio Blocks
+**Remaining:**
+- [x] Fix math handling bug (inline math lost during splitting)
+- [ ] Parameter tuning via systematic analysis
+- [ ] Add env vars to Settings class
+- [ ] Wire params to `transform_to_document` calls
+- [ ] Validate with real TTS playback
 
-- Each list item gets its own `audio_block_idx`
-- `ListBlock` is now a container (like `BlockquoteBlock`)
-- Prevents 500+ char lists from being single audio blocks
+## Bug: Inline Math Lost During Splitting
 
-### 3. Interactive Visualization Tool
+**Discovered:** 2026-01-15
 
-`scripts/block_viz_server.py` - FastAPI server with sliders for all parameters, real-time updates.
+When paragraphs with inline math (`$...$`) get split, the math disappears from HTML output.
 
-```bash
-python scripts/block_viz_server.py whatisintelligencechap1.md
+**Root cause:** `InlineContent` AST doesn't model `math_inline`:
+1. `_transform_inline_node` doesn't handle `math_inline` → becomes `TextContent`
+2. `_slice_inline_node` doesn't recognize math → returns `[]` (dropped)
+3. `_render_inline_content_html` has no math case → can't render
+
+**Fix:**
+- Add `MathInlineContent` to `InlineContent` union in `models.py`
+- Handle `math_inline` in `_transform_inline_node` → create `MathInlineContent`
+- Handle in `_get_inline_length` → return 0 (math doesn't count toward block size)
+- Handle in `_slice_inline_node` → atomic (include fully or skip)
+- Handle in `_render_inline_content_html` → `<span class="math-inline">...</span>`
+
+## Parameter Analysis Plan
+
+### Parameter Space (64 combinations)
+```
+max_block_chars: [150, 200, 250, 300]
+soft_limit_mult: [1.0, 1.3, 1.7, 2.0]
+min_chunk_size:  [20, 40, 60, 80]
 ```
 
-## Findings from Testing
+### Constraints
+- **Latency safe zone:** median ~200-250 chars, absolute max <350
+- Prefetch algorithm: 4 blocks before playback starts
+- Start higher (better splitting), easy to shrink if latency issues
 
-Best results with `whatisintelligencechap1.md` (156K chars):
-- `max_block_chars=200`, `soft_limit_mult=1.5`, `min_chunk_size=80`
-- Most sentences stay coherent, avg block size ~126 chars
-- Even with 300 char soft limit, most blocks stay 150-160 chars (natural sentence lengths)
-- Reduces block count by ~200 blocks compared to max=150 (1130 → 915)
-- Potential latency benefit from fewer blocks (less hop overhead) - needs validation
+### Evaluation Approach
+1. Run all parameter combinations on test corpus
+2. Collect stats: block count, median, p95, max, size distribution
+3. **Qualitative analysis**: Read actual splits, judge if they'd sound natural spoken aloud
+4. Identify which combinations produce "reasonable" splitting across all text types
 
-## Still TODO
+### Test Corpus
+`scripts/block-splitter-test-corpus.md` — ~5 pages of varied content:
+1. Dense academic prose (long sentences, multiple clauses)
+2. Conversational web article (shorter, casual)
+3. Technical documentation (lists, code refs)
+4. Mixed list content (long list items)
+5. Narrative with dialogue (quotes, pauses)
+6. Dense technical explanation
+7. Parenthetical/quote heavy
 
-### Before Merging
-- [ ] Add settings to config (`MAX_BLOCK_CHARS`, `SOFT_LIMIT_MULT`, `MIN_CHUNK_SIZE`)
-- [ ] Test with actual TTS playback to validate quality improvement
-- [ ] Commit to feature branch
+## Key Questions
 
-### Follow-up (depends on [[monitoring-observability-logging]])
-- [ ] Measure latency impact of larger blocks (150 vs 200 vs 250)
-- [ ] Validate no buffering issues with WebGPU
-- [ ] Data-driven tuning of parameters
-
-### Edge Cases (low priority)
-- [ ] Very long headings (malformed docs) - currently not split
-- [ ] Very long list items - currently not split within item
+1. At what `max_block_chars` do we catch "almost all" cases with reasonable splits?
+2. How do `soft_limit_mult` and `min_chunk_size` interact with max size?
+3. What's the actual max block size produced for each config?
+4. Which configs keep median ~200 while avoiding forced word-boundary splits?
 
 ## Sources
 
-- `yapit/gateway/processors/markdown/transformer.py` - main splitting logic
-- `yapit/gateway/processors/markdown/models.py` - ListItem now has audio_block_idx
-- `scripts/block_viz_server.py` - interactive visualization
-- `whatisintelligencechap1.md` - test document (156K chars)
-
-## Handoff
-
-Algorithm is implemented and working. Next agent should:
-1. Add the three params to Settings class (with defaults from `.env`)
-2. Wire them through to where `transform_to_document` is called
-3. Test with real TTS playback
-4. Consider doing monitoring task first to get baseline metrics
+- `yapit/gateway/processors/markdown/transformer.py` — splitting logic
+- `yapit/gateway/processors/markdown/models.py` — block/inline content models
+- `scripts/block_viz_server.py` — interactive visualization
+- [[document-processing]] — how blocks flow through the system

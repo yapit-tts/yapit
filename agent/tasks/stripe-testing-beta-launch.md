@@ -1,5 +1,5 @@
 ---
-status: active
+status: done
 type: testing-session
 started: 2026-01-02
 ---

@@ -1,6 +1,7 @@
 ---
-status: active
+status: done
 started: 2026-01-03
+completed: 2026-01-07
 ---
 
 # Task: Link Click Behavior Fixes

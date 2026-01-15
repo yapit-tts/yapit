@@ -32,9 +32,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
-import { ChevronUp, FileText, Plus, Loader2, MoreHorizontal, User2, LogOut, LogIn, Trash2, Pencil, CreditCard } from "lucide-react";
+import { ChevronUp, FileText, Plus, Loader2, MoreHorizontal, User2, LogOut, LogIn, Trash2, Pencil, CreditCard, Lightbulb, Settings, Info, Link2, Check } from "lucide-react";
 import { useApi } from "@/api";
 import { useUser } from "@stackframe/react";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 const CHARS_PER_HOUR = 61200;
 
@@ -42,6 +43,7 @@ interface DocumentItem {
   id: string;
   title: string | null;
   created: string;
+  is_public: boolean;
 }
 
 interface SubscriptionSummary {
@@ -58,11 +60,13 @@ function DocumentSidebar() {
   const [newTitle, setNewTitle] = useState("");
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [subscription, setSubscription] = useState<SubscriptionSummary | null>(null);
+  const [justSharedId, setJustSharedId] = useState<string | null>(null);
   const { api, isAuthReady, isAnonymous } = useApi();
   const navigate = useNavigate();
   const { documentId } = useParams();
   const location = useLocation();
   const user = useUser();
+  const isMobile = useIsMobile();
 
   useEffect(() => {
     if (!isAuthReady) return;
@@ -92,11 +96,15 @@ function DocumentSidebar() {
     fetchSubscription();
   }, [api, isAuthReady, isAnonymous, user, location.pathname]);
 
-  const handleDocumentClick = (doc: DocumentItem) => {
-    navigate(`/playback/${doc.id}`, {
-      state: { documentTitle: doc.title },
-    });
-  };
+  // Listen for title changes from PlaybackPage
+  useEffect(() => {
+    const handleTitleChanged = (e: Event) => {
+      const { documentId: docId, title } = (e as CustomEvent).detail;
+      setDocuments(prev => prev.map(d => d.id === docId ? { ...d, title } : d));
+    };
+    window.addEventListener('document-title-changed', handleTitleChanged);
+    return () => window.removeEventListener('document-title-changed', handleTitleChanged);
+  }, []);
 
   const handleDeleteDocument = async (e: React.MouseEvent, docId: string) => {
     e.stopPropagation();
@@ -128,6 +136,26 @@ function DocumentSidebar() {
       setRenameDoc(null);
     } catch (error) {
       console.error("Failed to rename document:", error);
+      alert("Failed to rename document");
+    }
+  };
+
+  const handleShareToggle = async (e: React.MouseEvent, doc: DocumentItem) => {
+    e.stopPropagation();
+    const newIsPublic = !doc.is_public;
+    try {
+      await api.patch(`/v1/documents/${doc.id}`, { is_public: newIsPublic });
+      setDocuments(prev =>
+        prev.map(d => (d.id === doc.id ? { ...d, is_public: newIsPublic } : d))
+      );
+      if (newIsPublic) {
+        const url = `${window.location.origin}/listen/${doc.id}`;
+        await navigator.clipboard.writeText(url);
+        setJustSharedId(doc.id);
+        setTimeout(() => setJustSharedId(null), 2000);
+      }
+    } catch (error) {
+      console.error("Failed to update sharing:", error);
     }
   };
 
@@ -181,14 +209,16 @@ function DocumentSidebar() {
                 documents.map((doc) => (
                   <SidebarMenuItem key={doc.id}>
                     <SidebarMenuButton
-                      onClick={() => handleDocumentClick(doc)}
+                      asChild
                       isActive={documentId === doc.id}
                       size="lg"
                     >
-                      <FileText className="shrink-0" />
-                      <span className="truncate" title={doc.title || "Untitled"}>
-                        {doc.title || "Untitled"}
-                      </span>
+                      <Link to={`/listen/${doc.id}`} state={{ documentTitle: doc.title }}>
+                        <FileText className="shrink-0" />
+                        <span className="truncate" title={doc.title || "Untitled"}>
+                          {doc.title || "Untitled"}
+                        </span>
+                      </Link>
                     </SidebarMenuButton>
                     <DropdownMenu
                       open={openMenuId === doc.id}
@@ -204,6 +234,24 @@ function DocumentSidebar() {
                         <DropdownMenuItem onClick={(e) => openRenameDialog(e, doc)}>
                           <Pencil className="mr-2 h-4 w-4" />
                           Rename
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={(e) => handleShareToggle(e, doc)}
+                          onSelect={(e) => e.preventDefault()}
+                        >
+                          {doc.is_public ? (
+                            <>
+                              <Check className="mr-2 h-4 w-4 text-primary" />
+                              <span className="text-primary">
+                                {justSharedId === doc.id ? "Link copied!" : "Shared"}
+                              </span>
+                            </>
+                          ) : (
+                            <>
+                              <Link2 className="mr-2 h-4 w-4" />
+                              Share...
+                            </>
+                          )}
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
                         <DropdownMenuItem
@@ -229,26 +277,33 @@ function DocumentSidebar() {
           <SidebarMenuItem>
             <Tooltip>
               <TooltipTrigger asChild>
-                <SidebarMenuButton onClick={() => navigate("/subscription")} size="lg" className="h-auto py-3">
-                  <div className="flex flex-col w-full gap-1">
-                    <div className="flex items-center gap-2">
-                      <CreditCard className="h-4 w-4 text-primary shrink-0" />
-                      <span className="truncate font-medium">
-                        {subscription?.plan.name ?? "Free"} Plan
-                      </span>
-                    </div>
-                    {subscription?.subscription && subscription.limits.premium_voice_characters !== null && subscription.limits.premium_voice_characters > 0 && (
-                      <div className="w-full pl-6">
-                        <Progress
-                          value={Math.min(100, (subscription.usage.premium_voice_characters / subscription.limits.premium_voice_characters) * 100)}
-                          className="h-1.5"
-                        />
+                <SidebarMenuButton asChild size="lg" className="h-auto py-3">
+                  <Link to="/subscription">
+                    <div className="flex flex-col w-full gap-1">
+                      <div className="flex items-center gap-2">
+                        <CreditCard className="h-4 w-4 text-primary shrink-0" />
+                        <span className="truncate font-medium">
+                          {subscription?.plan.name ?? "Free"} Plan
+                        </span>
                       </div>
-                    )}
-                  </div>
+                      {subscription?.subscription && subscription.limits.premium_voice_characters !== null && subscription.limits.premium_voice_characters > 0 && (() => {
+                        const usagePct = (subscription.usage.premium_voice_characters / subscription.limits.premium_voice_characters) * 100;
+                        const isNearLimit = usagePct >= 95;
+                        return (
+                          <div className="w-full pl-6">
+                            <Progress
+                              value={Math.min(100, usagePct)}
+                              className="h-1.5"
+                              indicatorClassName={isNearLimit ? "bg-[oklch(0.7_0.12_70)]" : undefined}
+                            />
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  </Link>
                 </SidebarMenuButton>
               </TooltipTrigger>
-              <TooltipContent side="right">
+              <TooltipContent side="right" hidden={isMobile}>
                 {subscription?.subscription ? (
                   <div className="space-y-1">
                     {subscription.limits.premium_voice_characters !== null && subscription.limits.premium_voice_characters > 0 && (
@@ -263,6 +318,16 @@ function DocumentSidebar() {
                 )}
               </TooltipContent>
             </Tooltip>
+          </SidebarMenuItem>
+
+          {/* Tips button */}
+          <SidebarMenuItem>
+            <SidebarMenuButton asChild size="lg">
+              <Link to="/tips">
+                <Lightbulb className="h-4 w-4 text-muted-foreground" />
+                <span>Tips</span>
+              </Link>
+            </SidebarMenuButton>
           </SidebarMenuItem>
 
           {/* User button */}
@@ -281,6 +346,17 @@ function DocumentSidebar() {
                 side="top"
                 className="min-w-[var(--radix-popper-anchor-width)]"
               >
+                {user && (
+                  <DropdownMenuItem onClick={() => navigate("/account")}>
+                    <Settings className="mr-2 h-4 w-4" />
+                    Account
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenuItem onClick={() => navigate("/about")}>
+                  <Info className="mr-2 h-4 w-4" />
+                  About
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
                 <DropdownMenuItem
                   onClick={handleAuth}
                   className={user ? "hover:bg-muted-warm focus:bg-muted-warm" : ""}
@@ -312,6 +388,7 @@ function DocumentSidebar() {
             value={newTitle}
             onChange={(e) => setNewTitle(e.target.value)}
             placeholder="Document title"
+            maxLength={500}
             onKeyDown={(e) => e.key === "Enter" && handleRenameDocument()}
           />
           <DialogFooter>

@@ -5,7 +5,7 @@ type: implementation
 
 # Task: Subscription Backend Refactor
 
-**Knowledge extracted:** [[secrets-management]] (TEST/LIVE pattern), [[stripe-integration]] (Stripe patterns, Managed Payments, webhooks), [[architecture]] (updated billing models)
+**Knowledge extracted:** [[env-config]] (TEST/LIVE pattern), [[stripe-integration]] (Stripe patterns, Managed Payments, webhooks), [[architecture]] (updated billing models)
 
 ## Goal
 
@@ -903,7 +903,7 @@ Created `scripts/stripe_setup.py`:
 **Stripe test environment configured:**
 - Ran `scripts/stripe_setup.py --test` — created products/prices
 - Updated `dev_seed.py` with test price IDs
-- Production webhook configured at `https://yapit.md/v1/billing/webhook` (6 events)
+- Production webhook configured at `https://api.yapit.md/v1/billing/webhook` (6 events)
 - Webhook secret saved to `.env.sops`
 
 **All tests passing.**
@@ -1050,6 +1050,6 @@ period_start = first_item.current_period_start
 ### 2025-12-31 - Archived
 
 Knowledge extracted for future agents:
-- Updated [[secrets-management]] with TEST/LIVE key pattern and `make dev-env` transformation
+- Updated [[env-config]] with TEST/LIVE key pattern and `make dev-env` transformation
 - Created [[stripe-integration]] (in private/) with Managed Payments patterns, webhook handling, IaC strategy
 - Updated [[architecture]] with new billing models, removed credit references

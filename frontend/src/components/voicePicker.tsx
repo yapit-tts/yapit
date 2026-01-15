@@ -1,5 +1,5 @@
-import { useState, useEffect } from "react";
-import { ChevronDown, Star, ChevronRight, Monitor, Cloud, Loader2, Info } from "lucide-react";
+import { useState, useEffect, useMemo, memo, startTransition } from "react";
+import { ChevronDown, Star, ChevronRight, Monitor, Cloud, Loader2, Info, Lock } from "lucide-react";
 
 // HIGGS backend is flaky and more expensive than Inworld - hide for now
 const SHOW_HIGGS_TAB = false;
@@ -23,10 +23,10 @@ import {
   groupInworldVoicesByLanguage,
   isHighQualityVoice,
   setVoiceSelection,
-  getPinnedVoices,
-  togglePinnedVoice,
 } from "@/lib/voiceSelection";
 import { useInworldVoices } from "@/hooks/useInworldVoices";
+import { useSubscription } from "@/hooks/useSubscription";
+import { useUserPreferences } from "@/hooks/useUserPreferences";
 
 interface VoicePickerProps {
   value: VoiceSelection;
@@ -35,7 +35,6 @@ interface VoicePickerProps {
 
 export function VoicePicker({ value, onChange }: VoicePickerProps) {
   const [open, setOpen] = useState(false);
-  const [pinnedVoices, setPinnedVoices] = useState<string[]>([]);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   // Track which language sections are expanded (user manages, we just remember)
   const [expandedKokoroLangs, setExpandedKokoroLangs] = useState<Set<KokoroLanguageCode>>(new Set(["a"]));
@@ -44,9 +43,21 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
   // Fetch Inworld voices from API
   const { voices: inworldVoices, isLoading: inworldLoading } = useInworldVoices();
 
+  // Subscription state for gating Cloud/Inworld features
+  const { canUseCloudKokoro, canUseInworld, isLoading: subLoading } = useSubscription();
+
+  // Use synced preferences (cross-device sync for authenticated users)
+  const { pinnedVoices, togglePinnedVoice } = useUserPreferences();
+
+  // Default subscribers to Cloud on first load
   useEffect(() => {
-    setPinnedVoices(getPinnedVoices());
-  }, []);
+    if (subLoading) return;
+    if (canUseCloudKokoro && value.model === "kokoro") {
+      const newSelection: VoiceSelection = { ...value, model: "kokoro-server" };
+      onChange(newSelection);
+      setVoiceSelection(newSelection);
+    }
+  }, [canUseCloudKokoro, subLoading]); // Only run when subscription state resolves
 
   const toggleKokoroLangExpanded = (lang: KokoroLanguageCode) => {
     setExpandedKokoroLangs(prev => {
@@ -70,11 +81,6 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
       }
       return next;
     });
-  };
-
-  const handlePinToggle = (slug: string) => {
-    const newPinned = togglePinnedVoice(slug);
-    setPinnedVoices(newPinned);
   };
 
   // Track model type for tab logic
@@ -132,11 +138,26 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
 
   const handleKokoroSourceToggle = () => {
     const newModel: ModelType = isKokoroServer ? "kokoro" : "kokoro-server";
+
+    // When switching to Local, auto-switch to English voice if current voice isn't English
+    let voiceSlug = value.voiceSlug;
+    if (newModel === "kokoro") {
+      const currentVoice = KOKORO_VOICES.find(v => v.index === value.voiceSlug);
+      const isEnglish = currentVoice && (currentVoice.language === "a" || currentVoice.language === "b");
+      if (!isEnglish) {
+        voiceSlug = "af_heart";
+      }
+    }
+
     const newSelection: VoiceSelection = {
       ...value,
       model: newModel,
+      voiceSlug,
     };
-    onChange(newSelection);
+    // Mark as non-urgent transition so UI stays responsive during cache clearing
+    startTransition(() => {
+      onChange(newSelection);
+    });
     setVoiceSelection(newSelection);
   };
 
@@ -174,20 +195,28 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
 
   let modelLabel: string;
   if (isKokoroModel) {
-    modelLabel = `Kokoro${isKokoroServer ? " (Cloud)" : ""}`;
+    modelLabel = `Kokoro${isKokoroServer ? "" : " (Local)"}`;
   } else if (isInworldModel) {
     modelLabel = isInworldMax ? "Inworld Max" : "Inworld";
   } else {
     modelLabel = "HIGGS";
   }
 
-  const kokoroVoiceGroups = groupKokoroVoicesByLanguage(KOKORO_VOICES);
-  const inworldVoiceGroups = groupInworldVoicesByLanguage(inworldVoices);
+  // Local mode only supports English (browser WASM limitation)
+  const englishOnly = !isKokoroServer;
+  const isEnglishLang = (lang: KokoroLanguageCode) => lang === "a" || lang === "b";
 
-  // Get pinned voices for current model
-  const pinnedKokoro = KOKORO_VOICES.filter(v => pinnedVoices.includes(v.index));
-  const pinnedHiggs = HIGGS_PRESETS.filter(p => pinnedVoices.includes(p.slug));
-  const pinnedInworld = inworldVoices.filter(v => pinnedVoices.includes(v.slug));
+  // Memoize computed values to prevent unnecessary re-renders
+  const kokoroVoiceGroups = useMemo(() => groupKokoroVoicesByLanguage(KOKORO_VOICES), []);
+  const inworldVoiceGroups = useMemo(() => groupInworldVoicesByLanguage(inworldVoices), [inworldVoices]);
+
+  // Pinned voices filtered for Local mode
+  const pinnedKokoro = useMemo(
+    () => KOKORO_VOICES.filter(v => pinnedVoices.includes(v.index) && (!englishOnly || isEnglishLang(v.language))),
+    [pinnedVoices, englishOnly]
+  );
+  const pinnedHiggs = useMemo(() => HIGGS_PRESETS.filter(p => pinnedVoices.includes(p.slug)), [pinnedVoices]);
+  const pinnedInworld = useMemo(() => inworldVoices.filter(v => pinnedVoices.includes(v.slug)), [inworldVoices, pinnedVoices]);
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -203,14 +232,41 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
         <Tabs value={activeTab} onValueChange={handleModelChange}>
           <TabsList className="w-full h-11 rounded-none border-b">
             <TabsTrigger value="kokoro" className="flex-1 text-sm py-2.5">Kokoro</TabsTrigger>
-            <TabsTrigger value="inworld" className="flex-1 text-sm py-2.5">Inworld</TabsTrigger>
+            {canUseInworld ? (
+              <TabsTrigger value="inworld" className="flex-1 text-sm py-2.5">Inworld</TabsTrigger>
+            ) : (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="flex-1 inline-flex items-center justify-center text-sm py-2.5 text-muted-foreground/50 cursor-not-allowed">
+                    <Lock className="h-3 w-3 mr-1" />
+                    Inworld
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">
+                  <p>Requires Plus or Max subscription</p>
+                </TooltipContent>
+              </Tooltip>
+            )}
             {SHOW_HIGGS_TAB && <TabsTrigger value="higgs" className="flex-1 text-sm py-2.5">HIGGS</TabsTrigger>}
           </TabsList>
 
           <TabsContent value="kokoro" className="m-0 max-h-[28rem] overflow-y-auto">
             {/* Local/Cloud toggle */}
             <div className="flex items-center justify-between px-4 py-3 border-b bg-muted/30">
-              <span className="text-sm text-muted-foreground">Run on</span>
+              <div className="flex items-center gap-1.5">
+                <span className="text-sm text-muted-foreground">Run on</span>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button className="text-muted-foreground hover:text-foreground">
+                      <Info className="h-3.5 w-3.5" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="max-w-xs">
+                    <p><strong>Local:</strong> English voices only.</p>
+                    <p><strong>Cloud:</strong> All available languages and voices.</p>
+                  </TooltipContent>
+                </Tooltip>
+              </div>
               <div className="flex rounded-md border bg-background">
                 <button
                   onClick={() => isKokoroServer && handleKokoroSourceToggle()}
@@ -221,15 +277,32 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
                   <Monitor className="h-4 w-4" />
                   Local
                 </button>
-                <button
-                  onClick={() => !isKokoroServer && handleKokoroSourceToggle()}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-r-md transition-colors ${
-                    isKokoroServer ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  <Cloud className="h-4 w-4" />
-                  Cloud
-                </button>
+                {canUseCloudKokoro ? (
+                  <button
+                    onClick={() => !isKokoroServer && handleKokoroSourceToggle()}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-r-md transition-colors ${
+                      isKokoroServer ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    <Cloud className="h-4 w-4" />
+                    Cloud
+                  </button>
+                ) : (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-r-md text-muted-foreground/50 cursor-not-allowed"
+                        disabled
+                      >
+                        <Lock className="h-3.5 w-3.5" />
+                        Cloud
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="top">
+                      <p>Requires subscription</p>
+                    </TooltipContent>
+                  </Tooltip>
+                )}
               </div>
             </div>
             {/* Starred section */}
@@ -246,19 +319,19 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
                     isPinned={true}
                     isSelected={value.voiceSlug === voice.index}
                     onSelect={() => handleVoiceSelect(voice.index)}
-                    onPinToggle={() => handlePinToggle(voice.index)}
+                    onPinToggle={() => togglePinnedVoice(voice.index)}
                   />
                 ))}
               </div>
             )}
 
-            {/* Language sections */}
+            {/* Language sections (non-English hidden in Local mode via CSS to avoid flicker) */}
             {kokoroVoiceGroups.map(group => (
               <Collapsible
                 key={group.language}
                 open={expandedKokoroLangs.has(group.language)}
                 onOpenChange={() => toggleKokoroLangExpanded(group.language)}
-                className="border-b last:border-b-0"
+                className={`border-b last:border-b-0 ${englishOnly && !isEnglishLang(group.language) ? "hidden" : ""}`}
               >
                 <CollapsibleTrigger className="flex w-full items-center gap-2 px-4 py-2.5 text-sm font-medium hover:bg-accent">
                   <ChevronRight className={`h-4 w-4 transition-transform ${expandedKokoroLangs.has(group.language) ? "rotate-90" : ""}`} />
@@ -276,7 +349,7 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
                       isPinned={pinnedVoices.includes(voice.index)}
                       isSelected={value.voiceSlug === voice.index}
                       onSelect={() => handleVoiceSelect(voice.index)}
-                      onPinToggle={() => handlePinToggle(voice.index)}
+                      onPinToggle={() => togglePinnedVoice(voice.index)}
                     />
                   ))}
                 </CollapsibleContent>
@@ -340,7 +413,7 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
                         isPinned={true}
                         isSelected={value.voiceSlug === voice.slug}
                         onSelect={() => handleVoiceSelect(voice.slug)}
-                        onPinToggle={() => handlePinToggle(voice.slug)}
+                        onPinToggle={() => togglePinnedVoice(voice.slug)}
                       />
                     ))}
                   </div>
@@ -369,7 +442,7 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
                           isPinned={pinnedVoices.includes(voice.slug)}
                           isSelected={value.voiceSlug === voice.slug}
                           onSelect={() => handleVoiceSelect(voice.slug)}
-                          onPinToggle={() => handlePinToggle(voice.slug)}
+                          onPinToggle={() => togglePinnedVoice(voice.slug)}
                         />
                       ))}
                     </CollapsibleContent>
@@ -393,7 +466,7 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
                       isPinned={true}
                       isSelected={value.voiceSlug === preset.slug}
                       onSelect={() => handleVoiceSelect(preset.slug)}
-                      onPinToggle={() => handlePinToggle(preset.slug)}
+                      onPinToggle={() => togglePinnedVoice(preset.slug)}
                     />
                   ))}
                 </div>
@@ -410,7 +483,7 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
                     isPinned={pinnedVoices.includes(preset.slug)}
                     isSelected={value.voiceSlug === preset.slug}
                     onSelect={() => handleVoiceSelect(preset.slug)}
-                    onPinToggle={() => handlePinToggle(preset.slug)}
+                    onPinToggle={() => togglePinnedVoice(preset.slug)}
                   />
                 ))}
               </div>
@@ -474,14 +547,15 @@ interface VoiceRowProps {
   onPinToggle: () => void;
 }
 
-function VoiceRow({ name, flag, detail, isHighQuality, gender, isPinned, isSelected, onSelect, onPinToggle }: VoiceRowProps) {
+// Memoized to prevent re-renders when only function props change
+const VoiceRow = memo(function VoiceRow({ name, flag, detail, isHighQuality, gender, isPinned, isSelected, onSelect, onPinToggle }: VoiceRowProps) {
   // Two-line layout for voices with descriptions (Inworld)
   // Single-line layout for voices without descriptions (Kokoro)
   const hasTwoLineLayout = !!detail;
 
   return (
     <div
-      className={`flex gap-3 px-4 py-2.5 cursor-pointer hover:bg-accent ${isSelected ? "bg-accent" : ""} ${hasTwoLineLayout ? "items-start" : "items-center"}`}
+      className={`flex gap-1 px-2 py-1 cursor-pointer hover:bg-accent ${isSelected ? "bg-accent" : ""} items-center`}
       onClick={onSelect}
     >
       <button
@@ -489,12 +563,12 @@ function VoiceRow({ name, flag, detail, isHighQuality, gender, isPinned, isSelec
           e.stopPropagation();
           onPinToggle();
         }}
-        className="text-muted-foreground hover:text-foreground flex-shrink-0 mt-0.5"
+        className="p-2 -m-1 text-muted-foreground hover:text-foreground flex-shrink-0 touch-manipulation"
       >
         <Star className={`h-4 w-4 ${isPinned ? "fill-current text-yellow-500" : ""}`} />
       </button>
       {hasTwoLineLayout ? (
-        <div className="flex-1 min-w-0">
+        <div className="flex-1 min-w-0 py-1.5 pl-1">
           <div className="flex items-center gap-2">
             {flag && <span className="text-sm">{flag}</span>}
             <span className="text-base font-medium">{name}</span>
@@ -503,14 +577,23 @@ function VoiceRow({ name, flag, detail, isHighQuality, gender, isPinned, isSelec
         </div>
       ) : (
         <>
-          <span className="text-base flex-1 flex items-center gap-2">
+          <span className="text-base flex-1 flex items-center gap-2 py-1.5 pl-1">
             {flag && <span className="text-sm">{flag}</span>}
             {name}
             {isHighQuality && <span className="text-sm" title="High quality">✨</span>}
           </span>
-          {gender && <span className="text-sm text-muted-foreground">{gender === "Female" ? "♀" : "♂"}</span>}
+          {gender && <span className="text-sm text-muted-foreground pr-2">{gender === "Female" ? "♀" : "♂"}</span>}
         </>
       )}
     </div>
   );
-}
+}, (prev, next) => {
+  // Custom comparison: ignore function props since they're recreated every render
+  return prev.name === next.name &&
+    prev.flag === next.flag &&
+    prev.detail === next.detail &&
+    prev.isHighQuality === next.isHighQuality &&
+    prev.gender === next.gender &&
+    prev.isPinned === next.isPinned &&
+    prev.isSelected === next.isSelected;
+});

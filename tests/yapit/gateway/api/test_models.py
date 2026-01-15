@@ -104,3 +104,62 @@ async def test_list_voices_model_not_found(client, as_test_user):
     """Test listing voices for a non-existent model."""
     response = await client.get("/v1/models/non-existent-model/voices")
     assert response.status_code == status.HTTP_404_NOT_FOUND
+
+
+@pytest.mark.asyncio
+async def test_inactive_models_not_listed(client, as_test_user, session):
+    """Test that inactive models are filtered from list."""
+    active_model = TTSModel(
+        slug="active-model",
+        name="Active Model",
+        sample_rate=24000,
+        channels=1,
+        sample_width=2,
+        native_codec="pcm",
+        is_active=True,
+    )
+    inactive_model = TTSModel(
+        slug="inactive-model",
+        name="Inactive Model",
+        sample_rate=24000,
+        channels=1,
+        sample_width=2,
+        native_codec="pcm",
+        is_active=False,
+    )
+    session.add(active_model)
+    session.add(inactive_model)
+    await session.commit()
+
+    response = await client.get("/v1/models")
+    assert response.status_code == status.HTTP_200_OK
+
+    slugs = [m["slug"] for m in response.json()]
+    assert "active-model" in slugs
+    assert "inactive-model" not in slugs
+
+
+@pytest.mark.asyncio
+async def test_inactive_voices_not_listed(client, as_test_user, session):
+    """Test that inactive voices are filtered from model's voice list."""
+    model = TTSModel(
+        slug="model-with-voices",
+        name="Model With Voices",
+        sample_rate=24000,
+        channels=1,
+        sample_width=2,
+        native_codec="pcm",
+    )
+    active_voice = Voice(slug="active-voice", name="Active", lang="en", model=model, is_active=True)
+    inactive_voice = Voice(slug="inactive-voice", name="Inactive", lang="en", model=model, is_active=False)
+    session.add(model)
+    session.add(active_voice)
+    session.add(inactive_voice)
+    await session.commit()
+
+    response = await client.get(f"/v1/models/{model.slug}/voices")
+    assert response.status_code == status.HTTP_200_OK
+
+    slugs = [v["slug"] for v in response.json()]
+    assert "active-voice" in slugs
+    assert "inactive-voice" not in slugs

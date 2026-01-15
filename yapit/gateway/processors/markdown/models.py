@@ -146,6 +146,8 @@ class ImageBlock(BaseModel):
     src: str
     alt: str
     title: str | None = None
+    width_pct: float | None = None  # Figure width as % of page (from YOLO bbox)
+    row_group: str | None = None  # "row0", "row1", etc. - figures in same row are side-by-side
     audio_block_idx: None = None
 
 

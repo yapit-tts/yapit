@@ -1,6 +1,7 @@
 ---
-status: active
+status: done
 started: 2026-01-02
+completed: 2026-01-06
 ---
 
 # Task: Sidebar Edge Trigger Redesign
@@ -124,3 +125,11 @@ If hitbox is too generous, users might trigger it while moving cursor across scr
 ## Considered & Rejected
 
 (To be filled as we explore)
+
+## Implementation
+
+Implemented as part of [[mobile-ux-overhaul]]. Created `frontend/src/components/sidebarEdgeTrigger.tsx`:
+
+- **Desktop**: 40px invisible edge zone, chevron reveals on hover (100ms delay), click to toggle
+- **Mobile**: Swipe-from-left gesture (50px threshold), subtle visual hint strip on left edge
+- Trigger hides when sidebar is already open

@@ -6,6 +6,7 @@ with both HTML and AST representations for prose blocks.
 
 import re
 from typing import Literal, cast
+from urllib.parse import parse_qs, urlparse
 
 from markdown_it import MarkdownIt
 from markdown_it.tree import SyntaxTreeNode
@@ -18,6 +19,7 @@ from yapit.gateway.processors.markdown.models import (
     ContentBlock,
     EmphasisContent,
     HeadingBlock,
+    ImageBlock,
     InlineContent,
     InlineImageContent,
     LinkContent,
@@ -138,9 +140,14 @@ class DocumentTransformer:
             )
         ]
 
-    def _transform_paragraph(self, node: SyntaxTreeNode) -> list[ParagraphBlock]:
-        """Transform paragraph node, splitting if too long."""
+    def _transform_paragraph(self, node: SyntaxTreeNode) -> list[ContentBlock]:
+        """Transform paragraph node, detecting standalone images or splitting if too long."""
         inline = node.children[0] if node.children else None
+
+        # Check for standalone image (paragraph containing only an image)
+        if self._is_standalone_image(inline):
+            return [self._create_image_block(inline)]
+
         plain_text = self._extract_plain_text(inline)
 
         # Check if splitting is needed
@@ -159,6 +166,60 @@ class DocumentTransformer:
 
         # Split large paragraphs
         return self._split_paragraph(inline, plain_text)
+
+    def _is_standalone_image(self, inline: SyntaxTreeNode | None) -> bool:
+        """Check if inline content is just a single image (no other meaningful content)."""
+        if not inline or not inline.children:
+            return False
+
+        # Filter out whitespace-only text nodes and line breaks
+        meaningful = [
+            c
+            for c in inline.children
+            if c.type not in ("softbreak", "hardbreak") and not (c.type == "text" and not (c.content or "").strip())
+        ]
+
+        return len(meaningful) == 1 and meaningful[0].type == "image"
+
+    def _create_image_block(self, inline: SyntaxTreeNode) -> ImageBlock:
+        """Create an ImageBlock from a standalone image paragraph."""
+        # Find the image node
+        img_node = next(c for c in inline.children if c.type == "image")
+
+        src = img_node.attrs.get("src", "")
+        alt = img_node.content or ""
+        title = img_node.attrs.get("title")
+
+        # Parse layout metadata from URL query params
+        width_pct, row_group = self._parse_image_metadata(src)
+
+        # Strip query params from src for clean URL
+        clean_src = src.split("?")[0] if "?" in src else src
+
+        return ImageBlock(
+            id=self._next_block_id(),
+            src=clean_src,
+            alt=alt,
+            title=title,
+            width_pct=width_pct,
+            row_group=row_group,
+        )
+
+    def _parse_image_metadata(self, src: str) -> tuple[float | None, str | None]:
+        """Parse width_pct and row_group from image URL query params."""
+        parsed = urlparse(src)
+        params = parse_qs(parsed.query)
+
+        width_pct = None
+        if "w" in params:
+            try:
+                width_pct = float(params["w"][0])
+            except (ValueError, IndexError):
+                pass
+
+        row_group = params.get("row", [None])[0]
+
+        return width_pct, row_group
 
     def _split_paragraph(self, inline: SyntaxTreeNode | None, plain_text: str) -> list[ParagraphBlock]:
         """Split a large paragraph into multiple blocks at sentence boundaries.

@@ -5,6 +5,8 @@ import AppRoutes from "@/routes/AppRoutes";
 import { stackClientApp } from "@/auth";
 import { ApiProvider } from "@/api";
 import { SettingsProvider } from "@/hooks/useSettings";
+import { SubscriptionProvider } from "@/hooks/useSubscription";
+import { UserPreferencesProvider } from "@/hooks/useUserPreferences";
 
 const stackTheme = {
 	light: {
@@ -22,7 +24,11 @@ function App() {
 				<Suspense fallback={null}>
 					<SettingsProvider>
 						<ApiProvider>
-							<AppRoutes />
+							<SubscriptionProvider>
+								<UserPreferencesProvider>
+									<AppRoutes />
+								</UserPreferencesProvider>
+							</SubscriptionProvider>
 						</ApiProvider>
 					</SettingsProvider>
 				</Suspense>

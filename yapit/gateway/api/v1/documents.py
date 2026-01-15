@@ -1,9 +1,12 @@
+import datetime as dt
 import hashlib
 import io
-import logging
 import math
 import re
+import shutil
+from datetime import datetime
 from email.message import EmailMessage
+from pathlib import Path
 from typing import Annotated, Literal
 from urllib.parse import urljoin, urlparse
 from uuid import UUID
@@ -11,33 +14,38 @@ from uuid import UUID
 import httpx
 import pymupdf
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
+from loguru import logger
 from markitdown import MarkItDown
-from pydantic import BaseModel, HttpUrl, StringConstraints
+from pydantic import BaseModel, Field, HttpUrl, StringConstraints
 from sqlmodel import col, select
 
 from yapit.gateway.auth import authenticate
+from yapit.gateway.cache import Cache
 from yapit.gateway.constants import SUPPORTED_WEB_MIME_TYPES
 from yapit.gateway.deps import (
+    AiProcessorDep,
     AuthenticatedUser,
     CurrentDoc,
     DbSession,
     DocumentCache,
-    DocumentProcessorManagerDep,
+    ExtractionCache,
+    FreeProcessorDep,
     IsAdmin,
     SettingsDep,
 )
-from yapit.gateway.domain_models import Block, Document, DocumentMetadata, DocumentProcessor
+from yapit.gateway.domain_models import Block, Document, DocumentMetadata, UserPreferences
 from yapit.gateway.exceptions import ResourceNotFoundError
 from yapit.gateway.processors.document.base import (
+    BaseDocumentProcessor,
     CachedDocument,
     DocumentExtractionResult,
     ExtractedPage,
-    get_uncached_pages,
 )
+from yapit.gateway.processors.document.playwright_renderer import render_with_js
 from yapit.gateway.processors.markdown import parse_markdown, transform_to_document
 
 router = APIRouter(prefix="/v1/documents", tags=["Documents"], dependencies=[Depends(authenticate)])
-log = logging.getLogger(__name__)
+public_router = APIRouter(prefix="/v1/documents", tags=["Documents"])
 
 
 class DocumentPrepareRequest(BaseModel):
@@ -57,11 +65,13 @@ class DocumentPrepareResponse(BaseModel):
 
     Args:
         hash: SHA256 hash of the document content (for uploads) or url (for urls), used as cache key
+        content_hash: SHA256 hash of actual content (for extraction progress tracking)
         endpoint: Which API endpoint the client should use to create the document
         uncached_pages: Set of page numbers that need OCR processing (empty for websites/text)
     """
 
     hash: str
+    content_hash: str
     metadata: DocumentMetadata
     endpoint: Literal["text", "website", "document"]
     uncached_pages: set[int]
@@ -97,12 +107,12 @@ class DocumentCreateRequest(BasePreparedDocumentCreateRequest):
     """Create a document from a standard document or image file.
 
     Args:
-        pages (list[int] | None): Specific pages to process (None means all).
-        processor_slug (str | None): Slug of the document processor to use (None means default docling processor, non-ocr).
+        pages: List of page indices to process (0-indexed). None = all pages.
+        ai_transform: Use AI-powered extraction (requires subscription). False = free markitdown.
     """
 
-    pages: list[int] | None
-    processor_slug: str | None = None
+    pages: list[int] | None = None
+    ai_transform: bool = False
 
 
 class WebsiteDocumentCreateRequest(BasePreparedDocumentCreateRequest):
@@ -114,25 +124,82 @@ class DocumentCreateResponse(BaseModel):
 
     id: UUID
     title: str | None
+    failed_pages: list[int] = []  # Pages that failed extraction (0-indexed)
+
+
+class ExtractionStatusResponse(BaseModel):
+    """Progress of an ongoing extraction."""
+
+    total_pages: int
+    completed_pages: list[int]
+    status: Literal["processing", "complete", "not_found"]
+
+
+class ExtractionStatusRequest(BaseModel):
+    """Request for extraction status check."""
+
+    content_hash: str
+    processor_slug: str
+    pages: list[int]
+
+
+@router.post("/extraction/status", response_model=ExtractionStatusResponse)
+async def get_extraction_status(
+    req: ExtractionStatusRequest,
+    extraction_cache: ExtractionCache,
+    ai_processor: AiProcessorDep,
+    free_processor: FreeProcessorDep,
+) -> ExtractionStatusResponse:
+    """Get progress of an ongoing document extraction by checking cache directly."""
+    processor = ai_processor if req.processor_slug == "gemini" else free_processor
+    if not processor or not processor._extraction_key_prefix:
+        return ExtractionStatusResponse(total_pages=len(req.pages), completed_pages=[], status="not_found")
+
+    completed = []
+    for page_idx in req.pages:
+        cache_key = processor._extraction_cache_key(req.content_hash, page_idx)
+        if await extraction_cache.exists(cache_key):
+            completed.append(page_idx)
+
+    is_complete = len(completed) >= len(req.pages)
+    return ExtractionStatusResponse(
+        total_pages=len(req.pages),
+        completed_pages=completed,
+        status="complete" if is_complete else "processing",
+    )
 
 
 @router.post("/prepare", response_model=DocumentPrepareResponse)
 async def prepare_document(
     request: DocumentPrepareRequest,
-    cache: DocumentCache,
+    file_cache: DocumentCache,
+    extraction_cache: ExtractionCache,
     settings: SettingsDep,
+    ai_processor: AiProcessorDep,
 ) -> DocumentPrepareResponse:
     """Prepare a document from URL for creation."""
-    cache_key = hashlib.sha256(str(request.url).encode()).hexdigest()
-    cached_data = await cache.retrieve_data(cache_key)
+    url_hash = hashlib.sha256(str(request.url).encode()).hexdigest()
+
+    # Check URL cache first (same URL within TTL = no download needed)
+    cached_data = await file_cache.retrieve_data(url_hash)
     if cached_data:
         cached_doc = CachedDocument.model_validate_json(cached_data)
         endpoint = _get_endpoint_type_from_content_type(cached_doc.metadata.content_type)
+        # Compute content_hash for extraction cache lookup
+        content_hash = hashlib.sha256(cached_doc.content).hexdigest() if cached_doc.content else url_hash
         uncached_pages = (
-            get_uncached_pages(cached_doc, None) if _needs_ocr_processing(cached_doc.metadata.content_type) else set()
+            await _get_uncached_pages(
+                content_hash,
+                cached_doc.metadata.total_pages,
+                extraction_cache,
+                ai_processor,
+            )
+            if _needs_ocr_processing(cached_doc.metadata.content_type)
+            else set()
         )
         return DocumentPrepareResponse(
-            hash=cache_key,
+            hash=url_hash,
+            content_hash=content_hash,
             metadata=cached_doc.metadata,
             endpoint=endpoint,
             uncached_pages=uncached_pages,
@@ -146,24 +213,36 @@ async def prepare_document(
         total_pages=page_count,
         title=title,
         url=str(request.url),
-        file_name=request.url.path,
+        file_name=Path(request.url.path).name or None,
         file_size=len(content),
     )
 
     endpoint = _get_endpoint_type_from_content_type(content_type)
     cached_doc = CachedDocument(content=content, metadata=metadata)
-    ttl = settings.document_cache_ttl_webpage if endpoint == "website" else settings.document_cache_ttl_document
-    await cache.store(cache_key, cached_doc.model_dump_json().encode(), ttl_seconds=ttl)
+    await file_cache.store(url_hash, cached_doc.model_dump_json().encode())
 
-    uncached_pages = get_uncached_pages(cached_doc, None) if _needs_ocr_processing(content_type) else set()
-    return DocumentPrepareResponse(hash=cache_key, metadata=metadata, endpoint=endpoint, uncached_pages=uncached_pages)
+    content_hash = hashlib.sha256(content).hexdigest()
+    uncached_pages = (
+        await _get_uncached_pages(
+            content_hash,
+            metadata.total_pages,
+            extraction_cache,
+            ai_processor,
+        )
+        if _needs_ocr_processing(content_type)
+        else set()
+    )
+    return DocumentPrepareResponse(
+        hash=url_hash, content_hash=content_hash, metadata=metadata, endpoint=endpoint, uncached_pages=uncached_pages
+    )
 
 
 @router.post("/prepare/upload", response_model=DocumentPrepareResponse)
 async def prepare_document_upload(
     file: UploadFile,
-    cache: DocumentCache,
-    settings: SettingsDep,
+    file_cache: DocumentCache,
+    extraction_cache: ExtractionCache,
+    ai_processor: AiProcessorDep,
 ) -> DocumentPrepareResponse:
     """Prepare a document from file upload."""
     content = await file.read()
@@ -171,14 +250,22 @@ async def prepare_document_upload(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Empty file")
 
     cache_key = hashlib.sha256(content).hexdigest()
-    cached_data = await cache.retrieve_data(cache_key)
+    cached_data = await file_cache.retrieve_data(cache_key)
     if cached_data:
         cached_doc = CachedDocument.model_validate_json(cached_data)
         uncached_pages = (
-            get_uncached_pages(cached_doc, None) if _needs_ocr_processing(cached_doc.metadata.content_type) else set()
+            await _get_uncached_pages(
+                cache_key,
+                cached_doc.metadata.total_pages,
+                extraction_cache,
+                ai_processor,
+            )
+            if _needs_ocr_processing(cached_doc.metadata.content_type)
+            else set()
         )
         return DocumentPrepareResponse(
             hash=cache_key,
+            content_hash=cache_key,
             metadata=cached_doc.metadata,
             endpoint="document",
             uncached_pages=uncached_pages,
@@ -197,13 +284,20 @@ async def prepare_document_upload(
     )
 
     cached_doc = CachedDocument(metadata=metadata, content=content)
-    await cache.store(
-        cache_key, cached_doc.model_dump_json().encode(), ttl_seconds=settings.document_cache_ttl_document
-    )
+    await file_cache.store(cache_key, cached_doc.model_dump_json().encode())
 
-    uncached_pages = get_uncached_pages(cached_doc, None) if _needs_ocr_processing(content_type) else set()
+    uncached_pages = (
+        await _get_uncached_pages(
+            cache_key,
+            metadata.total_pages,
+            extraction_cache,
+            ai_processor,
+        )
+        if _needs_ocr_processing(content_type)
+        else set()
+    )
     return DocumentPrepareResponse(
-        hash=cache_key, metadata=metadata, endpoint="document", uncached_pages=uncached_pages
+        hash=cache_key, content_hash=cache_key, metadata=metadata, endpoint="document", uncached_pages=uncached_pages
     )
 
 
@@ -215,6 +309,8 @@ async def create_text_document(
     user: AuthenticatedUser,
 ) -> DocumentCreateResponse:
     """Create a document from direct text input."""
+    prefs = await db.get(UserPreferences, user.id)
+
     ast = parse_markdown(req.content)
     structured_doc = transform_to_document(ast, max_block_chars=settings.max_block_chars)
     structured_content = structured_doc.model_dump_json()
@@ -225,7 +321,6 @@ async def create_text_document(
         user_id=user.id,
         title=req.title,
         original_text=req.content,
-        filtered_text=None,  # No filtering for direct text input
         structured_content=structured_content,
         metadata=DocumentMetadata(
             content_type="text/plain",
@@ -237,6 +332,7 @@ async def create_text_document(
         ),
         extraction_method=None,
         text_blocks=text_blocks,
+        is_public=prefs.default_documents_public if prefs else False,
     )
     return DocumentCreateResponse(id=doc.id, title=doc.title)
 
@@ -245,12 +341,13 @@ async def create_text_document(
 async def create_website_document(
     req: WebsiteDocumentCreateRequest,
     db: DbSession,
-    cache: DocumentCache,
+    file_cache: DocumentCache,
     settings: SettingsDep,
     user: AuthenticatedUser,
 ) -> DocumentCreateResponse:
     """Create a document from a live website."""
-    cached_data = await cache.retrieve_data(req.hash)
+    prefs = await db.get(UserPreferences, user.id)
+    cached_data = await file_cache.retrieve_data(req.hash)
     if not cached_data:
         raise ResourceNotFoundError(
             CachedDocument.__name__,
@@ -273,18 +370,18 @@ async def create_website_document(
     md = MarkItDown(enable_plugins=False)
     result = md.convert_stream(io.BytesIO(cached_doc.content))
     markdown = result.markdown
+
+    if cached_doc.metadata.url and _needs_js_rendering(cached_doc.content, markdown):
+        logger.info(f"JS rendering detected, using Playwright for {cached_doc.metadata.url}")
+        rendered_html = await render_with_js(cached_doc.metadata.url)
+        result = md.convert_stream(io.BytesIO(rendered_html.encode("utf-8")))
+        markdown = result.markdown
+
     if cached_doc.metadata.url:
         markdown = _resolve_relative_urls(markdown, cached_doc.metadata.url)
     extraction_result = DocumentExtractionResult(
         pages={0: ExtractedPage(markdown=markdown, images=[])},
         extraction_method="markitdown",
-    )
-
-    cached_doc.extraction = extraction_result
-    await cache.store(
-        req.hash,
-        cached_doc.model_dump_json().encode(),
-        ttl_seconds=settings.document_cache_ttl_webpage,
     )
 
     extracted_text = extraction_result.pages[0].markdown  # website are just a single page
@@ -297,13 +394,13 @@ async def create_website_document(
     doc = await _create_document_with_blocks(
         db=db,
         user_id=user.id,
-        title=cached_doc.metadata.title or req.title,
+        title=cached_doc.metadata.title or req.title or cached_doc.metadata.file_name,
         original_text=extracted_text,
-        filtered_text=None,  # TODO: Implement filtering
         structured_content=structured_content,
         metadata=cached_doc.metadata,
         extraction_method=extraction_result.extraction_method,
         text_blocks=text_blocks,
+        is_public=prefs.default_documents_public if prefs else False,
     )
     return DocumentCreateResponse(id=doc.id, title=doc.title)
 
@@ -316,14 +413,17 @@ async def create_website_document(
 async def create_document(
     req: DocumentCreateRequest,
     db: DbSession,
-    cache: DocumentCache,
+    file_cache: DocumentCache,
+    extraction_cache: ExtractionCache,
     settings: SettingsDep,
     user: AuthenticatedUser,
     is_admin: IsAdmin,
-    document_processor_manager: DocumentProcessorManagerDep,
+    free_processor: FreeProcessorDep,
+    ai_processor: AiProcessorDep,
 ) -> DocumentCreateResponse:
     """Create a document from a file (PDF, image, etc)."""
-    cached_data = await cache.retrieve_data(req.hash)
+    prefs = await db.get(UserPreferences, user.id)
+    cached_data = await file_cache.retrieve_data(req.hash)
     if not cached_data:
         raise ResourceNotFoundError(
             CachedDocument.__name__,
@@ -339,21 +439,41 @@ async def create_document(
         )
     _validate_page_numbers(req.pages, cached_doc.metadata.total_pages)
 
-    processor = document_processor_manager.get_processor(req.processor_slug)
-    if not processor:
-        raise ResourceNotFoundError(DocumentProcessor.__name__, req.processor_slug)
+    if req.ai_transform:
+        if not ai_processor:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="AI transform not configured on this server",
+            )
+        processor = ai_processor
+    else:
+        processor = free_processor
+    if not cached_doc.content:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Cached document has no content",
+        )
 
+    content_hash = hashlib.sha256(cached_doc.content).hexdigest()
     extraction_result = await processor.process_with_billing(
         user_id=user.id,
-        cache_key=req.hash,
+        content_hash=content_hash,
         db=db,
-        cache=cache,
-        url=cached_doc.metadata.url,
+        extraction_cache=extraction_cache,
         content=cached_doc.content,
         content_type=cached_doc.metadata.content_type,
+        total_pages=cached_doc.metadata.total_pages,
+        file_size=cached_doc.metadata.file_size,
         pages=req.pages,
         is_admin=is_admin,
     )
+
+    # If all pages failed, return error
+    if not extraction_result.pages:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Document extraction failed. Please try again later.",
+        )
 
     extracted_text: str = "\n\n".join(page.markdown for page in extraction_result.pages.values())
 
@@ -365,15 +485,16 @@ async def create_document(
     doc = await _create_document_with_blocks(
         db=db,
         user_id=user.id,
-        title=cached_doc.metadata.title or req.title,
+        title=cached_doc.metadata.title or req.title or cached_doc.metadata.file_name,
         original_text=extracted_text,
-        filtered_text=None,  # TODO: Implement filtering
         structured_content=structured_content,
         metadata=cached_doc.metadata,
         extraction_method=extraction_result.extraction_method,
         text_blocks=text_blocks,
+        is_public=prefs.default_documents_public if prefs else False,
+        content_hash=content_hash,
     )
-    return DocumentCreateResponse(id=doc.id, title=doc.title)
+    return DocumentCreateResponse(id=doc.id, title=doc.title, failed_pages=extraction_result.failed_pages)
 
 
 class DocumentListItem(BaseModel):
@@ -382,6 +503,7 @@ class DocumentListItem(BaseModel):
     id: UUID
     title: str | None
     created: str  # ISO format
+    is_public: bool
 
 
 @router.get("")
@@ -399,7 +521,10 @@ async def list_documents(
         .offset(offset)
         .limit(limit)
     )
-    return [DocumentListItem(id=doc.id, title=doc.title, created=doc.created.isoformat()) for doc in result.all()]
+    return [
+        DocumentListItem(id=doc.id, title=doc.title, created=doc.created.isoformat(), is_public=doc.is_public)
+        for doc in result.all()
+    ]
 
 
 @router.get("/{document_id}")
@@ -408,31 +533,51 @@ async def get_document(document: CurrentDoc) -> Document:
 
 
 class DocumentUpdateRequest(BaseModel):
-    title: str | None = None
+    title: str | None = Field(default=None, max_length=500)
+    is_public: bool | None = Field(default=None)
 
 
-@router.patch("/{document_id}", response_model=DocumentCreateResponse)
+class DocumentUpdateResponse(BaseModel):
+    id: UUID
+    title: str | None
+    is_public: bool
+
+
+@router.patch("/{document_id}", response_model=DocumentUpdateResponse)
 async def update_document(
     document: CurrentDoc,
     request: DocumentUpdateRequest,
     db: DbSession,
-) -> DocumentCreateResponse:
-    """Update document properties (currently just title)."""
+) -> DocumentUpdateResponse:
+    """Update document properties."""
     if request.title is not None:
         document.title = request.title
+    if request.is_public is not None:
+        document.is_public = request.is_public
     await db.commit()
     await db.refresh(document)
-    return DocumentCreateResponse(id=document.id, title=document.title)
+    return DocumentUpdateResponse(id=document.id, title=document.title, is_public=document.is_public)
 
 
 @router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_document(
     document: CurrentDoc,
     db: DbSession,
+    settings: SettingsDep,
 ) -> None:
-    """Delete a document and all its blocks."""
+    """Delete a document and all its blocks. Cleans up images if last doc with this content."""
+    content_hash = document.content_hash
+
     await db.delete(document)
     await db.commit()
+
+    # Clean up images if no other documents use this content
+    if content_hash:
+        other_docs = await db.exec(select(Document).where(Document.content_hash == content_hash).limit(1))
+        if not other_docs.first():
+            images_dir = Path(settings.images_dir) / content_hash
+            if images_dir.exists():
+                shutil.rmtree(images_dir)
 
 
 @router.get("/{document_id}/blocks")
@@ -449,6 +594,126 @@ async def get_document_blocks(
     return result.all()
 
 
+class PositionUpdate(BaseModel):
+    block_idx: int
+
+
+@router.patch("/{document_id}/position")
+async def update_position(
+    document: CurrentDoc,
+    body: PositionUpdate,
+    db: DbSession,
+) -> dict:
+    """Update playback position for cross-device sync."""
+    document.last_block_idx = body.block_idx
+    document.last_played_at = datetime.now(tz=dt.UTC)
+    await db.commit()
+    return {"ok": True}
+
+
+# Public document access (no auth required)
+
+
+class PublicDocumentResponse(BaseModel):
+    """Public document data for viewing shared documents."""
+
+    id: UUID
+    title: str | None
+    structured_content: str
+    original_text: str
+    metadata_dict: dict | None
+    block_count: int
+
+
+@public_router.get("/{document_id}/public", response_model=PublicDocumentResponse)
+async def get_public_document(
+    document_id: UUID,
+    db: DbSession,
+) -> PublicDocumentResponse:
+    """Get a public document without authentication.
+
+    Returns document data if is_public=True, otherwise 404.
+    """
+    result = await db.exec(select(Document).where(Document.id == document_id, Document.is_public.is_(True)))
+    document = result.first()
+    if not document:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    block_count = (await db.exec(select(Block).where(Block.document_id == document_id))).all()
+    return PublicDocumentResponse(
+        id=document.id,
+        title=document.title,
+        structured_content=document.structured_content,
+        original_text=document.original_text,
+        metadata_dict=document.metadata_dict,
+        block_count=len(block_count),
+    )
+
+
+@public_router.get("/{document_id}/public/blocks")
+async def get_public_document_blocks(
+    document_id: UUID,
+    db: DbSession,
+) -> list[Block]:
+    """Get blocks for a public document without authentication."""
+    result = await db.exec(select(Document).where(Document.id == document_id, Document.is_public.is_(True)))
+    document = result.first()
+    if not document:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    result = await db.exec(select(Block).where(Block.document_id == document_id).order_by(Block.idx))
+    return result.all()
+
+
+class DocumentImportResponse(BaseModel):
+    """Response after importing a public document."""
+
+    id: UUID
+    title: str | None
+
+
+@router.post("/{document_id}/import", response_model=DocumentImportResponse, status_code=status.HTTP_201_CREATED)
+async def import_document(
+    document_id: UUID,
+    db: DbSession,
+    user: AuthenticatedUser,
+) -> DocumentImportResponse:
+    """Import (clone) a public document to the authenticated user's library."""
+    result = await db.exec(select(Document).where(Document.id == document_id, Document.is_public.is_(True)))
+    source_doc = result.first()
+    if not source_doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    # Clone the document
+    new_doc = Document(
+        user_id=user.id,
+        is_public=False,
+        title=source_doc.title,
+        original_text=source_doc.original_text,
+        extraction_method=source_doc.extraction_method,
+        structured_content=source_doc.structured_content,
+        metadata_dict=source_doc.metadata_dict,
+    )
+    db.add(new_doc)
+
+    # Clone the blocks
+    source_blocks = await db.exec(select(Block).where(Block.document_id == document_id).order_by(Block.idx))
+    db.add_all(
+        [
+            Block(
+                document=new_doc,
+                idx=block.idx,
+                text=block.text,
+                est_duration_ms=block.est_duration_ms,
+            )
+            for block in source_blocks.all()
+        ]
+    )
+
+    await db.commit()
+    return DocumentImportResponse(id=new_doc.id, title=new_doc.title)
+
+
 async def _download_document(url: HttpUrl, max_size: int) -> tuple[bytes, str]:
     """Download a document from URL within size limits.
 
@@ -462,13 +727,17 @@ async def _download_document(url: HttpUrl, max_size: int) -> tuple[bytes, str]:
     Raises:
         ValidationError: If download fails or file is too large
     """
-    # User-Agent required by Wikipedia and many other sites (they block requests without it)
-    headers = {"User-Agent": "Yapit/1.0 (https://yapit.app; document fetcher)"}
-    async with httpx.AsyncClient(follow_redirects=True, timeout=30.0, headers=headers) as client:
+    headers = {"User-Agent": "Yapit/1.0 (https://yapit.md; document fetcher)"}
+    async with httpx.AsyncClient(
+        proxy="http://smokescreen:4750",
+        follow_redirects=True,
+        timeout=30.0,
+        headers=headers,
+    ) as client:
         try:
             head_response = await client.head(str(url))
             if head_response.status_code != 200:
-                log.debug(f"HEAD request failed with {head_response.status_code}, falling back to GET")
+                logger.debug(f"HEAD request failed with {head_response.status_code}, falling back to GET")
             else:
                 content_length = head_response.headers.get("content-length")
                 if content_length and int(content_length) > max_size:
@@ -488,13 +757,16 @@ async def _download_document(url: HttpUrl, max_size: int) -> tuple[bytes, str]:
                         detail=f"File too large: downloaded {downloaded} bytes exceeds maximum of {max_size} bytes",
                     )
                 content.write(chunk)
-            content_type = response.headers.get("content-type", "application/octet-stream")
-            return content.getvalue(), content_type
+            content_bytes = content.getvalue()
+            header_type = response.headers.get("content-type", "application/octet-stream")
+            sniffed_type = _sniff_content_type(content_bytes)
+            # Trust magic bytes over header if we can detect the type
+            content_type = sniffed_type if sniffed_type else header_type
+            return content_bytes, content_type
         except httpx.HTTPStatusError as e:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"URL returned error: HTTP {e.response.status_code}",
-            )
+            code = e.response.status_code
+            detail = _get_http_error_message(code)
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=detail)
         except httpx.RequestError:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -527,7 +799,7 @@ def _extract_document_info(content: bytes, content_type: str) -> tuple[int, str 
         if title_match:
             title = title_match.group(1).strip()
         else:
-            log.warning(f"Failed to extract title from HTML content:\n{html_text}", exc_info=True)
+            logger.warning(f"Failed to extract title from HTML content:\n{html_text}")
     elif content_type.lower().startswith("text/"):
         total_pages = 1
     else:
@@ -565,23 +837,43 @@ def _needs_ocr_processing(content_type: str | None) -> bool:
     return ct == "application/pdf" or ct.startswith("image/")
 
 
+async def _get_uncached_pages(
+    content_hash: str,
+    total_pages: int,
+    extraction_cache: Cache,
+    processor: BaseDocumentProcessor | None,
+) -> set[int]:
+    """Query extraction cache to find which pages need processing."""
+    if not processor or not processor._extraction_key_prefix:
+        return set(range(total_pages))
+
+    uncached = set()
+    for page_idx in range(total_pages):
+        key = f"{content_hash}:{processor._extraction_key_prefix}:{page_idx}"
+        if not await extraction_cache.exists(key):
+            uncached.add(page_idx)
+    return uncached
+
+
 async def _create_document_with_blocks(
     db: DbSession,
     user_id: str,
     title: str | None,
     original_text: str,
-    filtered_text: str | None,
     structured_content: str,
     metadata: DocumentMetadata,
     extraction_method: str | None,
     text_blocks: list[str],
+    is_public: bool,
+    content_hash: str | None = None,
 ) -> Document:
     doc = Document(
         user_id=user_id,
+        is_public=is_public,
         title=title,
         original_text=original_text,
-        filtered_text=filtered_text,
         extraction_method=extraction_method,
+        content_hash=content_hash,
         structured_content=structured_content,
         metadata_dict=metadata.model_dump(),
     )
@@ -683,3 +975,88 @@ def _resolve_relative_urls(markdown: str, base_url: str) -> str:
     # Links: [text](url)
     markdown = re.sub(r"(?<!!)\[([^\]]*)\]\(([^)]+)\)", make_resolver(False), markdown)
     return markdown
+
+
+def _sniff_content_type(content: bytes) -> str | None:
+    """Detect content type from magic bytes. Returns None if unknown."""
+    if content.startswith(b"%PDF"):
+        return "application/pdf"
+    if content.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if content.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if content.startswith(b"GIF87a") or content.startswith(b"GIF89a"):
+        return "image/gif"
+    if content.startswith(b"RIFF") and content[8:12] == b"WEBP":
+        return "image/webp"
+    # HTML detection (check first 1KB for common patterns)
+    head = content[:1024].lstrip()
+    if head.startswith(b"<!DOCTYPE") or head.startswith(b"<html") or head.startswith(b"<HTML"):
+        return "text/html"
+    return None
+
+
+def _get_http_error_message(status_code: int) -> str:
+    """Return a user-friendly error message for HTTP status codes."""
+    messages = {
+        300: "Document has multiple versions - try a more specific URL",
+        301: "Page has moved permanently",
+        302: "Page has moved temporarily",
+        400: "Invalid request to the website",
+        401: "This page requires authentication",
+        403: "Access to this page is forbidden",
+        404: "Page not found - check the URL",
+        407: "URL points to a blocked destination",
+        408: "Request timed out - the website took too long to respond",
+        410: "This page no longer exists",
+        429: "Site is rate limiting requests - try again later",
+        451: "Content unavailable for legal reasons",
+        500: "The target website is having internal issues - try again later",
+        502: "The target website's server is not responding - try again later",
+        503: "The target website is temporarily unavailable - try again later",
+        504: "The target website took too long to respond - try again later",
+    }
+    if status_code in messages:
+        return messages[status_code]
+    if 400 <= status_code < 500:
+        return f"Website returned client error (HTTP {status_code})"
+    if 500 <= status_code < 600:
+        return f"Website returned server error (HTTP {status_code})"
+    return f"URL returned unexpected status: HTTP {status_code}"
+
+
+_JS_RENDERING_PATTERNS = [
+    r"marked\.parse",  # marked.js
+    r"markdown-it",  # markdown-it
+    r"renderMarkdown",  # custom pattern like k-a.in
+    r"ReactDOM\.render",  # React (legacy)
+    r"createRoot",  # React 18+
+    r"createApp\s*\(",  # Vue 3
+    r"ng-app",  # Angular
+    r"\.mount\s*\(",  # Vue mount
+]
+_JS_PATTERN_REGEX = re.compile("|".join(_JS_RENDERING_PATTERNS), re.IGNORECASE)
+
+
+def _needs_js_rendering(html: bytes, markdown: str) -> bool:
+    """Detect if a page likely needs JavaScript rendering.
+
+    Uses two heuristics:
+    1. Content sniffing: look for known JS rendering patterns in HTML
+    2. Size heuristic: large HTML but tiny markdown output suggests JS-loaded content
+
+    Returns True if either heuristic triggers.
+    """
+    html_str = html.decode("utf-8", errors="ignore")
+
+    # Content sniffing: detect known JS rendering frameworks
+    if _JS_PATTERN_REGEX.search(html_str):
+        logger.debug("JS rendering pattern detected in HTML")
+        return True
+
+    # Size heuristic: big HTML (>5KB) but tiny markdown (<500 chars)
+    if len(html) > 5000 and len(markdown) < 500:
+        logger.debug(f"Size heuristic triggered: {len(html)} bytes HTML -> {len(markdown)} chars markdown")
+        return True
+
+    return False

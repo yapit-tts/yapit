@@ -1,6 +1,7 @@
 ---
-status: active
+status: done
 type: research
+completed: 2025-01-06
 ---
 
 # Task: XSS Security Audit for HTML Document Display
@@ -11,6 +12,28 @@ Audit input-related security vulnerabilities:
 1. **XSS**: How we display HTML content from websites - are we protected against XSS attacks?
 2. **SSRF**: When fetching URLs, could we be tricked into hitting internal services?
 3. **File uploads**: Path traversal, malware concerns
+
+## Current Status
+
+- **XSS: ✅ FIXED** - DOMPurify implemented (commit `5c87e99`)
+- **SSRF: ✅ FIXED** - Smokescreen proxy implemented (2025-01-06)
+- **File uploads: ✅ NO ACTION NEEDED** - Already safe
+
+## Implementation Summary
+
+**SSRF fix (2025-01-06):**
+- Reverted broken application-level IP validation code
+- Added Smokescreen proxy container (built from pinned commit `a7fdfcb5`)
+- Configured httpx to route through `http://smokescreen:4750`
+- Added to CI build matrix for ghcr.io
+- 407 responses from proxy return user-friendly "URL points to a blocked destination"
+
+Files changed:
+- `docker/Dockerfile.smokescreen` - new
+- `docker-compose.yml` - added smokescreen service
+- `docker-compose.prod.yml` - added smokescreen service
+- `.github/workflows/deploy.yml` - added to build matrix
+- `yapit/gateway/api/v1/documents.py` - proxy config + error handling
 
 ## Notes / Findings
 
@@ -52,49 +75,39 @@ Direct Text → parse_markdown() → AST → transform_to_document() → HTML bl
 
 ### 2. SSRF Analysis
 
-**Risk Level: LOW-MEDIUM** (requires open redirect on external site)
+**Risk Level: HIGH** - trivially exploitable, could give attacker access to internal services including auth
 
-**Vulnerable code:** `_download_document()` in `documents.py:474-524`
+**Vulnerable code:** `_download_document()` in `documents.py`
 
-```python
-async with httpx.AsyncClient(follow_redirects=True, timeout=30.0, headers=headers) as client:
-    response = await client.get(str(url))
-```
+**The vulnerability:**
+- URL fetching follows redirects without validating destinations
+- Attacker can redirect to internal Docker services or cloud metadata
 
-**Issues:**
-- `follow_redirects=True` - will follow redirects to any destination
-- No validation of redirect destination against private IP ranges
-- Pydantic's `HttpUrl` only validates initial URL is http/https
+**Internal services accessible via Docker network (yapit-network):**
+- `http://stack-auth:8102` - **Auth API** (most dangerous - could read/modify users, create admins)
+- `http://redis:6379` - Redis cache
+- `http://postgres:5432` - Database
+- `http://gateway:8000`, `http://frontend:80`, `http://kokoro-cpu:...`
 
-**Internal services accessible via Docker network (dokploy-network):**
+**Why this is HIGH severity:**
+- Account creation is trivial (no barrier to "authenticated" attacker)
+- Attacker controls the URL they submit
+- Attacker can set up DNS rebinding infrastructure in ~10 minutes
+- If `stack-auth:8102` trusts internal callers (common for microservices), attacker could:
+  - Read/modify user data
+  - Create admin accounts
+  - Access API keys or secrets
+  - Pivot to database access
 
-*Yapit services:*
-- `http://postgres:5432` - PostgreSQL (limited impact - HTTP to postgres)
-- `http://redis:6379` - Redis (potential data exfil/manipulation via HTTP smuggling)
-- `http://stack-auth:8101` - Auth dashboard
-- `http://stack-auth:8102` - Auth API
-- `http://gateway:8000` - API gateway itself
-- `http://frontend:80` - Nginx frontend
-- `http://kokoro-cpu:...` - TTS workers
+**DNS Rebinding Attack (bypasses application-level IP validation):**
+1. Attacker controls `evil.com` with TTL=0
+2. First DNS resolution returns `1.2.3.4` (public IP) → passes validation
+3. Application validates and proceeds
+4. Attacker flips DNS to `169.254.169.254` or `172.17.0.x`
+5. HTTP client resolves again for actual connection → gets internal IP
+6. Request hits internal service
 
-*Dokploy infrastructure:*
-- `http://traefik:80` / `http://traefik:443` - Reverse proxy
-- `http://dokploy:3000` - Dokploy web interface (if on same network)
-- Port 4500 - Monitoring metrics
-
-*Cloud metadata (if deployed on cloud):*
-- `http://169.254.169.254/` - AWS/GCP/Azure instance metadata
-
-**Attack scenario:**
-1. Attacker hosts `https://evil.com/redirect` that 302 redirects to `http://stack-auth:8102/api/...`
-2. User submits `https://evil.com/redirect` as document URL
-3. Gateway follows redirect, hits internal auth service
-4. Response content potentially leaked to attacker via document content
-
-**Mitigating factors:**
-- Requires attacker to control a domain that redirects
-- Response must be parseable by MarkItDown
-- Attacker doesn't see raw response, only processed markdown
+The window between validation and connection is easily tens to hundreds of milliseconds - plenty of time for DNS flip.
 
 ### 3. File Upload Analysis
 
@@ -140,23 +153,33 @@ async with httpx.AsyncClient(follow_redirects=True, timeout=30.0, headers=header
 
 **Recommendation:** Use Option A (DOMPurify) as primary defense. It's the most robust and handles edge cases we haven't thought of.
 
-### SSRF Fix (Priority: MEDIUM)
+### SSRF Fix (Priority: HIGH - CRITICAL)
 
-**Option A: Validate redirect destinations** (Recommended)
-- Before following redirects, check destination against blocklist
-- Block private IP ranges: `127.0.0.0/8`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `169.254.0.0/16`
-- Block internal Docker hostnames: `postgres`, `redis`, `stack-auth`, `gateway`, `frontend`, `kokoro-cpu`, `traefik`, `dokploy`, `localhost`
-- Still follows legitimate redirects (www→non-www, http→https, URL shorteners)
+**Why application-level validation is insufficient:**
+Any approach that validates DNS/IP before the HTTP request has a TOCTOU (time-of-check-time-of-use) vulnerability. DNS rebinding attacks exploit the gap between validation and connection.
 
-**Option B: Disable redirect following**
-- Set `follow_redirects=False` in httpx client
-- Simpler but may break legitimate sites that redirect (e.g., www → non-www)
+**Rejected approaches:**
+1. **Hostname blocklist + IP validation before request** - Bypassable via DNS rebinding
+2. **Custom httpx transport with IP pinning** - Complex, error-prone, TLS SNI issues
+3. **Disable TLS verification to connect to IPs directly** - Worse (enables MITM)
 
-**Option C: Use allowlist of content types**
-- Only process responses with expected content types (text/html, application/pdf, etc.)
-- Combined with option A for defense in depth
+**Chosen solution: Smokescreen proxy (Stripe)**
+- https://github.com/stripe/smokescreen
+- HTTP CONNECT proxy that validates at the network/connection layer
+- DNS resolution and IP validation happen atomically at connect time
+- Battle-tested by Stripe, handles edge cases
+- Docker image available: `pretix/smokescreen`
 
-**Recommendation:** Option A - validate redirect destinations. This is the standard approach for SSRF prevention.
+**Implementation:**
+1. Add Smokescreen container to docker-compose (listens on port 4750)
+2. Configure httpx to use it as proxy: `httpx.AsyncClient(proxy="http://smokescreen:4750")`
+3. Default behavior blocks private IP ranges - no config needed for our use case
+
+**Why Smokescreen is better:**
+- Network-layer validation can't be raced (no TOCTOU)
+- Handles all edge cases (DNS rebinding, redirects, etc.)
+- ~10 lines of config vs 100+ lines of complex custom code
+- All normal URLs still work, only internal/private blocked
 
 ### File Uploads (Priority: LOW)
 
@@ -168,9 +191,7 @@ For defense in depth (future):
 
 ## Open Questions
 
-1. **For XSS fix:** Should we allow ANY raw HTML in user input, or strip it entirely? DOMPurify can be configured to allow safe subset (e.g., `<b>`, `<i>`) or strip all tags. **Default recommendation:** Use DOMPurify's default config which keeps safe formatting tags.
-
-~~2. **For SSRF fix:** Do we need to support sites that require redirects?~~ **Answered:** Yes, support redirects with destination validation.
+All questions resolved. See work log for decisions.
 
 ---
 
@@ -240,4 +261,65 @@ Implemented DOMPurify fix for XSS vulnerability.
 **Commit:** `5c87e99 fix: add DOMPurify to sanitize HTML and prevent XSS attacks`
 
 **Remaining:**
-- SSRF fix (backend) - blocked on backend refactor completion
+- ~~SSRF fix (backend) - blocked on backend refactor completion~~
+
+### 2025-01-06 - SSRF Analysis Deep Dive and Solution Selection
+
+**Initial attempt: Application-level IP validation**
+
+Implemented DNS resolution + IP validation in `_download_document()`:
+- Added `_PRIVATE_IP_RANGES` tuple
+- Added `_resolve_and_validate_url()` function
+- Modified `_download_document()` to validate before each request
+
+**User challenged the approach - correctly identified DNS rebinding vulnerability:**
+
+The initial code had a TOCTOU gap:
+1. Our code resolves DNS, validates IP is public → passes
+2. httpx internally resolves DNS again for the actual connection
+3. Attacker can flip DNS between these two resolutions (TTL=0)
+4. Connection goes to internal IP despite validation passing
+
+User's key points:
+- "Authentication is no barrier" - account creation is trivial
+- "Motivated attacker" is meaningless - automated tools exist
+- Code is public - anyone can find and exploit this
+- DNS rebinding servers take ~10 minutes to set up (tools like `rebinder`)
+- Stack-auth likely trusts internal callers → full auth system compromise possible
+
+**Attempted fix: Connect to resolved IP directly**
+
+Tried modifying code to connect to the resolved IP with Host header for virtual hosting. Problem: TLS certificate verification. Either:
+- `verify=False` → enables MITM attacks (worse than the original problem)
+- Custom SSL context with SNI → complex, error-prone
+
+**Final decision: Use Smokescreen proxy**
+
+After evaluating options:
+1. ~~Application-level validation~~ - Bypassable via DNS rebinding
+2. ~~Custom httpx transport~~ - Complex, TLS issues
+3. ~~iptables on host~~ - Would break Docker internal networking
+4. ~~Separate fetcher microservice~~ - Architectural overhead
+5. **Smokescreen proxy** ✓ - Network-layer validation, battle-tested
+
+Smokescreen (https://github.com/stripe/smokescreen):
+- Built by Stripe specifically for SSRF protection
+- Validates at connection layer (no TOCTOU possible)
+- Docker image: `pretix/smokescreen`
+- Default config blocks private IPs - exactly what we need
+
+**Current state of code: MESSY - NEEDS CLEANUP**
+
+`documents.py` has incomplete/incorrect SSRF code that needs to be:
+1. Removed (the `_resolve_and_validate_url`, `_PRIVATE_IP_RANGES` stuff)
+2. Replaced with Smokescreen proxy configuration
+
+The current code in `documents.py` is NOT a valid fix and should not be deployed.
+
+**XSS fix status: COMPLETE**
+- DOMPurify implemented and committed: `5c87e99`
+- This fix is solid and can be deployed
+
+**SSRF fix status: NOT COMPLETE**
+- Need to: add Smokescreen to docker-compose, configure httpx to use proxy
+- Current code in documents.py is broken/incomplete - revert or clean up

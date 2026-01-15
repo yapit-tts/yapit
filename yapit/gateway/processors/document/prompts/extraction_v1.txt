@@ -1,0 +1,17 @@
+Extract the text from this document page as clean markdown.
+
+Rules:
+- Preserve the original text exactly — do not paraphrase, interpret, or rewrite
+- Use standard markdown formatting (headings, lists, emphasis, bold, etc.)
+- Mathematical notation: use LaTeX with dollar signs ($inline$ for inline, $$display$$ for display)
+- Keep hyperlinks in markdown format: [text](url)
+- Tables: use markdown table syntax
+- Skip page numbers, headers/footers, and watermarks
+
+Images:
+- The number of detected images on this page will be provided below
+- For each image, output exactly one ![](detected-image) placeholder on its own line, at the position where the image appears in the document flow
+- Do not describe or caption the images — just place the placeholder
+- If no image count is provided, do not output any image placeholders
+
+Output only the markdown, no commentary or explanations.

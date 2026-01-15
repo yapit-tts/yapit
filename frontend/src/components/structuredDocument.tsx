@@ -124,6 +124,8 @@ interface ImageBlock {
   src: string;
   alt: string;
   title?: string;
+  width_pct?: number;  // Figure width as % of page (from YOLO detection)
+  row_group?: string;  // "row0", "row1", etc. - figures in same row are side-by-side
   audio_block_idx: null;
 }
 
@@ -225,7 +227,7 @@ function BlockquoteBlockView({ block, onBlockClick }: {
   block: BlockquoteBlock;
   onBlockClick?: (audioIdx: number) => void;
 }) {
-  // Group nested blocks by visual_group_id (same as top-level)
+  // Group nested blocks by visual_group_id and row_group (same as top-level)
   const groupedBlocks = groupBlocks(block.blocks);
 
   // Blockquote is a visual container - nested blocks have their own audio indices
@@ -238,6 +240,13 @@ function BlockquoteBlockView({ block, onBlockClick }: {
               key={grouped.blocks[0].id}
               blocks={grouped.blocks}
               onBlockClick={onBlockClick}
+            />
+          );
+        } else if (grouped.kind === "image-row") {
+          return (
+            <ImageRowView
+              key={grouped.blocks[0].id}
+              blocks={grouped.blocks}
             />
           );
         } else {
@@ -339,13 +348,19 @@ function TableBlockView({ block }: BlockProps & { block: TableBlock }) {
   );
 }
 
-function ImageBlockView({ block }: BlockProps & { block: ImageBlock }) {
+function ImageBlockView({ block, inRow }: BlockProps & { block: ImageBlock; inRow?: boolean }) {
+  // Apply width styling if width_pct is provided (from YOLO detection)
+  const style = block.width_pct
+    ? { width: `${Math.min(block.width_pct, 100)}%`, maxWidth: "100%" }
+    : {};
+
   return (
-    <figure className="my-4">
+    <figure className={cn("flex flex-col items-center", !inRow && "my-4")}>
       <img
         src={block.src}
         alt={block.alt}
         title={block.title}
+        style={style}
         className="max-w-full max-h-96 h-auto object-contain rounded"
       />
       {block.alt && (
@@ -365,41 +380,96 @@ function ThematicBreakView() {
 
 type GroupedBlock =
   | { kind: "single"; block: ContentBlock }
-  | { kind: "paragraph-group"; blocks: ParagraphBlock[] };
+  | { kind: "paragraph-group"; blocks: ParagraphBlock[] }
+  | { kind: "image-row"; blocks: ImageBlock[] };
 
 function groupBlocks(blocks: ContentBlock[]): GroupedBlock[] {
   const result: GroupedBlock[] = [];
-  let currentGroup: ParagraphBlock[] = [];
-  let currentGroupId: string | null = null;
+  let currentParagraphGroup: ParagraphBlock[] = [];
+  let currentParagraphGroupId: string | null = null;
+  let currentImageRow: ImageBlock[] = [];
+  let currentImageRowGroup: string | null = null;
 
-  const flushGroup = () => {
-    if (currentGroup.length > 1) {
-      result.push({ kind: "paragraph-group", blocks: currentGroup });
-    } else if (currentGroup.length === 1) {
-      result.push({ kind: "single", block: currentGroup[0] });
+  const flushParagraphGroup = () => {
+    if (currentParagraphGroup.length > 1) {
+      result.push({ kind: "paragraph-group", blocks: currentParagraphGroup });
+    } else if (currentParagraphGroup.length === 1) {
+      result.push({ kind: "single", block: currentParagraphGroup[0] });
     }
-    currentGroup = [];
-    currentGroupId = null;
+    currentParagraphGroup = [];
+    currentParagraphGroupId = null;
+  };
+
+  const flushImageRow = () => {
+    if (currentImageRow.length > 1) {
+      result.push({ kind: "image-row", blocks: currentImageRow });
+    } else if (currentImageRow.length === 1) {
+      result.push({ kind: "single", block: currentImageRow[0] });
+    }
+    currentImageRow = [];
+    currentImageRowGroup = null;
   };
 
   for (const block of blocks) {
-    const groupId = block.type === "paragraph" ? block.visual_group_id : null;
-
-    if (groupId && groupId === currentGroupId) {
-      currentGroup.push(block as ParagraphBlock);
-    } else {
-      flushGroup();
-      if (groupId) {
-        currentGroup = [block as ParagraphBlock];
-        currentGroupId = groupId;
+    // Handle paragraph visual groups
+    if (block.type === "paragraph" && block.visual_group_id) {
+      flushImageRow(); // Flush any pending image row
+      if (block.visual_group_id === currentParagraphGroupId) {
+        currentParagraphGroup.push(block);
       } else {
-        result.push({ kind: "single", block });
+        flushParagraphGroup();
+        currentParagraphGroup = [block];
+        currentParagraphGroupId = block.visual_group_id;
       }
+      continue;
     }
+
+    // Handle image row groups
+    if (block.type === "image" && block.row_group) {
+      flushParagraphGroup(); // Flush any pending paragraph group
+      if (block.row_group === currentImageRowGroup) {
+        currentImageRow.push(block);
+      } else {
+        flushImageRow();
+        currentImageRow = [block];
+        currentImageRowGroup = block.row_group;
+      }
+      continue;
+    }
+
+    // Single block - flush any pending groups first
+    flushParagraphGroup();
+    flushImageRow();
+    result.push({ kind: "single", block });
   }
 
-  flushGroup();
+  flushParagraphGroup();
+  flushImageRow();
   return result;
+}
+
+// Renders multiple image blocks in a flex row (side-by-side figures)
+// Normalizes widths so images fill available space proportionally
+function ImageRowView({ blocks }: { blocks: ImageBlock[] }) {
+  // Calculate scaled widths: preserve relative proportions but fill ~95% of space
+  const totalRawWidth = blocks.reduce((sum, b) => sum + (b.width_pct || 50), 0);
+  const targetTotalWidth = 95; // Leave 5% for gaps
+  const scaleFactor = Math.min(targetTotalWidth / totalRawWidth, 2.5); // Cap scaling to prevent oversized images
+
+  return (
+    <div className="my-4 flex gap-4 justify-center items-start flex-wrap">
+      {blocks.map((block) => {
+        const scaledWidth = Math.min((block.width_pct || 50) * scaleFactor, 100);
+        return (
+          <ImageBlockView
+            key={block.id}
+            block={{ ...block, width_pct: scaledWidth }}
+            inRow
+          />
+        );
+      })}
+    </div>
+  );
 }
 
 // Renders multiple paragraph blocks as spans within a single <p>
@@ -483,6 +553,7 @@ interface StructuredDocumentViewProps {
   markdownContent?: string | null;
   onBlockClick?: (audioIdx: number) => void;
   fallbackContent?: string;
+  onTitleChange?: (newTitle: string) => void;
 }
 
 // Memoized to prevent re-renders from parent's audioProgress updates
@@ -493,9 +564,12 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
   markdownContent,
   onBlockClick,
   fallbackContent,
+  onTitleChange,
 }: StructuredDocumentViewProps) {
   const contentRef = useRef<HTMLDivElement>(null);
   const [copied, setCopied] = useState(false);
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [editedTitle, setEditedTitle] = useState("");
 
   // Copy markdown to clipboard
   const handleCopyMarkdown = useCallback(async () => {
@@ -530,6 +604,27 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
       window.open(sourceUrl, "_blank", "noopener,noreferrer");
     }
   }, [sourceUrl]);
+
+  // Inline title editing (for no-title documents)
+  const startEditingTitle = useCallback(() => {
+    if (!title && onTitleChange) {
+      setEditedTitle("");
+      setIsEditingTitle(true);
+    }
+  }, [title, onTitleChange]);
+
+  const saveTitle = useCallback(() => {
+    if (editedTitle.trim() && onTitleChange) {
+      onTitleChange(editedTitle.trim());
+    }
+    setIsEditingTitle(false);
+    setEditedTitle("");
+  }, [editedTitle, onTitleChange]);
+
+  const cancelEditingTitle = useCallback(() => {
+    setIsEditingTitle(false);
+    setEditedTitle("");
+  }, []);
 
   // Parse structured content
   const doc = useMemo(() => {
@@ -589,7 +684,7 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
     }, 0);
 
     return () => clearTimeout(timeoutId);
-  });
+  }, [doc]);
 
   // Replace video links with embedded video players
   useEffect(() => {
@@ -651,45 +746,62 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
     }
   }, []);
 
+  // Action buttons toolbar - always rendered
+  const ActionButtons = () => (
+    <div className="flex items-center gap-1 shrink-0">
+      <button
+        onClick={handleCopyMarkdown}
+        disabled={!markdownContent}
+        className="p-2 rounded hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+        title={copied ? "Copied!" : "Copy markdown"}
+      >
+        {copied ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4 text-muted-foreground" />}
+      </button>
+      <button
+        onClick={handleDownloadMarkdown}
+        disabled={!markdownContent}
+        className="p-2 rounded hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+        title="Download markdown"
+      >
+        <Download className="h-4 w-4 text-muted-foreground" />
+      </button>
+      <button
+        disabled
+        className="p-2 rounded opacity-40 cursor-not-allowed"
+        title="Export as audio (coming soon)"
+      >
+        <Music className="h-4 w-4 text-muted-foreground" />
+      </button>
+    </div>
+  );
+
+  // Responsive margins: larger on desktop, smaller on mobile
+  // pb-52 (208px) provides clearance above the fixed SoundControl bar (~177px)
+  const containerClass = "w-full flex flex-col overflow-y-auto px-4 sm:px-[8%] md:px-[10%] pt-4 sm:pt-[4%] pb-52";
+
   // Fallback to plain text rendering
   if (!doc || !doc.blocks || doc.blocks.length === 0) {
     return (
-      <div className="flex flex-col overflow-y-auto m-[10%] mt-[4%]">
-        {title && (
-          <div className="flex items-center justify-between mb-[4%] border-b border-b-border pb-2">
+      <div className={containerClass}>
+        {title ? (
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-4 pb-2 border-b border-b-border">
             <p
               className={cn(
-                "text-4xl font-bold",
+                "text-4xl font-bold sm:mr-4",
                 sourceUrl && "cursor-pointer hover:opacity-80"
               )}
               onClick={sourceUrl ? handleTitleClick : undefined}
             >
               {title}
             </p>
-            <div className="flex items-center gap-1 ml-4">
-              <button
-                onClick={handleCopyMarkdown}
-                disabled={!markdownContent}
-                className="p-2 rounded hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                title={copied ? "Copied!" : "Copy markdown"}
-              >
-                {copied ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4 text-muted-foreground" />}
-              </button>
-              <button
-                onClick={handleDownloadMarkdown}
-                disabled={!markdownContent}
-                className="p-2 rounded hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                title="Download markdown"
-              >
-                <Download className="h-4 w-4 text-muted-foreground" />
-              </button>
-              <button
-                disabled
-                className="p-2 rounded opacity-40 cursor-not-allowed"
-                title="Export as audio (coming soon)"
-              >
-                <Music className="h-4 w-4 text-muted-foreground" />
-              </button>
+            <div className="flex justify-end mt-2 sm:mt-0">
+              <ActionButtons />
+            </div>
+          </div>
+        ) : (
+          <div className="-mx-4 px-4 sm:-mx-[8%] sm:px-[8%] md:-mx-[10%] md:px-[10%] mb-4 pb-2 border-b border-b-border">
+            <div className="w-full flex justify-end">
+              <ActionButtons />
             </div>
           </div>
         )}
@@ -704,46 +816,85 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
   const groupedBlocks = groupBlocks(doc.blocks);
 
   return (
-    <article className="flex flex-col overflow-y-auto m-[10%] mt-[4%] prose-container">
-      {title && (
-        <div className="flex items-center justify-between mb-6 border-b border-b-border pb-2">
-          <h1
-            className={cn(
-              "text-4xl font-bold",
-              sourceUrl && "cursor-pointer hover:opacity-80"
+    <article className={cn(containerClass, "prose-container")}>
+      {title && !isEditingTitle ? (
+        <div
+          className={cn(
+            "flex flex-col sm:flex-row sm:items-center sm:justify-between mb-6 pb-2 border-b border-b-border overflow-hidden",
+            onTitleChange && "cursor-text"
+          )}
+          onClick={onTitleChange ? () => { setEditedTitle(title); setIsEditingTitle(true); } : undefined}
+        >
+          <h1 className="text-4xl font-bold sm:mr-4 break-all min-w-0 flex-1">
+            {sourceUrl ? (
+              <a
+                href={sourceUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="hover:opacity-80"
+                onClick={(e) => e.stopPropagation()}
+              >
+                {title}
+              </a>
+            ) : (
+              title
             )}
-            onClick={sourceUrl ? handleTitleClick : undefined}
-          >
-            {title}
           </h1>
-          <div className="flex items-center gap-1 ml-4">
-            <button
-              onClick={handleCopyMarkdown}
-              disabled={!markdownContent}
-              className="p-2 rounded hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-              title={copied ? "Copied!" : "Copy markdown"}
-            >
-              {copied ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4 text-muted-foreground" />}
-            </button>
-            <button
-              onClick={handleDownloadMarkdown}
-              disabled={!markdownContent}
-              className="p-2 rounded hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-              title="Download markdown"
-            >
-              <Download className="h-4 w-4 text-muted-foreground" />
-            </button>
-            <button
-              disabled
-              className="p-2 rounded opacity-40 cursor-not-allowed"
-              title="Export as audio (coming soon)"
-            >
-              <Music className="h-4 w-4 text-muted-foreground" />
-            </button>
+          <div className="flex justify-end mt-2 sm:mt-0 shrink-0" onClick={(e) => e.stopPropagation()}>
+            <ActionButtons />
+          </div>
+        </div>
+      ) : title && isEditingTitle ? (
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-6 pb-2 border-b border-b-border">
+          <input
+            type="text"
+            value={editedTitle}
+            onChange={(e) => setEditedTitle(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") saveTitle();
+              if (e.key === "Escape") cancelEditingTitle();
+            }}
+            onBlur={saveTitle}
+            autoFocus
+            maxLength={500}
+            className="flex-1 text-4xl font-bold bg-transparent border-none outline-none sm:mr-4"
+          />
+          <div className="flex justify-end mt-2 sm:mt-0">
+            <ActionButtons />
+          </div>
+        </div>
+      ) : (
+        <div className="-mx-4 px-4 sm:-mx-[8%] sm:px-[8%] md:-mx-[10%] md:px-[10%] mb-6 pb-2 border-b border-b-border">
+          <div className="w-full flex items-center justify-between gap-4">
+            {isEditingTitle ? (
+              <input
+                type="text"
+                value={editedTitle}
+                onChange={(e) => setEditedTitle(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") saveTitle();
+                  if (e.key === "Escape") cancelEditingTitle();
+                }}
+                onBlur={saveTitle}
+                autoFocus
+                maxLength={500}
+                placeholder="Enter title..."
+                className="flex-1 text-2xl font-bold bg-transparent border-none outline-none placeholder:text-muted-foreground/40"
+              />
+            ) : onTitleChange ? (
+              <div
+                onClick={startEditingTitle}
+                className="flex-1 h-8 cursor-text"
+                title="Click to add title"
+              />
+            ) : (
+              <div className="flex-1" />
+            )}
+            <ActionButtons />
           </div>
         </div>
       )}
-      <div ref={contentRef} className="structured-content px-3" onClick={handleContentClick}>
+      <div ref={contentRef} className="structured-content px-3 break-words" onClick={handleContentClick}>
         {groupedBlocks.map((grouped) => {
           if (grouped.kind === "paragraph-group") {
             return (
@@ -751,6 +902,13 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
                 key={grouped.blocks[0].id}
                 blocks={grouped.blocks}
                 onBlockClick={onBlockClick}
+              />
+            );
+          } else if (grouped.kind === "image-row") {
+            return (
+              <ImageRowView
+                key={grouped.blocks[0].id}
+                blocks={grouped.blocks}
               />
             );
           } else {

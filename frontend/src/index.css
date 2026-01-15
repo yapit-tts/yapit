@@ -125,7 +125,17 @@
     scrollbar-gutter: stable;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground overflow-x-hidden;
+  }
+}
+
+/* Sidebar edge trigger animation - syncs with sidebar open animation */
+@keyframes slideToSidebarEdge {
+  from {
+    left: 0;
+  }
+  to {
+    left: var(--sidebar-width, 256px);
   }
 }
 

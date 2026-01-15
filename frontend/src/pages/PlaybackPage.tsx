@@ -1,14 +1,15 @@
 import { SoundControl } from '@/components/soundControl';
 import { StructuredDocumentView } from '@/components/structuredDocument';
-import { useParams, useLocation, Link } from "react-router";
-import { useRef, useState, useEffect, useLayoutEffect, useCallback } from "react";
+import { useParams, useLocation, Link, useNavigate } from "react-router";
+import { useRef, useState, useEffect, useLayoutEffect, useCallback, useMemo } from "react";
 import { useApi } from '@/api';
-import { Loader2, FileQuestion } from "lucide-react";
+import { Loader2, FileQuestion, Download, X } from "lucide-react";
 import { AxiosError } from "axios";
 import { AudioPlayer } from '@/lib/audio';
 import { useBrowserTTS } from '@/lib/browserTTS';
 import { type VoiceSelection, getVoiceSelection, getBackendModelSlug, isServerSideModel } from '@/lib/voiceSelection';
 import { useSettings } from '@/hooks/useSettings';
+import { useUserPreferences } from '@/hooks/useUserPreferences';
 import { useTTSWebSocket } from '@/hooks/useTTSWebSocket';
 
 // Playback position persistence
@@ -58,9 +59,18 @@ interface DocumentResponse {
   id: string;
   title: string | null;
   original_text: string;
-  filtered_text: string | null;
   structured_content: string | null;
   metadata_dict: DocumentMetadata | null;
+  last_block_idx: number | null;
+}
+
+interface PublicDocumentResponse {
+  id: string;
+  title: string | null;
+  original_text: string;
+  structured_content: string;
+  metadata_dict: DocumentMetadata | null;
+  block_count: number;
 }
 
 interface AudioBufferData {
@@ -72,11 +82,14 @@ interface AudioBufferData {
 const PlaybackPage = () => {
   const { documentId } = useParams<{ documentId: string }>();
   const { state } = useLocation();
+  const navigate = useNavigate();
   const initialTitle: string | undefined = state?.documentTitle;
+  const failedPages: number[] | undefined = state?.failedPages;
 
-  const { api, isAuthReady } = useApi();
+  const { api, isAuthReady, isAnonymous } = useApi();
   const browserTTS = useBrowserTTS();
   const { settings } = useSettings();
+  const { autoImportSharedDocuments } = useUserPreferences();
   const ttsWS = useTTSWebSocket();
 
   // Document data fetched from API
@@ -85,12 +98,18 @@ const PlaybackPage = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Public document viewing (ephemeral access before import)
+  const [isPublicView, setIsPublicView] = useState(false);
+  const [showImportBanner, setShowImportBanner] = useState(true);
+  const [showFailedPagesBanner, setShowFailedPagesBanner] = useState(true);
+  const [isImporting, setIsImporting] = useState(false);
+
   // Derived state
   const documentTitle = document?.title ?? initialTitle;
   const structuredContent = document?.structured_content ?? null;
-  const fallbackContent = document?.filtered_text ?? document?.original_text ?? "";
+  const fallbackContent = document?.original_text ?? "";
   const sourceUrl = document?.metadata_dict?.url ?? null;
-  const markdownContent = document?.filtered_text ?? document?.original_text ?? null;
+  const markdownContent = document?.original_text ?? null;
   const numberOfBlocks = documentBlocks.length;
   const estimated_ms = documentBlocks.reduce((sum, b) => sum + (b.est_duration_ms || 0), 0);
 
@@ -126,16 +145,57 @@ const PlaybackPage = () => {
   // Track previous block for DOM-based highlighting (avoids React re-renders)
   const prevBlockIdxRef = useRef<number>(-1);
 
-  // Hover/drag highlighting state (progress bar → document)
-  const [hoveredBlock, setHoveredBlock] = useState<number | null>(null);
-  const [isDraggingProgressBar, setIsDraggingProgressBar] = useState(false);
-  const prevHoveredBlockRef = useRef<number | null>(null);
+  // Hover/drag highlighting - refs instead of state to avoid re-renders
+  // These drive purely imperative DOM updates (class manipulation + scroll)
+  const hoveredBlockRef = useRef<number | null>(null);
+  const isDraggingProgressBarRef = useRef(false);
   const lastHoverScrollTimeRef = useRef<number>(0);
 
-  // Handler for progress bar hover/drag - updates both hover position and drag state
+  // Handler for progress bar hover/drag - direct DOM manipulation, no state
   const handleBlockHover = useCallback((idx: number | null, isDragging: boolean) => {
-    setHoveredBlock(idx);
-    setIsDraggingProgressBar(isDragging);
+    const prevHovered = hoveredBlockRef.current;
+    hoveredBlockRef.current = idx;
+    isDraggingProgressBarRef.current = isDragging;
+
+    const HOVER_BLOCK_CLASS = "audio-block-hovered";
+
+    // Remove hover class from previous block
+    if (prevHovered !== null && prevHovered !== idx) {
+      window.document.querySelectorAll(`[data-audio-block-idx="${prevHovered}"]`)
+        .forEach(el => el.classList.remove(HOVER_BLOCK_CLASS));
+    }
+
+    // Add hover class to currently hovered block (if not same as active playing block)
+    if (idx !== null && idx !== currentBlockRef.current) {
+      window.document.querySelectorAll(`[data-audio-block-idx="${idx}"]`)
+        .forEach(el => el.classList.add(HOVER_BLOCK_CLASS));
+    }
+
+    // Clear hover class if hovering over the active block or leaving
+    if (idx === null || idx === currentBlockRef.current) {
+      if (prevHovered !== null) {
+        window.document.querySelectorAll(`[data-audio-block-idx="${prevHovered}"]`)
+          .forEach(el => el.classList.remove(HOVER_BLOCK_CLASS));
+      }
+    }
+
+    // Scroll to hovered block during drag (throttled, only when off-screen)
+    if (isDragging && idx !== null && idx !== currentBlockRef.current) {
+      const SCROLL_THROTTLE_MS = 500;
+      const now = Date.now();
+      if (now - lastHoverScrollTimeRef.current >= SCROLL_THROTTLE_MS) {
+        const element = window.document.querySelector(`[data-audio-block-idx="${idx}"]`);
+        if (element) {
+          const rect = element.getBoundingClientRect();
+          const margin = 50;
+          const isVisible = rect.top >= margin && rect.bottom <= window.innerHeight - margin;
+          if (!isVisible) {
+            element.scrollIntoView({ behavior: "auto", block: "center" });
+            lastHoverScrollTimeRef.current = now;
+          }
+        }
+      }
+    }
   }, []);
 
   // Parallel prefetch tracking
@@ -185,56 +245,6 @@ const PlaybackPage = () => {
     prevBlockIdxRef.current = currentBlock;
   }, [currentBlock]);
 
-  // DOM-based hover highlighting (progress bar → document block)
-  useLayoutEffect(() => {
-    const HOVER_BLOCK_CLASS = "audio-block-hovered";
-
-    // Remove hover class from previous block
-    if (prevHoveredBlockRef.current !== null) {
-      const prevElements = window.document.querySelectorAll(
-        `[data-audio-block-idx="${prevHoveredBlockRef.current}"]`
-      );
-      prevElements.forEach((el) => el.classList.remove(HOVER_BLOCK_CLASS));
-    }
-
-    // Add hover class to currently hovered block (if not same as active)
-    if (hoveredBlock !== null && hoveredBlock !== currentBlock) {
-      const hoveredElements = window.document.querySelectorAll(
-        `[data-audio-block-idx="${hoveredBlock}"]`
-      );
-      hoveredElements.forEach((el) => el.classList.add(HOVER_BLOCK_CLASS));
-    }
-
-    prevHoveredBlockRef.current = hoveredBlock;
-  }, [hoveredBlock, currentBlock]);
-
-  // Scroll to hovered block during drag (not hover) - throttled, only when off-screen
-  useEffect(() => {
-    // Only scroll when actively dragging, not on passive hover
-    if (!isDraggingProgressBar) return;
-    if (hoveredBlock === null || hoveredBlock === currentBlock) return;
-
-    const SCROLL_THROTTLE_MS = 500; // Higher = less jittery on fast drags
-    const now = Date.now();
-    if (now - lastHoverScrollTimeRef.current < SCROLL_THROTTLE_MS) return;
-
-    const element = window.document.querySelector(
-      `[data-audio-block-idx="${hoveredBlock}"]`
-    );
-    if (!element) return;
-
-    // Check if element is visible in viewport (with some margin)
-    const rect = element.getBoundingClientRect();
-    const margin = 50; // Don't scroll if block is near edge
-    const isVisible = rect.top >= margin && rect.bottom <= window.innerHeight - margin;
-
-    if (!isVisible) {
-      // Use instant scroll to avoid queuing animations
-      element.scrollIntoView({ behavior: "auto", block: "center" });
-      lastHoverScrollTimeRef.current = now;
-    }
-  }, [hoveredBlock, currentBlock, isDraggingProgressBar]);
-
   // Fetch document and blocks on mount (wait for auth to be ready)
   useEffect(() => {
     if (!isAuthReady) return;
@@ -253,8 +263,32 @@ const PlaybackPage = () => {
         ]);
         setDocument(docResponse.data);
         setDocumentBlocks(blocksResponse.data);
+        setIsPublicView(false);
       } catch (err) {
-        if (err instanceof AxiosError && (err.response?.status === 404 || err.response?.status === 422)) {
+        if (err instanceof AxiosError && err.response?.status === 403) {
+          // 403 = not owner, try public endpoint
+          try {
+            const [publicDocResponse, publicBlocksResponse] = await Promise.all([
+              api.get<PublicDocumentResponse>(`/v1/documents/${documentId}/public`),
+              api.get<Block[]>(`/v1/documents/${documentId}/public/blocks`),
+            ]);
+            // Convert public response to document response format
+            setDocument({
+              id: publicDocResponse.data.id,
+              title: publicDocResponse.data.title,
+              original_text: publicDocResponse.data.original_text,
+              structured_content: publicDocResponse.data.structured_content,
+              metadata_dict: publicDocResponse.data.metadata_dict,
+              last_block_idx: null, // No saved position for public docs
+            });
+            setDocumentBlocks(publicBlocksResponse.data);
+            setIsPublicView(true);
+            setShowImportBanner(true);
+          } catch {
+            // Public endpoint also failed - doc is private or doesn't exist
+            setError("not_found");
+          }
+        } else if (err instanceof AxiosError && (err.response?.status === 404 || err.response?.status === 422)) {
           // 404 = doc doesn't exist, 422 = invalid UUID format (same user experience)
           setError("not_found");
         } else {
@@ -323,21 +357,42 @@ const PlaybackPage = () => {
     }
   }, [documentBlocks, estimated_ms]);
 
-  // Restore playback position from localStorage when document loads
+  // Restore playback position when document loads
+  // For authenticated users: prefer server's last_block_idx for cross-device sync
+  // For anonymous users: use localStorage
   useEffect(() => {
-    if (!documentId || documentBlocks.length === 0) return;
+    if (!documentId || documentBlocks.length === 0 || !document) return;
 
-    const saved = getPlaybackPosition(documentId);
-    if (saved && saved.block >= 0 && saved.block < documentBlocks.length) {
-      setCurrentBlock(saved.block);
-      setAudioProgress(saved.progressMs);
-      blockStartTimeRef.current = saved.progressMs;
+    // Prefer server position for authenticated users (cross-device sync)
+    const serverBlock = document.last_block_idx;
+    const localSaved = getPlaybackPosition(documentId);
+
+    // Use server position if authenticated and server has a saved position
+    // Otherwise fall back to localStorage
+    let restoreBlock: number | null = null;
+    let restoreProgressMs = 0;
+
+    if (!isAnonymous && serverBlock !== null && serverBlock >= 0 && serverBlock < documentBlocks.length) {
+      restoreBlock = serverBlock;
+      // Estimate progress to this block for display
+      for (let i = 0; i < serverBlock; i++) {
+        restoreProgressMs += documentBlocks[i].est_duration_ms || 0;
+      }
+    } else if (localSaved && localSaved.block >= 0 && localSaved.block < documentBlocks.length) {
+      restoreBlock = localSaved.block;
+      restoreProgressMs = localSaved.progressMs;
+    }
+
+    if (restoreBlock !== null) {
+      setCurrentBlock(restoreBlock);
+      setAudioProgress(restoreProgressMs);
+      blockStartTimeRef.current = restoreProgressMs;
 
       // Scroll to restored block after React renders the blocks
       if (settings.scrollOnRestore) {
         setTimeout(() => {
           const blockElement = window.document.querySelector(
-            `[data-audio-block-idx="${saved.block}"]`
+            `[data-audio-block-idx="${restoreBlock}"]`
           );
           if (blockElement) {
             blockElement.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -345,22 +400,36 @@ const PlaybackPage = () => {
         }, 100);
       }
     }
-  }, [documentId, documentBlocks.length, settings.scrollOnRestore]);
+  }, [documentId, documentBlocks, document, isAnonymous, settings.scrollOnRestore]);
 
   // Ref to track documentId for position saving (avoids saving old position to new doc on navigation)
   const documentIdRef = useRef(documentId);
   documentIdRef.current = documentId;
+
+  // Track isAnonymous via ref to avoid re-triggering on auth changes
+  const isAnonymousRef = useRef(isAnonymous);
+  isAnonymousRef.current = isAnonymous;
 
   // Save playback position when currentBlock changes
   // Uses ref for documentId so navigating to a new doc doesn't save old position to new doc's key
   useEffect(() => {
     if (!documentIdRef.current || currentBlock < 0) return;
 
+    // Always save to localStorage (instant, serves as fallback if server sync fails)
     setPlaybackPosition(documentIdRef.current, {
       block: currentBlock,
       progressMs: blockStartTimeRef.current,
     });
-  }, [currentBlock]); // Only depend on currentBlock - documentId comes from ref
+
+    // Sync to server for authenticated users (cross-device sync)
+    if (!isAnonymousRef.current) {
+      api.patch(`/v1/documents/${documentIdRef.current}/position`, {
+        block_idx: currentBlock,
+      }).catch(() => {
+        // Silently ignore sync failures - localStorage is the fallback
+      });
+    }
+  }, [currentBlock, api]); // Only depend on currentBlock - documentId and isAnonymous come from refs
 
   // Helper to scroll to a specific block
   const scrollToBlock = useCallback((blockIdx: number, behavior: ScrollBehavior = "smooth") => {
@@ -397,12 +466,20 @@ const PlaybackPage = () => {
     }
 
     const states: BlockState[] = documentBlocks.map((block, idx) => {
-      // Use cachedBlocksRef for visual state (persists even after buffer eviction)
-      if (cachedBlocksRef.current.has(block.id)) return 'cached';
+      const wsState = isServerMode ? ttsWS.blockStates.get(idx) : undefined;
+      const wsStatus = wsState?.status;
+
+      // Use cachedBlocksRef for visual state, but only if we still have access to audio.
+      // If backend evicted (wsStatus undefined), we need buffer locally to show as cached.
+      if (cachedBlocksRef.current.has(block.id)) {
+        if (audioBuffersRef.current.has(block.id) || wsStatus === 'cached') {
+          return 'cached';
+        }
+        // Backend evicted and no local buffer - fall through to pending
+      }
 
       if (isServerMode) {
         // Server mode: use WS block states
-        const wsStatus = ttsWS.blockStates.get(idx);
         if (wsStatus === 'cached') return 'cached';
         if (wsStatus === 'queued' || wsStatus === 'processing') return 'synthesizing';
         return 'pending';
@@ -413,7 +490,7 @@ const PlaybackPage = () => {
       }
     });
     setBlockStates(states);
-  }, [documentBlocks, currentBlock, blockStateVersion, isServerMode, ttsWS.blockStates]);
+  }, [documentBlocks, blockStateVersion, isServerMode, ttsWS.blockStates]);
 
   // Refs for keyboard handler to avoid stale closures
   const handlePlayRef = useRef<() => void>(() => {});
@@ -695,12 +772,17 @@ const PlaybackPage = () => {
       }
 
       const indicesToRequest: number[] = [];
+      const currentVoice = voiceSelection.voiceSlug;
       for (let idx = fromIdx; idx <= toIdx; idx++) {
         const block = documentBlocks[idx];
         if (!block) continue;
         if (audioBuffersRef.current.has(block.id)) continue;
-        const wsStatus = ttsWS.getBlockStatus(idx);
-        if (wsStatus === 'cached' || wsStatus === 'queued' || wsStatus === 'processing') continue;
+        const wsState = ttsWS.getBlockState(idx);
+        // Only skip if status is terminal AND voice matches current selection
+        // If voice doesn't match, we need to re-request with new voice
+        if (wsState && wsState.voice_slug === currentVoice) {
+          if (wsState.status === 'cached' || wsState.status === 'queued' || wsState.status === 'processing' || wsState.status === 'skipped') continue;
+        }
         indicesToRequest.push(idx);
       }
 
@@ -749,7 +831,7 @@ const PlaybackPage = () => {
       // For server mode, also count queued/processing from WS state
       if (isServer) {
         const wsStatus = ttsWS.getBlockStatus(idx);
-        if (wsStatus === 'queued' || wsStatus === 'processing' || wsStatus === 'cached') {
+        if (wsStatus === 'queued' || wsStatus === 'processing' || wsStatus === 'cached' || wsStatus === 'skipped') {
           readyAhead++;
           continue;
         }
@@ -770,7 +852,7 @@ const PlaybackPage = () => {
       for (let idx = currentBlockRef.current + 1; idx < documentBlocks.length; idx++) {
         const block = documentBlocks[idx];
         const isCached = audioBuffersRef.current.has(block.id);
-        const isQueued = isServer && ['queued', 'processing', 'cached'].includes(ttsWS.getBlockStatus(idx) || '');
+        const isQueued = isServer && ['queued', 'processing', 'cached', 'skipped'].includes(ttsWS.getBlockStatus(idx) || '');
         const isSynthesizing = !isServer && synthesizingRef.current.has(block.id);
         if (!isCached && !isQueued && !isSynthesizing) {
           firstUnreadyIdx = idx;
@@ -886,7 +968,7 @@ const PlaybackPage = () => {
     let cachedAhead = 0;
     for (let idx = startBlock; idx < documentBlocks.length; idx++) {
       const block = documentBlocks[idx];
-      const isSkipped = ttsWS.blockStates.get(idx) === "skipped";
+      const isSkipped = ttsWS.blockStates.get(idx)?.status === "skipped";
       if (audioBuffersRef.current.has(block.id) || isSkipped) {
         cachedAhead++;
       } else {
@@ -959,7 +1041,7 @@ const PlaybackPage = () => {
       }
 
       // Auto-advance if this block is marked as skipped (empty audio)
-      if (ttsWS.blockStates.get(currentBlock) === "skipped") {
+      if (ttsWS.blockStates.get(currentBlock)?.status === "skipped") {
         console.log(`[Playback] Block ${currentBlock} is skipped, advancing to next`);
         playingBlockRef.current = currentBlock;
         setCurrentBlock(prev => {
@@ -1033,7 +1115,7 @@ const PlaybackPage = () => {
     let count = 0;
     for (let idx = fromIdx; idx < documentBlocks.length; idx++) {
       const block = documentBlocks[idx];
-      const isSkipped = ttsWS.blockStates.get(idx) === "skipped";
+      const isSkipped = ttsWS.blockStates.get(idx)?.status === "skipped";
       if (audioBuffersRef.current.has(block.id) || isSkipped) {
         count++;
       } else {
@@ -1188,6 +1270,8 @@ const PlaybackPage = () => {
 
   // Memoized to prevent StructuredDocumentView re-renders from audioProgress updates
   // Uses currentBlockRef instead of currentBlock to keep callback stable
+  // Note: Uses ttsWS.moveCursor directly (stable ref) instead of ttsWS object to prevent
+  // cascading re-renders when WS state (blockStates/audioUrls) changes during playback
   const handleBlockChange = useCallback((newBlock: number) => {
     if (newBlock === currentBlockRef.current) return;
     if (!documentBlocks || newBlock < 0 || newBlock >= documentBlocks.length) {
@@ -1197,6 +1281,11 @@ const PlaybackPage = () => {
 
     console.log(`[Playback] Jumping to block ${newBlock}`);
     audioPlayerRef.current?.stop();
+
+    // Notify backend to evict blocks outside new cursor window
+    if (documentId && isServerSideModel(voiceSelection.model)) {
+      ttsWS.moveCursor(documentId, newBlock);
+    }
 
     // Calculate progress up to the new block
     let progressMs = 0;
@@ -1210,7 +1299,7 @@ const PlaybackPage = () => {
 
     // If already playing, the useEffect will auto-play the new block
     // If paused, just set position (user can press play)
-  }, [documentBlocks]);
+  }, [documentBlocks, documentId, voiceSelection.model, ttsWS.moveCursor]);
 
   // Handle click on structured document block (by audio_block_idx)
   // Memoized to prevent StructuredDocumentView re-renders from audioProgress updates
@@ -1218,13 +1307,66 @@ const PlaybackPage = () => {
     handleBlockChange(audioBlockIdx);
   }, [handleBlockChange]);
 
-  const handleVolumeChange = (newVolume: number) => {
+  const handleVolumeChange = useCallback((newVolume: number) => {
     setVolume(newVolume);
-  };
+  }, []);
 
-  const handleSpeedChange = (newSpeed: number) => {
+  const handleSpeedChange = useCallback((newSpeed: number) => {
     setPlaybackSpeed(newSpeed);
-  };
+  }, []);
+
+  const handleTitleChange = useCallback(async (newTitle: string) => {
+    if (!documentId) return;
+    try {
+      await api.patch(`/v1/documents/${documentId}`, { title: newTitle });
+      setDocument(prev => prev ? { ...prev, title: newTitle } : prev);
+      // Notify sidebar to update its document list
+      window.dispatchEvent(new CustomEvent('document-title-changed', {
+        detail: { documentId, title: newTitle }
+      }));
+    } catch (err) {
+      console.error("Failed to update title:", err);
+      // Revert to original title on error
+      setDocument(prev => prev ? { ...prev } : prev);
+      const errorMessage = err instanceof AxiosError && err.response?.status === 422
+        ? "Title is too long (max 500 characters)"
+        : "Failed to update title";
+      alert(errorMessage);
+    }
+  }, [api, documentId]);
+
+  // Import public document to user's library
+  const handleImportDocument = useCallback(async () => {
+    if (!documentId || isImporting) return;
+    setIsImporting(true);
+    try {
+      const response = await api.post<{ id: string; title: string | null }>(`/v1/documents/${documentId}/import`);
+      // Navigate to the new document (user's copy)
+      navigate(`/listen/${response.data.id}`, { replace: true });
+    } catch (err) {
+      console.error("Failed to import document:", err);
+      alert("Failed to add document to library");
+      setIsImporting(false);
+    }
+  }, [api, documentId, isImporting, navigate]);
+
+  // Auto-import if preference is enabled
+  useEffect(() => {
+    if (isPublicView && autoImportSharedDocuments && !isImporting) {
+      handleImportDocument();
+    }
+  }, [isPublicView, autoImportSharedDocuments, isImporting, handleImportDocument]);
+
+  // Memoize progressBarValues to prevent SoundControl re-renders when unrelated state changes
+  const progressBarValues = useMemo(() => ({
+    estimated_ms: actualTotalDuration > 0 ? actualTotalDuration : estimated_ms,
+    numberOfBlocks,
+    currentBlock: currentBlock >= 0 ? currentBlock : 0,
+    setCurrentBlock: handleBlockChange,
+    onBlockHover: handleBlockHover,
+    audioProgress,
+    blockStates,
+  }), [actualTotalDuration, estimated_ms, numberOfBlocks, currentBlock, handleBlockChange, handleBlockHover, audioProgress, blockStates]);
 
   if (isLoading) {
     return (
@@ -1255,42 +1397,89 @@ const PlaybackPage = () => {
   }
 
   return (
-    <div className="flex grow pb-32">
-      <StructuredDocumentView
-        structuredContent={structuredContent}
-        title={documentTitle}
-        sourceUrl={sourceUrl}
-        markdownContent={markdownContent}
-        onBlockClick={handleDocumentBlockClick}
-        fallbackContent={fallbackContent}
-      />
-      <SoundControl
-        isPlaying={isPlaying}
-        isBuffering={isBuffering}
-        isSynthesizing={isSynthesizing}
-        isReconnecting={ttsWS.isReconnecting}
-        connectionError={ttsWS.connectionError}
-        onPlay={handlePlay}
-        onPause={handlePause}
-        onCancelSynthesis={handleCancelSynthesis}
-        onSkipBack={handleSkipBack}
-        onSkipForward={handleSkipForward}
-        progressBarValues={{
-          estimated_ms: actualTotalDuration > 0 ? actualTotalDuration : estimated_ms,
-          numberOfBlocks,
-          currentBlock: currentBlock >= 0 ? currentBlock : 0,
-          setCurrentBlock: handleBlockChange,
-          onBlockHover: handleBlockHover,
-          audioProgress,
-          blockStates,
-        }}
-        volume={volume}
-        onVolumeChange={handleVolumeChange}
-        playbackSpeed={playbackSpeed}
-        onSpeedChange={handleSpeedChange}
-        voiceSelection={voiceSelection}
-        onVoiceChange={setVoiceSelection}
-      />
+    <div className="flex grow flex-col">
+      {/* Public document import banner */}
+      {isPublicView && showImportBanner && (
+        <div className="flex items-center justify-between gap-4 bg-muted px-4 py-2 border-b border-border">
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Download className="h-4 w-4" />
+            <span>Shared document</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleImportDocument}
+              disabled={isImporting}
+              className="flex items-center gap-1.5 rounded bg-primary px-3 py-1 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+            >
+              {isImporting ? (
+                <>
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Adding...
+                </>
+              ) : (
+                "Add to Library"
+              )}
+            </button>
+            <button
+              onClick={() => setShowImportBanner(false)}
+              className="p-1 text-muted-foreground hover:text-foreground"
+              title="Dismiss"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Failed pages warning banner */}
+      {failedPages && failedPages.length > 0 && showFailedPagesBanner && (
+        <div className="flex items-center justify-between gap-4 bg-destructive/10 px-4 py-3 border-b border-destructive/20">
+          <p className="text-destructive">
+            {failedPages.length === 1
+              ? `Page ${failedPages[0] + 1} failed to extract.`
+              : `Pages ${failedPages.map(p => p + 1).join(", ")} failed to extract.`}
+            {" "}Try again later — successfully extracted pages are cached and won't count toward your usage again.
+          </p>
+          <button
+            onClick={() => setShowFailedPagesBanner(false)}
+            className="shrink-0 p-1 text-destructive/70 hover:text-destructive"
+            title="Dismiss"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
+      <div className="flex grow">
+        <StructuredDocumentView
+          structuredContent={structuredContent}
+          title={documentTitle}
+          sourceUrl={sourceUrl}
+          markdownContent={markdownContent}
+          onBlockClick={handleDocumentBlockClick}
+          fallbackContent={fallbackContent}
+          onTitleChange={isPublicView ? undefined : handleTitleChange}
+        />
+        <SoundControl
+          isPlaying={isPlaying}
+          isBuffering={isBuffering}
+          isSynthesizing={isSynthesizing}
+          isReconnecting={ttsWS.isReconnecting}
+          connectionError={ttsWS.connectionError}
+          onPlay={handlePlay}
+          onPause={handlePause}
+          onCancelSynthesis={handleCancelSynthesis}
+          onSkipBack={handleSkipBack}
+          onSkipForward={handleSkipForward}
+          progressBarValues={progressBarValues}
+          volume={volume}
+          onVolumeChange={handleVolumeChange}
+          playbackSpeed={playbackSpeed}
+          onSpeedChange={handleSpeedChange}
+          voiceSelection={voiceSelection}
+          onVoiceChange={setVoiceSelection}
+        />
+      </div>
     </div>
   );
 };

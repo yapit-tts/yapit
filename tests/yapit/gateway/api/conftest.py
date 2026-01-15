@@ -47,21 +47,23 @@ async def app(postgres_container, redis_container) -> FastAPI:
     shutil.rmtree("test_audio_cache", ignore_errors=True)
     shutil.rmtree("test_document_cache", ignore_errors=True)
 
-    # Only override test-specific values, let everything else come from .env.dev
+    # Override only test-specific values; everything else comes from .env.dev via uv run --env-file
     settings = Settings(
-        # Test container URLs (must override)
+        # Test containers (must override)
         database_url=postgres_container.get_connection_url(),
         redis_url=f"redis://{redis_container.get_container_host_ip()}:{redis_container.get_exposed_port(6379)}",
-        # Test-specific cache paths (must override to avoid conflicts)
+        # Test-specific cache paths (avoid conflicts with dev)
         audio_cache_config=CacheConfig(path="test_audio_cache"),
         document_cache_config=CacheConfig(path="test_document_cache"),
-        # Empty auth for tests (auth is mocked)
+        # Auth (mocked in tests)
         stack_auth_api_host="",
         stack_auth_project_id="",
         stack_auth_server_key="",
-        # Test-specific processor configs
+        # Processor configs
         tts_processors_file="tests/empty_processors.json",
-        document_processors_file="tests/empty_processors.json",
+        ai_processor=None,  # Disable Gemini (needs API key)
+        # Disable metrics (no TimescaleDB in tests)
+        metrics_database_url=None,
     )
 
     app = create_app(settings)

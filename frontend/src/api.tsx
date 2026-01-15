@@ -10,7 +10,11 @@ import {
 	useRef,
 	useState,
 } from "react";
-import { getOrCreateAnonymousId } from "./lib/anonymousId";
+import {
+	clearAnonymousId,
+	getOrCreateAnonymousId,
+	hasAnonymousId,
+} from "./lib/anonymousId";
 
 const baseURL = import.meta.env.VITE_API_BASE_URL;
 
@@ -30,6 +34,7 @@ export const ApiProvider: FC<PropsWithChildren> = ({ children }) => {
 	const userRef = useRef<typeof user>(undefined);
 	const [isAuthReady, setIsAuthReady] = useState(false);
 	const [isAnonymous, setIsAnonymous] = useState(true);
+	const claimAttempted = useRef(false);
 	const user = useUser();
 
 	// Keep userRef in sync with current user
@@ -84,16 +89,30 @@ export const ApiProvider: FC<PropsWithChildren> = ({ children }) => {
 		// User is logged in - verify we can get a token
 		user.currentSession
 			.getTokens()
-			.then(({ accessToken }) => {
+			.then(async ({ accessToken }) => {
 				setIsAnonymous(!accessToken);
 				setIsAuthReady(true);
+
+				// Claim anonymous data if user just logged in and has anonymous ID
+				if (accessToken && hasAnonymousId() && !claimAttempted.current) {
+					claimAttempted.current = true;
+					const anonId = getOrCreateAnonymousId();
+					try {
+						await api.post("/v1/users/claim-anonymous", null, {
+							headers: { "X-Anonymous-ID": anonId },
+						});
+						clearAnonymousId();
+					} catch (err) {
+						console.error("Failed to claim anonymous data:", err);
+					}
+				}
 			})
 			.catch((err) => {
 				console.error("api provider: failed to get access token:", err);
 				setIsAnonymous(true);
 				setIsAuthReady(true);
 			});
-	}, [user]);
+	}, [user, api]);
 
 	return (
 		<ApiContext.Provider value={{ api, isAuthReady, isAnonymous }}>

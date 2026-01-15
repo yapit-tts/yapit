@@ -31,11 +31,13 @@ class Settings(BaseSettings):
 
     document_cache_type: Caches
     document_cache_config: CacheConfig
-    document_cache_ttl_webpage: int  # in seconds
-    document_cache_ttl_document: int  # in seconds
 
-    document_processors_file: str
-    mistral_api_key: str | None = None
+    extraction_cache_type: Caches
+    extraction_cache_config: CacheConfig
+
+    ai_processor: str | None = None
+    google_api_key: str | None = None
+    images_dir: str
 
     document_max_download_size: int = 100 * 1024 * 1024  # 100MB default
 
@@ -57,8 +59,10 @@ class Settings(BaseSettings):
     stripe_price_max_monthly: str | None = None
     stripe_price_max_yearly: str | None = None
 
-    # Self-hosting: set False to disable subscription/usage limits entirely
-    billing_enabled: bool
+    billing_enabled: bool  # Self-hosting: set False to disable subscription/usage limits
+
+    metrics_database_url: str | None
+    log_dir: str
 
     model_config = SettingsConfigDict(
         env_prefix="",

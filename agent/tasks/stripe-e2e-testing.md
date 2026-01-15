@@ -1,5 +1,5 @@
 ---
-status: active
+status: done
 type: workflow
 ---
 
@@ -11,35 +11,78 @@ Parent: [[stripe-integration]]
 
 This file defines the **testing workflow** for Stripe billing features. Concrete testing sessions are separate task files that link here.
 
+## Agent Instructions
+
+When working through this test suite:
+
+**Test Execution:**
+- Work through sections 1-10 sequentially
+- Use Chrome DevTools MCP for UI interactions (login, checkout, portal)
+- Use CLI/API for verification (DB queries, Stripe CLI, webhook logs)
+
+**Recording Results:**
+- **Only mark a test ✅ PASS if 100% successful** — all expected behaviors verified
+- **If ANY issue:** Mark ❌ FAIL or ⚠️ PARTIAL, document exactly what went wrong
+- **Document workflow slowdowns:** If something took longer than expected or required workarounds, note it in Gotchas
+
+**After Each Section:**
+- Update the testing session file with results table
+- If issues found, add to "Issues Found" section with severity and reproduction steps
+- Commit progress periodically (don't batch everything to the end)
+
+**If Blocked:**
+- Document the blocker clearly
+- Check if it's a known issue in [[stripe-integration]] gotchas
+- Ask user before attempting workarounds that modify code
+
+**Test User:**
+- Use `dev@example.com` / `dev-password-123` for most tests
+- For promo code tests or resubscribe flows, may need to delete Stripe customer first:
+  ```bash
+  stripe customers list --email=dev@example.com
+  stripe customers delete cus_xxx --confirm
+  ```
+
 ## Testing Sessions
 
 | Session | Status | Notes |
 |---------|--------|-------|
-| [[stripe-testing-beta-launch]] | In Progress | Pre-beta comprehensive testing |
-| [[stripe-testing-targeted-validation]] | ✅ Done | Portal downgrade, duplicate prevention, promo codes — all critical paths verified |
+| [[stripe-testing-fresh-sandbox]] | ✅ Done | Fresh sandbox full E2E validation (2026-01-05). All sections complete. |
+| [[stripe-testing-beta-launch]] | Reference | Pre-beta testing, detailed observations |
+| [[stripe-testing-targeted-validation]] | ✅ Done | Portal downgrade, duplicate prevention, promo codes verified |
 
 ## Environment Setup
 
 ```bash
-# 1. Start dev environment
+# 1. Start dev environment (includes stripe-cli for webhook forwarding)
 make dev-cpu
 
-# 2. Forward webhooks (in separate terminal)
-stripe listen --forward-to localhost:8000/v1/billing/webhook
+# 2. IMPORTANT: Verify stripe-cli is running and forwarding webhooks
+docker ps | grep stripe  # Should show yapit-stripe-cli-1
+docker logs yapit-stripe-cli-1 --tail 5  # Look for "Ready!" message
 
-# 3. Verify webhook forwarding works
-# Look for "Ready!" message and note the webhook signing secret
+# 3. If stripe-cli is missing or exited, restart it:
+docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile stripe up stripe-cli -d
 ```
+
+**GOTCHA:** Before testing any flows, always verify `yapit-stripe-cli-1` is running. If webhook forwarding isn't active, checkout/portal events will be lost and you'll need to resend them manually.
 
 ## Test Card Numbers
 
 | Card | Use Case |
 |------|----------|
 | `4242 4242 4242 4242` | Successful payment |
-| `4000 0000 0000 0002` | Card declined |
+| `4000 0000 0000 0002` | Card declined (fails immediately) |
+| `4000 0000 0000 0341` | Attaches OK but fails on charge (for renewal failure tests) |
 | `4000 0000 0000 3220` | 3D Secure required |
 
 Expiry: any future date, CVC: any 3 digits
+
+**Testing renewal failures with 0341 card:**
+1. Use SETUP mode checkout (no immediate charge): `stripe checkout sessions create --customer=cus_xxx --mode=setup ...`
+2. Complete checkout with card 4000000000000341 in browser
+3. Create subscription with trial: `stripe subscriptions create ... -d 'trial_period_days=1'`
+4. Advance test clock past trial → invoice.payment_failed fires
 
 ## DB Verification Commands
 
@@ -161,6 +204,7 @@ stripe customers delete cus_XXXXX --confirm
 ### Portal vs Checkout
 
 - **Users with existing subscription** → UI shows "Upgrade/Downgrade" buttons that go to portal, NOT checkout
+- **Canceled users must go to Checkout** — Portal can't resubscribe; must use Checkout with existing customer ID. Frontend fixed in commit `675521a` to detect `status === "canceled"` and route to checkout.
 - **Duplicate subscription prevention** — `billing.py:119-124` blocks checkout for users with active/trialing subscription; returns 400 error
 - **Portal downgrades** — Now work with "immediately" setting (fixed via `_clear_portal_schedule_conditions()`)
 
@@ -200,21 +244,29 @@ stripe customers delete cus_XXXXX --confirm
 ### 6. Resubscribe Flows
 - After full cancel → new checkout
 - Trial eligibility based on highest_tier_subscribed
+- Resubscribe with promo code (fully canceled user should be able to use promo codes)
 
 ### 7. Edge Cases
 - Multiple downgrades in same period
 - Upgrade during grace period
 - Downgrade during trial
+- Grace expiry fallback: if `invoice.payment_succeeded` webhook delayed, verify `get_effective_plan()` checks `grace_until < now` (user loses grace access at correct time, not when webhook arrives)
 
 ### 8. Payment Failures
 - Declined card on renewal
 - Declined card on upgrade
+- Payment recovery: user `past_due` → updates card in portal → Stripe retries → `invoice.payment_succeeded` → status returns to `active`
+- Dunning exhaustion: Stripe gives up retrying → `customer.subscription.deleted` with `cancellation_details.reason = "payment_failed"` → handler marks as canceled
 
 ### 9. Promo Codes
 - See `scripts/stripe_setup.py` for current promo code definitions
 - Valid code applies discount (verify in checkout UI and on invoice)
 - Invalid code shows "promotional code is invalid" error
 - Check redemption counts: `stripe promotion_codes list --code=<CODE>`
+
+### 10. Webhook Reliability
+- Delayed webhook (simulate outage): webhook arrives hours after event → handlers still work (idempotent, set state from webhook data)
+- Webhook ordering: `subscription.updated` before `checkout.completed` → updated handler no-ops if subscription doesn't exist, checkout creates it later (self-corrects)
 
 ## Creating a New Testing Session
 
@@ -224,7 +276,7 @@ stripe customers delete cus_XXXXX --confirm
 
 ```markdown
 ---
-status: active
+status: done
 started: YYYY-MM-DD
 ---
 

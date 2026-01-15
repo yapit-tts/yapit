@@ -1,10 +1,17 @@
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Play, Pause, Volume2, SkipBack, SkipForward, Loader2, Square, WifiOff, ChevronUp } from "lucide-react";
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef, useCallback, useMemo, memo } from "react";
+import { useNavigate } from "react-router";
 import { VoicePicker } from "@/components/voicePicker";
 import { SettingsDialog } from "@/components/settingsDialog";
-import { type VoiceSelection } from "@/lib/voiceSelection";
+import { type VoiceSelection, setVoiceSelection } from "@/lib/voiceSelection";
 import { useSidebar } from "@/components/ui/sidebar";
 
 type BlockState = 'pending' | 'synthesizing' | 'cached';
@@ -97,7 +104,7 @@ function SmoothProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
   const barRef = useRef<HTMLDivElement>(null);
   const numBlocks = blockStates.length;
 
-  // Drag state
+  // Drag state (local)
   const [isDragging, setIsDragging] = useState(false);
   const [seekPosition, setSeekPosition] = useState<number | null>(null); // Block index being seeked to
   const dragStartXRef = useRef<number | null>(null);
@@ -155,6 +162,9 @@ function SmoothProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
     onBlockHover?.(null, false);
   };
 
+  // Track last hover position to avoid unnecessary updates
+  const lastHoverBlockRef = useRef<number | null>(null);
+
   // Mouse events
   const handleMouseDown = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -164,17 +174,21 @@ function SmoothProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
     if (dragStartXRef.current !== null) {
       handleMove(e.clientX);
     } else {
-      // Just hovering - show indicator but don't trigger drag behavior
+      // Just hovering - show indicator but only update if block changed
       const blockIdx = getBlockFromX(e.clientX);
-      setSeekPosition(blockIdx);
-      onBlockHover?.(blockIdx, false);
+      if (blockIdx !== lastHoverBlockRef.current) {
+        lastHoverBlockRef.current = blockIdx;
+        setSeekPosition(blockIdx);
+        onBlockHover?.(blockIdx, false);
+      }
     }
   };
   const handleMouseUp = (e: React.MouseEvent) => {
     handleEnd(e.clientX);
   };
   const handleMouseLeave = () => {
-    setSeekPosition(null); // Always clear indicator on leave
+    lastHoverBlockRef.current = null;
+    setSeekPosition(null);
     if (!isDragging) {
       onBlockHover?.(null, false);
     }
@@ -193,9 +207,8 @@ function SmoothProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
     handleEnd(getClientX(e));
   };
 
-  // Build CSS gradient from block states
-  // Group consecutive blocks with same state to reduce gradient complexity
-  const buildGradient = () => {
+  // Build CSS gradient from block states - memoized to avoid rebuilding on every hover
+  const gradient = useMemo(() => {
     if (numBlocks === 0) return 'transparent';
 
     // State colors: pending=warm brown, cached=light green, current=solid green
@@ -229,9 +242,8 @@ function SmoothProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
     }
 
     return `linear-gradient(to right, ${stops.join(', ')})`;
-  };
+  }, [blockStates, currentBlock, numBlocks]);
 
-  const gradient = buildGradient();
   const currentPct = numBlocks > 0 ? (currentBlock / numBlocks) * 100 : 0;
 
   return (
@@ -263,15 +275,15 @@ function SmoothProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
           boxShadow: '0 0 6px oklch(0.55 0.1 133.7 / 0.8)',
         }}
       />
-      {/* Seek position indicator - green, same as current playing */}
+      {/* Seek position indicator - same width as current position */}
       {seekPosition !== null && seekPosition !== currentBlock && (
         <div
-          className="absolute top-0 bottom-0 w-1.5 pointer-events-none"
+          className="absolute top-0 bottom-0 w-1 pointer-events-none"
           style={{
             left: `${(seekPosition / numBlocks) * 100}%`,
             transform: 'translateX(-50%)',
             backgroundColor: 'var(--primary)',
-            boxShadow: '0 0 8px oklch(0.55 0.1 133.7 / 0.9)',
+            boxShadow: '0 0 6px oklch(0.55 0.1 133.7 / 0.8)',
           }}
         />
       )}
@@ -407,13 +419,12 @@ function BlockyProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
         return (
           <div
             key={idx}
-            className={`h-full transition-colors duration-150 ${bgColor}`}
+            className={`h-full ${bgColor}`}
             style={{
               flex: '1 1 0',
               minWidth: 0,
               borderRight: idx < numBlocks - 1 ? '1px solid rgba(0,0,0,0.1)' : 'none',
             }}
-            title={`Block ${idx + 1}: ${state}`}
           />
         );
       })}
@@ -465,7 +476,7 @@ function msToTime(duration: number | undefined): string {
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 }
 
-const SoundControl = ({
+const SoundControl = memo(function SoundControl({
   isPlaying,
   isBuffering,
   isSynthesizing,
@@ -483,12 +494,65 @@ const SoundControl = ({
   onSpeedChange,
   voiceSelection,
   onVoiceChange,
-}: Props) => {
+}: Props) {
   const { estimated_ms, numberOfBlocks, currentBlock, setCurrentBlock, onBlockHover, audioProgress, blockStates } = progressBarValues;
   const [progressDisplay, setProgressDisplay] = useState("0:00");
   const [durationDisplay, setDurationDisplay] = useState("0:00");
   const [isHoveringSpinner, setIsHoveringSpinner] = useState(false);
   const [isMobileExpanded, setIsMobileExpanded] = useState(false);
+  const [isHoveringProgressBar, setIsHoveringProgressBar] = useState(false);
+  const [hoveredBlock, setHoveredBlock] = useState<number | null>(null);
+  const [isDraggingProgressBar, setIsDraggingProgressBar] = useState(false);
+  const navigate = useNavigate();
+
+  // Detect quota exceeded error
+  const isQuotaExceeded = connectionError?.includes("Usage limit exceeded");
+  const isUsingInworld = voiceSelection.model === "inworld" || voiceSelection.model === "inworld-max";
+
+  // Show modal when quota exceeded on Inworld
+  const [quotaDismissed, setQuotaDismissed] = useState(false);
+
+  // Reset dismissed when switching TO Inworld or starting new synthesis
+  const prevIsInworld = useRef(isUsingInworld);
+  useEffect(() => {
+    if (isUsingInworld && !prevIsInworld.current) {
+      setQuotaDismissed(false);
+    }
+    prevIsInworld.current = isUsingInworld;
+  }, [isUsingInworld]);
+
+  const showQuotaModal = isQuotaExceeded && isUsingInworld && !quotaDismissed;
+
+  // Wrap onPlay to reset dismissed state (so modal shows again on retry)
+  const handlePlay = useCallback(() => {
+    setQuotaDismissed(false);
+    onPlay();
+  }, [onPlay]);
+
+  const handleContinueWithKokoro = useCallback(() => {
+    const newSelection: VoiceSelection = {
+      ...voiceSelection,
+      model: "kokoro-server",
+      voiceSlug: "af_heart",
+    };
+    onVoiceChange(newSelection);
+    setVoiceSelection(newSelection);
+    setQuotaDismissed(true);
+    onPlay();
+  }, [voiceSelection, onVoiceChange, onPlay]);
+
+  const handleUpgradePlan = useCallback(() => {
+    setQuotaDismissed(true);
+    navigate("/subscription");
+  }, [navigate]);
+
+  // Wrap onBlockHover to track hover state locally for display swap
+  const handleBlockHover = useCallback((idx: number | null, isDragging: boolean) => {
+    setHoveredBlock(idx);
+    setIsHoveringProgressBar(idx !== null);
+    setIsDraggingProgressBar(isDragging);
+    onBlockHover?.(idx, isDragging);
+  }, [onBlockHover]);
 
   // Get sidebar state for responsive positioning
   const { state: sidebarState, isMobile } = useSidebar();
@@ -498,6 +562,12 @@ const SoundControl = ({
   // Long-press repeat with acceleration for skip buttons
   const skipBackProps = useRepeatOnHold(onSkipBack, (currentBlock ?? 0) <= 0 && !isPlaying);
   const skipForwardProps = useRepeatOnHold(onSkipForward, (currentBlock ?? 0) >= numBlocks - 1);
+
+  // Hover handlers for play button spinner (show stop icon on hover during buffering)
+  const handleSpinnerMouseEnter = useCallback(() => {
+    if (isBuffering || isSynthesizing) setIsHoveringSpinner(true);
+  }, [isBuffering, isSynthesizing]);
+  const handleSpinnerMouseLeave = useCallback(() => setIsHoveringSpinner(false), []);
 
   useEffect(() => {
     setProgressDisplay(msToTime(audioProgress));
@@ -530,9 +600,9 @@ const SoundControl = ({
           variant="secondary"
           size="lg"
           className="rounded-full w-14 h-14"
-          onClick={isBuffering || isSynthesizing ? onCancelSynthesis : isPlaying ? onPause : onPlay}
-          onMouseEnter={() => (isBuffering || isSynthesizing) && setIsHoveringSpinner(true)}
-          onMouseLeave={() => setIsHoveringSpinner(false)}
+          onClick={isBuffering || isSynthesizing ? onCancelSynthesis : isPlaying ? onPause : handlePlay}
+          onMouseEnter={handleSpinnerMouseEnter}
+          onMouseLeave={handleSpinnerMouseLeave}
         >
           {isBuffering || isSynthesizing ? (
             isHoveringSpinner ? (
@@ -557,37 +627,37 @@ const SoundControl = ({
       </div>
 
       {/* Progress bar - smooth gradient for large docs, blocky for smaller ones */}
+      {/* On hover: swap time displays with block numbers (current / total) */}
       <div className="flex items-center gap-4 max-w-2xl mx-auto">
         <span className="text-sm text-muted-foreground w-12 text-right tabular-nums">
-          {progressDisplay}
+          {isHoveringProgressBar
+            ? (isDraggingProgressBar && hoveredBlock !== null ? hoveredBlock + 1 : blockNum)
+            : progressDisplay}
         </span>
         {blockStates.length > SMOOTH_THRESHOLD ? (
           <SmoothProgressBar
             blockStates={blockStates}
             currentBlock={currentBlock ?? 0}
             onBlockClick={setCurrentBlock}
-            onBlockHover={onBlockHover}
+            onBlockHover={handleBlockHover}
           />
         ) : (
           <BlockyProgressBar
             blockStates={blockStates}
             currentBlock={currentBlock ?? 0}
             onBlockClick={setCurrentBlock}
-            onBlockHover={onBlockHover}
+            onBlockHover={handleBlockHover}
           />
         )}
         <span className="text-sm text-muted-foreground w-12 tabular-nums">
-          {durationDisplay}
+          {isHoveringProgressBar ? numBlocks : durationDisplay}
         </span>
       </div>
 
-      {/* Mobile: block info + expand toggle (always visible) */}
+      {/* Mobile: connection status + expand toggle */}
       {isMobile && (
-        <div className="flex items-center justify-between mt-2 max-w-2xl mx-auto">
-          <span className="text-xs text-muted-foreground">
-            Block {blockNum} of {numBlocks}
-          </span>
-          {(isReconnecting || connectionError) && (
+        <div className="flex items-center justify-end gap-2 mt-2 max-w-2xl mx-auto">
+          {(isReconnecting || (connectionError && !isQuotaExceeded)) && (
             <span className={`flex items-center gap-1 text-xs ${connectionError ? 'text-destructive' : 'text-yellow-600'}`}>
               <WifiOff className="h-3 w-3" />
               {connectionError || 'Reconnecting...'}
@@ -645,13 +715,10 @@ const SoundControl = ({
 
       {/* Desktop: horizontal layout with all controls */}
       {!isMobile && (
-        <div className="flex items-center justify-between mt-3 max-w-2xl mx-auto">
+        <div className="flex items-center justify-between mt-3 max-w-xl mx-auto">
           <div className="flex items-center gap-4">
             <VoicePicker value={voiceSelection} onChange={onVoiceChange} />
-            <span className="text-sm text-muted-foreground">
-              Block {blockNum} of {numBlocks}
-            </span>
-            {(isReconnecting || connectionError) && (
+            {(isReconnecting || (connectionError && !isQuotaExceeded)) && (
               <span className={`flex items-center gap-1.5 text-sm ${connectionError ? 'text-destructive' : 'text-yellow-600'}`}>
                 <WifiOff className="h-4 w-4" />
                 {connectionError || 'Reconnecting...'}
@@ -686,8 +753,25 @@ const SoundControl = ({
           </div>
         </div>
       )}
+
+      {/* Quota exceeded modal */}
+      <Dialog open={showQuotaModal} onOpenChange={(open) => !open && setQuotaDismissed(true)}>
+        <DialogContent showCloseButton={false} className="max-w-md">
+          <DialogHeader className="text-center">
+            <DialogTitle>You've reached your Cloud voice quota for this month.</DialogTitle>
+          </DialogHeader>
+          <div className="flex justify-center gap-3 pt-2">
+            <Button variant="outline" onClick={handleContinueWithKokoro}>
+              Continue with Kokoro
+            </Button>
+            <Button onClick={handleUpgradePlan}>
+              Upgrade Plan
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
-};
+});
 
 export { SoundControl };

@@ -4,6 +4,10 @@ import PlaybackPage from "../pages/PlaybackPage";
 import TextInputPage from "@/pages/TextInputPage";
 import AdminPanelPage from "@/pages/AdminPanelPage";
 import SubscriptionPage from "@/pages/SubscriptionPage";
+import TipsPage from "@/pages/TipsPage";
+import AccountPage from "@/pages/AccountPage";
+import AccountSettingsPage from "@/pages/AccountSettingsPage";
+import AboutPage from "@/pages/AboutPage";
 import CheckoutSuccessPage from "@/pages/CheckoutSuccessPage";
 import CheckoutCancelPage from "@/pages/CheckoutCancelPage";
 import TermsPage from "@/pages/TermsPage";
@@ -37,7 +41,7 @@ const AppRoutes = () => (
 			}
 		/>
 		<Route
-			path="/playback/:documentId"
+			path="/listen/:documentId"
 			element={
 				<MainLayout>
 					<PlaybackPage />
@@ -57,6 +61,38 @@ const AppRoutes = () => (
 			element={
 				<MainLayout>
 					<SubscriptionPage />
+				</MainLayout>
+			}
+		/>
+		<Route
+			path="/tips"
+			element={
+				<MainLayout>
+					<TipsPage />
+				</MainLayout>
+			}
+		/>
+		<Route
+			path="/account"
+			element={
+				<MainLayout>
+					<AccountPage />
+				</MainLayout>
+			}
+		/>
+		<Route
+			path="/account/settings"
+			element={
+				<MainLayout>
+					<AccountSettingsPage />
+				</MainLayout>
+			}
+		/>
+		<Route
+			path="/about"
+			element={
+				<MainLayout>
+					<AboutPage />
 				</MainLayout>
 			}
 		/>

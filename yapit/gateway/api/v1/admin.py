@@ -2,10 +2,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlmodel import select
 
-from yapit.gateway.db import get_by_slug_or_404, get_or_404
+from yapit.gateway.db import get_by_slug_or_404
 from yapit.gateway.deps import DbSession, require_admin
 from yapit.gateway.domain_models import (
-    Filter,
     TTSModel,
     Voice,
 )
@@ -50,22 +49,6 @@ class VoiceUpdateRequest(BaseModel):
     name: str | None = None
     lang: str | None = None
     description: str | None = None
-
-
-class FilterCreateRequest(BaseModel):
-    """Request to create a system filter."""
-
-    name: str
-    description: str | None = None
-    config: dict
-
-
-class FilterUpdateRequest(BaseModel):
-    """Request to update a system filter."""
-
-    name: str | None = None
-    description: str | None = None
-    config: dict | None = None
 
 
 # Models CRUD
@@ -190,92 +173,4 @@ async def delete_voice(
         )
 
     await db.delete(voice)
-    await db.commit()
-
-
-# System Filters CRUD
-
-
-@router.get("/filters")
-async def list_system_filters(
-    db: DbSession,
-) -> list[Filter]:
-    """List all system filters (filters with no user_id)."""
-    result = await db.exec(select(Filter).where(Filter.user_id == None))
-    return result.all()
-
-
-@router.post("/filters", status_code=status.HTTP_201_CREATED)
-async def create_system_filter(
-    filter_data: FilterCreateRequest,
-    db: DbSession,
-) -> Filter:
-    """Create a new system filter."""
-    existing = (
-        await db.exec(select(Filter).where(Filter.name == filter_data.name).where(Filter.user_id == None))
-    ).first()
-    if existing:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"{Filter.__name__} with identifier {filter_data.name!r} already exists",
-        )
-
-    filter_obj = Filter(**filter_data.model_dump(), user_id=None)
-    db.add(filter_obj)
-    await db.commit()
-    await db.refresh(filter_obj)
-    return filter_obj
-
-
-@router.put("/filters/{filter_id}")
-async def update_system_filter(
-    filter_id: int,
-    filter_data: FilterUpdateRequest,
-    db: DbSession,
-) -> Filter:
-    """Update an existing system filter."""
-    filter_obj = await get_or_404(db, Filter, filter_id)
-    if filter_obj.user_id is not None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail=f"The filter {filter_id!r} is not a system filter"
-        )
-
-    # Check name uniqueness if updating name (relevant only for system filters)
-    if filter_data.name and filter_data.name != filter_obj.name:
-        existing = (
-            await db.exec(
-                select(Filter)
-                .where(Filter.name == filter_data.name)
-                .where(Filter.user_id == None)
-                .where(Filter.id != filter_id)
-            )
-        ).first()
-        if existing:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"{Filter.__name__} with identifier {filter_data.name!r} already exists",
-            )
-
-    update_data = filter_data.model_dump(exclude_unset=True)
-    for key, value in update_data.items():
-        setattr(filter_obj, key, value)
-
-    await db.commit()
-    await db.refresh(filter_obj)
-    return filter_obj
-
-
-@router.delete("/filters/{filter_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_system_filter(
-    filter_id: int,
-    db: DbSession,
-) -> None:
-    """Delete a system filter."""
-    filter_obj = await get_or_404(db, Filter, filter_id)
-    if filter_obj.user_id is not None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail=f"The filter {filter_id!r} is not a system filter"
-        )
-
-    await db.delete(filter_obj)
     await db.commit()

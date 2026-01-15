@@ -6,7 +6,6 @@ from enum import StrEnum, auto
 from typing import Any
 
 from pydantic import BaseModel as PydanticModel
-from pydantic import Field as PydanticField
 from sqlalchemy import Index, UniqueConstraint
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.types import JSON
@@ -29,6 +28,7 @@ class TTSModel(SQLModel, table=True):
     sample_width: int
     native_codec: str
     usage_multiplier: float = Field(default=1.0)
+    is_active: bool = Field(default=True, index=True)
 
     voices: list["Voice"] = Relationship(
         back_populates="model",
@@ -50,6 +50,7 @@ class Voice(SQLModel, table=True):
     name: str
     lang: str | None  # None -> multilingual
     description: str | None = Field(default=None)
+    is_active: bool = Field(default=True, index=True)
 
     parameters: dict[str, Any] = Field(
         default_factory=dict, sa_column=Column(JSON().with_variant(postgresql.JSONB(), "postgresql"), nullable=False)
@@ -66,20 +67,20 @@ class DocumentMetadata(PydanticModel):
 
     content_type: str  # MIME type
     total_pages: int  # 1 for websites and text
-    title: str | None = None  # Document title if we can extract it
-    url: str | None = None  # Original URL if from web
-    file_name: str | None = None  # Original filename
-    file_size: float | None = None  # Content size in bytes
+    title: str | None = Field(default=None, max_length=500)
+    url: str | None = Field(default=None, max_length=2000)
+    file_name: str | None = Field(default=None, max_length=255)
+    file_size: int | None = None  # Content size in bytes
 
 
 class Document(SQLModel, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     user_id: str = Field()
+    is_public: bool = Field(default=False)
 
-    title: str | None = Field(default=None)
+    title: str | None = Field(default=None, max_length=500)
 
     original_text: str = Field(sa_column=Column(TEXT))
-    filtered_text: str | None = Field(default=None, sa_column=Column(TEXT, nullable=True))
     last_applied_filter_config: dict | None = Field(
         default=None,
         sa_column=Column(
@@ -89,8 +90,13 @@ class Document(SQLModel, table=True):
     )
 
     extraction_method: str | None = Field(default=None)  # processor slug used for extraction
+    content_hash: str | None = Field(default=None, index=True)  # SHA256 of source content, for image cleanup
     # Structured content for frontend display (XML with block tags, images, tables, etc.)
     structured_content: str = Field(sa_column=Column(TEXT, nullable=False))
+
+    # Cross-device sync: playback position
+    last_block_idx: int | None = Field(default=None)
+    last_played_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
 
     created: datetime = Field(
         default_factory=lambda: datetime.now(tz=dt.UTC),
@@ -173,41 +179,7 @@ class DocumentProcessor(SQLModel, table=True):
 
     slug: str = Field(primary_key=True)
     name: str
-
-
-class RegexRule(PydanticModel):
-    pattern: str
-    replacement: str
-
-
-class FilterConfig(PydanticModel):
-    regex_rules: list[RegexRule] = PydanticField(default_factory=list)
-    llm: dict[str, Any] = PydanticField(default_factory=dict)
-
-
-class Filter(SQLModel, table=True):
-    """User or system defined reusable text filter configuration."""
-
-    id: int | None = Field(default=None, primary_key=True)
-    user_id: str | None = Field(default=None, index=True)  # if null, readonly for non-admins
-
-    name: str = Field(index=True)
-    description: str | None = Field(default=None)
-    config: FilterConfig = Field(
-        sa_column=Column(
-            JSON().with_variant(postgresql.JSONB(), "postgresql"),
-        ),
-        default_factory=FilterConfig,
-    )
-
-    created: datetime = Field(
-        default_factory=lambda: datetime.now(tz=dt.UTC),
-        sa_column=Column(DateTime(timezone=True)),
-    )
-    updated: datetime = Field(
-        default_factory=lambda: datetime.now(tz=dt.UTC),
-        sa_column=Column(DateTime(timezone=True)),
-    )
+    is_active: bool = Field(default=True, index=True)
 
 
 # Subscription Models
@@ -347,4 +319,26 @@ class UsageLog(SQLModel, table=True):
     __table_args__ = (
         Index("idx_usage_log_created", "created"),
         Index("idx_usage_log_user_created", "user_id", "created"),
+    )
+
+
+class UserPreferences(SQLModel, table=True):
+    """User-synced preferences (cross-device)."""
+
+    user_id: str = Field(primary_key=True)
+    pinned_voices: list[str] = Field(
+        default_factory=list,
+        sa_column=Column(JSON().with_variant(postgresql.JSONB(), "postgresql"), nullable=False),
+    )
+
+    auto_import_shared_documents: bool = Field(default=False)  # skip banner, auto-clone on visit
+    default_documents_public: bool = Field(default=False)  # new docs created with is_public=True
+
+    created: datetime = Field(
+        default_factory=lambda: datetime.now(tz=dt.UTC),
+        sa_column=Column(DateTime(timezone=True)),
+    )
+    updated: datetime = Field(
+        default_factory=lambda: datetime.now(tz=dt.UTC),
+        sa_column=Column(DateTime(timezone=True)),
     )

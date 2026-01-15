@@ -1,12 +1,13 @@
-import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
+import { SidebarProvider } from "@/components/ui/sidebar"
 import { DocumentSidebar } from "@/components/documentSidebar"
+import { SidebarEdgeTrigger } from "@/components/sidebarEdgeTrigger"
 
 const SidebarLayout = ({ children }: { children: React.ReactNode }) => {
   return (
     <SidebarProvider>
       <DocumentSidebar />
-      <main className="flex-1 min-w-0">
-        <SidebarTrigger className="fixed backdrop-blur-lg" />
+      <main className="flex-1 min-w-0 overflow-x-hidden">
+        <SidebarEdgeTrigger />
         {children}
       </main>
     </SidebarProvider>

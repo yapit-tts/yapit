@@ -10,7 +10,9 @@ services:
       - "8000:8000"
     volumes:
       - "./tts_processors.dev.json:/app/tts_processors.dev.json"
-      - "./document_processors.dev.json:/app/document_processors.dev.json"
+      - "./tts_processors.ci.json:/app/tts_processors.ci.json"
+      - "./gateway-data:/app/gateway"
+      - "./images:/data/images"
 
   stack-auth:
     env_file: ./.env.dev
@@ -29,7 +31,12 @@ services:
     volumes:
       - "./dev/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql"
 
+  metrics-db:
+    ports:
+      - "5433:5432"
+
   stripe-cli:
+    profiles: ["stripe"]
     image: stripe/stripe-cli:latest
     command: listen --forward-to http://gateway:8000/v1/billing/webhook --api-key ${STRIPE_SECRET_KEY}
     env_file:

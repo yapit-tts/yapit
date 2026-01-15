@@ -61,9 +61,9 @@ const TIER_ORDER: PlanTier[] = ["free", "basic", "plus", "max"];
 
 const PLAN_FEATURES: Record<PlanTier, string[]> = {
   free: ["Local TTS (English only)", "Unlimited documents"],
-  basic: ["Everything in Free", "Kokoro voices (all languages)", "500 OCR pages/month", "Cancel anytime during trial"],
-  plus: ["Everything in Basic", "~20 hrs premium voices/month*", "1,500 OCR pages/month", "Cancel anytime during trial"],
-  max: ["Everything in Plus", "~50 hrs premium voices/month*", "3,000 OCR pages/month"],
+  basic: ["Everything in Free", "Unlimited Kokoro (all languages)", "500 AI Transform pages/month", "Cancel anytime during trial"],
+  plus: ["Everything in Basic", "~20 hrs premium voices/month*", "1,500 AI Transform pages/month", "Cancel anytime during trial"],
+  max: ["Everything in Plus", "~50 hrs premium voices/month*", "3,000 AI Transform pages/month"],
 };
 
 const SubscriptionPage = () => {
@@ -169,9 +169,10 @@ const SubscriptionPage = () => {
   };
 
   const currentTier = subscription?.subscribed_tier ?? "free";
-  const isSubscribed = !!subscription?.subscription;
+  const isCanceled = subscription?.subscription?.status === "canceled";
+  const isSubscribed = !!subscription?.subscription && !isCanceled;
   const isTrialing = subscription?.subscription?.status === "trialing";
-  const isCanceling = subscription?.subscription?.cancel_at_period_end;
+  const isCanceling = subscription?.subscription?.cancel_at_period_end && !isCanceled;
   const graceTier = subscription?.subscription?.grace_tier;
   const graceUntil = subscription?.subscription?.grace_until;
 
@@ -188,19 +189,14 @@ const SubscriptionPage = () => {
   );
 
   return (
-    <div className="container max-w-7xl mx-auto py-8 px-6">
+    <div className="max-w-[1400px] mx-auto py-8 px-6">
       <Button variant="ghost" className="mb-8" onClick={() => navigate(-1)}>
         <ArrowLeft className="mr-2 h-5 w-5" />
         Back
       </Button>
 
-      <h1 className="text-4xl font-bold mb-2">Subscription</h1>
-      <p className="text-lg text-muted-foreground mb-8">
-        Manage your plan and usage
-      </p>
-
-      {/* Current Plan & Usage */}
-      {!isAnonymous && subscription && (
+      {/* Current Plan & Usage - only show for subscribed users */}
+      {!isAnonymous && isSubscribed && subscription && (
         <Card className="mb-6">
           <CardHeader>
             <div className="flex items-center justify-between">
@@ -213,12 +209,12 @@ const SubscriptionPage = () => {
                       Trial
                     </span>
                   )}
-                  {isCanceling && (
+                  {(isCanceling || isCanceled) && (
                     <span className="text-sm font-normal text-destructive bg-destructive/10 px-2 py-0.5 rounded-full">
-                      Canceling
+                      {isCanceled ? "Canceled" : "Canceling"}
                     </span>
                   )}
-                  {graceTier && !isCanceling && (
+                  {graceTier && !isCanceling && !isCanceled && (
                     <span className="text-sm font-normal text-amber-600 bg-amber-100 dark:bg-amber-900/30 dark:text-amber-400 px-2 py-0.5 rounded-full flex items-center gap-1">
                       <Clock className="h-3 w-3" />
                       {graceTier.charAt(0).toUpperCase() + graceTier.slice(1)} access
@@ -226,19 +222,13 @@ const SubscriptionPage = () => {
                   )}
                 </CardTitle>
                 <CardDescription>
-                  {subscription.subscription ? (
-                    <>
-                      {isTrialing
-                        ? `Trial ends in ${getDaysRemaining(subscription.subscription.current_period_end)} days`
-                        : isCanceling
-                        ? `Access until ${new Date(subscription.subscription.current_period_end).toLocaleDateString()}`
-                        : graceTier && graceUntil
-                        ? `${graceTier.charAt(0).toUpperCase() + graceTier.slice(1)} access until ${new Date(graceUntil).toLocaleDateString()}`
-                        : `Renews ${new Date(subscription.subscription.current_period_end).toLocaleDateString()}`}
-                    </>
-                  ) : (
-                    "Free tier — upgrade to unlock more features"
-                  )}
+                  {isTrialing
+                    ? `Trial ends in ${getDaysRemaining(subscription.subscription!.current_period_end)} days`
+                    : isCanceling
+                    ? `Access until ${new Date(subscription.subscription!.current_period_end).toLocaleDateString()}`
+                    : graceTier && graceUntil
+                    ? `${graceTier.charAt(0).toUpperCase() + graceTier.slice(1)} access until ${new Date(graceUntil).toLocaleDateString()}`
+                    : `Renews ${new Date(subscription.subscription!.current_period_end).toLocaleDateString()}`}
                 </CardDescription>
               </div>
               {isSubscribed && (
@@ -290,7 +280,7 @@ const SubscriptionPage = () => {
               {subscription.limits.ocr_pages !== null && subscription.limits.ocr_pages > 0 && (
                 <div>
                   <div className="flex justify-between text-sm mb-1.5">
-                    <span>OCR Pages</span>
+                    <span>AI Transform</span>
                     <span className="text-muted-foreground">
                       {subscription.usage.ocr_pages.toLocaleString()} /{" "}
                       {subscription.limits.ocr_pages.toLocaleString()}
@@ -307,7 +297,7 @@ const SubscriptionPage = () => {
       )}
 
       {/* Plan Selection */}
-      <div className="mb-6 flex items-center justify-between">
+      <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <h2 className="text-2xl font-semibold">Available Plans</h2>
         <Tabs value={interval} onValueChange={(v) => setInterval(v as BillingInterval)}>
           <TabsList>
@@ -326,13 +316,10 @@ const SubscriptionPage = () => {
         </p>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-6">
         {sortedPlans.map((plan) => {
           const isCurrent = plan.tier === currentTier;
           const isUpgrade = TIER_ORDER.indexOf(plan.tier) > TIER_ORDER.indexOf(currentTier);
-          const price = interval === "monthly" ? plan.price_cents_monthly : plan.price_cents_yearly;
-          const monthlyEquivalent =
-            interval === "yearly" ? Math.round(plan.price_cents_yearly / 12) : null;
 
           return (
             <Card
@@ -349,19 +336,21 @@ const SubscriptionPage = () => {
                   )}
                 </div>
                 <div className="mt-3">
-                  {price === 0 ? (
-                    <span className="text-4xl font-bold">Free</span>
+                  {plan.price_cents_monthly === 0 ? (
+                    <>
+                      <span className="text-4xl font-bold">€0</span>
+                      <span className="text-lg text-muted-foreground">/mo</span>
+                      <div className="text-muted-foreground mt-1 h-5"></div>
+                    </>
                   ) : (
                     <>
-                      <span className="text-4xl font-bold">{formatPrice(price)}</span>
-                      <span className="text-lg text-muted-foreground">
-                        /{interval === "monthly" ? "mo" : "yr"}
+                      <span className="text-4xl font-bold">
+                        {formatPrice(interval === "yearly" ? Math.round(plan.price_cents_yearly / 12) : plan.price_cents_monthly)}
                       </span>
-                      {monthlyEquivalent && (
-                        <div className="text-muted-foreground mt-1">
-                          {formatPrice(monthlyEquivalent)}/mo equivalent
-                        </div>
-                      )}
+                      <span className="text-lg text-muted-foreground">/mo</span>
+                      <div className="text-muted-foreground mt-1 h-5">
+                        {interval === "yearly" && `${formatPrice(plan.price_cents_yearly)}/year`}
+                      </div>
                     </>
                   )}
                 </div>
@@ -419,16 +408,62 @@ const SubscriptionPage = () => {
         })}
       </div>
 
-      <div className="mt-8 text-center text-muted-foreground max-w-3xl mx-auto space-y-2">
-        <p className="text-sm">
-          *Premium voice limits: Plus includes 1.22M characters (~20 hrs), Max includes 3.06M characters (~50 hrs).
-          TTS-1-Max quality uses 2× quota.
-        </p>
-        <p>
-          Prices include VAT. Free trials can be canceled anytime without charge.
-          After trial, subscriptions can be canceled anytime, effective at the end of your billing period.
-        </p>
+      {/* Value Comparison Table */}
+      <div className="mt-10 max-w-3xl mx-auto">
+        <h3 className="text-lg font-medium text-center mb-4 text-muted-foreground">Value Comparison</h3>
+        <div className="border rounded-lg overflow-hidden overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-muted/50">
+              <tr>
+                <th className="px-3 py-3 text-left font-medium"></th>
+                <th className="px-3 py-3 text-center font-medium">Plus Monthly</th>
+                <th className="px-3 py-3 text-center font-medium">Plus Yearly</th>
+                <th className="px-3 py-3 text-center font-medium">Max Monthly</th>
+                <th className="px-3 py-3 text-center font-medium">Max Yearly</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              <tr>
+                <td className="px-3 py-2.5 font-medium text-muted-foreground">Price</td>
+                <td className="px-3 py-2.5 text-center">€20/mo</td>
+                <td className="px-3 py-2.5 text-center">€16/mo eff.</td>
+                <td className="px-3 py-2.5 text-center">€40/mo</td>
+                <td className="px-3 py-2.5 text-center">€20/mo eff.</td>
+              </tr>
+              <tr>
+                <td className="px-3 py-2.5 font-medium text-muted-foreground">Chars</td>
+                <td className="px-3 py-2.5 text-center">1.2M</td>
+                <td className="px-3 py-2.5 text-center">1.2M</td>
+                <td className="px-3 py-2.5 text-center">3M</td>
+                <td className="px-3 py-2.5 text-center">3M</td>
+              </tr>
+              <tr>
+                <td className="px-3 py-2.5 font-medium text-muted-foreground">chars/€</td>
+                <td className="px-3 py-2.5 text-center">60k</td>
+                <td className="px-3 py-2.5 text-center">
+                  <span className="relative">
+                    75k
+                    <span className="absolute left-full ml-1 text-xs text-emerald-600 dark:text-emerald-400 whitespace-nowrap">+25%</span>
+                  </span>
+                </td>
+                <td className="px-3 py-2.5 text-center">75k</td>
+                <td className="px-3 py-2.5 text-center">
+                  <span className="relative">
+                    150k
+                    <span className="absolute left-full ml-1 text-xs text-emerald-600 dark:text-emerald-400 whitespace-nowrap">+100%</span>
+                  </span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
+
+      <p className="mt-8 text-center text-sm text-muted-foreground">
+        *~20 hrs at 1× listening speed. TTS-1-Max uses 2× quota. Prices <em>include</em> VAT.
+        <br />
+        Paid subscriptions are non-refundable after service begins. See <a href="/terms" className="underline hover:text-foreground">Terms</a>.
+      </p>
     </div>
   );
 };

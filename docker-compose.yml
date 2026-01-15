@@ -1,5 +1,6 @@
 volumes:
   pgdata:
+  metricsdata:
 
 services:
   # -------- database
@@ -15,10 +16,36 @@ services:
       timeout: 3s
       retries: 10
 
+  # -------- metrics (separate from main postgres for isolation)
+  metrics-db:
+    init: true
+    image: timescale/timescaledb:latest-pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: metrics
+      POSTGRES_PASSWORD: metrics
+      POSTGRES_DB: metrics
+    volumes:
+      - metricsdata:/var/lib/postgresql/data
+      - ./docker/metrics-init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U metrics"]
+      start_period: 30s
+      start_interval: 1s
+      interval: 30s
+      timeout: 3s
+      retries: 10
+
   # -------- cache / queue
   redis:
     init: true
     image: redis:7-alpine
+    restart: unless-stopped
+
+  smokescreen:
+    init: true
+    build:
+      dockerfile: ./docker/Dockerfile.smokescreen
     restart: unless-stopped
 
   # -------- api-gateway
@@ -38,7 +65,11 @@ services:
         condition: service_started
       postgres:
         condition: service_healthy
+      metrics-db:
+        condition: service_healthy
       stack-auth:
+        condition: service_started
+      smokescreen:
         condition: service_started
     restart: unless-stopped
     expose: ["8000"]
@@ -56,15 +87,18 @@ services:
       dockerfile: ./docker/Dockerfile.stackauth
     restart: unless-stopped
     env_file: ./.env.prod
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
        test: ["CMD-SHELL",
          "curl -fs http://localhost:8101/health && \
           curl -fs http://localhost:8102/health"]
-       start_period: 80s
-       start_interval: 1s
+       start_period: 180s
+       start_interval: 2s
        interval: 30s
-       timeout: 5s
-       retries: 10
+       timeout: 10s
+       retries: 15
 
   # svix:
   #   image: svix/svix-server

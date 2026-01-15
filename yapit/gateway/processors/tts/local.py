@@ -1,12 +1,10 @@
 import base64
-import logging
 
 import httpx
+from loguru import logger
 
 from yapit.contracts import SynthesisJob, SynthesisResult
 from yapit.gateway.processors.tts.base import BaseTTSProcessor
-
-log = logging.getLogger(__name__)
 
 
 class LocalProcessor(BaseTTSProcessor):
@@ -18,7 +16,7 @@ class LocalProcessor(BaseTTSProcessor):
         self._client: httpx.AsyncClient | None = None
 
     async def initialize(self) -> None:
-        self._client = httpx.AsyncClient(timeout=60.0)
+        self._client = httpx.AsyncClient(timeout=180.0)
 
     async def process(self, job: SynthesisJob) -> SynthesisResult:
         if not self._client:
@@ -33,9 +31,19 @@ class LocalProcessor(BaseTTSProcessor):
             return SynthesisResult(
                 job_id=job.job_id, audio=base64.b64decode(result["audio_base64"]), duration_ms=result["duration_ms"]
             )
+        except httpx.HTTPStatusError as e:
+            logger.error(
+                f"Worker returned error for job {job.job_id}: "
+                f"{e.response.status_code} {e.response.text[:200] if e.response.text else '(empty)'}"
+            )
+            raise
         except httpx.RequestError as e:
-            log.error(f"HTTP request failed for job {job.job_id}: {e}")
+            # RequestError can have empty str representation for low-level failures
+            logger.error(
+                f"HTTP request failed for job {job.job_id}: "
+                f"{type(e).__name__}: {e!r} (url: {self._worker_url}/synthesize)"
+            )
             raise
         except Exception as e:
-            log.error(f"Failed to process job {job.job_id}: {e}")
+            logger.error(f"Failed to process job {job.job_id}: {type(e).__name__}: {e}")
             raise

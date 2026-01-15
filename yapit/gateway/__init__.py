@@ -1,28 +1,46 @@
-import logging
+import asyncio
 import sys
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import redis.asyncio as redis
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, ORJSONResponse
+from loguru import logger
 
 from yapit.gateway.api.v1 import routers as v1_routers
+from yapit.gateway.cache import Cache
 from yapit.gateway.config import Settings, get_settings
 from yapit.gateway.db import close_db, prepare_database
-from yapit.gateway.deps import get_audio_cache
+from yapit.gateway.deps import create_cache
 from yapit.gateway.exceptions import APIError
-from yapit.gateway.processors.document.manager import DocumentProcessorManager
+from yapit.gateway.metrics import init_metrics_db, start_metrics_writer, stop_metrics_writer
+from yapit.gateway.processors.document.gemini import GeminiProcessor
+from yapit.gateway.processors.document.markitdown import MarkitdownProcessor
 from yapit.gateway.processors.tts.manager import TTSProcessorManager
 
-# Configure root logger for application-wide logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
-    stream=sys.stdout,
+logger.remove()
+logger.add(
+    sys.stdout,
+    format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
+    level="INFO",
+    colorize=True,
 )
 
-log = logging.getLogger(__name__)
+
+def _configure_file_logging(log_dir: Path) -> None:
+    """Add persistent JSON log file with rotation (50MB x 20 files = 1GB max)."""
+    log_dir.mkdir(parents=True, exist_ok=True)
+    logger.add(
+        log_dir / "gateway.jsonl",
+        format="{message}",
+        level="INFO",
+        serialize=True,
+        rotation="50 MB",
+        retention=20,
+        compression="gz",
+    )
 
 
 @asynccontextmanager
@@ -30,14 +48,23 @@ async def lifespan(app: FastAPI):
     settings = app.dependency_overrides[get_settings]()
     assert isinstance(settings, Settings)
 
+    await init_metrics_db(settings.metrics_database_url)
+    await start_metrics_writer()
+
     await prepare_database(settings)
 
     app.state.redis_client = await redis.from_url(settings.redis_url, decode_responses=False)
-    app.state.audio_cache = get_audio_cache(settings)
+    app.state.audio_cache = create_cache(settings.audio_cache_type, settings.audio_cache_config)
+    app.state.document_cache = create_cache(settings.document_cache_type, settings.document_cache_config)
+    app.state.extraction_cache = create_cache(settings.extraction_cache_type, settings.extraction_cache_config)
 
-    document_processor_manager = DocumentProcessorManager(settings)
-    document_processor_manager.load_processors(settings.document_processors_file)
-    app.state.document_processor_manager = document_processor_manager
+    # Document processors
+    app.state.free_processor = MarkitdownProcessor(settings=settings)
+    if settings.ai_processor == "gemini":
+        app.state.ai_processor = GeminiProcessor(settings=settings)
+        logger.info("AI processor: gemini")
+    else:
+        app.state.ai_processor = None
 
     tts_processor_manager = TTSProcessorManager(
         redis=app.state.redis_client,
@@ -47,11 +74,32 @@ async def lifespan(app: FastAPI):
     app.state.tts_processor_manager = tts_processor_manager
     await tts_processor_manager.start(settings.tts_processors_file)
 
+    all_caches = [app.state.audio_cache, app.state.document_cache, app.state.extraction_cache]
+    maintenance_task = asyncio.create_task(_cache_maintenance_task(all_caches))
+
     yield
 
+    maintenance_task.cancel()
+    try:
+        await maintenance_task
+    except asyncio.CancelledError:
+        pass
     await tts_processor_manager.stop()
+    await stop_metrics_writer()
     await close_db()
     await app.state.redis_client.aclose()
+
+
+async def _cache_maintenance_task(caches: list[Cache]) -> None:
+    """Background task to vacuum caches if bloated."""
+    await asyncio.sleep(60)
+    while True:
+        for cache in caches:
+            try:
+                await cache.vacuum_if_needed(bloat_threshold=2.0)
+            except Exception as e:
+                logger.exception(f"Cache vacuum failed: {e}")
+        await asyncio.sleep(86400)
 
 
 def create_app(
@@ -59,6 +107,8 @@ def create_app(
 ) -> FastAPI:
     if settings is None:
         settings = Settings()  # type: ignore
+
+    _configure_file_logging(Path(settings.log_dir))
 
     app = FastAPI(
         title="Yapit Gateway",
@@ -79,7 +129,7 @@ def create_app(
 
     @app.exception_handler(APIError)
     async def api_error_handler(request: Request, exc: APIError):
-        log.error(f"API error: {str(exc)}", exc_info=exc)
+        logger.exception(f"API error: {exc}")
         return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
 
     for r in v1_routers:

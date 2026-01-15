@@ -7,7 +7,7 @@ from pathlib import Path
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from yapit.gateway.config import Settings
-from yapit.gateway.domain_models import DocumentProcessor, Filter, Plan, PlanTier, TTSModel, Voice
+from yapit.gateway.domain_models import DocumentProcessor, Plan, PlanTier, TTSModel, Voice
 
 
 def load_voice_prompt(name: str) -> tuple[str, str]:
@@ -140,24 +140,6 @@ def create_models() -> list[TTSModel]:
     return models
 
 
-def create_filters() -> list[Filter]:
-    """Create default filter presets."""
-    presets_json = Path(__file__).parent.parent / "data/default_filters.json"
-    defaults = json.loads(presets_json.read_text())
-
-    filters = []
-    for p in defaults:
-        filters.append(
-            Filter(
-                name=p["name"],
-                description=p.get("description"),
-                config=p["config"],
-                user_id=None,  # system filters
-            )
-        )
-    return filters
-
-
 def create_document_processors() -> list[DocumentProcessor]:
     """Create document processors."""
     return [
@@ -200,7 +182,7 @@ def create_plans(settings: Settings) -> list[Plan]:
             ocr_pages=500,
             stripe_price_id_monthly=settings.stripe_price_basic_monthly,
             stripe_price_id_yearly=settings.stripe_price_basic_yearly,
-            trial_days=3,
+            trial_days=7,
             price_cents_monthly=700,
             price_cents_yearly=7500,
         ),
@@ -208,11 +190,11 @@ def create_plans(settings: Settings) -> list[Plan]:
             tier=PlanTier.plus,
             name="Plus",
             server_kokoro_characters=None,  # unlimited
-            premium_voice_characters=1_224_000,  # 20 hours
+            premium_voice_characters=1_200_000,  # ~20 hours
             ocr_pages=1500,
             stripe_price_id_monthly=settings.stripe_price_plus_monthly,
             stripe_price_id_yearly=settings.stripe_price_plus_yearly,
-            trial_days=3,
+            trial_days=7,
             price_cents_monthly=2000,
             price_cents_yearly=19200,
         ),
@@ -220,7 +202,7 @@ def create_plans(settings: Settings) -> list[Plan]:
             tier=PlanTier.max,
             name="Max",
             server_kokoro_characters=None,  # unlimited
-            premium_voice_characters=3_060_000,  # 50 hours
+            premium_voice_characters=3_000_000,  # ~50 hours
             ocr_pages=3000,
             stripe_price_id_monthly=settings.stripe_price_max_monthly,
             stripe_price_id_yearly=settings.stripe_price_max_yearly,
@@ -232,12 +214,9 @@ def create_plans(settings: Settings) -> list[Plan]:
 
 
 async def seed_database(db: AsyncSession, settings: Settings) -> None:
-    """Seed database with models, voices, filters, processors, and plans."""
+    """Seed database with models, voices, processors, and plans."""
     for model in create_models():
         db.add(model)
-
-    for filter_obj in create_filters():
-        db.add(filter_obj)
 
     for processor in create_document_processors():
         db.add(processor)

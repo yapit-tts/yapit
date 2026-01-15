@@ -47,21 +47,19 @@ async def test_prepare_and_create_document_from_url(client, as_test_user, sessio
         assert prepare_data.endpoint == "document"  # Not HTML, so not "website"
         assert prepare_data.uncached_pages == set()
 
-        # Step 2: Try to create document (will fail without processor)
+        # Step 2: Create document with free processor (ai_transform=False)
         create_response = await client.post(
             "/v1/documents/document",
             json={
                 "hash": prepare_data.hash,
                 "title": "Test Document",
-                "processor_slug": "markitdown",
-                "pages": None,  # Process all pages
+                "ai_transform": False,
             },
         )
 
-        # Should fail because no processors are loaded in unit test config
-        if create_response.status_code != 404:
-            print(f"Status: {create_response.status_code}, Body: {create_response.json()}")
-        assert create_response.status_code == 404
+        assert create_response.status_code == 201
+        doc = DocumentCreateResponse.model_validate(create_response.json())
+        assert doc.title == "Test Document"
 
 
 @pytest.mark.asyncio
@@ -132,7 +130,7 @@ async def test_document_create_invalid_page_numbers(client, as_test_user):
             json={
                 "hash": prepare_data["hash"],
                 "title": "Test Document",
-                "processor_slug": "markitdown",
+                "ai_transform": False,
                 "pages": [1, 5, 10],  # Pages 5 and 10 don't exist (0-indexed, so valid are 0,1,2)
             },
         )
@@ -223,3 +221,36 @@ async def test_prepare_website_returns_empty_uncached_pages(client, as_test_user
         data = DocumentPrepareResponse.model_validate(response.json())
         assert data.endpoint == "website"
         assert data.uncached_pages == set()
+
+
+# Position update tests
+
+
+@pytest.mark.asyncio
+async def test_update_position(client, as_test_user):
+    """Test updating document playback position."""
+    # Create a document first
+    r = await client.post("/v1/documents/text", json={"content": "Test content for position"})
+    assert r.status_code == 201
+    doc = DocumentCreateResponse.model_validate(r.json())
+
+    # Update position
+    r = await client.patch(f"/v1/documents/{doc.id}/position", json={"block_idx": 5})
+    assert r.status_code == 200
+    assert r.json() == {"ok": True}
+
+    # Verify position was saved
+    r = await client.get(f"/v1/documents/{doc.id}")
+    assert r.status_code == 200
+    assert r.json()["last_block_idx"] == 5
+    assert r.json()["last_played_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_update_position_not_found(client, as_test_user):
+    """Test updating position for non-existent document."""
+    r = await client.patch(
+        "/v1/documents/00000000-0000-0000-0000-000000000000/position",
+        json={"block_idx": 0},
+    )
+    assert r.status_code == 404

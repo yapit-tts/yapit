@@ -1,11 +1,14 @@
 ---
-status: active
+status: done
 started: 2025-01-02
+completed: 2025-01-04
 ---
 
 # Task: Operational Metrics & Visibility
 
-Related: [[monitoring-observability-logging]] — structured logging infrastructure (legacy plans)
+**MERGED into [[logging-observability]]** — this task's requirements are now part of the unified logging/metrics infrastructure.
+
+Related: [[logging-observability]] — active implementation task
 
 ## Intent
 

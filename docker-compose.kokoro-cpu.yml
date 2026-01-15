@@ -7,6 +7,13 @@ services:
     command: python -m yapit.workers.kokoro
     environment:
       ADAPTER_CLASS: yapit.workers.adapters.kokoro.KokoroAdapter
+      OMP_NUM_THREADS: ${OMP_NUM_THREADS}
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
     deploy:
-      replicas: ${KOKORO_CPU_REPLICAS:-2}
+      replicas: ${KOKORO_CPU_REPLICAS}

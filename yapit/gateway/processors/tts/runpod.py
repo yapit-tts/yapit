@@ -1,11 +1,10 @@
 import asyncio
 import base64
-import logging
+
+from loguru import logger
 
 from yapit.contracts import SynthesisJob, SynthesisResult
 from yapit.gateway.processors.tts.base import BaseTTSProcessor
-
-log = logging.getLogger("runpod_processor")
 
 
 class RunpodProcessor(BaseTTSProcessor):
@@ -44,5 +43,5 @@ class RunpodProcessor(BaseTTSProcessor):
                 audio_tokens=result.get("audio_tokens"),
             )
         except Exception as e:
-            log.error(f"Failed to process job {job.job_id}: {e}")
+            logger.error(f"Failed to process job {job.job_id}: {e}")
             raise

@@ -96,6 +96,8 @@ class WSBlockStatus(BaseModel):
     status: BlockStatus
     audio_url: str | None = None
     error: str | None = None
+    model_slug: str | None = None
+    voice_slug: str | None = None
 
 
 class WSEvicted(BaseModel):

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { useNavigate } from "react-router";
-import { Paperclip, Loader2, AlertCircle, Play } from "lucide-react";
+import { useNavigate, Link } from "react-router";
+import { Paperclip, Loader2, AlertCircle, Play, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { MetadataBanner } from "@/components/metadataBanner";
@@ -11,7 +11,7 @@ import { AxiosError } from "axios";
 
 // Match URLs with at least a domain and TLD (e.g., example.com, not just http://a)
 const URL_REGEX = /^https?:\/\/[^\s.]+\.[^\s]{2,}/i;
-const OCR_STORAGE_KEY = "yapit-ocr-enabled";
+const AI_TRANSFORM_STORAGE_KEY = "yapit-ai-transform-enabled";
 
 interface DocumentMetadata {
   content_type: string;
@@ -24,15 +24,23 @@ interface DocumentMetadata {
 
 interface PrepareResponse {
   hash: string;
+  content_hash: string;
   metadata: DocumentMetadata;
   endpoint: "text" | "website" | "document";
   credit_cost: string;
   uncached_pages: number[];
 }
 
+interface ExtractionStatusResponse {
+  total_pages: number;
+  completed_pages: number[];
+  status: "processing" | "complete" | "not_found";
+}
+
 interface DocumentCreateResponse {
   id: string;
   title: string | null;
+  failed_pages: number[];  // 0-indexed pages that failed extraction
 }
 
 type InputMode = "idle" | "text" | "url" | "file";
@@ -49,6 +57,9 @@ const ACCEPTED_FILE_TYPES = [
   "application/epub+zip",
 ];
 
+const MAX_FILE_SIZE_MB = 50;
+const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
+
 export function UnifiedInput() {
   const [value, setValue] = useState("");
   const [mode, setMode] = useState<InputMode>("idle");
@@ -57,13 +68,16 @@ export function UnifiedInput() {
   const [error, setError] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
-  const [ocrEnabled, setOcrEnabled] = useState(() => {
-    const stored = localStorage.getItem(OCR_STORAGE_KEY);
+  const [aiTransformEnabled, setAiTransformEnabled] = useState(() => {
+    const stored = localStorage.getItem(AI_TRANSFORM_STORAGE_KEY);
     return stored !== null ? stored === "true" : true;
   });
+  const [usageLimitExceeded, setUsageLimitExceeded] = useState(false);
+  const [completedPages, setCompletedPages] = useState<number[]>([]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragCounterRef = useRef(0);
+  const abortControllerRef = useRef<AbortController | null>(null);
   const navigate = useNavigate();
   const { api } = useApi();
 
@@ -71,9 +85,11 @@ export function UnifiedInput() {
 
   const isUrl = useCallback((text: string) => URL_REGEX.test(text.trim()), []);
 
-  // Detect input type and update mode (skip if in file mode - file uploads manage their own state)
+  // Detect input type and update mode
   useEffect(() => {
-    if (mode === "file") return;
+    // Don't change mode while processing or loading
+    if (isCreating) return;
+    if (urlState === "loading" || urlState === "ready") return;
 
     const trimmed = value.trim();
     if (!trimmed) {
@@ -83,6 +99,9 @@ export function UnifiedInput() {
       return;
     }
 
+    // If in file mode, only reset if value is completely cleared (handled above)
+    if (mode === "file") return;
+
     if (isUrl(trimmed)) {
       setMode("url");
       setUrlState("detecting");
@@ -91,7 +110,7 @@ export function UnifiedInput() {
       setPrepareData(null);
       setError(null);
     }
-  }, [value, isUrl, mode]);
+  }, [value, isUrl, mode, isCreating, urlState]);
 
   // Fetch metadata when URL is detected (debounced)
   useEffect(() => {
@@ -130,36 +149,97 @@ export function UnifiedInput() {
     fetchMetadata();
   }, [debouncedValue, mode, isUrl, api]);
 
-  // Save OCR preference
+  // Save AI Transform preference
   useEffect(() => {
-    localStorage.setItem(OCR_STORAGE_KEY, String(ocrEnabled));
-  }, [ocrEnabled]);
+    localStorage.setItem(AI_TRANSFORM_STORAGE_KEY, String(aiTransformEnabled));
+  }, [aiTransformEnabled]);
 
-  const createDocument = async (data: PrepareResponse) => {
+  const createDocument = async (data: PrepareResponse, pages: number[] | null = null) => {
     setIsCreating(true);
+    setCompletedPages([]);
+
+    // Create abort controller for this request
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+
+    const endpoint = data.endpoint === "website"
+      ? "/v1/documents/website"
+      : "/v1/documents/document";
+
+    const isImage = data.metadata.content_type?.startsWith("image/") ?? false;
+    const useAiTransform = isImage || aiTransformEnabled;
+    const body = data.endpoint === "website"
+      ? { hash: data.hash }
+      : {
+          hash: data.hash,
+          pages: pages,
+          ai_transform: useAiTransform,
+        };
+
+    // Start polling for progress (only for documents with AI transform)
+    let pollInterval: ReturnType<typeof setInterval> | null = null;
+    if (data.endpoint === "document" && useAiTransform) {
+      const requestedPages = pages ?? Array.from({ length: data.metadata.total_pages }, (_, i) => i);
+      const processorSlug = useAiTransform ? "gemini" : "markitdown";
+
+      pollInterval = setInterval(async () => {
+        try {
+          const statusResponse = await api.post<ExtractionStatusResponse>("/v1/documents/extraction/status", {
+            content_hash: data.content_hash,
+            processor_slug: processorSlug,
+            pages: requestedPages,
+          });
+          setCompletedPages(statusResponse.data.completed_pages);
+        } catch (err) {
+          // Log but don't fail — polling is just for UI feedback, main POST handles real errors
+          console.warn("Extraction status poll failed (non-critical):", err);
+        }
+      }, 1500);
+    }
+
     try {
-      const endpoint = data.endpoint === "website"
-        ? "/v1/documents/website"
-        : "/v1/documents/document";
+      const response = await api.post<DocumentCreateResponse>(endpoint, body, {
+        signal: abortController.signal,
+      });
 
-      const body = data.endpoint === "website"
-        ? { hash: data.hash }
-        : {
-            hash: data.hash,
-            pages: null, // all pages
-            processor_slug: ocrEnabled ? "mistral-ocr" : "markitdown",
-          };
+      if (pollInterval) clearInterval(pollInterval);
+      abortControllerRef.current = null;
 
-      const response = await api.post<DocumentCreateResponse>(endpoint, body);
-
-      navigate(`/playback/${response.data.id}`, {
-        state: { documentTitle: response.data.title }
+      // Pass failed pages info to the listen page if any
+      const failedPages = response.data.failed_pages ?? [];
+      navigate(`/listen/${response.data.id}`, {
+        state: {
+          documentTitle: response.data.title,
+          failedPages: failedPages.length > 0 ? failedPages : undefined,
+        }
       });
     } catch (err) {
+      if (pollInterval) clearInterval(pollInterval);
+      abortControllerRef.current = null;
       setIsCreating(false);
-      setError(err instanceof Error ? err.message : "Failed to create document");
+      setCompletedPages([]);
+
+      // Don't show error if user cancelled
+      if (err instanceof AxiosError && err.code === "ERR_CANCELED") {
+        return;
+      }
+
+      if (err instanceof AxiosError && err.response?.status === 402) {
+        setAiTransformEnabled(false);
+        setUsageLimitExceeded(true);
+        setError(null);
+      } else {
+        setError(err instanceof Error ? err.message : "Failed to create document");
+      }
     }
   };
+
+  const cancelExtraction = useCallback(() => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+  }, []);
 
   const handleTextSubmit = async () => {
     if (!value.trim()) return;
@@ -169,7 +249,7 @@ export function UnifiedInput() {
       const response = await api.post<DocumentCreateResponse>("/v1/documents/text", {
         content: value.trim(),
       });
-      navigate(`/playback/${response.data.id}`, {
+      navigate(`/listen/${response.data.id}`, {
         state: { documentTitle: response.data.title }
       });
     } catch (err) {
@@ -180,9 +260,16 @@ export function UnifiedInput() {
 
   const uploadFile = useCallback(async (file: File) => {
     setMode("file");
-    setUrlState("loading");
     setError(null);
     setValue(file.name);
+
+    if (file.size > MAX_FILE_SIZE_BYTES) {
+      setUrlState("error");
+      setError(`File too large (${(file.size / 1024 / 1024).toFixed(1)} MB). Maximum size is ${MAX_FILE_SIZE_MB} MB.`);
+      return;
+    }
+
+    setUrlState("loading");
 
     try {
       const formData = new FormData();
@@ -203,7 +290,7 @@ export function UnifiedInput() {
           pages: null,
           processor_slug: "markitdown",
         });
-        navigate(`/playback/${docResponse.data.id}`, {
+        navigate(`/listen/${docResponse.data.id}`, {
           state: { documentTitle: docResponse.data.title }
         });
       } else {
@@ -213,7 +300,17 @@ export function UnifiedInput() {
     } catch (err) {
       setUrlState("error");
       setIsCreating(false);
-      setError(err instanceof Error ? err.message : "Failed to upload file");
+      if (err instanceof AxiosError) {
+        if (err.response?.status === 413) {
+          setError(`File too large. Maximum size is ${MAX_FILE_SIZE_MB} MB.`);
+        } else if (err.response?.data?.detail) {
+          setError(err.response.data.detail);
+        } else {
+          setError(err.message);
+        }
+      } else {
+        setError(err instanceof Error ? err.message : "Failed to upload file");
+      }
     }
   }, [api, navigate]);
 
@@ -266,6 +363,13 @@ export function UnifiedInput() {
 
     await uploadFile(file);
   }, [uploadFile]);
+
+  const handleAiTransformToggle = useCallback((enabled: boolean) => {
+    setAiTransformEnabled(enabled);
+    if (enabled) {
+      setUsageLimitExceeded(false);
+    }
+  }, []);
 
   const showMetadataBanner = (mode === "url" || mode === "file") && urlState === "ready" && prepareData?.endpoint === "document";
   const showTextMode = mode === "text" || mode === "idle";
@@ -334,14 +438,27 @@ export function UnifiedInput() {
         </div>
       )}
 
+      {usageLimitExceeded && (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Info className="h-4 w-4 shrink-0" />
+          <span>
+            AI Transform limit reached.{" "}
+            <Link to="/subscription" className="text-primary hover:underline">
+              Upgrade plan
+            </Link>
+          </span>
+        </div>
+      )}
+
       {showMetadataBanner && prepareData && (
         <MetadataBanner
           metadata={prepareData.metadata}
-          creditCost={prepareData.credit_cost}
-          ocrEnabled={ocrEnabled}
-          onOcrToggle={setOcrEnabled}
-          onConfirm={() => createDocument(prepareData)}
+          aiTransformEnabled={aiTransformEnabled}
+          onAiTransformToggle={handleAiTransformToggle}
+          onConfirm={(pages) => createDocument(prepareData, pages)}
+          onCancel={cancelExtraction}
           isLoading={isCreating}
+          completedPages={completedPages}
         />
       )}
 
