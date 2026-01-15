@@ -106,7 +106,43 @@ def detect_figures(
     figure_scores = det.boxes.conf[figure_indices]
 
     # Apply NMS to deduplicate overlapping figure detections
-    keep_indices = torchvision.ops.nms(figure_boxes, figure_scores, iou_threshold)
+    nms_keep = torchvision.ops.nms(figure_boxes, figure_scores, iou_threshold)
+
+    # Additional containment filter: if one box is mostly inside another, keep the larger one
+    # (the larger box is the "real" figure with the caption, smaller ones are sub-components)
+    nms_boxes = figure_boxes[nms_keep]
+    keep_mask = [True] * len(nms_keep)
+
+    for i in range(len(nms_keep)):
+        if not keep_mask[i]:
+            continue
+        box_i = nms_boxes[i]
+        area_i = (box_i[2] - box_i[0]) * (box_i[3] - box_i[1])
+
+        for j in range(i + 1, len(nms_keep)):
+            if not keep_mask[j]:
+                continue
+            box_j = nms_boxes[j]
+            area_j = (box_j[2] - box_j[0]) * (box_j[3] - box_j[1])
+
+            # Calculate intersection
+            inter_x1 = max(box_i[0], box_j[0])
+            inter_y1 = max(box_i[1], box_j[1])
+            inter_x2 = min(box_i[2], box_j[2])
+            inter_y2 = min(box_i[3], box_j[3])
+
+            if inter_x2 > inter_x1 and inter_y2 > inter_y1:
+                inter_area = (inter_x2 - inter_x1) * (inter_y2 - inter_y1)
+                smaller_area = min(area_i, area_j)
+                # If smaller box is >70% contained in the larger, remove the smaller one
+                if inter_area / smaller_area > 0.7:
+                    if area_i < area_j:
+                        keep_mask[i] = False
+                        break
+                    else:
+                        keep_mask[j] = False
+
+    keep_indices = [nms_keep[i] for i in range(len(nms_keep)) if keep_mask[i]]
 
     figures = []
     for idx in keep_indices:
@@ -177,7 +213,40 @@ def detect_figures_batch(
         figure_scores = result.boxes.conf[figure_indices]
 
         # Apply NMS
-        keep_indices = torchvision.ops.nms(figure_boxes, figure_scores, iou_threshold)
+        nms_keep = torchvision.ops.nms(figure_boxes, figure_scores, iou_threshold)
+
+        # Containment filter: keep larger box when smaller is mostly contained
+        nms_boxes = figure_boxes[nms_keep]
+        keep_mask = [True] * len(nms_keep)
+
+        for ii in range(len(nms_keep)):
+            if not keep_mask[ii]:
+                continue
+            box_ii = nms_boxes[ii]
+            area_ii = (box_ii[2] - box_ii[0]) * (box_ii[3] - box_ii[1])
+
+            for jj in range(ii + 1, len(nms_keep)):
+                if not keep_mask[jj]:
+                    continue
+                box_jj = nms_boxes[jj]
+                area_jj = (box_jj[2] - box_jj[0]) * (box_jj[3] - box_jj[1])
+
+                inter_x1 = max(box_ii[0], box_jj[0])
+                inter_y1 = max(box_ii[1], box_jj[1])
+                inter_x2 = min(box_ii[2], box_jj[2])
+                inter_y2 = min(box_ii[3], box_jj[3])
+
+                if inter_x2 > inter_x1 and inter_y2 > inter_y1:
+                    inter_area = (inter_x2 - inter_x1) * (inter_y2 - inter_y1)
+                    smaller_area = min(area_ii, area_jj)
+                    if inter_area / smaller_area > 0.7:
+                        if area_ii < area_jj:
+                            keep_mask[ii] = False
+                            break
+                        else:
+                            keep_mask[jj] = False
+
+        keep_indices = [nms_keep[kk] for kk in range(len(nms_keep)) if keep_mask[kk]]
 
         figures = []
         for idx in keep_indices:

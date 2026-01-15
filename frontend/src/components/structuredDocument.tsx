@@ -352,18 +352,12 @@ function TableBlockView({ block }: BlockProps & { block: TableBlock }) {
 }
 
 function ImageBlockView({ block, inRow }: BlockProps & { block: ImageBlock; inRow?: boolean }) {
-  // Apply width styling if width_pct is provided (from YOLO detection)
-  const style = block.width_pct
-    ? { width: `${Math.min(block.width_pct, 100)}%`, maxWidth: "100%" }
-    : {};
-
   return (
     <figure className={cn("flex flex-col items-center", !inRow && "my-4")}>
       <img
         src={block.src}
         alt={block.alt}
         title={block.title}
-        style={style}
         className="max-w-full max-h-96 h-auto object-contain rounded"
       />
       {block.caption && (
