@@ -1,6 +1,7 @@
 ---
-status: active
+status: done
 started: 2026-01-10
+completed: 2026-01-16
 ---
 
 # Task: Agent Workflow Overhaul
@@ -240,9 +241,9 @@ Adapt Armin's script to find and parse session transcript.
 - [x] Test plugin install (marketplace setup done)
 - [x] Evaluate Armin's Chrome CDP scripts vs Chrome DevTools MCP — skipped, sticking with MCP (works, more ergonomic; Armin's leaner but more manual, would need Linux fixes)
 - [x] tmux skill — skipped, no strong use case currently (main value is debuggers with breakpoints)
-- [ ] Rename old task files with date prefix — after other work complete
-- [ ] Create knowledge structure over entire project (separate sub-task)
-  - [ ] Includes moving non-workflow content from CLAUDE.md to knowledge files
+- [x] Rename old task files with date prefix — after other work complete
+- [x] Create knowledge structure over entire project (separate sub-task)
+  - [x] Includes moving non-workflow content from CLAUDE.md to knowledge files
 
 
 ## Subtasks

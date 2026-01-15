@@ -206,3 +206,7 @@ agent/*/private/
 agent/handoffs
 scripts/tts_speed_benchmark/results/
 gateway-data/
+
+experiments/**/output/**
+experiments/gemini-flash-doc-transform/
+experiments/tts_speed_benchmark/
