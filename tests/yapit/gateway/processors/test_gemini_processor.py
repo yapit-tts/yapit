@@ -29,8 +29,9 @@ def processor(tmp_path):
     mock_settings = Mock()
     mock_settings.google_api_key = os.getenv("GOOGLE_API_KEY")
     mock_settings.images_dir = str(tmp_path / "images")
+    mock_redis = AsyncMock()
 
-    return GeminiProcessor(settings=mock_settings, resolution="low")
+    return GeminiProcessor(redis=mock_redis, settings=mock_settings, resolution="low")
 
 
 class MockCache:
@@ -102,9 +103,10 @@ def mock_processor(tmp_path):
     mock_settings = Mock()
     mock_settings.google_api_key = "fake-key-for-testing"
     mock_settings.images_dir = str(tmp_path / "images")
+    mock_redis = AsyncMock()
 
     with patch("yapit.gateway.processors.document.gemini.genai.Client"):
-        processor = GeminiProcessor(settings=mock_settings, resolution="low")
+        processor = GeminiProcessor(redis=mock_redis, settings=mock_settings, resolution="low")
     return processor
 
 
