@@ -516,3 +516,77 @@ Final thoughts.
         audio_blocks = doc.get_audio_blocks()
         # Should include: 2 headings, 2 paragraphs, 1 list, 1 blockquote = 6
         assert len(audio_blocks) >= 5
+
+
+class TestYapAnnotations:
+    """Test <yap-alt> and <yap-cap> annotation handling."""
+
+    def test_inline_math_with_yap_alt(self):
+        """Inline math $...$<yap-alt>...</yap-alt> extracts alt for TTS."""
+        md = r"We study $\alpha$<yap-alt>alpha</yap-alt> values."
+        ast = parse_markdown(md)
+        doc = transform_to_document(ast)
+
+        assert len(doc.blocks) == 1
+        assert doc.blocks[0].plain_text == "We study alpha values."
+
+    def test_display_math_with_yap_alt(self):
+        """Display math followed by <yap-alt> paragraph extracts alt."""
+        md = "$$E = mc^2$$\n\n<yap-alt>E equals m c squared</yap-alt>"
+        ast = parse_markdown(md)
+        doc = transform_to_document(ast)
+
+        # Should have just the math block (annotation paragraph skipped)
+        assert len(doc.blocks) == 1
+        assert doc.blocks[0].type == "math"
+        assert doc.blocks[0].alt == "E equals m c squared"
+
+    def test_image_with_yap_cap(self):
+        """Image with <yap-cap> extracts caption."""
+        md = "![Diagram](img.png)<yap-cap>Figure 1 overview</yap-cap>"
+        ast = parse_markdown(md)
+        doc = transform_to_document(ast)
+
+        assert len(doc.blocks) == 1
+        assert doc.blocks[0].type == "image"
+        assert doc.blocks[0].caption == "Figure 1 overview"
+        assert doc.blocks[0].alt == "Diagram"
+
+    def test_image_caption_with_nested_math(self):
+        """Caption containing math uses <yap-alt> for TTS."""
+        md = r"![Diagram](img.png)<yap-cap>Figure 1 shows $\beta$<yap-alt>beta</yap-alt> values</yap-cap>"
+        ast = parse_markdown(md)
+        doc = transform_to_document(ast)
+
+        block = doc.blocks[0]
+        assert block.type == "image"
+        # Display caption keeps LaTeX
+        assert r"$\beta$" in block.caption
+        # TTS should use alt text (verified via audio_block_idx being set)
+        assert block.audio_block_idx == 0
+
+    def test_multiple_math_in_paragraph(self):
+        """Multiple math expressions each get their own alt."""
+        md = r"$\alpha$<yap-alt>alpha</yap-alt> and $\beta$<yap-alt>beta</yap-alt>"
+        ast = parse_markdown(md)
+        doc = transform_to_document(ast)
+
+        assert doc.blocks[0].plain_text == "alpha and beta"
+
+    def test_math_without_yap_alt(self):
+        """Math without <yap-alt> is excluded from TTS."""
+        md = r"Value is $x^2$ here."
+        ast = parse_markdown(md)
+        doc = transform_to_document(ast)
+
+        # Math without alt should not appear in plain_text
+        assert doc.blocks[0].plain_text == "Value is  here."
+
+    def test_malformed_yap_alt_ignored(self):
+        """Unclosed <yap-alt> tag is ignored gracefully."""
+        md = r"$\alpha$<yap-alt>alpha without closing"
+        ast = parse_markdown(md)
+        doc = transform_to_document(ast)
+
+        # Should not crash, malformed annotation treated as regular text
+        assert len(doc.blocks) == 1
