@@ -26,6 +26,7 @@ from yapit.gateway.processors.markdown.models import (
     ListBlock,
     ListItem,
     MathBlock,
+    MathInlineContent,
     ParagraphBlock,
     StrongContent,
     StructuredDocument,
@@ -452,6 +453,10 @@ class DocumentTransformer:
             # Images are atomic - include fully or not at all
             return [node] if start == 0 else []
 
+        elif node.type == "math_inline":
+            # Math is atomic - include fully or not at all
+            return [node] if start == 0 else []
+
         return []
 
     def _get_inline_length(self, node: InlineContent) -> int:
@@ -464,6 +469,9 @@ class DocumentTransformer:
             return sum(self._get_inline_length(child) for child in node.content)
         elif node.type == "image":
             return len(node.alt)
+        elif node.type == "math_inline":
+            # Math doesn't count toward block length (excluded from TTS)
+            return 0
         return 0
 
     def _render_ast_to_html(self, ast: list[InlineContent]) -> str:
@@ -491,6 +499,8 @@ class DocumentTransformer:
             return f'<a href="{node.href}"{title_attr}>{inner}</a>'
         elif node.type == "image":
             return f'<img src="{node.src}" alt="{node.alt}" />'
+        elif node.type == "math_inline":
+            return f'<span class="math-inline">{node.content}</span>'
         return ""
 
     def _split_text_into_chunks(self, text: str) -> list[str]:
@@ -787,6 +797,8 @@ class DocumentTransformer:
             return [TextContent(content=" ")]
         elif node.type == "hardbreak":
             return [TextContent(content="\n")]
+        elif node.type == "math_inline":
+            return [MathInlineContent(content=node.content or "")]
         else:
             # Unknown type, return as text if has content
             if node.content:

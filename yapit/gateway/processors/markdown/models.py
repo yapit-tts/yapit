@@ -44,8 +44,21 @@ class InlineImageContent(BaseModel):
     alt: str
 
 
+class MathInlineContent(BaseModel):
+    """Inline math ($...$). Atomic - never split."""
+
+    type: Literal["math_inline"] = "math_inline"
+    content: str
+
+
 InlineContent = Annotated[
-    TextContent | StrongContent | EmphasisContent | CodeSpanContent | LinkContent | InlineImageContent,
+    TextContent
+    | StrongContent
+    | EmphasisContent
+    | CodeSpanContent
+    | LinkContent
+    | InlineImageContent
+    | MathInlineContent,
     Field(discriminator="type"),
 ]
 
