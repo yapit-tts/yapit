@@ -262,8 +262,8 @@ class DocumentTransformer:
         # Strip query params from src for clean URL
         clean_src = src.split("?")[0] if "?" in src else src
 
-        # Audio block if alt or caption present
-        tts_text = " ".join(p for p in (alt, caption) if p)
+        # TTS: prefer caption (scholarly label), fall back to alt (visual description)
+        tts_text = caption if caption else alt
 
         return ImageBlock(
             id=self._next_block_id(),

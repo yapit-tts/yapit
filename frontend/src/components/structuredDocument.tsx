@@ -471,10 +471,11 @@ function ImageRowView({ blocks, onBlockClick }: { blocks: ImageBlock[]; onBlockC
             key={block.id}
             data-audio-block-idx={block.audio_block_idx ?? undefined}
             className={cn(blockBaseClass, handleClick && clickableClass)}
+            style={{ width: `${scaledWidth}%` }}
             onClick={handleClick}
           >
             <ImageBlockView
-              block={{ ...block, width_pct: scaledWidth }}
+              block={{ ...block, width_pct: undefined }}
               inRow
             />
           </div>

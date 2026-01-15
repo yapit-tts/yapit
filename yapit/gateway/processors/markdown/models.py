@@ -222,9 +222,8 @@ class StructuredDocument(BaseModel):
             elif block.type == "math" and block.audio_block_idx is not None:
                 result.append(block.alt)
             elif block.type == "image" and block.audio_block_idx is not None:
-                # Combine alt and caption for TTS
-                parts = [p for p in (block.alt, block.caption) if p]
-                result.append(" ".join(parts))
+                # Prefer caption (scholarly label), fall back to alt (visual description)
+                result.append(block.caption if block.caption else block.alt)
             elif block.audio_block_idx is not None:
                 result.append(block.plain_text)
 
