@@ -124,6 +124,8 @@ interface ImageBlock {
   src: string;
   alt: string;
   title?: string;
+  width_pct?: number;  // Figure width as % of page (from YOLO detection)
+  row_group?: string;  // "row0", "row1", etc. - figures in same row are side-by-side
   audio_block_idx: null;
 }
 
@@ -225,7 +227,7 @@ function BlockquoteBlockView({ block, onBlockClick }: {
   block: BlockquoteBlock;
   onBlockClick?: (audioIdx: number) => void;
 }) {
-  // Group nested blocks by visual_group_id (same as top-level)
+  // Group nested blocks by visual_group_id and row_group (same as top-level)
   const groupedBlocks = groupBlocks(block.blocks);
 
   // Blockquote is a visual container - nested blocks have their own audio indices
@@ -238,6 +240,13 @@ function BlockquoteBlockView({ block, onBlockClick }: {
               key={grouped.blocks[0].id}
               blocks={grouped.blocks}
               onBlockClick={onBlockClick}
+            />
+          );
+        } else if (grouped.kind === "image-row") {
+          return (
+            <ImageRowView
+              key={grouped.blocks[0].id}
+              blocks={grouped.blocks}
             />
           );
         } else {
@@ -339,13 +348,19 @@ function TableBlockView({ block }: BlockProps & { block: TableBlock }) {
   );
 }
 
-function ImageBlockView({ block }: BlockProps & { block: ImageBlock }) {
+function ImageBlockView({ block, inRow }: BlockProps & { block: ImageBlock; inRow?: boolean }) {
+  // Apply width styling if width_pct is provided (from YOLO detection)
+  const style = block.width_pct
+    ? { width: `${Math.min(block.width_pct, 100)}%`, maxWidth: "100%" }
+    : {};
+
   return (
-    <figure className="my-4">
+    <figure className={cn("flex flex-col items-center", !inRow && "my-4")}>
       <img
         src={block.src}
         alt={block.alt}
         title={block.title}
+        style={style}
         className="max-w-full max-h-96 h-auto object-contain rounded"
       />
       {block.alt && (
@@ -365,41 +380,83 @@ function ThematicBreakView() {
 
 type GroupedBlock =
   | { kind: "single"; block: ContentBlock }
-  | { kind: "paragraph-group"; blocks: ParagraphBlock[] };
+  | { kind: "paragraph-group"; blocks: ParagraphBlock[] }
+  | { kind: "image-row"; blocks: ImageBlock[] };
 
 function groupBlocks(blocks: ContentBlock[]): GroupedBlock[] {
   const result: GroupedBlock[] = [];
-  let currentGroup: ParagraphBlock[] = [];
-  let currentGroupId: string | null = null;
+  let currentParagraphGroup: ParagraphBlock[] = [];
+  let currentParagraphGroupId: string | null = null;
+  let currentImageRow: ImageBlock[] = [];
+  let currentImageRowGroup: string | null = null;
 
-  const flushGroup = () => {
-    if (currentGroup.length > 1) {
-      result.push({ kind: "paragraph-group", blocks: currentGroup });
-    } else if (currentGroup.length === 1) {
-      result.push({ kind: "single", block: currentGroup[0] });
+  const flushParagraphGroup = () => {
+    if (currentParagraphGroup.length > 1) {
+      result.push({ kind: "paragraph-group", blocks: currentParagraphGroup });
+    } else if (currentParagraphGroup.length === 1) {
+      result.push({ kind: "single", block: currentParagraphGroup[0] });
     }
-    currentGroup = [];
-    currentGroupId = null;
+    currentParagraphGroup = [];
+    currentParagraphGroupId = null;
+  };
+
+  const flushImageRow = () => {
+    if (currentImageRow.length > 1) {
+      result.push({ kind: "image-row", blocks: currentImageRow });
+    } else if (currentImageRow.length === 1) {
+      result.push({ kind: "single", block: currentImageRow[0] });
+    }
+    currentImageRow = [];
+    currentImageRowGroup = null;
   };
 
   for (const block of blocks) {
-    const groupId = block.type === "paragraph" ? block.visual_group_id : null;
-
-    if (groupId && groupId === currentGroupId) {
-      currentGroup.push(block as ParagraphBlock);
-    } else {
-      flushGroup();
-      if (groupId) {
-        currentGroup = [block as ParagraphBlock];
-        currentGroupId = groupId;
+    // Handle paragraph visual groups
+    if (block.type === "paragraph" && block.visual_group_id) {
+      flushImageRow(); // Flush any pending image row
+      if (block.visual_group_id === currentParagraphGroupId) {
+        currentParagraphGroup.push(block);
       } else {
-        result.push({ kind: "single", block });
+        flushParagraphGroup();
+        currentParagraphGroup = [block];
+        currentParagraphGroupId = block.visual_group_id;
       }
+      continue;
     }
+
+    // Handle image row groups
+    if (block.type === "image" && block.row_group) {
+      flushParagraphGroup(); // Flush any pending paragraph group
+      if (block.row_group === currentImageRowGroup) {
+        currentImageRow.push(block);
+      } else {
+        flushImageRow();
+        currentImageRow = [block];
+        currentImageRowGroup = block.row_group;
+      }
+      continue;
+    }
+
+    // Single block - flush any pending groups first
+    flushParagraphGroup();
+    flushImageRow();
+    result.push({ kind: "single", block });
   }
 
-  flushGroup();
+  flushParagraphGroup();
+  flushImageRow();
   return result;
+}
+
+// Renders multiple image blocks in a flex row (side-by-side figures)
+function ImageRowView({ blocks }: { blocks: ImageBlock[] }) {
+  return (
+    <div className="my-4 flex gap-4 justify-center items-start flex-wrap">
+      {blocks.map((block) => (
+        <ImageBlockView key={block.id} block={block} inRow />
+      ))}
+    </div>
+  );
 }
 
 // Renders multiple paragraph blocks as spans within a single <p>
@@ -832,6 +889,13 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
                 key={grouped.blocks[0].id}
                 blocks={grouped.blocks}
                 onBlockClick={onBlockClick}
+              />
+            );
+          } else if (grouped.kind === "image-row") {
+            return (
+              <ImageRowView
+                key={grouped.blocks[0].id}
+                blocks={grouped.blocks}
               />
             );
           } else {

@@ -1,14 +1,231 @@
 import io
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 
 import pymupdf
+from doclayout_yolo import YOLOv10
+from huggingface_hub import hf_hub_download
+from loguru import logger
+from PIL import Image
 from pypdf import PdfReader, PdfWriter
 
 PROMPTS_DIR = Path(__file__).parent / "prompts"
 
 IMAGE_PLACEHOLDER = "![](detected-image)"
+
+_HF_REPO_ID = "juliozhao/DocLayout-YOLO-DocStructBench"
+_HF_MODEL_FILENAME = "doclayout_yolo_docstructbench_imgsz1024.pt"
+
+
+@dataclass
+class DetectedFigure:
+    """A figure detected by YOLO with layout information."""
+
+    bbox: tuple[float, float, float, float]  # x1, y1, x2, y2 normalized 0-1
+    confidence: float
+    width_pct: float  # (x2-x1) as percentage of page width
+    row_group: str | None = None  # "row0", "row1", etc. - assigned by assign_row_groups()
+    cropped_image: bytes = field(default=b"", repr=False)
+
+
+@lru_cache(maxsize=1)
+def get_yolo_model():
+    """Load the DocLayout-YOLO model (cached after first call)."""
+    logger.info("Loading DocLayout-YOLO model...")
+    model_path = hf_hub_download(repo_id=_HF_REPO_ID, filename=_HF_MODEL_FILENAME)
+    model = YOLOv10(model_path)
+    logger.info(f"DocLayout-YOLO model loaded from {model_path}")
+    return model
+
+
+def render_page_as_image(pdf_bytes: bytes, page_idx: int, dpi: int = 150) -> tuple[bytes, int, int]:
+    """Render a PDF page as PNG image.
+
+    Returns:
+        Tuple of (png_bytes, width, height)
+    """
+    doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
+    page = doc[page_idx]
+    pix = page.get_pixmap(dpi=dpi)
+    png_bytes = pix.tobytes("png")
+    doc.close()
+    return png_bytes, pix.width, pix.height
+
+
+def detect_figures(page_image: bytes, page_width: int, page_height: int) -> list[DetectedFigure]:
+    """Run YOLO on a single page image to detect figures.
+
+    Args:
+        page_image: PNG image bytes
+        page_width: Image width in pixels
+        page_height: Image height in pixels
+
+    Returns:
+        List of detected figures with normalized bboxes and layout info
+    """
+    model = get_yolo_model()
+
+    # Load image for YOLO
+    img = Image.open(io.BytesIO(page_image))
+
+    results = model.predict(img, imgsz=1024, conf=0.2, device="cpu", verbose=False)
+
+    # Log all detected classes for debugging
+    all_classes = [results[0].names[int(box.cls[0])] for box in results[0].boxes]
+    if all_classes:
+        logger.info(f"YOLO detected classes: {all_classes}")
+
+    figures = []
+    for box in results[0].boxes:
+        class_name = results[0].names[int(box.cls[0])]
+        if class_name not in ("Figure", "figure"):
+            continue
+
+        x1, y1, x2, y2 = box.xyxy[0].tolist()
+
+        # Normalize to 0-1 range
+        bbox = (x1 / page_width, y1 / page_height, x2 / page_width, y2 / page_height)
+
+        # Width as percentage of page
+        width_pct = round((x2 - x1) / page_width * 100)
+
+        figures.append(
+            DetectedFigure(
+                bbox=bbox,
+                confidence=float(box.conf[0]),
+                width_pct=width_pct,
+            )
+        )
+
+    # Assign row groups for side-by-side figures
+    return assign_row_groups(figures)
+
+
+def detect_figures_batch(page_images: list[tuple[bytes, int, int]]) -> list[list[DetectedFigure]]:
+    """Run YOLO on multiple page images in a batch.
+
+    Args:
+        page_images: List of (png_bytes, width, height) tuples
+
+    Returns:
+        List of figure lists, one per page
+    """
+    if not page_images:
+        return []
+
+    model = get_yolo_model()
+
+    # Load all images
+    pil_images = [Image.open(io.BytesIO(img_bytes)) for img_bytes, _, _ in page_images]
+
+    # Batch inference
+    results = model.predict(pil_images, imgsz=1024, conf=0.2, device="cpu", verbose=False)
+
+    all_figures = []
+    for i, result in enumerate(results):
+        _, page_width, page_height = page_images[i]
+        figures = []
+
+        for box in result.boxes:
+            class_name = result.names[int(box.cls[0])]
+            if class_name != "Figure":
+                continue
+
+            x1, y1, x2, y2 = box.xyxy[0].tolist()
+            bbox = (x1 / page_width, y1 / page_height, x2 / page_width, y2 / page_height)
+            width_pct = round((x2 - x1) / page_width * 100)
+
+            figures.append(
+                DetectedFigure(
+                    bbox=bbox,
+                    confidence=float(box.conf[0]),
+                    width_pct=width_pct,
+                )
+            )
+
+        all_figures.append(assign_row_groups(figures))
+
+    return all_figures
+
+
+def assign_row_groups(figures: list[DetectedFigure]) -> list[DetectedFigure]:
+    """Group figures with overlapping y-ranges (side-by-side on same row).
+
+    Two figures are in the same row if their y-ranges overlap significantly.
+    """
+    if not figures:
+        return figures
+
+    # Sort by center_y for processing
+    sorted_figures = sorted(figures, key=lambda f: (f.bbox[1] + f.bbox[3]) / 2)
+
+    row_idx = 0
+    used = [False] * len(sorted_figures)
+
+    for i, fig in enumerate(sorted_figures):
+        if used[i]:
+            continue
+
+        # Start a new row with this figure
+        fig.row_group = f"row{row_idx}"
+        used[i] = True
+
+        y1_i, y2_i = fig.bbox[1], fig.bbox[3]
+        height_i = y2_i - y1_i
+
+        # Find other figures that overlap in y
+        for j in range(i + 1, len(sorted_figures)):
+            if used[j]:
+                continue
+
+            other = sorted_figures[j]
+            y1_j, y2_j = other.bbox[1], other.bbox[3]
+            height_j = y2_j - y1_j
+
+            # Check y-overlap: figures overlap if their y-ranges intersect
+            overlap_start = max(y1_i, y1_j)
+            overlap_end = min(y2_i, y2_j)
+            overlap = max(0, overlap_end - overlap_start)
+
+            # Require >50% overlap relative to the smaller figure
+            min_height = min(height_i, height_j)
+            if min_height > 0 and overlap / min_height > 0.5:
+                other.row_group = f"row{row_idx}"
+                used[j] = True
+
+        row_idx += 1
+
+    # Sort within each row by x position (left to right)
+    return sorted(sorted_figures, key=lambda f: (f.row_group or "", f.bbox[0]))
+
+
+def crop_figure(page_image: bytes, bbox: tuple[float, float, float, float], page_width: int, page_height: int) -> bytes:
+    """Crop a figure from the rendered page image.
+
+    Args:
+        page_image: PNG image bytes of the full page
+        bbox: Normalized bounding box (x1, y1, x2, y2) in 0-1 range
+        page_width: Image width in pixels
+        page_height: Image height in pixels
+
+    Returns:
+        Cropped PNG image bytes
+    """
+    img = Image.open(io.BytesIO(page_image))
+
+    # Convert normalized bbox to pixel coordinates
+    x1 = int(bbox[0] * page_width)
+    y1 = int(bbox[1] * page_height)
+    x2 = int(bbox[2] * page_width)
+    y2 = int(bbox[3] * page_height)
+
+    cropped = img.crop((x1, y1, x2, y2))
+
+    buffer = io.BytesIO()
+    cropped.save(buffer, format="PNG")
+    return buffer.getvalue()
 
 
 def store_image(data: bytes, format: str, images_dir: Path, content_hash: str, page_idx: int, img_idx: int) -> str:
@@ -20,6 +237,69 @@ def store_image(data: bytes, format: str, images_dir: Path, content_hash: str, p
     (doc_dir / filename).write_bytes(data)
 
     return f"/images/{content_hash}/{filename}"
+
+
+def store_figure(
+    figure: DetectedFigure,
+    page_image: bytes,
+    page_width: int,
+    page_height: int,
+    images_dir: Path,
+    content_hash: str,
+    page_idx: int,
+    fig_idx: int,
+) -> str:
+    """Store a detected figure and return URL with layout query params."""
+    # Crop the figure from the page
+    cropped = crop_figure(page_image, figure.bbox, page_width, page_height)
+
+    # Store the cropped image
+    doc_dir = images_dir / content_hash
+    doc_dir.mkdir(parents=True, exist_ok=True)
+
+    filename = f"{page_idx}_{fig_idx}.png"
+    (doc_dir / filename).write_bytes(cropped)
+
+    # Build URL with layout info as query params
+    base_url = f"/images/{content_hash}/{filename}"
+    params = []
+    if figure.width_pct:
+        params.append(f"w={figure.width_pct}")
+    if figure.row_group:
+        params.append(f"row={figure.row_group}")
+
+    if params:
+        return f"{base_url}?{'&'.join(params)}"
+    return base_url
+
+
+def build_figure_prompt(base_prompt: str, figures: list[DetectedFigure]) -> str:
+    """Build prompt with figure placement hints for Gemini."""
+    if not figures:
+        return base_prompt
+
+    # Build position hints for each figure
+    hints = []
+    for i, fig in enumerate(figures):
+        # Describe position based on bbox center
+        center_y = (fig.bbox[1] + fig.bbox[3]) / 2
+        center_x = (fig.bbox[0] + fig.bbox[2]) / 2
+
+        y_pos = "top" if center_y < 0.33 else "middle" if center_y < 0.67 else "bottom"
+        x_pos = "left" if center_x < 0.33 else "center" if center_x < 0.67 else "right"
+
+        size = "large" if fig.width_pct > 70 else "medium" if fig.width_pct > 40 else "small"
+
+        hints.append(f"  - Figure {i + 1}: {size}, {y_pos}-{x_pos}")
+
+    figure_instruction = f"""This page contains {len(figures)} figure(s). Place exactly {len(figures)} {IMAGE_PLACEHOLDER} placeholder(s) where the figures appear in the document flow.
+
+Figure positions (for reference):
+{chr(10).join(hints)}
+
+Place each placeholder on its own line where that figure appears in the text."""
+
+    return f"{base_prompt}\n\n{figure_instruction}"
 
 
 @dataclass

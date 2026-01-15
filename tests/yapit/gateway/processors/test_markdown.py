@@ -367,15 +367,51 @@ class TestAudioBlockIndexing:
         assert doc.blocks[1].audio_block_idx is None  # math-only paragraph
         assert doc.blocks[2].audio_block_idx == 1  # "After." (not 2!)
 
-    def test_image_with_alt_text_gets_audio_index(self):
-        """Images with alt text contribute to audio, so paragraph gets index."""
+    def test_standalone_image_becomes_image_block(self):
+        """Standalone images become ImageBlock (no audio - visual content)."""
         md = "![A cat sitting on a mat](image.png)"
         ast = parse_markdown(md)
         doc = transform_to_document(ast)
 
         assert len(doc.blocks) == 1
-        assert doc.blocks[0].audio_block_idx == 0
-        assert doc.blocks[0].plain_text == "A cat sitting on a mat"
+        block = doc.blocks[0]
+        assert block.type == "image"
+        assert block.src == "image.png"
+        assert block.alt == "A cat sitting on a mat"
+        assert block.audio_block_idx is None  # Images don't have audio
+
+    def test_image_layout_metadata_from_url_params(self):
+        """ImageBlock parses width_pct and row_group from URL query params."""
+        md = "![Figure](image.png?w=85&row=row0)"
+        ast = parse_markdown(md)
+        doc = transform_to_document(ast)
+
+        assert len(doc.blocks) == 1
+        block = doc.blocks[0]
+        assert block.type == "image"
+        assert block.src == "image.png"  # Query params stripped from src
+        assert block.width_pct == 85.0
+        assert block.row_group == "row0"
+
+    def test_image_partial_layout_metadata(self):
+        """ImageBlock handles partial query params (only width or only row)."""
+        md = "![Figure](image.png?w=50)"
+        ast = parse_markdown(md)
+        doc = transform_to_document(ast)
+
+        block = doc.blocks[0]
+        assert block.width_pct == 50.0
+        assert block.row_group is None
+
+    def test_image_no_layout_metadata(self):
+        """ImageBlock without query params has None for layout fields."""
+        md = "![Figure](image.png)"
+        ast = parse_markdown(md)
+        doc = transform_to_document(ast)
+
+        block = doc.blocks[0]
+        assert block.width_pct is None
+        assert block.row_group is None
 
 
 class TestJsonSerialization:

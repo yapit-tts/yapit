@@ -33,6 +33,13 @@ def processor(tmp_path):
     return GeminiProcessor(settings=mock_settings, resolution="low")
 
 
+class MockCache:
+    """Simple mock cache for testing."""
+
+    async def store(self, key: str, value: bytes) -> None:
+        pass
+
+
 @pytest.mark.gemini
 @pytest.mark.asyncio
 async def test_extract_pdf(processor):
@@ -44,6 +51,7 @@ async def test_extract_pdf(processor):
         content=content,
         content_type="application/pdf",
         content_hash="test-minimal",
+        extraction_cache=MockCache(),
     )
 
     assert result.pages
@@ -61,6 +69,7 @@ async def test_extract_specific_pages(processor):
         content=content,
         content_type="application/pdf",
         content_hash="test-specific",
+        extraction_cache=MockCache(),
         pages=[0, 2],  # Skip page 1
     )
 
@@ -78,6 +87,7 @@ async def test_extract_image(processor):
         content=content,
         content_type="image/png",
         content_hash="test-png",
+        extraction_cache=MockCache(),
     )
 
     assert 0 in result.pages
@@ -129,11 +139,11 @@ class TestRetryBehavior:
                 new_callable=AsyncMock,
             ) as mock_sleep,
         ):
-            page_idx, result = await mock_processor._process_page(
+            page_idx, result = await mock_processor._process_page_with_figures(
                 pdf_reader=mock_pdf_reader,
                 page_idx=0,
-                images=[],
-                image_urls=[],
+                figures=[],
+                figure_urls=[],
                 semaphore=semaphore,
             )
 
@@ -167,11 +177,11 @@ class TestRetryBehavior:
                     new_callable=AsyncMock,
                 ),
             ):
-                page_idx, result = await mock_processor._process_page(
+                page_idx, result = await mock_processor._process_page_with_figures(
                     pdf_reader=Mock(),
                     page_idx=0,
-                    images=[],
-                    image_urls=[],
+                    figures=[],
+                    figure_urls=[],
                     semaphore=semaphore,
                 )
 
@@ -189,11 +199,11 @@ class TestRetryBehavior:
             "yapit.gateway.processors.document.gemini.extract_single_page_pdf",
             return_value=b"fake-pdf-bytes",
         ):
-            page_idx, result = await mock_processor._process_page(
+            page_idx, result = await mock_processor._process_page_with_figures(
                 pdf_reader=Mock(),
                 page_idx=0,
-                images=[],
-                image_urls=[],
+                figures=[],
+                figure_urls=[],
                 semaphore=semaphore,
             )
 
@@ -212,11 +222,11 @@ class TestRetryBehavior:
             "yapit.gateway.processors.document.gemini.extract_single_page_pdf",
             return_value=b"fake-pdf-bytes",
         ):
-            page_idx, result = await mock_processor._process_page(
+            page_idx, result = await mock_processor._process_page_with_figures(
                 pdf_reader=Mock(),
                 page_idx=0,
-                images=[],
-                image_urls=[],
+                figures=[],
+                figure_urls=[],
                 semaphore=semaphore,
             )
 
@@ -235,11 +245,11 @@ class TestRetryBehavior:
             "yapit.gateway.processors.document.gemini.extract_single_page_pdf",
             return_value=b"fake-pdf-bytes",
         ):
-            page_idx, result = await mock_processor._process_page(
+            page_idx, result = await mock_processor._process_page_with_figures(
                 pdf_reader=Mock(),
                 page_idx=0,
-                images=[],
-                image_urls=[],
+                figures=[],
+                figure_urls=[],
                 semaphore=semaphore,
             )
 
@@ -264,11 +274,11 @@ class TestRetryBehavior:
                 new_callable=AsyncMock,
             ),
         ):
-            page_idx, result = await mock_processor._process_page(
+            page_idx, result = await mock_processor._process_page_with_figures(
                 pdf_reader=Mock(),
                 page_idx=0,
-                images=[],
-                image_urls=[],
+                figures=[],
+                figure_urls=[],
                 semaphore=semaphore,
             )
 
@@ -299,11 +309,11 @@ class TestRetryBehavior:
                 new_callable=AsyncMock,
             ),
         ):
-            page_idx, result = await mock_processor._process_page(
+            page_idx, result = await mock_processor._process_page_with_figures(
                 pdf_reader=Mock(),
                 page_idx=0,
-                images=[],
-                image_urls=[],
+                figures=[],
+                figure_urls=[],
                 semaphore=semaphore,
             )
 
