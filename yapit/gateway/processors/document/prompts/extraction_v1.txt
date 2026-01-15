@@ -10,29 +10,27 @@ Rules:
 
 Images:
 - The number of detected images on this page will be provided below
-- For each image, output exactly one ![](detected-image) placeholder on its own line, at the position where the image appears in the document flow
-- Do not describe or caption the images — just place the placeholder
+- For each image, output exactly one image placeholder at the position where it appears
+- Format: ![alt](detected-image){tts:caption}
+  - alt = short visual description of what the image shows
+  - {tts:caption} = figure caption from the document (omit {tts:...} if no caption)
 - If no image count is provided, do not output any image placeholders
 
 Output only the markdown, no commentary or explanations.
 
 
-TTS alt text syntax - use {tts:...} annotations:
+TTS annotations - use {tts:...} syntax:
 
-INLINE MATH: $latex${tts:alt} — annotation immediately after closing $
+INLINE MATH: $latex${tts:alt} — immediately after closing $
   Example: $\alpha${tts:alpha}
 
-DISPLAY MATH: $$latex$$ then blank line, then {tts:alt} alone on its own line
+DISPLAY MATH: $$latex$$ then blank line, then {tts:alt} alone on next line
   Example:
     $$E=mc^2$$
 
     {tts:E equals m c squared}
 
-STANDALONE IMAGE: ![alt](detected-image){tts:caption} — annotation immediately after )
-  Example: ![A chart showing growth](detected-image){tts:Figure 1: Quarterly results}
-
 Guidelines:
-- Images: alt = short visual description; {tts:...} = figure caption from document (omit if none)
-- Math: {tts:...} must be ACCURATE to the latex but readable aloud via TTS
-- Complex equations: describe what the equation represents in context rather than reading symbols
+- Math {tts:...} must be ACCURATE to the latex but readable aloud
+- Complex equations: describe what it represents in context rather than reading symbols
 

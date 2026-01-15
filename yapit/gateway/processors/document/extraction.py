@@ -14,7 +14,11 @@ from pypdf import PdfReader, PdfWriter
 
 PROMPTS_DIR = Path(__file__).parent / "prompts"
 
-IMAGE_PLACEHOLDER = "![](detected-image)"
+# For prompt instructions - tells model what to output
+IMAGE_PLACEHOLDER = "![alt](detected-image){tts:caption}"
+
+# Matches all variants: ![alt](detected-image){tts:caption}, ![alt](detected-image), ![](detected-image)
+IMAGE_PLACEHOLDER_PATTERN = re.compile(r"!\[([^\]]*)\]\(detected-image\)(\{tts:[^}]*\})?")
 
 _HF_REPO_ID = "juliozhao/DocLayout-YOLO-DocStructBench"
 _HF_MODEL_FILENAME = "doclayout_yolo_docstructbench_imgsz1024.pt"
@@ -458,21 +462,28 @@ def build_prompt_with_image_count(base_prompt: str, image_count: int) -> str:
 
 
 def substitute_image_placeholders(text: str, image_urls: list[str]) -> str:
-    """Replace ![](detected-image) placeholders with actual image URLs.
+    """Replace ![alt](detected-image){tts:caption} placeholders with actual image URLs.
 
+    Preserves alt text and {tts:caption} annotations from the placeholder.
     Handles mismatch between placeholder count and image count:
     - Extra placeholders are removed
     - Extra images are appended at the end
     """
-    result = text
     idx = 0
 
-    while IMAGE_PLACEHOLDER in result and idx < len(image_urls):
-        result = result.replace(IMAGE_PLACEHOLDER, f"![]({image_urls[idx]})", 1)
+    def replace_match(match: re.Match[str]) -> str:
+        nonlocal idx
+        if idx >= len(image_urls):
+            return ""  # Remove extra placeholders
+        url = image_urls[idx]
         idx += 1
+        alt = match.group(1) or ""
+        tts = match.group(2) or ""
+        return f"![{alt}]({url}){tts}"
 
-    result = result.replace(IMAGE_PLACEHOLDER, "")
+    result = IMAGE_PLACEHOLDER_PATTERN.sub(replace_match, text)
 
+    # Append any remaining images at the end
     if idx < len(image_urls):
         extra = "\n\n".join(f"![]({url})" for url in image_urls[idx:])
         result = f"{result}\n\n{extra}"
