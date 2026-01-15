@@ -269,7 +269,7 @@ class BaseTTSProcessor:
         # stay in Redis queue until a slot is available. This ensures:
         # 1. Queue depth reflects actual backlog (overflow works correctly)
         # 2. Pending checks happen just-in-time (eviction works correctly)
-        semaphore = asyncio.Semaphore(2)
+        semaphore = asyncio.Semaphore(8)
 
         async def process_and_release(raw: bytes) -> None:
             try:
