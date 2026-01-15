@@ -5,6 +5,7 @@ from functools import lru_cache
 from pathlib import Path
 
 import pymupdf
+import torchvision.ops
 from doclayout_yolo import YOLOv10
 from huggingface_hub import hf_hub_download
 from loguru import logger
@@ -40,7 +41,7 @@ def get_yolo_model():
     return model
 
 
-def render_page_as_image(pdf_bytes: bytes, page_idx: int, dpi: int = 150) -> tuple[bytes, int, int]:
+def render_page_as_image(pdf_bytes: bytes, page_idx: int, dpi: int = 300) -> tuple[bytes, int, int]:
     """Render a PDF page as PNG image.
 
     Returns:
@@ -54,13 +55,21 @@ def render_page_as_image(pdf_bytes: bytes, page_idx: int, dpi: int = 150) -> tup
     return png_bytes, pix.width, pix.height
 
 
-def detect_figures(page_image: bytes, page_width: int, page_height: int) -> list[DetectedFigure]:
+def detect_figures(
+    page_image: bytes,
+    page_width: int,
+    page_height: int,
+    conf_threshold: float = 0.25,
+    iou_threshold: float = 0.45,
+) -> list[DetectedFigure]:
     """Run YOLO on a single page image to detect figures.
 
     Args:
         page_image: PNG image bytes
         page_width: Image width in pixels
         page_height: Image height in pixels
+        conf_threshold: Minimum confidence for detections
+        iou_threshold: IoU threshold for NMS deduplication
 
     Returns:
         List of detected figures with normalized bboxes and layout info
@@ -70,20 +79,35 @@ def detect_figures(page_image: bytes, page_width: int, page_height: int) -> list
     # Load image for YOLO
     img = Image.open(io.BytesIO(page_image))
 
-    results = model.predict(img, imgsz=1024, conf=0.2, device="cpu", verbose=False)
+    results = model.predict(img, imgsz=1024, conf=conf_threshold, device="cpu", verbose=False)
 
     # Log all detected classes for debugging
-    all_classes = [results[0].names[int(box.cls[0])] for box in results[0].boxes]
+    det = results[0]
+    all_classes = [det.names[int(cls)] for cls in det.boxes.cls]
     if all_classes:
         logger.info(f"YOLO detected classes: {all_classes}")
 
-    figures = []
-    for box in results[0].boxes:
-        class_name = results[0].names[int(box.cls[0])]
-        if class_name not in ("Figure", "figure"):
-            continue
+    # Filter to figure class only, then apply NMS
+    figure_indices = []
+    for i, cls in enumerate(det.boxes.cls):
+        class_name = det.names[int(cls)]
+        if class_name in ("Figure", "figure"):
+            figure_indices.append(i)
 
-        x1, y1, x2, y2 = box.xyxy[0].tolist()
+    if not figure_indices:
+        return []
+
+    # Extract figure boxes/scores for NMS
+    figure_boxes = det.boxes.xyxy[figure_indices]
+    figure_scores = det.boxes.conf[figure_indices]
+
+    # Apply NMS to deduplicate overlapping figure detections
+    keep_indices = torchvision.ops.nms(figure_boxes, figure_scores, iou_threshold)
+
+    figures = []
+    for idx in keep_indices:
+        orig_idx = figure_indices[idx]
+        x1, y1, x2, y2 = det.boxes.xyxy[orig_idx].tolist()
 
         # Normalize to 0-1 range
         bbox = (x1 / page_width, y1 / page_height, x2 / page_width, y2 / page_height)
@@ -94,7 +118,7 @@ def detect_figures(page_image: bytes, page_width: int, page_height: int) -> list
         figures.append(
             DetectedFigure(
                 bbox=bbox,
-                confidence=float(box.conf[0]),
+                confidence=float(det.boxes.conf[orig_idx]),
                 width_pct=width_pct,
             )
         )
@@ -103,11 +127,17 @@ def detect_figures(page_image: bytes, page_width: int, page_height: int) -> list
     return assign_row_groups(figures)
 
 
-def detect_figures_batch(page_images: list[tuple[bytes, int, int]]) -> list[list[DetectedFigure]]:
+def detect_figures_batch(
+    page_images: list[tuple[bytes, int, int]],
+    conf_threshold: float = 0.25,
+    iou_threshold: float = 0.45,
+) -> list[list[DetectedFigure]]:
     """Run YOLO on multiple page images in a batch.
 
     Args:
         page_images: List of (png_bytes, width, height) tuples
+        conf_threshold: Minimum confidence for detections
+        iou_threshold: IoU threshold for NMS deduplication
 
     Returns:
         List of figure lists, one per page
@@ -121,26 +151,41 @@ def detect_figures_batch(page_images: list[tuple[bytes, int, int]]) -> list[list
     pil_images = [Image.open(io.BytesIO(img_bytes)) for img_bytes, _, _ in page_images]
 
     # Batch inference
-    results = model.predict(pil_images, imgsz=1024, conf=0.2, device="cpu", verbose=False)
+    results = model.predict(pil_images, imgsz=1024, conf=conf_threshold, device="cpu", verbose=False)
 
     all_figures = []
     for i, result in enumerate(results):
         _, page_width, page_height = page_images[i]
+
+        # Filter to figure class only
+        figure_indices = []
+        for j, cls in enumerate(result.boxes.cls):
+            class_name = result.names[int(cls)]
+            if class_name in ("Figure", "figure"):
+                figure_indices.append(j)
+
+        if not figure_indices:
+            all_figures.append([])
+            continue
+
+        # Extract figure boxes/scores for NMS
+        figure_boxes = result.boxes.xyxy[figure_indices]
+        figure_scores = result.boxes.conf[figure_indices]
+
+        # Apply NMS
+        keep_indices = torchvision.ops.nms(figure_boxes, figure_scores, iou_threshold)
+
         figures = []
-
-        for box in result.boxes:
-            class_name = result.names[int(box.cls[0])]
-            if class_name != "Figure":
-                continue
-
-            x1, y1, x2, y2 = box.xyxy[0].tolist()
+        for idx in keep_indices:
+            orig_idx = figure_indices[idx]
+            x1, y1, x2, y2 = result.boxes.xyxy[orig_idx].tolist()
             bbox = (x1 / page_width, y1 / page_height, x2 / page_width, y2 / page_height)
             width_pct = round((x2 - x1) / page_width * 100)
 
             figures.append(
                 DetectedFigure(
                     bbox=bbox,
-                    confidence=float(box.conf[0]),
+                    confidence=float(result.boxes.conf[orig_idx]),
                     width_pct=width_pct,
                 )
             )

@@ -449,12 +449,25 @@ function groupBlocks(blocks: ContentBlock[]): GroupedBlock[] {
 }
 
 // Renders multiple image blocks in a flex row (side-by-side figures)
+// Normalizes widths so images fill available space proportionally
 function ImageRowView({ blocks }: { blocks: ImageBlock[] }) {
+  // Calculate scaled widths: preserve relative proportions but fill ~95% of space
+  const totalRawWidth = blocks.reduce((sum, b) => sum + (b.width_pct || 50), 0);
+  const targetTotalWidth = 95; // Leave 5% for gaps
+  const scaleFactor = Math.min(targetTotalWidth / totalRawWidth, 2.5); // Cap scaling to prevent oversized images
+
   return (
     <div className="my-4 flex gap-4 justify-center items-start flex-wrap">
-      {blocks.map((block) => (
-        <ImageBlockView key={block.id} block={block} inRow />
-      ))}
+      {blocks.map((block) => {
+        const scaledWidth = Math.min((block.width_pct || 50) * scaleFactor, 100);
+        return (
+          <ImageBlockView
+            key={block.id}
+            block={{ ...block, width_pct: scaledWidth }}
+            inRow
+          />
+        );
+      })}
     </div>
   );
 }
