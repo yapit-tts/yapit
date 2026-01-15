@@ -265,11 +265,11 @@ class BaseTTSProcessor:
         """Main processing loop - pull jobs from Redis queue."""
         await self.initialize()
 
-        # Limit concurrent jobs per worker. Acquire BEFORE popping so jobs
-        # stay in Redis queue until a slot is available. This ensures:
-        # 1. Queue depth reflects actual backlog (overflow works correctly)
-        # 2. Pending checks happen just-in-time (eviction works correctly)
-        semaphore = asyncio.Semaphore(2)
+        # Match worker replica count so all workers can be utilized.
+        # Jobs stay in Redis queue until a slot opens, ensuring queue depth
+        # reflects actual backlog (for overflow routing) and pending checks
+        # happen just-in-time (for eviction).
+        semaphore = asyncio.Semaphore(self._settings.kokoro_cpu_replicas)
 
         async def process_and_release(raw: bytes) -> None:
             try:

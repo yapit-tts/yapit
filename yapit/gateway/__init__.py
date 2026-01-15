@@ -18,6 +18,7 @@ from yapit.gateway.exceptions import APIError
 from yapit.gateway.metrics import init_metrics_db, start_metrics_writer, stop_metrics_writer
 from yapit.gateway.processors.document.gemini import GeminiProcessor
 from yapit.gateway.processors.document.markitdown import MarkitdownProcessor
+from yapit.gateway.processors.document.yolo_client import YoloProcessor
 from yapit.gateway.processors.tts.manager import TTSProcessorManager
 
 logger.remove()
@@ -61,7 +62,7 @@ async def lifespan(app: FastAPI):
     # Document processors
     app.state.free_processor = MarkitdownProcessor(settings=settings)
     if settings.ai_processor == "gemini":
-        app.state.ai_processor = GeminiProcessor(settings=settings)
+        app.state.ai_processor = GeminiProcessor(redis=app.state.redis_client, settings=settings)
         logger.info("AI processor: gemini")
     else:
         app.state.ai_processor = None
@@ -74,14 +75,24 @@ async def lifespan(app: FastAPI):
     app.state.tts_processor_manager = tts_processor_manager
     await tts_processor_manager.start(settings.tts_processors_file)
 
+    # YOLO figure detection processor
+    yolo_processor = YoloProcessor(redis=app.state.redis_client, settings=settings)
+    app.state.yolo_processor = yolo_processor
+    yolo_processor_task = asyncio.create_task(yolo_processor.run())
+
     all_caches = [app.state.audio_cache, app.state.document_cache, app.state.extraction_cache]
     maintenance_task = asyncio.create_task(_cache_maintenance_task(all_caches))
 
     yield
 
     maintenance_task.cancel()
+    yolo_processor_task.cancel()
     try:
         await maintenance_task
+    except asyncio.CancelledError:
+        pass
+    try:
+        await yolo_processor_task
     except asyncio.CancelledError:
         pass
     await tts_processor_manager.stop()

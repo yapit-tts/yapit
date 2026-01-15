@@ -1,14 +1,9 @@
 import io
 import re
 from dataclasses import dataclass, field
-from functools import lru_cache
 from pathlib import Path
 
 import pymupdf
-import torchvision.ops
-from doclayout_yolo import YOLOv10
-from huggingface_hub import hf_hub_download
-from loguru import logger
 from PIL import Image
 from pypdf import PdfReader, PdfWriter
 
@@ -20,9 +15,6 @@ IMAGE_PLACEHOLDER = "![alt](detected-image)<yap-cap>caption</yap-cap>"
 # Matches all variants: ![alt](detected-image)<yap-cap>caption</yap-cap>, ![alt](detected-image), ![](detected-image)
 IMAGE_PLACEHOLDER_PATTERN = re.compile(r"!\[([^\]]*)\]\(detected-image\)(<yap-cap>.*?</yap-cap>)?")
 
-_HF_REPO_ID = "juliozhao/DocLayout-YOLO-DocStructBench"
-_HF_MODEL_FILENAME = "doclayout_yolo_docstructbench_imgsz1024.pt"
-
 
 @dataclass
 class DetectedFigure:
@@ -31,18 +23,8 @@ class DetectedFigure:
     bbox: tuple[float, float, float, float]  # x1, y1, x2, y2 normalized 0-1
     confidence: float
     width_pct: float  # (x2-x1) as percentage of page width
-    row_group: str | None = None  # "row0", "row1", etc. - assigned by assign_row_groups()
+    row_group: str | None = None  # "row0", "row1", etc.
     cropped_image: bytes = field(default=b"", repr=False)
-
-
-@lru_cache(maxsize=1)
-def get_yolo_model():
-    """Load the DocLayout-YOLO model (cached after first call)."""
-    logger.info("Loading DocLayout-YOLO model...")
-    model_path = hf_hub_download(repo_id=_HF_REPO_ID, filename=_HF_MODEL_FILENAME)
-    model = YOLOv10(model_path)
-    logger.info(f"DocLayout-YOLO model loaded from {model_path}")
-    return model
 
 
 def render_page_as_image(pdf_bytes: bytes, page_idx: int, dpi: int = 300) -> tuple[bytes, int, int]:
@@ -57,266 +39,6 @@ def render_page_as_image(pdf_bytes: bytes, page_idx: int, dpi: int = 300) -> tup
     png_bytes = pix.tobytes("png")
     doc.close()
     return png_bytes, pix.width, pix.height
-
-
-def detect_figures(
-    page_image: bytes,
-    page_width: int,
-    page_height: int,
-    conf_threshold: float = 0.25,
-    iou_threshold: float = 0.45,
-) -> list[DetectedFigure]:
-    """Run YOLO on a single page image to detect figures.
-
-    Args:
-        page_image: PNG image bytes
-        page_width: Image width in pixels
-        page_height: Image height in pixels
-        conf_threshold: Minimum confidence for detections
-        iou_threshold: IoU threshold for NMS deduplication
-
-    Returns:
-        List of detected figures with normalized bboxes and layout info
-    """
-    model = get_yolo_model()
-
-    # Load image for YOLO
-    img = Image.open(io.BytesIO(page_image))
-
-    results = model.predict(img, imgsz=1024, conf=conf_threshold, device="cpu", verbose=False)
-
-    # Log all detected classes for debugging
-    det = results[0]
-    all_classes = [det.names[int(cls)] for cls in det.boxes.cls]
-    if all_classes:
-        logger.info(f"YOLO detected classes: {all_classes}")
-
-    # Filter to figure class only, then apply NMS
-    figure_indices = []
-    for i, cls in enumerate(det.boxes.cls):
-        class_name = det.names[int(cls)]
-        if class_name in ("Figure", "figure"):
-            figure_indices.append(i)
-
-    if not figure_indices:
-        return []
-
-    # Extract figure boxes/scores for NMS
-    figure_boxes = det.boxes.xyxy[figure_indices]
-    figure_scores = det.boxes.conf[figure_indices]
-
-    # Apply NMS to deduplicate overlapping figure detections
-    nms_keep = torchvision.ops.nms(figure_boxes, figure_scores, iou_threshold)
-
-    # Additional containment filter: if one box is mostly inside another, keep the larger one
-    # (the larger box is the "real" figure with the caption, smaller ones are sub-components)
-    nms_boxes = figure_boxes[nms_keep]
-    keep_mask = [True] * len(nms_keep)
-
-    for i in range(len(nms_keep)):
-        if not keep_mask[i]:
-            continue
-        box_i = nms_boxes[i]
-        area_i = (box_i[2] - box_i[0]) * (box_i[3] - box_i[1])
-
-        for j in range(i + 1, len(nms_keep)):
-            if not keep_mask[j]:
-                continue
-            box_j = nms_boxes[j]
-            area_j = (box_j[2] - box_j[0]) * (box_j[3] - box_j[1])
-
-            # Calculate intersection
-            inter_x1 = max(box_i[0], box_j[0])
-            inter_y1 = max(box_i[1], box_j[1])
-            inter_x2 = min(box_i[2], box_j[2])
-            inter_y2 = min(box_i[3], box_j[3])
-
-            if inter_x2 > inter_x1 and inter_y2 > inter_y1:
-                inter_area = (inter_x2 - inter_x1) * (inter_y2 - inter_y1)
-                smaller_area = min(area_i, area_j)
-                # If smaller box is >70% contained in the larger, remove the smaller one
-                if inter_area / smaller_area > 0.7:
-                    if area_i < area_j:
-                        keep_mask[i] = False
-                        break
-                    else:
-                        keep_mask[j] = False
-
-    keep_indices = [nms_keep[i] for i in range(len(nms_keep)) if keep_mask[i]]
-
-    figures = []
-    for idx in keep_indices:
-        orig_idx = figure_indices[idx]
-        x1, y1, x2, y2 = det.boxes.xyxy[orig_idx].tolist()
-
-        # Normalize to 0-1 range
-        bbox = (x1 / page_width, y1 / page_height, x2 / page_width, y2 / page_height)
-
-        # Width as percentage of page
-        width_pct = round((x2 - x1) / page_width * 100)
-
-        figures.append(
-            DetectedFigure(
-                bbox=bbox,
-                confidence=float(det.boxes.conf[orig_idx]),
-                width_pct=width_pct,
-            )
-        )
-
-    # Assign row groups for side-by-side figures
-    return assign_row_groups(figures)
-
-
-def detect_figures_batch(
-    page_images: list[tuple[bytes, int, int]],
-    conf_threshold: float = 0.25,
-    iou_threshold: float = 0.45,
-) -> list[list[DetectedFigure]]:
-    """Run YOLO on multiple page images in a batch.
-
-    Args:
-        page_images: List of (png_bytes, width, height) tuples
-        conf_threshold: Minimum confidence for detections
-        iou_threshold: IoU threshold for NMS deduplication
-
-    Returns:
-        List of figure lists, one per page
-    """
-    if not page_images:
-        return []
-
-    model = get_yolo_model()
-
-    # Load all images
-    pil_images = [Image.open(io.BytesIO(img_bytes)) for img_bytes, _, _ in page_images]
-
-    # Batch inference
-    results = model.predict(pil_images, imgsz=1024, conf=conf_threshold, device="cpu", verbose=False)
-
-    all_figures = []
-    for i, result in enumerate(results):
-        _, page_width, page_height = page_images[i]
-
-        # Filter to figure class only
-        figure_indices = []
-        for j, cls in enumerate(result.boxes.cls):
-            class_name = result.names[int(cls)]
-            if class_name in ("Figure", "figure"):
-                figure_indices.append(j)
-
-        if not figure_indices:
-            all_figures.append([])
-            continue
-
-        # Extract figure boxes/scores for NMS
-        figure_boxes = result.boxes.xyxy[figure_indices]
-        figure_scores = result.boxes.conf[figure_indices]
-
-        # Apply NMS
-        nms_keep = torchvision.ops.nms(figure_boxes, figure_scores, iou_threshold)
-
-        # Containment filter: keep larger box when smaller is mostly contained
-        nms_boxes = figure_boxes[nms_keep]
-        keep_mask = [True] * len(nms_keep)
-
-        for ii in range(len(nms_keep)):
-            if not keep_mask[ii]:
-                continue
-            box_ii = nms_boxes[ii]
-            area_ii = (box_ii[2] - box_ii[0]) * (box_ii[3] - box_ii[1])
-
-            for jj in range(ii + 1, len(nms_keep)):
-                if not keep_mask[jj]:
-                    continue
-                box_jj = nms_boxes[jj]
-                area_jj = (box_jj[2] - box_jj[0]) * (box_jj[3] - box_jj[1])
-
-                inter_x1 = max(box_ii[0], box_jj[0])
-                inter_y1 = max(box_ii[1], box_jj[1])
-                inter_x2 = min(box_ii[2], box_jj[2])
-                inter_y2 = min(box_ii[3], box_jj[3])
-
-                if inter_x2 > inter_x1 and inter_y2 > inter_y1:
-                    inter_area = (inter_x2 - inter_x1) * (inter_y2 - inter_y1)
-                    smaller_area = min(area_ii, area_jj)
-                    if inter_area / smaller_area > 0.7:
-                        if area_ii < area_jj:
-                            keep_mask[ii] = False
-                            break
-                        else:
-                            keep_mask[jj] = False
-
-        keep_indices = [nms_keep[kk] for kk in range(len(nms_keep)) if keep_mask[kk]]
-
-        figures = []
-        for idx in keep_indices:
-            orig_idx = figure_indices[idx]
-            x1, y1, x2, y2 = result.boxes.xyxy[orig_idx].tolist()
-            bbox = (x1 / page_width, y1 / page_height, x2 / page_width, y2 / page_height)
-            width_pct = round((x2 - x1) / page_width * 100)
-
-            figures.append(
-                DetectedFigure(
-                    bbox=bbox,
-                    confidence=float(result.boxes.conf[orig_idx]),
-                    width_pct=width_pct,
-                )
-            )
-
-        all_figures.append(assign_row_groups(figures))
-
-    return all_figures
-
-
-def assign_row_groups(figures: list[DetectedFigure]) -> list[DetectedFigure]:
-    """Group figures with overlapping y-ranges (side-by-side on same row).
-
-    Two figures are in the same row if their y-ranges overlap significantly.
-    """
-    if not figures:
-        return figures
-
-    # Sort by center_y for processing
-    sorted_figures = sorted(figures, key=lambda f: (f.bbox[1] + f.bbox[3]) / 2)
-
-    row_idx = 0
-    used = [False] * len(sorted_figures)
-
-    for i, fig in enumerate(sorted_figures):
-        if used[i]:
-            continue
-
-        # Start a new row with this figure
-        fig.row_group = f"row{row_idx}"
-        used[i] = True
-
-        y1_i, y2_i = fig.bbox[1], fig.bbox[3]
-        height_i = y2_i - y1_i
-
-        # Find other figures that overlap in y
-        for j in range(i + 1, len(sorted_figures)):
-            if used[j]:
-                continue
-
-            other = sorted_figures[j]
-            y1_j, y2_j = other.bbox[1], other.bbox[3]
-            height_j = y2_j - y1_j
-
-            # Check y-overlap: figures overlap if their y-ranges intersect
-            overlap_start = max(y1_i, y1_j)
-            overlap_end = min(y2_i, y2_j)
-            overlap = max(0, overlap_end - overlap_start)
-
-            # Require >50% overlap relative to the smaller figure
-            min_height = min(height_i, height_j)
-            if min_height > 0 and overlap / min_height > 0.5:
-                other.row_group = f"row{row_idx}"
-                used[j] = True
-
-        row_idx += 1
-
-    # Sort within each row by x position (left to right)
-    return sorted(sorted_figures, key=lambda f: (f.row_group or "", f.bbox[0]))
 
 
 def crop_figure(page_image: bytes, bbox: tuple[float, float, float, float], page_width: int, page_height: int) -> bytes:

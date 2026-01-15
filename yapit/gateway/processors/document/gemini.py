@@ -9,6 +9,7 @@ from google.genai import errors as genai_errors
 from google.genai import types
 from loguru import logger
 from pypdf import PdfReader
+from redis.asyncio import Redis
 
 from yapit.gateway.cache import Cache
 from yapit.gateway.processors.document.base import (
@@ -19,12 +20,15 @@ from yapit.gateway.processors.document.base import (
 from yapit.gateway.processors.document.extraction import (
     DetectedFigure,
     build_figure_prompt,
-    detect_figures,
     extract_single_page_pdf,
     load_prompt,
     render_page_as_image,
     store_figure,
     substitute_image_placeholders,
+)
+from yapit.gateway.processors.document.yolo_client import (
+    enqueue_detection,
+    wait_for_result,
 )
 
 RESOLUTION_MAP = {
@@ -48,6 +52,7 @@ class GeminiProcessor(BaseDocumentProcessor):
 
     def __init__(
         self,
+        redis: Redis,
         model: str = "gemini-3-flash-preview",
         resolution: str = "high",
         max_concurrent: int = 20,
@@ -61,6 +66,7 @@ class GeminiProcessor(BaseDocumentProcessor):
         if not self._settings.google_api_key:
             raise ValueError("GOOGLE_API_KEY is required for Gemini processor")
 
+        self._redis = redis
         self._client = genai.Client(api_key=self._settings.google_api_key)
         self._model = model
         self._resolution_str = resolution
@@ -138,8 +144,8 @@ class GeminiProcessor(BaseDocumentProcessor):
     ) -> DocumentExtractionResult:
         """Extract text from PDF with YOLO figure detection and parallel Gemini processing.
 
-        Uses generator pattern: YOLO runs in background thread, Gemini requests fire
-        as each page's figures are ready. This overlaps YOLO CPU work with Gemini latency.
+        Pages are processed in parallel: render → YOLO queue → Gemini API.
+        YOLO runs via containerized workers (yolo-cpu) through Redis queue.
         """
         start_time = time.monotonic()
 
@@ -149,79 +155,56 @@ class GeminiProcessor(BaseDocumentProcessor):
         pages_to_process = sorted(set(pages) if pages else set(range(total_pages)))
         logger.info(f"Extraction: starting {len(pages_to_process)} pages (PDF has {total_pages} total)")
 
-        # Queue for YOLO results: (page_idx, figures, figure_urls) or None as sentinel
-        results_queue: asyncio.Queue[tuple[int, list[DetectedFigure], list[str]] | None] = asyncio.Queue()
-
-        # Capture main event loop for thread-safe queue operations
-        main_loop = asyncio.get_event_loop()
-
-        # YOLO producer - runs in thread to not block event loop
-        def yolo_producer():
-            """Render pages, detect figures with YOLO, store crops, put results in queue."""
-            total_pages = len(pages_to_process)
-
-            for i, page_idx in enumerate(pages_to_process):
-                try:
-                    logger.info(f"YOLO: processing page {page_idx + 1} ({i + 1}/{total_pages})")
-
-                    # Render page as image
-                    page_image, width, height = render_page_as_image(content, page_idx)
-
-                    # Detect figures with YOLO
-                    figures = detect_figures(page_image, width, height)
-                    logger.info(f"YOLO: page {page_idx + 1} - detected {len(figures)} figures")
-
-                    # Store each figure and collect URLs
-                    figure_urls = []
-                    for fig_idx, figure in enumerate(figures):
-                        url = store_figure(
-                            figure, page_image, width, height, self._images_dir, content_hash, page_idx, fig_idx
-                        )
-                        figure_urls.append(url)
-
-                    # Put result in queue (thread-safe via call_soon_threadsafe on MAIN loop)
-                    main_loop.call_soon_threadsafe(
-                        lambda p=page_idx, f=figures, u=figure_urls: results_queue.put_nowait((p, f, u))
-                    )
-                except Exception as e:
-                    logger.error(f"YOLO detection failed for page {page_idx}: {e}")
-                    # Put empty result so Gemini can still process the page (without figures)
-                    main_loop.call_soon_threadsafe(lambda p=page_idx: results_queue.put_nowait((p, [], [])))
-
-            logger.info(f"YOLO: completed all {total_pages} pages")
-            # Signal completion
-            main_loop.call_soon_threadsafe(lambda: results_queue.put_nowait(None))
-
-        # Start YOLO producer in background thread
-        main_loop.run_in_executor(None, yolo_producer)
-
-        # Process Gemini requests as YOLO results arrive
         semaphore = asyncio.Semaphore(self._max_concurrent)
-        tasks: list[asyncio.Task] = []
 
-        async def process_and_cache(
-            page_idx: int, figures: list[DetectedFigure], figure_urls: list[str]
-        ) -> tuple[int, ExtractedPage | None]:
-            page_idx, page = await self._process_page_with_figures(
-                pdf_reader, page_idx, figures, figure_urls, semaphore
-            )
-            if page is not None:
-                cache_key = self._extraction_cache_key(content_hash, page_idx)
-                await extraction_cache.store(cache_key, page.model_dump_json().encode())
-            return page_idx, page
+        async def process_page(page_idx: int) -> tuple[int, ExtractedPage | None]:
+            """Process a single page: render → YOLO → store figures → Gemini."""
+            try:
+                # Render page as image (CPU-bound, run in thread)
+                page_image, width, height = await asyncio.to_thread(render_page_as_image, content, page_idx)
 
-        # Consume YOLO results and fire Gemini tasks
-        while True:
-            item = await results_queue.get()
-            if item is None:  # Sentinel - YOLO producer done
-                break
-            page_idx, figures, figure_urls = item
-            logger.info(f"Gemini: queuing page {page_idx + 1}")
-            task = asyncio.create_task(process_and_cache(page_idx, figures, figure_urls))
-            tasks.append(task)
+                # Queue YOLO detection and wait for result
+                job_id = await enqueue_detection(self._redis, page_image, width, height)
+                yolo_result = await wait_for_result(self._redis, job_id)
 
-        # Wait for all Gemini tasks to complete
-        logger.info(f"Gemini: waiting for {len(tasks)} tasks to complete")
+                if yolo_result.error:
+                    logger.warning(f"YOLO detection failed for page {page_idx + 1}: {yolo_result.error}")
+
+                logger.info(f"YOLO: page {page_idx + 1} - detected {len(yolo_result.figures)} figures")
+
+                # Convert YoloDetectedFigure to DetectedFigure and store each figure
+                figures: list[DetectedFigure] = []
+                figure_urls: list[str] = []
+                for fig_idx, yolo_fig in enumerate(yolo_result.figures):
+                    figure = DetectedFigure(
+                        bbox=yolo_fig.bbox,
+                        confidence=yolo_fig.confidence,
+                        width_pct=yolo_fig.width_pct,
+                        row_group=yolo_fig.row_group,
+                    )
+                    figures.append(figure)
+                    url = store_figure(
+                        figure, page_image, width, height, self._images_dir, content_hash, page_idx, fig_idx
+                    )
+                    figure_urls.append(url)
+
+                # Call Gemini API
+                page_idx, page = await self._process_page_with_figures(
+                    pdf_reader, page_idx, figures, figure_urls, semaphore
+                )
+
+                if page is not None:
+                    cache_key = self._extraction_cache_key(content_hash, page_idx)
+                    await extraction_cache.store(cache_key, page.model_dump_json().encode())
+
+                return page_idx, page
+
+            except Exception as e:
+                logger.error(f"Page {page_idx + 1} processing failed: {e}")
+                return page_idx, None
+
+        # Process all pages in parallel
+        tasks = [asyncio.create_task(process_page(page_idx)) for page_idx in pages_to_process]
         results = await asyncio.gather(*tasks)
 
         # Separate successful and failed pages

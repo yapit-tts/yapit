@@ -1,0 +1,23 @@
+[project]
+name = "yapit-yolo-cpu"
+version = "0.1.0"
+description = "Yapit YOLO figure detection CPU worker"
+requires-python = "~=3.12"
+dependencies = [
+  "pydantic~=2.11.3",
+  "torch~=2.7.0",
+  "torchvision~=0.22.0",
+  "doclayout-yolo~=0.0.4",
+  "huggingface-hub~=0.32.4",
+  "pillow~=11.2.1",
+  "fastapi[standard]~=0.124.4",
+]
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu" }]
+torchvision = [{ index = "pytorch-cpu" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true

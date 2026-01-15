@@ -525,7 +525,13 @@ class DocumentTransformer:
                 if target_end < len(sentence):
                     boundary = sentence.rfind(" ", chunk_pos, target_end)
                     if boundary > chunk_pos:
-                        target_end = boundary + 1
+                        # Check if this would leave a tiny orphan
+                        orphan_len = len(sentence) - (boundary + 1)
+                        if orphan_len < min_chunk_size:
+                            # Include the orphan rather than creating a bad split
+                            target_end = len(sentence)
+                        else:
+                            target_end = boundary + 1
                 ranges.append((sent_start + chunk_pos, sent_start + target_end))
                 chunk_pos = target_end
 

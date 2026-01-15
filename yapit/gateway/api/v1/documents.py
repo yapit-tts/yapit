@@ -312,7 +312,12 @@ async def create_text_document(
     prefs = await db.get(UserPreferences, user.id)
 
     ast = parse_markdown(req.content)
-    structured_doc = transform_to_document(ast, max_block_chars=settings.max_block_chars)
+    structured_doc = transform_to_document(
+        ast,
+        max_block_chars=settings.max_block_chars,
+        soft_limit_mult=settings.soft_limit_mult,
+        min_chunk_size=settings.min_chunk_size,
+    )
     structured_content = structured_doc.model_dump_json()
     text_blocks = structured_doc.get_audio_blocks()
 
@@ -387,7 +392,12 @@ async def create_website_document(
     extracted_text = extraction_result.pages[0].markdown  # website are just a single page
 
     ast = parse_markdown(extracted_text)
-    structured_doc = transform_to_document(ast, max_block_chars=settings.max_block_chars)
+    structured_doc = transform_to_document(
+        ast,
+        max_block_chars=settings.max_block_chars,
+        soft_limit_mult=settings.soft_limit_mult,
+        min_chunk_size=settings.min_chunk_size,
+    )
     structured_content = structured_doc.model_dump_json()
     text_blocks = structured_doc.get_audio_blocks()
 
@@ -478,7 +488,12 @@ async def create_document(
     extracted_text: str = "\n\n".join(page.markdown for page in extraction_result.pages.values())
 
     ast = parse_markdown(extracted_text)
-    structured_doc = transform_to_document(ast, max_block_chars=settings.max_block_chars)
+    structured_doc = transform_to_document(
+        ast,
+        max_block_chars=settings.max_block_chars,
+        soft_limit_mult=settings.soft_limit_mult,
+        min_chunk_size=settings.min_chunk_size,
+    )
     structured_content = structured_doc.model_dump_json()
     text_blocks = structured_doc.get_audio_blocks()
 

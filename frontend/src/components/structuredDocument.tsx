@@ -54,6 +54,7 @@ interface ListItem {
   html: string;
   ast: InlineContent[];
   plain_text: string;
+  audio_block_idx: number | null;
 }
 
 interface HeadingBlock {
@@ -205,7 +206,13 @@ function ParagraphBlockView({ block }: { block: ParagraphBlock }) {
   );
 }
 
-function ListBlockView({ block }: { block: ListBlock }) {
+function ListBlockView({
+  block,
+  onBlockClick,
+}: {
+  block: ListBlock;
+  onBlockClick?: (audioIdx: number) => void;
+}) {
   const ListTag = block.ordered ? "ol" : "ul";
   const listClass = block.ordered ? "list-decimal" : "list-disc";
 
@@ -214,13 +221,22 @@ function ListBlockView({ block }: { block: ListBlock }) {
       className={cn("my-3 ml-6 py-1", listClass)}
       start={block.ordered ? block.start : undefined}
     >
-      {block.items.map((item, idx) => (
-        <li
-          key={idx}
-          className="my-1"
-          dangerouslySetInnerHTML={{ __html: sanitize(item.html) }}
-        />
-      ))}
+      {block.items.map((item, idx) => {
+        const isClickable = item.audio_block_idx !== null;
+        return (
+          <li
+            key={idx}
+            className={cn("my-1", isClickable && "cursor-pointer hover:bg-accent/50 rounded px-1 -mx-1")}
+            data-audio-block-idx={item.audio_block_idx ?? undefined}
+            onClick={
+              isClickable
+                ? () => onBlockClick?.(item.audio_block_idx!)
+                : undefined
+            }
+            dangerouslySetInnerHTML={{ __html: sanitize(item.html) }}
+          />
+        );
+      })}
     </ListTag>
   );
 }
@@ -351,6 +367,11 @@ function TableBlockView({ block }: BlockProps & { block: TableBlock }) {
   );
 }
 
+// Convert $...$ in text to math-inline spans for KaTeX rendering
+function processInlineMath(text: string): string {
+  return text.replace(/\$([^$]+)\$/g, '<span class="math-inline">$1</span>');
+}
+
 function ImageBlockView({ block, inRow }: BlockProps & { block: ImageBlock; inRow?: boolean }) {
   return (
     <figure className={cn("flex flex-col items-center", !inRow && "my-4")}>
@@ -361,9 +382,10 @@ function ImageBlockView({ block, inRow }: BlockProps & { block: ImageBlock; inRo
         className="max-w-full max-h-96 h-auto object-contain rounded"
       />
       {block.caption && (
-        <figcaption className="text-sm text-muted-foreground mt-2 text-center">
-          {block.caption}
-        </figcaption>
+        <figcaption
+          className="text-sm text-muted-foreground mt-2 text-center"
+          dangerouslySetInnerHTML={{ __html: sanitize(processInlineMath(block.caption)) }}
+        />
       )}
     </figure>
   );
@@ -528,7 +550,7 @@ function BlockView({ block, onBlockClick, slugMap }: BlockViewProps) {
     case "paragraph":
       return <ParagraphBlockView block={block} />;
     case "list":
-      return <ListBlockView block={block} />;
+      return <ListBlockView block={block} onBlockClick={onBlockClick} />;
     case "blockquote":
       return (
         <BlockquoteBlockView

@@ -65,16 +65,18 @@ jobs:
           TTS_PROCESSORS_FILE=tts_processors.ci.json
           AI_PROCESSOR=
           KOKORO_CPU_REPLICAS=1
+          YOLO_CPU_REPLICAS=1
           EOF
       - run: make dev-ci
       - run: make test-integration-local
       - name: Show logs on failure
         if: failure()
         run: |
-          docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.kokoro-cpu.yml logs gateway
-          docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.kokoro-cpu.yml logs stack-auth
-          docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.kokoro-cpu.yml logs kokoro-cpu
-          docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.kokoro-cpu.yml ps -a
+          docker compose -f docker-compose.yml -f docker-compose.dev.yml logs gateway
+          docker compose -f docker-compose.yml -f docker-compose.dev.yml logs stack-auth
+          docker compose -f docker-compose.yml -f docker-compose.dev.yml logs kokoro-cpu
+          docker compose -f docker-compose.yml -f docker-compose.dev.yml logs yolo-cpu
+          docker compose -f docker-compose.yml -f docker-compose.dev.yml ps -a
 
   # === Build and Push Images ===
   build-and-push:
@@ -99,6 +101,9 @@ jobs:
           - name: kokoro-cpu
             context: .
             dockerfile: ./yapit/workers/kokoro/Dockerfile.cpu
+          - name: yolo-cpu
+            context: .
+            dockerfile: ./yapit/workers/yolo/Dockerfile.cpu
           - name: stack-auth
             context: .
             dockerfile: ./docker/Dockerfile.stackauth

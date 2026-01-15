@@ -48,9 +48,7 @@ gateway = [
   "pypdf~=6.6",
   "google-genai~=1.57",
   "playwright~=1.57",
-  "torch>=2.0.1",
-  "torchvision>=0.15.2",
-  "doclayout-yolo~=0.0.4",
+  "pillow~=12.1",
 ]
 
 test = [
@@ -110,17 +108,3 @@ dev = [
     "streamlit>=1.52.2",
 ]
 
-# PyTorch CPU-only configuration
-# doclayout-yolo depends on torch/torchvision - use CPU builds to avoid CUDA deps
-[tool.uv]
-index-strategy = "unsafe-best-match"
-required-environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
-
-[[tool.uv.index]]
-name = "pytorch-cpu"
-url = "https://download.pytorch.org/whl/cpu"
-explicit = true
-
-[tool.uv.sources]
-torch = [{ index = "pytorch-cpu" }]
-torchvision = [{ index = "pytorch-cpu" }]

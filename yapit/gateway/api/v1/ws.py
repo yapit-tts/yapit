@@ -243,23 +243,26 @@ async def _queue_synthesis_job(
             document_id=str(block.document_id),
             block_idx=block.idx,
         )
-        try:
-            await log_event(
-                "synthesis_started",
-                variant_hash=variant_hash,
-                model_slug=model.slug,
-                user_id=user.id,
-                document_id=str(block.document_id),
-                block_idx=block.idx,
-            )
-            start_time = time.time()
-            result = await route.overflow.process(job)
-            worker_latency_ms = int((time.time() - start_time) * 1000)
-            await route.overflow.finalize_synthesis(job, result, worker_latency_ms, processor_route="overflow")
-        except Exception as e:
-            logger.warning(f"Overflow processor failed, falling back to local queue: {e}")
-            # Fall back to local queue - will be logged as queued again with local route
-            await redis.lpush(get_queue_name(model.slug), job.model_dump_json())
+
+        async def process_overflow():
+            try:
+                await log_event(
+                    "synthesis_started",
+                    variant_hash=variant_hash,
+                    model_slug=model.slug,
+                    user_id=user.id,
+                    document_id=str(block.document_id),
+                    block_idx=block.idx,
+                )
+                start_time = time.time()
+                result = await route.overflow.process(job)
+                worker_latency_ms = int((time.time() - start_time) * 1000)
+                await route.overflow.finalize_synthesis(job, result, worker_latency_ms, processor_route="overflow")
+            except Exception as e:
+                logger.warning(f"Overflow processor failed, falling back to local queue: {e}")
+                await redis.lpush(get_queue_name(model.slug), job.model_dump_json())
+
+        asyncio.create_task(process_overflow())
         return variant_hash, False
     else:
         processor_route = "local"

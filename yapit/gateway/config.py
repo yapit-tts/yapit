@@ -39,9 +39,15 @@ class Settings(BaseSettings):
     google_api_key: str | None = None
     images_dir: str
 
+    # Worker replica counts (for queue semaphore sizing)
+    kokoro_cpu_replicas: int
+    yolo_cpu_replicas: int
+
     document_max_download_size: int = 100 * 1024 * 1024  # 100MB default
 
     max_block_chars: int
+    soft_limit_mult: float
+    min_chunk_size: int
 
     # TTS prefetch eviction window
     tts_buffer_behind: int  # Blocks to keep behind cursor for skip-back
