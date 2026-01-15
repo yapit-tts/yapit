@@ -35,6 +35,17 @@ from yapit.gateway.processors.markdown.models import (
     ThematicBreak,
 )
 
+# Pattern to match {tts:annotation} at start of text
+_ANNOTATION_PATTERN = re.compile(r"^\{tts:([^}]*)\}")
+
+
+def _extract_annotation(text: str) -> tuple[str, str]:
+    """Extract {tts:annotation} from start of text, return (annotation, remaining_text)."""
+    match = _ANNOTATION_PATTERN.match(text)
+    if match:
+        return match.group(1), text[match.end() :]
+    return "", text
+
 
 class DocumentTransformer:
     """Transforms markdown AST to StructuredDocument."""
@@ -52,6 +63,8 @@ class DocumentTransformer:
         self._audio_idx_counter = 0
         self._visual_group_counter = 0
         self._md = self._create_renderer()
+        # Annotations extracted from AST (node_id -> alt text)
+        self._math_block_alts: dict[int, str] = {}
 
     def _create_renderer(self) -> MarkdownIt:
         """Create markdown renderer for HTML output."""
@@ -84,13 +97,46 @@ class DocumentTransformer:
         self._block_counter = 0
         self._audio_idx_counter = 0
         self._visual_group_counter = 0
+        self._math_block_alts = {}
+        # Pre-process: extract {alt} annotations for math_blocks
+        self._extract_math_block_annotations(ast)
         blocks = self._transform_children(ast)
         return StructuredDocument(blocks=blocks)
+
+    def _extract_math_block_annotations(self, ast: SyntaxTreeNode) -> None:
+        """Extract {alt} annotations from paragraphs following math_blocks.
+
+        When display math ($$...$$) is followed by a paragraph containing only {alt},
+        we extract the alt text and mark that paragraph for skipping.
+        """
+        children = ast.children
+        skip_indices: set[int] = set()
+
+        for i, child in enumerate(children):
+            if child.type == "math_block" and i + 1 < len(children):
+                next_child = children[i + 1]
+                # Check if next is a paragraph with just {annotation}
+                if next_child.type == "paragraph" and next_child.children:
+                    inline = next_child.children[0]
+                    if inline.type == "inline" and len(inline.children) == 1:
+                        text_node = inline.children[0]
+                        if text_node.type == "text" and text_node.content:
+                            alt, remaining = _extract_annotation(text_node.content)
+                            if alt and not remaining.strip():
+                                # Found {alt} paragraph - store and mark for skip
+                                self._math_block_alts[id(child)] = alt
+                                skip_indices.add(i + 1)
+
+        # Store indices to skip during transform
+        self._skip_child_indices = skip_indices
 
     def _transform_children(self, node: SyntaxTreeNode) -> list[ContentBlock]:
         """Transform all children of a node."""
         blocks: list[ContentBlock] = []
-        for child in node.children:
+        for i, child in enumerate(node.children):
+            # Skip paragraphs that were consumed as {alt} annotations
+            if i in getattr(self, "_skip_child_indices", set()):
+                continue
             blocks.extend(self._transform_node(child))
         return blocks
 
@@ -169,27 +215,46 @@ class DocumentTransformer:
         return self._split_paragraph(inline, plain_text)
 
     def _is_standalone_image(self, inline: SyntaxTreeNode | None) -> bool:
-        """Check if inline content is just a single image (no other meaningful content)."""
+        """Check if inline content is just a single image (no other meaningful content).
+
+        Allows {tts:caption} text after the image, as that's extracted separately.
+        """
         if not inline or not inline.children:
             return False
 
-        # Filter out whitespace-only text nodes and line breaks
-        meaningful = [
-            c
-            for c in inline.children
-            if c.type not in ("softbreak", "hardbreak") and not (c.type == "text" and not (c.content or "").strip())
-        ]
+        # Filter out whitespace-only text nodes, line breaks, and {tts:...} annotations
+        def is_meaningful(c: SyntaxTreeNode) -> bool:
+            if c.type in ("softbreak", "hardbreak"):
+                return False
+            if c.type == "text":
+                text = (c.content or "").strip()
+                if not text:
+                    return False
+                # {tts:...} annotation after image is not meaningful content
+                if text.startswith("{tts:") and text.endswith("}"):
+                    return False
+            return True
 
+        meaningful = [c for c in inline.children if is_meaningful(c)]
         return len(meaningful) == 1 and meaningful[0].type == "image"
 
     def _create_image_block(self, inline: SyntaxTreeNode) -> ImageBlock:
         """Create an ImageBlock from a standalone image paragraph."""
-        # Find the image node
-        img_node = next(c for c in inline.children if c.type == "image")
+        # Find the image node and check for {caption} in following text
+        children = inline.children
+        img_idx = next(i for i, c in enumerate(children) if c.type == "image")
+        img_node = children[img_idx]
 
         src = img_node.attrs.get("src", "")
         alt = img_node.content or ""
         title = img_node.attrs.get("title")
+
+        # Extract caption from {annotation} in following text node
+        caption = ""
+        if img_idx + 1 < len(children):
+            next_node = children[img_idx + 1]
+            if next_node.type == "text" and next_node.content:
+                caption, _ = _extract_annotation(next_node.content)
 
         # Parse layout metadata from URL query params
         width_pct, row_group = self._parse_image_metadata(src)
@@ -197,13 +262,18 @@ class DocumentTransformer:
         # Strip query params from src for clean URL
         clean_src = src.split("?")[0] if "?" in src else src
 
+        # Audio block if alt or caption present
+        tts_text = " ".join(p for p in (alt, caption) if p)
+
         return ImageBlock(
             id=self._next_block_id(),
             src=clean_src,
             alt=alt,
+            caption=caption,
             title=title,
             width_pct=width_pct,
             row_group=row_group,
+            audio_block_idx=self._next_audio_idx(tts_text),
         )
 
     def _parse_image_metadata(self, src: str) -> tuple[float | None, str | None]:
@@ -470,8 +540,8 @@ class DocumentTransformer:
         elif node.type == "image":
             return len(node.alt)
         elif node.type == "math_inline":
-            # Math doesn't count toward block length (excluded from TTS)
-            return 0
+            # Math counts toward block length if it has alt text (for TTS)
+            return len(node.alt) if node.alt else 0
         return 0
 
     def _render_ast_to_html(self, ast: list[InlineContent]) -> str:
@@ -656,12 +726,15 @@ class DocumentTransformer:
     def _transform_math(self, node: SyntaxTreeNode) -> list[MathBlock]:
         """Transform math block ($$...$$)."""
         content = node.content or ""
+        alt = self._math_block_alts.get(id(node), "")
 
         return [
             MathBlock(
                 id=self._next_block_id(),
                 content=content.strip(),
+                alt=alt,
                 display_mode=True,
+                audio_block_idx=self._next_audio_idx(alt),
             )
         ]
 
@@ -699,15 +772,33 @@ class DocumentTransformer:
     # === INLINE CONTENT HELPERS ===
 
     def _render_inline_html(self, inline: SyntaxTreeNode | None) -> str:
-        """Render inline content to HTML string."""
+        """Render inline content to HTML string.
+
+        Strips {annotation} suffixes from text nodes following math_inline/image.
+        """
         if not inline or not inline.children:
             return ""
 
-        # Reconstruct the inline content and render
-        # This is a bit hacky but works for now
+        # Pre-process: track which text nodes need {annotation} stripped
+        children = inline.children
+        text_modifications: dict[int, str] = {}
+
+        for i, child in enumerate(children):
+            if child.type in ("math_inline", "image") and i + 1 < len(children):
+                next_child = children[i + 1]
+                if next_child.type == "text" and next_child.content:
+                    _, remaining = _extract_annotation(next_child.content)
+                    text_modifications[i + 1] = remaining
+
+        # Render with modifications
         parts = []
-        for child in inline.children:
-            parts.append(self._render_inline_node_html(child))
+        for i, child in enumerate(children):
+            if i in text_modifications:
+                text = text_modifications[i]
+                if text:
+                    parts.append(text)
+            else:
+                parts.append(self._render_inline_node_html(child))
         return "".join(parts)
 
     def _render_inline_node_html(self, node: SyntaxTreeNode) -> str:
@@ -748,17 +839,47 @@ class DocumentTransformer:
             return node.content or ""
 
     def _transform_inline(self, inline: SyntaxTreeNode | None) -> list[InlineContent]:
-        """Transform inline content to AST representation."""
+        """Transform inline content to AST representation.
+
+        Extracts {alt} annotations from text following math_inline/image nodes.
+        """
         if not inline or not inline.children:
             return []
 
+        # Pre-process: extract {annotations} from text nodes after math_inline/image
+        children = inline.children
+        annotations: dict[int, str] = {}  # index -> annotation
+        modified_text: dict[int, str] = {}  # index -> modified text content
+
+        for i, child in enumerate(children):
+            if child.type in ("math_inline", "image") and i + 1 < len(children):
+                next_child = children[i + 1]
+                if next_child.type == "text" and next_child.content:
+                    alt, remaining = _extract_annotation(next_child.content)
+                    if alt:
+                        annotations[i] = alt
+                        modified_text[i + 1] = remaining
+
+        # Transform with annotations
         result: list[InlineContent] = []
-        for child in inline.children:
-            result.extend(self._transform_inline_node(child))
+        for i, child in enumerate(children):
+            # Use modified text if annotation was extracted
+            if i in modified_text:
+                text = modified_text[i]
+                if text:  # Only add non-empty text
+                    result.append(TextContent(content=text))
+            else:
+                alt = annotations.get(i, "")
+                result.extend(self._transform_inline_node(child, alt=alt))
         return result
 
-    def _transform_inline_node(self, node: SyntaxTreeNode) -> list[InlineContent]:
-        """Transform a single inline node to InlineContent."""
+    def _transform_inline_node(self, node: SyntaxTreeNode, alt: str = "") -> list[InlineContent]:
+        """Transform a single inline node to InlineContent.
+
+        Args:
+            node: The AST node to transform
+            alt: Optional alt text extracted from {annotation} suffix
+        """
         if node.type == "text":
             return [TextContent(content=node.content or "")]
         elif node.type == "strong":
@@ -786,11 +907,11 @@ class DocumentTransformer:
             ]
         elif node.type == "image":
             # Alt text is in node.content (or children), not attrs['alt']
-            alt = node.content or ""
+            md_alt = node.content or ""
             return [
                 InlineImageContent(
                     src=cast(str, node.attrs.get("src", "")),
-                    alt=alt,
+                    alt=md_alt,
                 )
             ]
         elif node.type == "softbreak":
@@ -798,7 +919,7 @@ class DocumentTransformer:
         elif node.type == "hardbreak":
             return [TextContent(content="\n")]
         elif node.type == "math_inline":
-            return [MathInlineContent(content=node.content or "")]
+            return [MathInlineContent(content=node.content or "", alt=alt)]
         else:
             # Unknown type, return as text if has content
             if node.content:
@@ -806,13 +927,44 @@ class DocumentTransformer:
             return []
 
     def _extract_plain_text(self, inline: SyntaxTreeNode | None) -> str:
-        """Extract plain text from inline content (for TTS)."""
+        """Extract plain text from inline content (for TTS).
+
+        Handles {alt} annotations: uses alt text for math_inline, strips {annotations}
+        from text nodes that follow math_inline/image.
+        """
         if not inline or not inline.children:
             return ""
 
+        # Pre-process: find annotations and track which text nodes need modification
+        children = inline.children
+        annotations: dict[int, str] = {}  # math_inline/image index -> alt text
+        text_modifications: dict[int, str] = {}  # text index -> modified content
+
+        for i, child in enumerate(children):
+            if child.type in ("math_inline", "image") and i + 1 < len(children):
+                next_child = children[i + 1]
+                if next_child.type == "text" and next_child.content:
+                    alt, remaining = _extract_annotation(next_child.content)
+                    if alt:
+                        annotations[i] = alt
+                        text_modifications[i + 1] = remaining
+
+        # Extract text with annotations applied
         parts = []
-        for child in inline.children:
-            parts.append(self._extract_plain_text_node(child))
+        for i, child in enumerate(children):
+            if i in text_modifications:
+                # Use modified text (without the {annotation} prefix)
+                text = text_modifications[i]
+                if text:
+                    parts.append(text)
+            elif child.type == "math_inline":
+                # Use annotation as alt text, or skip if no annotation
+                alt = annotations.get(i, "")
+                if alt:
+                    parts.append(alt)
+            else:
+                parts.append(self._extract_plain_text_node(child))
+
         return "".join(parts)
 
     def _extract_plain_text_node(self, node: SyntaxTreeNode) -> str:
@@ -829,7 +981,7 @@ class DocumentTransformer:
         elif node.type in ("softbreak", "hardbreak"):
             return " "
         elif node.type == "math_inline":
-            # Skip inline math for TTS
+            # Handled by _extract_plain_text with annotation lookup
             return ""
         else:
             return node.content or ""

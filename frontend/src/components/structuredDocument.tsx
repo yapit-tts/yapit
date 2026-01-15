@@ -106,8 +106,9 @@ interface MathBlock {
   type: "math";
   id: string;
   content: string;
+  alt?: string;  // TTS text (read aloud if present)
   display_mode: boolean;
-  audio_block_idx: null;
+  audio_block_idx: number | null;  // Has audio if alt is provided
 }
 
 interface TableBlock {
@@ -122,11 +123,12 @@ interface ImageBlock {
   type: "image";
   id: string;
   src: string;
-  alt: string;
+  alt: string;  // Accessible text for TTS (not displayed)
+  caption?: string;  // Visible figcaption for TTS and display
   title?: string;
   width_pct?: number;  // Figure width as % of page (from YOLO detection)
   row_group?: string;  // "row0", "row1", etc. - figures in same row are side-by-side
-  audio_block_idx: null;
+  audio_block_idx: number | null;  // Has audio if alt or caption present
 }
 
 interface ThematicBreak {
@@ -363,9 +365,9 @@ function ImageBlockView({ block, inRow }: BlockProps & { block: ImageBlock; inRo
         style={style}
         className="max-w-full max-h-96 h-auto object-contain rounded"
       />
-      {block.alt && (
+      {block.caption && (
         <figcaption className="text-sm text-muted-foreground mt-2 text-center">
-          {block.alt}
+          {block.caption}
         </figcaption>
       )}
     </figure>

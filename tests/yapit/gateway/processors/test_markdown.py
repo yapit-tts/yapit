@@ -372,7 +372,7 @@ class TestAudioBlockIndexing:
         assert doc.blocks[2].audio_block_idx == 1  # "After." (not 2!)
 
     def test_standalone_image_becomes_image_block(self):
-        """Standalone images become ImageBlock (no audio - visual content)."""
+        """Standalone images become ImageBlock. Has audio if alt text is present."""
         md = "![A cat sitting on a mat](image.png)"
         ast = parse_markdown(md)
         doc = transform_to_document(ast)
@@ -382,7 +382,19 @@ class TestAudioBlockIndexing:
         assert block.type == "image"
         assert block.src == "image.png"
         assert block.alt == "A cat sitting on a mat"
-        assert block.audio_block_idx is None  # Images don't have audio
+        assert block.audio_block_idx == 0  # Alt text is read by TTS
+
+    def test_standalone_image_without_alt_no_audio(self):
+        """Standalone images without alt text have no audio."""
+        md = "![](image.png)"
+        ast = parse_markdown(md)
+        doc = transform_to_document(ast)
+
+        assert len(doc.blocks) == 1
+        block = doc.blocks[0]
+        assert block.type == "image"
+        assert block.alt == ""
+        assert block.audio_block_idx is None  # No alt = no audio
 
     def test_image_layout_metadata_from_url_params(self):
         """ImageBlock parses width_pct and row_group from URL query params."""

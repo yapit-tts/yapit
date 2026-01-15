@@ -15,3 +15,24 @@ Images:
 - If no image count is provided, do not output any image placeholders
 
 Output only the markdown, no commentary or explanations.
+
+
+TTS alt text syntax - use {tts:...} annotations:
+
+INLINE MATH: $latex${tts:alt} — annotation immediately after closing $
+  Example: $\alpha${tts:alpha}
+
+DISPLAY MATH: $$latex$$ then blank line, then {tts:alt} alone on its own line
+  Example:
+    $$E=mc^2$$
+
+    {tts:E equals m c squared}
+
+STANDALONE IMAGE: ![alt](detected-image){tts:caption} — annotation immediately after )
+  Example: ![A chart showing growth](detected-image){tts:Figure 1: Quarterly results}
+
+Guidelines:
+- Images: alt = short visual description; {tts:...} = figure caption from document (omit if none)
+- Math: {tts:...} must be ACCURATE to the latex but readable aloud via TTS
+- Complex equations: describe what the equation represents in context rather than reading symbols
+
