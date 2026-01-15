@@ -249,6 +249,7 @@ function BlockquoteBlockView({ block, onBlockClick }: {
             <ImageRowView
               key={grouped.blocks[0].id}
               blocks={grouped.blocks}
+              onBlockClick={onBlockClick}
             />
           );
         } else {
@@ -452,7 +453,7 @@ function groupBlocks(blocks: ContentBlock[]): GroupedBlock[] {
 
 // Renders multiple image blocks in a flex row (side-by-side figures)
 // Normalizes widths so images fill available space proportionally
-function ImageRowView({ blocks }: { blocks: ImageBlock[] }) {
+function ImageRowView({ blocks, onBlockClick }: { blocks: ImageBlock[]; onBlockClick?: (audioIdx: number) => void }) {
   // Calculate scaled widths: preserve relative proportions but fill ~95% of space
   const totalRawWidth = blocks.reduce((sum, b) => sum + (b.width_pct || 50), 0);
   const targetTotalWidth = 95; // Leave 5% for gaps
@@ -462,12 +463,21 @@ function ImageRowView({ blocks }: { blocks: ImageBlock[] }) {
     <div className="my-4 flex gap-4 justify-center items-start flex-wrap">
       {blocks.map((block) => {
         const scaledWidth = Math.min((block.width_pct || 50) * scaleFactor, 100);
+        const handleClick = block.audio_block_idx !== null && onBlockClick
+          ? () => onBlockClick(block.audio_block_idx as number)
+          : undefined;
         return (
-          <ImageBlockView
+          <div
             key={block.id}
-            block={{ ...block, width_pct: scaledWidth }}
-            inRow
-          />
+            data-audio-block-idx={block.audio_block_idx ?? undefined}
+            className={cn(blockBaseClass, handleClick && clickableClass)}
+            onClick={handleClick}
+          >
+            <ImageBlockView
+              block={{ ...block, width_pct: scaledWidth }}
+              inRow
+            />
+          </div>
         );
       })}
     </div>
@@ -911,6 +921,7 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
               <ImageRowView
                 key={grouped.blocks[0].id}
                 blocks={grouped.blocks}
+                onBlockClick={onBlockClick}
               />
             );
           } else {
