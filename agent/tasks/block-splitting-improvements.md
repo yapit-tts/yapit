@@ -25,10 +25,29 @@ Also: lists weren't split at all, creating huge 500+ char audio blocks.
 - Interactive visualization tool: `scripts/block_viz_server.py`
 
 **Remaining:**
+- [x] Fix math handling bug (inline math lost during splitting)
 - [ ] Parameter tuning via systematic analysis
 - [ ] Add env vars to Settings class
 - [ ] Wire params to `transform_to_document` calls
 - [ ] Validate with real TTS playback
+
+## Bug: Inline Math Lost During Splitting
+
+**Discovered:** 2026-01-15
+
+When paragraphs with inline math (`$...$`) get split, the math disappears from HTML output.
+
+**Root cause:** `InlineContent` AST doesn't model `math_inline`:
+1. `_transform_inline_node` doesn't handle `math_inline` → becomes `TextContent`
+2. `_slice_inline_node` doesn't recognize math → returns `[]` (dropped)
+3. `_render_inline_content_html` has no math case → can't render
+
+**Fix:**
+- Add `MathInlineContent` to `InlineContent` union in `models.py`
+- Handle `math_inline` in `_transform_inline_node` → create `MathInlineContent`
+- Handle in `_get_inline_length` → return 0 (math doesn't count toward block size)
+- Handle in `_slice_inline_node` → atomic (include fully or skip)
+- Handle in `_render_inline_content_html` → `<span class="math-inline">...</span>`
 
 ## Parameter Analysis Plan
 
@@ -70,5 +89,6 @@ min_chunk_size:  [20, 40, 60, 80]
 ## Sources
 
 - `yapit/gateway/processors/markdown/transformer.py` — splitting logic
+- `yapit/gateway/processors/markdown/models.py` — block/inline content models
 - `scripts/block_viz_server.py` — interactive visualization
 - [[document-processing]] — how blocks flow through the system

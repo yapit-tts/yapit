@@ -1,14 +1,15 @@
 import asyncio
 import io
 import random
+import time
 from pathlib import Path
 
-import pymupdf
 from google import genai
 from google.genai import errors as genai_errors
 from google.genai import types
 from loguru import logger
 from pypdf import PdfReader
+from redis.asyncio import Redis
 
 from yapit.gateway.cache import Cache
 from yapit.gateway.processors.document.base import (
@@ -17,13 +18,17 @@ from yapit.gateway.processors.document.base import (
     ExtractedPage,
 )
 from yapit.gateway.processors.document.extraction import (
-    ExtractedImage,
-    build_prompt_with_image_count,
-    extract_images_from_page,
+    DetectedFigure,
+    build_figure_prompt,
     extract_single_page_pdf,
     load_prompt,
-    store_image,
+    render_page_as_image,
+    store_figure,
     substitute_image_placeholders,
+)
+from yapit.gateway.processors.document.yolo_client import (
+    enqueue_detection,
+    wait_for_result,
 )
 
 RESOLUTION_MAP = {
@@ -47,6 +52,7 @@ class GeminiProcessor(BaseDocumentProcessor):
 
     def __init__(
         self,
+        redis: Redis,
         model: str = "gemini-3-flash-preview",
         resolution: str = "high",
         max_concurrent: int = 20,
@@ -60,6 +66,7 @@ class GeminiProcessor(BaseDocumentProcessor):
         if not self._settings.google_api_key:
             raise ValueError("GOOGLE_API_KEY is required for Gemini processor")
 
+        self._redis = redis
         self._client = genai.Client(api_key=self._settings.google_api_key)
         self._model = model
         self._resolution_str = resolution
@@ -135,50 +142,79 @@ class GeminiProcessor(BaseDocumentProcessor):
         content_hash: str,
         extraction_cache: Cache,
     ) -> DocumentExtractionResult:
-        """Extract text from PDF with parallel page processing, caching each page as it completes."""
+        """Extract text from PDF with YOLO figure detection and parallel Gemini processing.
+
+        Pages are processed in parallel: render → YOLO queue → Gemini API.
+        YOLO runs via containerized workers (yolo-cpu) through Redis queue.
+        """
+        start_time = time.monotonic()
+
         pdf_reader = PdfReader(io.BytesIO(content))
         total_pages = len(pdf_reader.pages)
 
-        pages_to_process = set(pages) if pages else set(range(total_pages))
+        pages_to_process = sorted(set(pages) if pages else set(range(total_pages)))
+        logger.info(f"Extraction: starting {len(pages_to_process)} pages (PDF has {total_pages} total)")
 
-        # Extract images from each page using PyMuPDF
-        mupdf_doc = pymupdf.open(stream=content, filetype="pdf")
-        page_images: dict[int, list[ExtractedImage]] = {}
-        for page_idx in pages_to_process:
-            page_images[page_idx] = extract_images_from_page(mupdf_doc, page_idx)
-        mupdf_doc.close()
-
-        # Store images and get URLs
-        page_image_urls: dict[int, list[str]] = {}
-        for page_idx in sorted(pages_to_process):
-            urls = []
-            for img_idx, img in enumerate(page_images[page_idx]):
-                url = store_image(img.data, img.format, self._images_dir, content_hash, page_idx, img_idx)
-                urls.append(url)
-            page_image_urls[page_idx] = urls
-
-        # Process pages with concurrency limit, caching each as it completes
         semaphore = asyncio.Semaphore(self._max_concurrent)
 
-        async def process_and_cache(page_idx: int) -> tuple[int, ExtractedPage | None]:
-            page_idx, page = await self._process_page(
-                pdf_reader, page_idx, page_images[page_idx], page_image_urls[page_idx], semaphore
-            )
-            # Only cache successful extractions
-            if page is not None:
-                cache_key = self._extraction_cache_key(content_hash, page_idx)
-                await extraction_cache.store(cache_key, page.model_dump_json().encode())
-            return page_idx, page
+        async def process_page(page_idx: int) -> tuple[int, ExtractedPage | None]:
+            """Process a single page: render → YOLO → store figures → Gemini."""
+            try:
+                # Render page as image (CPU-bound, run in thread)
+                page_image, width, height = await asyncio.to_thread(render_page_as_image, content, page_idx)
 
-        tasks = [process_and_cache(page_idx) for page_idx in sorted(pages_to_process)]
+                # Queue YOLO detection and wait for result
+                job_id = await enqueue_detection(self._redis, page_image, width, height)
+                yolo_result = await wait_for_result(self._redis, job_id)
+
+                if yolo_result.error:
+                    logger.warning(f"YOLO detection failed for page {page_idx + 1}: {yolo_result.error}")
+
+                logger.info(f"YOLO: page {page_idx + 1} - detected {len(yolo_result.figures)} figures")
+
+                # Convert YoloDetectedFigure to DetectedFigure and store each figure
+                figures: list[DetectedFigure] = []
+                figure_urls: list[str] = []
+                for fig_idx, yolo_fig in enumerate(yolo_result.figures):
+                    figure = DetectedFigure(
+                        bbox=yolo_fig.bbox,
+                        confidence=yolo_fig.confidence,
+                        width_pct=yolo_fig.width_pct,
+                        row_group=yolo_fig.row_group,
+                    )
+                    figures.append(figure)
+                    url = store_figure(
+                        figure, page_image, width, height, self._images_dir, content_hash, page_idx, fig_idx
+                    )
+                    figure_urls.append(url)
+
+                # Call Gemini API
+                page_idx, page = await self._process_page_with_figures(
+                    pdf_reader, page_idx, figures, figure_urls, semaphore
+                )
+
+                if page is not None:
+                    cache_key = self._extraction_cache_key(content_hash, page_idx)
+                    await extraction_cache.store(cache_key, page.model_dump_json().encode())
+
+                return page_idx, page
+
+            except Exception as e:
+                logger.error(f"Page {page_idx + 1} processing failed: {e}")
+                return page_idx, None
+
+        # Process all pages in parallel
+        tasks = [asyncio.create_task(process_page(page_idx)) for page_idx in pages_to_process]
         results = await asyncio.gather(*tasks)
 
         # Separate successful and failed pages
         successful_pages = {page_idx: page for page_idx, page in results if page is not None}
         failed_pages = [page_idx for page_idx, page in results if page is None]
 
+        elapsed = time.monotonic() - start_time
         if failed_pages:
             logger.error(f"Extraction completed with {len(failed_pages)} failed pages: {sorted(failed_pages)}")
+        logger.info(f"Extraction: completed {len(successful_pages)}/{len(pages_to_process)} pages in {elapsed:.1f}s")
 
         return DocumentExtractionResult(
             pages=successful_pages,
@@ -186,26 +222,27 @@ class GeminiProcessor(BaseDocumentProcessor):
             failed_pages=failed_pages,
         )
 
-    async def _process_page(
+    async def _process_page_with_figures(
         self,
         pdf_reader: PdfReader,
         page_idx: int,
-        images: list[ExtractedImage],
-        image_urls: list[str],
+        figures: list[DetectedFigure],
+        figure_urls: list[str],
         semaphore: asyncio.Semaphore,
     ) -> tuple[int, ExtractedPage | None]:
-        """Process a single PDF page with retry logic.
+        """Process a single PDF page with YOLO-detected figures.
 
         Returns (page_idx, ExtractedPage) on success, (page_idx, None) on failure after all retries.
         """
         async with semaphore:
             page_bytes = extract_single_page_pdf(pdf_reader, page_idx)
-            prompt = build_prompt_with_image_count(self._prompt, len(images))
+            prompt = build_figure_prompt(self._prompt, figures)
             config = types.GenerateContentConfig(media_resolution=self._resolution)
 
             last_error: Exception | None = None
             for attempt in range(MAX_RETRIES):
                 try:
+                    logger.info(f"Gemini: calling API for page {page_idx + 1}")
                     response = await asyncio.to_thread(
                         self._client.models.generate_content,
                         model=self._model,
@@ -217,20 +254,24 @@ class GeminiProcessor(BaseDocumentProcessor):
                     )
 
                     text = (response.text or "").strip()
-                    if image_urls:
-                        text = substitute_image_placeholders(text, image_urls)
+                    if figure_urls:
+                        text = substitute_image_placeholders(text, figure_urls)
 
                     if attempt > 0:
-                        logger.info(f"Page {page_idx} succeeded after {attempt + 1} attempts")
+                        logger.info(f"Gemini: page {page_idx + 1} succeeded after {attempt + 1} attempts")
+                    else:
+                        logger.info(f"Gemini: page {page_idx + 1} completed")
 
-                    return page_idx, ExtractedPage(markdown=text, images=image_urls)
+                    return page_idx, ExtractedPage(markdown=text, images=figure_urls)
 
                 except genai_errors.APIError as e:
                     last_error = e
                     is_retryable = e.code in RETRYABLE_STATUS_CODES
 
                     if not is_retryable:
-                        logger.error(f"Page {page_idx} failed with non-retryable error: {e.code} {e.message}")
+                        logger.error(
+                            f"Gemini: page {page_idx + 1} failed with non-retryable error: {e.code} {e.message}"
+                        )
                         return page_idx, None
 
                     if attempt < MAX_RETRIES - 1:
@@ -238,7 +279,7 @@ class GeminiProcessor(BaseDocumentProcessor):
                         jitter = random.uniform(0, delay * 0.5)
                         wait_time = delay + jitter
                         logger.warning(
-                            f"Page {page_idx} attempt {attempt + 1}/{MAX_RETRIES} failed "
+                            f"Gemini: page {page_idx + 1} attempt {attempt + 1}/{MAX_RETRIES} failed "
                             f"({e.code}), retrying in {wait_time:.1f}s"
                         )
                         await asyncio.sleep(wait_time)
@@ -251,10 +292,10 @@ class GeminiProcessor(BaseDocumentProcessor):
                         jitter = random.uniform(0, delay * 0.5)
                         wait_time = delay + jitter
                         logger.warning(
-                            f"Page {page_idx} attempt {attempt + 1}/{MAX_RETRIES} failed "
+                            f"Gemini: page {page_idx + 1} attempt {attempt + 1}/{MAX_RETRIES} failed "
                             f"with unexpected error: {e}, retrying in {wait_time:.1f}s"
                         )
                         await asyncio.sleep(wait_time)
 
-            logger.error(f"Page {page_idx} failed after {MAX_RETRIES} attempts. Last error: {last_error}")
+            logger.error(f"Gemini: page {page_idx + 1} failed after {MAX_RETRIES} attempts. Last error: {last_error}")
             return page_idx, None

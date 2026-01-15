@@ -131,7 +131,7 @@ class TestTransformToDocument:
         assert doc.blocks[0].audio_block_idx is None
 
     def test_transform_unordered_list(self):
-        """Transform bullet list."""
+        """Transform bullet list. Each item is a separate audio block."""
         ast = parse_markdown("- Item 1\n- Item 2")
         doc = transform_to_document(ast)
 
@@ -141,7 +141,9 @@ class TestTransformToDocument:
         assert block.ordered is False
         assert len(block.items) == 2
         assert block.items[0].plain_text == "Item 1"
-        assert block.audio_block_idx == 0
+        assert block.audio_block_idx is None  # Container, no audio
+        assert block.items[0].audio_block_idx == 0
+        assert block.items[1].audio_block_idx == 1
 
     def test_transform_ordered_list(self):
         """Transform numbered list."""
@@ -152,6 +154,8 @@ class TestTransformToDocument:
         assert isinstance(block, ListBlock)
         assert block.ordered is True
         assert len(block.items) == 2
+        assert block.items[0].audio_block_idx == 0
+        assert block.items[1].audio_block_idx == 1
 
     def test_transform_blockquote(self):
         """Transform blockquote with nested content."""
@@ -367,15 +371,63 @@ class TestAudioBlockIndexing:
         assert doc.blocks[1].audio_block_idx is None  # math-only paragraph
         assert doc.blocks[2].audio_block_idx == 1  # "After." (not 2!)
 
-    def test_image_with_alt_text_gets_audio_index(self):
-        """Images with alt text contribute to audio, so paragraph gets index."""
+    def test_standalone_image_becomes_image_block(self):
+        """Standalone images become ImageBlock. Has audio if alt text is present."""
         md = "![A cat sitting on a mat](image.png)"
         ast = parse_markdown(md)
         doc = transform_to_document(ast)
 
         assert len(doc.blocks) == 1
-        assert doc.blocks[0].audio_block_idx == 0
-        assert doc.blocks[0].plain_text == "A cat sitting on a mat"
+        block = doc.blocks[0]
+        assert block.type == "image"
+        assert block.src == "image.png"
+        assert block.alt == "A cat sitting on a mat"
+        assert block.audio_block_idx == 0  # Alt text is read by TTS
+
+    def test_standalone_image_without_alt_no_audio(self):
+        """Standalone images without alt text have no audio."""
+        md = "![](image.png)"
+        ast = parse_markdown(md)
+        doc = transform_to_document(ast)
+
+        assert len(doc.blocks) == 1
+        block = doc.blocks[0]
+        assert block.type == "image"
+        assert block.alt == ""
+        assert block.audio_block_idx is None  # No alt = no audio
+
+    def test_image_layout_metadata_from_url_params(self):
+        """ImageBlock parses width_pct and row_group from URL query params."""
+        md = "![Figure](image.png?w=85&row=row0)"
+        ast = parse_markdown(md)
+        doc = transform_to_document(ast)
+
+        assert len(doc.blocks) == 1
+        block = doc.blocks[0]
+        assert block.type == "image"
+        assert block.src == "image.png"  # Query params stripped from src
+        assert block.width_pct == 85.0
+        assert block.row_group == "row0"
+
+    def test_image_partial_layout_metadata(self):
+        """ImageBlock handles partial query params (only width or only row)."""
+        md = "![Figure](image.png?w=50)"
+        ast = parse_markdown(md)
+        doc = transform_to_document(ast)
+
+        block = doc.blocks[0]
+        assert block.width_pct == 50.0
+        assert block.row_group is None
+
+    def test_image_no_layout_metadata(self):
+        """ImageBlock without query params has None for layout fields."""
+        md = "![Figure](image.png)"
+        ast = parse_markdown(md)
+        doc = transform_to_document(ast)
+
+        block = doc.blocks[0]
+        assert block.width_pct is None
+        assert block.row_group is None
 
 
 class TestJsonSerialization:
@@ -464,3 +516,77 @@ Final thoughts.
         audio_blocks = doc.get_audio_blocks()
         # Should include: 2 headings, 2 paragraphs, 1 list, 1 blockquote = 6
         assert len(audio_blocks) >= 5
+
+
+class TestYapAnnotations:
+    """Test <yap-alt> and <yap-cap> annotation handling."""
+
+    def test_inline_math_with_yap_alt(self):
+        """Inline math $...$<yap-alt>...</yap-alt> extracts alt for TTS."""
+        md = r"We study $\alpha$<yap-alt>alpha</yap-alt> values."
+        ast = parse_markdown(md)
+        doc = transform_to_document(ast)
+
+        assert len(doc.blocks) == 1
+        assert doc.blocks[0].plain_text == "We study alpha values."
+
+    def test_display_math_with_yap_alt(self):
+        """Display math followed by <yap-alt> paragraph extracts alt."""
+        md = "$$E = mc^2$$\n\n<yap-alt>E equals m c squared</yap-alt>"
+        ast = parse_markdown(md)
+        doc = transform_to_document(ast)
+
+        # Should have just the math block (annotation paragraph skipped)
+        assert len(doc.blocks) == 1
+        assert doc.blocks[0].type == "math"
+        assert doc.blocks[0].alt == "E equals m c squared"
+
+    def test_image_with_yap_cap(self):
+        """Image with <yap-cap> extracts caption."""
+        md = "![Diagram](img.png)<yap-cap>Figure 1 overview</yap-cap>"
+        ast = parse_markdown(md)
+        doc = transform_to_document(ast)
+
+        assert len(doc.blocks) == 1
+        assert doc.blocks[0].type == "image"
+        assert doc.blocks[0].caption == "Figure 1 overview"
+        assert doc.blocks[0].alt == "Diagram"
+
+    def test_image_caption_with_nested_math(self):
+        """Caption containing math uses <yap-alt> for TTS."""
+        md = r"![Diagram](img.png)<yap-cap>Figure 1 shows $\beta$<yap-alt>beta</yap-alt> values</yap-cap>"
+        ast = parse_markdown(md)
+        doc = transform_to_document(ast)
+
+        block = doc.blocks[0]
+        assert block.type == "image"
+        # Display caption keeps LaTeX
+        assert r"$\beta$" in block.caption
+        # TTS should use alt text (verified via audio_block_idx being set)
+        assert block.audio_block_idx == 0
+
+    def test_multiple_math_in_paragraph(self):
+        """Multiple math expressions each get their own alt."""
+        md = r"$\alpha$<yap-alt>alpha</yap-alt> and $\beta$<yap-alt>beta</yap-alt>"
+        ast = parse_markdown(md)
+        doc = transform_to_document(ast)
+
+        assert doc.blocks[0].plain_text == "alpha and beta"
+
+    def test_math_without_yap_alt(self):
+        """Math without <yap-alt> is excluded from TTS."""
+        md = r"Value is $x^2$ here."
+        ast = parse_markdown(md)
+        doc = transform_to_document(ast)
+
+        # Math without alt should not appear in plain_text
+        assert doc.blocks[0].plain_text == "Value is  here."
+
+    def test_malformed_yap_alt_ignored(self):
+        """Unclosed <yap-alt> tag is ignored gracefully."""
+        md = r"$\alpha$<yap-alt>alpha without closing"
+        ast = parse_markdown(md)
+        doc = transform_to_document(ast)
+
+        # Should not crash, malformed annotation treated as regular text
+        assert len(doc.blocks) == 1

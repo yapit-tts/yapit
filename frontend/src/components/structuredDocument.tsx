@@ -54,6 +54,7 @@ interface ListItem {
   html: string;
   ast: InlineContent[];
   plain_text: string;
+  audio_block_idx: number | null;
 }
 
 interface HeadingBlock {
@@ -106,8 +107,9 @@ interface MathBlock {
   type: "math";
   id: string;
   content: string;
+  alt?: string;  // TTS text (read aloud if present)
   display_mode: boolean;
-  audio_block_idx: null;
+  audio_block_idx: number | null;  // Has audio if alt is provided
 }
 
 interface TableBlock {
@@ -122,9 +124,12 @@ interface ImageBlock {
   type: "image";
   id: string;
   src: string;
-  alt: string;
+  alt: string;  // Accessible text for TTS (not displayed)
+  caption?: string;  // Visible figcaption for TTS and display
   title?: string;
-  audio_block_idx: null;
+  width_pct?: number;  // Figure width as % of page (from YOLO detection)
+  row_group?: string;  // "row0", "row1", etc. - figures in same row are side-by-side
+  audio_block_idx: number | null;  // Has audio if alt or caption present
 }
 
 interface ThematicBreak {
@@ -201,7 +206,13 @@ function ParagraphBlockView({ block }: { block: ParagraphBlock }) {
   );
 }
 
-function ListBlockView({ block }: { block: ListBlock }) {
+function ListBlockView({
+  block,
+  onBlockClick,
+}: {
+  block: ListBlock;
+  onBlockClick?: (audioIdx: number) => void;
+}) {
   const ListTag = block.ordered ? "ol" : "ul";
   const listClass = block.ordered ? "list-decimal" : "list-disc";
 
@@ -210,13 +221,22 @@ function ListBlockView({ block }: { block: ListBlock }) {
       className={cn("my-3 ml-6 py-1", listClass)}
       start={block.ordered ? block.start : undefined}
     >
-      {block.items.map((item, idx) => (
-        <li
-          key={idx}
-          className="my-1"
-          dangerouslySetInnerHTML={{ __html: sanitize(item.html) }}
-        />
-      ))}
+      {block.items.map((item, idx) => {
+        const isClickable = item.audio_block_idx !== null;
+        return (
+          <li
+            key={idx}
+            className={cn("my-1", isClickable && "cursor-pointer hover:bg-accent/50 rounded px-1 -mx-1")}
+            data-audio-block-idx={item.audio_block_idx ?? undefined}
+            onClick={
+              isClickable
+                ? () => onBlockClick?.(item.audio_block_idx!)
+                : undefined
+            }
+            dangerouslySetInnerHTML={{ __html: sanitize(item.html) }}
+          />
+        );
+      })}
     </ListTag>
   );
 }
@@ -225,7 +245,7 @@ function BlockquoteBlockView({ block, onBlockClick }: {
   block: BlockquoteBlock;
   onBlockClick?: (audioIdx: number) => void;
 }) {
-  // Group nested blocks by visual_group_id (same as top-level)
+  // Group nested blocks by visual_group_id and row_group (same as top-level)
   const groupedBlocks = groupBlocks(block.blocks);
 
   // Blockquote is a visual container - nested blocks have their own audio indices
@@ -235,6 +255,14 @@ function BlockquoteBlockView({ block, onBlockClick }: {
         if (grouped.kind === "paragraph-group") {
           return (
             <ParagraphGroupView
+              key={grouped.blocks[0].id}
+              blocks={grouped.blocks}
+              onBlockClick={onBlockClick}
+            />
+          );
+        } else if (grouped.kind === "image-row") {
+          return (
+            <ImageRowView
               key={grouped.blocks[0].id}
               blocks={grouped.blocks}
               onBlockClick={onBlockClick}
@@ -339,19 +367,25 @@ function TableBlockView({ block }: BlockProps & { block: TableBlock }) {
   );
 }
 
-function ImageBlockView({ block }: BlockProps & { block: ImageBlock }) {
+// Convert $...$ in text to math-inline spans for KaTeX rendering
+function processInlineMath(text: string): string {
+  return text.replace(/\$([^$]+)\$/g, '<span class="math-inline">$1</span>');
+}
+
+function ImageBlockView({ block, inRow }: BlockProps & { block: ImageBlock; inRow?: boolean }) {
   return (
-    <figure className="my-4">
+    <figure className={cn("flex flex-col items-center", !inRow && "my-4")}>
       <img
         src={block.src}
         alt={block.alt}
         title={block.title}
         className="max-w-full max-h-96 h-auto object-contain rounded"
       />
-      {block.alt && (
-        <figcaption className="text-sm text-muted-foreground mt-2 text-center">
-          {block.alt}
-        </figcaption>
+      {block.caption && (
+        <figcaption
+          className="text-sm text-muted-foreground mt-2 text-center"
+          dangerouslySetInnerHTML={{ __html: sanitize(processInlineMath(block.caption)) }}
+        />
       )}
     </figure>
   );
@@ -365,41 +399,106 @@ function ThematicBreakView() {
 
 type GroupedBlock =
   | { kind: "single"; block: ContentBlock }
-  | { kind: "paragraph-group"; blocks: ParagraphBlock[] };
+  | { kind: "paragraph-group"; blocks: ParagraphBlock[] }
+  | { kind: "image-row"; blocks: ImageBlock[] };
 
 function groupBlocks(blocks: ContentBlock[]): GroupedBlock[] {
   const result: GroupedBlock[] = [];
-  let currentGroup: ParagraphBlock[] = [];
-  let currentGroupId: string | null = null;
+  let currentParagraphGroup: ParagraphBlock[] = [];
+  let currentParagraphGroupId: string | null = null;
+  let currentImageRow: ImageBlock[] = [];
+  let currentImageRowGroup: string | null = null;
 
-  const flushGroup = () => {
-    if (currentGroup.length > 1) {
-      result.push({ kind: "paragraph-group", blocks: currentGroup });
-    } else if (currentGroup.length === 1) {
-      result.push({ kind: "single", block: currentGroup[0] });
+  const flushParagraphGroup = () => {
+    if (currentParagraphGroup.length > 1) {
+      result.push({ kind: "paragraph-group", blocks: currentParagraphGroup });
+    } else if (currentParagraphGroup.length === 1) {
+      result.push({ kind: "single", block: currentParagraphGroup[0] });
     }
-    currentGroup = [];
-    currentGroupId = null;
+    currentParagraphGroup = [];
+    currentParagraphGroupId = null;
+  };
+
+  const flushImageRow = () => {
+    if (currentImageRow.length > 1) {
+      result.push({ kind: "image-row", blocks: currentImageRow });
+    } else if (currentImageRow.length === 1) {
+      result.push({ kind: "single", block: currentImageRow[0] });
+    }
+    currentImageRow = [];
+    currentImageRowGroup = null;
   };
 
   for (const block of blocks) {
-    const groupId = block.type === "paragraph" ? block.visual_group_id : null;
-
-    if (groupId && groupId === currentGroupId) {
-      currentGroup.push(block as ParagraphBlock);
-    } else {
-      flushGroup();
-      if (groupId) {
-        currentGroup = [block as ParagraphBlock];
-        currentGroupId = groupId;
+    // Handle paragraph visual groups
+    if (block.type === "paragraph" && block.visual_group_id) {
+      flushImageRow(); // Flush any pending image row
+      if (block.visual_group_id === currentParagraphGroupId) {
+        currentParagraphGroup.push(block);
       } else {
-        result.push({ kind: "single", block });
+        flushParagraphGroup();
+        currentParagraphGroup = [block];
+        currentParagraphGroupId = block.visual_group_id;
       }
+      continue;
     }
+
+    // Handle image row groups
+    if (block.type === "image" && block.row_group) {
+      flushParagraphGroup(); // Flush any pending paragraph group
+      if (block.row_group === currentImageRowGroup) {
+        currentImageRow.push(block);
+      } else {
+        flushImageRow();
+        currentImageRow = [block];
+        currentImageRowGroup = block.row_group;
+      }
+      continue;
+    }
+
+    // Single block - flush any pending groups first
+    flushParagraphGroup();
+    flushImageRow();
+    result.push({ kind: "single", block });
   }
 
-  flushGroup();
+  flushParagraphGroup();
+  flushImageRow();
   return result;
+}
+
+// Renders multiple image blocks in a flex row (side-by-side figures)
+// Normalizes widths so images fill available space proportionally
+function ImageRowView({ blocks, onBlockClick }: { blocks: ImageBlock[]; onBlockClick?: (audioIdx: number) => void }) {
+  // Calculate scaled widths: preserve relative proportions but fill ~95% of space
+  const totalRawWidth = blocks.reduce((sum, b) => sum + (b.width_pct || 50), 0);
+  const targetTotalWidth = 95; // Leave 5% for gaps
+  const scaleFactor = Math.min(targetTotalWidth / totalRawWidth, 2.5); // Cap scaling to prevent oversized images
+
+  return (
+    <div className="my-4 flex gap-4 justify-center items-start flex-wrap">
+      {blocks.map((block) => {
+        const scaledWidth = Math.min((block.width_pct || 50) * scaleFactor, 100);
+        const handleClick = block.audio_block_idx !== null && onBlockClick
+          ? () => onBlockClick(block.audio_block_idx as number)
+          : undefined;
+        return (
+          <div
+            key={block.id}
+            data-audio-block-idx={block.audio_block_idx ?? undefined}
+            className={cn(blockBaseClass, handleClick && clickableClass)}
+            style={{ width: `${scaledWidth}%` }}
+            onClick={handleClick}
+          >
+            <ImageBlockView
+              block={{ ...block, width_pct: undefined }}
+              inRow
+            />
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 // Renders multiple paragraph blocks as spans within a single <p>
@@ -451,7 +550,7 @@ function BlockView({ block, onBlockClick, slugMap }: BlockViewProps) {
     case "paragraph":
       return <ParagraphBlockView block={block} />;
     case "list":
-      return <ListBlockView block={block} />;
+      return <ListBlockView block={block} onBlockClick={onBlockClick} />;
     case "blockquote":
       return (
         <BlockquoteBlockView
@@ -829,6 +928,14 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
           if (grouped.kind === "paragraph-group") {
             return (
               <ParagraphGroupView
+                key={grouped.blocks[0].id}
+                blocks={grouped.blocks}
+                onBlockClick={onBlockClick}
+              />
+            );
+          } else if (grouped.kind === "image-row") {
+            return (
+              <ImageRowView
                 key={grouped.blocks[0].id}
                 blocks={grouped.blocks}
                 onBlockClick={onBlockClick}

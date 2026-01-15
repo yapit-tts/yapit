@@ -44,8 +44,25 @@ class InlineImageContent(BaseModel):
     alt: str
 
 
+class MathInlineContent(BaseModel):
+    """Inline math ($...$). Atomic - never split.
+
+    If alt is present, it's used for TTS. Otherwise math is skipped in TTS.
+    """
+
+    type: Literal["math_inline"] = "math_inline"
+    content: str  # LaTeX content
+    alt: str = ""  # TTS text (e.g., "alpha" for $\alpha$)
+
+
 InlineContent = Annotated[
-    TextContent | StrongContent | EmphasisContent | CodeSpanContent | LinkContent | InlineImageContent,
+    TextContent
+    | StrongContent
+    | EmphasisContent
+    | CodeSpanContent
+    | LinkContent
+    | InlineImageContent
+    | MathInlineContent,
     Field(discriminator="type"),
 ]
 
@@ -83,10 +100,11 @@ class ListItem(BaseModel):
     html: str
     ast: list[InlineContent]
     plain_text: str
+    audio_block_idx: int | None = None
 
 
 class ListBlock(BaseModel):
-    """Ordered or unordered list. Has audio (flattened)."""
+    """Ordered or unordered list. Container for items which have their own audio."""
 
     type: Literal["list"] = "list"
     id: str
@@ -94,7 +112,7 @@ class ListBlock(BaseModel):
     start: int | None = None
     items: list[ListItem]
     plain_text: str
-    audio_block_idx: int | None = None
+    audio_block_idx: None = None
 
 
 class BlockquoteBlock(BaseModel):
@@ -118,13 +136,14 @@ class CodeBlock(BaseModel):
 
 
 class MathBlock(BaseModel):
-    """Display math ($$...$$). No audio."""
+    """Display math ($$...$$). Has audio if alt text is provided."""
 
     type: Literal["math"] = "math"
     id: str
-    content: str
+    content: str  # LaTeX content
+    alt: str = ""  # TTS text (read aloud if present)
     display_mode: bool = True
-    audio_block_idx: None = None
+    audio_block_idx: int | None = None
 
 
 class TableBlock(BaseModel):
@@ -138,14 +157,17 @@ class TableBlock(BaseModel):
 
 
 class ImageBlock(BaseModel):
-    """Standalone image. No audio."""
+    """Standalone image. Has audio if alt or caption is provided."""
 
     type: Literal["image"] = "image"
     id: str
     src: str
-    alt: str
+    alt: str = ""  # Descriptive text for TTS (what the image shows)
+    caption: str = ""  # Figure caption for TTS and display (e.g., "Figure 2: Results")
     title: str | None = None
-    audio_block_idx: None = None
+    width_pct: float | None = None  # Figure width as % of page (from YOLO bbox)
+    row_group: str | None = None  # "row0", "row1", etc. - figures in same row are side-by-side
+    audio_block_idx: int | None = None
 
 
 class ThematicBreak(BaseModel):
@@ -192,8 +214,16 @@ class StructuredDocument(BaseModel):
         """Recursively collect audio blocks."""
         for block in blocks:
             if block.type == "blockquote":
-                # Recurse into blockquote's nested blocks
                 self._collect_audio_blocks(block.blocks, result)
+            elif block.type == "list":
+                for item in block.items:
+                    if item.audio_block_idx is not None:
+                        result.append(item.plain_text)
+            elif block.type == "math" and block.audio_block_idx is not None:
+                result.append(block.alt)
+            elif block.type == "image" and block.audio_block_idx is not None:
+                # Prefer caption (scholarly label), fall back to alt (visual description)
+                result.append(block.caption if block.caption else block.alt)
             elif block.audio_block_idx is not None:
                 result.append(block.plain_text)
 

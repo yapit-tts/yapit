@@ -5,25 +5,16 @@ define create-dev-user
 endef
 
 dev-cpu: down
-		docker compose --env-file .env --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.kokoro-cpu.yml \
-	--profile stripe up -d --build
-	$(call create-dev-user)
-
-dev-gpu: down
-		docker compose --env-file .env --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.kokoro-gpu.yml \
-	--profile stripe up -d --build
-
-dev-mac: down
-		docker compose --env-file .env --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.kokoro-cpu.yml -f docker-compose.mac.yml \
-	--profile stripe up -d --build
+	docker compose --env-file .env --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml \
+		--profile stripe up -d --build
 	$(call create-dev-user)
 
 dev-ci: down
-	docker compose --env-file .env --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.kokoro-cpu.yml \
-	up -d --build --wait --wait-timeout 300
+	docker compose --env-file .env --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml \
+		up -d --build --wait --wait-timeout 300
 
 down:
-	docker compose --env-file .env --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml down -v --remove-orphans
+	docker compose --env-file .env --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml --profile stripe down -v --remove-orphans
 
 dev-user:
 	$(call create-dev-user)
@@ -118,18 +109,6 @@ check-backend:
 
 check-frontend:
 	cd frontend && npm run lint && npx tsc --noEmit
-
-lint:
-	uv run ruff check .
-
-format:
-	uv run ruff format .
-
-repomix:
-	repomix -i "frontend/src/components/ui,.gitignore,**/*.data,**/*sql"
-
-repomix-backend:
-	repomix -i "frontend,.gitignore,**/*.data,**/*sql"
 
 # RunPod deployment
 HIGGS_TAG := $(shell date +%Y%m%d-%H%M%S)

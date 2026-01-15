@@ -198,8 +198,10 @@ class BaseDocumentProcessor:
             pages=list(uncached_pages),
         )
 
+        # Merge and sort by page index to ensure consistent ordering
         all_pages = {**cached_pages, **result.pages}
-        return DocumentExtractionResult(pages=all_pages, extraction_method=self._slug)
+        sorted_pages = {k: all_pages[k] for k in sorted(all_pages.keys())}
+        return DocumentExtractionResult(pages=sorted_pages, extraction_method=self._slug)
 
     def _is_supported(self, mime_type: str) -> bool:
         """Check if this processor supports the given MIME type."""

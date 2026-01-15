@@ -182,3 +182,14 @@ services:
       update_config:
         order: start-first
         failure_action: rollback
+
+  yolo-cpu:
+    image: ghcr.io/yapit-tts/yolo-cpu:${GIT_COMMIT}
+    command: python -m yapit.workers.yolo
+    networks:
+      - yapit-network
+    deploy:
+      replicas: ${YOLO_CPU_REPLICAS}
+      update_config:
+        order: start-first
+        failure_action: rollback

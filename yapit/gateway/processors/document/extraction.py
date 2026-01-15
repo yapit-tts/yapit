@@ -1,14 +1,71 @@
 import io
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pymupdf
+from PIL import Image
 from pypdf import PdfReader, PdfWriter
 
 PROMPTS_DIR = Path(__file__).parent / "prompts"
 
-IMAGE_PLACEHOLDER = "![](detected-image)"
+# For prompt instructions - tells model what to output
+IMAGE_PLACEHOLDER = "![alt](detected-image)<yap-cap>caption</yap-cap>"
+
+# Matches all variants: ![alt](detected-image)<yap-cap>caption</yap-cap>, ![alt](detected-image), ![](detected-image)
+IMAGE_PLACEHOLDER_PATTERN = re.compile(r"!\[([^\]]*)\]\(detected-image\)(<yap-cap>.*?</yap-cap>)?")
+
+
+@dataclass
+class DetectedFigure:
+    """A figure detected by YOLO with layout information."""
+
+    bbox: tuple[float, float, float, float]  # x1, y1, x2, y2 normalized 0-1
+    confidence: float
+    width_pct: float  # (x2-x1) as percentage of page width
+    row_group: str | None = None  # "row0", "row1", etc.
+    cropped_image: bytes = field(default=b"", repr=False)
+
+
+def render_page_as_image(pdf_bytes: bytes, page_idx: int, dpi: int = 300) -> tuple[bytes, int, int]:
+    """Render a PDF page as PNG image.
+
+    Returns:
+        Tuple of (png_bytes, width, height)
+    """
+    doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
+    page = doc[page_idx]
+    pix = page.get_pixmap(dpi=dpi)
+    png_bytes = pix.tobytes("png")
+    doc.close()
+    return png_bytes, pix.width, pix.height
+
+
+def crop_figure(page_image: bytes, bbox: tuple[float, float, float, float], page_width: int, page_height: int) -> bytes:
+    """Crop a figure from the rendered page image.
+
+    Args:
+        page_image: PNG image bytes of the full page
+        bbox: Normalized bounding box (x1, y1, x2, y2) in 0-1 range
+        page_width: Image width in pixels
+        page_height: Image height in pixels
+
+    Returns:
+        Cropped PNG image bytes
+    """
+    img = Image.open(io.BytesIO(page_image))
+
+    # Convert normalized bbox to pixel coordinates
+    x1 = int(bbox[0] * page_width)
+    y1 = int(bbox[1] * page_height)
+    x2 = int(bbox[2] * page_width)
+    y2 = int(bbox[3] * page_height)
+
+    cropped = img.crop((x1, y1, x2, y2))
+
+    buffer = io.BytesIO()
+    cropped.save(buffer, format="PNG")
+    return buffer.getvalue()
 
 
 def store_image(data: bytes, format: str, images_dir: Path, content_hash: str, page_idx: int, img_idx: int) -> str:
@@ -20,6 +77,69 @@ def store_image(data: bytes, format: str, images_dir: Path, content_hash: str, p
     (doc_dir / filename).write_bytes(data)
 
     return f"/images/{content_hash}/{filename}"
+
+
+def store_figure(
+    figure: DetectedFigure,
+    page_image: bytes,
+    page_width: int,
+    page_height: int,
+    images_dir: Path,
+    content_hash: str,
+    page_idx: int,
+    fig_idx: int,
+) -> str:
+    """Store a detected figure and return URL with layout query params."""
+    # Crop the figure from the page
+    cropped = crop_figure(page_image, figure.bbox, page_width, page_height)
+
+    # Store the cropped image
+    doc_dir = images_dir / content_hash
+    doc_dir.mkdir(parents=True, exist_ok=True)
+
+    filename = f"{page_idx}_{fig_idx}.png"
+    (doc_dir / filename).write_bytes(cropped)
+
+    # Build URL with layout info as query params
+    base_url = f"/images/{content_hash}/{filename}"
+    params = []
+    if figure.width_pct:
+        params.append(f"w={figure.width_pct}")
+    if figure.row_group:
+        params.append(f"row={figure.row_group}")
+
+    if params:
+        return f"{base_url}?{'&'.join(params)}"
+    return base_url
+
+
+def build_figure_prompt(base_prompt: str, figures: list[DetectedFigure]) -> str:
+    """Build prompt with figure placement hints for Gemini."""
+    if not figures:
+        return base_prompt
+
+    # Build position hints for each figure
+    hints = []
+    for i, fig in enumerate(figures):
+        # Describe position based on bbox center
+        center_y = (fig.bbox[1] + fig.bbox[3]) / 2
+        center_x = (fig.bbox[0] + fig.bbox[2]) / 2
+
+        y_pos = "top" if center_y < 0.33 else "middle" if center_y < 0.67 else "bottom"
+        x_pos = "left" if center_x < 0.33 else "center" if center_x < 0.67 else "right"
+
+        size = "large" if fig.width_pct > 70 else "medium" if fig.width_pct > 40 else "small"
+
+        hints.append(f"  - Figure {i + 1}: {size}, {y_pos}-{x_pos}")
+
+    figure_instruction = f"""This page contains {len(figures)} figure(s). Place exactly {len(figures)} {IMAGE_PLACEHOLDER} placeholder(s) where the figures appear in the document flow.
+
+Figure positions (for reference):
+{chr(10).join(hints)}
+
+Place each placeholder on its own line where that figure appears in the text."""
+
+    return f"{base_prompt}\n\n{figure_instruction}"
 
 
 @dataclass
@@ -133,21 +253,28 @@ def build_prompt_with_image_count(base_prompt: str, image_count: int) -> str:
 
 
 def substitute_image_placeholders(text: str, image_urls: list[str]) -> str:
-    """Replace ![](detected-image) placeholders with actual image URLs.
+    """Replace ![alt](detected-image)<yap-cap>caption</yap-cap> placeholders with actual image URLs.
 
+    Preserves alt text and <yap-cap>caption</yap-cap> annotations from the placeholder.
     Handles mismatch between placeholder count and image count:
     - Extra placeholders are removed
     - Extra images are appended at the end
     """
-    result = text
     idx = 0
 
-    while IMAGE_PLACEHOLDER in result and idx < len(image_urls):
-        result = result.replace(IMAGE_PLACEHOLDER, f"![]({image_urls[idx]})", 1)
+    def replace_match(match: re.Match[str]) -> str:
+        nonlocal idx
+        if idx >= len(image_urls):
+            return ""  # Remove extra placeholders
+        url = image_urls[idx]
         idx += 1
+        alt = match.group(1) or ""
+        tts = match.group(2) or ""
+        return f"![{alt}]({url}){tts}"
 
-    result = result.replace(IMAGE_PLACEHOLDER, "")
+    result = IMAGE_PLACEHOLDER_PATTERN.sub(replace_match, text)
 
+    # Append any remaining images at the end
     if idx < len(image_urls):
         extra = "\n\n".join(f"![]({url})" for url in image_urls[idx:])
         result = f"{result}\n\n{extra}"

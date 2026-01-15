@@ -105,3 +105,39 @@ services:
   #   restart: unless-stopped
   #   env_file: ./.env.prod
 
+  # -------- workers
+  kokoro-cpu:
+    init: true
+    build:
+      context: .
+      dockerfile: yapit/workers/kokoro/Dockerfile.cpu
+    command: python -m yapit.workers.kokoro
+    environment:
+      ADAPTER_CLASS: yapit.workers.adapters.kokoro.KokoroAdapter
+      OMP_NUM_THREADS: ${OMP_NUM_THREADS}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+    deploy:
+      replicas: ${KOKORO_CPU_REPLICAS}
+
+  yolo-cpu:
+    init: true
+    build:
+      context: .
+      dockerfile: yapit/workers/yolo/Dockerfile.cpu
+    command: python -m yapit.workers.yolo
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+    deploy:
+      replicas: ${YOLO_CPU_REPLICAS}
+
