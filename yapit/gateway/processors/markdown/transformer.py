@@ -35,16 +35,107 @@ from yapit.gateway.processors.markdown.models import (
     ThematicBreak,
 )
 
-# Pattern to match {tts:annotation} at start of text
-_ANNOTATION_PATTERN = re.compile(r"^\{tts:([^}]*)\}")
+# Patterns for yap annotation tags
+_YAP_ALT_OPEN = "<yap-alt>"
+_YAP_ALT_CLOSE = "</yap-alt>"
+_YAP_CAP_OPEN = "<yap-cap>"
+_YAP_CAP_CLOSE = "</yap-cap>"
 
 
-def _extract_annotation(text: str) -> tuple[str, str]:
-    """Extract {tts:annotation} from start of text, return (annotation, remaining_text)."""
-    match = _ANNOTATION_PATTERN.match(text)
-    if match:
-        return match.group(1), text[match.end() :]
-    return "", text
+def _is_html_tag(node: SyntaxTreeNode, tag: str) -> bool:
+    """Check if node is an html_inline containing the specified tag."""
+    return node.type == "html_inline" and node.content == tag
+
+
+def _extract_yap_alt(children: list[SyntaxTreeNode], start_idx: int) -> tuple[str, int]:
+    """Extract <yap-alt>...</yap-alt> starting at start_idx.
+
+    Returns (alt_text, num_nodes_consumed). If no yap-alt found, returns ("", 0).
+    """
+    if start_idx >= len(children):
+        return "", 0
+
+    if not _is_html_tag(children[start_idx], _YAP_ALT_OPEN):
+        return "", 0
+
+    # Collect content until </yap-alt>
+    alt_parts = []
+    i = start_idx + 1
+    while i < len(children):
+        node = children[i]
+        if _is_html_tag(node, _YAP_ALT_CLOSE):
+            return "".join(alt_parts), i - start_idx + 1
+        elif node.type == "text":
+            alt_parts.append(node.content or "")
+        # Skip other node types (shouldn't happen in well-formed yap-alt)
+        i += 1
+
+    # No closing tag found - malformed, return nothing
+    return "", 0
+
+
+def _extract_yap_cap(children: list[SyntaxTreeNode], start_idx: int) -> tuple[list[SyntaxTreeNode], int]:
+    """Extract <yap-cap>...</yap-cap> starting at start_idx.
+
+    Returns (list of nodes inside caption, num_nodes_consumed).
+    If no yap-cap found, returns ([], 0).
+    """
+    if start_idx >= len(children):
+        return [], 0
+
+    if not _is_html_tag(children[start_idx], _YAP_CAP_OPEN):
+        return [], 0
+
+    # Collect nodes until </yap-cap>
+    caption_nodes = []
+    i = start_idx + 1
+    while i < len(children):
+        node = children[i]
+        if _is_html_tag(node, _YAP_CAP_CLOSE):
+            return caption_nodes, i - start_idx + 1
+        caption_nodes.append(node)
+        i += 1
+
+    # No closing tag found - malformed, return nothing
+    return [], 0
+
+
+def _extract_plain_text_from_caption_nodes(nodes: list[SyntaxTreeNode]) -> tuple[str, str]:
+    """Extract display text and TTS text from caption nodes.
+
+    Handles <yap-alt> within captions for math alt text.
+    Returns (display_text, tts_text) where:
+    - display_text: includes math LaTeX for rendering
+    - tts_text: replaces math with alt text for speech
+    """
+    display_parts = []
+    tts_parts = []
+    i = 0
+    while i < len(nodes):
+        node = nodes[i]
+
+        if node.type == "math_inline":
+            # Check if followed by <yap-alt>
+            alt, consumed = _extract_yap_alt(nodes, i + 1)
+            display_parts.append(f"${node.content}$")
+            tts_parts.append(alt if alt else node.content or "")
+            i += 1 + consumed
+        elif node.type == "text":
+            display_parts.append(node.content or "")
+            tts_parts.append(node.content or "")
+            i += 1
+        elif _is_html_tag(node, _YAP_ALT_OPEN):
+            # Orphaned yap-alt (not after math) - skip it
+            _, consumed = _extract_yap_alt(nodes, i)
+            i += consumed if consumed else 1
+        else:
+            # Other nodes - include content if any
+            if node.content:
+                display_parts.append(node.content)
+                tts_parts.append(node.content)
+            i += 1
+
+    return "".join(display_parts), "".join(tts_parts)
 
 
 class DocumentTransformer:
@@ -104,10 +195,10 @@ class DocumentTransformer:
         return StructuredDocument(blocks=blocks)
 
     def _extract_math_block_annotations(self, ast: SyntaxTreeNode) -> None:
-        """Extract {alt} annotations from paragraphs following math_blocks.
+        """Extract <yap-alt> annotations from paragraphs following math_blocks.
 
-        When display math ($$...$$) is followed by a paragraph containing only {alt},
-        we extract the alt text and mark that paragraph for skipping.
+        When display math ($$...$$) is followed by a paragraph containing only
+        <yap-alt>...</yap-alt>, we extract the alt text and mark that paragraph for skipping.
         """
         children = ast.children
         skip_indices: set[int] = set()
@@ -115,17 +206,16 @@ class DocumentTransformer:
         for i, child in enumerate(children):
             if child.type == "math_block" and i + 1 < len(children):
                 next_child = children[i + 1]
-                # Check if next is a paragraph with just {annotation}
+                # Check if next is a paragraph with just <yap-alt>...</yap-alt>
                 if next_child.type == "paragraph" and next_child.children:
                     inline = next_child.children[0]
-                    if inline.type == "inline" and len(inline.children) == 1:
-                        text_node = inline.children[0]
-                        if text_node.type == "text" and text_node.content:
-                            alt, remaining = _extract_annotation(text_node.content)
-                            if alt and not remaining.strip():
-                                # Found {alt} paragraph - store and mark for skip
-                                self._math_block_alts[id(child)] = alt
-                                skip_indices.add(i + 1)
+                    if inline.type == "inline" and inline.children:
+                        # Look for <yap-alt>...</yap-alt> pattern
+                        alt, consumed = _extract_yap_alt(inline.children, 0)
+                        if alt and consumed == len(inline.children):
+                            # Entire inline is just the yap-alt annotation
+                            self._math_block_alts[id(child)] = alt
+                            skip_indices.add(i + 1)
 
         # Store indices to skip during transform
         self._skip_child_indices = skip_indices
@@ -217,30 +307,44 @@ class DocumentTransformer:
     def _is_standalone_image(self, inline: SyntaxTreeNode | None) -> bool:
         """Check if inline content is just a single image (no other meaningful content).
 
-        Allows {tts:caption} text after the image, as that's extracted separately.
+        Allows <yap-cap>...</yap-cap> and <yap-alt>...</yap-alt> after the image.
         """
         if not inline or not inline.children:
             return False
 
-        # Filter out whitespace-only text nodes, line breaks, and {tts:...} annotations
-        def is_meaningful(c: SyntaxTreeNode) -> bool:
-            if c.type in ("softbreak", "hardbreak"):
-                return False
-            if c.type == "text":
-                text = (c.content or "").strip()
-                if not text:
-                    return False
-                # {tts:...} annotation after image is not meaningful content
-                if text.startswith("{tts:") and text.endswith("}"):
-                    return False
-            return True
+        # Filter out whitespace-only text, line breaks, and yap annotation tags/content
+        children = inline.children
+        yap_depth = 0  # Track nesting depth of yap tags
+        meaningful = []
 
-        meaningful = [c for c in inline.children if is_meaningful(c)]
+        for c in children:
+            # Track entry/exit of yap tags (use depth for nested tags)
+            if c.type == "html_inline":
+                content = c.content or ""
+                if content in (_YAP_CAP_OPEN, _YAP_ALT_OPEN):
+                    yap_depth += 1
+                    continue
+                elif content in (_YAP_CAP_CLOSE, _YAP_ALT_CLOSE):
+                    yap_depth = max(0, yap_depth - 1)
+                    continue
+
+            # Skip content inside yap tags
+            if yap_depth > 0:
+                continue
+
+            # Skip whitespace and breaks
+            if c.type in ("softbreak", "hardbreak"):
+                continue
+            if c.type == "text" and not (c.content or "").strip():
+                continue
+
+            meaningful.append(c)
+
         return len(meaningful) == 1 and meaningful[0].type == "image"
 
     def _create_image_block(self, inline: SyntaxTreeNode) -> ImageBlock:
         """Create an ImageBlock from a standalone image paragraph."""
-        # Find the image node and check for {caption} in following text
+        # Find the image node
         children = inline.children
         img_idx = next(i for i, c in enumerate(children) if c.type == "image")
         img_node = children[img_idx]
@@ -249,12 +353,12 @@ class DocumentTransformer:
         alt = img_node.content or ""
         title = img_node.attrs.get("title")
 
-        # Extract caption from {annotation} in following text node
+        # Extract caption from <yap-cap>...</yap-cap> following the image
         caption = ""
-        if img_idx + 1 < len(children):
-            next_node = children[img_idx + 1]
-            if next_node.type == "text" and next_node.content:
-                caption, _ = _extract_annotation(next_node.content)
+        caption_tts = ""
+        caption_nodes, _ = _extract_yap_cap(children, img_idx + 1)
+        if caption_nodes:
+            caption, caption_tts = _extract_plain_text_from_caption_nodes(caption_nodes)
 
         # Parse layout metadata from URL query params
         width_pct, row_group = self._parse_image_metadata(src)
@@ -262,8 +366,8 @@ class DocumentTransformer:
         # Strip query params from src for clean URL
         clean_src = src.split("?")[0] if "?" in src else src
 
-        # TTS: prefer caption (scholarly label), fall back to alt (visual description)
-        tts_text = caption if caption else alt
+        # TTS: use caption_tts if available (math replaced with alt), else caption, else alt
+        tts_text = caption_tts if caption_tts else (caption if caption else alt)
 
         return ImageBlock(
             id=self._next_block_id(),
@@ -774,31 +878,38 @@ class DocumentTransformer:
     def _render_inline_html(self, inline: SyntaxTreeNode | None) -> str:
         """Render inline content to HTML string.
 
-        Strips {annotation} suffixes from text nodes following math_inline/image.
+        Skips <yap-alt> and <yap-cap> annotation nodes (not for display).
         """
         if not inline or not inline.children:
             return ""
 
-        # Pre-process: track which text nodes need {annotation} stripped
         children = inline.children
-        text_modifications: dict[int, str] = {}
-
-        for i, child in enumerate(children):
-            if child.type in ("math_inline", "image") and i + 1 < len(children):
-                next_child = children[i + 1]
-                if next_child.type == "text" and next_child.content:
-                    _, remaining = _extract_annotation(next_child.content)
-                    text_modifications[i + 1] = remaining
-
-        # Render with modifications
         parts = []
-        for i, child in enumerate(children):
-            if i in text_modifications:
-                text = text_modifications[i]
-                if text:
-                    parts.append(text)
-            else:
-                parts.append(self._render_inline_node_html(child))
+        i = 0
+
+        while i < len(children):
+            child = children[i]
+
+            # Skip yap-cap sections
+            if _is_html_tag(child, _YAP_CAP_OPEN):
+                _, consumed = _extract_yap_cap(children, i)
+                i += consumed if consumed else 1
+                continue
+
+            # Skip yap-alt sections
+            if _is_html_tag(child, _YAP_ALT_OPEN):
+                _, consumed = _extract_yap_alt(children, i)
+                i += consumed if consumed else 1
+                continue
+
+            # Skip orphaned closing tags
+            if _is_html_tag(child, _YAP_CAP_CLOSE) or _is_html_tag(child, _YAP_ALT_CLOSE):
+                i += 1
+                continue
+
+            parts.append(self._render_inline_node_html(child))
+            i += 1
+
         return "".join(parts)
 
     def _render_inline_node_html(self, node: SyntaxTreeNode) -> str:
@@ -841,36 +952,47 @@ class DocumentTransformer:
     def _transform_inline(self, inline: SyntaxTreeNode | None) -> list[InlineContent]:
         """Transform inline content to AST representation.
 
-        Extracts {alt} annotations from text following math_inline/image nodes.
+        Extracts <yap-alt> annotations from nodes following math_inline.
+        Skips <yap-cap> content (handled separately for images).
         """
         if not inline or not inline.children:
             return []
 
-        # Pre-process: extract {annotations} from text nodes after math_inline/image
         children = inline.children
-        annotations: dict[int, str] = {}  # index -> annotation
-        modified_text: dict[int, str] = {}  # index -> modified text content
-
-        for i, child in enumerate(children):
-            if child.type in ("math_inline", "image") and i + 1 < len(children):
-                next_child = children[i + 1]
-                if next_child.type == "text" and next_child.content:
-                    alt, remaining = _extract_annotation(next_child.content)
-                    if alt:
-                        annotations[i] = alt
-                        modified_text[i + 1] = remaining
-
-        # Transform with annotations
         result: list[InlineContent] = []
-        for i, child in enumerate(children):
-            # Use modified text if annotation was extracted
-            if i in modified_text:
-                text = modified_text[i]
-                if text:  # Only add non-empty text
-                    result.append(TextContent(content=text))
-            else:
-                alt = annotations.get(i, "")
+        i = 0
+
+        while i < len(children):
+            child = children[i]
+
+            # Skip yap-cap sections (handled by _create_image_block)
+            if _is_html_tag(child, _YAP_CAP_OPEN):
+                _, consumed = _extract_yap_cap(children, i)
+                i += consumed if consumed else 1
+                continue
+
+            # Skip orphaned yap-alt (shouldn't happen, but be safe)
+            if _is_html_tag(child, _YAP_ALT_OPEN):
+                _, consumed = _extract_yap_alt(children, i)
+                i += consumed if consumed else 1
+                continue
+
+            # Skip closing tags that might be orphaned
+            if _is_html_tag(child, _YAP_CAP_CLOSE) or _is_html_tag(child, _YAP_ALT_CLOSE):
+                i += 1
+                continue
+
+            # For math_inline, check for following <yap-alt>
+            if child.type == "math_inline":
+                alt, consumed = _extract_yap_alt(children, i + 1)
                 result.extend(self._transform_inline_node(child, alt=alt))
+                i += 1 + consumed
+                continue
+
+            # Regular node
+            result.extend(self._transform_inline_node(child))
+            i += 1
+
         return result
 
     def _transform_inline_node(self, node: SyntaxTreeNode, alt: str = "") -> list[InlineContent]:
@@ -929,41 +1051,47 @@ class DocumentTransformer:
     def _extract_plain_text(self, inline: SyntaxTreeNode | None) -> str:
         """Extract plain text from inline content (for TTS).
 
-        Handles {alt} annotations: uses alt text for math_inline, strips {annotations}
-        from text nodes that follow math_inline/image.
+        Uses <yap-alt> for math alt text. Skips <yap-cap> content (handled separately).
         """
         if not inline or not inline.children:
             return ""
 
-        # Pre-process: find annotations and track which text nodes need modification
         children = inline.children
-        annotations: dict[int, str] = {}  # math_inline/image index -> alt text
-        text_modifications: dict[int, str] = {}  # text index -> modified content
-
-        for i, child in enumerate(children):
-            if child.type in ("math_inline", "image") and i + 1 < len(children):
-                next_child = children[i + 1]
-                if next_child.type == "text" and next_child.content:
-                    alt, remaining = _extract_annotation(next_child.content)
-                    if alt:
-                        annotations[i] = alt
-                        text_modifications[i + 1] = remaining
-
-        # Extract text with annotations applied
         parts = []
-        for i, child in enumerate(children):
-            if i in text_modifications:
-                # Use modified text (without the {annotation} prefix)
-                text = text_modifications[i]
-                if text:
-                    parts.append(text)
-            elif child.type == "math_inline":
-                # Use annotation as alt text, or skip if no annotation
-                alt = annotations.get(i, "")
+        i = 0
+
+        while i < len(children):
+            child = children[i]
+
+            # Skip yap-cap sections (handled by _create_image_block)
+            if _is_html_tag(child, _YAP_CAP_OPEN):
+                _, consumed = _extract_yap_cap(children, i)
+                i += consumed if consumed else 1
+                continue
+
+            # Skip orphaned yap-alt (shouldn't appear outside math context)
+            if _is_html_tag(child, _YAP_ALT_OPEN):
+                _, consumed = _extract_yap_alt(children, i)
+                i += consumed if consumed else 1
+                continue
+
+            # Skip closing tags
+            if _is_html_tag(child, _YAP_CAP_CLOSE) or _is_html_tag(child, _YAP_ALT_CLOSE):
+                i += 1
+                continue
+
+            # For math_inline, use <yap-alt> if present
+            if child.type == "math_inline":
+                alt, consumed = _extract_yap_alt(children, i + 1)
                 if alt:
                     parts.append(alt)
-            else:
-                parts.append(self._extract_plain_text_node(child))
+                # else: no alt, skip the math for TTS
+                i += 1 + consumed
+                continue
+
+            # Regular node
+            parts.append(self._extract_plain_text_node(child))
+            i += 1
 
         return "".join(parts)
 
@@ -981,7 +1109,10 @@ class DocumentTransformer:
         elif node.type in ("softbreak", "hardbreak"):
             return " "
         elif node.type == "math_inline":
-            # Handled by _extract_plain_text with annotation lookup
+            # Handled by _extract_plain_text with yap-alt lookup
+            return ""
+        elif node.type == "html_inline":
+            # Skip HTML tags (yap annotations handled at higher level)
             return ""
         else:
             return node.content or ""

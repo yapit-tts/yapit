@@ -11,26 +11,28 @@ Rules:
 Images:
 - The number of detected images on this page will be provided below
 - For each image, output exactly one image placeholder at the position where it appears
-- Format: ![alt](detected-image){tts:caption}
+- Format: ![alt](detected-image)<yap-cap>caption</yap-cap>
   - alt = short visual description of what the image shows
-  - {tts:caption} = figure caption from the document (omit {tts:...} if no caption)
+  - <yap-cap>...</yap-cap> = figure caption from the document (omit if no caption)
 - If no image count is provided, do not output any image placeholders
 
 Output only the markdown, no commentary or explanations.
 
 
-TTS annotations - use {tts:...} syntax:
+TTS annotations for math — use <yap-alt>...</yap-alt> tags:
 
-INLINE MATH: $latex${tts:alt} — immediately after closing $
-  Example: $\alpha${tts:alpha}
+INLINE: $latex$<yap-alt>alt</yap-alt> — immediately after closing $
+  Example: $\alpha$<yap-alt>alpha</yap-alt>
 
-DISPLAY MATH: $$latex$$ then blank line, then {tts:alt} alone on next line
+DISPLAY: $$latex$$ then <yap-alt>alt</yap-alt> on next line
   Example:
     $$E=mc^2$$
-
-    {tts:E equals m c squared}
+    <yap-alt>E equals m c squared</yap-alt>
 
 Guidelines:
-- Math {tts:...} must be ACCURATE to the latex but readable aloud
+- Math <yap-alt>...</yap-alt> must be ACCURATE to the latex but readable aloud
 - Complex equations: describe what it represents in context rather than reading symbols
+- Figure captions may contain math — use <yap-alt> inside <yap-cap>:
+  Example: <yap-cap>Figure 1 shows $\beta$<yap-alt>beta</yap-alt> values</yap-cap>
+- IMPORTANT: Keep all tag content on a single line (no line breaks inside <yap-alt> or <yap-cap>)
 

@@ -15,10 +15,10 @@ from pypdf import PdfReader, PdfWriter
 PROMPTS_DIR = Path(__file__).parent / "prompts"
 
 # For prompt instructions - tells model what to output
-IMAGE_PLACEHOLDER = "![alt](detected-image){tts:caption}"
+IMAGE_PLACEHOLDER = "![alt](detected-image)<yap-cap>caption</yap-cap>"
 
-# Matches all variants: ![alt](detected-image){tts:caption}, ![alt](detected-image), ![](detected-image)
-IMAGE_PLACEHOLDER_PATTERN = re.compile(r"!\[([^\]]*)\]\(detected-image\)(\{tts:[^}]*\})?")
+# Matches all variants: ![alt](detected-image)<yap-cap>caption</yap-cap>, ![alt](detected-image), ![](detected-image)
+IMAGE_PLACEHOLDER_PATTERN = re.compile(r"!\[([^\]]*)\]\(detected-image\)(<yap-cap>.*?</yap-cap>)?")
 
 _HF_REPO_ID = "juliozhao/DocLayout-YOLO-DocStructBench"
 _HF_MODEL_FILENAME = "doclayout_yolo_docstructbench_imgsz1024.pt"
@@ -531,9 +531,9 @@ def build_prompt_with_image_count(base_prompt: str, image_count: int) -> str:
 
 
 def substitute_image_placeholders(text: str, image_urls: list[str]) -> str:
-    """Replace ![alt](detected-image){tts:caption} placeholders with actual image URLs.
+    """Replace ![alt](detected-image)<yap-cap>caption</yap-cap> placeholders with actual image URLs.
 
-    Preserves alt text and {tts:caption} annotations from the placeholder.
+    Preserves alt text and <yap-cap>caption</yap-cap> annotations from the placeholder.
     Handles mismatch between placeholder count and image count:
     - Extra placeholders are removed
     - Extra images are appended at the end
