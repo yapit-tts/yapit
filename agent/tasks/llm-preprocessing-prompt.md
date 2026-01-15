@@ -1,8 +1,10 @@
 ---
-status: active
+status: done
 type: tracking
 started: 2025-01-06
 ---
+
+Superceded by other task files.
 
 # Gemini Document Processing Integration
 

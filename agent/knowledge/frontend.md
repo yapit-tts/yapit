@@ -41,3 +41,13 @@ element (Xpx) → parent (Ypx) → grandparent (Zpx) → ...
 ```
 Find which ancestor is the constraint, fix there. Flex containers especially: children don't auto-stretch width in flex-row parents without `w-full`.
 
+## React Compiler
+
+Enabled via `babel-plugin-react-compiler`. Auto-memoizes components/values — no need for manual `useMemo`/`useCallback` in most cases.
+
+- ESLint rule `react-compiler/react-compiler` catches violations at lint time
+- Opt out specific components with `"use no memo"` directive at function start
+- Don't write to refs during render — move to `useEffect`
+
+**Gotcha — shadcn/ui components:**
+Some shadcn components assume Next.js SSR patterns. Example: sidebar cookie was write-only (SSR would read it server-side). In our SPA, we added client-side cookie reading on init.

@@ -1,6 +1,7 @@
 ---
-status: active
+status: done
 started: 2026-01-15
+completed: 2026-01-15
 ---
 
 # TTS Annotation Syntax
@@ -76,72 +77,32 @@ Math inside custom tags IS parsed by the dollarmath plugin. ✅
 
 ### Constraint: No newlines inside tags
 
-If content has newlines inside the tag:
-```markdown
-<yap-cap>Long caption
-with newlines</yap-cap>
-```
-...it becomes `html_block` and inner content is NOT parsed for markdown.
-
-**Prompt must instruct:** Keep `<yap-alt>` and `<yap-cap>` content on a single line.
+If content has newlines inside the tag, it becomes `html_block` and inner content is NOT parsed for markdown. Prompt instructs VLM to keep content on single lines.
 
 ## Implementation
 
-### 1. Update prompt (`extraction_v1.txt`)
+Helper functions added to `transformer.py`:
+- `_is_html_tag()` — Check if node is a specific HTML tag
+- `_extract_yap_alt()` — Extract `<yap-alt>...</yap-alt>` spans, returns (alt_text, nodes_consumed)
+- `_extract_yap_cap()` — Extract `<yap-cap>...</yap-cap>` spans, returns (caption_nodes, nodes_consumed)
+- `_extract_plain_text_from_caption_nodes()` — Get (display_text, tts_text) from caption nodes
 
-```
-Images:
-- Format: ![alt](detected-image)<yap-cap>caption</yap-cap>
-  - alt = short visual description
-  - <yap-cap>...</yap-cap> = figure caption (omit if none)
+Key insight: Use depth counter in `_is_standalone_image()` to handle nested tags correctly.
 
-Math TTS — use <yap-alt>...</yap-alt>:
-
-INLINE: $latex$<yap-alt>alt</yap-alt>
-  Example: $\alpha$<yap-alt>alpha</yap-alt>
-
-DISPLAY: $$latex$$ then <yap-alt>alt</yap-alt> on next line
-  Example:
-    $$E=mc^2$$
-    <yap-alt>E equals m c squared</yap-alt>
-
-Captions may contain math — use <yap-alt> inside <yap-cap>:
-  <yap-cap>Figure 1 shows $\beta$<yap-alt>beta</yap-alt> values</yap-cap>
-
-IMPORTANT: Keep all annotation content on a single line (no line breaks inside tags).
-```
-
-### 2. Token post-processor
-
-Add a phase between markdown-it parsing and block transformation:
-
-```python
-def process_annotations(tokens: list[Token]) -> list[Token]:
-    """
-    Walk token stream, attach annotations to elements:
-    - <yap-alt>...</yap-alt> after math_inline → attach as meta['alt']
-    - <yap-cap>...</yap-cap> after image → extract caption, handle nested <yap-alt>
-    """
-```
-
-This replaces the scattered annotation extraction currently in transformer.py.
-
-### 3. Simplify transformer
-
-Remove `_extract_annotation()` calls from transform methods. Instead, read from `token.meta['alt']` and `token.meta['caption']` which are already attached by the post-processor.
-
-## Files to Change
+## Files Changed
 
 | File | Change |
 |------|--------|
-| `yapit/gateway/processors/document/prompts/extraction_v1.txt` | Update syntax examples |
-| `yapit/gateway/processors/document/extraction.py` | Update `IMAGE_PLACEHOLDER_PATTERN` |
-| `yapit/gateway/processors/markdown/transformer.py` | Add post-processor, remove scattered extraction |
+| `extraction_v1.txt` | Updated syntax, added nested example, "no newlines" instruction |
+| `extraction.py` | Updated `IMAGE_PLACEHOLDER_PATTERN` for `<yap-cap>` |
+| `transformer.py` | Added helper functions, updated all annotation extraction points |
+| `test_markdown.py` | Added `TestYapAnnotations` class with 7 tests |
 
-## Done When
+## Done
 
-- [ ] Prompt uses `<yap-alt>` and `<yap-cap>` syntax
-- [ ] Post-processor extracts and attaches annotations
-- [ ] Transformer reads from token.meta instead of parsing inline
-- [ ] Test: math-heavy figure caption renders correctly AND has correct TTS
-- [ ] Test: inline math, display math, image captions all work
+- [x] Prompt uses `<yap-alt>` and `<yap-cap>` syntax
+- [x] Annotation extraction handles nested tags via depth tracking
+- [x] Transformer extracts captions with `_extract_yap_cap`, math alts with `_extract_yap_alt`
+- [x] Test: math-heavy figure caption renders correctly AND has correct TTS
+- [x] Test: inline math, display math, image captions all work
+- [x] Unit tests added for annotation handling

@@ -60,6 +60,50 @@ Each block gets:
 - `plain_text` — Text for TTS synthesis
 - `audio_block_idx` — Index into the audio blocks array (or null if not spoken)
 
+## TTS Annotations
+
+Some content needs alternative text for speech synthesis:
+
+- **Math expressions** — `$\alpha$` should be spoken as "alpha"
+- **Figure captions** — Images need scholarly captions read aloud
+- **Nested case** — Captions can contain math, each needing its own alt
+
+### Annotation Format
+
+Uses distinct HTML-like tags (parsed as `html_inline` by markdown-it):
+
+```markdown
+$\alpha$<yap-alt>alpha</yap-alt>           # Inline math
+$$E = mc^2$$
+<yap-alt>E equals m c squared</yap-alt>    # Display math
+
+![Diagram](url)<yap-cap>Figure 1 shows $\beta$<yap-alt>beta</yap-alt> values</yap-cap>
+```
+
+- `<yap-alt>` — Math alt text (short, inline)
+- `<yap-cap>` — Figure captions (can contain `<yap-alt>` inside)
+
+Distinct tags allow unambiguous nesting. No newlines allowed inside tags (would become `html_block`).
+
+### Extraction
+
+Helper functions in `transformer.py`:
+- `_extract_yap_alt()` — Returns (alt_text, nodes_consumed)
+- `_extract_yap_cap()` — Returns (caption_nodes, nodes_consumed)
+- `_extract_plain_text_from_caption_nodes()` — Returns (display_text, tts_text)
+
+Captions produce two outputs:
+- **display_text** — Keeps LaTeX for visual rendering (`$\beta$`)
+- **tts_text** — Replaces math with alt for speech ("beta")
+
+### Design Notes
+
+Earlier approaches failed:
+- `{tts:...}` — Conflicted with LaTeX braces
+- Single `<tts>` tag — Nesting broke regex matching
+
+See [[2026-01-15-tts-annotation-syntax-pivot]] for full history.
+
 ## Block Splitting
 
 Long paragraphs are split to keep synthesis chunks manageable:

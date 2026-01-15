@@ -38,3 +38,7 @@ make dashboard-local  # runs dashboard on existing local data
 make sync-metrics     # just sync, no dashboard
 ```
 
+## Gotchas
+
+- **Inworld `audio_duration_ms` is estimated** — Inworld calculates duration from MP3 file size (~16KB/sec assumption), can be off 10-20%. Realtime ratio metrics for Inworld are approximate. Kokoro duration is accurate (calculated from PCM bytes). Frontend uses accurate duration from decoded AudioBuffer regardless.
+

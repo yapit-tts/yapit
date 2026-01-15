@@ -1,6 +1,8 @@
 ---
-status: active
+status: done
 started: 2026-01-03
+completed: 2026-01-15
+commit: 11db22e
 ---
 
 # Task: Caching Strategy

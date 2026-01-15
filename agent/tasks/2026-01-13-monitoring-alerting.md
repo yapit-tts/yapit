@@ -26,12 +26,35 @@ Public topics fine for non-sensitive alerts.
 
 ### 2. Metrics Coverage Gaps
 
-Currently synthesis-focused. Add:
+Currently synthesis-focused. For each area, consider:
+
+**Prio 1 — LLM-analyzable diagnostics:**
+What can be queried from SQL/logs and interpreted by automated agents?
+- Error patterns, anomaly detection, issue diagnosis
+- Should be straightforward: raw data + aggregates → LLM → insight
+
+**Prio 2 — Human dashboard / cross-cutting insights:**
+Higher-level stuff LLMs might struggle with, but humans benefit from at a glance.
+- Per-model breakdowns (synthesis ratio, queue depth, wait time — currently missing)
+- Buffer health: are blocks actually buffering? (needs frontend+backend algorithm awareness)
+- Time-to-first-audio (real user experience metric)
+- Dashboard needs overhaul: more informative at first glance, visual polish, better labeling
+
+**Prio 3 — Cool stats / other:**
+- Voice popularity
+- Peak usage patterns
+- Document complexity vs processing time correlations
+- Cost tracking (external API calls: Gemini, RunPod, etc.)
+
+Areas to cover:
 - [ ] Auth failures (promote from DEBUG, log to metrics)
 - [ ] HTTP request latencies (general, not just synthesis)
 - [ ] Billing/Stripe events (webhook activity, failures)
-- [ ] Document processing events (parallel task may cover this)
+- [ ] Document processing events (upload, extraction, block splitting)
+  - Gemini API: success/failure rates, retry counts, error types (429/500/503/504), pages processed vs failed
 - [ ] Playwright usage (how often fallback to browser fetch is needed)
+- [ ] External API usage (not duplicating billing consoles, but: pages processed, minutes used, failures/aborts/latency — unified view)
+- [ ] User session metrics (documents per session, playback duration, etc.)
 
 ### 3. Infra Metrics
 
@@ -80,6 +103,18 @@ Add `make sync-logs` similar to `make sync-metrics`:
 | Logs | `/data/gateway/logs/` | `make sync-logs` → local files | jq, Claude |
 
 Both give full local access without endangering prod. Good for sandbox mode.
+
+### 6. Stress Testing
+
+Works perfectly for 1-10 users. But 10-20 concurrent users? Probably breaks.
+
+Need automated e2e stress testing:
+- [ ] Simulate N concurrent users (document upload → synthesis → playback)
+- [ ] Find breaking points (queue overflow, Redis bottlenecks, memory, etc.)
+- [ ] Establish baseline: "system handles X concurrent users before degradation"
+- [ ] Run periodically or before major changes
+
+Tools: locust, k6, or custom script with async clients.
 
 ## Open Questions
 

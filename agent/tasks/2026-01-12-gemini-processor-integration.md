@@ -1,6 +1,7 @@
 ---
 status: active
 started: 2026-01-12
+pr: https://github.com/yapit-tts/yapit/pull/56
 ---
 
 # Task: Gemini Document Processor Integration
@@ -119,16 +120,18 @@ Standard markdown image syntax. LLM outputs naturally, regex matches easily. Pos
 - [x] Cache LRU unit tests
 - [x] Integration tests for GeminiProcessor (with API key marker, `make test-gemini`)
 
-### Frontend (Partial)
+### Frontend (Progress ✅, Display WIP)
 - [x] Page selector UI (text input + visual bar for multi-page PDFs)
 - [x] Renamed OCR toggle → "AI Transform"
-- [ ] 402 error handling (usage limits UX)
-- [ ] Progress indication during extraction
+- [x] 402 error handling (auto-disable AI Transform, show upgrade link)
+- [x] Progress indication during extraction (cache-based polling)
+- [x] Document tab close behavior in /tips (cached pages survive, just retry)
 
-### Error Handling
-- [ ] 402 error frontend UX (detect, show helpful message, link to subscription)
-- [ ] Partial failure handling with exponential backoff
-- [ ] Rate limiting (429 handling with backoff)
+### Error Handling ✅
+- [x] 402 error frontend UX (detect, show helpful message, link to subscription)
+- [x] Partial failure handling with exponential backoff
+- [x] Rate limiting (429 handling with backoff)
+- [x] Failed pages banner in frontend (dismissible, shows which pages failed)
 
 ### Metrics
 - [ ] Cache stats to TimescaleDB (periodic logging of get_stats)
@@ -141,13 +144,16 @@ Standard markdown image syntax. LLM outputs naturally, regex matches easily. Pos
 - [ ] Batch API integration for ~50% more usage limits
 - [ ] Queue management for batch jobs
 
+### Performance
+- [ ] Investigate parallelizing MarkItDown page processing (currently sequential)
+
 ### Prompt Refinement
 - [ ] Inline math handling
-- [ ] Side-by-side images
-- [ ] Image edge cases:  https://arxiv.org/pdf/2301.00234.pdf (detects icons, but not the figure images themselves?; icons spam images, look way too big ... idea regarding size: ask gemini to specify image size/position in some way we can parse and use (not just "these two are side by side"?))
 - [ ] Displaymath captions
-- [ ] Figure captions
 - [ ] TOC links support
+
+### YOLO Figure Detection → [[2026-01-14-doclayout-yolo-figure-detection]]
+Separate task for replacing PyMuPDF with DocLayout-YOLO. Includes layout preservation, transformer changes, and frontend updates.
 
 ### Supporting Webpages / Text input
 
@@ -155,10 +161,10 @@ Standard markdown image syntax. LLM outputs naturally, regex matches easily. Pos
 
 ## Priority
 
-1. **Frontend 402 UX** — Nicer error handling when usage limits exceeded
-2. **Progress indicator** — Live feedback during PDF processing (convert page bar to progress bar, or counter)
+1. ~~**Frontend 402 UX** — Nicer error handling when usage limits exceeded~~ ✅
+2. ~~**Progress indicator** — Live feedback during PDF processing~~ ✅ (UX nit: green color too neon)
 3. **Error handling** — Partial failures with backoff, 429 handling
-4. **Metrics** — Cache health to TimescaleDB
+4. **Metrics** — Cache stats to TimescaleDB
 5. **Prompt refinement** — Math, captions, etc.
 6. **Batch mode** — Gemini batch API discount
 
@@ -174,10 +180,24 @@ Standard markdown image syntax. LLM outputs naturally, regex matches easily. Pos
 ## Gotchas
 
 - PyMuPDF only extracts raster images, not vector graphics — prompt instructs to only place placeholders if image count is given
-- `record_usage()` only called on success — existing behavior is correct
+- **Billing recorded upfront** — `record_usage()` called BEFORE extraction starts to prevent exploit (cancel mid-extraction = free API calls). User charged for intent, not outcome. For actual server-side failures, grant usage credits manually.
 - Images keyed by content_hash (PDF content), NOT full extraction key
 - Extraction cache can evict freely — markdown also in PostgreSQL Document
 - **Cache schema changed** — no `expires_at` column anymore, must delete SQLite DBs on deploy if upgrading
 - **No DocumentProcessorManager** — removed in favor of direct instantiation via AI_PROCESSOR env var
 - **Processor slugs hardcoded** — each processor class defines its own slug ("gemini", "markitdown")
 - **process_with_billing signature changed** — takes `total_pages`, `file_size` directly, not file_cache
+- **Tab close during extraction** — cancels extraction, but cached pages survive.
+- **Pages cached immediately** — Processors cache each page right after Gemini API returns, not after all pages complete. This enables real-time progress tracking (and resilience to interruptions).
+
+## Progress Indicator Approach (Implemented)
+
+**Blocking POST + Parallel Polling (cache-based):**
+1. Backend: Status endpoint checks extraction cache directly for completed pages
+2. Frontend: Fire POST, poll status in parallel every 1.5s, update PageSelectionBar
+3. PageSelectionBar shows: muted=unselected, blue=pending, green=completed
+4. Cancel button (X) aborts the fetch request via AbortController
+
+Key insight: "which pages are done" == "which cache entries exist" — no separate progress state needed. The extraction cache is the source of truth.
+
+No WebSocket complexity. 1-2 second UI lag acceptable given extraction takes 5s-minutes anyway.

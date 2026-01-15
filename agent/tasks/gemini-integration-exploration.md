@@ -1,6 +1,8 @@
 ---
-status: active
+status: done
 started: 2025-01-08
+completed: 2026-01-15
+pr: https://github.com/yapit-tts/yapit/pull/56
 ---
 
 # Task: Gemini 3 Flash Integration - Exploration & Planning

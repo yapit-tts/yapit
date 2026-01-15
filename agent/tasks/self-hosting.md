@@ -25,6 +25,9 @@ Make it easy for people to self-host Yapit with their own models/GPUs. Minimal e
 - Processor config is user-editable (`tts_processors.json`)
 - Stack Auth works fine for self-hosting (can have multiple users)
 
+BUG: BILLING_ENABLED=false doesn't unlock models in the model picker... also we have this (outdated?) admin concept which we should rethink and how it interacts with the billing env var...? ideally only the former is needed? 
+
+
 ## What We DON'T Need
 
 - Removing Stack Auth (self-hosters can use it)
