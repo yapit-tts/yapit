@@ -1,7 +1,6 @@
 """Scans for stale jobs and sends them to RunPod overflow."""
 
 import asyncio
-import base64
 import time
 
 from loguru import logger
@@ -52,11 +51,8 @@ async def run_overflow_scanner(redis: Redis, settings: Settings) -> None:
 
 def _get_overflow_config(settings: Settings) -> dict[str, str]:
     """Returns {model_slug: runpod_endpoint_id} for models with overflow."""
-    # TODO: Make this configurable via settings or database
-    # For now, hardcode kokoro -> runpod endpoint
-    # TODO we said it'ss fine to hardcode bcs since if we change either kokoro or runpod we're gonna have to refactor "substantially" anyways, but like the setting is missing from settings + env var. and should it maybe be called kokoro_runpod_overflow_endpoint_id or sth?
-    if settings.kokoro_overflow_endpoint_id:
-        return {"kokoro": settings.kokoro_overflow_endpoint_id}
+    if settings.kokoro_runpod_serverless_endpoint:
+        return {"kokoro": settings.kokoro_runpod_serverless_endpoint}
     return {}
 
 
@@ -124,7 +120,6 @@ async def _process_via_runpod(
             raise RuntimeError(f"RunPod error: {result['error']}")
 
         processing_time_ms = int((time.time() - start_time) * 1000)
-        audio = base64.b64decode(result["audio_base64"])
 
         worker_result = WorkerResult(
             job_id=job.job_id,
@@ -137,7 +132,7 @@ async def _process_via_runpod(
             text_length=len(job.synthesis_parameters.text),
             worker_id="overflow-runpod",
             processing_time_ms=processing_time_ms,
-            audio=audio,
+            audio_base64=result["audio_base64"],
             duration_ms=result["duration_ms"],
             audio_tokens=result.get("audio_tokens"),
         )

@@ -62,7 +62,6 @@ jobs:
         run: |
           cat > .env << EOF
           RUNPOD_API_KEY=${{ secrets.RUNPOD_API_KEY }}
-          TTS_PROCESSORS_FILE=tts_processors.ci.json
           AI_PROCESSOR=
           KOKORO_CPU_REPLICAS=1
           YOLO_CPU_REPLICAS=1
