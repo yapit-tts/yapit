@@ -1,5 +1,6 @@
 """Contracts for Redis keys, queues, and job processing."""
 
+import time
 import uuid
 from typing import Annotated, Final, Literal
 
@@ -7,22 +8,25 @@ import annotated_types
 from pydantic import BaseModel, ConfigDict, Field
 
 TTS_INFLIGHT: Final[str] = "tts:inflight:{hash}"
-TTS_SUBSCRIBERS: Final[str] = (
-    "tts:subscribers:{hash}"  # Set of user_id:doc_id:block_idx to notify when variant completes
-)
+TTS_SUBSCRIBERS: Final[str] = "tts:subscribers:{hash}"
 TTS_CURSOR: Final[str] = "tts:cursor:{user_id}:{document_id}"
+TTS_PENDING: Final[str] = "tts:pending:{user_id}:{document_id}"
 
-FILTER_STATUS: Final[str] = "filters:{document_id}:status"
-FILTER_CANCEL: Final[str] = "filters:{document_id}:cancel"
-FILTER_INFLIGHT: Final[str] = "filters:{document_id}:inflight"
+# Queue structure (sorted set + hashes for efficient eviction)
+TTS_QUEUE: Final[str] = "tts:queue:{model}"  # sorted set: job_id -> timestamp
+TTS_JOBS: Final[str] = "tts:jobs"  # hash: job_id -> job_json
+TTS_JOB_INDEX: Final[str] = "tts:job_index"  # hash: "user_id:doc_id:block_idx" -> job_id
+
+TTS_RESULTS: Final[str] = "tts:results"
+TTS_PROCESSING: Final[str] = "tts:processing:{worker_id}"
+TTS_DLQ: Final[str] = "tts:dlq:{model}"
 
 
 SynthesisMode = Literal["browser", "server"]
 
 
 def get_queue_name(model: str) -> str:
-    """Queue name for server-side synthesis. Browser mode doesn't use queues."""
-    return f"tts:queue:{model}"
+    return TTS_QUEUE.format(model=model)
 
 
 def get_pubsub_channel(user_id: str) -> str:
@@ -44,25 +48,56 @@ class SynthesisParameters(BaseModel):
 
 
 class SynthesisJob(BaseModel):
-    """JSON contract between gateway and worker."""
+    """Job pushed to queue, processed by workers."""
 
     job_id: uuid.UUID
     variant_hash: str
     user_id: str
     document_id: uuid.UUID
     block_idx: int
+    model_slug: str
+    voice_slug: str
 
     synthesis_parameters: SynthesisParameters
+
+    queued_at: float = Field(default_factory=time.time)
+    retry_count: int = 0
 
     model_config = ConfigDict(frozen=True)
 
 
 class SynthesisResult(BaseModel):
-    job_id: uuid.UUID
     audio: Annotated[bytes, annotated_types.MaxLen(10 * 1024 * 1024)]
     duration_ms: int
-    # For HIGGS context accumulation: base64-encoded serialized audio token tensor from this block
     audio_tokens: str | None = None
+
+
+class WorkerResult(BaseModel):
+    """Pushed to tts:results by workers. Contains everything for finalization."""
+
+    job_id: uuid.UUID
+    variant_hash: str
+    user_id: str
+    document_id: uuid.UUID
+    block_idx: int
+    model_slug: str
+    voice_slug: str
+    text_length: int
+
+    worker_id: str
+    processing_time_ms: int
+
+    audio_base64: str | None = None
+    duration_ms: int | None = None
+    audio_tokens: str | None = None
+    error: str | None = None
+
+
+class ProcessingEntry(BaseModel):
+    """Stored in TTS_PROCESSING to track jobs being worked on."""
+
+    processing_started: float
+    job: SynthesisJob
 
 
 # WebSocket messages: Client → Server

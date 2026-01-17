@@ -16,10 +16,14 @@ from yapit.gateway.db import close_db, prepare_database
 from yapit.gateway.deps import create_cache
 from yapit.gateway.exceptions import APIError
 from yapit.gateway.metrics import init_metrics_db, start_metrics_writer, stop_metrics_writer
+from yapit.gateway.overflow_scanner import run_overflow_scanner
 from yapit.gateway.processors.document.gemini import GeminiProcessor
 from yapit.gateway.processors.document.markitdown import MarkitdownProcessor
 from yapit.gateway.processors.document.yolo_client import YoloProcessor
-from yapit.gateway.processors.tts.manager import TTSProcessorManager
+from yapit.gateway.result_consumer import run_result_consumer
+from yapit.gateway.visibility_scanner import run_visibility_scanner
+from yapit.workers.adapters.inworld import InworldAdapter
+from yapit.workers.queue_worker import run_worker
 
 logger.remove()
 logger.add(
@@ -67,35 +71,44 @@ async def lifespan(app: FastAPI):
     else:
         app.state.ai_processor = None
 
-    tts_processor_manager = TTSProcessorManager(
-        redis=app.state.redis_client,
-        cache=app.state.audio_cache,
-        settings=settings,
+    # TTS background tasks
+    background_tasks: list[asyncio.Task] = []
+
+    result_consumer_task = asyncio.create_task(
+        run_result_consumer(app.state.redis_client, app.state.audio_cache, settings)
     )
-    app.state.tts_processor_manager = tts_processor_manager
-    await tts_processor_manager.start(settings.tts_processors_file)
+    background_tasks.append(result_consumer_task)
+
+    visibility_scanner_task = asyncio.create_task(run_visibility_scanner(app.state.redis_client))
+    background_tasks.append(visibility_scanner_task)
+
+    overflow_scanner_task = asyncio.create_task(run_overflow_scanner(app.state.redis_client, settings))
+    background_tasks.append(overflow_scanner_task)
+
+    # Inworld workers run in gateway (API calls, no local model)
+    if settings.inworld_api_key:
+        for model_id, model_slug in [("inworld-tts-1", "inworld"), ("inworld-tts-1-max", "inworld-max")]:
+            adapter = InworldAdapter(api_key=settings.inworld_api_key, model_id=model_id)
+            task = asyncio.create_task(run_worker(settings.redis_url, model_slug, adapter, f"inworld-{model_slug}"))
+            background_tasks.append(task)
+        logger.info("Inworld workers started")
 
     # YOLO figure detection processor
     yolo_processor = YoloProcessor(redis=app.state.redis_client, settings=settings)
     app.state.yolo_processor = yolo_processor
     yolo_processor_task = asyncio.create_task(yolo_processor.run())
+    background_tasks.append(yolo_processor_task)
 
     all_caches = [app.state.audio_cache, app.state.document_cache, app.state.extraction_cache]
     maintenance_task = asyncio.create_task(_cache_maintenance_task(all_caches))
+    background_tasks.append(maintenance_task)
 
     yield
 
-    maintenance_task.cancel()
-    yolo_processor_task.cancel()
-    try:
-        await maintenance_task
-    except asyncio.CancelledError:
-        pass
-    try:
-        await yolo_processor_task
-    except asyncio.CancelledError:
-        pass
-    await tts_processor_manager.stop()
+    for task in background_tasks:
+        task.cancel()
+    await asyncio.gather(*background_tasks, return_exceptions=True)
+
     await stop_metrics_writer()
     await close_db()
     await app.state.redis_client.aclose()

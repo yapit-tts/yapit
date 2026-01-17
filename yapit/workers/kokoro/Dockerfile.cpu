@@ -26,5 +26,4 @@ ENV HF_HUB_OFFLINE=1
 
 ENV PYTHONUNBUFFERED=1
 ENV DEVICE=cpu
-ENV ADAPTER_CLASS=yapit.workers.adapters.kokoro.KokoroAdapter
 CMD ["python", "-m", "yapit.workers.kokoro"]

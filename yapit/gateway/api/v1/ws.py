@@ -15,6 +15,9 @@ from sqlmodel import col, select
 
 from yapit.contracts import (
     TTS_INFLIGHT,
+    TTS_JOB_INDEX,
+    TTS_JOBS,
+    TTS_PENDING,
     TTS_SUBSCRIBERS,
     SynthesisJob,
     SynthesisParameters,
@@ -32,7 +35,6 @@ from yapit.gateway.deps import get_db_session
 from yapit.gateway.domain_models import Block, BlockVariant, Document, TTSModel, UsageType, Voice
 from yapit.gateway.exceptions import UsageLimitExceededError
 from yapit.gateway.metrics import log_event
-from yapit.gateway.processors.tts.manager import TTSProcessorManager
 from yapit.gateway.stack_auth.users import User
 from yapit.gateway.usage import check_usage_limit
 
@@ -45,8 +47,7 @@ CONTEXT_BUFFER_SIZE = 3
 
 
 def _get_pending_key(user_id: str, document_id: uuid.UUID) -> str:
-    """Redis key for tracking pending (queued) block indices per user/document."""
-    return f"tts:pending:{user_id}:{document_id}"
+    return TTS_PENDING.format(user_id=user_id, document_id=document_id)
 
 
 async def _get_model_and_voice(db, model_slug: str, voice_slug: str) -> tuple[TTSModel, Voice]:
@@ -117,8 +118,6 @@ async def _queue_synthesis_job(
     db,
     redis: Redis,
     cache: Cache,
-    processor_manager: TTSProcessorManager,
-    settings: Settings,
     user: User,
     block: Block,
     model: TTSModel,
@@ -134,12 +133,10 @@ async def _queue_synthesis_job(
         parameters=voice.parameters,
     )
 
-    # Check if variant exists in DB
     variant: BlockVariant | None = (
         await db.exec(select(BlockVariant).where(BlockVariant.hash == variant_hash))
     ).first()
 
-    # Check if audio is cached
     cached_data = await cache.retrieve_data(variant_hash)
     if cached_data is not None and variant is not None:
         await log_event(
@@ -151,7 +148,6 @@ async def _queue_synthesis_job(
             document_id=str(block.document_id),
             block_idx=block.idx,
         )
-        # Link variant to this block if it exists for a different block
         if variant.block_id != block.id:
             await db.merge(
                 BlockVariant(
@@ -166,7 +162,6 @@ async def _queue_synthesis_job(
             await db.commit()
         return variant_hash, True
 
-    # Create variant if it doesn't exist
     if variant is None:
         variant = BlockVariant(
             hash=variant_hash,
@@ -181,14 +176,13 @@ async def _queue_synthesis_job(
     subscriber_key = TTS_SUBSCRIBERS.format(hash=variant_hash)
     subscriber_entry = f"{user.id}:{block.document_id}:{block.idx}"
     await redis.sadd(subscriber_key, subscriber_entry)
-    await redis.expire(subscriber_key, 600)  # 10 min TTL
+    await redis.expire(subscriber_key, 600)
 
-    # Check if already processing - if so, we're now subscribed and will be notified
+    # Already processing - we're now subscribed and will be notified
     if await redis.exists(TTS_INFLIGHT.format(hash=variant_hash)):
         return variant_hash, False
     await redis.set(TTS_INFLIGHT.format(hash=variant_hash), 1, ex=300, nx=True)
 
-    # Build context tokens for HIGGS voice consistency
     context_tokens = None
     if model.slug.startswith("higgs"):
         context_tokens = await _build_context_tokens(
@@ -207,6 +201,8 @@ async def _queue_synthesis_job(
         user_id=user.id,
         document_id=block.document_id,
         block_idx=block.idx,
+        model_slug=model.slug,
+        voice_slug=voice.slug,
         synthesis_parameters=SynthesisParameters(
             model=model.slug,
             voice=voice.slug,
@@ -217,69 +213,31 @@ async def _queue_synthesis_job(
         ),
     )
 
-    route = processor_manager.get_route(model.slug, "server")
-    if route is None:
-        raise ValueError(f"No server route for model {model.slug!r}")
+    job_id = str(job.job_id)
+    queue_name = get_queue_name(model.slug)
+    index_key = f"{user.id}:{block.document_id}:{block.idx}"
 
-    # Track pending (not yet cached) blocks for eviction before pushing to queue
     pending_key = _get_pending_key(user.id, block.document_id)
     await redis.sadd(pending_key, block.idx)
-    await redis.expire(pending_key, 600)  # TTL 10 minutes
+    await redis.expire(pending_key, 600)
 
-    queue_depth = await processor_manager.get_queue_depth(model.slug)
-    threshold = settings.tts_overflow_queue_threshold
+    # Queue: sorted set (job_id -> timestamp) + hash (job_id -> job_json) + index (block -> job_id)
+    await redis.hset(TTS_JOBS, job_id, job.model_dump_json())
+    await redis.hset(TTS_JOB_INDEX, index_key, job_id)
+    await redis.zadd(queue_name, {job_id: time.time()})
 
-    if route.overflow and queue_depth > threshold:
-        processor_route = "overflow"
-        await log_event(
-            "synthesis_queued",
-            variant_hash=variant_hash,
-            model_slug=model.slug,
-            voice_slug=voice.slug,
-            text_length=len(block.text),
-            queue_depth=queue_depth,
-            processor_route=processor_route,
-            user_id=user.id,
-            document_id=str(block.document_id),
-            block_idx=block.idx,
-        )
+    await log_event(
+        "synthesis_queued",
+        variant_hash=variant_hash,
+        model_slug=model.slug,
+        voice_slug=voice.slug,
+        text_length=len(block.text),
+        user_id=user.id,
+        document_id=str(block.document_id),
+        block_idx=block.idx,
+    )
 
-        async def process_overflow():
-            try:
-                await log_event(
-                    "synthesis_started",
-                    variant_hash=variant_hash,
-                    model_slug=model.slug,
-                    user_id=user.id,
-                    document_id=str(block.document_id),
-                    block_idx=block.idx,
-                )
-                start_time = time.time()
-                result = await route.overflow.process(job)
-                worker_latency_ms = int((time.time() - start_time) * 1000)
-                await route.overflow.finalize_synthesis(job, result, worker_latency_ms, processor_route="overflow")
-            except Exception as e:
-                logger.warning(f"Overflow processor failed, falling back to local queue: {e}")
-                await redis.lpush(get_queue_name(model.slug), job.model_dump_json())
-
-        asyncio.create_task(process_overflow())
-        return variant_hash, False
-    else:
-        processor_route = "local"
-        await redis.lpush(get_queue_name(model.slug), job.model_dump_json())
-        await log_event(
-            "synthesis_queued",
-            variant_hash=variant_hash,
-            model_slug=model.slug,
-            voice_slug=voice.slug,
-            text_length=len(block.text),
-            queue_depth=queue_depth,
-            processor_route=processor_route,
-            user_id=user.id,
-            document_id=str(block.document_id),
-            block_idx=block.idx,
-        )
-        return variant_hash, False
+    return variant_hash, False
 
 
 async def _handle_synthesize(
@@ -288,7 +246,6 @@ async def _handle_synthesize(
     user: User,
     redis: Redis,
     cache: Cache,
-    processor_manager: TTSProcessorManager,
     settings: Settings,
 ):
     """Handle synthesize request - queue blocks for synthesis."""
@@ -348,9 +305,7 @@ async def _handle_synthesize(
                 continue
 
             try:
-                variant_hash, was_cached = await _queue_synthesis_job(
-                    db, redis, cache, processor_manager, settings, user, block, model, voice
-                )
+                variant_hash, was_cached = await _queue_synthesis_job(db, redis, cache, user, block, model, voice)
                 status = "cached" if was_cached else "queued"
                 audio_url = f"/v1/audio/{variant_hash}" if was_cached else None
 
@@ -410,6 +365,24 @@ async def _handle_cursor_moved(
     # Remove from pending set
     await redis.srem(pending_key, *to_evict)
 
+    # Remove jobs from queue for each evicted block
+    for idx in to_evict:
+        index_key = f"{user.id}:{msg.document_id}:{idx}"
+        job_id = await redis.hget(TTS_JOB_INDEX, index_key)
+        if job_id is None:
+            continue
+
+        job_id_str = job_id.decode()
+
+        job_json = await redis.hget(TTS_JOBS, job_id_str)
+        if job_json is not None:
+            job = SynthesisJob.model_validate_json(job_json)
+            queue_name = get_queue_name(job.model_slug)
+            await redis.zrem(queue_name, job_id_str)
+            await redis.hdel(TTS_JOBS, job_id_str)
+
+        await redis.hdel(TTS_JOB_INDEX, index_key)
+
     await log_event(
         "eviction_triggered",
         user_id=user.id,
@@ -458,7 +431,6 @@ async def tts_websocket(
     """WebSocket endpoint for TTS control."""
     redis: Redis = ws.app.state.redis_client
     cache: Cache = ws.app.state.audio_cache
-    processor_manager: TTSProcessorManager = ws.app.state.tts_processor_manager
 
     await ws.accept()
     connect_time = time.time()
@@ -475,7 +447,7 @@ async def tts_websocket(
 
                 if msg_type == "synthesize":
                     msg = WSSynthesizeRequest.model_validate(data)
-                    await _handle_synthesize(ws, msg, user, redis, cache, processor_manager, settings)
+                    await _handle_synthesize(ws, msg, user, redis, cache, settings)
                 elif msg_type == "cursor_moved":
                     msg = WSCursorMoved.model_validate(data)
                     await _handle_cursor_moved(ws, msg, user, redis, settings)

@@ -22,7 +22,7 @@ services:
       
   redis:
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
       
   postgres:
     env_file: ./.env.dev
@@ -34,6 +34,10 @@ services:
   metrics-db:
     ports:
       - "5433:5432"
+
+  kokoro-cpu:
+    environment:
+      WORKER_ID: dev-kokoro-cpu
 
   stripe-cli:
     profiles: ["stripe"]

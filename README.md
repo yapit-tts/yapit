@@ -1,6 +1,6 @@
 # yapit
 
-## Development
+## Development (TODO very stale)
 
 Set up the backend dev env:
 ```bash

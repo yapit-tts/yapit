@@ -6,7 +6,8 @@ services:
       dockerfile: yapit/workers/kokoro/Dockerfile.gpu
     command: python -m yapit.workers.kokoro
     environment:
-      ADAPTER_CLASS: yapit.workers.adapters.kokoro.KokoroAdapter
+      REDIS_URL: ${REDIS_URL}
+      WORKER_ID: ${WORKER_ID}
     deploy:
       resources:
         reservations:
