@@ -192,6 +192,7 @@ services:
     environment:
       REDIS_URL: redis://redis:6379
       WORKER_ID: swarm-yolo-cpu-{{.Task.Slot}}
+      OMP_NUM_THREADS: ${OMP_NUM_THREADS}
     networks:
       - yapit-network
     deploy:
