@@ -4,7 +4,7 @@ This module runs ON RunPod as a serverless worker. The gateway's overflow_scanne
 sends jobs here when the YOLO queue backs up (jobs older than 10s).
 
 Deployment:
-    Image: ghcr.io/yapit-tts/yolo-cpu:latest
+    Image: ghcr.io/yapit-tts/yolo-cpu:abc123 # do NOT use latest tag with runpod better to use their github integration
     CMD override: python -m yapit.workers.handlers.yolo_runpod
     Environment variables: None required (model paths baked into image)
 

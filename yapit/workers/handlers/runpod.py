@@ -4,7 +4,7 @@ This module runs ON RunPod as a serverless worker. The gateway's overflow_scanne
 sends jobs here when the TTS queue backs up (jobs older than 30s).
 
 Deployment (Kokoro example):
-    Image: ghcr.io/yapit-tts/kokoro-cpu:latest
+    Image: ghcr.io/yapit-tts/kokoro-cpu:abc123 # do NOT use latest tag with runpod better to use their github integration
     CMD override: python -m yapit.workers.handlers.runpod
     Environment variables:
         ADAPTER_CLASS: yapit.workers.adapters.kokoro.KokoroAdapter
