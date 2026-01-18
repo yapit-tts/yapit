@@ -57,12 +57,18 @@ async def _handle_success(
     result: WorkerResult,
     settings: Settings,
 ) -> None:
+    # Atomically claim this result - prevents double-processing if job was requeued
+    # and both workers completed. First to delete wins, others skip.
+    inflight_key = TTS_INFLIGHT.format(hash=result.variant_hash)
+    if await redis.delete(inflight_key) == 0:
+        logger.info(f"Variant {result.variant_hash} already finalized, skipping duplicate result")
+        return
+
     finalize_start = time.time()
 
     if not result.audio_base64:
         logger.info(f"Empty audio for variant {result.variant_hash}, marking as skipped")
         await _notify_subscribers(redis, result, status="skipped")
-        await redis.delete(TTS_INFLIGHT.format(hash=result.variant_hash))
         return
 
     audio = base64.b64decode(result.audio_base64)
@@ -124,10 +130,15 @@ async def _handle_success(
         status="cached",
         audio_url=f"/v1/audio/{result.variant_hash}",
     )
-    await redis.delete(TTS_INFLIGHT.format(hash=result.variant_hash))
 
 
 async def _handle_error(redis: Redis, result: WorkerResult, settings: Settings) -> None:
+    # Atomically claim this result - same dedup logic as _handle_success
+    inflight_key = TTS_INFLIGHT.format(hash=result.variant_hash)
+    if await redis.delete(inflight_key) == 0:
+        logger.info(f"Variant {result.variant_hash} already finalized, skipping duplicate error result")
+        return
+
     await log_event(
         "synthesis_error",
         variant_hash=result.variant_hash,
@@ -144,7 +155,6 @@ async def _handle_error(redis: Redis, result: WorkerResult, settings: Settings) 
     )
 
     await _notify_subscribers(redis, result, status="error", error=result.error)
-    await redis.delete(TTS_INFLIGHT.format(hash=result.variant_hash))
 
 
 async def _notify_subscribers(
