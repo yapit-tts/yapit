@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 from google.genai import errors as genai_errors
 
-from yapit.gateway.processors.document.gemini import (
+from yapit.gateway.document.gemini import (
     MAX_RETRIES,
     GeminiProcessor,
 )
@@ -104,7 +104,7 @@ def mock_processor(tmp_path):
     mock_settings.images_dir = str(tmp_path / "images")
     mock_redis = AsyncMock()
 
-    with patch("yapit.gateway.processors.document.gemini.genai.Client"):
+    with patch("yapit.gateway.document.gemini.genai.Client"):
         processor = GeminiProcessor(redis=mock_redis, settings=mock_settings, resolution="low")
     return processor
 
@@ -128,11 +128,11 @@ class TestRetryBehavior:
 
         with (
             patch(
-                "yapit.gateway.processors.document.gemini.extract_single_page_pdf",
+                "yapit.gateway.document.gemini.extract_single_page_pdf",
                 return_value=b"fake-pdf-bytes",
             ),
             patch(
-                "yapit.gateway.processors.document.gemini.asyncio.sleep",
+                "yapit.gateway.document.gemini.asyncio.sleep",
                 new_callable=AsyncMock,
             ) as mock_sleep,
         ):
@@ -164,11 +164,11 @@ class TestRetryBehavior:
 
             with (
                 patch(
-                    "yapit.gateway.processors.document.gemini.extract_single_page_pdf",
+                    "yapit.gateway.document.gemini.extract_single_page_pdf",
                     return_value=b"fake-pdf-bytes",
                 ),
                 patch(
-                    "yapit.gateway.processors.document.gemini.asyncio.sleep",
+                    "yapit.gateway.document.gemini.asyncio.sleep",
                     new_callable=AsyncMock,
                 ),
             ):
@@ -189,7 +189,7 @@ class TestRetryBehavior:
         )
 
         with patch(
-            "yapit.gateway.processors.document.gemini.extract_single_page_pdf",
+            "yapit.gateway.document.gemini.extract_single_page_pdf",
             return_value=b"fake-pdf-bytes",
         ):
             page_idx, result = await mock_processor._process_page_with_figures(
@@ -210,7 +210,7 @@ class TestRetryBehavior:
         )
 
         with patch(
-            "yapit.gateway.processors.document.gemini.extract_single_page_pdf",
+            "yapit.gateway.document.gemini.extract_single_page_pdf",
             return_value=b"fake-pdf-bytes",
         ):
             page_idx, result = await mock_processor._process_page_with_figures(
@@ -231,7 +231,7 @@ class TestRetryBehavior:
         )
 
         with patch(
-            "yapit.gateway.processors.document.gemini.extract_single_page_pdf",
+            "yapit.gateway.document.gemini.extract_single_page_pdf",
             return_value=b"fake-pdf-bytes",
         ):
             page_idx, result = await mock_processor._process_page_with_figures(
@@ -253,11 +253,11 @@ class TestRetryBehavior:
 
         with (
             patch(
-                "yapit.gateway.processors.document.gemini.extract_single_page_pdf",
+                "yapit.gateway.document.gemini.extract_single_page_pdf",
                 return_value=b"fake-pdf-bytes",
             ),
             patch(
-                "yapit.gateway.processors.document.gemini.asyncio.sleep",
+                "yapit.gateway.document.gemini.asyncio.sleep",
                 new_callable=AsyncMock,
             ),
         ):
@@ -286,11 +286,11 @@ class TestRetryBehavior:
 
         with (
             patch(
-                "yapit.gateway.processors.document.gemini.extract_single_page_pdf",
+                "yapit.gateway.document.gemini.extract_single_page_pdf",
                 return_value=b"fake-pdf-bytes",
             ),
             patch(
-                "yapit.gateway.processors.document.gemini.asyncio.sleep",
+                "yapit.gateway.document.gemini.asyncio.sleep",
                 new_callable=AsyncMock,
             ),
         ):

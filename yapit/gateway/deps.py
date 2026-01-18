@@ -13,6 +13,7 @@ from yapit.gateway.auth import authenticate
 from yapit.gateway.cache import Cache, CacheConfig, Caches, SqliteCache
 from yapit.gateway.config import Settings, get_settings
 from yapit.gateway.db import create_session, get_by_slug_or_404, get_or_404
+from yapit.gateway.document.base import BaseDocumentProcessor
 from yapit.gateway.domain_models import (
     Block,
     BlockVariant,
@@ -21,7 +22,6 @@ from yapit.gateway.domain_models import (
     Voice,
 )
 from yapit.gateway.exceptions import ResourceNotFoundError
-from yapit.gateway.processors.document.base import BaseDocumentProcessor
 from yapit.gateway.stack_auth.users import User
 
 SettingsDep = Annotated[Settings, Depends(get_settings)]

@@ -2,11 +2,11 @@
 
 import json
 
-from yapit.gateway.processors.markdown import (
+from yapit.gateway.markdown import (
     parse_markdown,
     transform_to_document,
 )
-from yapit.gateway.processors.markdown.models import (
+from yapit.gateway.markdown.models import (
     BlockquoteBlock,
     CodeBlock,
     HeadingBlock,

@@ -23,11 +23,11 @@ from yapit.gateway.cache import Cache
 from yapit.gateway.config import Settings, get_settings
 from yapit.gateway.db import close_db, prepare_database
 from yapit.gateway.deps import create_cache
+from yapit.gateway.document.gemini import GeminiProcessor
+from yapit.gateway.document.markitdown import MarkitdownProcessor
 from yapit.gateway.exceptions import APIError
 from yapit.gateway.metrics import init_metrics_db, start_metrics_writer, stop_metrics_writer
 from yapit.gateway.overflow_scanner import run_overflow_scanner
-from yapit.gateway.processors.document.gemini import GeminiProcessor
-from yapit.gateway.processors.document.markitdown import MarkitdownProcessor
 from yapit.gateway.result_consumer import run_result_consumer
 from yapit.gateway.visibility_scanner import run_visibility_scanner
 from yapit.workers.adapters.inworld import InworldAdapter

@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from yapit.gateway.processors.document.markitdown import MarkitdownProcessor
+from yapit.gateway.document.markitdown import MarkitdownProcessor
 
 
 class TestMarkitdownProcessor:

@@ -24,8 +24,8 @@ from pathlib import Path
 # Add parent to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from yapit.gateway.processors.markdown.parser import parse_markdown
-from yapit.gateway.processors.markdown.transformer import transform_to_document
+from yapit.gateway.markdown.parser import parse_markdown
+from yapit.gateway.markdown.transformer import transform_to_document
 
 
 @dataclass

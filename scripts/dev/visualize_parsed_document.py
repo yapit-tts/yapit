@@ -21,7 +21,7 @@ from pathlib import Path
 # Add project root to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from yapit.gateway.processors.markdown import parse_markdown, transform_to_document
+from yapit.gateway.markdown import parse_markdown, transform_to_document
 
 
 def escape(text: str) -> str:

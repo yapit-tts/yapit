@@ -15,7 +15,7 @@ from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 
-from yapit.gateway.processors.markdown import parse_markdown, transform_to_document
+from yapit.gateway.markdown import parse_markdown, transform_to_document
 
 app = FastAPI(title="Block Splitter Viz")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])

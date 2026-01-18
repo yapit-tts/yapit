@@ -12,12 +12,12 @@ from pypdf import PdfReader
 from redis.asyncio import Redis
 
 from yapit.gateway.cache import Cache
-from yapit.gateway.processors.document.base import (
+from yapit.gateway.document.base import (
     BaseDocumentProcessor,
     DocumentExtractionResult,
     ExtractedPage,
 )
-from yapit.gateway.processors.document.extraction import (
+from yapit.gateway.document.extraction import (
     DetectedFigure,
     build_figure_prompt,
     extract_single_page_pdf,
@@ -26,7 +26,7 @@ from yapit.gateway.processors.document.extraction import (
     store_figure,
     substitute_image_placeholders,
 )
-from yapit.gateway.processors.document.yolo_client import (
+from yapit.gateway.document.yolo_client import (
     enqueue_detection,
     wait_for_result,
 )
