@@ -15,7 +15,7 @@ from yapit.contracts import (
 from yapit.gateway.metrics import log_event
 from yapit.workers.queue import QueueConfig, push_job
 
-YOLO_RESULT_TIMEOUT_S = 60
+YOLO_RESULT_TIMEOUT_S = 120
 
 _yolo_config = QueueConfig(
     queue_name=YOLO_QUEUE,

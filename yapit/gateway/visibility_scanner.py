@@ -7,11 +7,12 @@ Processing entries store queue_name and dlq_key so scanner doesn't need to parse
 import asyncio
 import json
 import time
+import uuid
 
 from loguru import logger
 from redis.asyncio import Redis
 
-from yapit.contracts import parse_queue_name
+from yapit.contracts import YOLO_RESULT, YoloResult, parse_queue_name
 from yapit.gateway.metrics import log_event
 from yapit.workers.queue import move_to_dlq, requeue_job
 
@@ -97,6 +98,22 @@ async def _check_processing_set(
 
         if retry_count >= max_retries:
             await move_to_dlq(redis, dlq_key, job_id, raw_job, retry_count)
+
+            # For YOLO jobs, write error result so gateway doesn't wait for timeout
+            if queue_type == "yolo":
+                error_result = YoloResult(
+                    job_id=uuid.UUID(job_id),
+                    figures=[],
+                    page_width=None,
+                    page_height=None,
+                    worker_id="dlq",
+                    processing_time_ms=0,
+                    error=f"Job moved to DLQ after {retry_count} retries",
+                )
+                result_key = YOLO_RESULT.format(job_id=job_id)
+                await redis.lpush(result_key, error_result.model_dump_json())
+                await redis.expire(result_key, 300)
+
             await log_event(
                 "job_dlq",
                 queue_type=queue_type,
