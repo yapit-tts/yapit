@@ -31,6 +31,14 @@ def get_queue_name(model: str) -> str:
     return TTS_QUEUE.format(model=model)
 
 
+def parse_queue_name(queue_name: str) -> tuple[str, str | None]:
+    """Parse queue_name like 'tts:queue:kokoro' into (queue_type, model_slug)."""
+    parts = queue_name.split(":")
+    queue_type = parts[0]
+    model_slug = parts[2] if len(parts) > 2 else None
+    return queue_type, model_slug
+
+
 def get_pubsub_channel(user_id: str) -> str:
     return f"tts:done:{user_id}"
 
@@ -87,6 +95,7 @@ class WorkerResult(BaseModel):
 
     worker_id: str
     processing_time_ms: int
+    queue_wait_ms: int
 
     audio_base64: str | None = None
     duration_ms: int | None = None

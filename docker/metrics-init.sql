@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS metrics_event (
     timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     event_type TEXT NOT NULL,
 
-    -- Synthesis fields
+    -- Synthesis/detection fields
     model_slug TEXT,
     voice_slug TEXT,
     variant_hash TEXT,
@@ -20,8 +20,20 @@ CREATE TABLE IF NOT EXISTS metrics_event (
     total_latency_ms INTEGER,
     audio_duration_ms INTEGER,
     cache_hit BOOLEAN,
-    processor_route TEXT,
     queue_depth INTEGER,
+
+    -- Worker/queue fields
+    worker_id TEXT,
+    queue_type TEXT,  -- 'tts' or 'detection'
+    retry_count INTEGER,
+
+    -- LLM/extraction fields
+    processor_slug TEXT,
+    page_idx INTEGER,
+    prompt_token_count INTEGER,
+    candidates_token_count INTEGER,
+    thoughts_token_count INTEGER,
+    total_token_count INTEGER,
 
     -- Request fields
     endpoint TEXT,

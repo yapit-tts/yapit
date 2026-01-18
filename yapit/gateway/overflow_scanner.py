@@ -7,7 +7,9 @@ import time
 from loguru import logger
 from redis.asyncio import Redis
 
+from yapit.contracts import parse_queue_name
 from yapit.gateway.config import Settings
+from yapit.gateway.metrics import log_event
 
 
 async def run_overflow_scanner(
@@ -109,10 +111,23 @@ async def _check_queue_for_overflow(
     if job_index_key and "index_key" in wrapper:
         await redis.hdel(job_index_key, wrapper["index_key"])
 
+    queue_type, model_slug = parse_queue_name(queue_name)
+    queue_wait_ms = int(age * 1000)
+
     logger.info(f"{name}: job {job_id} stale for {age:.1f}s, sending to RunPod")
 
+    await log_event(
+        "job_overflow",
+        queue_type=queue_type,
+        model_slug=model_slug,
+        queue_wait_ms=queue_wait_ms,
+        data={"job_id": job_id},
+    )
+
     result_key = result_key_pattern.format(job_id=job_id)
-    await _process_via_runpod(redis, job_id, raw_job, endpoint_id, result_key, runpod_timeout, name)
+    await _process_via_runpod(
+        redis, job_id, raw_job, endpoint_id, result_key, runpod_timeout, name, queue_type, model_slug
+    )
 
 
 async def _process_via_runpod(
@@ -123,6 +138,8 @@ async def _process_via_runpod(
     result_key: str,
     runpod_timeout: int,
     name: str,
+    queue_type: str,
+    model_slug: str | None,
 ) -> None:
     import runpod
 
@@ -143,8 +160,16 @@ async def _process_via_runpod(
         processing_time_ms = int((time.time() - start_time) * 1000)
         logger.info(f"{name} job {job_id} completed in {processing_time_ms}ms")
 
+        await log_event(
+            "overflow_complete",
+            queue_type=queue_type,
+            model_slug=model_slug,
+            worker_latency_ms=processing_time_ms,
+            worker_id=f"{name}-runpod",
+            data={"job_id": job_id},
+        )
+
         # RunPod handler returns result JSON, we just pass it through
-        # Add job_id and worker_id for tracking
         if isinstance(result, dict):
             result["job_id"] = job_id
             result["worker_id"] = f"{name}-runpod"
@@ -155,6 +180,15 @@ async def _process_via_runpod(
     except Exception as e:
         processing_time_ms = int((time.time() - start_time) * 1000)
         logger.exception(f"{name} job {job_id} failed: {e}")
+
+        await log_event(
+            "overflow_error",
+            queue_type=queue_type,
+            model_slug=model_slug,
+            worker_latency_ms=processing_time_ms,
+            worker_id=f"{name}-runpod",
+            data={"job_id": job_id, "error": str(e)},
+        )
 
         error_result = {
             "job_id": job_id,

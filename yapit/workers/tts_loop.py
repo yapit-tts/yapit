@@ -48,6 +48,7 @@ async def run_tts_worker(redis_url: str, model: str, adapter: SynthAdapter, work
 
             job = SynthesisJob.model_validate_json(pulled.raw_job)
             start_time = time.time()
+            queue_wait_ms = int((start_time - pulled.queued_at) * 1000)
 
             await track_processing(
                 client, processing_key, pulled.job_id, pulled.raw_job, pulled.retry_count, config.queue_name, dlq_key
@@ -69,6 +70,7 @@ async def run_tts_worker(redis_url: str, model: str, adapter: SynthAdapter, work
                     usage_multiplier=job.usage_multiplier,
                     worker_id=worker_id,
                     processing_time_ms=processing_time_ms,
+                    queue_wait_ms=queue_wait_ms,
                     audio_base64=base64.b64encode(synth_result.audio).decode("ascii"),
                     duration_ms=synth_result.duration_ms,
                     audio_tokens=synth_result.audio_tokens,
@@ -94,6 +96,7 @@ async def run_tts_worker(redis_url: str, model: str, adapter: SynthAdapter, work
                     usage_multiplier=job.usage_multiplier,
                     worker_id=worker_id,
                     processing_time_ms=processing_time_ms,
+                    queue_wait_ms=queue_wait_ms,
                     error=str(e),
                 )
 

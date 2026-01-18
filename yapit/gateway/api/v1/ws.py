@@ -256,6 +256,7 @@ async def _queue_synthesis_job(
     tts_config = QueueConfig(queue_name=queue_name, jobs_key=TTS_JOBS, job_index_key=TTS_JOB_INDEX)
     await push_job(redis, tts_config, job_id, job.model_dump_json().encode(), index_key=index_key)
 
+    queue_depth = await redis.zcard(queue_name)
     await log_event(
         "synthesis_queued",
         variant_hash=variant_hash,
@@ -265,6 +266,8 @@ async def _queue_synthesis_job(
         user_id=user.id,
         document_id=str(block.document_id),
         block_idx=block.idx,
+        queue_depth=queue_depth,
+        queue_type="tts",
     )
 
     return variant_hash, False

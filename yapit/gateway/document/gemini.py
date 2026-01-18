@@ -30,6 +30,7 @@ from yapit.gateway.document.yolo_client import (
     enqueue_detection,
     wait_for_result,
 )
+from yapit.gateway.metrics import log_event
 
 RESOLUTION_MAP = {
     "low": types.MediaResolution.MEDIA_RESOLUTION_LOW,
@@ -96,6 +97,55 @@ class GeminiProcessor(BaseDocumentProcessor):
     def is_paid(self) -> bool:
         return True
 
+    async def _call_gemini_with_retry(
+        self,
+        contents: list,
+        config: types.GenerateContentConfig,
+        context: str,  # for logging, e.g. "page 5" or "image"
+    ) -> types.GenerateContentResponse:
+        """Call Gemini API with retry logic for transient errors.
+
+        Raises the last error if all retries exhausted or non-retryable error encountered.
+        """
+        last_error: Exception | None = None
+        for attempt in range(MAX_RETRIES):
+            try:
+                return await asyncio.to_thread(
+                    self._client.models.generate_content,
+                    model=self._model,
+                    contents=contents,
+                    config=config,
+                )
+            except genai_errors.APIError as e:
+                last_error = e
+                if e.code not in RETRYABLE_STATUS_CODES:
+                    raise
+
+                if attempt < MAX_RETRIES - 1:
+                    delay = min(BASE_DELAY_SECONDS * (2**attempt), MAX_DELAY_SECONDS)
+                    jitter = random.uniform(0, delay * 0.5)
+                    wait_time = delay + jitter
+                    logger.warning(
+                        f"Gemini {context}: attempt {attempt + 1}/{MAX_RETRIES} failed ({e.code}), "
+                        f"retrying in {wait_time:.1f}s"
+                    )
+                    await asyncio.sleep(wait_time)
+
+            except Exception as e:
+                last_error = e
+                if attempt < MAX_RETRIES - 1:
+                    delay = min(BASE_DELAY_SECONDS * (2**attempt), MAX_DELAY_SECONDS)
+                    jitter = random.uniform(0, delay * 0.5)
+                    wait_time = delay + jitter
+                    logger.warning(
+                        f"Gemini {context}: attempt {attempt + 1}/{MAX_RETRIES} failed ({e}), "
+                        f"retrying in {wait_time:.1f}s"
+                    )
+                    await asyncio.sleep(wait_time)
+
+        assert last_error is not None
+        raise last_error
+
     async def _extract(
         self,
         content: bytes,
@@ -116,16 +166,43 @@ class GeminiProcessor(BaseDocumentProcessor):
     async def _extract_image(self, content: bytes, content_type: str) -> DocumentExtractionResult:
         """Extract text from a single image."""
         config = types.GenerateContentConfig(media_resolution=self._resolution)
+        contents = [
+            types.Part.from_bytes(data=content, mime_type=content_type),
+            self._prompt,
+        ]
+        start_time = time.monotonic()
 
-        response = await asyncio.to_thread(
-            self._client.models.generate_content,
-            model=self._model,
-            contents=[
-                types.Part.from_bytes(data=content, mime_type=content_type),
-                self._prompt,
-            ],
-            config=config,
-        )
+        try:
+            response = await self._call_gemini_with_retry(contents, config, context="image")
+        except Exception as e:
+            duration_ms = int((time.monotonic() - start_time) * 1000)
+            logger.error(f"Gemini image extraction failed after retries: {e}")
+            await log_event(
+                "page_extraction_error",
+                processor_slug=self._model,
+                page_idx=0,
+                duration_ms=duration_ms,
+                status_code=getattr(e, "code", None),
+                data={"error": str(e)},
+            )
+            raise
+
+        duration_ms = int((time.monotonic() - start_time) * 1000)
+        usage = response.usage_metadata
+        if usage:
+            logger.info(f"Gemini image extraction: {duration_ms}ms, usage={usage.model_dump()}")
+            await log_event(
+                "page_extraction_complete",
+                processor_slug=self._model,
+                page_idx=0,
+                duration_ms=duration_ms,
+                prompt_token_count=usage.prompt_token_count,
+                candidates_token_count=usage.candidates_token_count,
+                thoughts_token_count=usage.thoughts_token_count,
+                total_token_count=usage.total_token_count,
+            )
+        else:
+            logger.warning(f"Gemini image extraction: {duration_ms}ms, no usage_metadata returned")
 
         text = (response.text or "").strip()
         return DocumentExtractionResult(
@@ -230,62 +307,46 @@ class GeminiProcessor(BaseDocumentProcessor):
         page_bytes = extract_single_page_pdf(pdf_reader, page_idx)
         prompt = build_figure_prompt(self._prompt, figures)
         config = types.GenerateContentConfig(media_resolution=self._resolution)
+        contents = [
+            types.Part.from_bytes(data=page_bytes, mime_type="application/pdf"),
+            prompt,
+        ]
 
-        last_error: Exception | None = None
-        for attempt in range(MAX_RETRIES):
-            try:
-                logger.info(f"Gemini: calling API for page {page_idx + 1}")
-                response = await asyncio.to_thread(
-                    self._client.models.generate_content,
-                    model=self._model,
-                    contents=[
-                        types.Part.from_bytes(data=page_bytes, mime_type="application/pdf"),
-                        prompt,
-                    ],
-                    config=config,
-                )
+        start_time = time.monotonic()
+        try:
+            response = await self._call_gemini_with_retry(contents, config, context=f"page {page_idx + 1}")
+        except Exception as e:
+            duration_ms = int((time.monotonic() - start_time) * 1000)
+            logger.error(f"Gemini: page {page_idx + 1} failed after retries: {e}")
+            await log_event(
+                "page_extraction_error",
+                processor_slug=self._model,
+                page_idx=page_idx,
+                duration_ms=duration_ms,
+                status_code=getattr(e, "code", None),
+                data={"error": str(e)},
+            )
+            return page_idx, None
 
-                text = (response.text or "").strip()
-                if figure_urls:
-                    text = substitute_image_placeholders(text, figure_urls)
+        duration_ms = int((time.monotonic() - start_time) * 1000)
+        text = (response.text or "").strip()
+        if figure_urls:
+            text = substitute_image_placeholders(text, figure_urls)
 
-                if attempt > 0:
-                    logger.info(f"Gemini: page {page_idx + 1} succeeded after {attempt + 1} attempts")
-                else:
-                    logger.info(f"Gemini: page {page_idx + 1} completed")
+        usage = response.usage_metadata
+        if usage:
+            logger.info(f"Gemini: page {page_idx + 1} completed in {duration_ms}ms, usage={usage.model_dump()}")
+            await log_event(
+                "page_extraction_complete",
+                processor_slug=self._model,
+                page_idx=page_idx,
+                duration_ms=duration_ms,
+                prompt_token_count=usage.prompt_token_count,
+                candidates_token_count=usage.candidates_token_count,
+                thoughts_token_count=usage.thoughts_token_count,
+                total_token_count=usage.total_token_count,
+            )
+        else:
+            logger.warning(f"Gemini: page {page_idx + 1} completed in {duration_ms}ms, no usage_metadata returned")
 
-                return page_idx, ExtractedPage(markdown=text, images=figure_urls)
-
-            except genai_errors.APIError as e:
-                last_error = e
-                is_retryable = e.code in RETRYABLE_STATUS_CODES
-
-                if not is_retryable:
-                    logger.error(f"Gemini: page {page_idx + 1} failed with non-retryable error: {e.code} {e.message}")
-                    return page_idx, None
-
-                if attempt < MAX_RETRIES - 1:
-                    delay = min(BASE_DELAY_SECONDS * (2**attempt), MAX_DELAY_SECONDS)
-                    jitter = random.uniform(0, delay * 0.5)
-                    wait_time = delay + jitter
-                    logger.warning(
-                        f"Gemini: page {page_idx + 1} attempt {attempt + 1}/{MAX_RETRIES} failed "
-                        f"({e.code}), retrying in {wait_time:.1f}s"
-                    )
-                    await asyncio.sleep(wait_time)
-
-            except Exception as e:
-                # Unexpected errors (network issues, etc.) - also retry
-                last_error = e
-                if attempt < MAX_RETRIES - 1:
-                    delay = min(BASE_DELAY_SECONDS * (2**attempt), MAX_DELAY_SECONDS)
-                    jitter = random.uniform(0, delay * 0.5)
-                    wait_time = delay + jitter
-                    logger.warning(
-                        f"Gemini: page {page_idx + 1} attempt {attempt + 1}/{MAX_RETRIES} failed "
-                        f"with unexpected error: {e}, retrying in {wait_time:.1f}s"
-                    )
-                    await asyncio.sleep(wait_time)
-
-        logger.error(f"Gemini: page {page_idx + 1} failed after {MAX_RETRIES} attempts. Last error: {last_error}")
-        return page_idx, None
+        return page_idx, ExtractedPage(markdown=text, images=figure_urls)

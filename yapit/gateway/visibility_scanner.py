@@ -11,6 +11,8 @@ import time
 from loguru import logger
 from redis.asyncio import Redis
 
+from yapit.contracts import parse_queue_name
+from yapit.gateway.metrics import log_event
 from yapit.workers.queue import move_to_dlq, requeue_job
 
 
@@ -91,7 +93,23 @@ async def _check_processing_set(
 
         await redis.hdel(processing_key, job_id_bytes)
 
+        queue_type, model_slug = parse_queue_name(queue_name)
+
         if retry_count >= max_retries:
             await move_to_dlq(redis, dlq_key, job_id, raw_job, retry_count)
+            await log_event(
+                "job_dlq",
+                queue_type=queue_type,
+                model_slug=model_slug,
+                retry_count=retry_count,
+                data={"job_id": job_id, "stuck_seconds": age},
+            )
         else:
             await requeue_job(redis, queue_name, jobs_key, job_id, raw_job, retry_count)
+            await log_event(
+                "job_requeued",
+                queue_type=queue_type,
+                model_slug=model_slug,
+                retry_count=retry_count + 1,
+                data={"job_id": job_id, "stuck_seconds": age},
+            )
