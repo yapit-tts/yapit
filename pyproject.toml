@@ -28,7 +28,7 @@ dependencies = [
 gateway = [
   "fastapi[standard]~=0.115.12",
   "sqlmodel~=0.0.24",
-  "redis~=6.0.0",
+  "redis[hiredis]~=6.0.0",
   "alembic~=1.15.2",
   "asyncpg~=0.30.0",
   "orjson~=3.10.16",
@@ -55,7 +55,7 @@ test = [
   "pytest~=8.3.5",
   "pytest-asyncio==1.0.0",
   "requests~=2.32.3",
-  "redis~=6.0.0",
+  "redis[hiredis]~=6.0.0",
   "aiosqlite==0.21.0",
   "testcontainers==4.10.0",
   "httpx~=0.28.1",

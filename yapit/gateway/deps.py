@@ -13,6 +13,7 @@ from yapit.gateway.auth import authenticate
 from yapit.gateway.cache import Cache, CacheConfig, Caches, SqliteCache
 from yapit.gateway.config import Settings, get_settings
 from yapit.gateway.db import create_session, get_by_slug_or_404, get_or_404
+from yapit.gateway.document.base import BaseDocumentProcessor
 from yapit.gateway.domain_models import (
     Block,
     BlockVariant,
@@ -21,8 +22,6 @@ from yapit.gateway.domain_models import (
     Voice,
 )
 from yapit.gateway.exceptions import ResourceNotFoundError
-from yapit.gateway.processors.document.base import BaseDocumentProcessor
-from yapit.gateway.processors.tts.manager import TTSProcessorManager
 from yapit.gateway.stack_auth.users import User
 
 SettingsDep = Annotated[Settings, Depends(get_settings)]
@@ -156,12 +155,7 @@ async def get_ai_processor(request: Request) -> BaseDocumentProcessor | None:
     return request.app.state.ai_processor
 
 
-async def get_tts_processor_manager(request: Request) -> TTSProcessorManager:
-    return request.app.state.tts_processor_manager
-
-
 RedisClient = Annotated[Redis, Depends(get_redis_client)]
-TTSProcessorManagerDep = Annotated[TTSProcessorManager, Depends(get_tts_processor_manager)]
 FreeProcessorDep = Annotated[BaseDocumentProcessor, Depends(get_free_processor)]
 AiProcessorDep = Annotated[BaseDocumentProcessor | None, Depends(get_ai_processor)]
 AudioCache = Annotated[Cache, Depends(get_audio_cache)]

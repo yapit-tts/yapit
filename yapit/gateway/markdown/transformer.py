@@ -12,7 +12,7 @@ from markdown_it import MarkdownIt
 from markdown_it.tree import SyntaxTreeNode
 from mdit_py_plugins.dollarmath import dollarmath_plugin
 
-from yapit.gateway.processors.markdown.models import (
+from yapit.gateway.markdown.models import (
     BlockquoteBlock,
     CodeBlock,
     CodeSpanContent,

@@ -1,7 +1,12 @@
-import uvicorn
+import asyncio
+import os
 
-from yapit.workers.handlers.local import create_app
+from yapit.workers.adapters.higgs_audio_v2_native import HiggsAudioV2NativeAdapter
+from yapit.workers.tts_loop import run_tts_worker
 
 if __name__ == "__main__":
-    app = create_app("yapit.workers.adapters.higgs_audio_v2_native.HiggsAudioV2NativeAdapter")
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    redis_url = os.environ["REDIS_URL"]
+    worker_id = os.environ["WORKER_ID"]
+
+    adapter = HiggsAudioV2NativeAdapter()
+    asyncio.run(run_tts_worker(redis_url, "higgs", adapter, worker_id))

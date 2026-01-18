@@ -38,14 +38,33 @@ This project uses a multi-session workflow with task files, handoffs, and a pers
 
 **This is non-negotiable.** Before doing any significant work:
 
-0. YOU READ `agent/knowledge/overview` ALWAYS. REGARDLESS OF WHETHER YOU ARE CREATING A TASK, OR PICKING UP A HANDOFF, OR DOING KNOWLEDGE DISTILLATION.
-1. From there, branch out to relevant topics
-2. Use memex `explore` to follow wikilinks — outlinks show what a note references, backlinks show what references it
-3. Navigate progressively: overview → domain topics → specific topics → concrete content
-4. **Follow references in knowledge files** — when a knowledge file points to code files, external docs, or says "see X", read those too when relevant to your task
+0. **ALWAYS read `agent/knowledge/overview`** — regardless of whether you're creating a task, picking up a handoff, or doing distillation.
+1. Branch out to relevant topics — follow the wikilinks
+2. Use memex `explore` to see outlinks (what a note references) and backlinks (what references it)
+3. **Read the Gotchas sections** — these save hours of debugging
+4. **Follow references** — when knowledge files point to code files, external docs, or say "see X", read those too
 
-Knowledge files capture decisions and point to sources — they intentionally don't document code or copy external sources. Code is truth. Follow the pointers to understand implementations, including web links.
-Re-read external documentation that is linked from knowledge files to ensure you have the full context.
+Knowledge files capture decisions and point to sources — they don't duplicate code or external docs. Code is truth. Follow the pointers.
+
+**Why this matters:** Skipping knowledge exploration to "get to work faster" consistently costs more time. The knowledge, pointers, and bigger picture help you build an accurate mental representation — the foundation for effective problem-solving. Documented gotchas help you avoid repeating past mistakes.
+
+### What Good Exploration Looks Like
+
+**Example: "Fix a bug where audio doesn't play for some documents"**
+
+1. **Read overview** → see Core section links to [[tts-flow]] and [[document-processing]]
+2. **Read both** — the bug could be in either pipeline. Note:
+   - tts-flow has "Voice change race condition" gotcha — could this be it?
+   - document-processing explains block splitting — maybe blocks aren't getting `audio_block_idx`?
+3. **Follow cross-references** — tts-flow links to [[document-processing]] for "how documents become blocks", document-processing links back to [[tts-flow]] for "variant caching"
+4. **Read the Key Files tables** — now you know which source files to examine
+5. **Check related knowledge** — if it's a WebSocket issue, [[frontend]] might have relevant info
+
+This takes ~30 seconds. Without it, you'd grep around, miss the gotcha, and waste time rediscovering the race condition.
+
+**This applies to brainstorming and discussion too** — not just implementation. Context gathering (knowledge + code + docs/web links where indicated) is required before meaningful discussion.
+
+**Bad exploration:** Read overview, skim one file, skip cross-references and gotchas. Miss critical context.
 
 The knowledge base is a graph, not a tree. Files are flat but connected via `[[wikilinks]]`. You don't load everything — you navigate to what you need with increasing detail.
 
@@ -116,8 +135,8 @@ git checkout dev && git merge main  # brings dev up to date with main
 - Looking for where something lives
 - After creating/moving files
 
-**tre tips:** Always use `-L 10` for full depth. If you want less output, scope to a specific directory instead of reducing depth (which hides files):
-- Full repo: `tre -L 10`
+**tre tips:** Always use `-L 10` for full depth. For less output, scope to a specific directory instead of reducing depth (which hides files):
+- Full repo: `tre -L 10` (discouraged for this repo; use ls -la for the root, then *full* tre on first-level subdirs)
 - Frontend only: `tre frontend -L 10`
 - Backend only: `tre yapit -L 10`
 

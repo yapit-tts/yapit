@@ -33,16 +33,16 @@ from yapit.gateway.deps import (
     IsAdmin,
     SettingsDep,
 )
-from yapit.gateway.domain_models import Block, Document, DocumentMetadata, UserPreferences
-from yapit.gateway.exceptions import ResourceNotFoundError
-from yapit.gateway.processors.document.base import (
+from yapit.gateway.document.base import (
     BaseDocumentProcessor,
     CachedDocument,
     DocumentExtractionResult,
     ExtractedPage,
 )
-from yapit.gateway.processors.document.playwright_renderer import render_with_js
-from yapit.gateway.processors.markdown import parse_markdown, transform_to_document
+from yapit.gateway.document.playwright_renderer import render_with_js
+from yapit.gateway.domain_models import Block, Document, DocumentMetadata, UserPreferences
+from yapit.gateway.exceptions import ResourceNotFoundError
+from yapit.gateway.markdown import parse_markdown, transform_to_document
 
 router = APIRouter(prefix="/v1/documents", tags=["Documents"], dependencies=[Depends(authenticate)])
 public_router = APIRouter(prefix="/v1/documents", tags=["Documents"])

@@ -3,7 +3,7 @@ import io
 from markitdown import MarkItDown
 
 from yapit.gateway.cache import Cache
-from yapit.gateway.processors.document.base import (
+from yapit.gateway.document.base import (
     BaseDocumentProcessor,
     DocumentExtractionResult,
     ExtractedPage,

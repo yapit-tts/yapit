@@ -4,7 +4,6 @@ Integration tests require GOOGLE_API_KEY. Run with: make test-gemini
 Unit tests for retry logic run without API key.
 """
 
-import asyncio
 import os
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
@@ -12,7 +11,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 from google.genai import errors as genai_errors
 
-from yapit.gateway.processors.document.gemini import (
+from yapit.gateway.document.gemini import (
     MAX_RETRIES,
     GeminiProcessor,
 )
@@ -105,7 +104,7 @@ def mock_processor(tmp_path):
     mock_settings.images_dir = str(tmp_path / "images")
     mock_redis = AsyncMock()
 
-    with patch("yapit.gateway.processors.document.gemini.genai.Client"):
+    with patch("yapit.gateway.document.gemini.genai.Client"):
         processor = GeminiProcessor(redis=mock_redis, settings=mock_settings, resolution="low")
     return processor
 
@@ -119,7 +118,6 @@ class TestRetryBehavior:
         mock_response = Mock()
         mock_response.text = "Extracted text"
 
-        # Fail twice with 429, then succeed
         mock_processor._client.models.generate_content = Mock(
             side_effect=[
                 genai_errors.APIError(code=429, response_json={"error": {"message": "Rate limit"}}),
@@ -128,31 +126,27 @@ class TestRetryBehavior:
             ]
         )
 
-        semaphore = asyncio.Semaphore(1)
-        mock_pdf_reader = Mock()
-
         with (
             patch(
-                "yapit.gateway.processors.document.gemini.extract_single_page_pdf",
+                "yapit.gateway.document.gemini.extract_single_page_pdf",
                 return_value=b"fake-pdf-bytes",
             ),
             patch(
-                "yapit.gateway.processors.document.gemini.asyncio.sleep",
+                "yapit.gateway.document.gemini.asyncio.sleep",
                 new_callable=AsyncMock,
             ) as mock_sleep,
         ):
             page_idx, result = await mock_processor._process_page_with_figures(
-                pdf_reader=mock_pdf_reader,
+                pdf_reader=Mock(),
                 page_idx=0,
                 figures=[],
                 figure_urls=[],
-                semaphore=semaphore,
             )
 
         assert result is not None
         assert result.markdown == "Extracted text"
         assert mock_processor._client.models.generate_content.call_count == 3
-        assert mock_sleep.call_count == 2  # Slept between retries
+        assert mock_sleep.call_count == 2
 
     @pytest.mark.asyncio
     async def test_retries_on_server_errors(self, mock_processor):
@@ -168,14 +162,13 @@ class TestRetryBehavior:
                 ]
             )
 
-            semaphore = asyncio.Semaphore(1)
             with (
                 patch(
-                    "yapit.gateway.processors.document.gemini.extract_single_page_pdf",
+                    "yapit.gateway.document.gemini.extract_single_page_pdf",
                     return_value=b"fake-pdf-bytes",
                 ),
                 patch(
-                    "yapit.gateway.processors.document.gemini.asyncio.sleep",
+                    "yapit.gateway.document.gemini.asyncio.sleep",
                     new_callable=AsyncMock,
                 ),
             ):
@@ -184,7 +177,6 @@ class TestRetryBehavior:
                     page_idx=0,
                     figures=[],
                     figure_urls=[],
-                    semaphore=semaphore,
                 )
 
             assert result is not None, f"Should succeed after {error_code} retry"
@@ -196,9 +188,8 @@ class TestRetryBehavior:
             side_effect=genai_errors.APIError(code=400, response_json={"error": {"message": "Bad request"}})
         )
 
-        semaphore = asyncio.Semaphore(1)
         with patch(
-            "yapit.gateway.processors.document.gemini.extract_single_page_pdf",
+            "yapit.gateway.document.gemini.extract_single_page_pdf",
             return_value=b"fake-pdf-bytes",
         ):
             page_idx, result = await mock_processor._process_page_with_figures(
@@ -206,7 +197,6 @@ class TestRetryBehavior:
                 page_idx=0,
                 figures=[],
                 figure_urls=[],
-                semaphore=semaphore,
             )
 
         assert result is None
@@ -219,9 +209,8 @@ class TestRetryBehavior:
             side_effect=genai_errors.APIError(code=403, response_json={"error": {"message": "Forbidden"}})
         )
 
-        semaphore = asyncio.Semaphore(1)
         with patch(
-            "yapit.gateway.processors.document.gemini.extract_single_page_pdf",
+            "yapit.gateway.document.gemini.extract_single_page_pdf",
             return_value=b"fake-pdf-bytes",
         ):
             page_idx, result = await mock_processor._process_page_with_figures(
@@ -229,7 +218,6 @@ class TestRetryBehavior:
                 page_idx=0,
                 figures=[],
                 figure_urls=[],
-                semaphore=semaphore,
             )
 
         assert result is None
@@ -242,9 +230,8 @@ class TestRetryBehavior:
             side_effect=genai_errors.APIError(code=404, response_json={"error": {"message": "Not found"}})
         )
 
-        semaphore = asyncio.Semaphore(1)
         with patch(
-            "yapit.gateway.processors.document.gemini.extract_single_page_pdf",
+            "yapit.gateway.document.gemini.extract_single_page_pdf",
             return_value=b"fake-pdf-bytes",
         ):
             page_idx, result = await mock_processor._process_page_with_figures(
@@ -252,7 +239,6 @@ class TestRetryBehavior:
                 page_idx=0,
                 figures=[],
                 figure_urls=[],
-                semaphore=semaphore,
             )
 
         assert result is None
@@ -265,14 +251,13 @@ class TestRetryBehavior:
             side_effect=genai_errors.APIError(code=503, response_json={"error": {"message": "Unavailable"}})
         )
 
-        semaphore = asyncio.Semaphore(1)
         with (
             patch(
-                "yapit.gateway.processors.document.gemini.extract_single_page_pdf",
+                "yapit.gateway.document.gemini.extract_single_page_pdf",
                 return_value=b"fake-pdf-bytes",
             ),
             patch(
-                "yapit.gateway.processors.document.gemini.asyncio.sleep",
+                "yapit.gateway.document.gemini.asyncio.sleep",
                 new_callable=AsyncMock,
             ),
         ):
@@ -281,7 +266,6 @@ class TestRetryBehavior:
                 page_idx=0,
                 figures=[],
                 figure_urls=[],
-                semaphore=semaphore,
             )
 
         assert result is None
@@ -300,14 +284,13 @@ class TestRetryBehavior:
             ]
         )
 
-        semaphore = asyncio.Semaphore(1)
         with (
             patch(
-                "yapit.gateway.processors.document.gemini.extract_single_page_pdf",
+                "yapit.gateway.document.gemini.extract_single_page_pdf",
                 return_value=b"fake-pdf-bytes",
             ),
             patch(
-                "yapit.gateway.processors.document.gemini.asyncio.sleep",
+                "yapit.gateway.document.gemini.asyncio.sleep",
                 new_callable=AsyncMock,
             ),
         ):
@@ -316,7 +299,6 @@ class TestRetryBehavior:
                 page_idx=0,
                 figures=[],
                 figure_urls=[],
-                semaphore=semaphore,
             )
 
         assert result is not None

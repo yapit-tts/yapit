@@ -29,5 +29,4 @@ ENV HF_HUB_OFFLINE=1
 
 ENV PYTHONUNBUFFERED=1
 ENV DEVICE=cuda
-ENV ADAPTER_CLASS=yapit.workers.adapters.kokoro.KokoroAdapter
 CMD ["python3", "-m", "yapit.workers.kokoro"]

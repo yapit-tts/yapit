@@ -52,6 +52,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    command: redis-server --requirepass ${REDIS_PASSWORD}
     networks:
       - yapit-network
     deploy:
@@ -173,7 +174,8 @@ services:
     image: ghcr.io/yapit-tts/kokoro-cpu:${GIT_COMMIT}
     command: python -m yapit.workers.kokoro
     environment:
-      ADAPTER_CLASS: yapit.workers.adapters.kokoro.KokoroAdapter
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      WORKER_ID: swarm-kokoro-cpu-{{.Task.Slot}}
       OMP_NUM_THREADS: ${OMP_NUM_THREADS}
     networks:
       - yapit-network
@@ -186,6 +188,9 @@ services:
   yolo-cpu:
     image: ghcr.io/yapit-tts/yolo-cpu:${GIT_COMMIT}
     command: python -m yapit.workers.yolo
+    environment:
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      WORKER_ID: swarm-yolo-cpu-{{.Task.Slot}}
     networks:
       - yapit-network
     deploy:
