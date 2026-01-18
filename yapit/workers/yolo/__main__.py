@@ -1,18 +1,15 @@
-import base64
+import asyncio
 import io
-import logging
-from contextlib import asynccontextmanager
+import os
 from dataclasses import dataclass
 
 import torchvision.ops
-import uvicorn
 from doclayout_yolo import YOLOv10
-from fastapi import FastAPI, HTTPException
 from huggingface_hub import hf_hub_download
+from loguru import logger
 from PIL import Image
-from pydantic import BaseModel
 
-log = logging.getLogger("yolo_worker")
+from yapit.workers.yolo_loop import run_yolo_worker
 
 HF_REPO_ID = "juliozhao/DocLayout-YOLO-DocStructBench"
 HF_MODEL_FILENAME = "doclayout_yolo_docstructbench_imgsz1024.pt"
@@ -24,13 +21,6 @@ IMGSZ = 1024
 _model: YOLOv10 | None = None
 
 
-def get_model() -> YOLOv10:
-    global _model
-    if _model is None:
-        raise RuntimeError("Model not loaded")
-    return _model
-
-
 @dataclass
 class DetectedFigure:
     bbox: tuple[float, float, float, float]  # x1, y1, x2, y2 normalized 0-1
@@ -39,29 +29,20 @@ class DetectedFigure:
     row_group: str | None = None
 
 
-class DetectRequest(BaseModel):
-    image_base64: str
-    page_width: int
-    page_height: int
-
-
-class DetectedFigureResponse(BaseModel):
-    bbox: tuple[float, float, float, float]
-    confidence: float
-    width_pct: float
-    row_group: str | None
-
-
-class DetectResponse(BaseModel):
-    figures: list[DetectedFigureResponse]
+def load_model() -> None:
+    global _model
+    logger.info("Loading DocLayout-YOLO model...")
+    model_path = hf_hub_download(repo_id=HF_REPO_ID, filename=HF_MODEL_FILENAME)
+    _model = YOLOv10(model_path)
+    logger.info(f"Model loaded from {model_path}")
 
 
 def detect_figures(page_image: bytes, page_width: int, page_height: int) -> list[DetectedFigure]:
     """Run YOLO on a page image to detect figures."""
-    model = get_model()
+    assert _model is not None, "Model not loaded"
     img = Image.open(io.BytesIO(page_image))
 
-    results = model.predict(img, imgsz=IMGSZ, conf=CONF_THRESHOLD, device="cpu", verbose=False)
+    results = _model.predict(img, imgsz=IMGSZ, conf=CONF_THRESHOLD, device="cpu", verbose=False)
     det = results[0]
 
     # Filter to figure class only
@@ -173,44 +154,9 @@ def assign_row_groups(figures: list[DetectedFigure]) -> list[DetectedFigure]:
     return sorted(sorted_figures, key=lambda f: (f.row_group or "", f.bbox[0]))
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    global _model
-    log.info("Loading DocLayout-YOLO model...")
-    model_path = hf_hub_download(repo_id=HF_REPO_ID, filename=HF_MODEL_FILENAME)
-    _model = YOLOv10(model_path)
-    log.info(f"Model loaded from {model_path}")
-    yield
-
-
-app = FastAPI(title="YOLO Figure Detection Worker", lifespan=lifespan)
-
-
-@app.get("/health")
-async def health():
-    return {"status": "healthy"}
-
-
-@app.post("/detect", response_model=DetectResponse)
-async def detect(request: DetectRequest):
-    try:
-        image_bytes = base64.b64decode(request.image_base64)
-        figures = detect_figures(image_bytes, request.page_width, request.page_height)
-        return DetectResponse(
-            figures=[
-                DetectedFigureResponse(
-                    bbox=f.bbox,
-                    confidence=f.confidence,
-                    width_pct=f.width_pct,
-                    row_group=f.row_group,
-                )
-                for f in figures
-            ]
-        )
-    except Exception as e:
-        log.error(f"Detection failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    redis_url = os.environ["REDIS_URL"]
+    worker_id = os.environ["WORKER_ID"]
+
+    load_model()
+    asyncio.run(run_yolo_worker(redis_url, worker_id, detect_figures))

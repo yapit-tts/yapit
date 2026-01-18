@@ -10,7 +10,8 @@ dependencies = [
   "doclayout-yolo~=0.0.4",
   "huggingface-hub~=0.32.4",
   "pillow~=11.2.1",
-  "fastapi[standard]~=0.124.4",
+  "redis[hiredis]~=5.2.1",
+  "loguru~=0.7.3",
 ]
 
 [tool.uv.sources]

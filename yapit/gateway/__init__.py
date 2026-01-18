@@ -9,6 +9,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, ORJSONResponse
 from loguru import logger
 
+from yapit.contracts import (
+    TTS_JOB_INDEX,
+    TTS_JOBS,
+    TTS_RESULTS,
+    YOLO_JOBS,
+    YOLO_QUEUE,
+    YOLO_RESULT,
+    get_queue_name,
+)
 from yapit.gateway.api.v1 import routers as v1_routers
 from yapit.gateway.cache import Cache
 from yapit.gateway.config import Settings, get_settings
@@ -19,11 +28,10 @@ from yapit.gateway.metrics import init_metrics_db, start_metrics_writer, stop_me
 from yapit.gateway.overflow_scanner import run_overflow_scanner
 from yapit.gateway.processors.document.gemini import GeminiProcessor
 from yapit.gateway.processors.document.markitdown import MarkitdownProcessor
-from yapit.gateway.processors.document.yolo_client import YoloProcessor
 from yapit.gateway.result_consumer import run_result_consumer
 from yapit.gateway.visibility_scanner import run_visibility_scanner
 from yapit.workers.adapters.inworld import InworldAdapter
-from yapit.workers.queue_worker import run_worker
+from yapit.workers.tts_loop import run_tts_worker
 
 logger.remove()
 logger.add(
@@ -32,6 +40,15 @@ logger.add(
     level="INFO",
     colorize=True,
 )
+
+# Scanner constants
+TTS_VISIBILITY_TIMEOUT_S = 30
+TTS_OVERFLOW_THRESHOLD_S = 30
+YOLO_VISIBILITY_TIMEOUT_S = 10
+YOLO_OVERFLOW_THRESHOLD_S = 10
+VISIBILITY_SCAN_INTERVAL_S = 15
+OVERFLOW_SCAN_INTERVAL_S = 5
+MAX_RETRIES = 3
 
 
 def _configure_file_logging(log_dir: Path) -> None:
@@ -71,33 +88,85 @@ async def lifespan(app: FastAPI):
     else:
         app.state.ai_processor = None
 
-    # TTS background tasks
     background_tasks: list[asyncio.Task] = []
 
+    # TTS result consumer
     result_consumer_task = asyncio.create_task(
         run_result_consumer(app.state.redis_client, app.state.audio_cache, settings)
     )
     background_tasks.append(result_consumer_task)
 
-    visibility_scanner_task = asyncio.create_task(run_visibility_scanner(app.state.redis_client))
-    background_tasks.append(visibility_scanner_task)
+    # TTS visibility scanner
+    tts_visibility_task = asyncio.create_task(
+        run_visibility_scanner(
+            app.state.redis_client,
+            processing_pattern="tts:processing:*",
+            jobs_key=TTS_JOBS,
+            visibility_timeout_s=TTS_VISIBILITY_TIMEOUT_S,
+            max_retries=MAX_RETRIES,
+            scan_interval_s=VISIBILITY_SCAN_INTERVAL_S,
+            name="tts-visibility",
+        )
+    )
+    background_tasks.append(tts_visibility_task)
 
-    overflow_scanner_task = asyncio.create_task(run_overflow_scanner(app.state.redis_client, settings))
-    background_tasks.append(overflow_scanner_task)
+    # TTS overflow scanner (for Kokoro)
+    if settings.kokoro_runpod_serverless_endpoint:
+        tts_overflow_task = asyncio.create_task(
+            run_overflow_scanner(
+                app.state.redis_client,
+                settings,
+                queue_name=get_queue_name("kokoro"),
+                jobs_key=TTS_JOBS,
+                job_index_key=TTS_JOB_INDEX,
+                endpoint_id=settings.kokoro_runpod_serverless_endpoint,
+                result_key_pattern=TTS_RESULTS,
+                overflow_threshold_s=TTS_OVERFLOW_THRESHOLD_S,
+                scan_interval_s=OVERFLOW_SCAN_INTERVAL_S,
+                name="tts-overflow",
+            )
+        )
+        background_tasks.append(tts_overflow_task)
+
+    # YOLO visibility scanner
+    yolo_visibility_task = asyncio.create_task(
+        run_visibility_scanner(
+            app.state.redis_client,
+            processing_pattern="yolo:processing:*",
+            jobs_key=YOLO_JOBS,
+            visibility_timeout_s=YOLO_VISIBILITY_TIMEOUT_S,
+            max_retries=MAX_RETRIES,
+            scan_interval_s=VISIBILITY_SCAN_INTERVAL_S,
+            name="yolo-visibility",
+        )
+    )
+    background_tasks.append(yolo_visibility_task)
+
+    # YOLO overflow scanner
+    if settings.yolo_runpod_serverless_endpoint:
+        yolo_overflow_task = asyncio.create_task(
+            run_overflow_scanner(
+                app.state.redis_client,
+                settings,
+                queue_name=YOLO_QUEUE,
+                jobs_key=YOLO_JOBS,
+                job_index_key=None,
+                endpoint_id=settings.yolo_runpod_serverless_endpoint,
+                result_key_pattern=YOLO_RESULT,
+                overflow_threshold_s=YOLO_OVERFLOW_THRESHOLD_S,
+                scan_interval_s=OVERFLOW_SCAN_INTERVAL_S,
+                name="yolo-overflow",
+            )
+        )
+        background_tasks.append(yolo_overflow_task)
 
     # Inworld workers run in gateway (API calls, no local model)
     if settings.inworld_api_key:
         for model_id, model_slug in [("inworld-tts-1", "inworld"), ("inworld-tts-1-max", "inworld-max")]:
             adapter = InworldAdapter(api_key=settings.inworld_api_key, model_id=model_id)
-            task = asyncio.create_task(run_worker(settings.redis_url, model_slug, adapter, f"inworld-{model_slug}"))
+            task = asyncio.create_task(run_tts_worker(settings.redis_url, model_slug, adapter, f"inworld-{model_slug}"))
             background_tasks.append(task)
         logger.info("Inworld workers started")
-
-    # YOLO figure detection processor
-    yolo_processor = YoloProcessor(redis=app.state.redis_client, settings=settings)
-    app.state.yolo_processor = yolo_processor
-    yolo_processor_task = asyncio.create_task(yolo_processor.run())
-    background_tasks.append(yolo_processor_task)
 
     all_caches = [app.state.audio_cache, app.state.document_cache, app.state.extraction_cache]
     maintenance_task = asyncio.create_task(_cache_maintenance_task(all_caches))

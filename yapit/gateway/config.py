@@ -23,6 +23,7 @@ class Settings(BaseSettings):
 
     tts_overflow_queue_threshold: int  # jobs per worker before routing to overflow
     kokoro_runpod_serverless_endpoint: str | None = None
+    yolo_runpod_serverless_endpoint: str | None = None
     runpod_api_key: str | None = None
     runpod_request_timeout_seconds: int | None = None
     inworld_api_key: str | None = None

@@ -39,6 +39,10 @@ services:
     environment:
       WORKER_ID: dev-kokoro-cpu
 
+  yolo-cpu:
+    environment:
+      WORKER_ID: dev-yolo-cpu
+
   stripe-cli:
     profiles: ["stripe"]
     image: stripe/stripe-cli:latest

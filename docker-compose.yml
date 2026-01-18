@@ -126,13 +126,9 @@ services:
       context: .
       dockerfile: yapit/workers/yolo/Dockerfile.cpu
     command: python -m yapit.workers.yolo
+    environment:
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-      start_period: 60s
     deploy:
       replicas: ${YOLO_CPU_REPLICAS}
 

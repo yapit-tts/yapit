@@ -1,14 +1,13 @@
 """RunPod serverless handler for TTS overflow.
 
 This module runs ON RunPod as a serverless worker. The gateway's overflow_scanner
-sends jobs here when the main queue backs up (jobs older than 30s).
+sends jobs here when the TTS queue backs up (jobs older than 30s).
 
-Environment variables:
-    ADAPTER_CLASS: Full path to the adapter class to use.
-        Example: yapit.workers.adapters.kokoro.KokoroAdapter
-
-Usage:
-    Deploy to RunPod with CMD: python -m yapit.workers.handlers.runpod
+Deployment (Kokoro example):
+    Image: ghcr.io/yapit-tts/kokoro-cpu:latest
+    CMD override: python -m yapit.workers.handlers.runpod
+    Environment variables:
+        ADAPTER_CLASS: yapit.workers.adapters.kokoro.KokoroAdapter
 
 The handler receives SynthesisParameters (text, kwargs) and returns:
     {audio_base64: str, duration_ms: int, audio_tokens?: str}

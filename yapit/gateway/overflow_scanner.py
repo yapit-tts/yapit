@@ -1,70 +1,84 @@
 """Scans for stale jobs and sends them to RunPod overflow."""
 
 import asyncio
+import json
 import time
 
 from loguru import logger
 from redis.asyncio import Redis
 
-from yapit.contracts import (
-    TTS_JOB_INDEX,
-    TTS_JOBS,
-    TTS_QUEUE,
-    TTS_RESULTS,
-    SynthesisJob,
-    WorkerResult,
-)
 from yapit.gateway.config import Settings
 
-OVERFLOW_THRESHOLD_S = 30
-SCAN_INTERVAL_S = 5
 
+async def run_overflow_scanner(
+    redis: Redis,
+    settings: Settings,
+    queue_name: str,
+    jobs_key: str,
+    job_index_key: str | None,
+    endpoint_id: str,
+    result_key_pattern: str,
+    overflow_threshold_s: int,
+    scan_interval_s: int,
+    name: str,
+) -> None:
+    """Run overflow scanner for a queue.
 
-async def run_overflow_scanner(redis: Redis, settings: Settings) -> None:
+    Args:
+        redis: Redis client
+        settings: App settings (for RunPod timeout)
+        queue_name: Sorted set queue to scan
+        jobs_key: Hash where jobs are stored
+        job_index_key: Optional hash for job index cleanup
+        endpoint_id: RunPod endpoint ID
+        result_key_pattern: Where to push results. Can contain {job_id} for substitution.
+        overflow_threshold_s: Seconds before a job is sent to overflow
+        scan_interval_s: Seconds between scans
+        name: Name for logging
+    """
     if not settings.runpod_api_key:
-        logger.warning("No RunPod API key configured, overflow scanner disabled")
+        logger.warning(f"{name} scanner disabled: no RunPod API key")
         return
 
     import runpod
 
     runpod.api_key = settings.runpod_api_key
 
-    overflow_config = _get_overflow_config(settings)
-    if not overflow_config:
-        logger.warning("No overflow endpoints configured, overflow scanner disabled")
-        return
-
-    logger.info(f"Overflow scanner starting, models={list(overflow_config.keys())}")
+    logger.info(f"{name} scanner starting (queue={queue_name}, threshold={overflow_threshold_s}s)")
 
     while True:
         try:
-            for model, endpoint_id in overflow_config.items():
-                await _check_queue_for_overflow(redis, model, endpoint_id, settings)
-            await asyncio.sleep(SCAN_INTERVAL_S)
+            await _check_queue_for_overflow(
+                redis,
+                settings,
+                queue_name,
+                jobs_key,
+                job_index_key,
+                endpoint_id,
+                result_key_pattern,
+                overflow_threshold_s,
+                name,
+            )
+            await asyncio.sleep(scan_interval_s)
         except asyncio.CancelledError:
-            logger.info("Overflow scanner shutting down")
+            logger.info(f"{name} scanner shutting down")
             raise
         except Exception as e:
-            logger.exception(f"Error in overflow scanner: {e}")
-            await asyncio.sleep(SCAN_INTERVAL_S)
-
-
-def _get_overflow_config(settings: Settings) -> dict[str, str]:
-    """Returns {model_slug: runpod_endpoint_id} for models with overflow."""
-    if settings.kokoro_runpod_serverless_endpoint:
-        return {"kokoro": settings.kokoro_runpod_serverless_endpoint}
-    return {}
+            logger.exception(f"Error in {name} scanner: {e}")
+            await asyncio.sleep(scan_interval_s)
 
 
 async def _check_queue_for_overflow(
     redis: Redis,
-    model: str,
-    endpoint_id: str,
     settings: Settings,
+    queue_name: str,
+    jobs_key: str,
+    job_index_key: str | None,
+    endpoint_id: str,
+    result_key_pattern: str,
+    overflow_threshold_s: int,
+    name: str,
 ) -> None:
-    queue_name = TTS_QUEUE.format(model=model)
-
-    # Get oldest job_id without removing (ZRANGE returns [(member, score), ...])
     oldest = await redis.zrange(queue_name, 0, 0, withscores=True)
     if not oldest:
         return
@@ -73,36 +87,41 @@ async def _check_queue_for_overflow(
     job_id = job_id_bytes.decode() if isinstance(job_id_bytes, bytes) else job_id_bytes
 
     age = time.time() - queued_score
-    if age < OVERFLOW_THRESHOLD_S:
+    if age < overflow_threshold_s:
         return
 
-    # Job is stale, try to claim it
+    # Claim the job
     removed = await redis.zrem(queue_name, job_id)
     if not removed:
         return  # Worker grabbed it first
 
-    job_json = await redis.hget(TTS_JOBS, job_id)
-    if job_json is None:
+    wrapper_json = await redis.hget(jobs_key, job_id)
+    if wrapper_json is None:
         return  # Already processed or evicted
 
-    await redis.hdel(TTS_JOBS, job_id)
+    await redis.hdel(jobs_key, job_id)
 
-    job = SynthesisJob.model_validate_json(job_json)
+    wrapper = json.loads(wrapper_json)
+    raw_job = wrapper["job"]
 
-    # Clean up job index
-    index_key = f"{job.user_id}:{job.document_id}:{job.block_idx}"
-    await redis.hdel(TTS_JOB_INDEX, index_key)
+    # Clean up job index if present (index_key stored in wrapper by push_job)
+    if job_index_key and "index_key" in wrapper:
+        await redis.hdel(job_index_key, wrapper["index_key"])
 
-    logger.info(f"Overflow: job {job_id} stale for {age:.1f}s, sending to RunPod")
+    logger.info(f"{name}: job {job_id} stale for {age:.1f}s, sending to RunPod")
 
-    await _process_via_runpod(redis, job, endpoint_id, settings)
+    result_key = result_key_pattern.format(job_id=job_id)
+    await _process_via_runpod(redis, job_id, raw_job, endpoint_id, result_key, settings, name)
 
 
 async def _process_via_runpod(
     redis: Redis,
-    job: SynthesisJob,
+    job_id: str,
+    raw_job: str,
     endpoint_id: str,
+    result_key: str,
     settings: Settings,
+    name: str,
 ) -> None:
     import runpod
 
@@ -110,51 +129,36 @@ async def _process_via_runpod(
     endpoint = runpod.Endpoint(endpoint_id)
 
     try:
+        job_data = json.loads(raw_job)
         result = await asyncio.to_thread(
             endpoint.run_sync,
-            job.synthesis_parameters.model_dump(),
+            job_data,
             timeout=settings.runpod_request_timeout_seconds,
         )
 
-        if "error" in result:
+        if isinstance(result, dict) and "error" in result:
             raise RuntimeError(f"RunPod error: {result['error']}")
 
         processing_time_ms = int((time.time() - start_time) * 1000)
+        logger.info(f"{name} job {job_id} completed in {processing_time_ms}ms")
 
-        worker_result = WorkerResult(
-            job_id=job.job_id,
-            variant_hash=job.variant_hash,
-            user_id=job.user_id,
-            document_id=job.document_id,
-            block_idx=job.block_idx,
-            model_slug=job.model_slug,
-            voice_slug=job.voice_slug,
-            text_length=len(job.synthesis_parameters.text),
-            worker_id="overflow-runpod",
-            processing_time_ms=processing_time_ms,
-            audio_base64=result["audio_base64"],
-            duration_ms=result["duration_ms"],
-            audio_tokens=result.get("audio_tokens"),
-        )
+        # RunPod handler returns result JSON, we just pass it through
+        # Add job_id and worker_id for tracking
+        if isinstance(result, dict):
+            result["job_id"] = job_id
+            result["worker_id"] = f"{name}-runpod"
+            result["processing_time_ms"] = processing_time_ms
 
-        logger.info(f"Overflow job {job.job_id} completed: {processing_time_ms}ms, {result['duration_ms']}ms audio")
+        await redis.lpush(result_key, json.dumps(result))
 
     except Exception as e:
         processing_time_ms = int((time.time() - start_time) * 1000)
-        logger.exception(f"Overflow job {job.job_id} failed: {e}")
+        logger.exception(f"{name} job {job_id} failed: {e}")
 
-        worker_result = WorkerResult(
-            job_id=job.job_id,
-            variant_hash=job.variant_hash,
-            user_id=job.user_id,
-            document_id=job.document_id,
-            block_idx=job.block_idx,
-            model_slug=job.model_slug,
-            voice_slug=job.voice_slug,
-            text_length=len(job.synthesis_parameters.text),
-            worker_id="overflow-runpod",
-            processing_time_ms=processing_time_ms,
-            error=str(e),
-        )
-
-    await redis.lpush(TTS_RESULTS, worker_result.model_dump_json())
+        error_result = {
+            "job_id": job_id,
+            "worker_id": f"{name}-runpod",
+            "processing_time_ms": processing_time_ms,
+            "error": str(e),
+        }
+        await redis.lpush(result_key, json.dumps(error_result))

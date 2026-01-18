@@ -1,6 +1,5 @@
 """Contracts for Redis keys, queues, and job processing."""
 
-import time
 import uuid
 from typing import Annotated, Final, Literal
 
@@ -20,6 +19,12 @@ TTS_JOB_INDEX: Final[str] = "tts:job_index"  # hash: "user_id:doc_id:block_idx" 
 TTS_RESULTS: Final[str] = "tts:results"
 TTS_PROCESSING: Final[str] = "tts:processing:{worker_id}"
 TTS_DLQ: Final[str] = "tts:dlq:{model}"
+
+YOLO_QUEUE: Final[str] = "yolo:queue"  # sorted set: job_id -> timestamp
+YOLO_JOBS: Final[str] = "yolo:jobs"  # hash: job_id -> job_json
+YOLO_PROCESSING: Final[str] = "yolo:processing:{worker_id}"
+YOLO_DLQ: Final[str] = "yolo:dlq"
+YOLO_RESULT: Final[str] = "yolo:result:{job_id}"  # list for BRPOP result delivery
 
 
 SynthesisMode = Literal["browser", "server"]
@@ -60,9 +65,6 @@ class SynthesisJob(BaseModel):
 
     synthesis_parameters: SynthesisParameters
 
-    queued_at: float = Field(default_factory=time.time)
-    retry_count: int = 0
-
     model_config = ConfigDict(frozen=True)
 
 
@@ -93,11 +95,34 @@ class WorkerResult(BaseModel):
     error: str | None = None
 
 
-class ProcessingEntry(BaseModel):
-    """Stored in TTS_PROCESSING to track jobs being worked on."""
+class YoloJob(BaseModel):
+    """YOLO detection job pushed to queue."""
 
-    processing_started: float
-    job: SynthesisJob
+    job_id: uuid.UUID
+    image_base64: str
+    page_width: int
+    page_height: int
+
+    model_config = ConfigDict(frozen=True)
+
+
+class DetectedFigure(BaseModel):
+    """A figure detected by YOLO."""
+
+    bbox: tuple[float, float, float, float]  # x1, y1, x2, y2 normalized 0-1
+    confidence: float
+    width_pct: float
+    row_group: str | None = None
+
+
+class YoloResult(BaseModel):
+    """YOLO detection result."""
+
+    job_id: uuid.UUID
+    figures: list[DetectedFigure]
+    worker_id: str
+    processing_time_ms: int
+    error: str | None = None
 
 
 # WebSocket messages: Client → Server
