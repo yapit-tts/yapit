@@ -4,6 +4,7 @@ import time
 from enum import StrEnum, auto
 from pathlib import Path
 
+import aiosqlite
 from loguru import logger
 from pydantic import BaseModel
 
@@ -52,7 +53,7 @@ class Cache(abc.ABC):
         """Delete `key`. Return True if deleted or not present, False on error."""
 
     @abc.abstractmethod
-    def get_stats(self) -> CacheStats:
+    async def get_stats(self) -> CacheStats:
         """Return cache statistics for monitoring."""
 
     @abc.abstractmethod
@@ -68,6 +69,7 @@ class SqliteCache(Cache):
         self._init_db()
 
     def _init_db(self) -> None:
+        """Initialize DB schema synchronously (only called once at startup)."""
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         with sqlite3.connect(self.db_path) as db:
             db.execute(
@@ -87,67 +89,76 @@ class SqliteCache(Cache):
     async def store(self, key: str, data: bytes) -> str | None:
         ts = time.time()
         size = len(data)
-        with sqlite3.connect(self.db_path) as db:
-            db.execute(
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
                 "REPLACE INTO cache(key, data, size, created_at, last_accessed) VALUES(?, ?, ?, ?, ?)",
                 (key, data, size, ts, ts),
             )
+            await db.commit()
         if self._max_size_bytes:
             await self._enforce_max_size()
         return key
 
     async def exists(self, key: str) -> bool:
-        with sqlite3.connect(self.db_path) as db:
-            row = db.execute("SELECT 1 FROM cache WHERE key=?", (key,)).fetchone()
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute("SELECT 1 FROM cache WHERE key=?", (key,)) as cursor:
+                row = await cursor.fetchone()
         return bool(row)
 
     async def retrieve_ref(self, key: str) -> str | None:
         return key if await self.exists(key) else None
 
     async def retrieve_data(self, key: str) -> bytes | None:
-        with sqlite3.connect(self.db_path) as db:
-            row = db.execute("SELECT data FROM cache WHERE key=?", (key,)).fetchone()
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute("SELECT data FROM cache WHERE key=?", (key,)) as cursor:
+                row = await cursor.fetchone()
             if row:
-                db.execute("UPDATE cache SET last_accessed=? WHERE key=?", (time.time(), key))
+                await db.execute("UPDATE cache SET last_accessed=? WHERE key=?", (time.time(), key))
+                await db.commit()
         return row[0] if row else None
 
     async def delete(self, key: str) -> bool:
-        with sqlite3.connect(self.db_path) as db:
-            cur = db.execute("DELETE FROM cache WHERE key=?", (key,))
-        return cur.rowcount > 0
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute("DELETE FROM cache WHERE key=?", (key,))
+            await db.commit()
+            return cursor.rowcount > 0
 
     async def _enforce_max_size(self) -> int:
         """Evict oldest entries (by last_accessed) until total size is under max_size_bytes."""
         if not self._max_size_bytes:
             return 0
 
-        with sqlite3.connect(self.db_path) as db:
-            total_size = db.execute("SELECT COALESCE(SUM(size), 0) FROM cache").fetchone()[0]
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute("SELECT COALESCE(SUM(size), 0) FROM cache") as cursor:
+                total_size = (await cursor.fetchone())[0]
 
             if total_size <= self._max_size_bytes:
                 return 0
 
-            rows = db.execute("SELECT key, size FROM cache ORDER BY last_accessed ASC").fetchall()
+            async with db.execute("SELECT key, size FROM cache ORDER BY last_accessed ASC") as cursor:
+                rows = await cursor.fetchall()
 
             evicted = 0
             for key, size in rows:
                 if total_size <= self._max_size_bytes:
                     break
-                db.execute("DELETE FROM cache WHERE key=?", (key,))
+                await db.execute("DELETE FROM cache WHERE key=?", (key,))
                 total_size -= size
                 evicted += 1
 
             if evicted > 0:
+                await db.commit()
                 logger.debug(f"Cache LRU eviction: removed {evicted} entries from {self.db_path}")
 
             return evicted
 
-    def get_stats(self) -> CacheStats:
+    async def get_stats(self) -> CacheStats:
         """Return cache statistics for monitoring."""
-        with sqlite3.connect(self.db_path) as db:
-            row = db.execute("SELECT COALESCE(SUM(size), 0), COUNT(*) FROM cache").fetchone()
-            data_size = row[0]
-            entry_count = row[1]
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute("SELECT COALESCE(SUM(size), 0), COUNT(*) FROM cache") as cursor:
+                row = await cursor.fetchone()
+                data_size = row[0]
+                entry_count = row[1]
 
         file_size = self.db_path.stat().st_size if self.db_path.exists() else 0
         bloat_ratio = file_size / data_size if data_size > 0 else 1.0
@@ -161,7 +172,7 @@ class SqliteCache(Cache):
 
     async def vacuum_if_needed(self, bloat_threshold: float = 2.0) -> bool:
         """Vacuum if file size exceeds bloat_threshold * data size."""
-        stats = self.get_stats()
+        stats = await self.get_stats()
 
         if stats.bloat_ratio <= bloat_threshold or stats.data_size_bytes == 0:
             return False
@@ -173,12 +184,13 @@ class SqliteCache(Cache):
         )
 
         start = time.time()
-        with sqlite3.connect(self.db_path) as db:
-            db.execute("VACUUM")
-            db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("VACUUM")
+            await db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            await db.commit()
 
         duration_ms = int((time.time() - start) * 1000)
-        new_stats = self.get_stats()
+        new_stats = await self.get_stats()
 
         logger.info(
             f"Cache vacuum complete: {self.db_path} "

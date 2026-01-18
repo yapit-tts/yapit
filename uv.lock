@@ -2619,6 +2619,7 @@ dev = [
     { name = "pre-commit" },
 ]
 gateway = [
+    { name = "aiosqlite" },
     { name = "alembic" },
     { name = "asyncpg" },
     { name = "fastapi", extra = ["standard"] },
@@ -2663,6 +2664,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aiosqlite", marker = "extra == 'gateway'", specifier = "==0.21.0" },
     { name = "aiosqlite", marker = "extra == 'test'", specifier = "==0.21.0" },
     { name = "alembic", marker = "extra == 'gateway'", specifier = "~=1.15.2" },
     { name = "asyncpg", marker = "extra == 'gateway'", specifier = "~=0.30.0" },

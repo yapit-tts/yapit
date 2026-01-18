@@ -49,6 +49,7 @@ gateway = [
   "google-genai~=1.57",
   "playwright~=1.57",
   "pillow~=12.1",
+  "aiosqlite==0.21.0",
 ]
 
 test = [

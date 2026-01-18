@@ -113,7 +113,7 @@ class TestLRUEviction:
 class TestCacheStats:
     @pytest.mark.asyncio
     async def test_stats_empty_cache(self, unlimited_cache):
-        stats = unlimited_cache.get_stats()
+        stats = await unlimited_cache.get_stats()
         assert stats.data_size_bytes == 0
         assert stats.entry_count == 0
         assert stats.bloat_ratio == 1.0
@@ -123,7 +123,7 @@ class TestCacheStats:
         await unlimited_cache.store("key1", b"x" * 100)
         await unlimited_cache.store("key2", b"y" * 200)
 
-        stats = unlimited_cache.get_stats()
+        stats = await unlimited_cache.get_stats()
         assert stats.data_size_bytes == 300
         assert stats.entry_count == 2
         assert stats.file_size_bytes > 0
@@ -135,7 +135,7 @@ class TestCacheStats:
         await unlimited_cache.store("key2", b"y" * 100)
         await unlimited_cache.delete("key1")
 
-        stats = unlimited_cache.get_stats()
+        stats = await unlimited_cache.get_stats()
         assert stats.data_size_bytes == 100
         assert stats.entry_count == 1
 
@@ -146,7 +146,7 @@ class TestVacuum:
         # Need enough data that SQLite overhead doesn't dominate
         await unlimited_cache.store("key1", b"x" * 100_000)
 
-        stats = unlimited_cache.get_stats()
+        stats = await unlimited_cache.get_stats()
         # With 100KB data, bloat should be reasonable (< 2x)
         assert stats.bloat_ratio < 2.0
 
