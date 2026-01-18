@@ -12,6 +12,7 @@ dependencies = [
   "pillow~=11.2.1",
   "redis[hiredis]~=5.2.1",
   "loguru~=0.7.3",
+  "PyMuPDF~=1.26.7",
 ]
 
 [tool.uv.sources]

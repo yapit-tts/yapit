@@ -127,6 +127,7 @@ services:
     command: python -m yapit.workers.yolo
     environment:
       REDIS_URL: redis://redis:6379
+      OMP_NUM_THREADS: ${OMP_NUM_THREADS}
     restart: unless-stopped
     deploy:
       replicas: ${YOLO_CPU_REPLICAS}

@@ -104,30 +104,35 @@ class WorkerResult(BaseModel):
 
 
 class YoloJob(BaseModel):
-    """YOLO detection job pushed to queue."""
+    """YOLO detection job pushed to queue.
+
+    Worker receives single-page PDF bytes, renders the page, runs detection,
+    crops detected figures, and returns everything in YoloResult.
+    """
 
     job_id: uuid.UUID
-    image_base64: str
-    page_width: int
-    page_height: int
+    page_pdf_base64: str  # single-page PDF bytes
 
     model_config = ConfigDict(frozen=True)
 
 
 class DetectedFigure(BaseModel):
-    """A figure detected by YOLO."""
+    """A figure detected by YOLO, with cropped image data."""
 
     bbox: tuple[float, float, float, float]  # x1, y1, x2, y2 normalized 0-1
     confidence: float
     width_pct: float
     row_group: str | None = None
+    cropped_image_base64: str  # cropped PNG bytes
 
 
 class YoloResult(BaseModel):
-    """YOLO detection result."""
+    """YOLO detection result including rendered page dimensions and cropped figures."""
 
     job_id: uuid.UUID
     figures: list[DetectedFigure]
+    page_width: int | None  # rendered dimensions, None on error
+    page_height: int | None
     worker_id: str
     processing_time_ms: int
     error: str | None = None

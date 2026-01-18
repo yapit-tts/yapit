@@ -11,6 +11,7 @@ from loguru import logger
 from pypdf import PdfReader
 from redis.asyncio import Redis
 
+from yapit.contracts import DetectedFigure
 from yapit.gateway.cache import Cache
 from yapit.gateway.document.base import (
     BaseDocumentProcessor,
@@ -18,11 +19,9 @@ from yapit.gateway.document.base import (
     ExtractedPage,
 )
 from yapit.gateway.document.extraction import (
-    DetectedFigure,
     build_figure_prompt,
     extract_single_page_pdf,
     load_prompt,
-    render_page_as_image,
     store_figure,
     substitute_image_placeholders,
 )
@@ -231,13 +230,13 @@ class GeminiProcessor(BaseDocumentProcessor):
         logger.info(f"Extraction: starting {len(pages_to_process)} pages (PDF has {total_pages} total)")
 
         async def process_page(page_idx: int) -> tuple[int, ExtractedPage | None]:
-            """Process a single page: render → YOLO → store figures → Gemini."""
+            """Process a single page: extract PDF → YOLO worker → store figures → Gemini."""
             try:
-                # Render page as image (CPU-bound, run in thread)
-                page_image, width, height = await asyncio.to_thread(render_page_as_image, content, page_idx)
+                # Extract single-page PDF for YOLO worker (worker renders + detects + crops)
+                page_pdf = extract_single_page_pdf(pdf_reader, page_idx)
 
-                # Queue YOLO detection and wait for result
-                job_id = await enqueue_detection(self._redis, page_image, width, height)
+                # Queue detection and wait for result
+                job_id = await enqueue_detection(self._redis, page_pdf)
                 yolo_result = await wait_for_result(self._redis, job_id)
 
                 if yolo_result.error:
@@ -245,24 +244,16 @@ class GeminiProcessor(BaseDocumentProcessor):
 
                 logger.info(f"YOLO: page {page_idx + 1} - detected {len(yolo_result.figures)} figures")
 
-                # Convert YoloDetectedFigure to DetectedFigure and store each figure
-                figures: list[DetectedFigure] = []
+                # Store each detected figure and collect URLs
                 figure_urls: list[str] = []
-                for fig_idx, yolo_fig in enumerate(yolo_result.figures):
-                    figure = DetectedFigure(
-                        bbox=yolo_fig.bbox,
-                        confidence=yolo_fig.confidence,
-                        width_pct=yolo_fig.width_pct,
-                        row_group=yolo_fig.row_group,
-                    )
-                    figures.append(figure)
-                    url = store_figure(
-                        figure, page_image, width, height, self._images_dir, content_hash, page_idx, fig_idx
-                    )
+                for fig_idx, figure in enumerate(yolo_result.figures):
+                    url = store_figure(figure, self._images_dir, content_hash, page_idx, fig_idx)
                     figure_urls.append(url)
 
                 # Call Gemini API
-                page_idx, page = await self._process_page_with_figures(pdf_reader, page_idx, figures, figure_urls)
+                page_idx, page = await self._process_page_with_figures(
+                    pdf_reader, page_idx, yolo_result.figures, figure_urls
+                )
 
                 if page is not None:
                     cache_key = self._extraction_cache_key(content_hash, page_idx)

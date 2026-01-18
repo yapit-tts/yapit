@@ -190,10 +190,15 @@ async def _process_via_runpod(
             data={"job_id": job_id, "error": str(e)},
         )
 
-        error_result = {
+        error_result: dict = {
             "job_id": job_id,
             "worker_id": f"{name}-runpod",
             "processing_time_ms": processing_time_ms,
             "error": str(e),
         }
+        # Add queue-type specific fields for validation
+        if queue_type == "yolo":
+            error_result["figures"] = []
+            error_result["page_width"] = None
+            error_result["page_height"] = None
         await redis.lpush(result_key, json.dumps(error_result))

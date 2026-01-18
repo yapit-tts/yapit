@@ -27,8 +27,6 @@ class Settings(BaseSettings):
     runpod_api_key: str | None = None
     runpod_request_timeout_seconds: int | None = None
     inworld_api_key: str | None = None
-    client_request_timeout_seconds: int
-    synthesis_polling_timeout_seconds: int
 
     document_cache_type: Caches
     document_cache_config: CacheConfig

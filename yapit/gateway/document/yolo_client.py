@@ -24,19 +24,17 @@ _yolo_config = QueueConfig(
 )
 
 
-async def enqueue_detection(
-    redis: Redis,
-    page_image: bytes,
-    page_width: int,
-    page_height: int,
-) -> str:
-    """Put a YOLO detection job on the queue. Returns job_id."""
+async def enqueue_detection(redis: Redis, page_pdf: bytes) -> str:
+    """Put a YOLO detection job on the queue. Returns job_id.
+
+    Args:
+        redis: Redis client
+        page_pdf: Single-page PDF bytes (worker renders + detects + crops)
+    """
     job_id = uuid.uuid4()
     job = YoloJob(
         job_id=job_id,
-        image_base64=base64.b64encode(page_image).decode(),
-        page_width=page_width,
-        page_height=page_height,
+        page_pdf_base64=base64.b64encode(page_pdf).decode(),
     )
     await push_job(redis, _yolo_config, str(job_id), job.model_dump_json().encode())
 
@@ -60,6 +58,8 @@ async def wait_for_result(redis: Redis, job_id: str, timeout: float = YOLO_RESUL
         timeout_result = YoloResult(
             job_id=uuid.UUID(job_id),
             figures=[],
+            page_width=None,
+            page_height=None,
             worker_id="timeout",
             processing_time_ms=0,
             error="Timeout waiting for YOLO result",

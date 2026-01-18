@@ -1,11 +1,13 @@
+import base64
 import io
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 import pymupdf
-from PIL import Image
 from pypdf import PdfReader, PdfWriter
+
+from yapit.contracts import DetectedFigure
 
 PROMPTS_DIR = Path(__file__).parent / "prompts"
 
@@ -14,58 +16,6 @@ IMAGE_PLACEHOLDER = "![alt](detected-image)<yap-cap>caption</yap-cap>"
 
 # Matches all variants: ![alt](detected-image)<yap-cap>caption</yap-cap>, ![alt](detected-image), ![](detected-image)
 IMAGE_PLACEHOLDER_PATTERN = re.compile(r"!\[([^\]]*)\]\(detected-image\)(<yap-cap>.*?</yap-cap>)?")
-
-
-@dataclass
-class DetectedFigure:
-    """A figure detected by YOLO with layout information."""
-
-    bbox: tuple[float, float, float, float]  # x1, y1, x2, y2 normalized 0-1
-    confidence: float
-    width_pct: float  # (x2-x1) as percentage of page width
-    row_group: str | None = None  # "row0", "row1", etc.
-    cropped_image: bytes = field(default=b"", repr=False)
-
-
-def render_page_as_image(pdf_bytes: bytes, page_idx: int, dpi: int = 300) -> tuple[bytes, int, int]:
-    """Render a PDF page as PNG image.
-
-    Returns:
-        Tuple of (png_bytes, width, height)
-    """
-    doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
-    page = doc[page_idx]
-    pix = page.get_pixmap(dpi=dpi)
-    png_bytes = pix.tobytes("png")
-    doc.close()
-    return png_bytes, pix.width, pix.height
-
-
-def crop_figure(page_image: bytes, bbox: tuple[float, float, float, float], page_width: int, page_height: int) -> bytes:
-    """Crop a figure from the rendered page image.
-
-    Args:
-        page_image: PNG image bytes of the full page
-        bbox: Normalized bounding box (x1, y1, x2, y2) in 0-1 range
-        page_width: Image width in pixels
-        page_height: Image height in pixels
-
-    Returns:
-        Cropped PNG image bytes
-    """
-    img = Image.open(io.BytesIO(page_image))
-
-    # Convert normalized bbox to pixel coordinates
-    x1 = int(bbox[0] * page_width)
-    y1 = int(bbox[1] * page_height)
-    x2 = int(bbox[2] * page_width)
-    y2 = int(bbox[3] * page_height)
-
-    cropped = img.crop((x1, y1, x2, y2))
-
-    buffer = io.BytesIO()
-    cropped.save(buffer, format="PNG")
-    return buffer.getvalue()
 
 
 def store_image(data: bytes, format: str, images_dir: Path, content_hash: str, page_idx: int, img_idx: int) -> str:
@@ -81,24 +31,18 @@ def store_image(data: bytes, format: str, images_dir: Path, content_hash: str, p
 
 def store_figure(
     figure: DetectedFigure,
-    page_image: bytes,
-    page_width: int,
-    page_height: int,
     images_dir: Path,
     content_hash: str,
     page_idx: int,
     fig_idx: int,
 ) -> str:
     """Store a detected figure and return URL with layout query params."""
-    # Crop the figure from the page
-    cropped = crop_figure(page_image, figure.bbox, page_width, page_height)
-
-    # Store the cropped image
     doc_dir = images_dir / content_hash
     doc_dir.mkdir(parents=True, exist_ok=True)
 
     filename = f"{page_idx}_{fig_idx}.png"
-    (doc_dir / filename).write_bytes(cropped)
+    cropped_bytes = base64.b64decode(figure.cropped_image_base64)
+    (doc_dir / filename).write_bytes(cropped_bytes)
 
     # Build URL with layout info as query params
     base_url = f"/images/{content_hash}/{filename}"
