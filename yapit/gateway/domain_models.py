@@ -267,7 +267,7 @@ class UserSubscription(SQLModel, table=True):
         sa_column=Column(DateTime(timezone=True)),
     )
 
-    plan: Plan = Relationship()
+    plan: Plan = Relationship(sa_relationship_kwargs={"lazy": "selectin"})
 
 
 class UsagePeriod(SQLModel, table=True):

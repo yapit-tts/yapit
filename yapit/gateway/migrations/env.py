@@ -32,8 +32,8 @@ def include_object(object, name, type_, reflected, compare_to):
 def get_url() -> str:
     """Get database URL from environment, converting async driver to sync."""
     url = os.environ.get("DATABASE_URL", "")
-    # Alembic needs sync driver - convert asyncpg to psycopg2
-    return url.replace("postgresql+asyncpg://", "postgresql://")
+    # Alembic needs sync driver - convert asyncpg to psycopg
+    return url.replace("postgresql+asyncpg://", "postgresql+psycopg://")
 
 
 def run_migrations_offline() -> None:

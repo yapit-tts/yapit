@@ -605,7 +605,7 @@ async def get_document_blocks(
     Returns all blocks without pagination - needed for playback to work correctly.
     Data size is small (~200 bytes/block), so even 1000+ blocks is fine.
     """
-    result = await db.exec(select(Block).where(Block.document_id == document.id).order_by(Block.idx))
+    result = await db.exec(select(Block).where(Block.document_id == document.id).order_by(col(Block.idx)))
     return result.all()
 
 
@@ -649,7 +649,7 @@ async def get_public_document(
 
     Returns document data if is_public=True, otherwise 404.
     """
-    result = await db.exec(select(Document).where(Document.id == document_id, Document.is_public.is_(True)))
+    result = await db.exec(select(Document).where(Document.id == document_id, col(Document.is_public).is_(True)))
     document = result.first()
     if not document:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
@@ -671,12 +671,12 @@ async def get_public_document_blocks(
     db: DbSession,
 ) -> list[Block]:
     """Get blocks for a public document without authentication."""
-    result = await db.exec(select(Document).where(Document.id == document_id, Document.is_public.is_(True)))
+    result = await db.exec(select(Document).where(Document.id == document_id, col(Document.is_public).is_(True)))
     document = result.first()
     if not document:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
 
-    result = await db.exec(select(Block).where(Block.document_id == document_id).order_by(Block.idx))
+    result = await db.exec(select(Block).where(Block.document_id == document_id).order_by(col(Block.idx)))
     return result.all()
 
 
@@ -694,7 +694,7 @@ async def import_document(
     user: AuthenticatedUser,
 ) -> DocumentImportResponse:
     """Import (clone) a public document to the authenticated user's library."""
-    result = await db.exec(select(Document).where(Document.id == document_id, Document.is_public.is_(True)))
+    result = await db.exec(select(Document).where(Document.id == document_id, col(Document.is_public).is_(True)))
     source_doc = result.first()
     if not source_doc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
@@ -712,7 +712,7 @@ async def import_document(
     db.add(new_doc)
 
     # Clone the blocks
-    source_blocks = await db.exec(select(Block).where(Block.document_id == document_id).order_by(Block.idx))
+    source_blocks = await db.exec(select(Block).where(Block.document_id == document_id).order_by(col(Block.idx)))
     db.add_all(
         [
             Block(

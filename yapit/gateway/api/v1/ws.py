@@ -5,7 +5,7 @@ import json
 import pickle
 import time
 import uuid
-from typing import Literal
+from typing import Literal, cast
 
 import numpy as np
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
@@ -13,6 +13,7 @@ from loguru import logger
 from pydantic import BaseModel, ValidationError
 from redis.asyncio import Redis
 from sqlmodel import col, select
+from starlette.applications import Starlette
 
 from yapit.contracts import (
     TTS_INFLIGHT,
@@ -87,8 +88,9 @@ async def tts_websocket(
     settings: Settings = Depends(get_settings),
 ):
     """WebSocket endpoint for TTS control."""
-    redis: Redis = ws.app.state.redis_client
-    cache: Cache = ws.app.state.audio_cache
+    app = cast(Starlette, ws.app)
+    redis: Redis = app.state.redis_client
+    cache: Cache = app.state.audio_cache
 
     await ws.accept()
     connect_time = time.time()
@@ -470,7 +472,7 @@ async def _build_context_tokens(
         .where(Block.document_id == document_id)
         .where(Block.idx >= start_idx)
         .where(Block.idx < current_block_idx)
-        .order_by(Block.idx)
+        .order_by(col(Block.idx))
     )
     preceding_blocks = result.all()
 

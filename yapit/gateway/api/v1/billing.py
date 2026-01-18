@@ -7,8 +7,7 @@ import stripe
 from fastapi import APIRouter, HTTPException, Request, status
 from loguru import logger
 from pydantic import BaseModel
-from sqlalchemy.orm import selectinload
-from sqlmodel import select
+from sqlmodel import col, select
 
 from yapit.gateway.config import Settings
 from yapit.gateway.deps import AuthenticatedUser, DbSession, SettingsDep
@@ -49,7 +48,7 @@ class PlanResponse(BaseModel):
 @router.get("/plans")
 async def list_plans(db: DbSession) -> list[PlanResponse]:
     """List available subscription plans."""
-    result = await db.exec(select(Plan).where(Plan.is_active.is_(True)))
+    result = await db.exec(select(Plan).where(col(Plan.is_active).is_(True)))
     plans = result.all()
     return [
         PlanResponse(
@@ -96,7 +95,7 @@ async def create_subscription_checkout(
     if not settings.stripe_secret_key:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Billing is not configured")
 
-    result = await db.exec(select(Plan).where(Plan.tier == request.tier, Plan.is_active.is_(True)))
+    result = await db.exec(select(Plan).where(Plan.tier == request.tier, col(Plan.is_active).is_(True)))
     plan = result.first()
     if not plan:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Plan {request.tier} not found")
@@ -358,11 +357,7 @@ async def _handle_subscription_updated(stripe_sub: dict, db: DbSession) -> None:
     """Handle subscription updates (plan change, status change, etc.)."""
     subscription_id = stripe_sub["id"]
 
-    result = await db.exec(
-        select(UserSubscription)
-        .where(UserSubscription.stripe_subscription_id == subscription_id)
-        .options(selectinload(UserSubscription.plan))
-    )
+    result = await db.exec(select(UserSubscription).where(UserSubscription.stripe_subscription_id == subscription_id))
     subscription = result.first()
 
     if not subscription:

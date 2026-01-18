@@ -36,13 +36,14 @@ async def run_overflow_scanner(
         scan_interval_s: Seconds between scans
         name: Name for logging
     """
-    if not settings.runpod_api_key:
-        logger.warning(f"{name} scanner disabled: no RunPod API key")
+    if not settings.runpod_api_key or not settings.runpod_request_timeout_seconds:
+        logger.warning(f"{name} scanner disabled: missing RunPod API key or timeout config")
         return
 
     import runpod
 
     runpod.api_key = settings.runpod_api_key
+    runpod_timeout = settings.runpod_request_timeout_seconds
 
     logger.info(f"{name} scanner starting (queue={queue_name}, threshold={overflow_threshold_s}s)")
 
@@ -50,7 +51,7 @@ async def run_overflow_scanner(
         try:
             await _check_queue_for_overflow(
                 redis,
-                settings,
+                runpod_timeout,
                 queue_name,
                 jobs_key,
                 job_index_key,
@@ -70,7 +71,7 @@ async def run_overflow_scanner(
 
 async def _check_queue_for_overflow(
     redis: Redis,
-    settings: Settings,
+    runpod_timeout: int,
     queue_name: str,
     jobs_key: str,
     job_index_key: str | None,
@@ -111,7 +112,7 @@ async def _check_queue_for_overflow(
     logger.info(f"{name}: job {job_id} stale for {age:.1f}s, sending to RunPod")
 
     result_key = result_key_pattern.format(job_id=job_id)
-    await _process_via_runpod(redis, job_id, raw_job, endpoint_id, result_key, settings, name)
+    await _process_via_runpod(redis, job_id, raw_job, endpoint_id, result_key, runpod_timeout, name)
 
 
 async def _process_via_runpod(
@@ -120,7 +121,7 @@ async def _process_via_runpod(
     raw_job: str,
     endpoint_id: str,
     result_key: str,
-    settings: Settings,
+    runpod_timeout: int,
     name: str,
 ) -> None:
     import runpod
@@ -133,7 +134,7 @@ async def _process_via_runpod(
         result = await asyncio.to_thread(
             endpoint.run_sync,
             job_data,
-            timeout=settings.runpod_request_timeout_seconds,
+            timeout=runpod_timeout,
         )
 
         if isinstance(result, dict) and "error" in result:

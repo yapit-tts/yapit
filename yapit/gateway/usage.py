@@ -3,7 +3,6 @@
 import datetime as dt
 from datetime import datetime
 
-from sqlalchemy.orm import selectinload
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -35,9 +34,7 @@ FREE_PLAN = Plan(
 
 async def get_user_subscription(user_id: str, db: AsyncSession) -> UserSubscription | None:
     """Get user's subscription with plan data."""
-    result = await db.exec(
-        select(UserSubscription).where(UserSubscription.user_id == user_id).options(selectinload(UserSubscription.plan))
-    )
+    result = await db.exec(select(UserSubscription).where(UserSubscription.user_id == user_id))
     return result.first()
 
 

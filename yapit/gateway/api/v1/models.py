@@ -2,7 +2,7 @@ from typing import List
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from sqlmodel import select
+from sqlmodel import col, select
 
 from yapit.gateway.auth import authenticate
 from yapit.gateway.db import get_by_slug_or_404
@@ -33,7 +33,7 @@ async def list_models(
     db: DbSession,
 ) -> List[ModelRead]:
     """Get all available TTS models with their voices (only active ones)."""
-    models = (await db.exec(select(TTSModel).where(TTSModel.is_active.is_(True)))).all()
+    models = (await db.exec(select(TTSModel).where(col(TTSModel.is_active).is_(True)))).all()
     return [
         ModelRead(
             id=model.id,

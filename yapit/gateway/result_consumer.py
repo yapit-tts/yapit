@@ -17,7 +17,7 @@ from yapit.contracts import (
     WorkerResult,
     get_pubsub_channel,
 )
-from yapit.gateway.api.v1.ws import WSBlockStatus
+from yapit.gateway.api.v1.ws import BlockStatus, WSBlockStatus
 from yapit.gateway.cache import Cache
 from yapit.gateway.config import Settings
 from yapit.gateway.db import create_session
@@ -145,7 +145,7 @@ async def _handle_error(redis: Redis, result: WorkerResult, settings: Settings) 
 async def _notify_subscribers(
     redis: Redis,
     result: WorkerResult,
-    status: str,
+    status: BlockStatus,
     audio_url: str | None = None,
     error: str | None = None,
 ) -> None:

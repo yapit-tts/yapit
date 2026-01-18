@@ -120,8 +120,8 @@ async def get_block_variant(
         BlockVariant,
         variant_hash,
         options=[
-            selectinload(BlockVariant.block).selectinload(Block.document),
-            selectinload(BlockVariant.model),
+            selectinload(BlockVariant.block).selectinload(Block.document),  # type: ignore[arg-type]
+            selectinload(BlockVariant.model),  # type: ignore[arg-type]
         ],
     )
 
