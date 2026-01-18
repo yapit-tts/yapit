@@ -1,7 +1,7 @@
 """Contracts for Redis keys, queues, and job processing."""
 
 import uuid
-from typing import Annotated, Final, Literal
+from typing import Annotated, Final
 
 import annotated_types
 from pydantic import BaseModel, ConfigDict, Field
@@ -25,9 +25,6 @@ YOLO_JOBS: Final[str] = "yolo:jobs"  # hash: job_id -> job_json
 YOLO_PROCESSING: Final[str] = "yolo:processing:{worker_id}"
 YOLO_DLQ: Final[str] = "yolo:dlq"
 YOLO_RESULT: Final[str] = "yolo:result:{job_id}"  # list for BRPOP result delivery
-
-
-SynthesisMode = Literal["browser", "server"]
 
 
 def get_queue_name(model: str) -> str:
@@ -62,6 +59,7 @@ class SynthesisJob(BaseModel):
     block_idx: int
     model_slug: str
     voice_slug: str
+    usage_multiplier: float  # From TTSModel, for billing without DB query on finalize
 
     synthesis_parameters: SynthesisParameters
 
@@ -85,6 +83,7 @@ class WorkerResult(BaseModel):
     model_slug: str
     voice_slug: str
     text_length: int
+    usage_multiplier: float
 
     worker_id: str
     processing_time_ms: int
@@ -123,44 +122,3 @@ class YoloResult(BaseModel):
     worker_id: str
     processing_time_ms: int
     error: str | None = None
-
-
-# WebSocket messages: Client → Server
-
-
-class WSSynthesizeRequest(BaseModel):
-    type: Literal["synthesize"] = "synthesize"
-    document_id: uuid.UUID
-    block_indices: list[int]
-    cursor: int
-    model: str
-    voice: str
-    synthesis_mode: SynthesisMode
-
-
-class WSCursorMoved(BaseModel):
-    type: Literal["cursor_moved"] = "cursor_moved"
-    document_id: uuid.UUID
-    cursor: int
-
-
-# WebSocket messages: Server → Client
-
-BlockStatus = Literal["queued", "processing", "cached", "skipped", "error"]
-
-
-class WSBlockStatus(BaseModel):
-    type: Literal["status"] = "status"
-    document_id: uuid.UUID
-    block_idx: int
-    status: BlockStatus
-    audio_url: str | None = None
-    error: str | None = None
-    model_slug: str | None = None
-    voice_slug: str | None = None
-
-
-class WSEvicted(BaseModel):
-    type: Literal["evicted"] = "evicted"
-    document_id: uuid.UUID
-    block_indices: list[int]

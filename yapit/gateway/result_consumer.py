@@ -7,7 +7,7 @@ import uuid
 
 from loguru import logger
 from redis.asyncio import Redis
-from sqlmodel import select, update
+from sqlmodel import update
 
 from yapit.contracts import (
     TTS_INFLIGHT,
@@ -15,13 +15,13 @@ from yapit.contracts import (
     TTS_RESULTS,
     TTS_SUBSCRIBERS,
     WorkerResult,
-    WSBlockStatus,
     get_pubsub_channel,
 )
+from yapit.gateway.api.v1.ws import WSBlockStatus
 from yapit.gateway.cache import Cache
 from yapit.gateway.config import Settings
 from yapit.gateway.db import create_session
-from yapit.gateway.domain_models import BlockVariant, TTSModel, UsageType
+from yapit.gateway.domain_models import BlockVariant, UsageType
 from yapit.gateway.metrics import log_event
 from yapit.gateway.usage import record_usage
 
@@ -81,8 +81,7 @@ async def _handle_success(
         )
 
         usage_type = UsageType.server_kokoro if result.model_slug.startswith("kokoro") else UsageType.premium_voice
-        model = (await db.exec(select(TTSModel).where(TTSModel.slug == result.model_slug))).one()
-        characters_used = int(result.text_length * model.usage_multiplier)
+        characters_used = int(result.text_length * result.usage_multiplier)
 
         await record_usage(
             user_id=result.user_id,
@@ -95,7 +94,7 @@ async def _handle_success(
                 "variant_hash": result.variant_hash,
                 "model_slug": result.model_slug,
                 "duration_ms": result.duration_ms,
-                "usage_multiplier": model.usage_multiplier,
+                "usage_multiplier": result.usage_multiplier,
             },
         )
         break

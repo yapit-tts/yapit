@@ -5,11 +5,12 @@ import json
 import pickle
 import time
 import uuid
+from typing import Literal
 
 import numpy as np
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 from loguru import logger
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 from redis.asyncio import Redis
 from sqlmodel import col, select
 
@@ -21,10 +22,6 @@ from yapit.contracts import (
     TTS_SUBSCRIBERS,
     SynthesisJob,
     SynthesisParameters,
-    WSBlockStatus,
-    WSCursorMoved,
-    WSEvicted,
-    WSSynthesizeRequest,
     get_pubsub_channel,
     get_queue_name,
 )
@@ -41,10 +38,46 @@ from yapit.workers.queue import QueueConfig, push_job
 
 router = APIRouter(tags=["websocket"])
 
-
 # HIGGS voice consistency: number of preceding blocks to use for context.
 # 3 was found sufficient in manual testing (experiments/test_higgs_context_fixed.py)
 CONTEXT_BUFFER_SIZE = 3
+
+
+SynthesisMode = Literal["browser", "server"]
+BlockStatus = Literal["queued", "processing", "cached", "skipped", "error"]
+
+
+class WSSynthesizeRequest(BaseModel):
+    type: Literal["synthesize"] = "synthesize"
+    document_id: uuid.UUID
+    block_indices: list[int]
+    cursor: int
+    model: str
+    voice: str
+    synthesis_mode: SynthesisMode
+
+
+class WSCursorMoved(BaseModel):
+    type: Literal["cursor_moved"] = "cursor_moved"
+    document_id: uuid.UUID
+    cursor: int
+
+
+class WSBlockStatus(BaseModel):
+    type: Literal["status"] = "status"
+    document_id: uuid.UUID
+    block_idx: int
+    status: BlockStatus
+    audio_url: str | None = None
+    error: str | None = None
+    model_slug: str | None = None
+    voice_slug: str | None = None
+
+
+class WSEvicted(BaseModel):
+    type: Literal["evicted"] = "evicted"
+    document_id: uuid.UUID
+    block_indices: list[int]
 
 
 @router.websocket("/v1/ws/tts")
@@ -198,6 +231,7 @@ async def _queue_synthesis_job(
         block_idx=block.idx,
         model_slug=model.slug,
         voice_slug=voice.slug,
+        usage_multiplier=model.usage_multiplier,
         synthesis_parameters=SynthesisParameters(
             model=model.slug,
             voice=voice.slug,
