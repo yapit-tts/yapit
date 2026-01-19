@@ -65,7 +65,9 @@ Options:
 - Just use Hetzner dashboard → simpler, good enough for side project scale
 - Hybrid: only pull what we need (disk usage for alerts)
 
-### 4. Agent-in-a-Loop Automated Analysis
+### 4. Agent-in-a-Loop Automated Analysis ✅
+
+Implemented in 5cc550b (`scripts/report.sh`, `make report`). See [[metrics]] for usage.
 
 Daily (or every few hours) automated health check:
 

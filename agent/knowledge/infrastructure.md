@@ -20,12 +20,25 @@ Cloudflare (edge SSL)
 
 Layered compose files via `-f` flags:
 
-- `docker-compose.yml` — Base services (postgres, redis, gateway, stack-auth)
+- `docker-compose.yml` — Base services (postgres, redis, gateway, stack-auth, kokoro-cpu, yolo-cpu)
 - `docker-compose.dev.yml` — Dev overrides (ports, volumes, stripe-cli)
-- `docker-compose.kokoro-cpu.yml` — Kokoro worker
-- `docker-compose.prod.yml` — Production (Swarm mode, Traefik labels)
+- `docker-compose.prod.yml` — Production (Swarm mode, Traefik labels, image refs)
+
+**Worker replicas** configured via env vars (`KOKORO_CPU_REPLICAS`, `YOLO_CPU_REPLICAS`) in the base compose file, set in `.env.{dev,prod}`.
 
 Dev commands in `Makefile`. See [[dev-setup]] for local development, [[env-config]] for secrets/configuration.
+
+## Worker Services
+
+Workers pull jobs from Redis. Gateway doesn't need to know about them.
+
+| Service | Purpose | Queue |
+|---------|---------|-------|
+| `kokoro-cpu` | Kokoro TTS on CPU | `tts:queue:kokoro` |
+| `yolo-cpu` | Figure detection | `yolo:queue` |
+| Gateway background tasks | Inworld TTS, visibility/overflow scanners | `tts:queue:inworld*` |
+
+**Adding workers:** Just connect to Redis (via Tailscale for external machines) and start pulling. No gateway config needed.
 
 ## CI/CD
 

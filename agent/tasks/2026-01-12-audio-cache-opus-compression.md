@@ -25,6 +25,11 @@ Reduce audio cache storage by ~5x by compressing TTS output with Opus codec befo
 - [Opus Codec](https://opus-codec.org/) — official site
 - Python: `opuslib` or `pyogg` for encoding
 
+**Inworld API natively supports Opus output:**
+- [Inworld Generating Audio docs](https://docs.inworld.ai/docs/tts/capabilities/generating-audio) — lists Opus as supported format (8-48kHz, 32-192kbps)
+- Just change `"audio_encoding": "MP3"` → `"OPUS"` in `yapit/workers/adapters/inworld.py`
+- No transcoding needed for Inworld — only Kokoro/Higgs need PCM→Opus conversion
+
 ## Key Decisions
 
 ### Encode on store, serve directly

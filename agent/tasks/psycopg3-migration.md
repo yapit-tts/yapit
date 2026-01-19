@@ -1,47 +1,32 @@
-# psycopg2 → psycopg3 Migration
+# Dependency Housekeeping
 
-**Status:** pending
-**Priority:** low
-**Effort:** ~5 minutes
+**Status:** done
+**Completed:** 2026-01-18
 
-## Context
+---
 
-psycopg2 is legacy (maintenance-only). psycopg3 is the modern rewrite with native async, better typing, and free-threading support for Python 3.14+.
+## Summary
 
-We only use psycopg2 for Alembic migrations (runtime uses asyncpg). This is a housekeeping change — no performance benefit, but future-proofs the stack.
+Batch update of non-Stripe dependencies + SQLModel type fixes.
 
-## Changes Required
+**Commit:** `db84107` — chore: dependency housekeeping + SQLModel type fixes
 
-### 1. pyproject.toml
+### Changes
 
-```diff
-- "psycopg2-binary~=2.9.10",
-+ "psycopg[binary]~=3.2",
-```
+- **psycopg2 → psycopg3**: Modern async driver for Alembic migrations
+- **Removed unused**: google-re2, svix
+- **Updated**: fastapi 0.128, sqlmodel 0.0.31, redis 7.1, alembic 1.18, asyncpg 0.31, pydantic 2.12, orjson 3.11, markdown-it-py 4.0, aiosqlite 0.22, and others
+- **Type fixes**: Added `col()` wrapper, `lazy="selectin"` on UserSubscription.plan, removed redundant selectinload calls
 
-### 2. yapit/gateway/migrations/env.py:36
+### Verification
 
-```diff
-- return url.replace("postgresql+asyncpg://", "postgresql://")
-+ return url.replace("postgresql+asyncpg://", "postgresql+psycopg://")
-```
+- ✅ `uv sync` — deps install cleanly
+- ✅ Tests pass
+- ✅ Alembic works with psycopg driver (tested migration creation)
+- Type errors reduced from 92 → 48
 
-## What Stays the Same
-
-- All existing migration files (just SQL)
-- All SQLModel/SQLAlchemy ORM code
-- `db.py` (uses asyncpg, untouched)
-- Prod databases (driver is client-side only)
-- Deploy scripts, docker-compose
-
-## Verification
-
-1. `uv sync` — deps install cleanly
-2. `make dev-cpu` — gateway starts
-3. `alembic upgrade head` — migrations still run
-4. (Optional) `alembic revision --autogenerate -m "test"` — generates empty migration
+---
 
 ## Related
 
-- [[overview]] — for general architecture context
-- Session: `python-3.14-free-threading-feasibility-analysis-psycopg3-migration`
+- [[2026-01-14-pricing-restructure]] — Stripe SDK upgrade bundled there

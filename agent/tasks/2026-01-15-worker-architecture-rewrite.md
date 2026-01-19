@@ -1,6 +1,7 @@
 ---
-status: active
+status: done
 started: 2026-01-15
+completed: 2026-01-18
 ---
 
 # Task: Worker Architecture Rewrite
@@ -215,9 +216,118 @@ Use visibility timeout pattern with dead letter queue:
 
 1. Pop job → move to `processing:{worker_id}` set with timestamp + retry count
 2. Worker finishes → delete from processing set
-3. Background task (every ~30s): jobs stuck > 60s → re-queue, increment retry count
+3. Background task (every ~15s): jobs stuck > 30s → re-queue, increment retry count
 4. Retry count > 3 → move to `tts:dlq`, stop retrying
 
 Why not accept loss: buffering logic fetches ~8 blocks ahead at ~10s each. 5 minute inflight TTL far exceeds the ~80s buffer runway — playback would stall.
 
 Why DLQ: prevents poison messages (malformed input causing crashes) from spinning forever. Can inspect and fix or discard.
+
+### Worker identification
+
+Generate UUID on worker startup (not PID — can repeat; not just IP — multiple workers per machine). Format: `{worker_type}-{uuid}` or similar.
+
+In metrics, aggregate by IP address for per-machine view, use full worker_id for individual worker tracking.
+
+### Inworld runs in gateway process
+
+Inworld is a queue-pulling worker like others (for consistent logging/metrics/failure paths), but runs as a gateway background task — it's just API calls, no local model to isolate. Same pattern, different deployment.
+
+### GPU workers
+
+Multiple worker processes can share one GPU (time-share). Less efficient than batching but simpler and fits the one-job-at-a-time model.
+
+For models that support batch inference (not Kokoro), worker-side batching is straightforward:
+- Collect up to N jobs with timeout
+- Batch process
+- Push results individually
+- Gateway doesn't know about batching
+
+Defer batching until needed — sequential is simpler and sufficient for now.
+
+### Metrics additions
+
+Beyond the basics (queue depth, latency, error rate), also track:
+- Retry rate (jobs re-queued from visibility timeout)
+- Dead letter queue depth (gauge)
+- Per-worker and per-overflow/serverless: requests processed, throughput, error rate
+
+**Alert on DLQ** — if jobs are landing there, something is broken.
+
+## Implementation Refinements (2026-01-17)
+
+### Queue structure for efficient eviction
+
+Using sorted set + hash instead of simple list:
+- `tts:queue:{model}` — sorted set with job_id as member, timestamp as score
+- `tts:jobs` — hash mapping job_id to job JSON
+- `tts:job_index` — hash mapping "user:doc:block" to job_id
+
+This gives O(log N) eviction via ZREM instead of O(N) LREM. Important when queue depth grows during load spikes.
+
+### ProcessingEntry separate from SynthesisJob
+
+`processing_started` timestamp is tracked separately from the job via ProcessingEntry wrapper. This cleanly separates job data (what to do) from processing state (when it started being worked on). `queued_at` on SynthesisJob is preserved across retries to track total user wait time.
+
+### Worker identification
+
+Worker ID is passed in (from env var or operator choice), not auto-generated. This allows meaningful identifiers (hostname, IP, pod name) for debugging and metrics aggregation.
+
+### Health checks scope
+
+HTTP health checks only matter for Swarm-managed workers (e.g., Kokoro on gateway VPS). External workers (home PC, RunPod pods, other VPSes) don't need health checks — health is implicit. If they're pulling and completing jobs, they're healthy. If they stop, jobs stay in queue and other workers pick up, or overflow kicks in.
+
+### YOLO refactor
+
+Same pattern applies to YOLO (currently HTTP-based). After TTS refactor is verified E2E, apply the same pull-based architecture to YOLO. Simpler implementation — no DB finalization, no subscriber notifications, just detection results.
+
+### Timeout rationale
+
+**Visibility timeout (30s, not 60s):**
+
+Frontend pre-fetches ~8 blocks, each ~5s audio. Buffer runway = ~40s. If a job sits in processing for 60s before being re-queued, user's buffer is exhausted and playback stalls. 30s gives margin: job is re-queued while buffer still has runway.
+
+Also: if synthesis takes >30s for a ~5-10s audio block, something is broken (slow worker, crash, etc.). Workers that consistently timeout should be noticed in logs/metrics.
+
+**Overflow threshold (30s):**
+
+Conservative starting point. Easier to spot "overflow not kicking in" than "overusing overflow unnecessarily". If 30s is too slow, tune down later. The threshold is per-model configurable via settings.
+
+**Scan intervals:**
+
+- Visibility scanner: 15s (check for stuck jobs twice before timeout)
+- Overflow scanner: 5s (more responsive to queue backup)
+
+These are somewhat arbitrary — the key is they're fast enough to catch issues without being wasteful. Can tune based on observed behavior.
+
+## Future Improvements
+
+### Docker Compose Layering for Prod
+
+Currently:
+- Dev: `docker-compose.yml` + `docker-compose.dev.yml` (layered)
+- Prod: `docker-compose.prod.yml` (standalone)
+
+This causes duplication — changes often need to be made in both base and prod files. Investigate whether prod could also layer on a common base:
+- Base: service structure without `build:` or `image:`
+- Dev overlay: adds `build:` contexts
+- Prod overlay: adds `image:` references from GHCR
+
+Would eliminate duplication and reduce risk of forgetting to update one file.
+
+## Completion Notes (2026-01-18)
+
+**Implemented:** (PR: #58)
+- Pull-based TTS and YOLO workers (`tts_loop.py`, `yolo_loop.py`)
+- Shared queue utilities (`workers/queue.py`)
+- Generic visibility/overflow scanners (parameterized for TTS/YOLO)
+- Result consumer for TTS finalization
+- Inworld runs as gateway background task (same worker loop, no separate container)
+- YOLO RunPod serverless handler for overflow
+- Flattened `gateway/processors/` → `gateway/document/` + `gateway/markdown/`
+- Moved WS message types from contracts.py to ws.py (gateway-only)
+- Added `usage_multiplier` to job to avoid DB query on finalization
+
+**Deferred to separate work:**
+- Metrics instrumentation → [[2026-01-18-metrics-observability-for-worker-architecture]]
+- Docker Compose layering (listed above in Future Improvements)

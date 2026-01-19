@@ -11,100 +11,111 @@ Restructure subscription pricing, usage limits, and add rollover/add-on features
 
 Current limits were set before accurate cost analysis. With real Gemini 3 Flash pricing ($0.50/M in, $3.00/M out) and Stripe MoR fees (7% + €0.30), several plans lose money at full utilization.
 
-## Constraints
+## Decided Pricing (2026-01-18)
 
-**Hard constraints:**
-- All plans must have ≥0% margin at 100% utilization + Hungary VAT (worst case)
-- Voice limits stay as-is: 1.2M chars (Plus), 3M chars (Max)
-- Basic/Plus yearly discounts (11%, 20%) are acceptable
-- Max Yearly 50% discount is NOT acceptable — must be reduced
+All plans ≥100% break-even at Hungary 27% VAT. Uniform 20% yearly discount. OCR in 500-step progression.
+
+| Plan | Price | OCR/mo | Voice/mo | Break-even (HU) |
+|------|-------|--------|----------|-----------------|
+| Basic Monthly | €10 | 500 | 0 | 250% ✅ |
+| Basic Yearly | €96 | 500 | 0 | 208% ✅ |
+| Plus Monthly | €20 | 1000 | 1.2M | 128% ✅ |
+| Plus Yearly | €192 | 1000 | 1.2M | 105% ✅ |
+| Max Monthly | €40 | 1500 | 3M | 130% ✅ |
+| Max Yearly | €384 | 1500 | 3M | 105% ✅ |
+
+**Changes from current:**
+- Basic: €7 → €10/mo, yearly €75 → €96 (was 11% discount, now 20%)
+- Plus: OCR 1500 → 1000 pages
+- Max: OCR 3000 → 1500 pages, yearly €240 → €384 (was 50% discount, now 20%)
+
+**Pending:** Verify actual token consumption per page before finalizing. Conservative estimate is €5.61/1000 pages, realistic might be €3.20/1000.
+
+## Rollover & Purchased Model
+
+**Two separate pools per resource type:**
+
+```python
+# On UserSubscription
+rollover_pages: int = 0          # capped at 1000, from unused subscription
+rollover_voice_chars: int = 0    # capped at 1_000_000
+purchased_pages: int = 0         # uncapped, from packs
+purchased_voice_chars: int = 0   # uncapped, from packs (future)
+```
+
+**Consumption order:**
+1. Subscription limit (resets each billing cycle)
+2. Rollover (capped, from unused subscription quota)
+3. Purchased (uncapped, from pack purchases)
+
+**On billing cycle reset:**
+```python
+unused = plan_limit - period_used
+rollover_pages = min(rollover_pages + unused, 1000)
+```
+
+**On pack purchase:**
+```python
+purchased_pages += pack_pages  # no cap
+```
+
+**Key behaviors:**
+- Rollover/purchased persist after cancellation (they paid for it)
+- Free tier users can buy packs
+- Packs: Stripe/frontend deferred until demand confirmed; backend infrastructure now
+
+## Bug Fix: Usage Check Before Cache
+
+**Yoinked from [[2026-01-17-onboarding-showcase-launch]]**
+
+Current `ws.py:273-335` checks usage on ALL blocks before checking cache. User with 500 chars remaining fails on 2000-char request even if 1600 chars are cached.
+
+**Fix:** Check cache first, only count uncached blocks for usage limit. This is required anyway for the 3-tier waterfall — need to know uncached amount before checking/decrementing pools.
+
+## Constraints
 
 **Cost basis (conservative estimates):**
 - Gemini 3 Flash: $0.50/M input, $3.00/M output
-- High resolution: 1120 tokens/image + ~1500-2000 prompt tokens
-- Output: ~1500-2000 tokens/page (conservative; real avg ~500-1000)
-- Result: ~€5.61/1000 pages
+- High resolution: 1120 tokens/image + ~2000 prompt tokens + ~1500 output tokens
+- Result: ~€5.61/1000 pages (conservative), ~€3.20/1000 (realistic)
 - Inworld TTS-1: $5.00/M chars = €4.63/M chars
 - Stripe MoR: 7% + €0.30 (conservative for international cards)
-- VAT range: 0% (some US states) to 27% (Hungary)
+- VAT: Stripe default (EUR inclusive, USD exclusive)
 
-## Current State (Problematic)
+## Prerequisite: Stripe SDK Upgrade
 
-| Plan | Price | OCR/mo | Voice/mo | Break-even (Hungary) |
-|------|-------|--------|----------|---------------------|
-| Basic Monthly | €7 | 500 | 0 | 172% ✅ |
-| Basic Yearly | €75 | 500 | 0 | 162% ✅ |
-| Plus Monthly | €20 | 1500 | 1.2M | 103% ⚠️ |
-| Plus Yearly | €192 | 1500 | 1.2M | 84% ❌ |
-| Max Monthly | €40 | 3000 | 3.0M | 94% ❌ |
-| Max Yearly | €240 | 3000 | 3.0M | 48% ❌❌ |
+Before pricing changes, upgrade Stripe SDK (12→14) and clean up billing code:
 
-## Direction
+- Update `pyproject.toml`: `stripe~=12.0` → `stripe~=14.2`
+- Fix imports: `from stripe.<MODULE> import X` → `from stripe import X`
+- Make access patterns consistent (object access, not mixed dict/object)
+- Use typed params where practical
 
-### 1. Adjust Base Pricing
-
-- Basic: €7 → €10 (gives more OCR headroom)
-- Plus/Max monthly: likely keep prices, reduce OCR limits
-- Max Yearly: reduce discount from 50% to ~30-40%
-
-### 2. Reduce OCR Limits
-
-Calculate limits that give ≥100% break-even at Hungary VAT. Preliminary safe ranges:
-- Basic €10: up to ~1000 pages safe
-- Plus €20: ~700-900 pages safe (after voice costs)
-- Max €40: ~1500-2000 pages safe (after voice costs)
-- Max Yearly: severely constrained by voice costs eating budget
-
-### 3. Add Rollover System
-
-**Fixed universal cap (not plan-based, not time-limited):**
-- Pages: ~1500 cap
-- Voice chars: ~1M cap
-- Never expires (even after cancellation — they paid for it)
-- Only consumed after monthly subscription limit exhausted
-
-Implementation: add `rollover_pages` and `rollover_voice_chars` to user model, capped at fixed values.
-
-### 4. Add Page Packs (One-Time Purchases)
-
-Stripe MoR now supports one-time payments (as of Sept 2025).
-
-**Preliminary pricing (15-25% nominal margin, ~40-50% real margin):**
-- 100 pages: ~€1.50
-- 250 pages: ~€3.00
-- 500 pages: ~€5.50
-- 1000 pages: ~€10.00
-
-Note: €0.30 Stripe fixed fee hurts small packs. Consider minimum pack size of 250.
-
-**Implementation:** Store purchased pages separately, never expire, consumed after subscription + rollover exhausted.
-
-**Defer until:** Beta tester usage data confirms actual cost-per-page.
-
-## Open Questions
-
-1. **Exact OCR limits per tier** — run margin calculator with candidate values, verify ≥100% break-even
-2. **Max Yearly price** — what discount is acceptable? €290 (40%)? €320 (33%)?
-3. **Rollover cap values** — 1500 pages / 1M chars confirmed, or adjust?
-4. **Add-on pack sizes and prices** — wait for real usage data before finalizing
-5. **Voice packs** — needed? Or just page packs for now?
+Lower risk than pricing changes (just types/imports). E2E testing at the end catches issues from both.
 
 ## Sources
 
 **Tools:**
-- `scripts/margin_calculator.py` — comprehensive margin analysis with all cost components
+- `scripts/margin_calculator.py` — margin analysis (updated with OCR%/Voice% columns)
+
+**Related tasks:**
+- [[2026-01-17-onboarding-showcase-launch]] — bug fix yoinked from here
 
 **References:**
-- Stripe MoR changelog (Sept 22, 2025 - one-time payments added): https://docs.stripe.com/payments/managed-payments/changelog
-- Stripe MoR setup guide: https://docs.stripe.com/payments/managed-payments/set-up
-- Stripe MoR update checkout integration: https://docs.stripe.com/payments/managed-payments/update-checkout
+- Stripe MoR changelog: https://docs.stripe.com/payments/managed-payments/changelog
 - Gemini 3 Flash pricing: https://ai.google.dev/gemini-api/docs/pricing
 - Inworld TTS pricing: https://inworld.ai/pricing
 
+---
+
 ## Done When
 
-- [ ] All plans have ≥100% break-even at Hungary VAT + 100% utilization
-- [ ] New limits/prices reflected in seed.py and frontend
-- [ ] Rollover system implemented (fixed cap, never expires)
-- [ ] Add-on page packs available for purchase (can be post-launch)
-- [ ] Margin calculator updated with final values, confirms profitability
+- [ ] Stripe SDK upgraded to 14.x, billing code cleaned up
+- [ ] New limits/prices in seed.py, frontend, AND prod DB (already seeded)
+- [ ] Rollover + purchased fields on UserSubscription, migration done
+- [ ] Usage checking/consumption uses 3-tier waterfall (subscription → rollover → purchased)
+- [ ] Bug fix: cache check before usage limit check
+- [x] Margin calculator updated with final values (added OCR%/Voice% columns)
+- [ ] New Stripe sandbox, E2E tests pass
+- [ ] (Deferred) Stripe products for page/voice packs
+- [ ] (Deferred) Frontend for purchasing packs
