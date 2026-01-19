@@ -39,11 +39,15 @@ DISPLAY: $$latex$$ then <yap-alt>alt</yap-alt> on next line
     <yap-alt>E equals m c squared</yap-alt>
 
 Math alt-text guidelines:
-- Must be ACCURATE to the latex but readable aloud
-- Prefer structural: $\sum_{t=0}^{T} \gamma^t r_t$ → "the sum from t equals zero to T of gamma to the t, times r sub t"
+- LaTeX must be accurate to original. Alt-text is optimized for listening — it can simplify or be omitted entirely when speaking adds no value.
+- Omit alt-text for: footnote markers ($^\dagger$, $^*$, $^1$), math already explained by surrounding text, or repetitive similar notation
+  - "their dot product, $q \cdot k = \sum ...$" → no alt needed, context explains it
+  - "$W_i^Q$, $W_i^K$, $W_i^V$, $W^O$" → first one gets "W Q, W K, W V, and W O", rest empty
+- Ignore visual-only formatting: $\mathbf{z}$ → "z" not "bold z", $\mathcal{L}$ → "L" not "script L"
+- Accurate but listenable: $\sum_{t=0}^{T} \gamma^t r_t$ → "the sum of gamma t times r t, from t equals zero to T"
 - Well-known formulas can be semantic: $\frac{e^{x_i}}{\sum_j e^{x_j}}$ → "the softmax of x sub i"
 - Use context: if surrounding text explains what a formula represents, prefer describing its meaning
-  Example: text says "the value function V^π measures expected return" → $V^\pi(s) = E_{a \sim \pi}\{...\}$ can be "the value of state s under policy pi is the expected discounted return when starting in s and taking actions according to pi" instead of spelling every symbol
+  Example: text says "the value function V^π measures expected return" → $V^\pi(s) = E_{a \sim \pi}\{...\}$ can be "the value of state s under policy pi is the expected discounted return when starting in s and taking actions according to pi"
 - Figure captions may contain math — use <yap-alt> inside <yap-cap>:
   Example: <yap-cap>Figure 1 shows $\beta$<yap-alt>beta</yap-alt> values</yap-cap>
 
