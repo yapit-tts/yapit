@@ -97,6 +97,7 @@ def _summary_stats(df: pd.DataFrame):
 def _token_breakdown(df: pd.DataFrame):
     """Display token usage breakdown with per-page averages."""
     costs = _calculate_costs(df)
+    complete = get_events(df, "page_extraction_complete")
 
     section_header("Token Usage", "Total and per-page breakdown")
 
@@ -117,17 +118,31 @@ def _token_breakdown(df: pd.DataFrame):
     with col5:
         st.metric("Total Cost", format_cost(costs["total_cost"]))
 
-    # Row 2: Per-page averages
-    st.markdown("**Per Page (avg)**")
+    # Row 2: Per-page averages with std
+    st.markdown("**Per Page (avg ± std)**")
     col1, col2, col3, col4, col5 = st.columns(5)
+
+    # Calculate stds
+    if not complete.empty:
+        input_std = complete["prompt_token_count"].std()
+        output_std = complete["candidates_token_count"].std()
+        thinking_std = complete["thoughts_token_count"].std()
+        total_std = complete["total_token_count"].std()
+    else:
+        input_std = output_std = thinking_std = total_std = 0
+
     with col1:
         st.metric("Input/pg", format_number(costs["prompt_per_page"]))
+        st.caption(f"± {format_number(input_std)}")
     with col2:
         st.metric("Output/pg", format_number(costs["candidates_per_page"]))
+        st.caption(f"± {format_number(output_std)}")
     with col3:
         st.metric("Thinking/pg", format_number(costs["thoughts_per_page"]))
+        st.caption(f"± {format_number(thinking_std)}")
     with col4:
         st.metric("Total/pg", format_number(costs["total_per_page"]))
+        st.caption(f"± {format_number(total_std)}")
     with col5:
         st.metric("Cost/pg", format_cost(costs["cost_per_page"]))
 

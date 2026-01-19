@@ -6,6 +6,7 @@ and overall system performance.
 Run via: make dashboard
 """
 
+import subprocess
 from datetime import timedelta
 from pathlib import Path
 
@@ -51,12 +52,18 @@ def main():
         st.caption(f"Size: {db_info['size_kb']:.1f} KB")
         st.caption(f"Modified: {db_info['modified'].strftime('%Y-%m-%d %H:%M')}")
 
+        # Sync from prod button
+        if st.button("🔄 Sync from Prod", use_container_width=True):
+            with st.spinner("Syncing metrics from prod..."):
+                result = subprocess.run(["make", "sync-metrics"], capture_output=True, text=True)
+                if result.returncode != 0:
+                    st.error(f"Sync failed: {result.stderr}")
+                else:
+                    st.cache_data.clear()
+                    st.rerun()
+
         df, loaded_at = load_data(str(db_path))
         st.caption(f"Loaded: {loaded_at}")
-
-        if st.button("🔄 Refresh", use_container_width=True):
-            st.cache_data.clear()
-            st.rerun()
 
         if df.empty:
             st.warning("Database is empty")
