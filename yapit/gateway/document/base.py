@@ -8,6 +8,7 @@ from yapit.gateway.config import Settings
 from yapit.gateway.constants import SUPPORTED_DOCUMENT_MIME_TYPES
 from yapit.gateway.domain_models import DocumentMetadata, UsageType
 from yapit.gateway.exceptions import ValidationError
+from yapit.gateway.metrics import log_event
 from yapit.gateway.usage import check_usage_limit, record_usage
 
 
@@ -160,6 +161,11 @@ class BaseDocumentProcessor:
 
         # All pages cached — return immediately
         if not uncached_pages:
+            await log_event(
+                "extraction_cache_hit",
+                processor_slug=self._slug,
+                data={"pages_hit": len(cached_pages)},
+            )
             return DocumentExtractionResult(pages=cached_pages, extraction_method=self._slug)
 
         # Check usage limit before processing (only for paid processors)

@@ -43,6 +43,7 @@ from yapit.gateway.document.playwright_renderer import render_with_js
 from yapit.gateway.domain_models import Block, Document, DocumentMetadata, UserPreferences
 from yapit.gateway.exceptions import ResourceNotFoundError
 from yapit.gateway.markdown import parse_markdown, transform_to_document
+from yapit.gateway.metrics import log_event
 
 router = APIRouter(prefix="/v1/documents", tags=["Documents"], dependencies=[Depends(authenticate)])
 public_router = APIRouter(prefix="/v1/documents", tags=["Documents"])
@@ -184,6 +185,10 @@ async def prepare_document(
     cached_data = await file_cache.retrieve_data(url_hash)
     if cached_data:
         cached_doc = CachedDocument.model_validate_json(cached_data)
+        await log_event(
+            "document_cache_hit",
+            data={"cache_type": "url", "content_type": cached_doc.metadata.content_type},
+        )
         endpoint = _get_endpoint_type_from_content_type(cached_doc.metadata.content_type)
         # Compute content_hash for extraction cache lookup
         content_hash = hashlib.sha256(cached_doc.content).hexdigest() if cached_doc.content else url_hash
@@ -253,6 +258,10 @@ async def prepare_document_upload(
     cached_data = await file_cache.retrieve_data(cache_key)
     if cached_data:
         cached_doc = CachedDocument.model_validate_json(cached_data)
+        await log_event(
+            "document_cache_hit",
+            data={"cache_type": "upload", "content_type": cached_doc.metadata.content_type},
+        )
         uncached_pages = (
             await _get_uncached_pages(
                 cache_key,
