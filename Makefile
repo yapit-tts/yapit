@@ -130,6 +130,7 @@ PROD_HOST := root@46.224.195.97
 
 # Sync metrics from prod TimescaleDB to local DuckDB
 sync-metrics:
+	@mkdir -p gateway-data
 	@echo "Exporting metrics from prod..."
 	@ssh $(PROD_HOST) 'docker exec $$(docker ps -qf name=metrics-db) \
 		psql -U metrics -d metrics -c "COPY (SELECT * FROM metrics_event ORDER BY timestamp DESC LIMIT 100000) TO STDOUT WITH CSV HEADER"' \
@@ -157,15 +158,34 @@ conn.close()"
 	@rm -f gateway-data/metrics_raw.csv gateway-data/metrics_hourly.csv gateway-data/metrics_daily.csv
 	@echo "✓ Metrics synced to gateway-data/metrics.duckdb"
 
+# Sync logs from prod (from Docker volume)
+sync-logs:
+	@echo "Syncing logs from prod..."
+	@mkdir -p gateway-data/logs
+	@rsync -avz --progress $(PROD_HOST):/var/lib/docker/volumes/yapit_gateway-data/_data/logs/*.jsonl* gateway-data/logs/
+	@echo "Decompressing logs..."
+	@gunzip -f gateway-data/logs/*.jsonl.gz 2>/dev/null || true
+	@echo "✓ Logs synced to gateway-data/logs/"
+
+# Sync all data (metrics + logs)
+sync-data: sync-metrics sync-logs
+
+# Run health analysis (syncs data, runs Claude, sends to Discord)
+report:
+	@./scripts/report.sh
+
+report-post-deploy:
+	@./scripts/report.sh --after-deploy
+
 # Run local dashboard (syncs first)
 dashboard: sync-metrics
 	@echo "Starting dashboard..."
 	@(sleep 2 && xdg-open http://localhost:8502 2>/dev/null || open http://localhost:8502 2>/dev/null || true) &
-	@uv run --with streamlit,pandas,plotly,duckdb streamlit run scripts/dashboard.py --server.port 8502
+	@uv run --with streamlit,pandas,plotly,duckdb,numpy streamlit run dashboard/__init__.py --server.port 8502
 
 # Dashboard without sync (use existing local data)
 dashboard-local:
 	@echo "Starting dashboard with local data..."
 	@(sleep 2 && xdg-open http://localhost:8502 2>/dev/null || open http://localhost:8502 2>/dev/null || true) &
-	@uv run --with streamlit,pandas,plotly,duckdb streamlit run scripts/dashboard.py --server.port 8502
+	@uv run --with streamlit,pandas,plotly,duckdb,numpy streamlit run dashboard/__init__.py --server.port 8502
 
