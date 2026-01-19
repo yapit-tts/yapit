@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Libre+Baskerville:wght@400;700&display=swap');
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      width: 2400px;
+      height: 1260px;
+      background: oklch(0.96 0.0267 97.61);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: 'Libre Baskerville', Georgia, serif;
+      overflow: hidden;
+      position: relative;
+    }
+
+    /* Subtle texture overlay */
+    body::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background:
+        radial-gradient(circle at 20% 30%, oklch(0.93 0.04 130 / 0.3), transparent 50%),
+        radial-gradient(circle at 80% 70%, oklch(0.90 0.03 85 / 0.2), transparent 40%);
+      pointer-events: none;
+    }
+
+    .container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 48px;
+      z-index: 1;
+    }
+
+    .logo-container {
+      display: flex;
+      align-items: center;
+      gap: 64px;
+    }
+
+    .logo {
+      width: 320px;
+      height: 320px;
+    }
+
+    .wordmark {
+      font-size: 192px;
+      font-weight: 700;
+      color: oklch(0.35 0.0355 43.21);
+      letter-spacing: -4px;
+    }
+
+    .tagline {
+      font-size: 72px;
+      font-weight: 400;
+      color: oklch(0.45 0.06 130);
+      font-style: italic;
+      margin-top: 16px;
+    }
+
+    .url {
+      font-size: 48px;
+      color: oklch(0.55 0.04 85);
+      margin-top: 32px;
+      letter-spacing: 2px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="logo-container">
+      <svg class="logo" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="treeGrad" x1="0" y1="1" x2="0" y2="0">
+            <stop offset="0%" stop-color="#5c4a3a"/>
+            <stop offset="40%" stop-color="#4a6840"/>
+            <stop offset="100%" stop-color="#3a8a4d"/>
+          </linearGradient>
+        </defs>
+        <path
+          d="M2 2 L9 14 L9 29 L15 29 L15 14 L22 2 L17 2 L12 10 L7 2 Z"
+          fill="url(#treeGrad)"
+        />
+        <path
+          d="M20 11 Q23 13 23 16 Q23 19 20 21"
+          fill="none"
+          stroke="#3a8a4d"
+          stroke-width="2.5"
+          stroke-linecap="round"
+        />
+        <path
+          d="M24 9 Q28 12 28 16 Q28 20 24 23"
+          fill="none"
+          stroke="#5aa86a"
+          stroke-width="2"
+          stroke-linecap="round"
+          opacity="0.55"
+        />
+      </svg>
+      <span class="wordmark">Yapit</span>
+    </div>
+    <p class="tagline">Listen to anything</p>
+    <p class="url">yapit.md</p>
+  </div>
+</body>
+</html>
