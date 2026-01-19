@@ -61,14 +61,14 @@ endif
 		(echo "Starting postgres..." && docker compose --env-file .env --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml up -d postgres --wait)
 	@echo "Resetting database to migration state..."
 	@docker compose --env-file .env --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml exec -T postgres psql -U yapit -d yapit -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;" > /dev/null
-	@cd yapit/gateway && DATABASE_URL="postgresql://yapit:yapit@localhost:5432/yapit" uv run alembic upgrade head
+	@cd yapit/gateway && DATABASE_URL="postgresql+psycopg://yapit:yapit@localhost:5432/yapit" uv run alembic upgrade head
 	@echo "Generating migration..."
-	@cd yapit/gateway && DATABASE_URL="postgresql://yapit:yapit@localhost:5432/yapit" uv run alembic revision --autogenerate -m "$(MSG)"
+	@cd yapit/gateway && DATABASE_URL="postgresql+psycopg://yapit:yapit@localhost:5432/yapit" uv run alembic revision --autogenerate -m "$(MSG)"
 	@echo "Auto-fixing sqlmodel types..."
 	@find yapit/gateway/migrations/versions -name "*.py" -exec sed -i 's/sqlmodel\.sql\.sqltypes\.AutoString()/sa.String()/g' {} \;
 	@echo "Testing migration on fresh DB (yapit_test)..."
 	@docker compose --env-file .env --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml exec -T postgres psql -U yapit -d postgres -c "DROP DATABASE IF EXISTS yapit_test;" -c "CREATE DATABASE yapit_test;" > /dev/null
-	@cd yapit/gateway && DATABASE_URL="postgresql://yapit:yapit@localhost:5432/yapit_test" uv run alembic upgrade head
+	@cd yapit/gateway && DATABASE_URL="postgresql+psycopg://yapit:yapit@localhost:5432/yapit_test" uv run alembic upgrade head
 	@echo "✓ Migration generated and verified"
 	@echo "Review: yapit/gateway/migrations/versions/"
 	@echo "Restart dev: make dev-cpu"
