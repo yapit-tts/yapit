@@ -22,8 +22,11 @@ GEMINI_OUTPUT_COST_PER_M = 3.00  # $/M tokens (thoughts count as output)
 def _calculate_costs(df: pd.DataFrame) -> dict:
     """Calculate token costs from extraction events."""
     complete = get_events(df, "page_extraction_complete")
+    num_pages = len(complete)
+
     if complete.empty:
         return {
+            "num_pages": 0,
             "prompt_tokens": 0,
             "candidates_tokens": 0,
             "thoughts_tokens": 0,
@@ -31,6 +34,12 @@ def _calculate_costs(df: pd.DataFrame) -> dict:
             "input_cost": 0,
             "output_cost": 0,
             "total_cost": 0,
+            # Per-page averages
+            "prompt_per_page": 0,
+            "candidates_per_page": 0,
+            "thoughts_per_page": 0,
+            "total_per_page": 0,
+            "cost_per_page": 0,
         }
 
     prompt = complete["prompt_token_count"].fillna(0).sum()
@@ -40,15 +49,23 @@ def _calculate_costs(df: pd.DataFrame) -> dict:
 
     input_cost = (prompt / 1_000_000) * GEMINI_INPUT_COST_PER_M
     output_cost = ((candidates + thoughts) / 1_000_000) * GEMINI_OUTPUT_COST_PER_M
+    total_cost = input_cost + output_cost
 
     return {
+        "num_pages": num_pages,
         "prompt_tokens": int(prompt),
         "candidates_tokens": int(candidates),
         "thoughts_tokens": int(thoughts),
         "total_tokens": int(total),
         "input_cost": input_cost,
         "output_cost": output_cost,
-        "total_cost": input_cost + output_cost,
+        "total_cost": total_cost,
+        # Per-page averages
+        "prompt_per_page": int(prompt / num_pages),
+        "candidates_per_page": int(candidates / num_pages),
+        "thoughts_per_page": int(thoughts / num_pages),
+        "total_per_page": int(total / num_pages),
+        "cost_per_page": total_cost / num_pages,
     }
 
 
@@ -64,9 +81,7 @@ def _summary_stats(df: pd.DataFrame):
     success_rate = (total_pages / (total_pages + errored) * 100) if (total_pages + errored) > 0 else 0
     cache_rate = calculate_rate(cached, total_pages)
 
-    costs = _calculate_costs(df)
-
-    col1, col2, col3, col4, col5, col6 = st.columns(6)
+    col1, col2, col3, col4, col5 = st.columns(5)
     with col1:
         st.metric("Pages Processed", format_number(total_pages))
     with col2:
@@ -77,34 +92,48 @@ def _summary_stats(df: pd.DataFrame):
         st.metric("Success Rate", format_percent(success_rate))
     with col5:
         st.metric("Cache Hit Rate", format_percent(cache_rate))
-    with col6:
-        st.metric("Total Cost", format_cost(costs["total_cost"]))
 
 
 def _token_breakdown(df: pd.DataFrame):
-    """Display token usage breakdown."""
+    """Display token usage breakdown with per-page averages."""
     costs = _calculate_costs(df)
 
-    section_header("Token Usage", "Breakdown by token type")
+    section_header("Token Usage", "Total and per-page breakdown")
 
-    col1, col2, col3, col4 = st.columns(4)
+    # Row 1: Total tokens
+    st.markdown("**Totals**")
+    col1, col2, col3, col4, col5 = st.columns(5)
     with col1:
-        st.metric("Input Tokens", format_number(costs["prompt_tokens"]))
-        st.caption(f"Cost: {format_cost(costs['input_cost'])}")
+        st.metric("Input", format_number(costs["prompt_tokens"]))
     with col2:
-        st.metric("Output Tokens", format_number(costs["candidates_tokens"]))
+        st.metric("Output", format_number(costs["candidates_tokens"]))
     with col3:
-        st.metric("Thinking Tokens", format_number(costs["thoughts_tokens"]))
+        st.metric("Thinking", format_number(costs["thoughts_tokens"]))
         if costs["total_tokens"] > 0:
             thinking_pct = costs["thoughts_tokens"] / costs["total_tokens"] * 100
             st.caption(f"{thinking_pct:.1f}% of total")
     with col4:
-        st.metric("Output Cost", format_cost(costs["output_cost"]))
-        st.caption("(candidates + thoughts)")
+        st.metric("Total", format_number(costs["total_tokens"]))
+    with col5:
+        st.metric("Total Cost", format_cost(costs["total_cost"]))
+
+    # Row 2: Per-page averages
+    st.markdown("**Per Page (avg)**")
+    col1, col2, col3, col4, col5 = st.columns(5)
+    with col1:
+        st.metric("Input/pg", format_number(costs["prompt_per_page"]))
+    with col2:
+        st.metric("Output/pg", format_number(costs["candidates_per_page"]))
+    with col3:
+        st.metric("Thinking/pg", format_number(costs["thoughts_per_page"]))
+    with col4:
+        st.metric("Total/pg", format_number(costs["total_per_page"]))
+    with col5:
+        st.metric("Cost/pg", format_cost(costs["cost_per_page"]))
 
 
 def _token_usage_chart(df: pd.DataFrame) -> go.Figure | None:
-    """Token usage over time (stacked area)."""
+    """Token usage over time (stacked area) - total tokens."""
     complete = get_events(df, "page_extraction_complete")
     if complete.empty:
         return None
@@ -168,10 +197,81 @@ def _token_usage_chart(df: pd.DataFrame) -> go.Figure | None:
     )
 
     fig.update_layout(
-        title="Token Usage Over Time (hourly)",
+        title="Total Token Usage Over Time (hourly)",
         height=350,
         xaxis_title="Time",
         yaxis_title="Tokens",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+    )
+    apply_plotly_theme(fig)
+    return fig
+
+
+def _tokens_per_page_chart(df: pd.DataFrame) -> go.Figure | None:
+    """Average tokens per page over time."""
+    complete = get_events(df, "page_extraction_complete")
+    if complete.empty:
+        return None
+
+    complete = bin_by_time(complete, "1h")
+    hourly = (
+        complete.groupby("time_bin")
+        .agg(
+            pages=("event_type", "count"),
+            prompt=("prompt_token_count", "sum"),
+            candidates=("candidates_token_count", "sum"),
+            thoughts=("thoughts_token_count", "sum"),
+            total=("total_token_count", "sum"),
+        )
+        .reset_index()
+    )
+
+    if hourly.empty:
+        return None
+
+    # Calculate per-page averages
+    hourly["total_per_page"] = hourly["total"] / hourly["pages"]
+    hourly["input_per_page"] = hourly["prompt"] / hourly["pages"]
+    hourly["output_per_page"] = hourly["candidates"] / hourly["pages"]
+    hourly["thinking_per_page"] = hourly["thoughts"] / hourly["pages"]
+
+    # Calculate cost per page
+    hourly["cost_per_page"] = (
+        (hourly["prompt"] / 1_000_000 * GEMINI_INPUT_COST_PER_M)
+        + ((hourly["candidates"] + hourly["thoughts"]) / 1_000_000 * GEMINI_OUTPUT_COST_PER_M)
+    ) / hourly["pages"]
+
+    fig = go.Figure()
+
+    fig.add_trace(
+        go.Scatter(
+            x=hourly["time_bin"],
+            y=hourly["total_per_page"],
+            mode="lines+markers",
+            name="Total/pg",
+            line=dict(color=COLORS["accent_teal"], width=2),
+            marker=dict(size=5),
+            hovertemplate="Total: %{y:,.0f} tokens/pg<extra></extra>",
+        )
+    )
+
+    fig.add_trace(
+        go.Scatter(
+            x=hourly["time_bin"],
+            y=hourly["thinking_per_page"],
+            mode="lines+markers",
+            name="Thinking/pg",
+            line=dict(color=COLORS["accent_purple"], width=2),
+            marker=dict(size=5),
+            hovertemplate="Thinking: %{y:,.0f} tokens/pg<extra></extra>",
+        )
+    )
+
+    fig.update_layout(
+        title="Tokens Per Page Over Time (hourly avg)",
+        height=350,
+        xaxis_title="Time",
+        yaxis_title="Tokens per Page",
         legend=dict(orientation="h", yanchor="bottom", y=1.02),
     )
     apply_plotly_theme(fig)
@@ -382,14 +482,23 @@ def render(df: pd.DataFrame):
     # Charts
     section_header("Charts")
 
-    # Token usage over time
-    fig = _token_usage_chart(df)
-    if fig:
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.caption("No token usage data")
+    # Row 1: Total tokens + per-page tokens
+    col1, col2 = st.columns(2)
+    with col1:
+        fig = _token_usage_chart(df)
+        if fig:
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.caption("No token usage data")
 
-    # Row: Cost breakdown + errors
+    with col2:
+        fig = _tokens_per_page_chart(df)
+        if fig:
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.caption("No per-page data")
+
+    # Row 2: Cost breakdown + errors
     col1, col2 = st.columns(2)
     with col1:
         fig = _cost_breakdown_pie(df)

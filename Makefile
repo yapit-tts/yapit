@@ -181,11 +181,11 @@ report-post-deploy:
 dashboard: sync-metrics
 	@echo "Starting dashboard..."
 	@(sleep 2 && xdg-open http://localhost:8502 2>/dev/null || open http://localhost:8502 2>/dev/null || true) &
-	@uv run --with streamlit,pandas,plotly,duckdb,numpy streamlit run dashboard/__init__.py --server.port 8502
+	@uv run --with streamlit,pandas,plotly,duckdb,numpy streamlit run dashboard/__init__.py --server.port 8502 --server.headless true
 
 # Dashboard without sync (use existing local data)
 dashboard-local:
 	@echo "Starting dashboard with local data..."
 	@(sleep 2 && xdg-open http://localhost:8502 2>/dev/null || open http://localhost:8502 2>/dev/null || true) &
-	@uv run --with streamlit,pandas,plotly,duckdb,numpy streamlit run dashboard/__init__.py --server.port 8502
+	@uv run --with streamlit,pandas,plotly,duckdb,numpy streamlit run dashboard/__init__.py --server.port 8502 --server.headless true
 
