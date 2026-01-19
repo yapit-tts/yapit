@@ -94,13 +94,9 @@ class ExtractedImage:
     height: int
 
 
-def load_prompt(version: str) -> str:
-    """Load extraction prompt from file.
-
-    Args:
-        version: Prompt version (e.g., "v1" loads prompts/extraction_v1.txt)
-    """
-    prompt_file = PROMPTS_DIR / f"extraction_{version}.txt"
+def load_prompt() -> str:
+    """Load extraction prompt from file."""
+    prompt_file = PROMPTS_DIR / "extraction.txt"
     return prompt_file.read_text().strip()
 
 

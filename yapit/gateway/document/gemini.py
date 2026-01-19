@@ -55,7 +55,7 @@ class GeminiProcessor(BaseDocumentProcessor):
         redis: Redis,
         model: str = "gemini-3-flash-preview",
         resolution: str = "high",
-        prompt_version: str = "v1",
+        prompt_version: str = "v2",  # bump for prompt/processing changes to apply to future extractions of same doc
         max_pages: int = 10000,
         max_file_size: int = 100 * 1024 * 1024,  # 100MB
         **kwargs,
@@ -71,7 +71,7 @@ class GeminiProcessor(BaseDocumentProcessor):
         self._resolution_str = resolution
         self._resolution = RESOLUTION_MAP[resolution]
         self._prompt_version = prompt_version
-        self._prompt = load_prompt(prompt_version)
+        self._prompt = load_prompt()
         self._max_pages = max_pages
         self._max_file_size = max_file_size
         self._images_dir = Path(self._settings.images_dir)
@@ -164,7 +164,10 @@ class GeminiProcessor(BaseDocumentProcessor):
 
     async def _extract_image(self, content: bytes, content_type: str) -> DocumentExtractionResult:
         """Extract text from a single image."""
-        config = types.GenerateContentConfig(media_resolution=self._resolution)
+        config = types.GenerateContentConfig(
+            media_resolution=self._resolution,
+            thinking_config=types.ThinkingConfig(thinking_level=types.ThinkingLevel.MINIMAL),
+        )
         contents = [
             types.Part.from_bytes(data=content, mime_type=content_type),
             self._prompt,
@@ -297,7 +300,10 @@ class GeminiProcessor(BaseDocumentProcessor):
         """
         page_bytes = extract_single_page_pdf(pdf_reader, page_idx)
         prompt = build_figure_prompt(self._prompt, figures)
-        config = types.GenerateContentConfig(media_resolution=self._resolution)
+        config = types.GenerateContentConfig(
+            media_resolution=self._resolution,
+            thinking_config=types.ThinkingConfig(thinking_level=types.ThinkingLevel.MINIMAL),
+        )
         contents = [
             types.Part.from_bytes(data=page_bytes, mime_type="application/pdf"),
             prompt,
