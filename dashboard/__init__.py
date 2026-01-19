@@ -55,7 +55,7 @@ def main():
         st.caption(f"Loaded: {loaded_at}")
 
         if st.button("🔄 Refresh", use_container_width=True):
-            load_data.clear()
+            st.cache_data.clear()
             st.rerun()
 
         if df.empty:
