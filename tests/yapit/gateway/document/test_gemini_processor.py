@@ -5,12 +5,14 @@ Unit tests for retry logic run without API key.
 """
 
 import os
+import uuid
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from google.genai import errors as genai_errors
 
+from yapit.contracts import YoloResult
 from yapit.gateway.document.gemini import (
     MAX_RETRIES,
     GeminiProcessor,
@@ -40,6 +42,18 @@ class MockCache:
         pass
 
 
+def _mock_yolo_result() -> YoloResult:
+    """Create a mock YOLO result with no figures detected."""
+    return YoloResult(
+        job_id=uuid.uuid4(),
+        figures=[],
+        page_width=612,
+        page_height=792,
+        worker_id="mock",
+        processing_time_ms=0,
+    )
+
+
 @pytest.mark.gemini
 @pytest.mark.asyncio
 async def test_extract_pdf(processor):
@@ -47,12 +61,18 @@ async def test_extract_pdf(processor):
     with open(FIXTURES_DIR / "minimal.pdf", "rb") as f:
         content = f.read()
 
-    result = await processor._extract(
-        content=content,
-        content_type="application/pdf",
-        content_hash="test-minimal",
-        extraction_cache=MockCache(),
-    )
+    with (
+        patch("yapit.gateway.document.gemini.enqueue_detection", new_callable=AsyncMock, return_value="mock-job-id"),
+        patch(
+            "yapit.gateway.document.gemini.wait_for_result", new_callable=AsyncMock, return_value=_mock_yolo_result()
+        ),
+    ):
+        result = await processor._extract(
+            content=content,
+            content_type="application/pdf",
+            content_hash="test-minimal",
+            extraction_cache=MockCache(),
+        )
 
     assert result.pages
     assert result.pages[0].markdown.strip()
@@ -65,13 +85,19 @@ async def test_extract_specific_pages(processor):
     with open(FIXTURES_DIR / "multipage.pdf", "rb") as f:
         content = f.read()
 
-    result = await processor._extract(
-        content=content,
-        content_type="application/pdf",
-        content_hash="test-specific",
-        extraction_cache=MockCache(),
-        pages=[0, 2],  # Skip page 1
-    )
+    with (
+        patch("yapit.gateway.document.gemini.enqueue_detection", new_callable=AsyncMock, return_value="mock-job-id"),
+        patch(
+            "yapit.gateway.document.gemini.wait_for_result", new_callable=AsyncMock, return_value=_mock_yolo_result()
+        ),
+    ):
+        result = await processor._extract(
+            content=content,
+            content_type="application/pdf",
+            content_hash="test-specific",
+            extraction_cache=MockCache(),
+            pages=[0, 2],  # Skip page 1
+        )
 
     assert set(result.pages.keys()) == {0, 2}
 
