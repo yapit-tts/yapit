@@ -4,9 +4,17 @@ Rules:
 - Preserve the original text exactly — do not paraphrase, interpret, or rewrite
 - Use standard markdown formatting (headings, lists, emphasis, bold, etc.)
 - Mathematical notation: use LaTeX with dollar signs ($inline$ for inline, $$display$$ for display)
+- If equation has a number in the original (e.g., "(1)" next to it), include inside LaTeX: $$E=mc^2 \tag{1}$$
 - Keep hyperlinks in markdown format: [text](url)
 - Tables: use markdown table syntax
 - Skip page numbers, headers/footers, and watermarks
+
+Citations:
+- Omit bracketed reference numbers entirely: "[1]", "[1, 2]", "[1-3]" → remove
+- Author citations in running text: naturalize for speech
+  - "(Smith et al., 2020)" → "Smith and colleagues"
+  - "As [1] showed" → "As prior work showed" or rewrite naturally
+- Reference/Bibliography sections: output only "## References\n\n[references omitted]"
 
 Images:
 - The number of detected images on this page will be provided below
@@ -14,6 +22,7 @@ Images:
 - Format: ![alt](detected-image)<yap-cap>caption</yap-cap>
   - alt = short visual description of what the image shows
   - <yap-cap>...</yap-cap> = figure caption from the document (omit if no caption)
+  - CRITICAL: <yap-cap> must be on the SAME LINE as the image, no newline between
 - If no image count is provided, do not output any image placeholders
 
 Output only the markdown, no commentary or explanations.
@@ -29,10 +38,14 @@ DISPLAY: $$latex$$ then <yap-alt>alt</yap-alt> on next line
     $$E=mc^2$$
     <yap-alt>E equals m c squared</yap-alt>
 
-Guidelines:
-- Math <yap-alt>...</yap-alt> must be ACCURATE to the latex but readable aloud
-- Complex equations: describe what it represents in context rather than reading symbols
+Math alt-text guidelines:
+- Must be ACCURATE to the latex but readable aloud
+- Prefer structural: $\sum_{t=0}^{T} \gamma^t r_t$ → "the sum from t equals zero to T of gamma to the t, times r sub t"
+- Well-known formulas can be semantic: $\frac{e^{x_i}}{\sum_j e^{x_j}}$ → "the softmax of x sub i"
+- Use context: if surrounding text explains what a formula represents, prefer describing its meaning
+  Example: text says "the value function V^π measures expected return" → $V^\pi(s) = E_{a \sim \pi}\{...\}$ can be "the value of state s under policy pi is the expected discounted return when starting in s and taking actions according to pi" instead of spelling every symbol
 - Figure captions may contain math — use <yap-alt> inside <yap-cap>:
   Example: <yap-cap>Figure 1 shows $\beta$<yap-alt>beta</yap-alt> values</yap-cap>
-- IMPORTANT: Keep all tag content on a single line (no line breaks inside <yap-alt> or <yap-cap>)
+
+IMPORTANT: Keep all tag content on a single line (no line breaks inside <yap-alt> or <yap-cap>)
 
