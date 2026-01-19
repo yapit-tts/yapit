@@ -590,3 +590,64 @@ class TestYapAnnotations:
 
         # Should not crash, malformed annotation treated as regular text
         assert len(doc.blocks) == 1
+
+    def test_consecutive_display_math_with_blank_lines(self):
+        """Two display math blocks work when blank line precedes each.
+
+        Prompt instructs: "Blank line required BEFORE each $$block$$"
+        """
+        md = "$$eq1$$\n\n<yap-alt>equation one</yap-alt>\n\n$$eq2$$\n\n<yap-alt>equation two</yap-alt>"
+        ast = parse_markdown(md)
+        doc = transform_to_document(ast)
+
+        assert len(doc.blocks) == 2
+        assert doc.blocks[0].type == "math"
+        assert doc.blocks[0].alt == "equation one"
+        assert doc.blocks[1].type == "math"
+        assert doc.blocks[1].alt == "equation two"
+
+    def test_consecutive_display_math_without_blank_line_fails(self):
+        """Second equation fails to parse as math without blank line before it.
+
+        This test documents parser behavior that the prompt works around.
+        """
+        md = "$$eq1$$\n\n<yap-alt>equation one</yap-alt>\n$$eq2$$\n\n<yap-alt>equation two</yap-alt>"
+        ast = parse_markdown(md)
+
+        # Without blank line, second $$ merges into paragraph with yap-alt
+        # Only one math_block in AST
+        math_blocks = [c for c in ast.children if c.type == "math_block"]
+        assert len(math_blocks) == 1
+
+    def test_multiline_aligned_display_math(self):
+        """Multiline display math with aligned environment works.
+
+        Prompt instructs: use aligned for grouped equations (e.g., equation + "where" clause)
+        """
+        md = (
+            "$$\\begin{aligned}\n"
+            "f(x) &= ax^2 + bx + c \\\\\n"
+            "\\text{where } a &> 0\n"
+            "\\end{aligned}$$\n\n"
+            "<yap-alt>f of x equals a x squared plus b x plus c, where a is greater than zero</yap-alt>"
+        )
+        ast = parse_markdown(md)
+        doc = transform_to_document(ast)
+
+        assert len(doc.blocks) == 1
+        assert doc.blocks[0].type == "math"
+        assert "aligned" in doc.blocks[0].content
+        assert doc.blocks[0].alt == "f of x equals a x squared plus b x plus c, where a is greater than zero"
+
+    def test_display_math_yap_alt_no_blank_between(self):
+        r"""Display math alt can be on next line without blank line between.
+
+        Prompt format: $$latex$$\n<yap-alt>alt</yap-alt>
+        """
+        md = "$$E = mc^2$$\n<yap-alt>E equals m c squared</yap-alt>"
+        ast = parse_markdown(md)
+        doc = transform_to_document(ast)
+
+        assert len(doc.blocks) == 1
+        assert doc.blocks[0].type == "math"
+        assert doc.blocks[0].alt == "E equals m c squared"
