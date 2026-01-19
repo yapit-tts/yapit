@@ -261,12 +261,28 @@ def _tokens_per_page_chart(df: pd.DataFrame) -> go.Figure | None:
     fig.add_trace(
         go.Scatter(
             x=hourly["time_bin"],
-            y=hourly["total_per_page"],
-            mode="lines+markers",
-            name="Total/pg",
-            line=dict(color=COLORS["accent_teal"], width=2),
-            marker=dict(size=5),
-            hovertemplate="Total: %{y:,.0f} tokens/pg<extra></extra>",
+            y=hourly["input_per_page"],
+            mode="lines",
+            name="Input",
+            line=dict(width=0),
+            fill="tonexty",
+            fillcolor="rgba(88, 166, 255, 0.6)",
+            stackgroup="one",
+            hovertemplate="Input: %{y:,.0f}/pg<extra></extra>",
+        )
+    )
+
+    fig.add_trace(
+        go.Scatter(
+            x=hourly["time_bin"],
+            y=hourly["output_per_page"],
+            mode="lines",
+            name="Output",
+            line=dict(width=0),
+            fill="tonexty",
+            fillcolor="rgba(57, 217, 138, 0.6)",
+            stackgroup="one",
+            hovertemplate="Output: %{y:,.0f}/pg<extra></extra>",
         )
     )
 
@@ -274,16 +290,18 @@ def _tokens_per_page_chart(df: pd.DataFrame) -> go.Figure | None:
         go.Scatter(
             x=hourly["time_bin"],
             y=hourly["thinking_per_page"],
-            mode="lines+markers",
-            name="Thinking/pg",
-            line=dict(color=COLORS["accent_purple"], width=2),
-            marker=dict(size=5),
-            hovertemplate="Thinking: %{y:,.0f} tokens/pg<extra></extra>",
+            mode="lines",
+            name="Thinking",
+            line=dict(width=0),
+            fill="tonexty",
+            fillcolor="rgba(163, 113, 247, 0.6)",
+            stackgroup="one",
+            hovertemplate="Thinking: %{y:,.0f}/pg<extra></extra>",
         )
     )
 
     fig.update_layout(
-        title="Tokens Per Page Over Time (hourly avg)",
+        title="Tokens Per Page Over Time (hourly avg, stacked)",
         height=350,
         xaxis_title="Time",
         yaxis_title="Tokens per Page",
