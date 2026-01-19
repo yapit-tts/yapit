@@ -163,8 +163,12 @@ def detect_figures(page_image: bytes, page_width: int, page_height: int) -> list
 def assign_row_groups(figures: list[DetectedFigure]) -> list[DetectedFigure]:
     """Group figures with overlapping y-ranges (side-by-side on same row).
 
-    Only assigns row_group when multiple figures share a row.
-    Solo figures keep row_group=None (no horizontal grouping needed).
+    Only assigns row_group when multiple figures share a row (>50% y-overlap).
+    Solo figures keep row_group=None to avoid cross-page collisions when pages
+    are stitched together (each page's row numbering starts at row0).
+
+    Returns figures sorted by visual reading order (y-center, then x) to ensure
+    the output order matches Gemini's expected placeholder order for URL assignment.
     """
     if not figures:
         return figures
@@ -172,7 +176,7 @@ def assign_row_groups(figures: list[DetectedFigure]) -> list[DetectedFigure]:
     sorted_figures = sorted(figures, key=lambda f: (f.bbox[1] + f.bbox[3]) / 2)
 
     # First pass: determine row membership
-    row_members: list[list[int]] = []  # row_idx -> list of figure indices
+    row_members: list[list[int]] = []
     used = [False] * len(sorted_figures)
 
     for i, fig in enumerate(sorted_figures):
@@ -211,9 +215,8 @@ def assign_row_groups(figures: list[DetectedFigure]) -> list[DetectedFigure]:
             for idx in members:
                 sorted_figures[idx].row_group = f"row{row_idx}"
             row_idx += 1
-        # Solo figures: row_group stays None
 
-    return sorted(sorted_figures, key=lambda f: (f.row_group or "", f.bbox[0]))
+    return sorted(sorted_figures, key=lambda f: ((f.bbox[1] + f.bbox[3]) / 2, f.bbox[0]))
 
 
 def process_job(job: YoloJob) -> tuple[list[DetectedFigureContract], int, int]:
