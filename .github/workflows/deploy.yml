@@ -168,6 +168,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Send ntfy notification
+        env:
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
         run: |
           STATUS="${{ needs.deploy.result }}"
           if [ "$STATUS" = "success" ]; then
@@ -177,10 +179,10 @@ jobs:
             ICON="❌"
             PRIORITY="high"
           fi
-          curl -s \
+          printf '%s' "$COMMIT_MSG" | curl -s \
             -H "Title: ${ICON} yapit deploy: ${STATUS}" \
             -H "Priority: ${PRIORITY}" \
             -H "Tags: rocket" \
             -H "Click: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
-            -d "Commit: ${{ github.event.head_commit.message }}" \
+            -d @- \
             https://ntfy.sh/yapit-tts-deploy
