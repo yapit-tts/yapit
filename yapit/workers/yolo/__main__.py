@@ -161,20 +161,25 @@ def detect_figures(page_image: bytes, page_width: int, page_height: int) -> list
 
 
 def assign_row_groups(figures: list[DetectedFigure]) -> list[DetectedFigure]:
-    """Group figures with overlapping y-ranges (side-by-side on same row)."""
+    """Group figures with overlapping y-ranges (side-by-side on same row).
+
+    Only assigns row_group when multiple figures share a row.
+    Solo figures keep row_group=None (no horizontal grouping needed).
+    """
     if not figures:
         return figures
 
     sorted_figures = sorted(figures, key=lambda f: (f.bbox[1] + f.bbox[3]) / 2)
 
-    row_idx = 0
+    # First pass: determine row membership
+    row_members: list[list[int]] = []  # row_idx -> list of figure indices
     used = [False] * len(sorted_figures)
 
     for i, fig in enumerate(sorted_figures):
         if used[i]:
             continue
 
-        fig.row_group = f"row{row_idx}"
+        row = [i]
         used[i] = True
 
         y1_i, y2_i = fig.bbox[1], fig.bbox[3]
@@ -194,10 +199,19 @@ def assign_row_groups(figures: list[DetectedFigure]) -> list[DetectedFigure]:
 
             min_height = min(height_i, height_j)
             if min_height > 0 and overlap / min_height > 0.5:
-                other.row_group = f"row{row_idx}"
+                row.append(j)
                 used[j] = True
 
-        row_idx += 1
+        row_members.append(row)
+
+    # Second pass: only assign row_group to rows with multiple figures
+    row_idx = 0
+    for members in row_members:
+        if len(members) > 1:
+            for idx in members:
+                sorted_figures[idx].row_group = f"row{row_idx}"
+            row_idx += 1
+        # Solo figures: row_group stays None
 
     return sorted(sorted_figures, key=lambda f: (f.row_group or "", f.bbox[0]))
 

@@ -55,7 +55,7 @@ class GeminiProcessor(BaseDocumentProcessor):
         redis: Redis,
         model: str = "gemini-3-flash-preview",
         resolution: str = "high",
-        prompt_version: str = "v2",  # bump for prompt/processing changes to apply to future extractions of same doc
+        prompt_version: str = "v3",  # bump for prompt/processing changes to apply to future extractions of same doc
         max_pages: int = 10000,
         max_file_size: int = 100 * 1024 * 1024,  # 100MB
         **kwargs,
