@@ -17,6 +17,7 @@ from yapit.gateway.document.base import (
     BaseDocumentProcessor,
     DocumentExtractionResult,
     ExtractedPage,
+    TokenUsage,
 )
 from yapit.gateway.document.extraction import (
     build_figure_prompt,
@@ -50,6 +51,15 @@ class GeminiProcessor(BaseDocumentProcessor):
         "image/*",
     }
 
+    # Token billing: output costs 6× input ($0.50/M input, $3.00/M output for gemini-3-flash)
+    # token_equiv = input_tokens + (output_tokens × OUTPUT_TOKEN_MULTIPLIER)
+    OUTPUT_TOKEN_MULTIPLIER = 6
+
+    # Fallback estimates when usage_metadata is None (shouldn't happen, but be safe)
+    # Based on measured averages + buffer: 2500 input, 1000 output per page
+    FALLBACK_INPUT_TOKENS_PER_PAGE = 2500
+    FALLBACK_OUTPUT_TOKENS_PER_PAGE = 1000
+
     def __init__(
         self,
         redis: Redis,
@@ -80,6 +90,45 @@ class GeminiProcessor(BaseDocumentProcessor):
     def _processor_supported_mime_types(self) -> set[str]:
         return self.SUPPORTED_MIME_TYPES
 
+    def _extract_token_usage(
+        self,
+        usage_metadata: types.GenerateContentResponseUsageMetadata | None,
+        num_pages: int,
+        context: str,
+    ) -> tuple[int, int, int, bool]:
+        """Extract and validate token counts from Gemini response.
+
+        Returns: (input_tokens, output_tokens, thoughts_tokens, is_fallback)
+        """
+        if usage_metadata is None:
+            logger.error(f"Gemini {context}: usage_metadata is None, using fallback estimates")
+            return (
+                self.FALLBACK_INPUT_TOKENS_PER_PAGE * num_pages,
+                self.FALLBACK_OUTPUT_TOKENS_PER_PAGE * num_pages,
+                0,
+                True,
+            )
+
+        input_tokens = usage_metadata.prompt_token_count or 0
+        output_tokens = usage_metadata.candidates_token_count or 0
+        thoughts_tokens = usage_metadata.thoughts_token_count or 0
+
+        # Sanity check: validate total matches components
+        expected_total = input_tokens + output_tokens + thoughts_tokens
+        actual_total = usage_metadata.total_token_count or 0
+        if actual_total != expected_total:
+            logger.warning(
+                f"Gemini {context}: token count mismatch - "
+                f"total={actual_total}, expected={expected_total} "
+                f"(prompt={input_tokens}, candidates={output_tokens}, thoughts={thoughts_tokens})"
+            )
+
+        return input_tokens, output_tokens, thoughts_tokens, False
+
+    def _calculate_token_equiv(self, input_tokens: int, output_tokens: int, thoughts_tokens: int) -> int:
+        """Calculate token equivalents for billing: input + (output + thoughts) × multiplier."""
+        return input_tokens + (output_tokens + thoughts_tokens) * self.OUTPUT_TOKEN_MULTIPLIER
+
     @property
     def _extraction_key_prefix(self) -> str:
         return f"{self._slug}:{self._resolution_str}:{self._prompt_version}"
@@ -95,6 +144,12 @@ class GeminiProcessor(BaseDocumentProcessor):
     @property
     def is_paid(self) -> bool:
         return True
+
+    def estimate_tokens(self, num_pages: int) -> int:
+        """Estimate token equivalents for limit checking (conservative)."""
+        input_est = self.FALLBACK_INPUT_TOKENS_PER_PAGE * num_pages
+        output_est = self.FALLBACK_OUTPUT_TOKENS_PER_PAGE * num_pages
+        return self._calculate_token_equiv(input_est, output_est, thoughts_tokens=0)
 
     async def _call_gemini_with_retry(
         self,
@@ -191,25 +246,37 @@ class GeminiProcessor(BaseDocumentProcessor):
 
         duration_ms = int((time.monotonic() - start_time) * 1000)
         usage = response.usage_metadata
+
+        # Extract and validate token usage
+        input_tokens, output_tokens, thoughts_tokens, is_fallback = self._extract_token_usage(
+            usage, num_pages=1, context="image"
+        )
+        token_equiv = self._calculate_token_equiv(input_tokens, output_tokens, thoughts_tokens)
+
         if usage:
             logger.info(f"Gemini image extraction: {duration_ms}ms, usage={usage.model_dump()}")
-            await log_event(
-                "page_extraction_complete",
-                processor_slug=self._model,
-                page_idx=0,
-                duration_ms=duration_ms,
-                prompt_token_count=usage.prompt_token_count,
-                candidates_token_count=usage.candidates_token_count,
-                thoughts_token_count=usage.thoughts_token_count,
-                total_token_count=usage.total_token_count,
-            )
-        else:
-            logger.warning(f"Gemini image extraction: {duration_ms}ms, no usage_metadata returned")
+        await log_event(
+            "page_extraction_complete",
+            processor_slug=self._model,
+            page_idx=0,
+            duration_ms=duration_ms,
+            prompt_token_count=input_tokens,
+            candidates_token_count=output_tokens,
+            thoughts_token_count=thoughts_tokens,
+            total_token_count=input_tokens + output_tokens + thoughts_tokens,
+        )
 
         text = (response.text or "").strip()
         return DocumentExtractionResult(
             pages={0: ExtractedPage(markdown=text, images=[])},
             extraction_method=self._slug,
+            token_usage=TokenUsage(
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                thoughts_tokens=thoughts_tokens,
+                token_equiv=token_equiv,
+                is_fallback=is_fallback,
+            ),
         )
 
     async def _extract_pdf(
@@ -232,8 +299,11 @@ class GeminiProcessor(BaseDocumentProcessor):
         pages_to_process = sorted(set(pages) if pages else set(range(total_pages)))
         logger.info(f"Extraction: starting {len(pages_to_process)} pages (PDF has {total_pages} total)")
 
-        async def process_page(page_idx: int) -> tuple[int, ExtractedPage | None]:
-            """Process a single page: extract PDF → YOLO worker → store figures → Gemini."""
+        async def process_page(page_idx: int) -> tuple[int, ExtractedPage | None, int, int, int, bool]:
+            """Process a single page: extract PDF → YOLO worker → store figures → Gemini.
+
+            Returns (page_idx, page, input_tokens, output_tokens, thoughts_tokens, is_fallback).
+            """
             try:
                 # Extract single-page PDF for YOLO worker (worker renders + detects + crops)
                 page_pdf = extract_single_page_pdf(pdf_reader, page_idx)
@@ -254,37 +324,64 @@ class GeminiProcessor(BaseDocumentProcessor):
                     figure_urls.append(url)
 
                 # Call Gemini API
-                page_idx, page = await self._process_page_with_figures(
-                    pdf_reader, page_idx, yolo_result.figures, figure_urls
-                )
+                result = await self._process_page_with_figures(pdf_reader, page_idx, yolo_result.figures, figure_urls)
+                page_idx, page, input_tokens, output_tokens, thoughts_tokens, is_fallback = result
 
                 if page is not None:
                     cache_key = self._extraction_cache_key(content_hash, page_idx)
                     await extraction_cache.store(cache_key, page.model_dump_json().encode())
 
-                return page_idx, page
+                return page_idx, page, input_tokens, output_tokens, thoughts_tokens, is_fallback
 
             except Exception as e:
                 logger.error(f"Page {page_idx + 1} processing failed: {e}")
-                return page_idx, None
+                return page_idx, None, 0, 0, 0, False
 
         # Process all pages in parallel
         tasks = [asyncio.create_task(process_page(page_idx)) for page_idx in pages_to_process]
         results = await asyncio.gather(*tasks)
 
-        # Separate successful and failed pages
-        successful_pages = {page_idx: page for page_idx, page in results if page is not None}
-        failed_pages = [page_idx for page_idx, page in results if page is None]
+        # Separate successful and failed pages, aggregate token usage
+        successful_pages: dict[int, ExtractedPage] = {}
+        failed_pages: list[int] = []
+        total_input_tokens = 0
+        total_output_tokens = 0
+        total_thoughts_tokens = 0
+        any_fallback = False
+
+        for page_idx, page, input_tokens, output_tokens, thoughts_tokens, is_fallback in results:
+            if page is not None:
+                successful_pages[page_idx] = page
+                total_input_tokens += input_tokens
+                total_output_tokens += output_tokens
+                total_thoughts_tokens += thoughts_tokens
+                any_fallback = any_fallback or is_fallback
+            else:
+                failed_pages.append(page_idx)
 
         elapsed = time.monotonic() - start_time
         if failed_pages:
             logger.error(f"Extraction completed with {len(failed_pages)} failed pages: {sorted(failed_pages)}")
-        logger.info(f"Extraction: completed {len(successful_pages)}/{len(pages_to_process)} pages in {elapsed:.1f}s")
+
+        token_equiv = self._calculate_token_equiv(total_input_tokens, total_output_tokens, total_thoughts_tokens)
+        logger.info(
+            f"Extraction: completed {len(successful_pages)}/{len(pages_to_process)} pages in {elapsed:.1f}s, "
+            f"tokens: input={total_input_tokens}, output={total_output_tokens}, thoughts={total_thoughts_tokens}, equiv={token_equiv}"
+        )
 
         return DocumentExtractionResult(
             pages=successful_pages,
             extraction_method=self._slug,
             failed_pages=failed_pages,
+            token_usage=TokenUsage(
+                input_tokens=total_input_tokens,
+                output_tokens=total_output_tokens,
+                thoughts_tokens=total_thoughts_tokens,
+                token_equiv=token_equiv,
+                is_fallback=any_fallback,
+            )
+            if successful_pages
+            else None,  # No token usage if all pages failed
         )
 
     async def _process_page_with_figures(
@@ -293,10 +390,11 @@ class GeminiProcessor(BaseDocumentProcessor):
         page_idx: int,
         figures: list[DetectedFigure],
         figure_urls: list[str],
-    ) -> tuple[int, ExtractedPage | None]:
+    ) -> tuple[int, ExtractedPage | None, int, int, int, bool]:
         """Process a single PDF page with YOLO-detected figures.
 
-        Returns (page_idx, ExtractedPage) on success, (page_idx, None) on failure after all retries.
+        Returns (page_idx, ExtractedPage, input_tokens, output_tokens, thoughts_tokens, is_fallback)
+        on success, or (page_idx, None, 0, 0, 0, False) on failure after all retries.
         """
         page_bytes = extract_single_page_pdf(pdf_reader, page_idx)
         prompt = build_figure_prompt(self._prompt, figures)
@@ -323,27 +421,39 @@ class GeminiProcessor(BaseDocumentProcessor):
                 status_code=getattr(e, "code", None),
                 data={"error": str(e)},
             )
-            return page_idx, None
+            # Don't bill for failed pages
+            return page_idx, None, 0, 0, 0, False
 
         duration_ms = int((time.monotonic() - start_time) * 1000)
         text = (response.text or "").strip()
         if figure_urls:
             text = substitute_image_placeholders(text, figure_urls)
 
-        usage = response.usage_metadata
-        if usage:
-            logger.info(f"Gemini: page {page_idx + 1} completed in {duration_ms}ms, usage={usage.model_dump()}")
-            await log_event(
-                "page_extraction_complete",
-                processor_slug=self._model,
-                page_idx=page_idx,
-                duration_ms=duration_ms,
-                prompt_token_count=usage.prompt_token_count,
-                candidates_token_count=usage.candidates_token_count,
-                thoughts_token_count=usage.thoughts_token_count,
-                total_token_count=usage.total_token_count,
-            )
-        else:
-            logger.warning(f"Gemini: page {page_idx + 1} completed in {duration_ms}ms, no usage_metadata returned")
+        # Extract and validate token usage
+        input_tokens, output_tokens, thoughts_tokens, is_fallback = self._extract_token_usage(
+            response.usage_metadata, num_pages=1, context=f"page {page_idx + 1}"
+        )
 
-        return page_idx, ExtractedPage(markdown=text, images=figure_urls)
+        if response.usage_metadata:
+            logger.info(
+                f"Gemini: page {page_idx + 1} completed in {duration_ms}ms, usage={response.usage_metadata.model_dump()}"
+            )
+        await log_event(
+            "page_extraction_complete",
+            processor_slug=self._model,
+            page_idx=page_idx,
+            duration_ms=duration_ms,
+            prompt_token_count=input_tokens,
+            candidates_token_count=output_tokens,
+            thoughts_token_count=thoughts_tokens,
+            total_token_count=input_tokens + output_tokens + thoughts_tokens,
+        )
+
+        return (
+            page_idx,
+            ExtractedPage(markdown=text, images=figure_urls),
+            input_tokens,
+            output_tokens,
+            thoughts_tokens,
+            is_fallback,
+        )

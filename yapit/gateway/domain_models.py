@@ -136,17 +136,13 @@ class Block(SQLModel, table=True):
     est_duration_ms: int | None = Field(default=None)  # 1x speed estimate based on text length
 
     document: Document = Relationship(back_populates="blocks")
-    variants: list["BlockVariant"] = Relationship(
-        back_populates="block", sa_relationship_kwargs={"cascade": "all, delete-orphan"}
-    )
 
 
 class BlockVariant(SQLModel, table=True):
-    """A synthesized audio variant of a text block."""
+    """Cached audio metadata, keyed by content hash (text + model + voice + params)."""
 
     hash: str = Field(primary_key=True)
 
-    block_id: int = Field(foreign_key="block.id")
     model_id: int = Field(foreign_key="ttsmodel.id")
     voice_id: int = Field(foreign_key="voice.id")
 
@@ -158,7 +154,6 @@ class BlockVariant(SQLModel, table=True):
         sa_column=Column(DateTime(timezone=True)),
     )
 
-    block: Block = Relationship(back_populates="variants")
     model: TTSModel = Relationship(back_populates="block_variants")
     voice: Voice = Relationship(back_populates="block_variants")
 
@@ -207,7 +202,7 @@ class Plan(SQLModel, table=True):
     # Limits per billing period (None = unlimited, 0 = not available)
     server_kokoro_characters: int | None = Field(default=None)
     premium_voice_characters: int | None = Field(default=None)
-    ocr_pages: int | None = Field(default=None)
+    ocr_tokens: int | None = Field(default=None)  # Token equivalents (processor-specific calculation)
 
     # Stripe price IDs (None for free tier)
     stripe_price_id_monthly: str | None = Field(default=None)
@@ -258,6 +253,14 @@ class UserSubscription(SQLModel, table=True):
     grace_tier: PlanTier | None = Field(default=None)
     grace_until: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
 
+    # Rollover: unused subscription tokens/chars carried forward (capped)
+    rollover_tokens: int = Field(default=0)  # Capped at 10M
+    rollover_voice_chars: int = Field(default=0)  # Capped at 1M
+
+    # Purchased: from token/voice packs (uncapped, persists after cancellation)
+    purchased_tokens: int = Field(default=0)
+    purchased_voice_chars: int = Field(default=0)
+
     created: datetime = Field(
         default_factory=lambda: datetime.now(tz=dt.UTC),
         sa_column=Column(DateTime(timezone=True)),
@@ -279,10 +282,10 @@ class UsagePeriod(SQLModel, table=True):
     period_start: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
     period_end: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
 
-    # Counters (characters for TTS, pages for OCR)
+    # Counters (characters for TTS, token equivalents for OCR)
     server_kokoro_characters: int = Field(default=0)
     premium_voice_characters: int = Field(default=0)
-    ocr_pages: int = Field(default=0)
+    ocr_tokens: int = Field(default=0)  # Token equivalents consumed this period
 
     __table_args__ = (Index("idx_usage_period_user_period", "user_id", "period_start"),)
 
@@ -290,17 +293,17 @@ class UsagePeriod(SQLModel, table=True):
 class UsageType(StrEnum):
     server_kokoro = auto()
     premium_voice = auto()
-    ocr = auto()
+    ocr_tokens = auto()
 
 
 class UsageLog(SQLModel, table=True):
-    """Immutable audit log for usage events (characters for TTS, pages for OCR)."""
+    """Immutable audit log for usage events (character equivalents for TTS, token equivalents for OCR)."""
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     user_id: str = Field(index=True)
 
     type: UsageType
-    amount: int  # characters for TTS, pages for OCR
+    amount: int  # character equivalents for TTS, token equivalents for OCR
 
     description: str | None = Field(default=None)
     details: dict | None = Field(

@@ -113,23 +113,13 @@ async def get_block(
 async def get_block_variant(
     variant_hash: str,
     db: DbSession,
-    user: AuthenticatedUser,
 ) -> BlockVariant:
-    variant = await get_or_404(
+    return await get_or_404(
         db,
         BlockVariant,
         variant_hash,
-        options=[
-            selectinload(BlockVariant.block).selectinload(Block.document),  # type: ignore[arg-type]
-            selectinload(BlockVariant.model),  # type: ignore[arg-type]
-        ],
+        options=[selectinload(BlockVariant.model)],  # type: ignore[arg-type]
     )
-
-    if variant.block.document.user_id != user.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail="Cannot access block variant in another user's document"
-        )
-    return variant
 
 
 async def is_admin(user: Annotated[User, Depends(authenticate)]) -> bool:

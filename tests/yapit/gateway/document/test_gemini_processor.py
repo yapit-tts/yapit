@@ -141,8 +141,15 @@ class TestRetryBehavior:
     @pytest.mark.asyncio
     async def test_retries_on_429_rate_limit(self, mock_processor):
         """Should retry on 429 rate limit and succeed on subsequent attempt."""
+        mock_usage = Mock()
+        mock_usage.prompt_token_count = 100
+        mock_usage.candidates_token_count = 50
+        mock_usage.thoughts_token_count = 10
+        mock_usage.total_token_count = 160
+
         mock_response = Mock()
         mock_response.text = "Extracted text"
+        mock_response.usage_metadata = mock_usage
 
         mock_processor._client.models.generate_content = Mock(
             side_effect=[
@@ -162,7 +169,7 @@ class TestRetryBehavior:
                 new_callable=AsyncMock,
             ) as mock_sleep,
         ):
-            page_idx, result = await mock_processor._process_page_with_figures(
+            page_idx, result, *_ = await mock_processor._process_page_with_figures(
                 pdf_reader=Mock(),
                 page_idx=0,
                 figures=[],
@@ -177,8 +184,15 @@ class TestRetryBehavior:
     @pytest.mark.asyncio
     async def test_retries_on_server_errors(self, mock_processor):
         """Should retry on 500, 503, 504 server errors."""
+        mock_usage = Mock()
+        mock_usage.prompt_token_count = 100
+        mock_usage.candidates_token_count = 50
+        mock_usage.thoughts_token_count = 10
+        mock_usage.total_token_count = 160
+
         mock_response = Mock()
         mock_response.text = "Success after errors"
+        mock_response.usage_metadata = mock_usage
 
         for error_code in [500, 503, 504]:
             mock_processor._client.models.generate_content = Mock(
@@ -198,7 +212,7 @@ class TestRetryBehavior:
                     new_callable=AsyncMock,
                 ),
             ):
-                page_idx, result = await mock_processor._process_page_with_figures(
+                page_idx, result, *_ = await mock_processor._process_page_with_figures(
                     pdf_reader=Mock(),
                     page_idx=0,
                     figures=[],
@@ -218,7 +232,7 @@ class TestRetryBehavior:
             "yapit.gateway.document.gemini.extract_single_page_pdf",
             return_value=b"fake-pdf-bytes",
         ):
-            page_idx, result = await mock_processor._process_page_with_figures(
+            page_idx, result, *_ = await mock_processor._process_page_with_figures(
                 pdf_reader=Mock(),
                 page_idx=0,
                 figures=[],
@@ -239,7 +253,7 @@ class TestRetryBehavior:
             "yapit.gateway.document.gemini.extract_single_page_pdf",
             return_value=b"fake-pdf-bytes",
         ):
-            page_idx, result = await mock_processor._process_page_with_figures(
+            page_idx, result, *_ = await mock_processor._process_page_with_figures(
                 pdf_reader=Mock(),
                 page_idx=0,
                 figures=[],
@@ -260,7 +274,7 @@ class TestRetryBehavior:
             "yapit.gateway.document.gemini.extract_single_page_pdf",
             return_value=b"fake-pdf-bytes",
         ):
-            page_idx, result = await mock_processor._process_page_with_figures(
+            page_idx, result, *_ = await mock_processor._process_page_with_figures(
                 pdf_reader=Mock(),
                 page_idx=0,
                 figures=[],
@@ -287,7 +301,7 @@ class TestRetryBehavior:
                 new_callable=AsyncMock,
             ),
         ):
-            page_idx, result = await mock_processor._process_page_with_figures(
+            page_idx, result, *_ = await mock_processor._process_page_with_figures(
                 pdf_reader=Mock(),
                 page_idx=0,
                 figures=[],
@@ -300,8 +314,15 @@ class TestRetryBehavior:
     @pytest.mark.asyncio
     async def test_retries_on_unexpected_exceptions(self, mock_processor):
         """Should retry on unexpected exceptions (network errors, etc.)."""
+        mock_usage = Mock()
+        mock_usage.prompt_token_count = 100
+        mock_usage.candidates_token_count = 50
+        mock_usage.thoughts_token_count = 10
+        mock_usage.total_token_count = 160
+
         mock_response = Mock()
         mock_response.text = "Success"
+        mock_response.usage_metadata = mock_usage
 
         mock_processor._client.models.generate_content = Mock(
             side_effect=[
@@ -320,7 +341,7 @@ class TestRetryBehavior:
                 new_callable=AsyncMock,
             ),
         ):
-            page_idx, result = await mock_processor._process_page_with_figures(
+            page_idx, result, *_ = await mock_processor._process_page_with_figures(
                 pdf_reader=Mock(),
                 page_idx=0,
                 figures=[],

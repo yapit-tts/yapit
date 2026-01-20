@@ -152,50 +152,18 @@ async def _queue_synthesis_job(
     block: Block,
     model: TTSModel,
     voice: Voice,
-) -> tuple[str, bool]:
-    """Queue a synthesis job, returning (variant_hash, was_cached)."""
+    variant_hash: str,
+    variant: BlockVariant | None,
+) -> str:
+    """Queue a synthesis job for an uncached block. Returns variant_hash.
+
+    Caller must check cache first and only call this for uncached blocks.
+    """
     served_codec = model.native_codec
-    variant_hash = BlockVariant.get_hash(
-        text=block.text,
-        model_slug=model.slug,
-        voice_slug=voice.slug,
-        codec=served_codec,
-        parameters=voice.parameters,
-    )
-
-    variant: BlockVariant | None = (
-        await db.exec(select(BlockVariant).where(BlockVariant.hash == variant_hash))
-    ).first()
-
-    cached_data = await cache.retrieve_data(variant_hash)
-    if cached_data is not None and variant is not None:
-        await log_event(
-            "cache_hit",
-            variant_hash=variant_hash,
-            model_slug=model.slug,
-            voice_slug=voice.slug,
-            user_id=user.id,
-            document_id=str(block.document_id),
-            block_idx=block.idx,
-        )
-        if variant.block_id != block.id:
-            await db.merge(
-                BlockVariant(
-                    hash=variant.hash,
-                    block_id=block.id,
-                    model_id=variant.model_id,
-                    voice_id=variant.voice_id,
-                    duration_ms=variant.duration_ms,
-                    cache_ref=variant.cache_ref,
-                )
-            )
-            await db.commit()
-        return variant_hash, True
 
     if variant is None:
         variant = BlockVariant(
             hash=variant_hash,
-            block_id=block.id,
             model_id=model.id,
             voice_id=voice.id,
         )
@@ -210,7 +178,7 @@ async def _queue_synthesis_job(
 
     # Already processing - we're now subscribed and will be notified
     if await redis.exists(TTS_INFLIGHT.format(hash=variant_hash)):
-        return variant_hash, False
+        return variant_hash
     await redis.set(TTS_INFLIGHT.format(hash=variant_hash), 1, ex=300, nx=True)
 
     context_tokens = None
@@ -270,7 +238,7 @@ async def _queue_synthesis_job(
         queue_type="tts",
     )
 
-    return variant_hash, False
+    return variant_hash
 
 
 async def _handle_synthesize(
@@ -303,25 +271,10 @@ async def _handle_synthesize(
 
         block_map = {b.idx: b for b in blocks}
 
-        # Usage limit check for server-side synthesis
+        # Process each block: check cache → check budget → queue (per-block)
         is_admin = bool(user.server_metadata and user.server_metadata.is_admin)
-        if msg.synthesis_mode != "browser":
-            usage_type = UsageType.server_kokoro if model.slug.startswith("kokoro") else UsageType.premium_voice
-            total_chars = int(sum(len(b.text) for b in blocks) * model.usage_multiplier)
-            try:
-                await check_usage_limit(
-                    user.id,
-                    usage_type,
-                    total_chars,
-                    db,
-                    is_admin=is_admin,
-                    billing_enabled=settings.billing_enabled,
-                )
-            except UsageLimitExceededError as e:
-                await ws.send_json({"type": "error", "error": str(e)})
-                return
+        usage_type = UsageType.server_kokoro if model.slug.startswith("kokoro") else UsageType.premium_voice
 
-        # Queue each block
         for idx in msg.block_indices:
             block = block_map.get(idx)
             if not block:
@@ -338,16 +291,72 @@ async def _handle_synthesize(
                 continue
 
             try:
-                variant_hash, was_cached = await _queue_synthesis_job(db, redis, cache, user, block, model, voice)
-                status = "cached" if was_cached else "queued"
-                audio_url = f"/v1/audio/{variant_hash}" if was_cached else None
+                # Check cache first (without queuing)
+                served_codec = model.native_codec
+                variant_hash = BlockVariant.get_hash(
+                    text=block.text,
+                    model_slug=model.slug,
+                    voice_slug=voice.slug,
+                    codec=served_codec,
+                    parameters=voice.parameters,
+                )
+                variant = (await db.exec(select(BlockVariant).where(BlockVariant.hash == variant_hash))).first()
+                cached_data = await cache.retrieve_data(variant_hash)
+                is_cached = cached_data is not None and variant is not None
+
+                if is_cached:
+                    await log_event(
+                        "cache_hit",
+                        variant_hash=variant_hash,
+                        model_slug=model.slug,
+                        voice_slug=voice.slug,
+                        user_id=user.id,
+                        document_id=str(msg.document_id),
+                        block_idx=idx,
+                    )
+                    await ws.send_json(
+                        WSBlockStatus(
+                            document_id=msg.document_id,
+                            block_idx=idx,
+                            status="cached",
+                            audio_url=f"/v1/audio/{variant_hash}",
+                            model_slug=model.slug,
+                            voice_slug=voice.slug,
+                        ).model_dump(mode="json")
+                    )
+                    continue
+
+                # Check usage limit BEFORE queuing, only for uncached server-side synthesis
+                if msg.synthesis_mode != "browser":
+                    block_chars = int(len(block.text) * model.usage_multiplier)
+                    await check_usage_limit(
+                        user.id,
+                        usage_type,
+                        block_chars,
+                        db,
+                        is_admin=is_admin,
+                        billing_enabled=settings.billing_enabled,
+                    )
+
+                # Queue for synthesis (not cached)
+                await _queue_synthesis_job(db, redis, cache, user, block, model, voice, variant_hash, variant)
 
                 await ws.send_json(
                     WSBlockStatus(
                         document_id=msg.document_id,
                         block_idx=idx,
-                        status=status,
-                        audio_url=audio_url,
+                        status="queued",
+                        model_slug=model.slug,
+                        voice_slug=voice.slug,
+                    ).model_dump(mode="json")
+                )
+            except UsageLimitExceededError as e:
+                await ws.send_json(
+                    WSBlockStatus(
+                        document_id=msg.document_id,
+                        block_idx=idx,
+                        status="error",
+                        error=str(e),
                         model_slug=model.slug,
                         voice_slug=voice.slug,
                     ).model_dump(mode="json")

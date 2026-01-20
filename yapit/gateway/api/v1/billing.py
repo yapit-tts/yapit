@@ -19,7 +19,12 @@ from yapit.gateway.domain_models import (
     UsagePeriod,
     UserSubscription,
 )
-from yapit.gateway.usage import get_user_subscription
+from yapit.gateway.usage import (
+    MAX_ROLLOVER_TOKENS,
+    MAX_ROLLOVER_VOICE_CHARS,
+    get_or_create_usage_period,
+    get_user_subscription,
+)
 
 router = APIRouter(prefix="/v1/billing", tags=["Billing"])
 
@@ -39,7 +44,7 @@ class PlanResponse(BaseModel):
     name: str
     server_kokoro_characters: int | None
     premium_voice_characters: int | None
-    ocr_pages: int | None
+    ocr_tokens: int | None
     price_cents_monthly: int
     price_cents_yearly: int
     trial_days: int
@@ -56,7 +61,7 @@ async def list_plans(db: DbSession) -> list[PlanResponse]:
             name=p.name,
             server_kokoro_characters=p.server_kokoro_characters,
             premium_voice_characters=p.premium_voice_characters,
-            ocr_pages=p.ocr_pages,
+            ocr_tokens=p.ocr_tokens,
             price_cents_monthly=p.price_cents_monthly,
             price_cents_yearly=p.price_cents_yearly,
             trial_days=p.trial_days,
@@ -462,7 +467,7 @@ def _get_invoice_subscription_id(invoice: dict) -> str | None:
 
 
 async def _handle_invoice_paid(invoice: dict, db: DbSession) -> None:
-    """Handle successful invoice payment - reset usage on new billing period."""
+    """Handle successful invoice payment - calculate rollover and reset usage on new billing period."""
     billing_reason = invoice.get("billing_reason")
     subscription_id = _get_invoice_subscription_id(invoice)
 
@@ -482,6 +487,33 @@ async def _handle_invoice_paid(invoice: dict, db: DbSession) -> None:
     period_end = invoice.get("period_end")
 
     if period_start and period_end:
+        # Calculate rollover from the ending period BEFORE updating dates
+        old_period = await get_or_create_usage_period(subscription.user_id, subscription, db)
+        plan = subscription.plan
+
+        # Token rollover: unused subscription tokens (capped)
+        if plan.ocr_tokens:
+            unused_tokens = max(0, plan.ocr_tokens - old_period.ocr_tokens)
+            new_rollover = min(subscription.rollover_tokens + unused_tokens, MAX_ROLLOVER_TOKENS)
+            if unused_tokens > 0:
+                logger.info(
+                    f"Token rollover for {subscription_id}: {unused_tokens} unused, "
+                    f"rollover {subscription.rollover_tokens} -> {new_rollover}"
+                )
+            subscription.rollover_tokens = new_rollover
+
+        # Voice char rollover: unused premium voice characters (capped)
+        if plan.premium_voice_characters:
+            unused_voice = max(0, plan.premium_voice_characters - old_period.premium_voice_characters)
+            new_rollover = min(subscription.rollover_voice_chars + unused_voice, MAX_ROLLOVER_VOICE_CHARS)
+            if unused_voice > 0:
+                logger.info(
+                    f"Voice rollover for {subscription_id}: {unused_voice} unused, "
+                    f"rollover {subscription.rollover_voice_chars} -> {new_rollover}"
+                )
+            subscription.rollover_voice_chars = new_rollover
+
+        # Now update period dates
         subscription.current_period_start = datetime.fromtimestamp(period_start, tz=dt.UTC)
         subscription.current_period_end = datetime.fromtimestamp(period_end, tz=dt.UTC)
         subscription.updated = datetime.now(tz=dt.UTC)

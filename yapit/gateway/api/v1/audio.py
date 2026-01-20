@@ -92,7 +92,6 @@ async def submit_audio(
     if variant is None:
         variant = BlockVariant(
             hash=variant_hash,
-            block_id=block.id,
             model_id=model.id,
             voice_id=voice.id,
             duration_ms=request.duration_ms,

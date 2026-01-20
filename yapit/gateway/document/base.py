@@ -19,12 +19,23 @@ class ExtractedPage(BaseModel):
     images: list[str]  # URLs to stored images (e.g., /images/{hash}/0.png)
 
 
+class TokenUsage(BaseModel):
+    """Token usage data for billing (from paid processors like Gemini)."""
+
+    input_tokens: int
+    output_tokens: int
+    thoughts_tokens: int = 0
+    token_equiv: int  # input + (output + thoughts) × multiplier — what we bill
+    is_fallback: bool = False  # True if using estimated values (usage_metadata was None)
+
+
 class DocumentExtractionResult(BaseModel):
     """Unified extraction result from any processor."""
 
     pages: dict[int, ExtractedPage]
     extraction_method: str
     failed_pages: list[int] = []  # Pages that failed after all retries
+    token_usage: TokenUsage | None = None  # For paid processors that bill by tokens
 
 
 class CachedDocument(BaseModel):
@@ -79,6 +90,13 @@ class BaseDocumentProcessor:
     def is_paid(self) -> bool:
         """Whether this processor requires usage tracking (counts against OCR limit)."""
         return False
+
+    def estimate_tokens(self, num_pages: int) -> int:
+        """Estimate token equivalents for limit checking (before actual extraction).
+
+        Override in paid processors that bill by tokens.
+        """
+        return 0
 
     @abstractmethod
     async def _extract(
@@ -169,30 +187,16 @@ class BaseDocumentProcessor:
             return DocumentExtractionResult(pages=cached_pages, extraction_method=self._slug)
 
         # Check usage limit before processing (only for paid processors)
+        # Use conservative token estimate for limit check (actual may be lower)
         if self.is_paid:
+            estimated_tokens = self.estimate_tokens(len(uncached_pages))
             await check_usage_limit(
                 user_id,
-                UsageType.ocr,
-                len(uncached_pages),
+                UsageType.ocr_tokens,
+                estimated_tokens,
                 db,
                 is_admin=is_admin,
                 billing_enabled=self._settings.billing_enabled,
-            )
-
-        # Record usage BEFORE extraction to prevent cancel-exploit
-        if self.is_paid:
-            await record_usage(
-                user_id=user_id,
-                usage_type=UsageType.ocr,
-                amount=len(uncached_pages),
-                db=db,
-                reference_id=content_hash,
-                description=f"Document processing: {len(uncached_pages)} pages with {self._slug}",
-                details={
-                    "processor": self._slug,
-                    "pages_requested": len(uncached_pages),
-                    "page_numbers": sorted(uncached_pages),
-                },
             )
 
         # Process missing pages (processor caches each page as it completes)
@@ -204,10 +208,38 @@ class BaseDocumentProcessor:
             pages=list(uncached_pages),
         )
 
+        # Bill actual tokens after extraction (server-side processing continues even if client disconnects)
+        if self.is_paid and result.token_usage:
+            await record_usage(
+                user_id=user_id,
+                usage_type=UsageType.ocr_tokens,
+                amount=result.token_usage.token_equiv,
+                db=db,
+                reference_id=content_hash,
+                description=f"Document processing: {len(result.pages)} pages with {self._slug}",
+                details={
+                    "processor": self._slug,
+                    "pages_extracted": len(result.pages),
+                    "pages_failed": len(result.failed_pages),
+                    "input_tokens": result.token_usage.input_tokens,
+                    "output_tokens": result.token_usage.output_tokens,
+                    "thoughts_tokens": result.token_usage.thoughts_tokens,
+                    "token_equiv": result.token_usage.token_equiv,
+                    "is_fallback": result.token_usage.is_fallback,
+                },
+            )
+
         # Merge and sort by page index to ensure consistent ordering
         all_pages = {**cached_pages, **result.pages}
         sorted_pages = {k: all_pages[k] for k in sorted(all_pages.keys())}
-        return DocumentExtractionResult(pages=sorted_pages, extraction_method=self._slug)
+
+        # Preserve token_usage from extraction for API response
+        return DocumentExtractionResult(
+            pages=sorted_pages,
+            extraction_method=self._slug,
+            failed_pages=result.failed_pages,
+            token_usage=result.token_usage,
+        )
 
     def _is_supported(self, mime_type: str) -> bool:
         """Check if this processor supports the given MIME type."""
