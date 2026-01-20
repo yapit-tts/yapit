@@ -3,6 +3,7 @@
 import datetime as dt
 from datetime import datetime
 
+from loguru import logger
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -36,9 +37,17 @@ MAX_ROLLOVER_TOKENS = 10_000_000  # 10M tokens
 MAX_ROLLOVER_VOICE_CHARS = 1_000_000  # 1M characters
 
 
-async def get_user_subscription(user_id: str, db: AsyncSession) -> UserSubscription | None:
-    """Get user's subscription with plan data."""
-    result = await db.exec(select(UserSubscription).where(UserSubscription.user_id == user_id))
+async def get_user_subscription(user_id: str, db: AsyncSession, *, for_update: bool = False) -> UserSubscription | None:
+    """Get user's subscription with plan data.
+
+    Args:
+        for_update: If True, acquires row lock to prevent concurrent modifications.
+            Use when you need to read-then-write atomically (e.g., billing).
+    """
+    query = select(UserSubscription).where(UserSubscription.user_id == user_id)
+    if for_update:
+        query = query.with_for_update()
+    result = await db.exec(query)
     return result.first()
 
 
@@ -124,7 +133,11 @@ def _get_total_available(
     usage_type: UsageType,
     subscription_remaining: int,
 ) -> int:
-    """Get total available: subscription remaining + rollover + purchased."""
+    """Get total available: subscription remaining + rollover + purchased.
+
+    Note: rollover can be negative (debt from past overages). A negative
+    rollover reduces total_available, potentially blocking new operations.
+    """
     if not subscription:
         return subscription_remaining
 
@@ -212,30 +225,52 @@ def _consume_from_tiers(
     if remaining <= 0:
         return breakdown
 
-    # Consume from rollover
+    # Consume from: rollover (if positive) → purchased (pure, to 0) → rollover (debt)
     match usage_type:
         case UsageType.ocr_tokens:
-            from_rollover = min(remaining, subscription.rollover_tokens)
-            subscription.rollover_tokens -= from_rollover
-            remaining -= from_rollover
-            breakdown["from_rollover"] = from_rollover
+            # Only consume from rollover if positive
+            if subscription.rollover_tokens > 0:
+                from_rollover = min(remaining, subscription.rollover_tokens)
+                subscription.rollover_tokens -= from_rollover
+                remaining -= from_rollover
+                breakdown["from_rollover"] = from_rollover
 
-            # Consume from purchased
-            if remaining > 0:
+            # Consume from purchased (pure pool, stops at 0)
+            if remaining > 0 and subscription.purchased_tokens > 0:
                 from_purchased = min(remaining, subscription.purchased_tokens)
                 subscription.purchased_tokens -= from_purchased
+                remaining -= from_purchased
                 breakdown["from_purchased"] = from_purchased
+
+            # Any overflow goes to rollover as debt
+            if remaining > 0:
+                subscription.rollover_tokens -= remaining
+                breakdown["overflow_to_debt"] = remaining
+                logger.warning(
+                    f"User {subscription.user_id} rollover_tokens went to debt: "
+                    f"{subscription.rollover_tokens} (overflow {remaining})"
+                )
 
         case UsageType.premium_voice:
-            from_rollover = min(remaining, subscription.rollover_voice_chars)
-            subscription.rollover_voice_chars -= from_rollover
-            remaining -= from_rollover
-            breakdown["from_rollover"] = from_rollover
+            if subscription.rollover_voice_chars > 0:
+                from_rollover = min(remaining, subscription.rollover_voice_chars)
+                subscription.rollover_voice_chars -= from_rollover
+                remaining -= from_rollover
+                breakdown["from_rollover"] = from_rollover
 
-            if remaining > 0:
+            if remaining > 0 and subscription.purchased_voice_chars > 0:
                 from_purchased = min(remaining, subscription.purchased_voice_chars)
                 subscription.purchased_voice_chars -= from_purchased
+                remaining -= from_purchased
                 breakdown["from_purchased"] = from_purchased
+
+            if remaining > 0:
+                subscription.rollover_voice_chars -= remaining
+                breakdown["overflow_to_debt"] = remaining
+                logger.warning(
+                    f"User {subscription.user_id} rollover_voice_chars went to debt: "
+                    f"{subscription.rollover_voice_chars} (overflow {remaining})"
+                )
 
     return breakdown
 
@@ -253,8 +288,10 @@ async def record_usage(
     """Record usage and consume from subscription → rollover → purchased.
 
     Creates audit log for all users. Only consumes from tiers for subscribed users.
+    Uses FOR UPDATE lock to prevent concurrent modifications (TOCTOU safety).
     """
-    subscription = await get_user_subscription(user_id, db)
+    # FOR UPDATE ensures concurrent record_usage calls serialize
+    subscription = await get_user_subscription(user_id, db, for_update=True)
     breakdown = None
 
     if subscription and subscription.status in (SubscriptionStatus.active, SubscriptionStatus.trialing):

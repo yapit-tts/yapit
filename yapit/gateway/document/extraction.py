@@ -181,6 +181,108 @@ def is_scanned_page(doc: pymupdf.Document, page_idx: int) -> bool:
     return False
 
 
+def extract_page_text(doc: pymupdf.Document, page_idx: int) -> str:
+    """Extract text content from a PDF page using PyMuPDF.
+
+    Returns empty string for raster/scanned pages (text extraction won't work).
+    """
+    page = doc[page_idx]
+    return page.get_text()
+
+
+# Token estimation constants
+CHARS_PER_TOKEN = 4  # Rough approximation: ~4 characters per token
+RASTER_PAGE_TOKEN_EQUIV = 10_000  # Conservative estimate for raster pages (accounts for 6x output cost)
+PER_PAGE_TOLERANCE = 2_000  # Buffer per page for estimation variance
+
+
+@dataclass
+class PageEstimate:
+    """Estimation result for a single page."""
+
+    token_equiv: int
+    text_chars: int  # 0 for raster pages
+    is_raster: bool
+
+
+@dataclass
+class DocumentEstimate:
+    """Estimation result for a document."""
+
+    total_tokens: int
+    total_text_chars: int  # Sum of extracted text chars (0 for raster-only docs)
+    num_pages: int
+    raster_pages: int
+    text_pages: int
+
+
+def estimate_page_tokens(doc: pymupdf.Document, page_idx: int, output_multiplier: int) -> PageEstimate:
+    """Estimate token equivalents for a single PDF page.
+
+    For text pages: estimates from extracted text length.
+    For raster pages: uses conservative fixed estimate.
+
+    Token equiv = input_tokens + (output_tokens × output_multiplier)
+    """
+    if is_scanned_page(doc, page_idx):
+        return PageEstimate(token_equiv=RASTER_PAGE_TOKEN_EQUIV, text_chars=0, is_raster=True)
+
+    text = extract_page_text(doc, page_idx)
+    if not text.strip():
+        return PageEstimate(token_equiv=RASTER_PAGE_TOKEN_EQUIV, text_chars=0, is_raster=True)
+
+    text_chars = len(text)
+    input_tokens = text_chars // CHARS_PER_TOKEN
+
+    # Output is typically ~45% of input (measured: 890 output / 2005 input)
+    # Use 50% as conservative estimate
+    estimated_output = input_tokens // 2
+    token_equiv = input_tokens + (estimated_output * output_multiplier)
+
+    return PageEstimate(token_equiv=token_equiv, text_chars=text_chars, is_raster=False)
+
+
+def estimate_document_tokens(
+    content: bytes,
+    content_type: str,
+    output_multiplier: int,
+    pages: list[int] | None = None,
+) -> DocumentEstimate:
+    """Estimate total token equivalents for a document.
+
+    Args:
+        content: Document bytes
+        content_type: MIME type
+        output_multiplier: Cost multiplier for output tokens (e.g., 6 for Gemini)
+        pages: Specific pages to estimate (None = all pages)
+
+    Returns:
+        DocumentEstimate with token total and breakdown info for tuning.
+    """
+    if content_type.startswith("image/"):
+        return DocumentEstimate(
+            total_tokens=RASTER_PAGE_TOKEN_EQUIV,
+            total_text_chars=0,
+            num_pages=1,
+            raster_pages=1,
+            text_pages=0,
+        )
+
+    with pymupdf.open(stream=content, filetype="pdf") as doc:
+        total_pages = len(doc)
+        pages_to_check = pages if pages else list(range(total_pages))
+
+        estimates = [estimate_page_tokens(doc, idx, output_multiplier) for idx in pages_to_check]
+
+        return DocumentEstimate(
+            total_tokens=sum(e.token_equiv for e in estimates),
+            total_text_chars=sum(e.text_chars for e in estimates),
+            num_pages=len(estimates),
+            raster_pages=sum(1 for e in estimates if e.is_raster),
+            text_pages=sum(1 for e in estimates if not e.is_raster),
+        )
+
+
 def build_prompt_with_image_count(base_prompt: str, image_count: int) -> str:
     """Append image count instruction to prompt if there are images."""
     if image_count == 0:

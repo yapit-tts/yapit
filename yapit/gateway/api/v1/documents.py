@@ -31,6 +31,7 @@ from yapit.gateway.deps import (
     ExtractionCache,
     FreeProcessorDep,
     IsAdmin,
+    RedisClient,
     SettingsDep,
 )
 from yapit.gateway.document.base import (
@@ -168,6 +169,30 @@ async def get_extraction_status(
         completed_pages=completed,
         status="complete" if is_complete else "processing",
     )
+
+
+class CancelExtractionRequest(BaseModel):
+    content_hash: str
+
+
+class CancelExtractionResponse(BaseModel):
+    status: Literal["cancelled", "not_found"]
+
+
+@router.post("/extraction/cancel", response_model=CancelExtractionResponse)
+async def cancel_extraction(
+    req: CancelExtractionRequest,
+    redis: RedisClient,
+) -> CancelExtractionResponse:
+    """Cancel an ongoing document extraction.
+
+    Sets a Redis flag that gemini.py checks before processing each page.
+    Pages already in-flight will complete, but pending pages will be skipped.
+    """
+    cancel_key = f"extraction:cancel:{req.content_hash}"
+    await redis.set(cancel_key, "1", ex=300)  # 5 minute TTL
+    logger.info(f"Extraction cancel requested for {req.content_hash}")
+    return CancelExtractionResponse(status="cancelled")
 
 
 @router.post("/prepare", response_model=DocumentPrepareResponse)

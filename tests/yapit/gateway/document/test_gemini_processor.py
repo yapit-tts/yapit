@@ -169,15 +169,15 @@ class TestRetryBehavior:
                 new_callable=AsyncMock,
             ) as mock_sleep,
         ):
-            page_idx, result, *_ = await mock_processor._process_page_with_figures(
+            result = await mock_processor._call_gemini_for_page(
                 pdf_reader=Mock(),
                 page_idx=0,
                 figures=[],
                 figure_urls=[],
             )
 
-        assert result is not None
-        assert result.markdown == "Extracted text"
+        assert result.page is not None
+        assert result.page.markdown == "Extracted text"
         assert mock_processor._client.models.generate_content.call_count == 3
         assert mock_sleep.call_count == 2
 
@@ -212,14 +212,14 @@ class TestRetryBehavior:
                     new_callable=AsyncMock,
                 ),
             ):
-                page_idx, result, *_ = await mock_processor._process_page_with_figures(
+                result = await mock_processor._call_gemini_for_page(
                     pdf_reader=Mock(),
                     page_idx=0,
                     figures=[],
                     figure_urls=[],
                 )
 
-            assert result is not None, f"Should succeed after {error_code} retry"
+            assert result.page is not None, f"Should succeed after {error_code} retry"
 
     @pytest.mark.asyncio
     async def test_no_retry_on_400_bad_request(self, mock_processor):
@@ -232,14 +232,14 @@ class TestRetryBehavior:
             "yapit.gateway.document.gemini.extract_single_page_pdf",
             return_value=b"fake-pdf-bytes",
         ):
-            page_idx, result, *_ = await mock_processor._process_page_with_figures(
+            result = await mock_processor._call_gemini_for_page(
                 pdf_reader=Mock(),
                 page_idx=0,
                 figures=[],
                 figure_urls=[],
             )
 
-        assert result is None
+        assert result.page is None
         assert mock_processor._client.models.generate_content.call_count == 1
 
     @pytest.mark.asyncio
@@ -253,14 +253,14 @@ class TestRetryBehavior:
             "yapit.gateway.document.gemini.extract_single_page_pdf",
             return_value=b"fake-pdf-bytes",
         ):
-            page_idx, result, *_ = await mock_processor._process_page_with_figures(
+            result = await mock_processor._call_gemini_for_page(
                 pdf_reader=Mock(),
                 page_idx=0,
                 figures=[],
                 figure_urls=[],
             )
 
-        assert result is None
+        assert result.page is None
         assert mock_processor._client.models.generate_content.call_count == 1
 
     @pytest.mark.asyncio
@@ -274,14 +274,14 @@ class TestRetryBehavior:
             "yapit.gateway.document.gemini.extract_single_page_pdf",
             return_value=b"fake-pdf-bytes",
         ):
-            page_idx, result, *_ = await mock_processor._process_page_with_figures(
+            result = await mock_processor._call_gemini_for_page(
                 pdf_reader=Mock(),
                 page_idx=0,
                 figures=[],
                 figure_urls=[],
             )
 
-        assert result is None
+        assert result.page is None
         assert mock_processor._client.models.generate_content.call_count == 1
 
     @pytest.mark.asyncio
@@ -301,14 +301,14 @@ class TestRetryBehavior:
                 new_callable=AsyncMock,
             ),
         ):
-            page_idx, result, *_ = await mock_processor._process_page_with_figures(
+            result = await mock_processor._call_gemini_for_page(
                 pdf_reader=Mock(),
                 page_idx=0,
                 figures=[],
                 figure_urls=[],
             )
 
-        assert result is None
+        assert result.page is None
         assert mock_processor._client.models.generate_content.call_count == MAX_RETRIES
 
     @pytest.mark.asyncio
@@ -341,12 +341,12 @@ class TestRetryBehavior:
                 new_callable=AsyncMock,
             ),
         ):
-            page_idx, result, *_ = await mock_processor._process_page_with_figures(
+            result = await mock_processor._call_gemini_for_page(
                 pdf_reader=Mock(),
                 page_idx=0,
                 figures=[],
                 figure_urls=[],
             )
 
-        assert result is not None
+        assert result.page is not None
         assert mock_processor._client.models.generate_content.call_count == 2

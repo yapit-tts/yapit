@@ -262,3 +262,123 @@ class TestServerKokoroNoWaterfall:
         ).first()
         # server_kokoro doesn't use waterfall, so no breakdown
         assert log.details is None or "consumption_breakdown" not in log.details
+
+
+class TestDebtAccumulation:
+    """Test that overages accumulate as negative rollover (debt)."""
+
+    @pytest.mark.asyncio
+    async def test_overage_goes_to_rollover_debt(self, session, subscribed_user):
+        """When all pools exhausted, overflow goes to rollover as debt."""
+        user_id = subscribed_user["user_id"]
+
+        # Exhaust subscription and rollover, leave some purchased
+        subscribed_user["usage_period"].ocr_tokens = 100_000
+        subscribed_user["subscription"].rollover_tokens = 0
+        subscribed_user["subscription"].purchased_tokens = 5_000
+        await session.commit()
+
+        # Request 10K — purchased has 5K, needs 5K overflow
+        await record_usage(
+            user_id=user_id,
+            usage_type=UsageType.ocr_tokens,
+            amount=10_000,
+            db=session,
+        )
+
+        await session.refresh(subscribed_user["subscription"])
+
+        # Purchased fully consumed
+        assert subscribed_user["subscription"].purchased_tokens == 0
+
+        # Rollover now negative (debt)
+        assert subscribed_user["subscription"].rollover_tokens == -5_000
+
+        # Verify audit log captures overflow
+        logs = (await session.exec(select(UsageLog).where(UsageLog.user_id == user_id))).all()
+        latest_log = logs[-1]
+        breakdown = latest_log.details["consumption_breakdown"]
+        assert breakdown["from_purchased"] == 5_000
+        assert breakdown["overflow_to_debt"] == 5_000
+
+    @pytest.mark.asyncio
+    async def test_debt_reduces_total_available(self, session, subscribed_user):
+        """Negative rollover (debt) reduces total available balance."""
+        user_id = subscribed_user["user_id"]
+
+        # Set rollover to negative (debt)
+        subscribed_user["subscription"].rollover_tokens = -30_000
+        subscribed_user["subscription"].purchased_tokens = 20_000
+        await session.commit()
+
+        # Total available = 100K (sub) + (-30K rollover) + 20K purchased = 90K
+        # Request 95K should fail
+        with pytest.raises(UsageLimitExceededError):
+            await check_usage_limit(
+                user_id=user_id,
+                usage_type=UsageType.ocr_tokens,
+                amount=95_000,
+                db=session,
+            )
+
+        # Request 85K should succeed
+        await check_usage_limit(
+            user_id=user_id,
+            usage_type=UsageType.ocr_tokens,
+            amount=85_000,
+            db=session,
+        )
+
+    @pytest.mark.asyncio
+    async def test_debt_skips_rollover_in_waterfall(self, session, subscribed_user):
+        """When rollover is negative (debt), waterfall skips it."""
+        user_id = subscribed_user["user_id"]
+
+        # Set up: subscription exhausted, rollover negative (debt), purchased has credit
+        subscribed_user["usage_period"].ocr_tokens = 100_000  # exhausted
+        subscribed_user["subscription"].rollover_tokens = -10_000  # debt
+        subscribed_user["subscription"].purchased_tokens = 50_000  # available
+        await session.commit()
+
+        # Request should skip rollover and go to purchased
+        await record_usage(
+            user_id=user_id,
+            usage_type=UsageType.ocr_tokens,
+            amount=5_000,
+            db=session,
+        )
+
+        await session.refresh(subscribed_user["subscription"])
+
+        # Rollover unchanged (still debt, not consumed from)
+        assert subscribed_user["subscription"].rollover_tokens == -10_000
+
+        # Purchased reduced
+        assert subscribed_user["subscription"].purchased_tokens == 45_000
+
+        # Verify audit log
+        logs = (await session.exec(select(UsageLog).where(UsageLog.user_id == user_id))).all()
+        latest_log = logs[-1]
+        breakdown = latest_log.details["consumption_breakdown"]
+        assert breakdown["from_rollover"] == 0
+        assert breakdown["from_purchased"] == 5_000
+
+    @pytest.mark.asyncio
+    async def test_debt_accumulates_when_purchased_exhausted(self, session, subscribed_user):
+        """Multiple overages stack up as increasing debt."""
+        user_id = subscribed_user["user_id"]
+
+        # Exhaust everything
+        subscribed_user["usage_period"].ocr_tokens = 100_000
+        subscribed_user["subscription"].rollover_tokens = 0
+        subscribed_user["subscription"].purchased_tokens = 0
+        await session.commit()
+
+        # Two overages
+        await record_usage(user_id=user_id, usage_type=UsageType.ocr_tokens, amount=3_000, db=session)
+        await record_usage(user_id=user_id, usage_type=UsageType.ocr_tokens, amount=2_000, db=session)
+
+        await session.refresh(subscribed_user["subscription"])
+
+        # Total debt = 3K + 2K = 5K
+        assert subscribed_user["subscription"].rollover_tokens == -5_000

@@ -491,25 +491,43 @@ async def _handle_invoice_paid(invoice: dict, db: DbSession) -> None:
         old_period = await get_or_create_usage_period(subscription.user_id, subscription, db)
         plan = subscription.plan
 
-        # Token rollover: unused subscription tokens (capped)
+        # Token rollover: unused subscription tokens first pay off debt, then accumulate (capped)
+        # Rollover can be negative (debt from past overages). Addition handles this naturally:
+        # e.g., rollover=-50K + unused=30K → new=-20K (debt reduced by 30K)
         if plan.ocr_tokens:
             unused_tokens = max(0, plan.ocr_tokens - old_period.ocr_tokens)
-            new_rollover = min(subscription.rollover_tokens + unused_tokens, MAX_ROLLOVER_TOKENS)
-            if unused_tokens > 0:
+            old_rollover = subscription.rollover_tokens
+            new_rollover = min(old_rollover + unused_tokens, MAX_ROLLOVER_TOKENS)
+
+            if old_rollover < 0 and unused_tokens > 0:
+                debt_paid = min(unused_tokens, -old_rollover)
+                logger.info(
+                    f"Token debt payment for {subscription_id}: {debt_paid} tokens paid off debt, "
+                    f"rollover {old_rollover} -> {new_rollover}"
+                )
+            elif unused_tokens > 0:
                 logger.info(
                     f"Token rollover for {subscription_id}: {unused_tokens} unused, "
-                    f"rollover {subscription.rollover_tokens} -> {new_rollover}"
+                    f"rollover {old_rollover} -> {new_rollover}"
                 )
             subscription.rollover_tokens = new_rollover
 
-        # Voice char rollover: unused premium voice characters (capped)
+        # Voice char rollover: same debt payoff logic as tokens
         if plan.premium_voice_characters:
             unused_voice = max(0, plan.premium_voice_characters - old_period.premium_voice_characters)
-            new_rollover = min(subscription.rollover_voice_chars + unused_voice, MAX_ROLLOVER_VOICE_CHARS)
-            if unused_voice > 0:
+            old_rollover = subscription.rollover_voice_chars
+            new_rollover = min(old_rollover + unused_voice, MAX_ROLLOVER_VOICE_CHARS)
+
+            if old_rollover < 0 and unused_voice > 0:
+                debt_paid = min(unused_voice, -old_rollover)
+                logger.info(
+                    f"Voice debt payment for {subscription_id}: {debt_paid} chars paid off debt, "
+                    f"rollover {old_rollover} -> {new_rollover}"
+                )
+            elif unused_voice > 0:
                 logger.info(
                     f"Voice rollover for {subscription_id}: {unused_voice} unused, "
-                    f"rollover {subscription.rollover_voice_chars} -> {new_rollover}"
+                    f"rollover {old_rollover} -> {new_rollover}"
                 )
             subscription.rollover_voice_chars = new_rollover
 

@@ -90,6 +90,7 @@ Yapit is a text-to-speech platform with these components:
 - `overflow_complete`, `overflow_error` — RunPod result
 
 **Extraction:**
+- `extraction_estimate` — pre-check token estimate (compare with actual for tuning)
 - `page_extraction_complete`, `page_extraction_error` — Gemini API calls
 
 ## What to Analyze

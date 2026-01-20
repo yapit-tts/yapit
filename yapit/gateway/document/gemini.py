@@ -2,6 +2,7 @@ import asyncio
 import io
 import random
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 from google import genai
@@ -38,11 +39,23 @@ RESOLUTION_MAP = {
     "high": types.MediaResolution.MEDIA_RESOLUTION_HIGH,
 }
 
-# Retryable HTTP status codes (transient errors)
-RETRYABLE_STATUS_CODES = {429, 500, 503, 504}
+RETRYABLE_STATUS_CODES = {429, 500, 503, 504}  # Transient errors
 MAX_RETRIES = 6
 BASE_DELAY_SECONDS = 1.0
 MAX_DELAY_SECONDS = 30.0  # Total retry time ~61s (1+2+4+8+16+30) to handle rate limit windows
+
+
+@dataclass
+class PageResult:
+    """Result of processing a single page."""
+
+    page_idx: int
+    page: ExtractedPage | None
+    input_tokens: int
+    output_tokens: int
+    thoughts_tokens: int
+    is_fallback: bool
+    cancelled: bool
 
 
 class GeminiProcessor(BaseDocumentProcessor):
@@ -50,10 +63,6 @@ class GeminiProcessor(BaseDocumentProcessor):
         "application/pdf",
         "image/*",
     }
-
-    # Token billing: output costs 6× input ($0.50/M input, $3.00/M output for gemini-3-flash)
-    # token_equiv = input_tokens + (output_tokens × OUTPUT_TOKEN_MULTIPLIER)
-    OUTPUT_TOKEN_MULTIPLIER = 6
 
     # Fallback estimates when usage_metadata is None (shouldn't happen, but be safe)
     # Based on measured averages + buffer: 2500 input, 1000 output per page
@@ -127,7 +136,7 @@ class GeminiProcessor(BaseDocumentProcessor):
 
     def _calculate_token_equiv(self, input_tokens: int, output_tokens: int, thoughts_tokens: int) -> int:
         """Calculate token equivalents for billing: input + (output + thoughts) × multiplier."""
-        return input_tokens + (output_tokens + thoughts_tokens) * self.OUTPUT_TOKEN_MULTIPLIER
+        return input_tokens + (output_tokens + thoughts_tokens) * self.output_token_multiplier
 
     @property
     def _extraction_key_prefix(self) -> str:
@@ -145,11 +154,10 @@ class GeminiProcessor(BaseDocumentProcessor):
     def is_paid(self) -> bool:
         return True
 
-    def estimate_tokens(self, num_pages: int) -> int:
-        """Estimate token equivalents for limit checking (conservative)."""
-        input_est = self.FALLBACK_INPUT_TOKENS_PER_PAGE * num_pages
-        output_est = self.FALLBACK_OUTPUT_TOKENS_PER_PAGE * num_pages
-        return self._calculate_token_equiv(input_est, output_est, thoughts_tokens=0)
+    @property
+    def output_token_multiplier(self) -> int:
+        """Output tokens cost 6× input ($0.50/M input, $3.00/M output for gemini-3-flash)."""
+        return 6
 
     async def _call_gemini_with_retry(
         self,
@@ -299,16 +307,26 @@ class GeminiProcessor(BaseDocumentProcessor):
         pages_to_process = sorted(set(pages) if pages else set(range(total_pages)))
         logger.info(f"Extraction: starting {len(pages_to_process)} pages (PDF has {total_pages} total)")
 
-        async def process_page(page_idx: int) -> tuple[int, ExtractedPage | None, int, int, int, bool]:
-            """Process a single page: extract PDF → YOLO worker → store figures → Gemini.
+        cancel_key = f"extraction:cancel:{content_hash}"
 
-            Returns (page_idx, page, input_tokens, output_tokens, thoughts_tokens, is_fallback).
-            """
+        async def process_page(page_idx: int) -> PageResult:
+            """Process a single page: extract PDF → YOLO worker → store figures → Gemini."""
+            # Check for cancellation before starting expensive operations
+            if await self._redis.exists(cancel_key):
+                logger.info(f"Page {page_idx + 1} cancelled before processing")
+                return PageResult(
+                    page_idx=page_idx,
+                    page=None,
+                    input_tokens=0,
+                    output_tokens=0,
+                    thoughts_tokens=0,
+                    is_fallback=False,
+                    cancelled=True,
+                )
+
             try:
-                # Extract single-page PDF for YOLO worker (worker renders + detects + crops)
                 page_pdf = extract_single_page_pdf(pdf_reader, page_idx)
 
-                # Queue detection and wait for result
                 job_id = await enqueue_detection(self._redis, page_pdf)
                 yolo_result = await wait_for_result(self._redis, job_id)
 
@@ -317,49 +335,59 @@ class GeminiProcessor(BaseDocumentProcessor):
 
                 logger.info(f"YOLO: page {page_idx + 1} - detected {len(yolo_result.figures)} figures")
 
-                # Store each detected figure and collect URLs
                 figure_urls: list[str] = []
                 for fig_idx, figure in enumerate(yolo_result.figures):
                     url = store_figure(figure, self._images_dir, content_hash, page_idx, fig_idx)
                     figure_urls.append(url)
 
-                # Call Gemini API
-                result = await self._process_page_with_figures(pdf_reader, page_idx, yolo_result.figures, figure_urls)
-                page_idx, page, input_tokens, output_tokens, thoughts_tokens, is_fallback = result
+                result = await self._call_gemini_for_page(pdf_reader, page_idx, yolo_result.figures, figure_urls)
 
-                if page is not None:
+                if result.page is not None:
                     cache_key = self._extraction_cache_key(content_hash, page_idx)
-                    await extraction_cache.store(cache_key, page.model_dump_json().encode())
+                    await extraction_cache.store(cache_key, result.page.model_dump_json().encode())
 
-                return page_idx, page, input_tokens, output_tokens, thoughts_tokens, is_fallback
+                return result
 
             except Exception as e:
                 logger.error(f"Page {page_idx + 1} processing failed: {e}")
-                return page_idx, None, 0, 0, 0, False
+                return PageResult(
+                    page_idx=page_idx,
+                    page=None,
+                    input_tokens=0,  # Don't bill for failed pages
+                    output_tokens=0,
+                    thoughts_tokens=0,
+                    is_fallback=False,
+                    cancelled=False,
+                )
 
         # Process all pages in parallel
         tasks = [asyncio.create_task(process_page(page_idx)) for page_idx in pages_to_process]
         results = await asyncio.gather(*tasks)
 
-        # Separate successful and failed pages, aggregate token usage
+        # Separate successful, failed, and cancelled pages; aggregate token usage
         successful_pages: dict[int, ExtractedPage] = {}
         failed_pages: list[int] = []
+        cancelled_pages: list[int] = []
         total_input_tokens = 0
         total_output_tokens = 0
         total_thoughts_tokens = 0
         any_fallback = False
 
-        for page_idx, page, input_tokens, output_tokens, thoughts_tokens, is_fallback in results:
-            if page is not None:
-                successful_pages[page_idx] = page
-                total_input_tokens += input_tokens
-                total_output_tokens += output_tokens
-                total_thoughts_tokens += thoughts_tokens
-                any_fallback = any_fallback or is_fallback
+        for result in results:
+            if result.cancelled:
+                cancelled_pages.append(result.page_idx)
+            elif result.page is not None:
+                successful_pages[result.page_idx] = result.page
+                total_input_tokens += result.input_tokens
+                total_output_tokens += result.output_tokens
+                total_thoughts_tokens += result.thoughts_tokens
+                any_fallback = any_fallback or result.is_fallback
             else:
-                failed_pages.append(page_idx)
+                failed_pages.append(result.page_idx)
 
         elapsed = time.monotonic() - start_time
+        if cancelled_pages:
+            logger.info(f"Extraction cancelled: {len(cancelled_pages)} pages skipped: {sorted(cancelled_pages)}")
         if failed_pages:
             logger.error(f"Extraction completed with {len(failed_pages)} failed pages: {sorted(failed_pages)}")
 
@@ -384,18 +412,14 @@ class GeminiProcessor(BaseDocumentProcessor):
             else None,  # No token usage if all pages failed
         )
 
-    async def _process_page_with_figures(
+    async def _call_gemini_for_page(
         self,
         pdf_reader: PdfReader,
         page_idx: int,
         figures: list[DetectedFigure],
         figure_urls: list[str],
-    ) -> tuple[int, ExtractedPage | None, int, int, int, bool]:
-        """Process a single PDF page with YOLO-detected figures.
-
-        Returns (page_idx, ExtractedPage, input_tokens, output_tokens, thoughts_tokens, is_fallback)
-        on success, or (page_idx, None, 0, 0, 0, False) on failure after all retries.
-        """
+    ) -> PageResult:
+        """Call Gemini API to extract text from a single PDF page."""
         page_bytes = extract_single_page_pdf(pdf_reader, page_idx)
         prompt = build_figure_prompt(self._prompt, figures)
         config = types.GenerateContentConfig(
@@ -421,15 +445,21 @@ class GeminiProcessor(BaseDocumentProcessor):
                 status_code=getattr(e, "code", None),
                 data={"error": str(e)},
             )
-            # Don't bill for failed pages
-            return page_idx, None, 0, 0, 0, False
+            return PageResult(
+                page_idx=page_idx,
+                page=None,
+                input_tokens=0,
+                output_tokens=0,
+                thoughts_tokens=0,
+                is_fallback=False,
+                cancelled=False,
+            )
 
         duration_ms = int((time.monotonic() - start_time) * 1000)
         text = (response.text or "").strip()
         if figure_urls:
             text = substitute_image_placeholders(text, figure_urls)
 
-        # Extract and validate token usage
         input_tokens, output_tokens, thoughts_tokens, is_fallback = self._extract_token_usage(
             response.usage_metadata, num_pages=1, context=f"page {page_idx + 1}"
         )
@@ -449,11 +479,12 @@ class GeminiProcessor(BaseDocumentProcessor):
             total_token_count=input_tokens + output_tokens + thoughts_tokens,
         )
 
-        return (
-            page_idx,
-            ExtractedPage(markdown=text, images=figure_urls),
-            input_tokens,
-            output_tokens,
-            thoughts_tokens,
-            is_fallback,
+        return PageResult(
+            page_idx=page_idx,
+            page=ExtractedPage(markdown=text, images=figure_urls),
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            thoughts_tokens=thoughts_tokens,
+            is_fallback=is_fallback,
+            cancelled=False,
         )

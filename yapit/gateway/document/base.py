@@ -6,6 +6,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from yapit.gateway.cache import Cache
 from yapit.gateway.config import Settings
 from yapit.gateway.constants import SUPPORTED_DOCUMENT_MIME_TYPES
+from yapit.gateway.document.extraction import PER_PAGE_TOLERANCE, estimate_document_tokens
 from yapit.gateway.domain_models import DocumentMetadata, UsageType
 from yapit.gateway.exceptions import ValidationError
 from yapit.gateway.metrics import log_event
@@ -91,12 +92,13 @@ class BaseDocumentProcessor:
         """Whether this processor requires usage tracking (counts against OCR limit)."""
         return False
 
-    def estimate_tokens(self, num_pages: int) -> int:
-        """Estimate token equivalents for limit checking (before actual extraction).
+    @property
+    def output_token_multiplier(self) -> int:
+        """Cost multiplier for output tokens (e.g., 6 for Gemini where output costs 6x input).
 
-        Override in paid processors that bill by tokens.
+        Override in paid processors.
         """
-        return 0
+        return 1
 
     @abstractmethod
     async def _extract(
@@ -187,13 +189,36 @@ class BaseDocumentProcessor:
             return DocumentExtractionResult(pages=cached_pages, extraction_method=self._slug)
 
         # Check usage limit before processing (only for paid processors)
-        # Use conservative token estimate for limit check (actual may be lower)
+        # Estimate tokens from actual content using PyMuPDF text extraction
+        # Buffer favors user: allow estimate to exceed balance by per-page tolerance
         if self.is_paid:
-            estimated_tokens = self.estimate_tokens(len(uncached_pages))
+            estimate = estimate_document_tokens(
+                content, content_type, self.output_token_multiplier, list(uncached_pages)
+            )
+            tolerance = PER_PAGE_TOLERANCE * estimate.num_pages
+            # Subtract tolerance from estimate — effectively gives user extra headroom
+            # If estimate=55K, tolerance=10K, we check if user has 45K (not 55K)
+            amount_to_check = max(0, estimate.total_tokens - tolerance)
+
+            await log_event(
+                "extraction_estimate",
+                processor_slug=self._slug,
+                data={
+                    "content_hash": content_hash,
+                    "num_pages": estimate.num_pages,
+                    "text_pages": estimate.text_pages,
+                    "raster_pages": estimate.raster_pages,
+                    "total_text_chars": estimate.total_text_chars,
+                    "estimated_tokens": estimate.total_tokens,
+                    "tolerance": tolerance,
+                    "amount_checked": amount_to_check,
+                },
+            )
+
             await check_usage_limit(
                 user_id,
                 UsageType.ocr_tokens,
-                estimated_tokens,
+                amount_to_check,
                 db,
                 is_admin=is_admin,
                 billing_enabled=self._settings.billing_enabled,
