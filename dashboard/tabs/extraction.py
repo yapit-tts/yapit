@@ -445,6 +445,50 @@ def _error_breakdown(df: pd.DataFrame) -> go.Figure | None:
     return fig
 
 
+def _estimate_stats(df: pd.DataFrame):
+    """Display extraction estimate statistics."""
+    estimates = get_events(df, "extraction_estimate")
+    if estimates.empty:
+        st.caption("No extraction estimates logged yet")
+        return
+
+    # Extract data from blob
+    estimates = estimates.copy()
+    estimates["num_pages"] = estimates["data"].apply(lambda d: d.get("num_pages", 0) if isinstance(d, dict) else 0)
+    estimates["text_pages"] = estimates["data"].apply(lambda d: d.get("text_pages", 0) if isinstance(d, dict) else 0)
+    estimates["raster_pages"] = estimates["data"].apply(
+        lambda d: d.get("raster_pages", 0) if isinstance(d, dict) else 0
+    )
+    estimates["total_text_chars"] = estimates["data"].apply(
+        lambda d: d.get("total_text_chars", 0) if isinstance(d, dict) else 0
+    )
+    estimates["estimated_tokens"] = estimates["data"].apply(
+        lambda d: d.get("estimated_tokens", 0) if isinstance(d, dict) else 0
+    )
+    estimates["tolerance"] = estimates["data"].apply(lambda d: d.get("tolerance", 0) if isinstance(d, dict) else 0)
+
+    total_estimates = len(estimates)
+    avg_pages = estimates["num_pages"].mean()
+    avg_text_pages = estimates["text_pages"].mean()
+    avg_raster_pages = estimates["raster_pages"].mean()
+    avg_estimated = estimates["estimated_tokens"].mean()
+    avg_tolerance = estimates["tolerance"].mean()
+
+    col1, col2, col3, col4, col5, col6 = st.columns(6)
+    with col1:
+        st.metric("Documents", format_number(total_estimates))
+    with col2:
+        st.metric("Avg Pages", f"{avg_pages:.1f}")
+    with col3:
+        st.metric("Avg Text Pgs", f"{avg_text_pages:.1f}")
+    with col4:
+        st.metric("Avg Raster Pgs", f"{avg_raster_pages:.1f}")
+    with col5:
+        st.metric("Avg Est. Tokens", format_number(avg_estimated))
+    with col6:
+        st.metric("Avg Tolerance", f"{avg_tolerance:.0%}")
+
+
 def _processor_stats(df: pd.DataFrame):
     """Stats by processor."""
     complete = get_events(df, "page_extraction_complete")
@@ -503,6 +547,12 @@ def render(df: pd.DataFrame):
 
     # Token breakdown
     _token_breakdown(df)
+
+    st.divider()
+
+    # Estimate stats
+    section_header("Extraction Estimates", "Pre-extraction document analysis")
+    _estimate_stats(df)
 
     st.divider()
 

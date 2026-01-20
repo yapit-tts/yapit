@@ -145,14 +145,15 @@ def _volume_sparkline(df: pd.DataFrame) -> go.Figure | None:
             hovertemplate="%{y} requests<extra></extra>",
         )
     )
+    apply_plotly_theme(fig)
     fig.update_layout(
+        title="",
         height=150,
         margin=dict(l=0, r=0, t=10, b=30),
-        xaxis=dict(showgrid=False, title=None),
-        yaxis=dict(showgrid=True, title=None, gridcolor=COLORS["border"]),
+        xaxis=dict(showgrid=False, title=dict(text="")),
+        yaxis=dict(showgrid=True, title=dict(text=""), gridcolor=COLORS["border"]),
         showlegend=False,
     )
-    apply_plotly_theme(fig)
     return fig
 
 
