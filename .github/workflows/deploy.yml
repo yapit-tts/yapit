@@ -9,6 +9,7 @@ on:
       - 'docs/**'
       - '**/*.md'
   pull_request:
+    types: [ready_for_review]
     paths-ignore:
       - 'agent/**'
       - 'notes/**'
@@ -21,13 +22,46 @@ on:
         required: false
         default: false
         type: boolean
+      force_build_all:
+        description: 'Build all images regardless of changes'
+        required: false
+        default: false
+        type: boolean
 
 env:
   REGISTRY: ghcr.io
 
 jobs:
+  # === Detect what changed ===
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      frontend: ${{ steps.filter.outputs.frontend }}
+      gateway: ${{ steps.filter.outputs.gateway }}
+      workers: ${{ steps.filter.outputs.workers }}
+      stack-auth: ${{ steps.filter.outputs.stack-auth }}
+      smokescreen: ${{ steps.filter.outputs.smokescreen }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            frontend:
+              - 'frontend/**'
+            gateway:
+              - 'pyproject.toml'
+              - 'yapit/gateway/**'
+              - 'yapit/contracts.py'
+            workers:
+              - 'yapit/workers/**'
+              - 'yapit/contracts.py'
+            stack-auth:
+              - 'docker/Dockerfile.stackauth'
+            smokescreen:
+              - 'docker/Dockerfile.smokescreen'
+
   # === Tests (run in parallel) ===
-  # Skip with [skip tests] in commit message or workflow_dispatch skip_tests input
   lint:
     if: ${{ !inputs.skip_tests && !contains(github.event.head_commit.message, '[skip tests]') }}
     runs-on: ubuntu-latest
@@ -38,32 +72,6 @@ jobs:
   test-unit:
     if: ${{ !inputs.skip_tests && !contains(github.event.head_commit.message, '[skip tests]') }}
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: test
-          POSTGRES_PASSWORD: test
-          POSTGRES_DB: test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-    env:
-      TEST_POSTGRES_URL: postgresql+asyncpg://test:test@localhost:5432/test
-      TEST_REDIS_URL: redis://localhost:6379
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -103,13 +111,88 @@ jobs:
           docker compose -f docker-compose.yml -f docker-compose.dev.yml logs yolo-cpu
           docker compose -f docker-compose.yml -f docker-compose.dev.yml ps -a
 
-  # === Build and Push Images ===
-  build-and-push:
-    needs: [lint, test-unit, test-integration]
+  # === Build and Push Images (only what changed) ===
+  build-frontend:
+    needs: [changes, lint, test-unit, test-integration]
     if: |
       always() &&
       github.ref == 'refs/heads/main' &&
-      (inputs.skip_tests || contains(github.event.head_commit.message, '[skip tests]') || (needs.lint.result == 'success' && needs.test-unit.result == 'success' && needs.test-integration.result == 'success'))
+      (needs.changes.outputs.frontend == 'true' || inputs.force_build_all) &&
+      (inputs.skip_tests == true || contains(github.event.head_commit.message, '[skip tests]') || (needs.lint.result == 'success' && needs.test-unit.result == 'success' && needs.test-integration.result == 'success'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ${{ env.REGISTRY }}/yapit-tts/frontend
+          tags: |
+            type=sha,prefix=,format=long
+            type=raw,value=latest,enable={{is_default_branch}}
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: GIT_COMMIT=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  build-gateway:
+    needs: [changes, lint, test-unit, test-integration]
+    if: |
+      always() &&
+      github.ref == 'refs/heads/main' &&
+      (needs.changes.outputs.gateway == 'true' || inputs.force_build_all) &&
+      (inputs.skip_tests == true || contains(github.event.head_commit.message, '[skip tests]') || (needs.lint.result == 'success' && needs.test-unit.result == 'success' && needs.test-integration.result == 'success'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ${{ env.REGISTRY }}/yapit-tts/gateway
+          tags: |
+            type=sha,prefix=,format=long
+            type=raw,value=latest,enable={{is_default_branch}}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./yapit/gateway/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: GIT_COMMIT=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  build-workers:
+    needs: [changes, lint, test-unit, test-integration]
+    if: |
+      always() &&
+      github.ref == 'refs/heads/main' &&
+      (needs.changes.outputs.workers == 'true' || inputs.force_build_all) &&
+      (inputs.skip_tests == true || contains(github.event.head_commit.message, '[skip tests]') || (needs.lint.result == 'success' && needs.test-unit.result == 'success' && needs.test-integration.result == 'success'))
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -117,30 +200,14 @@ jobs:
     strategy:
       matrix:
         include:
-          - name: frontend
-            context: ./frontend
-            dockerfile: ./frontend/Dockerfile
-          - name: gateway
-            context: .
-            dockerfile: ./yapit/gateway/Dockerfile
           - name: kokoro-cpu
-            context: .
             dockerfile: ./yapit/workers/kokoro/Dockerfile.cpu
           - name: yolo-cpu
-            context: .
             dockerfile: ./yapit/workers/yolo/Dockerfile.cpu
           - name: kokoro-gpu
-            context: .
             dockerfile: ./yapit/workers/kokoro/Dockerfile.gpu
           - name: yolo-gpu
-            context: .
             dockerfile: ./yapit/workers/yolo/Dockerfile.gpu
-          - name: stack-auth
-            context: .
-            dockerfile: ./docker/Dockerfile.stackauth
-          - name: smokescreen
-            context: .
-            dockerfile: ./docker/Dockerfile.smokescreen
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -158,8 +225,82 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
       - uses: docker/build-push-action@v6
         with:
-          context: ${{ matrix.context }}
+          context: .
           file: ${{ matrix.dockerfile }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: GIT_COMMIT=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  build-stack-auth:
+    needs: [changes, lint, test-unit, test-integration]
+    if: |
+      always() &&
+      github.ref == 'refs/heads/main' &&
+      (needs.changes.outputs.stack-auth == 'true' || inputs.force_build_all) &&
+      (inputs.skip_tests == true || contains(github.event.head_commit.message, '[skip tests]') || (needs.lint.result == 'success' && needs.test-unit.result == 'success' && needs.test-integration.result == 'success'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ${{ env.REGISTRY }}/yapit-tts/stack-auth
+          tags: |
+            type=sha,prefix=,format=long
+            type=raw,value=latest,enable={{is_default_branch}}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./docker/Dockerfile.stackauth
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: GIT_COMMIT=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  build-smokescreen:
+    needs: [changes, lint, test-unit, test-integration]
+    if: |
+      always() &&
+      github.ref == 'refs/heads/main' &&
+      (needs.changes.outputs.smokescreen == 'true' || inputs.force_build_all) &&
+      (inputs.skip_tests == true || contains(github.event.head_commit.message, '[skip tests]') || (needs.lint.result == 'success' && needs.test-unit.result == 'success' && needs.test-integration.result == 'success'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ${{ env.REGISTRY }}/yapit-tts/smokescreen
+          tags: |
+            type=sha,prefix=,format=long
+            type=raw,value=latest,enable={{is_default_branch}}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./docker/Dockerfile.smokescreen
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -169,7 +310,8 @@ jobs:
 
   # === Deploy via SSH + Docker Stack ===
   deploy:
-    needs: build-and-push
+    needs: [build-frontend, build-gateway, build-workers, build-stack-auth, build-smokescreen]
+    if: always() && github.ref == 'refs/heads/main' && !contains(needs.*.result, 'failure')
     runs-on: ubuntu-latest
     environment: production
     steps:
