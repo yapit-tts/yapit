@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator
 
 from markitdown import MarkItDown
 
-from yapit.gateway.document.base import ExtractedPage, PageResult, ProcessorConfig
+from yapit.gateway.document.processing import ExtractedPage, PageResult, ProcessorConfig
 
 MARKITDOWN_CONFIG = ProcessorConfig(
     slug="markitdown",

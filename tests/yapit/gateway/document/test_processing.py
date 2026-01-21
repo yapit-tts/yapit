@@ -7,8 +7,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from yapit.gateway.document.base import ExtractedPage, PageResult, ProcessorConfig
-from yapit.gateway.document.service import process_with_billing
+from yapit.gateway.document.processing import ExtractedPage, PageResult, ProcessorConfig, process_with_billing
 from yapit.gateway.exceptions import ValidationError
 
 
@@ -189,9 +188,9 @@ class TestBilling:
         mock_estimate.num_pages = 1
         mock_estimate.total_tokens = 1000
 
-        with patch("yapit.gateway.document.service.estimate_document_tokens", return_value=mock_estimate):
-            with patch("yapit.gateway.document.service.check_usage_limit", new_callable=AsyncMock) as mock_check:
-                with patch("yapit.gateway.document.service.record_usage", new_callable=AsyncMock):
+        with patch("yapit.gateway.document.processing.estimate_document_tokens", return_value=mock_estimate):
+            with patch("yapit.gateway.document.processing.check_usage_limit", new_callable=AsyncMock) as mock_check:
+                with patch("yapit.gateway.document.processing.record_usage", new_callable=AsyncMock):
                     await process_with_billing(
                         config=config,
                         extractor=fake_extractor([(0, "Content")]),
@@ -215,9 +214,9 @@ class TestBilling:
         mock_estimate.num_pages = 3
         mock_estimate.total_tokens = 3000
 
-        with patch("yapit.gateway.document.service.estimate_document_tokens", return_value=mock_estimate):
-            with patch("yapit.gateway.document.service.check_usage_limit", new_callable=AsyncMock):
-                with patch("yapit.gateway.document.service.record_usage", new_callable=AsyncMock) as mock_record:
+        with patch("yapit.gateway.document.processing.estimate_document_tokens", return_value=mock_estimate):
+            with patch("yapit.gateway.document.processing.check_usage_limit", new_callable=AsyncMock):
+                with patch("yapit.gateway.document.processing.record_usage", new_callable=AsyncMock) as mock_record:
                     await process_with_billing(
                         config=config,
                         extractor=fake_extractor([(0, "Page 0"), (1, "Page 1"), (2, "Page 2")]),
@@ -237,8 +236,8 @@ class TestBilling:
     async def test_free_processor_skips_billing(self, mock_db, mock_cache, mock_settings):
         config = make_config(is_paid=False)
 
-        with patch("yapit.gateway.document.service.check_usage_limit", new_callable=AsyncMock) as mock_check:
-            with patch("yapit.gateway.document.service.record_usage", new_callable=AsyncMock) as mock_record:
+        with patch("yapit.gateway.document.processing.check_usage_limit", new_callable=AsyncMock) as mock_check:
+            with patch("yapit.gateway.document.processing.record_usage", new_callable=AsyncMock) as mock_record:
                 await process_with_billing(
                     config=config,
                     extractor=fake_extractor([(0, "Content")]),

@@ -16,7 +16,6 @@ from redis.asyncio import Redis
 
 from yapit.contracts import DetectedFigure
 from yapit.gateway.config import Settings
-from yapit.gateway.document.base import ExtractedPage, PageResult, ProcessorConfig
 from yapit.gateway.document.extraction import (
     build_figure_prompt,
     extract_single_page_pdf,
@@ -24,6 +23,7 @@ from yapit.gateway.document.extraction import (
     store_figure,
     substitute_image_placeholders,
 )
+from yapit.gateway.document.processing import ExtractedPage, PageResult, ProcessorConfig
 from yapit.gateway.document.yolo_client import enqueue_detection, wait_for_result
 from yapit.gateway.metrics import log_event
 

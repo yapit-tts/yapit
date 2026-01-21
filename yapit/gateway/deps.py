@@ -13,8 +13,8 @@ from yapit.gateway.auth import authenticate
 from yapit.gateway.cache import Cache, CacheConfig, Caches, SqliteCache
 from yapit.gateway.config import Settings, get_settings
 from yapit.gateway.db import create_session, get_by_slug_or_404, get_or_404
-from yapit.gateway.document.base import ProcessorConfig
 from yapit.gateway.document.gemini import GeminiExtractor
+from yapit.gateway.document.processing import ProcessorConfig
 from yapit.gateway.domain_models import (
     Block,
     BlockVariant,

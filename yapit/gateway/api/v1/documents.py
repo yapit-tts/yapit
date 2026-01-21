@@ -35,9 +35,14 @@ from yapit.gateway.deps import (
     SettingsDep,
 )
 from yapit.gateway.document import markitdown
-from yapit.gateway.document.base import CachedDocument, DocumentExtractionResult, ExtractedPage, ProcessorConfig
 from yapit.gateway.document.playwright_renderer import render_with_js
-from yapit.gateway.document.service import process_with_billing
+from yapit.gateway.document.processing import (
+    CachedDocument,
+    DocumentExtractionResult,
+    ExtractedPage,
+    ProcessorConfig,
+    process_with_billing,
+)
 from yapit.gateway.domain_models import Block, Document, DocumentMetadata, UserPreferences
 from yapit.gateway.exceptions import ResourceNotFoundError
 from yapit.gateway.markdown import parse_markdown, transform_to_document
