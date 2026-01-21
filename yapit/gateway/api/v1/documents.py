@@ -23,24 +23,21 @@ from yapit.gateway.auth import authenticate
 from yapit.gateway.cache import Cache
 from yapit.gateway.constants import SUPPORTED_WEB_MIME_TYPES
 from yapit.gateway.deps import (
-    AiProcessorDep,
+    AiExtractorConfigDep,
+    AiExtractorDep,
     AuthenticatedUser,
     CurrentDoc,
     DbSession,
     DocumentCache,
     ExtractionCache,
-    FreeProcessorDep,
     IsAdmin,
     RedisClient,
     SettingsDep,
 )
-from yapit.gateway.document.base import (
-    BaseDocumentProcessor,
-    CachedDocument,
-    DocumentExtractionResult,
-    ExtractedPage,
-)
+from yapit.gateway.document import markitdown
+from yapit.gateway.document.base import CachedDocument, DocumentExtractionResult, ExtractedPage, ProcessorConfig
 from yapit.gateway.document.playwright_renderer import render_with_js
+from yapit.gateway.document.service import process_with_billing
 from yapit.gateway.domain_models import Block, Document, DocumentMetadata, UserPreferences
 from yapit.gateway.exceptions import ResourceNotFoundError
 from yapit.gateway.markdown import parse_markdown, transform_to_document
@@ -149,17 +146,16 @@ class ExtractionStatusRequest(BaseModel):
 async def get_extraction_status(
     req: ExtractionStatusRequest,
     extraction_cache: ExtractionCache,
-    ai_processor: AiProcessorDep,
-    free_processor: FreeProcessorDep,
+    ai_extractor_config: AiExtractorConfigDep,
 ) -> ExtractionStatusResponse:
     """Get progress of an ongoing document extraction by checking cache directly."""
-    processor = ai_processor if req.processor_slug == "gemini" else free_processor
-    if not processor or not processor._extraction_key_prefix:
+    config = ai_extractor_config if req.processor_slug == "gemini" else markitdown.MARKITDOWN_CONFIG
+    if not config or not config.extraction_cache_prefix:
         return ExtractionStatusResponse(total_pages=len(req.pages), completed_pages=[], status="not_found")
 
     completed = []
     for page_idx in req.pages:
-        cache_key = processor._extraction_cache_key(req.content_hash, page_idx)
+        cache_key = config.extraction_cache_key(req.content_hash, page_idx)
         if await extraction_cache.exists(cache_key):
             completed.append(page_idx)
 
@@ -201,7 +197,7 @@ async def prepare_document(
     file_cache: DocumentCache,
     extraction_cache: ExtractionCache,
     settings: SettingsDep,
-    ai_processor: AiProcessorDep,
+    ai_extractor_config: AiExtractorConfigDep,
 ) -> DocumentPrepareResponse:
     """Prepare a document from URL for creation."""
     url_hash = hashlib.sha256(str(request.url).encode()).hexdigest()
@@ -222,7 +218,7 @@ async def prepare_document(
                 content_hash,
                 cached_doc.metadata.total_pages,
                 extraction_cache,
-                ai_processor,
+                ai_extractor_config,
             )
             if _needs_ocr_processing(cached_doc.metadata.content_type)
             else set()
@@ -257,7 +253,7 @@ async def prepare_document(
             content_hash,
             metadata.total_pages,
             extraction_cache,
-            ai_processor,
+            ai_extractor_config,
         )
         if _needs_ocr_processing(content_type)
         else set()
@@ -272,7 +268,7 @@ async def prepare_document_upload(
     file: UploadFile,
     file_cache: DocumentCache,
     extraction_cache: ExtractionCache,
-    ai_processor: AiProcessorDep,
+    ai_extractor_config: AiExtractorConfigDep,
 ) -> DocumentPrepareResponse:
     """Prepare a document from file upload."""
     content = await file.read()
@@ -292,7 +288,7 @@ async def prepare_document_upload(
                 cache_key,
                 cached_doc.metadata.total_pages,
                 extraction_cache,
-                ai_processor,
+                ai_extractor_config,
             )
             if _needs_ocr_processing(cached_doc.metadata.content_type)
             else set()
@@ -325,7 +321,7 @@ async def prepare_document_upload(
             cache_key,
             metadata.total_pages,
             extraction_cache,
-            ai_processor,
+            ai_extractor_config,
         )
         if _needs_ocr_processing(content_type)
         else set()
@@ -462,8 +458,8 @@ async def create_document(
     settings: SettingsDep,
     user: AuthenticatedUser,
     is_admin: IsAdmin,
-    free_processor: FreeProcessorDep,
-    ai_processor: AiProcessorDep,
+    ai_extractor_config: AiExtractorConfigDep,
+    ai_extractor: AiExtractorDep,
 ) -> DocumentCreateResponse:
     """Create a document from a file (PDF, image, etc)."""
     prefs = await db.get(UserPreferences, user.id)
@@ -483,15 +479,6 @@ async def create_document(
         )
     _validate_page_numbers(req.pages, cached_doc.metadata.total_pages)
 
-    if req.ai_transform:
-        if not ai_processor:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="AI transform not configured on this server",
-            )
-        processor = ai_processor
-    else:
-        processor = free_processor
     if not cached_doc.content:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -499,14 +486,35 @@ async def create_document(
         )
 
     content_hash = hashlib.sha256(cached_doc.content).hexdigest()
-    extraction_result = await processor.process_with_billing(
+
+    if req.ai_transform:
+        if not ai_extractor or not ai_extractor_config:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="AI transform not configured on this server",
+            )
+        config = ai_extractor_config
+        extractor = ai_extractor.extract(
+            cached_doc.content,
+            cached_doc.metadata.content_type,
+            content_hash,
+            req.pages,
+        )
+    else:
+        config = markitdown.MARKITDOWN_CONFIG
+        extractor = markitdown.extract(cached_doc.content, cached_doc.metadata.content_type)
+
+    extraction_result = await process_with_billing(
+        config=config,
+        extractor=extractor,
         user_id=user.id,
-        content_hash=content_hash,
-        db=db,
-        extraction_cache=extraction_cache,
         content=cached_doc.content,
         content_type=cached_doc.metadata.content_type,
+        content_hash=content_hash,
         total_pages=cached_doc.metadata.total_pages,
+        db=db,
+        extraction_cache=extraction_cache,
+        settings=settings,
         file_size=cached_doc.metadata.file_size,
         pages=req.pages,
         is_admin=is_admin,
@@ -890,15 +898,15 @@ async def _get_uncached_pages(
     content_hash: str,
     total_pages: int,
     extraction_cache: Cache,
-    processor: BaseDocumentProcessor | None,
+    config: ProcessorConfig | None,
 ) -> set[int]:
     """Query extraction cache to find which pages need processing."""
-    if not processor or not processor._extraction_key_prefix:
+    if not config or not config.extraction_cache_prefix:
         return set(range(total_pages))
 
     uncached = set()
     for page_idx in range(total_pages):
-        key = f"{content_hash}:{processor._extraction_key_prefix}:{page_idx}"
+        key = config.extraction_cache_key(content_hash, page_idx)
         if not await extraction_cache.exists(key):
             uncached.add(page_idx)
     return uncached

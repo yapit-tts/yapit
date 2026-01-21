@@ -23,8 +23,7 @@ from yapit.gateway.cache import Cache
 from yapit.gateway.config import Settings, get_settings
 from yapit.gateway.db import close_db, prepare_database
 from yapit.gateway.deps import create_cache
-from yapit.gateway.document.gemini import GeminiProcessor
-from yapit.gateway.document.markitdown import MarkitdownProcessor
+from yapit.gateway.document.gemini import GeminiExtractor, create_gemini_config
 from yapit.gateway.exceptions import APIError
 from yapit.gateway.metrics import init_metrics_db, start_metrics_writer, stop_metrics_writer
 from yapit.gateway.overflow_scanner import run_overflow_scanner
@@ -80,13 +79,14 @@ async def lifespan(app: FastAPI):
     app.state.document_cache = create_cache(settings.document_cache_type, settings.document_cache_config)
     app.state.extraction_cache = create_cache(settings.extraction_cache_type, settings.extraction_cache_config)
 
-    # Document processors
-    app.state.free_processor = MarkitdownProcessor(settings=settings)
+    # Document extractors
     if settings.ai_processor == "gemini":
-        app.state.ai_processor = GeminiProcessor(redis=app.state.redis_client, settings=settings)
-        logger.info("AI processor: gemini")
+        app.state.ai_extractor_config = create_gemini_config()
+        app.state.ai_extractor = GeminiExtractor(settings=settings, redis=app.state.redis_client)
+        logger.info("AI extractor: gemini")
     else:
-        app.state.ai_processor = None
+        app.state.ai_extractor_config = None
+        app.state.ai_extractor = None
 
     background_tasks: list[asyncio.Task] = []
 

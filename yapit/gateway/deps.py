@@ -13,7 +13,8 @@ from yapit.gateway.auth import authenticate
 from yapit.gateway.cache import Cache, CacheConfig, Caches, SqliteCache
 from yapit.gateway.config import Settings, get_settings
 from yapit.gateway.db import create_session, get_by_slug_or_404, get_or_404
-from yapit.gateway.document.base import BaseDocumentProcessor
+from yapit.gateway.document.base import ProcessorConfig
+from yapit.gateway.document.gemini import GeminiExtractor
 from yapit.gateway.domain_models import (
     Block,
     BlockVariant,
@@ -137,17 +138,17 @@ async def get_redis_client(request: Request) -> Redis:
     return request.app.state.redis_client
 
 
-async def get_free_processor(request: Request) -> BaseDocumentProcessor:
-    return request.app.state.free_processor
+async def get_ai_extractor_config(request: Request) -> ProcessorConfig | None:
+    return request.app.state.ai_extractor_config
 
 
-async def get_ai_processor(request: Request) -> BaseDocumentProcessor | None:
-    return request.app.state.ai_processor
+async def get_ai_extractor(request: Request) -> GeminiExtractor | None:
+    return request.app.state.ai_extractor
 
 
 RedisClient = Annotated[Redis, Depends(get_redis_client)]
-FreeProcessorDep = Annotated[BaseDocumentProcessor, Depends(get_free_processor)]
-AiProcessorDep = Annotated[BaseDocumentProcessor | None, Depends(get_ai_processor)]
+AiExtractorConfigDep = Annotated[ProcessorConfig | None, Depends(get_ai_extractor_config)]
+AiExtractorDep = Annotated[GeminiExtractor | None, Depends(get_ai_extractor)]
 AudioCache = Annotated[Cache, Depends(get_audio_cache)]
 DocumentCache = Annotated[Cache, Depends(get_document_cache)]
 ExtractionCache = Annotated[Cache, Depends(get_extraction_cache)]
