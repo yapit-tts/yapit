@@ -1,0 +1,25 @@
+FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl ca-certificates libgl1 libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+ADD https://astral.sh/uv/install.sh /uv-install.sh
+RUN sh /uv-install.sh && rm /uv-install.sh
+ENV PATH="/root/.local/bin:$PATH"
+
+WORKDIR /app
+
+COPY yapit/workers/yolo/pyproject.gpu.toml ./pyproject.toml
+RUN uv sync
+
+ENV HF_HOME=/models
+RUN uv run python -c "from huggingface_hub import hf_hub_download; hf_hub_download('juliozhao/DocLayout-YOLO-DocStructBench', 'doclayout_yolo_docstructbench_imgsz1024.pt')"
+
+COPY yapit/ /app/yapit
+
+ENV HF_HUB_OFFLINE=1
+ENV PYTHONUNBUFFERED=1
+ENV DEVICE=cuda
+
+CMD ["uv", "run", "python", "-m", "yapit.workers.yolo"]

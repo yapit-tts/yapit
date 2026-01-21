@@ -19,6 +19,7 @@
 *.jpeg
 *.png
 !frontend/public/icon-*.png
+!frontend/public/og-image.png
 *.zip
 *.tar
 *.gz

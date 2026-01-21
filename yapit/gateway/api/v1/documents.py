@@ -14,6 +14,7 @@ from uuid import UUID
 import httpx
 import pymupdf
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
+from fastapi.responses import HTMLResponse
 from loguru import logger
 from markitdown import MarkItDown
 from pydantic import BaseModel, Field, HttpUrl, StringConstraints
@@ -725,6 +726,40 @@ async def get_public_document_blocks(
 
     result = await db.exec(select(Block).where(Block.document_id == document_id).order_by(col(Block.idx)))
     return result.all()
+
+
+@public_router.get("/{document_id}/og-preview", response_class=HTMLResponse)
+async def get_og_preview(document_id: UUID, db: DbSession) -> HTMLResponse:
+    """Return HTML with og:* meta tags for social media bots."""
+    result = await db.exec(select(Document).where(Document.id == document_id, col(Document.is_public).is_(True)))
+    document = result.first()
+    if not document:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    title = document.title or "Untitled"
+    url = f"https://yapit.md/listen/{document_id}"
+
+    html = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="{title}" />
+    <meta property="og:description" content="Listen on Yapit" />
+    <meta property="og:image" content="https://yapit.md/og-image.png" />
+    <meta property="og:url" content="{url}" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="{title}" />
+    <meta name="twitter:description" content="Listen on Yapit" />
+    <meta name="twitter:image" content="https://yapit.md/og-image.png" />
+    <meta http-equiv="refresh" content="0;url={url}">
+    <title>{title}</title>
+</head>
+<body>
+    <p>Redirecting to <a href="{url}">{url}</a>...</p>
+</body>
+</html>"""
+    return HTMLResponse(content=html)
 
 
 class DocumentImportResponse(BaseModel):
