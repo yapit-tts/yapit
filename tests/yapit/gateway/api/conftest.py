@@ -1,3 +1,4 @@
+import os
 import shutil
 
 import httpx
@@ -26,43 +27,65 @@ DEFAULT_TEST_USER = User(
 )
 
 
+class CIPostgres:
+    """Wrapper for CI service container to match testcontainers interface."""
+
+    def __init__(self, url: str):
+        self._url = url
+
+    def get_connection_url(self) -> str:
+        return self._url
+
+
+class CIRedis:
+    """Wrapper for CI service container to match testcontainers interface."""
+
+    def __init__(self, url: str):
+        self._url = url
+
+    def get_container_host_ip(self) -> str:
+        return "localhost"
+
+    def get_exposed_port(self, _: int) -> int:
+        return 6379
+
+
 @pytest.fixture(scope="session")
 def postgres_container():
-    with PostgresContainer("postgres:16-alpine", driver="asyncpg") as postgres:
-        yield postgres
+    # CI provides pre-started service containers via env vars
+    if url := os.environ.get("TEST_POSTGRES_URL"):
+        yield CIPostgres(url)
+    else:
+        with PostgresContainer("postgres:16-alpine", driver="asyncpg") as postgres:
+            yield postgres
 
 
 @pytest.fixture(scope="session")
 def redis_container():
-    with RedisContainer("redis:7-alpine") as redis:
-        yield redis
+    if os.environ.get("TEST_REDIS_URL"):
+        yield CIRedis(os.environ["TEST_REDIS_URL"])
+    else:
+        with RedisContainer("redis:7-alpine") as redis:
+            yield redis
 
 
 @pytest_asyncio.fixture(scope="function")
 async def app(postgres_container, redis_container) -> FastAPI:
-    # Clean up any existing database state
     await close_db()
 
-    # Clean up test cache directories
     shutil.rmtree("test_audio_cache", ignore_errors=True)
     shutil.rmtree("test_document_cache", ignore_errors=True)
 
-    # Override only test-specific values; everything else comes from .env.dev via uv run --env-file
     settings = Settings(
-        # Test containers (must override)
         database_url=postgres_container.get_connection_url(),
         redis_url=f"redis://{redis_container.get_container_host_ip()}:{redis_container.get_exposed_port(6379)}",
-        # Test-specific cache paths (avoid conflicts with dev)
         audio_cache_config=CacheConfig(path="test_audio_cache"),
         document_cache_config=CacheConfig(path="test_document_cache"),
-        # Auth (mocked in tests)
         stack_auth_api_host="",
         stack_auth_project_id="",
         stack_auth_server_key="",
-        # Processor configs
         tts_processors_file="tests/empty_processors.json",
-        ai_processor=None,  # Disable Gemini (needs API key)
-        # Disable metrics (no TimescaleDB in tests)
+        ai_processor=None,
         metrics_database_url=None,
     )
 
