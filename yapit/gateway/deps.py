@@ -13,7 +13,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from yapit.gateway.auth import authenticate
 from yapit.gateway.cache import Cache, CacheConfig, Caches, SqliteCache
 from yapit.gateway.config import Settings, get_settings
-from yapit.gateway.db import create_session, get_by_slug_or_404, get_or_404
+from yapit.gateway.db import create_session, get_or_404
 from yapit.gateway.document.gemini import GeminiExtractor
 from yapit.gateway.document.processing import ProcessorConfig
 from yapit.gateway.domain_models import (
@@ -71,7 +71,10 @@ async def get_model(
     db: DbSession,
     model_slug: str,
 ) -> TTSModel:
-    return await get_by_slug_or_404(db, TTSModel, model_slug)
+    model = (await db.exec(select(TTSModel).where(TTSModel.slug == model_slug))).first()
+    if not model:
+        raise ResourceNotFoundError(TTSModel.__name__, model_slug)
+    return model
 
 
 CurrentTTSModel = Annotated[TTSModel, Depends(get_model)]

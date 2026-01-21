@@ -2,8 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlmodel import select
 
-from yapit.gateway.db import get_by_slug_or_404
-from yapit.gateway.deps import DbSession, require_admin
+from yapit.gateway.deps import CurrentTTSModel, DbSession, require_admin
 from yapit.gateway.domain_models import (
     TTSModel,
     Voice,
@@ -76,13 +75,11 @@ async def create_model(
 
 @router.put("/models/{model_slug}")
 async def update_model(
-    model_slug: str,
+    model: CurrentTTSModel,
     model_data: ModelUpdateRequest,
     db: DbSession,
 ) -> TTSModel:
     """Update an existing TTS model."""
-    model = await get_by_slug_or_404(db, TTSModel, model_slug)
-
     update_data = model_data.model_dump(exclude_unset=True)
     for key, value in update_data.items():
         setattr(model, key, value)
@@ -94,12 +91,10 @@ async def update_model(
 
 @router.delete("/models/{model_slug}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_model(
-    model_slug: str,
+    model: CurrentTTSModel,
     db: DbSession,
 ) -> None:
     """Delete a TTS model and all its voices."""
-    model = await get_by_slug_or_404(db, TTSModel, model_slug)
-
     await db.delete(model)
     await db.commit()
 
@@ -109,20 +104,18 @@ async def delete_model(
 
 @router.post("/models/{model_slug}/voices", status_code=status.HTTP_201_CREATED)
 async def create_voice(
-    model_slug: str,
+    model: CurrentTTSModel,
     voice_data: VoiceCreateRequest,
     db: DbSession,
 ) -> Voice:
     """Create a new voice for a model."""
-    model = await get_by_slug_or_404(db, TTSModel, model_slug)
-
     existing = (
         await db.exec(select(Voice).where(Voice.slug == voice_data.slug).where(Voice.model_id == model.id))
     ).first()
     if existing:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"{Voice.__name__} with slug {voice_data.slug!r} already exists for model {model_slug!r}",
+            detail=f"{Voice.__name__} with slug {voice_data.slug!r} already exists for model {model.slug!r}",
         )
 
     voice = Voice(**voice_data.model_dump(), model_id=model.id)

@@ -5,7 +5,6 @@ from pydantic import BaseModel
 from sqlmodel import col, select
 
 from yapit.gateway.auth import authenticate
-from yapit.gateway.db import get_by_slug_or_404
 from yapit.gateway.deps import CurrentTTSModel, DbSession
 from yapit.gateway.domain_models import TTSModel
 
@@ -82,12 +81,9 @@ async def read_model(
 
 @router.get("/{model_slug}/voices", response_model=List[VoiceRead])
 async def list_voices(
-    model_slug: str,
-    db: DbSession,
+    model: CurrentTTSModel,
 ) -> List[VoiceRead]:
     """Get all active voices available for a specific model."""
-    model = await get_by_slug_or_404(db, TTSModel, model_slug)
-
     return [
         VoiceRead(
             id=voice.id,
