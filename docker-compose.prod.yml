@@ -13,7 +13,7 @@ networks:
 
 services:
   frontend:
-    image: ghcr.io/yapit-tts/frontend:${GIT_COMMIT}
+    image: ghcr.io/yapit-tts/frontend:latest
     networks:
       - yapit-network
     deploy:
@@ -62,7 +62,7 @@ services:
         order: stop-first
 
   smokescreen:
-    image: ghcr.io/yapit-tts/smokescreen:${GIT_COMMIT}
+    image: ghcr.io/yapit-tts/smokescreen:latest
     networks:
       - yapit-network
     deploy:
@@ -95,7 +95,7 @@ services:
         order: stop-first
 
   gateway:
-    image: ghcr.io/yapit-tts/gateway:${GIT_COMMIT}
+    image: ghcr.io/yapit-tts/gateway:latest
     env_file:
       - ./.env
       - ./.env.prod
@@ -136,7 +136,7 @@ services:
         - "traefik.http.routers.yapit-images.service=yapit-gateway"
 
   stack-auth:
-    image: ghcr.io/yapit-tts/stack-auth:${GIT_COMMIT}
+    image: ghcr.io/yapit-tts/stack-auth:latest
     env_file:
       - ./.env
       - ./.env.prod
@@ -172,7 +172,7 @@ services:
         - "traefik.http.services.stack-auth-dashboard.loadbalancer.server.port=8101"
 
   kokoro-cpu:
-    image: ghcr.io/yapit-tts/kokoro-cpu:${GIT_COMMIT}
+    image: ghcr.io/yapit-tts/kokoro-cpu:latest
     command: python -m yapit.workers.kokoro
     environment:
       REDIS_URL: redis://redis:6379
@@ -187,7 +187,7 @@ services:
         failure_action: rollback
 
   yolo-cpu:
-    image: ghcr.io/yapit-tts/yolo-cpu:${GIT_COMMIT}
+    image: ghcr.io/yapit-tts/yolo-cpu:latest
     command: python -m yapit.workers.yolo
     environment:
       REDIS_URL: redis://redis:6379

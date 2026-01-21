@@ -79,17 +79,30 @@ else
   exit 1
 fi
 
-# Verify expected commit is actually running (not rolled back)
-log "Verifying deployed images..."
+# Check for rollbacks by comparing expected vs running image digests
+log "Checking for rollbacks..."
 SERVICES="gateway stack-auth frontend"
+ROLLBACK_DETECTED=0
 for svc in $SERVICES; do
-  RUNNING=$(ssh "$VPS_HOST" "docker service inspect ${STACK_NAME}_${svc} --format '{{.Spec.TaskTemplate.ContainerSpec.Image}}'" 2>/dev/null | grep -oE ':[a-f0-9]{40}' | head -1 | cut -c2- || echo "")
-  if [ "$RUNNING" != "$GIT_COMMIT" ]; then
-    echo "  ✗ ${svc}: expected $GIT_COMMIT but running ${RUNNING:-unknown}"
-    echo "    Docker may have rolled back due to container crash. Check: docker service ps ${STACK_NAME}_${svc}"
-    exit 1
+  # Get the digest of :latest that we're trying to deploy
+  EXPECTED=$(ssh "$VPS_HOST" "docker inspect ghcr.io/yapit-tts/${svc}:latest --format '{{.Id}}'" 2>/dev/null || echo "")
+  # Get what the service is actually running
+  RUNNING=$(ssh "$VPS_HOST" "docker service ps ${STACK_NAME}_${svc} --format '{{.Image}}' --filter 'desired-state=running' | head -1 | xargs -I{} docker inspect {} --format '{{.Id}}'" 2>/dev/null || echo "")
+
+  if [ -z "$EXPECTED" ]; then
+    echo "  ? ${svc}: could not determine expected image"
+  elif [ "$EXPECTED" = "$RUNNING" ]; then
+    echo "  ✓ ${svc}: running latest"
+  else
+    echo "  ✗ ${svc}: possible rollback (expected ${EXPECTED:0:12}, running ${RUNNING:0:12})"
+    echo "    Check: docker service ps ${STACK_NAME}_${svc}"
+    ROLLBACK_DETECTED=1
   fi
-  echo "  ✓ ${svc}: $GIT_COMMIT"
 done
 
-log "Deploy complete: $GIT_COMMIT"
+if [ "$ROLLBACK_DETECTED" = "1" ]; then
+  log "WARNING: Possible rollback detected. Services may have crashed and reverted."
+  exit 1
+fi
+
+log "Deploy complete"
