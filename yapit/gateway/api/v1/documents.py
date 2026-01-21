@@ -706,16 +706,16 @@ async def get_og_preview(document_id: UUID, db: DbSession) -> HTMLResponse:
 <head>
     <meta charset="utf-8">
     <meta property="og:type" content="website" />
-    <meta property="og:title" content="{title} - Yapit" />
+    <meta property="og:title" content="{title}" />
     <meta property="og:description" content="Listen on Yapit" />
     <meta property="og:image" content="https://yapit.md/og-image.png" />
     <meta property="og:url" content="{url}" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="{title} - Yapit" />
+    <meta name="twitter:title" content="{title}" />
     <meta name="twitter:description" content="Listen on Yapit" />
     <meta name="twitter:image" content="https://yapit.md/og-image.png" />
     <meta http-equiv="refresh" content="0;url={url}">
-    <title>{title} - Yapit</title>
+    <title>{title}</title>
 </head>
 <body>
     <p>Redirecting to <a href="{url}">{url}</a>...</p>
