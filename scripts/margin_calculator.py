@@ -106,14 +106,18 @@ SVS_RATE = 0.27  # Social insurance rate
 # Token equivalents = input_tokens + (output_tokens * 6)
 # Use TOKENS_PER_PAGE to convert to/from approximate pages
 PLANS = {
-    # Uniform 25% yearly discount, round token numbers
+    # Uniform 25% yearly discount, round token/char numbers
     "Basic Monthly": (10, "monthly", 5_000_000, 0),
     "Basic Yearly": (90, "yearly", 5_000_000, 0),  # 25% discount
-    "Plus Monthly": (20, "monthly", 10_000_000, 1_200_000),
-    "Plus Yearly": (180, "yearly", 10_000_000, 1_200_000),  # 25% discount
+    "Plus Monthly": (20, "monthly", 10_000_000, 1_000_000),
+    "Plus Yearly": (180, "yearly", 10_000_000, 1_000_000),  # 25% discount
     "Max Monthly": (40, "monthly", 15_000_000, 3_000_000),
     "Max Yearly": (360, "yearly", 15_000_000, 3_000_000),  # 25% discount
 }
+
+# Voice character to hours conversion
+CHARS_PER_SECOND = 14  # see script in experiments/
+SECONDS_PER_HOUR = 3600
 
 # --- Scenario Settings ---
 DEFAULT_UTILIZATION = 0.75  # 75% average utilization of limits
@@ -507,6 +511,65 @@ def print_plan_limits():
     console.print(table)
 
 
+def print_value_analysis():
+    """Print value per euro analysis - what users get for their money."""
+    if PLAIN_MODE:
+        print("2b. VALUE PER EURO")
+        print("Plan\tPrice\tTokens/€\tChars/€\t~Hours\tPages/€")
+        for name, (price, interval, ocr_tokens, voice_chars) in PLANS.items():
+            months = 12 if interval == "yearly" else 1
+            monthly_price = price / months
+            tokens_per_eur = ocr_tokens / monthly_price if monthly_price > 0 else 0
+            chars_per_eur = voice_chars / monthly_price if monthly_price > 0 and voice_chars > 0 else 0
+            hours = voice_chars / CHARS_PER_SECOND / SECONDS_PER_HOUR if voice_chars > 0 else 0
+            pages_per_eur = (ocr_tokens / TOKENS_PER_PAGE) / monthly_price if monthly_price > 0 else 0
+            hours_str = f"~{hours:.0f}h" if hours > 0 else "—"
+            chars_str = f"{chars_per_eur / 1000:.0f}K" if chars_per_eur > 0 else "—"
+            period = "/yr" if interval == "yearly" else "/mo"
+            print(
+                f"{name}\t€{price}{period}\t{tokens_per_eur / 1000:.0f}K\t{chars_str}\t{hours_str}\t{pages_per_eur:.0f}"
+            )
+        print()
+        return
+
+    console.print("\n[bold yellow]2b. VALUE PER EURO[/bold yellow]")
+    console.print("[dim]What users get for their money (yearly normalized to monthly)[/dim]\n")
+
+    table = Table(box=box.ROUNDED, show_header=True, header_style="bold")
+    table.add_column("Plan", style="cyan")
+    table.add_column("Price", justify="right")
+    table.add_column("€/mo eff.", justify="right")
+    table.add_column("Tokens/€", justify="right")
+    table.add_column("Chars/€", justify="right")
+    table.add_column("~Hours", justify="right")
+    table.add_column("Pages/€", justify="right")
+
+    for name, (price, interval, ocr_tokens, voice_chars) in PLANS.items():
+        months = 12 if interval == "yearly" else 1
+        monthly_price = price / months
+        tokens_per_eur = ocr_tokens / monthly_price if monthly_price > 0 else 0
+        chars_per_eur = voice_chars / monthly_price if monthly_price > 0 and voice_chars > 0 else 0
+        hours = voice_chars / CHARS_PER_SECOND / SECONDS_PER_HOUR if voice_chars > 0 else 0
+        pages_per_eur = (ocr_tokens / TOKENS_PER_PAGE) / monthly_price if monthly_price > 0 else 0
+
+        period = "/yr" if interval == "yearly" else "/mo"
+        hours_str = f"~{hours:.0f}h" if hours > 0 else "—"
+        chars_str = f"{chars_per_eur / 1000:.0f}K" if chars_per_eur > 0 else "—"
+
+        table.add_row(
+            name,
+            f"€{price}{period}",
+            f"€{monthly_price:.2f}",
+            f"{tokens_per_eur / 1000:.0f}K",
+            chars_str,
+            hours_str,
+            f"{pages_per_eur:.0f}",
+        )
+
+    console.print(table)
+    console.print(f"[dim]Hours based on ~{CHARS_PER_SECOND} chars/second speech rate. TTS-1-Max uses 2x chars.[/dim]")
+
+
 def print_breakeven_table():
     """Print break-even utilization by VAT rate."""
     if PLAIN_MODE:
@@ -849,6 +912,7 @@ def main():
     print_config_summary()
     print_unit_costs()
     print_plan_limits()
+    print_value_analysis()
     print_breakeven_table()
     print_profit_by_utilization()
     print_margin_breakdown()

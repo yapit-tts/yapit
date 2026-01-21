@@ -74,31 +74,43 @@ PRODUCTS = [
     {
         "id": "yapit_basic",
         "name": "Yapit Basic",
-        "description": "Unlimited Kokoro TTS (all languages), 500 OCR pages/month",
+        "description": "Unlimited Kokoro TTS, 5M AI extraction tokens/month",
         "active": True,
         "prices": [
-            {"id": "yapit_basic_monthly", "amount": 700, "interval": "month"},
-            {"id": "yapit_basic_yearly", "amount": 7500, "interval": "year"},
+            # === OLD PRICES (deactivated) ===
+            {"id": "yapit_basic_monthly", "amount": 700, "interval": "month", "active": False},
+            {"id": "yapit_basic_yearly", "amount": 7500, "interval": "year", "active": False},
+            # === NEW PRICES (v2) ===
+            {"id": "yapit_basic_monthly_v2", "amount": 1000, "interval": "month"},
+            {"id": "yapit_basic_yearly_v2", "amount": 9000, "interval": "year"},
         ],
     },
     {
         "id": "yapit_plus",
         "name": "Yapit Plus",
-        "description": "Premium voices (1.2M chars/mo), 1,500 OCR pages/month",
+        "description": "1M premium voice chars/month, 10M AI extraction tokens/month",
         "active": True,
         "prices": [
-            {"id": "yapit_plus_monthly", "amount": 2000, "interval": "month"},
-            {"id": "yapit_plus_yearly", "amount": 19200, "interval": "year"},
+            # === OLD PRICES (deactivated) ===
+            {"id": "yapit_plus_monthly", "amount": 2000, "interval": "month", "active": False},
+            {"id": "yapit_plus_yearly", "amount": 19200, "interval": "year", "active": False},
+            # === NEW PRICES (v2) ===
+            {"id": "yapit_plus_monthly_v2", "amount": 2000, "interval": "month"},
+            {"id": "yapit_plus_yearly_v2", "amount": 18000, "interval": "year"},
         ],
     },
     {
         "id": "yapit_max",
         "name": "Yapit Max",
-        "description": "Premium voices (3M chars/mo), 3,000 OCR pages/month",
+        "description": "3M premium voice chars/month, 15M AI extraction tokens/month",
         "active": True,
         "prices": [
-            {"id": "yapit_max_monthly", "amount": 4000, "interval": "month"},
-            {"id": "yapit_max_yearly", "amount": 24000, "interval": "year"},
+            # === OLD PRICES (deactivated) ===
+            {"id": "yapit_max_monthly", "amount": 4000, "interval": "month", "active": False},
+            {"id": "yapit_max_yearly", "amount": 24000, "interval": "year", "active": False},
+            # === NEW PRICES (v2) ===
+            {"id": "yapit_max_monthly_v2", "amount": 4000, "interval": "month"},
+            {"id": "yapit_max_yearly_v2", "amount": 36000, "interval": "year"},
         ],
     },
 ]
@@ -106,9 +118,7 @@ PRODUCTS = [
 # Coupons define the discount. Promo codes are customer-facing codes that reference coupons.
 # Using amount_off (not percent_off) to cap discount value regardless of billing interval.
 COUPONS = [
-    # === OLD PERCENT-OFF COUPONS (deactivated) ===
-    # These gave full discount on yearly plans when users switched intervals.
-    # Keeping for reference, but inactive.
+    # === OLD COUPONS (deactivated) ===
     {
         "id": "beta_100",
         "name": "Beta - Free First Month (DEPRECATED)",
@@ -132,24 +142,42 @@ COUPONS = [
         "applies_to": ["yapit_plus"],
         "active": False,
     },
-    # === NEW AMOUNT-OFF COUPONS ===
-    # Fixed euro amounts - safe regardless of billing interval.
     {
         "id": "yapit_7_off",
-        "name": "€7 Off Basic",
+        "name": "€7 Off Basic (DEPRECATED)",
         "amount_off": 700,
         "currency": "eur",
         "duration": "once",
         "applies_to": ["yapit_basic"],
-        "active": True,
+        "active": False,
     },
     {
         "id": "yapit_10_off",
-        "name": "€10 Off Plus",
+        "name": "€10 Off Plus (DEPRECATED)",
         "amount_off": 1000,
         "currency": "eur",
         "duration": "once",
         "applies_to": ["yapit_plus"],
+        "active": False,
+    },
+    # === NEW COUPONS (v2) ===
+    # €10 off any plan: 100% off Basic, 50% off Plus, 25% off Max
+    {
+        "id": "yapit_10_off_v2",
+        "name": "€10 Off Any Plan",
+        "amount_off": 1000,
+        "currency": "eur",
+        "duration": "once",
+        # No applies_to = works on all products
+        "active": True,
+    },
+    # Beta: €40 off = free Max monthly (for testing friends)
+    {
+        "id": "yapit_beta_40",
+        "name": "Beta Tester - €40 Off",
+        "amount_off": 4000,
+        "currency": "eur",
+        "duration": "once",
         "active": True,
     },
 ]
@@ -175,17 +203,29 @@ PROMO_CODES = [
         "max_redemptions": 100,
         "active": False,
     },
-    # === NEW PROMO CODES ===
     {
         "coupon": "yapit_7_off",
         "code": "YAPIT7",
         "max_redemptions": 500,
-        "active": True,
+        "active": False,
     },
     {
         "coupon": "yapit_10_off",
         "code": "YAPIT10",
         "max_redemptions": 200,
+        "active": False,
+    },
+    # === NEW PROMO CODES (v2) ===
+    {
+        "coupon": "yapit_10_off_v2",
+        "code": "YAP10",
+        "max_redemptions": 500,
+        "active": True,
+    },
+    {
+        "coupon": "yapit_beta_40",
+        "code": "VIP",
+        "max_redemptions": 20,
         "active": True,
     },
 ]
@@ -404,7 +444,7 @@ def upsert_price(client: stripe.StripeClient, product_id: str, price: dict) -> s
             "unit_amount": price["amount"],
             "currency": "eur",
             "recurring": {"interval": price["interval"]},
-            "tax_behavior": "inclusive",
+            "tax_behavior": "unspecified",  # Inherits from account Tax Settings (automatic = EUR inclusive, USD/CAD exclusive)
             "active": price.get("active", True),
         }
     )
@@ -515,7 +555,7 @@ def upsert_portal_config(
             continue
         product_prices = []
         for price in product["prices"]:
-            if price["id"] in price_ids:
+            if price["id"] in price_ids and price.get("active", True):
                 product_prices.append(price_ids[price["id"]])
         if product_prices:
             products_config.append(
@@ -677,12 +717,21 @@ def main():
     else:
         print("\n\nWebhook Endpoint: skipped (test mode uses stripe listen)")
 
-    # Summary
+    # Summary - only show active prices (v2)
     print(f"\n{'=' * 60}")
     print("Price IDs for .env.dev / .env.prod:")
     print(f"{'=' * 60}")
     for lookup_key, stripe_id in sorted(price_ids.items()):
-        env_var = lookup_key.upper().replace("YAPIT_", "STRIPE_PRICE_")
+        # Skip old/deactivated prices
+        is_active = True
+        for product in PRODUCTS:
+            for price in product["prices"]:
+                if price["id"] == lookup_key and not price.get("active", True):
+                    is_active = False
+                    break
+        if not is_active:
+            continue
+        env_var = lookup_key.upper().replace("YAPIT_", "STRIPE_PRICE_").replace("_V2", "")
         print(f"  {env_var}={stripe_id}")
 
     print("\nAdd these to .env.dev (test) or .env.prod (live)")
