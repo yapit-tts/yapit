@@ -103,6 +103,12 @@ jobs:
           - name: yolo-cpu
             context: .
             dockerfile: ./yapit/workers/yolo/Dockerfile.cpu
+          - name: kokoro-gpu
+            context: .
+            dockerfile: ./yapit/workers/kokoro/Dockerfile.gpu
+          - name: yolo-gpu
+            context: .
+            dockerfile: ./yapit/workers/yolo/Dockerfile.gpu
           - name: stack-auth
             context: .
             dockerfile: ./docker/Dockerfile.stackauth

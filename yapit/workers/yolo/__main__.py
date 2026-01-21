@@ -13,6 +13,7 @@ from dataclasses import dataclass
 
 import pymupdf
 import redis.asyncio as redis
+import torch
 import torchvision.ops
 from doclayout_yolo import YOLOv10
 from huggingface_hub import hf_hub_download
@@ -32,6 +33,8 @@ from yapit.contracts import (
     DetectedFigure as DetectedFigureContract,
 )
 from yapit.workers.queue import QueueConfig, pull_job, track_processing
+
+DEVICE: str = os.getenv("DEVICE", "cpu")
 
 HF_REPO_ID = "juliozhao/DocLayout-YOLO-DocStructBench"
 HF_MODEL_FILENAME = "doclayout_yolo_docstructbench_imgsz1024.pt"
@@ -90,7 +93,7 @@ def detect_figures(page_image: bytes, page_width: int, page_height: int) -> list
     assert _model is not None, "Model not loaded"
     img = Image.open(io.BytesIO(page_image))
 
-    results = _model.predict(img, imgsz=IMGSZ, conf=CONF_THRESHOLD, device="cpu", verbose=False)
+    results = _model.predict(img, imgsz=IMGSZ, conf=CONF_THRESHOLD, device=DEVICE, verbose=False)
     det = results[0]
 
     # Filter to figure class only
@@ -310,5 +313,8 @@ async def run_worker(redis_url: str, worker_id: str) -> None:
 
 
 if __name__ == "__main__":
+    if DEVICE == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("CUDA requested but unavailable, please check your setup.")
+    logger.info(f"YOLO worker starting with device={DEVICE}")
     load_model()
     asyncio.run(run_worker(os.environ["REDIS_URL"], os.environ["WORKER_ID"]))

@@ -1,0 +1,56 @@
+# External worker compose file - connect GPU/CPU machines via Tailscale
+#
+# Prerequisites: Docker + nvidia-container-toolkit, Tailscale connected, REDIS_URL set
+#
+# MPS (optional, one-time): sudo nvidia-cuda-mps-control -d
+#
+# Start: docker compose -f docker-compose.worker.yml up -d --scale kokoro-gpu=2 --scale yolo-gpu=2 --scale kokoro-cpu=1 --scale yolo-cpu=1
+# Stop:  docker compose -f docker-compose.worker.yml down
+# Logs:  docker compose -f docker-compose.worker.yml logs -f
+
+services:
+  kokoro-gpu:
+    image: ghcr.io/yapit-tts/kokoro-gpu:latest
+    environment:
+      REDIS_URL: ${REDIS_URL}
+      WORKER_ID: ${HOSTNAME:-worker}-kokoro-gpu
+      DEVICE: cuda
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
+    restart: unless-stopped
+
+  kokoro-cpu:
+    image: ghcr.io/yapit-tts/kokoro-cpu:latest
+    environment:
+      REDIS_URL: ${REDIS_URL}
+      WORKER_ID: ${HOSTNAME:-worker}-kokoro-cpu
+      DEVICE: cpu
+      OMP_NUM_THREADS: "2"
+    restart: unless-stopped
+
+  yolo-gpu:
+    image: ghcr.io/yapit-tts/yolo-gpu:latest
+    environment:
+      REDIS_URL: ${REDIS_URL}
+      WORKER_ID: ${HOSTNAME:-worker}-yolo-gpu
+      DEVICE: cuda
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
+    restart: unless-stopped
+
+  yolo-cpu:
+    image: ghcr.io/yapit-tts/yolo-cpu:latest
+    environment:
+      REDIS_URL: ${REDIS_URL}
+      WORKER_ID: ${HOSTNAME:-worker}-yolo-cpu
+      DEVICE: cpu
+      OMP_NUM_THREADS: "2"
+    restart: unless-stopped
