@@ -245,7 +245,7 @@ async def prepare_document(
         total_pages=page_count,
         title=title,
         url=str(request.url),
-        file_name=Path(request.url.path).name or None,
+        file_name=Path(request.url.path or "/").name or None,
         file_size=len(content),
     )
 
@@ -654,7 +654,7 @@ async def get_document_blocks(
     Data size is small (~200 bytes/block), so even 1000+ blocks is fine.
     """
     result = await db.exec(select(Block).where(Block.document_id == document.id).order_by(col(Block.idx)))
-    return result.all()
+    return list(result.all())
 
 
 class PositionUpdate(BaseModel):
@@ -725,7 +725,7 @@ async def get_public_document_blocks(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
 
     result = await db.exec(select(Block).where(Block.document_id == document_id).order_by(col(Block.idx)))
-    return result.all()
+    return list(result.all())
 
 
 @public_router.get("/{document_id}/og-preview", response_class=HTMLResponse)

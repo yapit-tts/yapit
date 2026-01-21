@@ -7,7 +7,7 @@ from fastapi import APIRouter, Header, Request, status
 from loguru import logger
 from pydantic import BaseModel
 from sqlalchemy import func, update
-from sqlmodel import delete, select
+from sqlmodel import col, delete, select
 
 from yapit.gateway.auth import ANONYMOUS_ID_PREFIX
 from yapit.gateway.deps import AuthenticatedUser, DbSession, SettingsDep
@@ -157,7 +157,9 @@ async def claim_anonymous_data(
 
     anon_user_id = f"{ANONYMOUS_ID_PREFIX}{x_anonymous_id}"
 
-    doc_result = await db.exec(update(Document).where(Document.user_id == anon_user_id).values(user_id=auth_user.id))
+    doc_result = await db.exec(
+        update(Document).where(col(Document.user_id) == anon_user_id).values(user_id=auth_user.id)
+    )
 
     await db.commit()
 
@@ -205,13 +207,13 @@ async def delete_account(
                 logger.warning(f"Failed to cancel Stripe subscription: {e}")
 
     # 2. Delete user-owned data (cascades handle blocks → block variants)
-    await db.exec(delete(Document).where(Document.user_id == user_id))
-    await db.exec(delete(UserPreferences).where(UserPreferences.user_id == user_id))
+    await db.exec(delete(Document).where(col(Document.user_id) == user_id))
+    await db.exec(delete(UserPreferences).where(col(UserPreferences.user_id) == user_id))
 
     # 3. Anonymize billing data (preserves patterns for aggregate analysis)
-    await db.exec(update(UserSubscription).where(UserSubscription.user_id == user_id).values(user_id=anon_id))
-    await db.exec(update(UsagePeriod).where(UsagePeriod.user_id == user_id).values(user_id=anon_id))
-    await db.exec(update(UsageLog).where(UsageLog.user_id == user_id).values(user_id=anon_id))
+    await db.exec(update(UserSubscription).where(col(UserSubscription.user_id) == user_id).values(user_id=anon_id))
+    await db.exec(update(UsagePeriod).where(col(UsagePeriod.user_id) == user_id).values(user_id=anon_id))
+    await db.exec(update(UsageLog).where(col(UsageLog.user_id) == user_id).values(user_id=anon_id))
 
     await db.commit()
 

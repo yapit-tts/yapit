@@ -213,7 +213,7 @@ def create_app(
     app.dependency_overrides[get_settings] = lambda: settings
 
     app.add_middleware(
-        CORSMiddleware,
+        CORSMiddleware,  # type: ignore[arg-type]  # Starlette typing limitation
         allow_origins=settings.cors_origins,
         allow_credentials=True,
         allow_methods=["*"],
