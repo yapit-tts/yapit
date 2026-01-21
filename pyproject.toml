@@ -16,16 +16,8 @@ classifiers = [
     "Topic :: Multimedia :: Sound/Audio :: Speech",
 ]
 
-# pip install yapit | (worker) contracts
 dependencies = [
-    "huggingface-hub>=1.3.2",
-    "pydantic~=2.12.5",
-]
-
-[project.optional-dependencies]
-
-# pip install yapit[gateway] | core application / API
-gateway = [
+  "pydantic~=2.12.5",
   "fastapi[standard]~=0.128.0",
   "sqlmodel~=0.0.31",
   "redis[hiredis]~=7.1.0",
@@ -41,7 +33,7 @@ gateway = [
   "runpod~=1.8.1",
   "markdown-it-py~=4.0.0",
   "mdit-py-plugins~=0.5.0",
-  "stripe~=12.0",
+  "stripe~=14.2",
   "loguru~=0.7.3",
   "pypdf~=6.6",
   "google-genai~=1.59.0",
@@ -49,6 +41,8 @@ gateway = [
   "pillow~=12.1",
   "aiosqlite~=0.22.1",
 ]
+
+[project.optional-dependencies]
 
 test = [
   "pytest~=8.3.5",

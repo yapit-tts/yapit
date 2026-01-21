@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Annotated, AsyncIterator
 from uuid import UUID
 
+import stripe
 from fastapi import Depends, HTTPException, Request, status
 from redis.asyncio import Redis
 from sqlalchemy.orm import selectinload
@@ -146,6 +147,13 @@ async def get_ai_extractor(request: Request) -> GeminiExtractor | None:
     return request.app.state.ai_extractor
 
 
+def get_stripe_client(settings: SettingsDep) -> stripe.StripeClient | None:
+    """Stripe client for billing operations. Returns None if billing is not configured."""
+    if not settings.stripe_secret_key:
+        return None
+    return stripe.StripeClient(settings.stripe_secret_key)
+
+
 RedisClient = Annotated[Redis, Depends(get_redis_client)]
 AiExtractorConfigDep = Annotated[ProcessorConfig | None, Depends(get_ai_extractor_config)]
 AiExtractorDep = Annotated[GeminiExtractor | None, Depends(get_ai_extractor)]
@@ -158,3 +166,4 @@ CurrentBlock = Annotated[Block, Depends(get_block)]
 CurrentBlockVariant = Annotated[BlockVariant, Depends(get_block_variant)]
 AuthenticatedUser = Annotated[User, Depends(authenticate)]
 IsAdmin = Annotated[bool, Depends(is_admin)]
+StripeClient = Annotated[stripe.StripeClient | None, Depends(get_stripe_client)]
