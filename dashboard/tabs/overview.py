@@ -47,13 +47,14 @@ def _get_kpi_data(df: pd.DataFrame, comparison: pd.DataFrame | None = None) -> l
     audio_ms = synthesis_complete["audio_duration_ms"].sum()
     audio_min = audio_ms / 60000
 
-    # Requests (synthesis + cache hits)
+    # Blocks synthesized (actual synthesis work, not cache hits)
     synthesis_queued = get_events(df, "synthesis_queued")
     cache_hits = get_events(df, "cache_hit")
-    total_requests = len(synthesis_queued) + len(cache_hits)
+    blocks_synthesized = len(synthesis_queued)
 
-    # Cache hit rate (audio only for now)
-    cache_rate = calculate_rate(len(cache_hits), len(synthesis_queued))
+    # Cache hit rate: cache_hits / total_requests
+    total_requests = len(synthesis_queued) + len(cache_hits)
+    cache_rate = (len(cache_hits) / total_requests * 100) if total_requests > 0 else 0
 
     # Error rate
     synthesis_errors = get_events(df, "synthesis_error")
@@ -74,9 +75,9 @@ def _get_kpi_data(df: pd.DataFrame, comparison: pd.DataFrame | None = None) -> l
         if comp_audio_min > 0:
             deltas["audio"] = delta_str(audio_min, comp_audio_min)
 
-        comp_requests = len(get_events(comparison, "synthesis_queued")) + len(get_events(comparison, "cache_hit"))
-        if comp_requests > 0:
-            deltas["requests"] = delta_str(total_requests, comp_requests)
+        comp_synthesized = len(get_events(comparison, "synthesis_queued"))
+        if comp_synthesized > 0:
+            deltas["synthesized"] = delta_str(blocks_synthesized, comp_synthesized)
 
         comp_errors = get_events(comparison, "synthesis_error")
         comp_complete = get_events(comparison, "synthesis_complete")
@@ -93,26 +94,26 @@ def _get_kpi_data(df: pd.DataFrame, comparison: pd.DataFrame | None = None) -> l
             "help": "Total audio duration synthesized",
         },
         {
-            "label": "Requests",
-            "value": format_number(total_requests),
-            "delta": deltas.get("requests"),
-            "help": "Synthesis requests + cache hits",
+            "label": "Blocks Synthesized",
+            "value": format_number(blocks_synthesized),
+            "delta": deltas.get("synthesized"),
+            "help": "Audio blocks that needed synthesis (cache misses)",
         },
         {
             "label": "Cache Hit Rate",
             "value": format_percent(cache_rate),
-            "help": "Audio cache hit rate",
+            "help": "Blocks served from cache vs total requested",
         },
         {
-            "label": "Error Rate",
+            "label": "Synth Error Rate",
             "value": format_percent(error_rate),
             "delta": deltas.get("error_rate"),
             "help": "Synthesis error rate",
         },
         {
-            "label": "Avg Latency",
+            "label": "Avg Synth Latency",
             "value": format_duration(avg_latency),
-            "help": "Average worker processing time",
+            "help": "Average synthesis worker processing time",
         },
         {
             "label": "Gemini Cost",
