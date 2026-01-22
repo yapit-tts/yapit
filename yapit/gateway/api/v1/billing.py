@@ -335,7 +335,7 @@ async def _handle_checkout_completed(
         logger.error(f"Plan {plan_tier} not found in database")
         return
 
-    first_item = stripe_sub.items.data[0]
+    first_item = stripe_sub["items"].data[0]
     period_start = datetime.fromtimestamp(first_item.current_period_start, tz=dt.UTC)
     period_end = datetime.fromtimestamp(first_item.current_period_end, tz=dt.UTC)
 
@@ -374,26 +374,71 @@ async def _handle_checkout_completed(
 
 
 async def _handle_subscription_updated(stripe_sub: stripe.Subscription, db: DbSession) -> None:
-    """Handle subscription updates (plan change, status change, etc.)."""
+    """Handle subscription updates (plan change, status change, etc.). Creates subscription if not found (upsert)."""
     result = await db.exec(select(UserSubscription).where(UserSubscription.stripe_subscription_id == stripe_sub.id))
     subscription = result.first()
+
+    first_item = stripe_sub["items"].data[0]
+    now = datetime.now(tz=dt.UTC)
+    period_start = datetime.fromtimestamp(first_item.current_period_start, tz=dt.UTC)
+    period_end = datetime.fromtimestamp(first_item.current_period_end, tz=dt.UTC)
+    price_id = first_item.price.id if first_item.price else None
+
+    # Upsert: create subscription if not found (handles race condition with checkout.session.completed)
     if not subscription:
-        logger.warning(f"Subscription {stripe_sub.id} not found in database")
+        user_id = stripe_sub.metadata.get("user_id") if stripe_sub.metadata else None
+        if not user_id:
+            logger.error(f"Subscription {stripe_sub.id} not in DB and missing user_id in metadata - cannot create")
+            return
+
+        if not price_id:
+            logger.error(f"Subscription {stripe_sub.id} not in DB and missing price_id - cannot create")
+            return
+
+        plan_result = await db.exec(
+            select(Plan).where((Plan.stripe_price_id_monthly == price_id) | (Plan.stripe_price_id_yearly == price_id))
+        )
+        plan = plan_result.first()
+        if not plan or not plan.id:
+            logger.error(f"Subscription {stripe_sub.id} not in DB and price {price_id} not found - cannot create")
+            return
+
+        customer_id = (
+            stripe_sub.customer
+            if isinstance(stripe_sub.customer, str)
+            else (stripe_sub.customer.id if stripe_sub.customer else None)
+        )
+
+        subscription = UserSubscription(
+            user_id=user_id,
+            plan_id=plan.id,
+            status=_map_stripe_status(stripe_sub.status),
+            stripe_customer_id=customer_id,
+            stripe_subscription_id=stripe_sub.id,
+            current_period_start=period_start,
+            current_period_end=period_end,
+            cancel_at_period_end=stripe_sub.cancel_at_period_end,
+            highest_tier_subscribed=plan.tier,
+            created=now,
+            updated=now,
+        )
+        db.add(subscription)
+        await db.commit()
+        logger.info(
+            f"Created subscription for user {user_id} via subscription.updated event (upsert): plan={plan.tier}"
+        )
         return
 
-    first_item = stripe_sub.items.data[0]
-    now = datetime.now(tz=dt.UTC)
     old_status = subscription.status
 
     subscription.status = _map_stripe_status(stripe_sub.status)
-    subscription.current_period_start = datetime.fromtimestamp(first_item.current_period_start, tz=dt.UTC)
-    subscription.current_period_end = datetime.fromtimestamp(first_item.current_period_end, tz=dt.UTC)
+    subscription.current_period_start = period_start
+    subscription.current_period_end = period_end
     subscription.cancel_at_period_end = stripe_sub.cancel_at_period_end
     if stripe_sub.canceled_at:
         subscription.canceled_at = datetime.fromtimestamp(stripe_sub.canceled_at, tz=dt.UTC)
 
     # Update plan if price changed (handles upgrades/downgrades)
-    price_id = first_item.price.id if first_item.price else None
     if price_id:
         plan_result = await db.exec(
             select(Plan).where((Plan.stripe_price_id_monthly == price_id) | (Plan.stripe_price_id_yearly == price_id))
@@ -466,6 +511,10 @@ async def _handle_invoice_paid(invoice: stripe.Invoice, db: DbSession) -> None:
         return
 
     if not invoice.period_start or not invoice.period_end:
+        logger.error(
+            f"Invoice {invoice.id} missing period dates (start={invoice.period_start}, end={invoice.period_end}) "
+            f"- cannot process renewal for subscription {subscription_id}"
+        )
         return
 
     # Calculate rollover from the ending period BEFORE updating dates
@@ -508,26 +557,48 @@ async def _handle_invoice_paid(invoice: stripe.Invoice, db: DbSession) -> None:
         subscription.grace_tier = None
         subscription.grace_until = None
 
-    # Create new usage period (old one is kept for history)
-    new_period = UsagePeriod(
-        user_id=subscription.user_id,
-        period_start=subscription.current_period_start,
-        period_end=subscription.current_period_end,
+    # Create new usage period if it doesn't exist (idempotency for webhook retries)
+    existing_period = await db.exec(
+        select(UsagePeriod).where(
+            UsagePeriod.user_id == subscription.user_id,
+            UsagePeriod.period_start == subscription.current_period_start,
+        )
     )
-    db.add(new_period)
+    if not existing_period.first():
+        new_period = UsagePeriod(
+            user_id=subscription.user_id,
+            period_start=subscription.current_period_start,
+            period_end=subscription.current_period_end,
+        )
+        db.add(new_period)
+        logger.info(f"Created new usage period for subscription {subscription_id}")
 
     await db.commit()
-    logger.info(f"Created new usage period for subscription {subscription_id}")
 
 
 async def _handle_invoice_failed(invoice: stripe.Invoice, db: DbSession) -> None:
     subscription_id = _get_invoice_subscription_id(invoice)
     if not subscription_id:
+        if invoice.billing_reason and "subscription" in invoice.billing_reason:
+            # Subscription invoice but can't extract ID - API may have changed
+            logger.error(
+                f"Invoice {invoice.id} failed with billing_reason={invoice.billing_reason} "
+                f"but couldn't extract subscription_id - possible API change"
+            )
+        else:
+            # One-time invoice (manual, credit pack, etc.) - not handled yet
+            logger.info(
+                f"Invoice {invoice.id} failed (billing_reason={invoice.billing_reason}) - not subscription-related"
+            )
         return
 
     result = await db.exec(select(UserSubscription).where(UserSubscription.stripe_subscription_id == subscription_id))
     subscription = result.first()
     if not subscription:
+        logger.error(
+            f"Invoice {invoice.id} failed for subscription {subscription_id} but subscription not found in DB "
+            f"- user may retain access despite failed payment"
+        )
         return
 
     subscription.status = SubscriptionStatus.past_due

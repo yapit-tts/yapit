@@ -199,6 +199,7 @@ Fix: With Issue 1 fixed, script now reaches product updates. Re-run `stripe_setu
 ## Gotchas (High-Level)
 
 ### Stripe API / SDK Quirks
+- **Python SDK v14 dict method shadowing** — Stripe objects inherit from dict, so `.items`, `.keys`, `.values`, `.get`, `.update` etc. are dict methods, not API fields. Use bracket notation: `subscription["items"]` not `subscription.items`. The latter returns `dict.items()` builtin method.
 - **Coupon `applies_to` is write-only** — Set on create, but NOT returned in retrieve/list responses. Can't validate via API. Verify in Dashboard if needed.
 - **Python SDK ignores empty arrays** — `{"conditions": []}` doesn't clear existing conditions. Must use raw HTTP with form-encoded empty value: `data={'field[nested][array]': ''}`. See `_clear_portal_schedule_conditions()` in `stripe_setup.py`. Source: discovered via testing, confirmed by [SDK releases](https://github.com/stripe/stripe-python/releases) mentioning "emptyable" array types.
 - **Promo code API structure** — Creating promo codes requires `{"promotion": {"type": "coupon", "coupon": "coupon_id"}}`, not top-level `coupon` field. Retrieving uses `promotion.coupon` not `coupon.id`.
@@ -225,6 +226,9 @@ Fix: With Issue 1 fixed, script now reaches product updates. Re-run `stripe_setu
 1. **Compare CLI vs SDK behavior** — If SDK doesn't work, try CLI. If CLI works, it's an SDK serialization issue.
 2. **Use raw HTTP for edge cases** — `requests` library with form-encoded data matches CLI behavior exactly.
 3. **Read the SDK source** — [stripe-python](https://github.com/stripe/stripe-python) shows how it serializes requests.
+
+### Debugging Webhook Issues
+- **Webhook 500 errors** — Check gateway container logs for the actual traceback, not just Stripe dashboard/CLI status codes.
 
 ### Assumptions / Corners Cut
 - Portal config `schedule_at_period_end` clearing uses raw HTTP instead of SDK — workaround for SDK limitation
