@@ -350,6 +350,7 @@ async def _handle_checkout_completed(
         existing.current_period_start = period_start
         existing.current_period_end = period_end
         existing.cancel_at_period_end = stripe_sub.cancel_at_period_end
+        existing.cancel_at = datetime.fromtimestamp(stripe_sub.cancel_at, tz=dt.UTC) if stripe_sub.cancel_at else None
         existing.updated = now
         if _rank(plan.tier) > _rank(existing.highest_tier_subscribed):
             existing.highest_tier_subscribed = plan.tier
@@ -363,6 +364,7 @@ async def _handle_checkout_completed(
             current_period_start=period_start,
             current_period_end=period_end,
             cancel_at_period_end=stripe_sub.cancel_at_period_end,
+            cancel_at=datetime.fromtimestamp(stripe_sub.cancel_at, tz=dt.UTC) if stripe_sub.cancel_at else None,
             highest_tier_subscribed=plan.tier,
             created=now,
             updated=now,
@@ -418,6 +420,7 @@ async def _handle_subscription_updated(stripe_sub: stripe.Subscription, db: DbSe
             current_period_start=period_start,
             current_period_end=period_end,
             cancel_at_period_end=stripe_sub.cancel_at_period_end,
+            cancel_at=datetime.fromtimestamp(stripe_sub.cancel_at, tz=dt.UTC) if stripe_sub.cancel_at else None,
             highest_tier_subscribed=plan.tier,
             created=now,
             updated=now,
@@ -435,6 +438,7 @@ async def _handle_subscription_updated(stripe_sub: stripe.Subscription, db: DbSe
     subscription.current_period_start = period_start
     subscription.current_period_end = period_end
     subscription.cancel_at_period_end = stripe_sub.cancel_at_period_end
+    subscription.cancel_at = datetime.fromtimestamp(stripe_sub.cancel_at, tz=dt.UTC) if stripe_sub.cancel_at else None
     if stripe_sub.canceled_at:
         subscription.canceled_at = datetime.fromtimestamp(stripe_sub.canceled_at, tz=dt.UTC)
 
@@ -470,7 +474,9 @@ async def _handle_subscription_updated(stripe_sub: stripe.Subscription, db: DbSe
             logger.info(f"Plan changed: {old_tier} -> {new_plan.tier}")
 
     subscription.updated = now
+
     await db.commit()
+
     logger.info(f"Updated subscription {stripe_sub.id}: status={subscription.status}")
 
 

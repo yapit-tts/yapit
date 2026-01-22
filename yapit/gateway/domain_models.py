@@ -244,7 +244,17 @@ class UserSubscription(SQLModel, table=True):
 
     # Cancellation
     cancel_at_period_end: bool = Field(default=False)
+    cancel_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
     canceled_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
+
+    @property
+    def is_canceling(self) -> bool:
+        """True if subscription will cancel (either via cancel_at_period_end or cancel_at)."""
+        if self.cancel_at_period_end:
+            return True
+        if self.cancel_at and self.cancel_at <= self.current_period_end:
+            return True
+        return False
 
     # Trial eligibility: highest tier ever subscribed (for per-tier trial logic)
     highest_tier_subscribed: PlanTier | None = Field(default=None)

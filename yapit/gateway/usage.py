@@ -369,6 +369,8 @@ async def get_usage_summary(
             "current_period_start": subscription.current_period_start.isoformat(),
             "current_period_end": subscription.current_period_end.isoformat(),
             "cancel_at_period_end": subscription.cancel_at_period_end,
+            "cancel_at": subscription.cancel_at.isoformat() if subscription.cancel_at else None,
+            "is_canceling": subscription.is_canceling,
             "grace_tier": subscription.grace_tier,
             "grace_until": subscription.grace_until.isoformat() if subscription.grace_until else None,
         }
