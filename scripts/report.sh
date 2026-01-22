@@ -55,13 +55,18 @@ Yapit is a text-to-speech platform with these components:
 
 **Reliability mechanisms:**
 - **Visibility timeout**: If worker takes too long (TTS: 30s, YOLO: 10s), job is requeued
-- **Overflow**: If job waits too long in queue (TTS: 30s, YOLO: 10s), sent to RunPod serverless
+- **Overflow**: If job waits too long in queue, sent to RunPod serverless
+  - Kokoro: 30s threshold, has RunPod overflow
+  - Inworld: NO overflow (external API, can't run on RunPod)
+  - YOLO: 10s threshold, has RunPod overflow
 - **DLQ (Dead Letter Queue)**: Jobs that fail after max retries — indicates systematic failure
 
 **Models:**
-- `kokoro` — local Kokoro TTS model
-- `inworld` — Inworld API (external)
-- YOLO — local object detection
+- `kokoro` — local Kokoro TTS, has overflow to RunPod serverless
+- `inworld` — Inworld external API, NO overflow. Jobs dispatched in parallel (no semaphore).
+  - Queue wait should be <1s (parallel dispatch). High queue wait = bug.
+  - Processing time >5s is unusual. Watch for rate limit errors.
+- YOLO — local object detection, has overflow to RunPod serverless
 
 ## Data Locations
 
@@ -148,22 +153,30 @@ Then:
 
 Be concise but complete. This is a diagnostic report.
 
-## Important
+## Limitations
 
-If any tool was missing or would have made analysis easier, note it:
-**Tooling gaps**: [what was missing]
+You have access to **synced static data only** (metrics DB + logs up to sync time).
+You do NOT have:
+- Live Redis access (no current queue depths)
+- Live worker status (only historical metrics)
+- Interactive prod access
+
+If any of these would help future analysis, note them:
+- Additional **metrics or log fields**
+- **Analysis tools/utilities** (scripts, queries, anything reusable)
+- **Tool permissions** you were missing
+
+Don't request live/interactive prod access — that's out of scope by design.
 EOF
 
 echo "Running Claude analysis..."
-result=$(claude -p "$PROMPT" \
+message=$(claude -p "$PROMPT" \
     --allowedTools "Read,Bash(jq:*),Bash(grep:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(duckdb:*),Bash(wc:*),Bash(sort:*),Bash(uniq:*),Bash(ls:*)" \
     --append-system-prompt "$EXTRA_CONTEXT" \
-    --output-format json 2>&1) || {
-    echo "Claude analysis failed: $result"
+    2>&1) || {
+    echo "Claude analysis failed: $message"
     exit 1
 }
-
-message=$(echo "$result" | jq -r '.result // "Analysis failed - no result"')
 
 # Save full report
 REPORT_FILE="$REPORT_DIR/report-$(date +%Y-%m-%d-%H%M%S).md"
