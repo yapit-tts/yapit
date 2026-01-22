@@ -246,6 +246,7 @@ export function MetadataBanner({
               id="page-range"
               value={pageRangeInput}
               onChange={(e) => setPageRangeInput(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && !isLoading && handleConfirm()}
               placeholder={`1-${metadata.total_pages}`}
               className="h-8 text-sm"
             />
