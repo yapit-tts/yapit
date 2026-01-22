@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { Loader2, ArrowLeft, Check, Clock } from "lucide-react";
 
 type PlanTier = "free" | "basic" | "plus" | "max";
@@ -50,6 +51,12 @@ interface UsageSummary {
     server_kokoro_characters: number;
     premium_voice_characters: number;
     ocr_tokens: number;
+  };
+  extra_balances?: {
+    rollover_tokens: number;
+    rollover_voice_chars: number;
+    purchased_tokens: number;
+    purchased_voice_chars: number;
   };
   period: { start: string; end: string } | null;
 }
@@ -136,30 +143,19 @@ const SubscriptionPage = () => {
     }).format(cents / 100);
   };
 
-  const formatCharacters = (chars: number | null, isLimit = false): string => {
-    if (chars === null) return "Unlimited";
-    if (chars === 0) return isLimit ? "Not included" : "0";
-    if (chars >= 1_000_000) {
-      const m = chars / 1_000_000;
-      return m % 1 === 0 ? `${m}M` : `${m.toFixed(1)}M`;
+  const formatNumber = (n: number | null, isLimit = false): string => {
+    if (n === null) return "Unlimited";
+    if (n === 0) return isLimit ? "Not included" : "0";
+    const abs = Math.abs(n);
+    const sign = n < 0 ? "-" : "";
+    if (abs >= 1_000_000) {
+      const m = abs / 1_000_000;
+      return sign + (m % 1 === 0 ? `${m}M` : `${m.toFixed(1)}M`);
     }
-    if (chars >= 1_000) {
-      return `${Math.round(chars / 1_000)}K`;
+    if (abs >= 1_000) {
+      return sign + `${Math.round(abs / 1_000)}K`;
     }
-    return chars.toLocaleString();
-  };
-
-  const formatTokens = (tokens: number | null, isLimit = false): string => {
-    if (tokens === null) return "Unlimited";
-    if (tokens === 0) return isLimit ? "Not included" : "0";
-    if (tokens >= 1_000_000) {
-      const m = tokens / 1_000_000;
-      return m % 1 === 0 ? `${m}M` : `${m.toFixed(1)}M`;
-    }
-    if (tokens >= 1_000) {
-      return `${Math.round(tokens / 1_000)}K`;
-    }
-    return tokens.toLocaleString();
+    return n.toLocaleString();
   };
 
   const getUsagePercent = (used: number, limit: number | null): number => {
@@ -257,36 +253,88 @@ const SubscriptionPage = () => {
             <CardContent className="space-y-4">
               {subscription.limits.premium_voice_characters !== null &&
                 subscription.limits.premium_voice_characters > 0 && (
-                  <div>
-                    <div className="flex justify-between text-sm mb-1.5">
-                      <span>Premium Voice</span>
-                      <span className="text-muted-foreground">
-                        {formatCharacters(subscription.usage.premium_voice_characters)} /{" "}
-                        {formatCharacters(subscription.limits.premium_voice_characters, true)} chars
-                      </span>
-                    </div>
-                    <Progress
-                      value={getUsagePercent(
-                        subscription.usage.premium_voice_characters,
-                        subscription.limits.premium_voice_characters
-                      )}
-                    />
-                  </div>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <div className="cursor-help">
+                        <div className="flex justify-between text-sm mb-1.5">
+                          <span>Premium Voice</span>
+                          <span className="text-muted-foreground">
+                            {formatNumber(subscription.usage.premium_voice_characters)} /{" "}
+                            {formatNumber(subscription.limits.premium_voice_characters, true)}
+                          </span>
+                        </div>
+                        <Progress
+                          value={getUsagePercent(
+                            subscription.usage.premium_voice_characters,
+                            subscription.limits.premium_voice_characters
+                          )}
+                        />
+                        {(() => {
+                          const extra = (subscription.extra_balances?.rollover_voice_chars ?? 0) + (subscription.extra_balances?.purchased_voice_chars ?? 0);
+                          if (extra === 0) return null;
+                          return (
+                            <p className={`text-sm mt-0.5 text-right ${extra > 0 ? "text-accent-success" : "text-accent-warning"}`}>
+                              {extra > 0 ? "+" : ""}{formatNumber(extra)}
+                            </p>
+                          );
+                        })()}
+                      </div>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom" className="text-xs">
+                      <div className="space-y-0.5">
+                        <p>Subscription: {formatNumber(subscription.usage.premium_voice_characters)} / {formatNumber(subscription.limits.premium_voice_characters)}</p>
+                        {(subscription.extra_balances?.rollover_voice_chars ?? 0) !== 0 && (
+                          <p>
+                            Rollover: {(subscription.extra_balances?.rollover_voice_chars ?? 0) > 0 ? "+" : ""}{formatNumber(subscription.extra_balances?.rollover_voice_chars ?? 0)}
+                          </p>
+                        )}
+                        {(subscription.extra_balances?.purchased_voice_chars ?? 0) > 0 && (
+                          <p>Top-up: +{formatNumber(subscription.extra_balances?.purchased_voice_chars ?? 0)}</p>
+                        )}
+                      </div>
+                    </TooltipContent>
+                  </Tooltip>
                 )}
 
               {subscription.limits.ocr_tokens !== null && subscription.limits.ocr_tokens > 0 && (
-                <div>
-                  <div className="flex justify-between text-sm mb-1.5">
-                    <span>AI Transform</span>
-                    <span className="text-muted-foreground">
-                      {formatTokens(subscription.usage.ocr_tokens)} /{" "}
-                      {formatTokens(subscription.limits.ocr_tokens, true)} tokens
-                    </span>
-                  </div>
-                  <Progress
-                    value={getUsagePercent(subscription.usage.ocr_tokens, subscription.limits.ocr_tokens)}
-                  />
-                </div>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <div className="cursor-help">
+                      <div className="flex justify-between text-sm mb-1.5">
+                        <span>AI Transform</span>
+                        <span className="text-muted-foreground">
+                          {formatNumber(subscription.usage.ocr_tokens)} /{" "}
+                          {formatNumber(subscription.limits.ocr_tokens, true)}
+                        </span>
+                      </div>
+                      <Progress
+                        value={getUsagePercent(subscription.usage.ocr_tokens, subscription.limits.ocr_tokens)}
+                      />
+                      {(() => {
+                        const extra = (subscription.extra_balances?.rollover_tokens ?? 0) + (subscription.extra_balances?.purchased_tokens ?? 0);
+                        if (extra === 0) return null;
+                        return (
+                          <p className={`text-sm mt-0.5 text-right ${extra > 0 ? "text-accent-success" : "text-accent-warning"}`}>
+                            {extra > 0 ? "+" : ""}{formatNumber(extra)}
+                          </p>
+                        );
+                      })()}
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" className="text-xs">
+                    <div className="space-y-0.5">
+                      <p>Subscription: {formatNumber(subscription.usage.ocr_tokens)} / {formatNumber(subscription.limits.ocr_tokens)}</p>
+                      {(subscription.extra_balances?.rollover_tokens ?? 0) !== 0 && (
+                        <p>
+                          Rollover: {(subscription.extra_balances?.rollover_tokens ?? 0) > 0 ? "+" : ""}{formatNumber(subscription.extra_balances?.rollover_tokens ?? 0)}
+                        </p>
+                      )}
+                      {(subscription.extra_balances?.purchased_tokens ?? 0) > 0 && (
+                        <p>Top-up: +{formatNumber(subscription.extra_balances?.purchased_tokens ?? 0)}</p>
+                      )}
+                    </div>
+                  </TooltipContent>
+                </Tooltip>
               )}
             </CardContent>
           )}
@@ -448,19 +496,19 @@ const SubscriptionPage = () => {
                 <td className="px-2 py-2 text-center">
                   <span className="relative">
                     67k
-                    <span className="absolute left-full ml-1 text-xs text-emerald-600 dark:text-emerald-400 whitespace-nowrap">+33%</span>
+                    <span className="absolute left-full ml-1 text-xs text-accent-success whitespace-nowrap">+33%</span>
                   </span>
                 </td>
                 <td className="px-2 py-2 text-center">
                   <span className="relative">
                     75k
-                    <span className="absolute left-full ml-1 text-xs text-emerald-600 dark:text-emerald-400 whitespace-nowrap">+50%</span>
+                    <span className="absolute left-full ml-1 text-xs text-accent-success whitespace-nowrap">+50%</span>
                   </span>
                 </td>
                 <td className="px-2 py-2 text-center">
                   <span className="relative">
                     100k
-                    <span className="absolute left-full ml-1 text-xs text-emerald-600 dark:text-emerald-400 whitespace-nowrap">+100%</span>
+                    <span className="absolute left-full ml-1 text-xs text-accent-success whitespace-nowrap">+100%</span>
                   </span>
                 </td>
               </tr>
@@ -479,14 +527,14 @@ const SubscriptionPage = () => {
                 <td className="px-2 py-2 text-center">
                   <span className="relative">
                     667k
-                    <span className="absolute left-full ml-1 text-xs text-emerald-600 dark:text-emerald-400 whitespace-nowrap">+33%</span>
+                    <span className="absolute left-full ml-1 text-xs text-accent-success whitespace-nowrap">+33%</span>
                   </span>
                 </td>
                 <td className="px-2 py-2 text-center">500k</td>
                 <td className="px-2 py-2 text-center">
                   <span className="relative">
                     667k
-                    <span className="absolute left-full ml-1 text-xs text-emerald-600 dark:text-emerald-400 whitespace-nowrap">+33%</span>
+                    <span className="absolute left-full ml-1 text-xs text-accent-success whitespace-nowrap">+33%</span>
                   </span>
                 </td>
                 <td className="px-2 py-2 text-center">375k</td>

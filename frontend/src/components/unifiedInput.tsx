@@ -459,6 +459,7 @@ export function UnifiedInput() {
           onCancel={cancelExtraction}
           isLoading={isCreating}
           completedPages={completedPages}
+          uncachedPages={prepareData.uncached_pages}
         />
       )}
 

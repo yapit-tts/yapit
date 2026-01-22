@@ -38,8 +38,10 @@ import { useUser } from "@stackframe/react";
 import { useIsMobile } from "@/hooks/use-mobile";
 
 const formatCompact = (n: number): string => {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${Math.round(n / 1_000)}K`;
+  const abs = Math.abs(n);
+  const sign = n < 0 ? "-" : "";
+  if (abs >= 1_000_000) return sign + `${(abs / 1_000_000).toFixed(1)}M`;
+  if (abs >= 1_000) return sign + `${Math.round(abs / 1_000)}K`;
   return n.toString();
 };
 
@@ -55,6 +57,12 @@ interface SubscriptionSummary {
   subscription: { status: string } | null;
   limits: { premium_voice_characters: number | null; ocr_tokens: number | null };
   usage: { premium_voice_characters: number; ocr_tokens: number };
+  extra_balances?: {
+    rollover_tokens: number;
+    rollover_voice_chars: number;
+    purchased_tokens: number;
+    purchased_voice_chars: number;
+  };
 }
 
 function DocumentSidebar() {
@@ -311,10 +319,24 @@ function DocumentSidebar() {
                 {subscription?.subscription ? (
                   <div className="space-y-1">
                     {subscription.limits.premium_voice_characters !== null && subscription.limits.premium_voice_characters > 0 && (
-                      <p>Voice: {formatCompact(subscription.usage.premium_voice_characters)} / {formatCompact(subscription.limits.premium_voice_characters)} chars</p>
+                      <p>
+                        Voice: {formatCompact(subscription.usage.premium_voice_characters)} / {formatCompact(subscription.limits.premium_voice_characters)}
+                        {(() => {
+                          const extra = (subscription.extra_balances?.rollover_voice_chars ?? 0) + (subscription.extra_balances?.purchased_voice_chars ?? 0);
+                          if (extra === 0) return null;
+                          return <span> ({extra > 0 ? "+" : ""}{formatCompact(extra)})</span>;
+                        })()}
+                      </p>
                     )}
                     {subscription.limits.ocr_tokens !== null && subscription.limits.ocr_tokens > 0 && (
-                      <p>AI Transform: {formatCompact(subscription.usage.ocr_tokens)} / {formatCompact(subscription.limits.ocr_tokens)} tokens</p>
+                      <p>
+                        AI Transform: {formatCompact(subscription.usage.ocr_tokens)} / {formatCompact(subscription.limits.ocr_tokens)}
+                        {(() => {
+                          const extra = (subscription.extra_balances?.rollover_tokens ?? 0) + (subscription.extra_balances?.purchased_tokens ?? 0);
+                          if (extra === 0) return null;
+                          return <span> ({extra > 0 ? "+" : ""}{formatCompact(extra)})</span>;
+                        })()}
+                      </p>
                     )}
                   </div>
                 ) : (
