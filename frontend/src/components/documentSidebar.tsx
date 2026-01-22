@@ -37,7 +37,11 @@ import { useApi } from "@/api";
 import { useUser } from "@stackframe/react";
 import { useIsMobile } from "@/hooks/use-mobile";
 
-const CHARS_PER_HOUR = 61200;
+const formatCompact = (n: number): string => {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${Math.round(n / 1_000)}K`;
+  return n.toString();
+};
 
 interface DocumentItem {
   id: string;
@@ -49,8 +53,8 @@ interface DocumentItem {
 interface SubscriptionSummary {
   plan: { tier: string; name: string };
   subscription: { status: string } | null;
-  limits: { premium_voice_characters: number | null; ocr_pages: number | null };
-  usage: { premium_voice_characters: number; ocr_pages: number };
+  limits: { premium_voice_characters: number | null; ocr_tokens: number | null };
+  usage: { premium_voice_characters: number; ocr_tokens: number };
 }
 
 function DocumentSidebar() {
@@ -307,10 +311,10 @@ function DocumentSidebar() {
                 {subscription?.subscription ? (
                   <div className="space-y-1">
                     {subscription.limits.premium_voice_characters !== null && subscription.limits.premium_voice_characters > 0 && (
-                      <p>Premium Voice: ~{Math.round(subscription.usage.premium_voice_characters / CHARS_PER_HOUR)} / ~{Math.round(subscription.limits.premium_voice_characters / CHARS_PER_HOUR)} hrs</p>
+                      <p>Voice: {formatCompact(subscription.usage.premium_voice_characters)} / {formatCompact(subscription.limits.premium_voice_characters)} chars</p>
                     )}
-                    {subscription.limits.ocr_pages !== null && subscription.limits.ocr_pages > 0 && (
-                      <p>OCR: {subscription.usage.ocr_pages} / {subscription.limits.ocr_pages} pages</p>
+                    {subscription.limits.ocr_tokens !== null && subscription.limits.ocr_tokens > 0 && (
+                      <p>AI Transform: {formatCompact(subscription.usage.ocr_tokens)} / {formatCompact(subscription.limits.ocr_tokens)} tokens</p>
                     )}
                   </div>
                 ) : (
