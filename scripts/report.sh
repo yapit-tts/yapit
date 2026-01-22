@@ -27,12 +27,36 @@ done
 echo "Syncing data from prod..."
 make sync-data
 
+# Require VPS_HOST
+if [[ -z "${VPS_HOST:-}" ]]; then
+    echo "Error: VPS_HOST not set"
+    exit 1
+fi
+
+# Capture disk usage (full report + appends to history on VPS)
+echo "Gathering disk usage..."
+DISK_REPORT=$("$SCRIPT_DIR/disk-usage.sh" 2>&1 || echo "(disk-usage.sh failed)")
+
+# Fetch disk history (last 50 entries)
+echo "Fetching disk history..."
+DISK_HISTORY=$(ssh "$VPS_HOST" "tail -50 /var/log/yapit-disk-history.log 2>/dev/null" || echo "(no history yet)")
+
 # Build context
 if $AFTER_DEPLOY; then
-    EXTRA_CONTEXT="CONTEXT: You were triggered shortly after a deploy. Focus on: Are there new errors since the deploy? Any anomalies compared to before?"
+    BASE_CONTEXT="CONTEXT: You were triggered shortly after a deploy. Focus on: Are there new errors since the deploy? Any anomalies compared to before?"
 else
-    EXTRA_CONTEXT="CONTEXT: Daily health check. Look for patterns, anomalies, degradation."
+    BASE_CONTEXT="CONTEXT: Daily health check. Look for patterns, anomalies, degradation."
 fi
+
+EXTRA_CONTEXT="$BASE_CONTEXT
+
+## DISK_USAGE (current snapshot)
+
+$DISK_REPORT
+
+## DISK_HISTORY (last 50 entries)
+
+$DISK_HISTORY"
 
 # The analysis prompt
 read -r -d '' PROMPT << 'EOF' || true
@@ -75,6 +99,7 @@ Yapit is a text-to-speech platform with these components:
   - `metrics_hourly` — hourly aggregates
   - `metrics_daily` — daily aggregates
 - **Logs**: gateway-data/logs/*.jsonl (JSON lines, multiple rotated files)
+- **Disk Report**: See DISK_USAGE section below (captured at report time)
 
 **Timezones**: Metrics DB uses CET (Europe/Vienna). Logs use UTC. Report times in CET, converting as needed.
 
