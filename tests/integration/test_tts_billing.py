@@ -10,7 +10,13 @@ import asyncio
 
 import pytest
 
-from tests.integration.conftest import create_unique_user, get_auth_token, make_client, make_ws_client
+from tests.integration.conftest import (
+    create_unique_user,
+    get_auth_token,
+    make_client,
+    make_ws_client,
+    provision_subscription,
+)
 
 
 @pytest.mark.asyncio
@@ -35,7 +41,7 @@ async def test_tts_usage_limit_exceeded(regular_ws_client, regular_document):
 
 
 @pytest.mark.asyncio
-async def test_tts_cached_no_additional_synthesis(admin_ws_client, admin_client, test_document):
+async def test_tts_cached_no_additional_synthesis(subscribed_ws_client, subscribed_client, test_document):
     """Test that cached audio returns immediately without re-synthesis.
 
     This verifies cache hits don't trigger the TTS processor (and thus don't
@@ -46,7 +52,7 @@ async def test_tts_cached_no_additional_synthesis(admin_ws_client, admin_client,
     block_idx = test_document["blocks"][0]["idx"]
 
     # First synthesis
-    await admin_ws_client.synthesize(
+    await subscribed_ws_client.synthesize(
         document_id=document_id,
         block_indices=[block_idx],
         model="kokoro",
@@ -55,14 +61,14 @@ async def test_tts_cached_no_additional_synthesis(admin_ws_client, admin_client,
     )
 
     # Wait for completion
-    cached_msg = await admin_ws_client.wait_for_status(block_idx, "cached", timeout=120.0)
+    cached_msg = await subscribed_ws_client.wait_for_status(block_idx, "cached", timeout=120.0)
     assert cached_msg is not None
     first_audio_url = cached_msg["audio_url"]
 
     # Clear messages and request same block again
-    admin_ws_client.messages.clear()
+    subscribed_ws_client.messages.clear()
 
-    await admin_ws_client.synthesize(
+    await subscribed_ws_client.synthesize(
         document_id=document_id,
         block_indices=[block_idx],
         model="kokoro",
@@ -72,46 +78,13 @@ async def test_tts_cached_no_additional_synthesis(admin_ws_client, admin_client,
 
     # Second request should get 'cached' status immediately (not 'queued')
     # because it's a cache hit — no actual synthesis happens
-    status_msg = await admin_ws_client.wait_for_any_status(block_idx, timeout=5.0)
+    status_msg = await subscribed_ws_client.wait_for_any_status(block_idx, timeout=5.0)
     assert status_msg is not None
     assert status_msg["status"] == "cached", "Second request should be cache hit"
     assert status_msg["audio_url"] == first_audio_url
 
     # Verify audio is valid
-    audio_response = await admin_client.get(first_audio_url)
-    assert audio_response.status_code == 200
-    assert len(audio_response.content) > 0
-
-
-@pytest.mark.asyncio
-async def test_tts_admin_no_usage_limit(admin_ws_client, admin_client, test_document):
-    """Test that admins bypass subscription limits via WS."""
-    document_id = test_document["id"]
-    block_idx = test_document["blocks"][0]["idx"]
-
-    await admin_ws_client.synthesize(
-        document_id=document_id,
-        block_indices=[block_idx],
-        model="kokoro",
-        voice="af_heart",
-        synthesis_mode="server",
-    )
-
-    # Should get queued or cached status (not error)
-    status_msg = await admin_ws_client.wait_for_any_status(block_idx, timeout=10.0)
-    assert status_msg is not None
-    assert status_msg["status"] in ("queued", "cached")
-
-    # Wait for completion if queued
-    if status_msg["status"] == "queued":
-        cached_msg = await admin_ws_client.wait_for_status(block_idx, "cached", timeout=120.0)
-        assert cached_msg is not None
-        audio_url = cached_msg["audio_url"]
-    else:
-        audio_url = status_msg["audio_url"]
-
-    # Fetch audio to verify
-    audio_response = await admin_client.get(audio_url)
+    audio_response = await subscribed_client.get(first_audio_url)
     assert audio_response.status_code == 200
     assert len(audio_response.content) > 0
 
@@ -126,12 +99,14 @@ async def test_cross_user_audio_sharing():
     """
     shared_text = "This exact text will be synthesized by user A and cached for user B."
 
-    # Create two separate admin users
-    user_a_data = create_unique_user(is_admin=True)
+    # Create two separate subscribed users
+    user_a_data = create_unique_user()
     user_a_data["token"] = get_auth_token(user_a_data["email"], user_a_data["password"])
+    await provision_subscription(user_a_data["id"])
 
-    user_b_data = create_unique_user(is_admin=True)
+    user_b_data = create_unique_user()
     user_b_data["token"] = get_auth_token(user_b_data["email"], user_b_data["password"])
+    await provision_subscription(user_b_data["id"])
 
     # User A: create document and synthesize
     async for client_a in make_client(user_a_data["token"]):

@@ -274,7 +274,6 @@ async def _handle_synthesize(
         block_map = {b.idx: b for b in blocks}
 
         # Process each block: check cache → check budget → queue (per-block)
-        is_admin = bool(user.server_metadata and user.server_metadata.is_admin)
         usage_type = UsageType.server_kokoro if model.slug.startswith("kokoro") else UsageType.premium_voice
 
         for idx in msg.block_indices:
@@ -336,7 +335,6 @@ async def _handle_synthesize(
                         usage_type,
                         block_chars,
                         db,
-                        is_admin=is_admin,
                         billing_enabled=settings.billing_enabled,
                     )
 

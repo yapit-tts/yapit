@@ -109,7 +109,6 @@ async def process_with_billing(
     settings: Settings,
     file_size: int | None = None,
     pages: list[int] | None = None,
-    is_admin: bool = False,
 ) -> DocumentExtractionResult:
     """Orchestrate document extraction with validation, caching, and billing.
 
@@ -179,7 +178,6 @@ async def process_with_billing(
             UsageType.ocr_tokens,
             amount_to_check,
             db,
-            is_admin=is_admin,
             billing_enabled=settings.billing_enabled,
         )
 

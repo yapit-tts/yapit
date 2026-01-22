@@ -127,17 +127,6 @@ async def get_block_variant(
     )
 
 
-async def is_admin(user: Annotated[User, Depends(authenticate)]) -> bool:
-    """Check if the authenticated user is an admin."""
-    return bool(user.server_metadata and user.server_metadata.is_admin)
-
-
-async def require_admin(is_admin: IsAdmin) -> None:
-    """Require the authenticated user to be an admin."""
-    if not is_admin:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
-
-
 async def get_redis_client(request: Request) -> Redis:
     return request.app.state.redis_client
 
@@ -168,5 +157,4 @@ CurrentVoice = Annotated[Voice, Depends(get_voice)]
 CurrentBlock = Annotated[Block, Depends(get_block)]
 CurrentBlockVariant = Annotated[BlockVariant, Depends(get_block_variant)]
 AuthenticatedUser = Annotated[User, Depends(authenticate)]
-IsAdmin = Annotated[bool, Depends(is_admin)]
 StripeClient = Annotated[stripe.StripeClient | None, Depends(get_stripe_client)]

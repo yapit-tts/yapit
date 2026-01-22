@@ -5,10 +5,37 @@ import json
 import os
 import subprocess
 import uuid
+from datetime import datetime, timedelta, timezone
 
 import pytest
 import requests
 import websockets
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlmodel.ext.asyncio.session import AsyncSession
+
+from yapit.gateway.domain_models import SubscriptionStatus, UserSubscription
+
+TEST_DATABASE_URL = "postgresql+asyncpg://yapit:yapit@localhost:5432/yapit"
+
+
+async def provision_subscription(user_id: str, plan_id: int = 2) -> None:
+    """Give a test user a subscription. Default plan_id=2 is Basic (unlimited kokoro)."""
+    engine = create_async_engine(TEST_DATABASE_URL)
+    session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+    async with session_factory() as session:
+        now = datetime.now(tz=timezone.utc)
+        subscription = UserSubscription(
+            user_id=user_id,
+            plan_id=plan_id,
+            status=SubscriptionStatus.active,
+            current_period_start=now,
+            current_period_end=now + timedelta(days=365),
+        )
+        session.add(subscription)
+        await session.commit()
+
+    await engine.dispose()
 
 
 def get_stack_auth_config():
@@ -76,10 +103,11 @@ def get_auth_token(email: str, password: str) -> str:
 
 
 @pytest.fixture
-def admin_user():
-    """Create a unique admin test user."""
-    user_data = create_unique_user(is_admin=True)
+async def subscribed_user():
+    """Create a test user with a Basic subscription (unlimited kokoro)."""
+    user_data = create_unique_user()
     user_data["token"] = get_auth_token(user_data["email"], user_data["password"])
+    await provision_subscription(user_data["id"])
     return user_data
 
 
@@ -101,9 +129,9 @@ async def make_client(auth_token: str = None):
 
 
 @pytest.fixture
-async def admin_client(admin_user):
-    """HTTP client authenticated as admin user."""
-    async for client in make_client(admin_user["token"]):
+async def subscribed_client(subscribed_user):
+    """HTTP client authenticated as subscribed user."""
+    async for client in make_client(subscribed_user["token"]):
         yield client
 
 
@@ -115,9 +143,9 @@ async def regular_client(regular_user):
 
 
 @pytest.fixture
-async def test_document(admin_client):
-    """Create a test document for admin."""
-    response = await admin_client.post(
+async def test_document(subscribed_client):
+    """Create a test document for subscribed user."""
+    response = await subscribed_client.post(
         "/v1/documents/text",
         json={"content": "Hello integration test!"},
     )
@@ -125,7 +153,7 @@ async def test_document(admin_client):
     doc = response.json()
 
     # Fetch blocks separately
-    blocks_response = await admin_client.get(f"/v1/documents/{doc['id']}/blocks")
+    blocks_response = await subscribed_client.get(f"/v1/documents/{doc['id']}/blocks")
     assert blocks_response.status_code == 200
     doc["blocks"] = blocks_response.json()
 
@@ -291,9 +319,9 @@ async def make_ws_client(auth_token: str):
 
 
 @pytest.fixture
-async def admin_ws_client(admin_user):
-    """WebSocket client authenticated as admin user."""
-    client = await make_ws_client(admin_user["token"])
+async def subscribed_ws_client(subscribed_user):
+    """WebSocket client authenticated as subscribed user."""
+    client = await make_ws_client(subscribed_user["token"])
     yield client
     await client.close()
 

@@ -160,16 +160,15 @@ async def check_usage_limit(
     amount: int,
     db: AsyncSession,
     *,
-    is_admin: bool = False,
     billing_enabled: bool = True,
 ) -> None:
     """Check if user has enough remaining usage. Raises UsageLimitExceededError if not.
 
     For token/voice billing, checks waterfall: subscription + rollover + purchased.
-    Admins bypass all checks. Free users (no subscription) get limit=0 for paid features.
+    Free users (no subscription) get limit=0 for paid features.
     When billing_enabled=False (self-hosting), all limits are bypassed.
     """
-    if not billing_enabled or is_admin:
+    if not billing_enabled:
         return
 
     subscription = await get_user_subscription(user_id, db)

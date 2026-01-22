@@ -31,7 +31,6 @@ from yapit.gateway.deps import (
     DbSession,
     DocumentCache,
     ExtractionCache,
-    IsAdmin,
     RedisClient,
     SettingsDep,
 )
@@ -463,7 +462,6 @@ async def create_document(
     extraction_cache: ExtractionCache,
     settings: SettingsDep,
     user: AuthenticatedUser,
-    is_admin: IsAdmin,
     ai_extractor_config: AiExtractorConfigDep,
     ai_extractor: AiExtractorDep,
 ) -> DocumentCreateResponse:
@@ -523,7 +521,6 @@ async def create_document(
         settings=settings,
         file_size=cached_doc.metadata.file_size,
         pages=req.pages,
-        is_admin=is_admin,
     )
 
     # If all pages failed, return error
