@@ -1,7 +1,9 @@
-"""Inworld TTS adapter - calls Inworld streaming API."""
+"""Inworld TTS adapter - calls Inworld streaming API with retry logic."""
 
+import asyncio
 import base64
 import json
+import random
 
 import httpx
 from loguru import logger
@@ -9,6 +11,11 @@ from loguru import logger
 from yapit.workers.adapters.base import SynthAdapter
 
 INWORLD_API_BASE = "https://api.inworld.ai/tts/v1"
+
+RETRYABLE_STATUS_CODES = {429, 500, 503, 504}
+MAX_RETRIES = 6
+BASE_DELAY_SECONDS = 1.0
+MAX_DELAY_SECONDS = 30.0  # Total retry window ~61s (1+2+4+8+16+30)
 
 
 class InworldAdapter(SynthAdapter):
@@ -36,6 +43,42 @@ class InworldAdapter(SynthAdapter):
             },
         }
 
+        last_error: Exception | None = None
+        for attempt in range(MAX_RETRIES):
+            try:
+                return await self._do_synthesis(payload)
+            except httpx.HTTPStatusError as e:
+                last_error = e
+                if e.response.status_code not in RETRYABLE_STATUS_CODES:
+                    raise
+
+                if attempt < MAX_RETRIES - 1:
+                    delay = min(BASE_DELAY_SECONDS * (2**attempt), MAX_DELAY_SECONDS)
+                    jitter = random.uniform(0, delay * 0.5)
+                    wait_time = delay + jitter
+                    logger.warning(
+                        f"Inworld API error {e.response.status_code}, "
+                        f"attempt {attempt + 1}/{MAX_RETRIES}, retrying in {wait_time:.1f}s"
+                    )
+                    await asyncio.sleep(wait_time)
+
+            except (httpx.TimeoutException, httpx.ConnectError) as e:
+                last_error = e
+                if attempt < MAX_RETRIES - 1:
+                    delay = min(BASE_DELAY_SECONDS * (2**attempt), MAX_DELAY_SECONDS)
+                    jitter = random.uniform(0, delay * 0.5)
+                    wait_time = delay + jitter
+                    logger.warning(
+                        f"Inworld connection error: {e}, "
+                        f"attempt {attempt + 1}/{MAX_RETRIES}, retrying in {wait_time:.1f}s"
+                    )
+                    await asyncio.sleep(wait_time)
+
+        assert last_error is not None
+        raise last_error
+
+    async def _do_synthesis(self, payload: dict) -> bytes:
+        assert self._client is not None
         audio_chunks: list[bytes] = []
 
         async with self._client.stream(

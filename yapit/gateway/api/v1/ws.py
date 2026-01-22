@@ -179,7 +179,9 @@ async def _queue_synthesis_job(
     # Already processing - we're now subscribed and will be notified
     if await redis.exists(TTS_INFLIGHT.format(hash=variant_hash)):
         return variant_hash
-    await redis.set(TTS_INFLIGHT.format(hash=variant_hash), 1, ex=300, nx=True)
+    # TTL covers max time in system (queue wait + processing + retries) with buffer.
+    # Increase if visibility/overflow/retry timeouts are raised significantly.
+    await redis.set(TTS_INFLIGHT.format(hash=variant_hash), 1, ex=200, nx=True)
 
     context_tokens = None
     if model.slug.startswith("higgs"):
