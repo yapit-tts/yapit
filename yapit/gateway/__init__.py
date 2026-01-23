@@ -8,6 +8,10 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, ORJSONResponse
 from loguru import logger
+from slowapi import Limiter
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+from slowapi.util import get_remote_address
 
 from yapit.contracts import (
     TTS_JOB_INDEX,
@@ -210,12 +214,15 @@ def create_app(
 
     _configure_file_logging(Path(settings.log_dir))
 
+    limiter = Limiter(key_func=get_remote_address, default_limits=["1000/minute"])
+
     app = FastAPI(
         title="Yapit Gateway",
         version="0.1.0",
         default_response_class=ORJSONResponse,
         lifespan=lifespan,
     )
+    app.state.limiter = limiter
 
     app.dependency_overrides[get_settings] = lambda: settings
 
@@ -226,6 +233,11 @@ def create_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.add_middleware(SlowAPIMiddleware)  # type: ignore[arg-type]
+
+    @app.exception_handler(RateLimitExceeded)
+    async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
+        return JSONResponse(status_code=429, content={"detail": "Rate limit exceeded"})
 
     @app.exception_handler(APIError)
     async def api_error_handler(request: Request, exc: APIError):

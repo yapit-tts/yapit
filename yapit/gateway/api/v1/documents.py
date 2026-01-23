@@ -20,8 +20,15 @@ from fastapi.responses import HTMLResponse
 from loguru import logger
 from markitdown import MarkItDown
 from pydantic import BaseModel, Field, HttpUrl, StringConstraints
-from sqlmodel import col, select
+from sqlmodel import col, func, select
 
+from yapit.contracts import (
+    MAX_CONCURRENT_EXTRACTIONS,
+    MAX_DOCUMENTS_FREE,
+    MAX_DOCUMENTS_GUEST,
+    MAX_DOCUMENTS_PAID,
+    RATELIMIT_EXTRACTION,
+)
 from yapit.gateway.auth import authenticate
 from yapit.gateway.cache import Cache
 from yapit.gateway.constants import SUPPORTED_WEB_MIME_TYPES
@@ -45,13 +52,32 @@ from yapit.gateway.document.processing import (
     ProcessorConfig,
     process_with_billing,
 )
-from yapit.gateway.domain_models import Block, Document, DocumentMetadata, UserPreferences
+from yapit.gateway.domain_models import Block, Document, DocumentMetadata, UserPreferences, UserSubscription
 from yapit.gateway.exceptions import ResourceNotFoundError
 from yapit.gateway.markdown import parse_markdown, transform_to_document
 from yapit.gateway.metrics import log_event
 
 router = APIRouter(prefix="/v1/documents", tags=["Documents"], dependencies=[Depends(authenticate)])
 public_router = APIRouter(prefix="/v1/documents", tags=["Documents"])
+
+
+async def check_document_limit(user_id: str, is_anonymous: bool, db: DbSession) -> None:
+    """Check if user can create more documents. Raises HTTPException if at limit."""
+    if is_anonymous:
+        limit = MAX_DOCUMENTS_GUEST
+    else:
+        result = await db.exec(select(UserSubscription).where(UserSubscription.user_id == user_id))
+        subscription = result.first()
+        limit = MAX_DOCUMENTS_PAID if subscription and subscription.ever_paid else MAX_DOCUMENTS_FREE
+
+    count_result = await db.exec(select(func.count()).where(Document.user_id == user_id))
+    count = count_result.one()
+
+    if count >= limit:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Document limit reached ({limit}). Delete some documents to create new ones.",
+        )
 
 
 class DocumentPrepareRequest(BaseModel):
@@ -346,6 +372,7 @@ async def create_text_document(
     user: AuthenticatedUser,
 ) -> DocumentCreateResponse:
     """Create a document from direct text input."""
+    await check_document_limit(user.id, user.is_anonymous, db)
     prefs = await db.get(UserPreferences, user.id)
 
     ast = parse_markdown(req.content)
@@ -388,6 +415,7 @@ async def create_website_document(
     user: AuthenticatedUser,
 ) -> DocumentCreateResponse:
     """Create a document from a live website."""
+    await check_document_limit(user.id, user.is_anonymous, db)
     prefs = await db.get(UserPreferences, user.id)
     cached_data = await file_cache.retrieve_data(req.hash)
     if not cached_data:
@@ -466,8 +494,10 @@ async def create_document(
     user: AuthenticatedUser,
     ai_extractor_config: AiExtractorConfigDep,
     ai_extractor: AiExtractorDep,
+    redis: RedisClient,
 ) -> DocumentCreateResponse:
     """Create a document from a file (PDF, image, etc)."""
+    await check_document_limit(user.id, user.is_anonymous, db)
     prefs = await db.get(UserPreferences, user.id)
     cached_data = await file_cache.retrieve_data(req.hash)
     if not cached_data:
@@ -511,20 +541,34 @@ async def create_document(
         config = markitdown.MARKITDOWN_CONFIG
         extractor = markitdown.extract(cached_doc.content, cached_doc.metadata.content_type)
 
-    extraction_result = await process_with_billing(
-        config=config,
-        extractor=extractor,
-        user_id=user.id,
-        content=cached_doc.content,
-        content_type=cached_doc.metadata.content_type,
-        content_hash=content_hash,
-        total_pages=cached_doc.metadata.total_pages,
-        db=db,
-        extraction_cache=extraction_cache,
-        settings=settings,
-        file_size=cached_doc.metadata.file_size,
-        pages=req.pages,
-    )
+    # Rate limit concurrent extractions per user
+    ratelimit_key = RATELIMIT_EXTRACTION.format(user_id=user.id)
+    current = await redis.incr(ratelimit_key)
+    await redis.expire(ratelimit_key, 600)  # 10min TTL for cleanup
+    if current > MAX_CONCURRENT_EXTRACTIONS:
+        await redis.decr(ratelimit_key)
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many concurrent document extractions. Please wait for current extractions to complete.",
+        )
+
+    try:
+        extraction_result = await process_with_billing(
+            config=config,
+            extractor=extractor,
+            user_id=user.id,
+            content=cached_doc.content,
+            content_type=cached_doc.metadata.content_type,
+            content_hash=content_hash,
+            total_pages=cached_doc.metadata.total_pages,
+            db=db,
+            extraction_cache=extraction_cache,
+            settings=settings,
+            file_size=cached_doc.metadata.file_size,
+            pages=req.pages,
+        )
+    finally:
+        await redis.decr(ratelimit_key)
 
     # If all pages failed, return error
     if not extraction_result.pages:
@@ -641,6 +685,46 @@ async def delete_document(
             images_dir = Path(settings.images_dir) / content_hash
             if images_dir.exists():
                 shutil.rmtree(images_dir)
+
+
+class BulkDeleteResponse(BaseModel):
+    deleted_count: int
+
+
+@router.delete("/bulk", response_model=BulkDeleteResponse)
+async def bulk_delete_documents(
+    db: DbSession,
+    settings: SettingsDep,
+    user: AuthenticatedUser,
+    older_than_days: int | None = Query(None, ge=1, description="Only delete documents older than X days"),
+) -> BulkDeleteResponse:
+    """Delete multiple documents. If older_than_days is provided, only delete documents older than that."""
+    query = select(Document).where(Document.user_id == user.id)
+
+    if older_than_days:
+        cutoff = datetime.now(dt.UTC) - dt.timedelta(days=older_than_days)
+        query = query.where(Document.created < cutoff)
+
+    result = await db.exec(query)
+    documents = result.all()
+
+    # Collect content hashes for image cleanup
+    content_hashes = {doc.content_hash for doc in documents if doc.content_hash}
+
+    for doc in documents:
+        await db.delete(doc)
+
+    await db.commit()
+
+    # Clean up images for content hashes no longer referenced
+    for content_hash in content_hashes:
+        other_docs = await db.exec(select(Document).where(Document.content_hash == content_hash).limit(1))
+        if not other_docs.first():
+            images_dir = Path(settings.images_dir) / content_hash
+            if images_dir.exists():
+                shutil.rmtree(images_dir)
+
+    return BulkDeleteResponse(deleted_count=len(documents))
 
 
 @router.get("/{document_id}/blocks")
@@ -776,6 +860,7 @@ async def import_document(
     user: AuthenticatedUser,
 ) -> DocumentImportResponse:
     """Import (clone) a public document to the authenticated user's library."""
+    await check_document_limit(user.id, user.is_anonymous, db)
     result = await db.exec(select(Document).where(Document.id == document_id, col(Document.is_public).is_(True)))
     source_doc = result.first()
     if not source_doc:

@@ -259,6 +259,8 @@ class UserSubscription(SQLModel, table=True):
     # Trial eligibility: highest tier ever subscribed (for per-tier trial logic)
     highest_tier_subscribed: PlanTier | None = Field(default=None)
 
+    ever_paid: bool = Field(default=False)
+
     # Grace period: higher-tier access after downgrade (until period ends)
     grace_tier: PlanTier | None = Field(default=None)
     grace_until: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))

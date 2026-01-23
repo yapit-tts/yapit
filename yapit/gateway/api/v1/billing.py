@@ -350,9 +350,12 @@ async def _handle_checkout_completed(
     existing = await db.get(UserSubscription, user_id)
     now = datetime.now(tz=dt.UTC)
 
+    status = _map_stripe_status(stripe_sub.status)
+    is_paid = status == SubscriptionStatus.active  # active = paid, trialing = not yet paid
+
     if existing:
         existing.plan_id = plan.id
-        existing.status = _map_stripe_status(stripe_sub.status)
+        existing.status = status
         existing.stripe_customer_id = customer_id
         existing.stripe_subscription_id = subscription_id
         existing.current_period_start = period_start
@@ -362,11 +365,14 @@ async def _handle_checkout_completed(
         existing.updated = now
         if _rank(plan.tier) > _rank(existing.highest_tier_subscribed):
             existing.highest_tier_subscribed = plan.tier
+        if is_paid and not existing.ever_paid:
+            existing.ever_paid = True
+            logger.info(f"First payment received for user {user_id}")
     else:
         subscription = UserSubscription(
             user_id=user_id,
             plan_id=plan.id,
-            status=_map_stripe_status(stripe_sub.status),
+            status=status,
             stripe_customer_id=customer_id,
             stripe_subscription_id=subscription_id,
             current_period_start=period_start,
@@ -374,10 +380,13 @@ async def _handle_checkout_completed(
             cancel_at_period_end=stripe_sub.cancel_at_period_end,
             cancel_at=datetime.fromtimestamp(stripe_sub.cancel_at, tz=dt.UTC) if stripe_sub.cancel_at else None,
             highest_tier_subscribed=plan.tier,
+            ever_paid=is_paid,
             created=now,
             updated=now,
         )
         db.add(subscription)
+        if is_paid:
+            logger.info(f"First payment received for user {user_id}")
 
     await db.commit()
     logger.info(f"Created/updated subscription for user {user_id}: plan={plan_tier}")
@@ -513,15 +522,26 @@ def _get_invoice_subscription_id(invoice: stripe.Invoice) -> str | None:
 
 
 async def _handle_invoice_paid(invoice: stripe.Invoice, db: DbSession) -> None:
-    """Handle successful invoice payment - calculate rollover and reset usage on new billing cycle."""
+    """Handle successful invoice payment - mark ever_paid and calculate rollover on billing cycle."""
     subscription_id = _get_invoice_subscription_id(invoice)
-    if invoice.billing_reason != "subscription_cycle" or not subscription_id:
+    if not subscription_id:
+        # Non-subscription invoice (one-time purchase, manual invoice) — nothing to do
         return
 
     result = await db.exec(select(UserSubscription).where(UserSubscription.stripe_subscription_id == subscription_id))
     subscription = result.first()
     if not subscription:
-        logger.warning(f"Subscription {subscription_id} not found for invoice")
+        # Webhook arrived before checkout.completed — user paid but we can't track it
+        logger.error(f"Invoice paid but subscription {subscription_id} not in DB — ever_paid may not be set correctly")
+        return
+
+    if not subscription.ever_paid:
+        subscription.ever_paid = True
+        await db.commit()
+        logger.info(f"First payment received for user {subscription.user_id}")
+
+    if invoice.billing_reason != "subscription_cycle":
+        # First invoice, mid-cycle change, etc. — rollover only applies to cycle renewals
         return
 
     if not invoice.period_start or not invoice.period_end:

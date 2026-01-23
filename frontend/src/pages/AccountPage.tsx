@@ -12,7 +12,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Loader2, ArrowLeft, FileText, Clock, Type, Trash2, AlertTriangle, Mail, Settings, Share2 } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Loader2, ArrowLeft, FileText, Clock, Type, Trash2, AlertTriangle, Mail, Settings, Share2, Calendar } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { useUserPreferences } from "@/hooks/useUserPreferences";
 
@@ -41,6 +47,9 @@ const AccountPage = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
+  const [bulkDeleteDays, setBulkDeleteDays] = useState<number | null>(null);
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
 
   useEffect(() => {
     if (!isAuthReady) return;
@@ -73,6 +82,27 @@ const AccountPage = () => {
       console.error("Failed to delete account:", error);
       setIsDeleting(false);
     }
+  };
+
+  const handleBulkDelete = async () => {
+    setIsBulkDeleting(true);
+    try {
+      const params = bulkDeleteDays ? `?older_than_days=${bulkDeleteDays}` : "";
+      await api.delete<{ deleted_count: number }>(`/v1/documents/bulk${params}`);
+      const statsResponse = await api.get<UserStats>("/v1/users/me/stats");
+      setStats(statsResponse.data);
+      setBulkDeleteDialogOpen(false);
+      setBulkDeleteDays(null);
+    } catch (error) {
+      console.error("Failed to delete documents:", error);
+    } finally {
+      setIsBulkDeleting(false);
+    }
+  };
+
+  const openBulkDeleteDialog = (days: number | null) => {
+    setBulkDeleteDays(days);
+    setBulkDeleteDialogOpen(true);
   };
 
   const formatDuration = (ms: number): string => {
@@ -314,9 +344,52 @@ const AccountPage = () => {
             <AlertTriangle className="h-5 w-5" />
             Danger Zone
           </CardTitle>
-          <CardDescription>Irreversible actions that affect your account</CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-6">
+          {/* Delete Documents */}
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="font-medium">Delete Documents</p>
+              <p className="text-sm text-muted-foreground">
+                Delete all or old documents from your library
+              </p>
+            </div>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline">
+                  <Trash2 className="h-4 w-4 mr-2" />
+                  Delete Documents...
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => openBulkDeleteDialog(7)}>
+                  <Calendar className="h-4 w-4 mr-2" />
+                  Older than 7 days
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => openBulkDeleteDialog(30)}>
+                  <Calendar className="h-4 w-4 mr-2" />
+                  Older than 30 days
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => openBulkDeleteDialog(90)}>
+                  <Calendar className="h-4 w-4 mr-2" />
+                  Older than 90 days
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => openBulkDeleteDialog(365)}>
+                  <Calendar className="h-4 w-4 mr-2" />
+                  Older than 1 year
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => openBulkDeleteDialog(null)}
+                  className="text-destructive focus:text-destructive"
+                >
+                  <Trash2 className="h-4 w-4 mr-2" />
+                  Delete all documents
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+
+          {/* Delete Account */}
           <div className="flex items-center justify-between">
             <div>
               <p className="font-medium">Delete Account</p>
@@ -369,6 +442,41 @@ const AccountPage = () => {
                 </>
               ) : (
                 "Yes, delete my account"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Bulk Delete Confirmation Dialog */}
+      <Dialog open={bulkDeleteDialogOpen} onOpenChange={setBulkDeleteDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-destructive">
+              <AlertTriangle className="h-5 w-5" />
+              Delete Documents
+            </DialogTitle>
+            <DialogDescription className="pt-4 space-y-3">
+              <p>
+                {bulkDeleteDays
+                  ? `This will permanently delete all documents older than ${bulkDeleteDays} days.`
+                  : "This will permanently delete all your documents."}
+              </p>
+              <p className="text-sm">This action cannot be undone.</p>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setBulkDeleteDialogOpen(false)} disabled={isBulkDeleting}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleBulkDelete} disabled={isBulkDeleting}>
+              {isBulkDeleting ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Deleting...
+                </>
+              ) : (
+                "Yes, delete"
               )}
             </Button>
           </DialogFooter>

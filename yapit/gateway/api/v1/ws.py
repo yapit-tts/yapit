@@ -16,6 +16,8 @@ from sqlmodel import col, select
 from starlette.applications import Starlette
 
 from yapit.contracts import (
+    MAX_TTS_REQUESTS_PER_MINUTE,
+    RATELIMIT_TTS,
     TTS_INFLIGHT,
     TTS_JOB_INDEX,
     TTS_JOBS,
@@ -252,6 +254,15 @@ async def _handle_synthesize(
     settings: Settings,
 ):
     """Handle synthesize request - queue blocks for synthesis."""
+    # Rate limit TTS requests per user (protects unlimited Kokoro from flooding)
+    rate_key = RATELIMIT_TTS.format(user_id=user.id)
+    count = await redis.incr(rate_key)
+    if count == 1:
+        await redis.expire(rate_key, 60)
+    if count > MAX_TTS_REQUESTS_PER_MINUTE:
+        await ws.send_json({"type": "error", "error": "Rate limit exceeded. Please slow down."})
+        return
+
     async for db in get_db_session(settings):
         # Validate document ownership
         doc = (await db.exec(select(Document).where(Document.id == msg.document_id))).first()

@@ -13,7 +13,7 @@ const TermsPage = () => {
       </Button>
 
       <h1 className="text-4xl font-bold mb-2">Terms of Service</h1>
-      <p className="text-muted-foreground mb-8">Last updated: January 8, 2026</p>
+      <p className="text-muted-foreground mb-8">Last updated: January 23, 2026</p>
 
       <div className="prose prose-neutral dark:prose-invert max-w-none space-y-8">
         <section>
@@ -74,8 +74,10 @@ const TermsPage = () => {
         </section>
 
         <section>
-          <h2 className="text-2xl font-semibold mb-3">5. Usage Limits</h2>
-          <p>Each plan has usage limits (listening hours, OCR pages). Limits reset monthly. We enforce limits — if you hit them, you'll need to wait or upgrade.</p>
+          <h2 className="text-2xl font-semibold mb-3">5. Usage Limits & Fair Use</h2>
+          <p className="mb-3">Each plan has usage limits (voice characters, AI transform tokens). Limits reset monthly. We enforce limits — if you hit them, you'll need to wait or upgrade.</p>
+          <p className="mb-3">Unused allowances may roll over to subsequent periods, subject to caps.</p>
+          <p>All offerings are subject to fair use. Rate limits may apply to ensure service quality for all users.</p>
         </section>
 
         <section>

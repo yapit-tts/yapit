@@ -11,6 +11,17 @@ TTS_SUBSCRIBERS: Final[str] = "tts:subscribers:{hash}"
 TTS_CURSOR: Final[str] = "tts:cursor:{user_id}:{document_id}"
 TTS_PENDING: Final[str] = "tts:pending:{user_id}:{document_id}"
 
+# Rate limiting
+RATELIMIT_EXTRACTION: Final[str] = "ratelimit:extraction:{user_id}"
+MAX_CONCURRENT_EXTRACTIONS: Final[int] = 3
+RATELIMIT_TTS: Final[str] = "ratelimit:tts:{user_id}"
+MAX_TTS_REQUESTS_PER_MINUTE: Final[int] = 300
+
+# Document storage limits
+MAX_DOCUMENTS_GUEST: Final[int] = 50
+MAX_DOCUMENTS_FREE: Final[int] = 100
+MAX_DOCUMENTS_PAID: Final[int] = 1000
+
 # Queue structure (sorted set + hashes for efficient eviction)
 TTS_QUEUE: Final[str] = "tts:queue:{model}"  # sorted set: job_id -> timestamp
 TTS_JOBS: Final[str] = "tts:jobs"  # hash: job_id -> job_json
