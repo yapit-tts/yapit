@@ -264,7 +264,8 @@ PORTAL_CONFIG = {
         "subscription_update": {
             "enabled": True,
             "default_allowed_updates": ["price"],
-            "proration_behavior": "create_prorations",
+            # Important: always_invoice charges immediately for upgrades, whereas "create_prorations" defers to next invoice — exploitable for yearly!
+            "proration_behavior": "always_invoice",
             # Note: schedule_at_period_end is cleared separately via raw HTTP
             # because the Python SDK doesn't support clearing arrays properly.
             # See _clear_portal_schedule_conditions() below.
