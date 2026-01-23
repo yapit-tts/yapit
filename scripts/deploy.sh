@@ -93,31 +93,42 @@ else
 fi
 
 # Verify built images weren't rolled back (digest comparison)
+# Check ACTUAL running task, not just the service spec
 if [ -n "$BUILT_IMAGES" ]; then
   log "Verifying built images..."
-  ROLLBACK=0
+  FAILED=0
 
   for svc in ${BUILT_IMAGES//,/ }; do
-    # Pull image and extract digest from output (avoids full download if cached)
+    # Get expected digest from registry
     EXPECTED=$(ssh "$VPS_HOST" "docker pull ghcr.io/yapit-tts/${svc}:latest 2>&1 | grep -oP 'Digest: \Ksha256:\w+'" || echo "")
-    RUNNING=$(ssh "$VPS_HOST" "docker service inspect yapit_${svc} --format '{{.Spec.TaskTemplate.ContainerSpec.Image}}' 2>/dev/null | grep -oP 'sha256:\S+'" || echo "")
+
+    # Get digest from ACTUALLY RUNNING task (not service spec)
+    RUNNING=$(ssh "$VPS_HOST" "docker service ps yapit_${svc} -f 'desired-state=running' --format '{{.Image}}' --no-trunc 2>/dev/null | head -1 | grep -oP 'sha256:\S+'" || echo "")
+
+    # Check for recently failed tasks (indicates deploy failure)
+    RECENT_FAILURES=$(ssh "$VPS_HOST" "docker service ps yapit_${svc} --format '{{.CurrentState}} {{.Error}}' 2>/dev/null | grep -c 'Failed.*non-zero exit'" || echo "0")
 
     if [ -z "$EXPECTED" ]; then
       echo "  ⚠ ${svc}: could not get expected digest"
     elif [ -z "$RUNNING" ]; then
-      echo "  ⚠ ${svc}: service not found"
-    elif [ "$EXPECTED" = "$RUNNING" ]; then
-      echo "  ✓ ${svc}: running expected version"
-    else
+      echo "  ✗ ${svc}: NO RUNNING TASK"
+      FAILED=1
+    elif [ "$EXPECTED" != "$RUNNING" ]; then
       echo "  ✗ ${svc}: ROLLBACK DETECTED"
       echo "    Expected: ${EXPECTED:0:32}..."
       echo "    Running:  ${RUNNING:0:32}..."
-      ROLLBACK=1
+      FAILED=1
+    elif [ "$RECENT_FAILURES" -gt 0 ]; then
+      echo "  ✗ ${svc}: running expected version but has $RECENT_FAILURES recent failure(s)"
+      echo "    Check: docker service ps yapit_${svc} --no-trunc"
+      FAILED=1
+    else
+      echo "  ✓ ${svc}: running expected version"
     fi
   done
 
-  if [ "$ROLLBACK" -eq 1 ]; then
-    die "One or more services rolled back. Check logs: docker service ps yapit_<service>"
+  if [ "$FAILED" -eq 1 ]; then
+    die "One or more services failed verification. Check logs: docker service ps yapit_<service>"
   fi
 else
   log "No BUILT_IMAGES specified, skipping rollback detection"
