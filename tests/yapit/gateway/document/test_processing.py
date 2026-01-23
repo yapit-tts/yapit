@@ -66,6 +66,31 @@ async def failing_extractor(fail_pages: set[int], total_pages: int):
             )
 
 
+async def cancelled_extractor(cancel_after: int, total_pages: int):
+    """Fake extractor where pages at or after cancel_after are cancelled."""
+    for page_idx in range(total_pages):
+        if page_idx >= cancel_after:
+            yield PageResult(
+                page_idx=page_idx,
+                page=None,
+                input_tokens=0,
+                output_tokens=0,
+                thoughts_tokens=0,
+                is_fallback=False,
+                cancelled=True,
+            )
+        else:
+            yield PageResult(
+                page_idx=page_idx,
+                page=ExtractedPage(markdown=f"Page {page_idx}", images=[]),
+                input_tokens=100,
+                output_tokens=50,
+                thoughts_tokens=10,
+                is_fallback=False,
+                cancelled=False,
+            )
+
+
 @pytest.fixture
 def mock_db():
     return AsyncMock()
@@ -275,3 +300,33 @@ class TestFailedPages:
 
         assert set(result.pages.keys()) == {0, 2}
         assert result.failed_pages == [1]
+
+
+class TestCancellation:
+    @pytest.mark.asyncio
+    async def test_cancelled_pages_not_billed(self, mock_db, mock_cache, mock_settings):
+        """Cancelled pages should not incur billing charges."""
+        config = make_config(is_paid=True)
+
+        mock_estimate = Mock()
+        mock_estimate.num_pages = 4
+        mock_estimate.total_tokens = 4000
+
+        with patch("yapit.gateway.document.processing.estimate_document_tokens", return_value=mock_estimate):
+            with patch("yapit.gateway.document.processing.check_usage_limit", new_callable=AsyncMock):
+                with patch("yapit.gateway.document.processing.record_usage", new_callable=AsyncMock) as mock_record:
+                    await process_with_billing(
+                        config=config,
+                        extractor=cancelled_extractor(cancel_after=2, total_pages=4),
+                        user_id="user-1",
+                        content=b"test",
+                        content_type="application/pdf",
+                        content_hash="abc123",
+                        total_pages=4,
+                        db=mock_db,
+                        extraction_cache=mock_cache,
+                        settings=mock_settings,
+                    )
+
+                    # Only pages 0 and 1 should be billed (pages 2, 3 cancelled)
+                    assert mock_record.call_count == 2
