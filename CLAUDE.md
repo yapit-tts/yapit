@@ -30,24 +30,6 @@ Ask explicitly: "I need to run `[exact command]` on prod. This will [effect]. Ty
 
 Do NOT assume approval from vague statements like "fix it" or "go ahead". Prod is prod.
 
-## Agent Workflow
-
-This project uses a multi-session workflow with task files, handoffs, and a persistent knowledge base.
-
-### Always Explore the Knowledge Base First
-
-**This is non-negotiable.** Before doing any significant work:
-
-0. **ALWAYS read `agent/knowledge/overview`** — regardless of whether you're creating a task, picking up a handoff, or doing distillation.
-1. Branch out to relevant topics — follow the wikilinks
-2. Use memex `explore` to see outlinks (what a note references) and backlinks (what references it)
-3. **Read the Gotchas sections** — these save hours of debugging
-4. **Follow references** — when knowledge files point to code files, external docs, or say "see X", read those too
-
-Knowledge files capture decisions and point to sources — they don't duplicate code or external docs. Code is truth. Follow the pointers.
-
-**Why this matters:** Skipping knowledge exploration to "get to work faster" consistently costs more time. The knowledge, pointers, and bigger picture help you build an accurate mental representation — the foundation for effective problem-solving. Documented gotchas help you avoid repeating past mistakes.
-
 ### What Good Exploration Looks Like
 
 **Example: "Fix a bug where audio doesn't play for some documents"**
@@ -68,55 +50,24 @@ This takes ~30 seconds. Without it, you'd grep around, miss the gotcha, and wast
 
 The knowledge base is a graph, not a tree. Files are flat but connected via `[[wikilinks]]`. You don't load everything — you navigate to what you need with increasing detail.
 
-### The Three-Way Split
-
-| Type | Location | Purpose |
-|------|----------|---------|
-| **Tasks** | `agent/tasks/` | Intent, goals, assumptions, planning |
-| **Handoffs** | `agent/handoffs/` | Session continuation state |
-| **Knowledge** | `agent/knowledge/` | Persistent reference docs |
-
-**Tasks** = source of truth for user intent. Not implementation logs (that's git), not code snippets (that's code), not gotchas (that's knowledge).
-
-**Handoffs** = session state for another agent to continue. Created via the **handoff skill**. Marked `consumed: true` after pickup.
-
-**Knowledge** = how things work. Updated via `/distill` (periodic, code-grounded) or `/learnings` (session-grounded).
-
-### Skills Available
-
-- **handoff** — create session continuation for another agent
-- **pickup** — resume from a handoff (used when `/task` is given a handoff path)
-- **implement** — mindset for moving from planning to coding
-
-The `/task` command orchestrates the workflow and indicates when to use each skill.
-
-### Wiki-Links
-
-Use `[[name]]` (not `name.md`) for task/knowledge references.
-
-Link directions:
-- Tasks → Knowledge (task references what it needs)
-- Handoffs → Tasks (handoff belongs to a task)
-- Knowledge ↔ Knowledge (cross-links)
-- Knowledge → Tasks (historical reasoning trails, tracking-issue style; rarer)
-
-**Hierarchy from links, not folders.** Use memex `explore` to follow outlinks/backlinks.
-
-### Notes
-
-Do not commit ./agent/* files together with code changes. They  are commited by the distillation agent or the user separately.
-
 ## Branch Strategy
 
 - `main` - production (deploys on push)
 - `dev` - for batching changes before deploy
 - Feature branches for larger isolated work
 
-**Rapid iteration / fixes:** Work on main directly.
+**When to use feature branches:** Multi-commit refactors, breaking changes, anything that shouldn't go to prod incrementally. Squash-merge when done.
 
-**Batched work:** Use dev, merge to main when ready.
+**When to commit directly to main:** Small self-contained changes (assets, config, typo fixes, isolated bug fixes) that don't interfere with ongoing branch work.
 
-**If branches diverge** (ff-only fails): Use `git cherry-pick <commit>` to move commits to main. Then sync dev:
+**Committing to main while on a feature branch:** Use an ephemeral worktree — no stashing, no branch switching, current directory untouched:
+```bash
+git worktree add ../yapit-main main
+cd ../yapit-main && # commit, push
+git worktree remove ../yapit-main
+```
+
+**If branches diverge** (ff-only fails): Use `git cherry-pick <commit>` to move commits to main. Then sync:
 ```bash
 git checkout dev && git merge main  # brings dev up to date with main
 ```
@@ -146,22 +97,14 @@ git checkout dev && git merge main  # brings dev up to date with main
 
 Conversely, `tre agent -L 10` shows all task files including `private/` and `knowledge/` subdirs — useful when specifically looking for task/knowledge files.
 
-## Memex MCP
+## Memex
 
-You have access to markdown vaults via memex. The primary value is **wikilink navigation** — the `explore` tool for following outlinks, backlinks, and discovering connections.
 Semantic search is disabled. Wikilinks provide the necessary structure for this project.
-
-Vaults:
-- `./agent` — Project-specific: tasks, knowledge, handoffs
-
-**Workflow:**
-1. Start from a known file (task file, or `[[overview]]` for knowledge)
-2. Use `explore` to follow wikilinks — outlinks, backlinks, similar notes
-3. `rename` for renaming files that already have outlinks or backlinks
 
 ## Coding Conventions
 
 - No default values in Settings class - all configs and defaults in `.env*` files only - single source of truth.
+- **Naming**: Prefer names that describe what something *is* over internal jargon (e.g., `kokoro_runpod_serverless_endpoint` over `overflow_endpoint_id`).
 - Follow existing patterns in codebase 
 - **No architectural discussions in code comments** - these should be resolved and clear long before code is written - and documented (by the distillation agent) AFTER the code is done and tested.
 - **No useless comments**: Don't add inline comments that restate what code does, don't add untested metrics/claims, don't add "LLM-style" explanatory comments. Comments should only explain non-obvious "why" - if you feel a comment is needed, the code probably needs refactoring instead.
@@ -177,3 +120,4 @@ You might occasionaly stumble upon referencse to
 - `architecture.md` - An old "god document" for architecture and todos, that has been replaced by our current workflow.
 - Task files that do not follow naming conventions or the structure / content guidelines of the new workflow - Some of these still contain useful context or historical reasoning trails, but are not up to date with our current practices. We keep them for reference; those that are valuable will be wikilinked (more often), naturally. The others can be ignored for almost all purposes.
 
+- important: While the project is private, we only have 2k free minutes on gh ci, include "[skip tests]" anywhere (at the end) of your commit message to avoid running tests in ci (takes 5+mins) if you have tested locally and only made minor changes.
