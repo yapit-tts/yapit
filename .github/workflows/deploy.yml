@@ -35,6 +35,9 @@ jobs:
   # === Detect what changed ===
   changes:
     runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+      contents: read
     outputs:
       frontend: ${{ steps.filter.outputs.frontend }}
       gateway: ${{ steps.filter.outputs.gateway }}
