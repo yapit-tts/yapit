@@ -5,13 +5,16 @@
 #   1. Decrypt .env.sops and transform for prod (LIVE → plain, remove TEST)
 #   2. Sync files to VPS
 #   3. Deploy stack
-#   4. Wait and verify health
+#   4. Poll health until ready (or timeout)
+#   5. Verify built images weren't rolled back
 #
 # Environment variables:
 #   SOPS_AGE_KEY      - Age private key content (required)
 #   VPS_HOST          - SSH host (default: root@46.224.195.97)
 #   SKIP_VERIFY       - Set to 1 to skip post-deploy verification
-#   WAIT_TIME         - Seconds to wait before verifying (default: 120)
+#   TIMEOUT           - Max seconds to wait for health (default: 120)
+#   POLL_INTERVAL     - Seconds between health checks (default: 10)
+#   BUILT_IMAGES      - Comma-separated list of images that were rebuilt (e.g., "gateway,frontend")
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -20,7 +23,9 @@ VPS_HOST="${VPS_HOST:-root@46.224.195.97}"
 DEPLOY_DIR="/opt/yapit/deploy"
 STACK_NAME="yapit"
 PROD_URL="https://yapit.md"
-WAIT_TIME="${WAIT_TIME:-120}"
+TIMEOUT="${TIMEOUT:-120}"
+POLL_INTERVAL="${POLL_INTERVAL:-10}"
+BUILT_IMAGES="${BUILT_IMAGES:-}"
 SOPS_FILE=".env.sops"
 
 GIT_COMMIT="${GIT_COMMIT:-$(git rev-parse HEAD)}"
@@ -61,17 +66,25 @@ if [ "${SKIP_VERIFY:-0}" = "1" ]; then
   exit 0
 fi
 
-log "Waiting ${WAIT_TIME}s for deployment..."
-sleep "$WAIT_TIME"
+# Poll until healthy or timeout
+log "Waiting for services (timeout: ${TIMEOUT}s, poll: ${POLL_INTERVAL}s)..."
+ELAPSED=0
+while [ "$ELAPSED" -lt "$TIMEOUT" ]; do
+  if curl -sf "https://api.yapit.md/health" > /dev/null 2>&1; then
+    echo "  ✓ API healthy after ${ELAPSED}s"
+    break
+  fi
+  sleep "$POLL_INTERVAL"
+  ELAPSED=$((ELAPSED + POLL_INTERVAL))
+  echo "  ... waiting (${ELAPSED}s)"
+done
 
-log "Verifying..."
-if curl -sf "https://api.yapit.md/health" > /dev/null; then
-  echo "  ✓ API healthy"
-else
-  echo "  ✗ API health check FAILED"
+if [ "$ELAPSED" -ge "$TIMEOUT" ]; then
+  echo "  ✗ API health check timed out after ${TIMEOUT}s"
   exit 1
 fi
 
+# Quick frontend check
 if curl -sf "$PROD_URL" > /dev/null; then
   echo "  ✓ Frontend OK"
 else
@@ -79,30 +92,35 @@ else
   exit 1
 fi
 
-# Check for rollbacks by comparing expected vs running image digests
-log "Checking for rollbacks..."
-SERVICES="gateway stack-auth frontend"
-ROLLBACK_DETECTED=0
-for svc in $SERVICES; do
-  # Get the digest of :latest that we're trying to deploy
-  EXPECTED=$(ssh "$VPS_HOST" "docker inspect ghcr.io/yapit-tts/${svc}:latest --format '{{.Id}}'" 2>/dev/null || echo "")
-  # Get what the service is actually running
-  RUNNING=$(ssh "$VPS_HOST" "docker service ps ${STACK_NAME}_${svc} --format '{{.Image}}' --filter 'desired-state=running' | head -1 | xargs -I{} docker inspect {} --format '{{.Id}}'" 2>/dev/null || echo "")
+# Verify built images weren't rolled back (digest comparison)
+if [ -n "$BUILT_IMAGES" ]; then
+  log "Verifying built images..."
+  ROLLBACK=0
 
-  if [ -z "$EXPECTED" ]; then
-    echo "  ? ${svc}: could not determine expected image"
-  elif [ "$EXPECTED" = "$RUNNING" ]; then
-    echo "  ✓ ${svc}: running latest"
-  else
-    echo "  ✗ ${svc}: possible rollback (expected ${EXPECTED:0:12}, running ${RUNNING:0:12})"
-    echo "    Check: docker service ps ${STACK_NAME}_${svc}"
-    ROLLBACK_DETECTED=1
+  for svc in ${BUILT_IMAGES//,/ }; do
+    # Pull image and extract digest from output (avoids full download if cached)
+    EXPECTED=$(ssh "$VPS_HOST" "docker pull ghcr.io/yapit-tts/${svc}:latest 2>&1 | grep -oP 'Digest: \Ksha256:\w+'" || echo "")
+    RUNNING=$(ssh "$VPS_HOST" "docker service inspect yapit_${svc} --format '{{.Spec.TaskTemplate.ContainerSpec.Image}}' 2>/dev/null | grep -oP 'sha256:\S+'" || echo "")
+
+    if [ -z "$EXPECTED" ]; then
+      echo "  ⚠ ${svc}: could not get expected digest"
+    elif [ -z "$RUNNING" ]; then
+      echo "  ⚠ ${svc}: service not found"
+    elif [ "$EXPECTED" = "$RUNNING" ]; then
+      echo "  ✓ ${svc}: running expected version"
+    else
+      echo "  ✗ ${svc}: ROLLBACK DETECTED"
+      echo "    Expected: ${EXPECTED:0:32}..."
+      echo "    Running:  ${RUNNING:0:32}..."
+      ROLLBACK=1
+    fi
+  done
+
+  if [ "$ROLLBACK" -eq 1 ]; then
+    die "One or more services rolled back. Check logs: docker service ps yapit_<service>"
   fi
-done
-
-if [ "$ROLLBACK_DETECTED" = "1" ]; then
-  log "WARNING: Possible rollback detected. Services may have crashed and reverted."
-  exit 1
+else
+  log "No BUILT_IMAGES specified, skipping rollback detection"
 fi
 
 log "Deploy complete"

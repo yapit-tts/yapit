@@ -320,6 +320,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Collect built images
+        id: built
+        run: |
+          BUILT=""
+          [ "${{ needs.build-frontend.result }}" = "success" ] && BUILT="${BUILT}frontend,"
+          [ "${{ needs.build-gateway.result }}" = "success" ] && BUILT="${BUILT}gateway,"
+          [ "${{ needs.build-stack-auth.result }}" = "success" ] && BUILT="${BUILT}stack-auth,"
+          [ "${{ needs.build-smokescreen.result }}" = "success" ] && BUILT="${BUILT}smokescreen,"
+          # Workers are a matrix - if any succeeded, add the CPU workers (we verify those, GPU rarely deployed)
+          [ "${{ needs.build-workers.result }}" = "success" ] && BUILT="${BUILT}kokoro-cpu,yolo-cpu,"
+          echo "images=${BUILT%,}" >> "$GITHUB_OUTPUT"
+          echo "Built images: ${BUILT%,}"
+
       - name: Setup SSH
         run: |
           mkdir -p ~/.ssh
@@ -337,6 +350,7 @@ jobs:
         env:
           GIT_COMMIT: ${{ github.sha }}
           SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
+          BUILT_IMAGES: ${{ steps.built.outputs.images }}
 
   # === Notify ===
   notify:
