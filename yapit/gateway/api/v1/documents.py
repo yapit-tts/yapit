@@ -7,6 +7,7 @@ import shutil
 import time
 from datetime import datetime
 from email.message import EmailMessage
+from html import escape as html_escape
 from pathlib import Path
 from typing import Annotated, Literal
 from urllib.parse import urljoin, urlparse
@@ -734,7 +735,7 @@ async def get_og_preview(document_id: UUID, db: DbSession) -> HTMLResponse:
     if not document:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
 
-    title = document.title or "Untitled"
+    title = html_escape(document.title or "Untitled")
     url = f"https://yapit.md/listen/{document_id}"
 
     html = f"""<!DOCTYPE html>
