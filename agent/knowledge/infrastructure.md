@@ -36,9 +36,19 @@ Workers pull jobs from Redis. Gateway doesn't need to know about them.
 |---------|---------|-------|
 | `kokoro-cpu` | Kokoro TTS on CPU | `tts:queue:kokoro` |
 | `yolo-cpu` | Figure detection | `yolo:queue` |
-| Gateway background tasks | Inworld TTS, visibility/overflow scanners | `tts:queue:inworld*` |
+| Gateway background tasks | Inworld TTS (parallel dispatcher), visibility/overflow scanners | `tts:queue:inworld*` |
 
 **Adding workers:** Just connect to Redis (via Tailscale for external machines) and start pulling. No gateway config needed.
+
+### GPU Workers & External Machines
+
+Workers can run on separate machines (home GPU, external VPS, RunPod):
+
+- `docker-compose.worker.yml` — External worker compose (connects via Tailscale)
+- `yapit/workers/kokoro/Dockerfile.gpu` — Kokoro GPU image (CUDA 12.4)
+- `yapit/workers/yolo/Dockerfile.gpu` — YOLO GPU image (CUDA 12.4)
+
+**pyproject structure:** Workers have separate `pyproject.{cpu,gpu}.toml` files since CPU/GPU deps differ significantly (torch-cpu vs torch-cuda, etc.). Gateway uses main `pyproject.toml`.
 
 ## CI/CD
 

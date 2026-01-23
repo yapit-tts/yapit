@@ -68,9 +68,11 @@ Pull-based workers instead of HTTP-based. Workers pull jobs from Redis, gateway 
 - `tts:results` — List for completed results
 
 **Workers:**
-- `yapit/workers/tts_loop.py` — Generic TTS worker loop
+- `yapit/workers/tts_loop.py` — TTS worker loop with two modes:
+  - `run_tts_worker` — Sequential processing for GPU models (Kokoro). One job at a time, visibility tracking for retries.
+  - `run_api_tts_dispatcher` — Parallel processing for API models (Inworld). Spawns task per job, unlimited concurrency. No visibility tracking (if gateway crashes, in-flight jobs lost).
 - `yapit/workers/adapters/kokoro.py` — Kokoro adapter (local model)
-- `yapit/workers/adapters/inworld.py` — Inworld adapter (API calls)
+- `yapit/workers/adapters/inworld.py` — Inworld adapter (API calls, with retry logic for 429/500/503/504)
 
 Workers only need Redis access. No Postgres, no HTTP endpoints. Gateway handles all DB writes and notifications centrally.
 
@@ -143,6 +145,8 @@ Current models: kokoro, higgs, inworld, inworld-max.
 
 ## Gotchas
 
+- **Billing happens in result_consumer, not ws.py:** `ws.py` only checks usage limits (gating). Actual billing (`record_usage`) happens in `result_consumer.py` after synthesis completes. Don't look for billing code in ws.py.
+- **Per-block vs document-level errors:** Document-level errors (not found, invalid model) send `{"type": "error", ...}`. Per-block errors (usage limit exceeded) send `WSBlockStatus` with `type="status"` and `status="error"`. Tests must check the correct field.
 - **Eviction timing:** Pending check happens at dequeue time, not enqueue. Jobs can sit in queue, then get skipped if cursor moved.
 - **Variant sharing:** Two users requesting same text+model+voice share the cached audio. Good for efficiency, but means cache eviction affects everyone.
 - **Empty audio:** Some blocks produce empty audio (whitespace-only). Marked as "skipped", frontend auto-advances.

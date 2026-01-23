@@ -1,6 +1,7 @@
 ---
-status: active
+status: done
 started: 2026-01-13
+completed: 2026-01-23
 ---
 
 # Task: Monitoring, Alerting & Automated Analysis
@@ -13,16 +14,11 @@ Don't discover issues when users complain. Have automated checks, alerts, and pe
 
 ## Work Items
 
-### 1. Simple Alerts (ntfy.sh)
+### 1. Simple Alerts (ntfy.sh) — ✅ Superseded
 
-Thresholds to alert on:
-- Error rate > X% (TBD, start conservative)
-- Queue depth > 30
-- Disk usage > 80%
-- Container unhealthy
+**Superseded by agent-in-loop (section 4).** The daily report agent already surfaces errors, queue issues, and anomalies via Discord webhook. Adding separate ntfy threshold alerts would be redundant complexity.
 
-Implementation: Hook into existing metrics, POST to ntfy topic when threshold crossed.
-Public topics fine for non-sensitive alerts.
+Deploy notifications already use ntfy (`.github/workflows/deploy.yml` → `ntfy.sh/yapit-tts-deploy`). Runtime alerting is handled by the daily agent.
 
 ### 2. Metrics Coverage Gaps
 
@@ -47,14 +43,14 @@ Higher-level stuff LLMs might struggle with, but humans benefit from at a glance
 - Cost tracking (external API calls: Gemini, RunPod, etc.)
 
 Areas to cover:
-- [ ] Auth failures (promote from DEBUG, log to metrics)
-- [ ] HTTP request latencies (general, not just synthesis)
-- [ ] Billing/Stripe events (webhook activity, failures)
-- [ ] Document processing events (upload, extraction, block splitting)
+- [x] ~~Auth failures~~ — decided against (expired tokens are normal, too noisy)
+- [x] ~~HTTP request latencies (general)~~ — deferred, low value (TTS/extraction latencies already tracked, general endpoint latency rarely the issue)
+- [x] Billing/Stripe events — `stripe_webhook` with duration_ms, event_type, errors (7aca6ea)
+- [x] Document processing events — `url_fetch` with duration/content_type/errors, `content_hash` added to extraction events for estimate correlation (7aca6ea)
   - Gemini API: success/failure rates, retry counts, error types (429/500/503/504), pages processed vs failed
-- [ ] Playwright usage (how often fallback to browser fetch is needed)
-- [ ] External API usage (not duplicating billing consoles, but: pages processed, minutes used, failures/aborts/latency — unified view)
-- [ ] User session metrics (documents per session, playback duration, etc.)
+- [x] Playwright usage — `playwright_fetch` with duration_ms (7aca6ea)
+- [x] ~~External API usage~~ — deferred, billing consoles more accurate + dashboard already shows usage
+- [x] ~~User session metrics~~ — out of scope, product analytics territory (PostHog/Plausible better fit)
 
 ### 3. Infra Metrics
 
@@ -80,48 +76,36 @@ Daily (or every few hours) automated health check:
 ```
 
 Design decisions:
-- **Pre-fetch data locally** — Claude doesn't need tool calls for basic analysis
-- **Allow tool calls optionally** — if deeper digging needed
-- **Run in sandbox mode** — safe to give full permissions on local copy
-- **Model choice** — Sonnet for cost, Opus if prompts need more intelligence
-- **Output** — Private Discord webhook, always fires (✓ nominal / ⚠ issues found). No message = script broken.
+- **Sync data first** — metrics to DuckDB, logs decompressed locally
+- **Targeted allowedTools** — read-only: jq, grep, cat, head, tail, duckdb, etc.
+- **Run on laptop** — systemd user timer at 22:00 daily
+- **Output** — Discord webhook + saved to `~/tmp/yapit-reports/`
+- **Post-deploy variant** — `make report-post-deploy` or `--after-deploy` flag
 
-Sync mechanism:
-- Metrics: `make sync-metrics` already exists (→ DuckDB)
-- Logs: need `make sync-logs` (copy log files locally)
+Note: Timeout values (TTS: 30s, YOLO: 10s) hardcoded in prompt — update if changed in code.
 
-### 5. Log Sync Mechanism
+### 5. Log Sync Mechanism ✅
 
-Add `make sync-logs` similar to `make sync-metrics`:
-- Copy `/data/gateway/logs/*.jsonl*` from prod
-- Store in `gateway-data/logs/`
-- Analysis can then run locally with full permissions
+Implemented alongside agent-in-loop:
+- `make sync-logs` — rsync from Docker volume, auto-decompress .gz files
+- `make sync-data` — sync both metrics + logs
+- Logs at: `/var/lib/docker/volumes/yapit_gateway-data/_data/logs/` on prod
 
 ## Access Pattern Summary
 
 | Data | Prod Location | Local Sync | Analysis |
 |------|---------------|------------|----------|
 | Metrics | TimescaleDB | `make sync-metrics` → DuckDB | SQL queries |
-| Logs | `/data/gateway/logs/` | `make sync-logs` → local files | jq, Claude |
+| Logs | Docker volume `yapit_gateway-data` | `make sync-logs` → `gateway-data/logs/` | jq, Claude |
 
-Both give full local access without endangering prod. Good for sandbox mode.
+Both give full local access without endangering prod.
 
-### 6. Stress Testing
-
-Works perfectly for 1-10 users. But 10-20 concurrent users? Probably breaks.
-
-Need automated e2e stress testing:
-- [ ] Simulate N concurrent users (document upload → synthesis → playback)
-- [ ] Find breaking points (queue overflow, Redis bottlenecks, memory, etc.)
-- [ ] Establish baseline: "system handles X concurrent users before degradation"
-- [ ] Run periodically or before major changes
-
-Tools: locust, k6, or custom script with async clients.
+### 6. Stress Testing → Extracted to [[stress-testing]]
 
 ## Open Questions
 
 - Exact thresholds for alerts (start conservative, tune over time)
-- Frequency for agent-in-loop (daily? every 6h? cost vs value)
+- ~~Frequency for agent-in-loop~~ → Daily at 10pm via systemd timer
 - Hetzner infra metrics: consolidate or keep separate?
 
 ## Sources

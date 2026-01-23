@@ -73,6 +73,32 @@ Portal is now configured with "immediately" for downgrades (not "schedule at per
 
 The custom endpoint was built when we thought ALL portal downgrades don't work, but it's specifically the "schedule at period end" option that requires subscription schedules.
 
+### Token-Based Billing Model (2026-01)
+
+Replaced page-based billing with token-based to eliminate exploit vectors and make costs predictable.
+
+**Why tokens:**
+- Page-based billing allowed adversarial PDFs (dense text = millions of tokens for flat per-page cost)
+- Token billing: cost = tokens × rate, no estimation uncertainty
+
+**Token equivalents:** `input_tokens + (output_tokens × 6)` — Gemini output costs 6× input.
+
+**Waterfall consumption order:**
+1. Subscription limit (counter goes UP, resets each billing cycle)
+2. Rollover IF positive (skip if negative/debt)
+3. Purchased (pure pool, down to 0)
+4. Overflow → rollover debt (rollover goes more negative)
+
+**Rollover debt:** Rollover can go negative. Purchased credits never touched by debt (user explicitly paid). Debt visible in `check_usage_limit`: `total_available = subscription + rollover + purchased`.
+
+**Fields on UserSubscription:**
+- `rollover_tokens` (capped at 10M, can go negative)
+- `rollover_voice_chars` (capped at 1M, can go negative)
+- `purchased_tokens` (uncapped, from packs, never negative)
+- `purchased_voice_chars` (uncapped, from packs, never negative)
+
+See [[2026-01-14-pricing-restructure]] for full implementation details.
+
 ### Trial Strategy
 
 - Basic: 3 days (low cost — server Kokoro only)
@@ -92,8 +118,9 @@ Best handled by one agent sequentially (all touch `stripe_setup.py`, share conte
 - [[stripe-iac-webhooks-tos]] — Webhook endpoint + ToS/Privacy URLs via API
 
 ### Testing
-- [[stripe-e2e-testing]] — Testing workflow and template
-- [[stripe-testing-beta-launch]] — Current testing session (renamed from stripe-billing-e2e-testing)
+- [[stripe-e2e-testing]] — Testing workflow template, test clock patterns
+- [[stripe-testing-pricing-restructure]] — Comprehensive E2E tests for token billing, waterfall consumption, debt/rollover behavior (2026-01)
+- `scripts/test_clock_setup.py` — Helper script for test clock testing (creates customer+subscription+DB records)
 
 ### Research
 - [[stripe-eu-withdrawal]] — EU 14-day withdrawal research ✅ (resolved 2026-01-07, see file for Stripe support response)
@@ -212,6 +239,9 @@ Fix: With Issue 1 fixed, script now reaches product updates. Re-run `stripe_setu
 - **Verify portal config via CLI** — Dashboard may cache old values. Use `stripe billing_portal configurations retrieve <id> | jq '.features.subscription_update.schedule_at_period_end'` to confirm.
 - (TODO) **Interval switching (Monthly ↔ Yearly)** — Portal does support inteveral switch, you simply pay yearly from the start of the next period, or from TODAY (at least in the trial that was the behavior). Need to verify behavior outside of trial, but either way prlly fine, since worst case you just cancel or wait until the end of your billing period to switch. But it's not as clean as idk, prorating the difference immediately. Hmm.
 
+### Trial Cancellation
+- **`cancel_at` vs `cancel_at_period_end`** — Stripe uses `cancel_at` (timestamp) for trial cancellations via portal, not `cancel_at_period_end`. Both must be checked. `UserSubscription.is_canceling` property handles this.
+
 ### Testing
 - **Test clock webhooks don't forward** — `stripe listen` doesn't catch them, use manual event resend
 
@@ -229,6 +259,7 @@ Fix: With Issue 1 fixed, script now reaches product updates. Re-run `stripe_setu
 
 ### Debugging Webhook Issues
 - **Webhook 500 errors** — Check gateway container logs for the actual traceback, not just Stripe dashboard/CLI status codes.
+- **Webhook event ordering** — Stripe doesn't guarantee order. Use upsert patterns (e.g., `subscription.updated` may arrive before `subscription.created`). See billing.py for examples.
 
 ### Assumptions / Corners Cut
 - Portal config `schedule_at_period_end` clearing uses raw HTTP instead of SDK — workaround for SDK limitation

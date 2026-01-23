@@ -35,6 +35,8 @@ cd frontend && npm run dev  # Start frontend separately
 
 **CI debugging:** When CI breaks, first find the exact commit where it started failing (`gh run list`). Don't trust error messages at face value - they may be downstream symptoms. Diff the breaking commit to find the actual cause.
 
+**Test speed investigation (2026-01):** Unit tests take ~40s total, but the tests themselves only take ~12s — the rest is testcontainer startup (~30s). Investigated: pytest-xdist (overhead exceeds gains for fast tests), CI service containers (slower than testcontainers), pre-started containers via env vars (2x faster but adds complexity). Conclusion: no easy wins, testcontainer startup is the bottleneck and there's no simple fix. testcontainers-python doesn't support cross-run reuse like the Java version.
+
 ## CI/CD
 
 - Full CI (tests + build + deploy): ~10 minutes. Tests ~5 min, build+deploy ~5 min.

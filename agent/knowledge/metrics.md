@@ -38,6 +38,13 @@ Separate TimescaleDB instance for metrics (isolated from main Postgres).
 - `extraction_cache_hit` — All requested pages already cached
 - `audio_cache_hit` — Variant already synthesized
 
+### URL Fetching
+- `url_fetch` — HTTP download (duration_ms, content_type, size_bytes, errors)
+- `playwright_fetch` — JS rendering fallback path (duration_ms)
+
+### Webhooks
+- `stripe_webhook` — Stripe webhook processing (duration_ms, event_type, errors)
+
 ## Retention & Aggregates
 
 | Data | Retention |

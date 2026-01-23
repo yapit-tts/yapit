@@ -61,6 +61,26 @@ Only tables from our SQLModel models are included. Stack Auth tables are invisib
 
 **Gotcha:** When you delete a model, the table disappears from `MANAGED_TABLES`, so alembic won't generate a drop. You must write it manually.
 
+## Seed Data
+
+**`yapit/gateway/seed.py` should mirror production state.**
+
+The seed file documents what prod DB should look like for reference data (plans, models, voices, processors). If prod doesn't match seed.py, one of them needs fixing.
+
+**Production updates:**
+- Cannot re-run `seed.py` — unique constraints (e.g., `Plan.tier`) cause INSERT failures
+- Use SQL UPDATE for production changes to plans, prices, limits
+- After schema migrations that add columns (e.g., `ocr_tokens`), may need manual UPDATE to populate values
+
+**Example:** After adding `Plan.ocr_tokens` column:
+```sql
+UPDATE plan SET ocr_tokens = 5000000 WHERE tier = 'basic';
+UPDATE plan SET ocr_tokens = 10000000 WHERE tier = 'plus';
+-- etc.
+```
+
+See also: `scripts/stripe_setup.py` for Stripe product/price configuration (should stay in sync with seed.py).
+
 ## Key Files
 
 | File | Purpose |
@@ -68,4 +88,6 @@ Only tables from our SQLModel models are included. Stack Auth tables are invisib
 | `yapit/gateway/migrations/env.py` | Alembic config, MANAGED_TABLES filter |
 | `yapit/gateway/migrations/versions/` | Migration files |
 | `yapit/gateway/domain_models.py` | SQLModel definitions |
+| `yapit/gateway/seed.py` | Reference data (plans, models, voices) |
+| `scripts/stripe_setup.py` | Stripe products/prices (mirrors seed.py) |
 | `Makefile` | `make migration-new` command |

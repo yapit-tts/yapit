@@ -41,6 +41,14 @@ element (Xpx) → parent (Ypx) → grandparent (Zpx) → ...
 ```
 Find which ancestor is the constraint, fix there. Flex containers especially: children don't auto-stretch width in flex-row parents without `w-full`.
 
+## CSS Theming
+
+Check `frontend/src/index.css` for existing color variables before adding new colors. Prefer theme variables over hardcoded Tailwind classes (`text-emerald-600`) for consistency.
+
+When adding UI, proactively refactor repeated color values into theme variables. If you see the same oklch/color used in multiple places, extract it.
+
+**Gotcha — `text-primary` in dark mode:** Changes from green to gray between modes. Use `--accent-success` for text that should stay green in both modes.
+
 ## React Compiler
 
 Enabled via `babel-plugin-react-compiler`. Auto-memoizes components/values — no need for manual `useMemo`/`useCallback` in most cases.

@@ -18,6 +18,8 @@ For URLs and files, there's a **prepare → create** pattern:
 
 This allows showing page count, title, OCR cost estimate before committing.
 
+MarkItDown runs synchronously on the gateway; Gemini uses parallel async tasks per page. See [[2026-01-21-markitdown-parallel-extraction-analysis]] for why parallelizing MarkItDown isn't worth it.
+
 ## URL Fetching & JS Rendering
 
 For URL inputs, the system first downloads HTML via httpx. If the page appears to be JS-rendered (detected via content sniffing for React/Vue/marked.js patterns, or size heuristic when large HTML yields tiny markdown), Playwright renders it in a headless browser first.
@@ -63,6 +65,30 @@ DocLayout-YOLO detects semantic figures in PDF pages:
 - `row=row0` → figures with same row_group are side-by-side
 
 See [[2026-01-14-doclayout-yolo-figure-detection]] for design decisions.
+
+### Extraction Prompt
+
+`yapit/gateway/document/prompts/extraction.txt`
+
+The prompt tells Gemini how to extract content with TTS annotations. When modifying the prompt, bump `prompt_version` in `gemini.py`. This invalidates cached extractions so documents get re-extracted with the new prompt.
+
+Cache key format: `{slug}:{resolution}:{prompt_version}`
+
+**Prompt design principles:**
+
+1. **Generalize first, then give concrete examples.** Don't list edge cases — state the principle, then anchor with 1-2 examples.
+   - Bad: `"$W_i^Q \in \mathbb{R}^{d \times k}$, $W_i^K \in ...$" → first one gets "W Q, W K, W V, and W O", rest empty`
+   - Good: `Write as a human would read: $W_i^Q \in \mathbb{R}^{d \times k}$ → "W Q"`
+
+2. **Examples must be self-contained.** Don't assume context from your conversation — future extractions won't have it.
+
+3. **Describe the goal, not a prescription.** Say what you want to achieve, not how to achieve it.
+   - Bad: "Drastically simplify complex notation: $W_i^Q \in \mathbb{R}^{d \times k}$ → W Q" — misses the point, could misguide in other cases
+   - Good: "Write as a human would read: $W_i^Q \in \mathbb{R}^{d \times k}$ → W Q" — same output, but captures the actual goal
+
+4. **Test parser behavior.** The transformer has specific requirements (e.g., blank line required BEFORE each `$$block$$`). Check existing test cases in `tests/yapit/gateway/markdown/test_markdown.py` or add new ones — this couples prompt to parser so changes don't silently drift.
+
+5. **Balance specificity.** Too general → model doesn't know what to do. Too specific → doesn't generalize to similar cases.
 
 ### Gemini Retry Logic
 
