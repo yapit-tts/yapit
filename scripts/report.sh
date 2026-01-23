@@ -123,6 +123,19 @@ Yapit is a text-to-speech platform with these components:
 - `extraction_estimate` — pre-check token estimate (compare with actual for tuning)
 - `page_extraction_complete`, `page_extraction_error` — Gemini API calls
 
+**Billing/Webhooks:**
+- `stripe_webhook` — Stripe webhook processing
+  - `duration_ms` — handler latency. Nominal: <1s. Stripe times out at 20s.
+  - `data.event_type` — which event (invoice.paid, subscription.updated, etc.)
+  - `status_code=500` — handler crashed
+
+**URL/Document fetching:**
+- `url_fetch` — document URL downloads
+  - `duration_ms`, `data.content_type`, `data.size_bytes` on success
+  - `data.error` on failure (http_status or request_error)
+- `playwright_fetch` — JS rendering fallback (lower volume, expensive path)
+  - `duration_ms` on success, `data.error` on failure
+
 ## What to Analyze
 
 ### Errors (should be near zero for system errors)

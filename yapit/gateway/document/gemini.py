@@ -87,13 +87,13 @@ class GeminiExtractor:
     ) -> AsyncIterator[PageResult]:
         """Extract pages, yielding results as each completes (parallel execution)."""
         if content_type.startswith("image/"):
-            yield await self._extract_image(content, content_type)
+            yield await self._extract_image(content, content_type, content_hash)
             return
 
         async for result in self._extract_pdf(content, content_hash, pages):
             yield result
 
-    async def _extract_image(self, content: bytes, content_type: str) -> PageResult:
+    async def _extract_image(self, content: bytes, content_type: str, content_hash: str) -> PageResult:
         """Extract text from a single image."""
         config = types.GenerateContentConfig(
             media_resolution=self._resolution,
@@ -116,7 +116,7 @@ class GeminiExtractor:
                 page_idx=0,
                 duration_ms=duration_ms,
                 status_code=getattr(e, "code", None),
-                data={"error": str(e)},
+                data={"error": str(e), "content_hash": content_hash},
             )
             return PageResult(
                 page_idx=0,
@@ -144,6 +144,7 @@ class GeminiExtractor:
             candidates_token_count=output_tokens,
             thoughts_token_count=thoughts_tokens,
             total_token_count=input_tokens + output_tokens + thoughts_tokens,
+            data={"content_hash": content_hash},
         )
 
         text = (response.text or "").strip()
@@ -218,7 +219,9 @@ class GeminiExtractor:
                 url = store_figure(figure, self._images_dir, content_hash, page_idx, fig_idx)
                 figure_urls.append(url)
 
-            return await self._call_gemini_for_page(pdf_reader, page_idx, yolo_result.figures, figure_urls)
+            return await self._call_gemini_for_page(
+                pdf_reader, page_idx, yolo_result.figures, figure_urls, content_hash
+            )
 
         except Exception as e:
             logger.error(f"Page {page_idx + 1} processing failed: {e}")
@@ -238,6 +241,7 @@ class GeminiExtractor:
         page_idx: int,
         figures: list[DetectedFigure],
         figure_urls: list[str],
+        content_hash: str,
     ) -> PageResult:
         """Call Gemini API to extract text from a single PDF page."""
         page_bytes = extract_single_page_pdf(pdf_reader, page_idx)
@@ -263,7 +267,7 @@ class GeminiExtractor:
                 page_idx=page_idx,
                 duration_ms=duration_ms,
                 status_code=getattr(e, "code", None),
-                data={"error": str(e)},
+                data={"error": str(e), "content_hash": content_hash},
             )
             return PageResult(
                 page_idx=page_idx,
@@ -297,6 +301,7 @@ class GeminiExtractor:
             candidates_token_count=output_tokens,
             thoughts_token_count=thoughts_tokens,
             total_token_count=input_tokens + output_tokens + thoughts_tokens,
+            data={"content_hash": content_hash},
         )
 
         return PageResult(

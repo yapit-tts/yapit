@@ -180,6 +180,7 @@ class TestRetryBehavior:
                 page_idx=0,
                 figures=[],
                 figure_urls=[],
+                content_hash="test-hash",
             )
 
         assert result.page is not None
@@ -223,6 +224,7 @@ class TestRetryBehavior:
                     page_idx=0,
                     figures=[],
                     figure_urls=[],
+                    content_hash="test-hash",
                 )
 
             assert result.page is not None, f"Should succeed after {error_code} retry"
@@ -243,6 +245,7 @@ class TestRetryBehavior:
                 page_idx=0,
                 figures=[],
                 figure_urls=[],
+                content_hash="test-hash",
             )
 
         assert result.page is None
@@ -264,6 +267,7 @@ class TestRetryBehavior:
                 page_idx=0,
                 figures=[],
                 figure_urls=[],
+                content_hash="test-hash",
             )
 
         assert result.page is None
@@ -285,6 +289,7 @@ class TestRetryBehavior:
                 page_idx=0,
                 figures=[],
                 figure_urls=[],
+                content_hash="test-hash",
             )
 
         assert result.page is None
@@ -312,6 +317,7 @@ class TestRetryBehavior:
                 page_idx=0,
                 figures=[],
                 figure_urls=[],
+                content_hash="test-hash",
             )
 
         assert result.page is None
@@ -352,6 +358,7 @@ class TestRetryBehavior:
                 page_idx=0,
                 figures=[],
                 figure_urls=[],
+                content_hash="test-hash",
             )
 
         assert result.page is not None

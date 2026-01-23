@@ -4,6 +4,7 @@ import io
 import math
 import re
 import shutil
+import time
 from datetime import datetime
 from email.message import EmailMessage
 from pathlib import Path
@@ -822,6 +823,7 @@ async def _download_document(url: HttpUrl, max_size: int) -> tuple[bytes, str]:
         ValidationError: If download fails or file is too large
     """
     headers = {"User-Agent": "Yapit/1.0 (https://yapit.md; document fetcher)"}
+    start = time.monotonic()
     async with httpx.AsyncClient(
         proxy="http://smokescreen:4750",
         follow_redirects=True,
@@ -856,12 +858,24 @@ async def _download_document(url: HttpUrl, max_size: int) -> tuple[bytes, str]:
             sniffed_type = _sniff_content_type(content_bytes)
             # Trust magic bytes over header if we can detect the type
             content_type = sniffed_type if sniffed_type else header_type
+            duration_ms = int((time.monotonic() - start) * 1000)
+            await log_event(
+                "url_fetch",
+                duration_ms=duration_ms,
+                data={"content_type": content_type, "size_bytes": len(content_bytes)},
+            )
             return content_bytes, content_type
         except httpx.HTTPStatusError as e:
+            duration_ms = int((time.monotonic() - start) * 1000)
             code = e.response.status_code
+            await log_event("url_fetch", duration_ms=duration_ms, status_code=code, data={"error": "http_status"})
             detail = _get_http_error_message(code)
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=detail)
-        except httpx.RequestError:
+        except httpx.RequestError as e:
+            duration_ms = int((time.monotonic() - start) * 1000)
+            await log_event(
+                "url_fetch", duration_ms=duration_ms, status_code=0, data={"error": "request_error", "detail": str(e)}
+            )
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="Unable to reach URL - check it's correct and accessible",

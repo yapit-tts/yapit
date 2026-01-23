@@ -1,6 +1,7 @@
 """Subscription billing API endpoints and Stripe webhook handling."""
 
 import datetime as dt
+import time
 from datetime import datetime
 from typing import cast
 
@@ -20,6 +21,7 @@ from yapit.gateway.domain_models import (
     UsagePeriod,
     UserSubscription,
 )
+from yapit.gateway.metrics import log_event
 from yapit.gateway.usage import (
     MAX_ROLLOVER_TOKENS,
     MAX_ROLLOVER_VOICE_CHARS,
@@ -269,6 +271,7 @@ async def stripe_webhook(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid signature")
 
     logger.info(f"Received Stripe webhook: {event.type}")
+    start = time.monotonic()
 
     if event.type not in SUBSCRIPTION_EVENTS:
         return {"status": "ignored", "event_type": event.type}
@@ -290,9 +293,15 @@ async def stripe_webhook(
             invoice = cast(stripe.Invoice, event.data.object)
             await _handle_invoice_failed(invoice, db)
     except Exception as e:
+        duration_ms = int((time.monotonic() - start) * 1000)
         logger.exception(f"Error handling webhook {event.type}: {e}")
+        await log_event(
+            "stripe_webhook", status_code=500, duration_ms=duration_ms, data={"event_type": event.type, "error": str(e)}
+        )
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Webhook handler error")
 
+    duration_ms = int((time.monotonic() - start) * 1000)
+    await log_event("stripe_webhook", duration_ms=duration_ms, data={"event_type": event.type})
     return {"status": "ok"}
 
 

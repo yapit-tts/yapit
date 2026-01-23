@@ -1,6 +1,9 @@
 import asyncio
+import time
 
 from loguru import logger
+
+from yapit.gateway.metrics import log_event
 
 _browser = None
 _playwright = None
@@ -40,8 +43,16 @@ async def render_with_js(url: str, timeout_ms: int = 30000) -> str:
     async with _semaphore:
         browser = await _get_browser()
         page = await browser.new_page()
+        start = time.monotonic()
         try:
             await page.goto(url, wait_until="networkidle", timeout=timeout_ms)
-            return await page.content()
+            content = await page.content()
+            duration_ms = int((time.monotonic() - start) * 1000)
+            asyncio.create_task(log_event("playwright_fetch", duration_ms=duration_ms))
+            return content
+        except Exception as e:
+            duration_ms = int((time.monotonic() - start) * 1000)
+            asyncio.create_task(log_event("playwright_fetch", duration_ms=duration_ms, data={"error": str(e)}))
+            raise
         finally:
             await page.close()
