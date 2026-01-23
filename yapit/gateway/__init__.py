@@ -1,5 +1,4 @@
 import asyncio
-import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -29,20 +28,17 @@ from yapit.gateway.db import close_db, prepare_database
 from yapit.gateway.deps import create_cache
 from yapit.gateway.document.gemini import GeminiExtractor, create_gemini_config
 from yapit.gateway.exceptions import APIError
+from yapit.gateway.logging_config import (
+    RequestContextMiddleware,
+    configure_logging,
+    unhandled_exception_handler,
+)
 from yapit.gateway.metrics import init_metrics_db, start_metrics_writer, stop_metrics_writer
 from yapit.gateway.overflow_scanner import run_overflow_scanner
 from yapit.gateway.result_consumer import run_result_consumer
 from yapit.gateway.visibility_scanner import run_visibility_scanner
 from yapit.workers.adapters.inworld import InworldAdapter
 from yapit.workers.tts_loop import run_api_tts_dispatcher
-
-logger.remove()
-logger.add(
-    sys.stdout,
-    format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
-    level="INFO",
-    colorize=True,
-)
 
 # Scanner constants
 TTS_VISIBILITY_TIMEOUT_S = 30
@@ -52,20 +48,6 @@ YOLO_OVERFLOW_THRESHOLD_S = 10
 VISIBILITY_SCAN_INTERVAL_S = 15
 OVERFLOW_SCAN_INTERVAL_S = 5
 MAX_RETRIES = 3
-
-
-def _configure_file_logging(log_dir: Path) -> None:
-    """Add persistent JSON log file with rotation (50MB x 20 files = 1GB max)."""
-    log_dir.mkdir(parents=True, exist_ok=True)
-    logger.add(
-        log_dir / "gateway.jsonl",
-        format="{message}",
-        level="INFO",
-        serialize=True,
-        rotation="50 MB",
-        retention=20,
-        compression="gz",
-    )
 
 
 @asynccontextmanager
@@ -212,7 +194,7 @@ def create_app(
     if settings is None:
         settings = Settings()  # type: ignore
 
-    _configure_file_logging(Path(settings.log_dir))
+    configure_logging(Path(settings.log_dir))
 
     limiter = Limiter(key_func=get_remote_address, default_limits=["1000/minute"])
 
@@ -234,6 +216,7 @@ def create_app(
         allow_headers=["*"],
     )
     app.add_middleware(SlowAPIMiddleware)  # type: ignore[arg-type]
+    app.add_middleware(RequestContextMiddleware)
 
     @app.exception_handler(RateLimitExceeded)
     async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
@@ -243,6 +226,8 @@ def create_app(
     async def api_error_handler(request: Request, exc: APIError):
         logger.exception(f"API error: {exc}")
         return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
+
+    app.add_exception_handler(Exception, unhandled_exception_handler)
 
     for r in v1_routers:
         app.include_router(r)

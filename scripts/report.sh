@@ -142,7 +142,12 @@ Yapit is a text-to-speech platform with these components:
 - `*_error` events — what failed and why?
 - `job_dlq` — ANY entry is a red flag, something is systematically broken
 - `job_requeued` — occasional is fine (transient), sustained pattern = worker issues
-- ERROR level in logs — stack traces, exceptions
+- ERROR level in logs — stack traces, exceptions (include request context: method, path, user_id, request_id)
+
+### Warnings
+- WARNING level in logs — library warnings, deprecations, near-failures
+- How often do they occur? Any patterns by module or time?
+- Warnings often precede errors — look for escalation patterns
 
 ### Queue Health
 - `queue_depth` values in `synthesis_queued` — sustained >20 means workers can't keep up
@@ -174,6 +179,45 @@ Yapit is a text-to-speech platform with these components:
 | Queue wait (YOLO) | <5s | >8s |
 | Requeues | Rare/isolated | Pattern (same worker, same error) |
 | Overflow usage | Occasional spikes | Constant (capacity issue) |
+
+## Log Investigation
+
+Logs are JSON lines (loguru format). Key fields:
+- `.record.level.name` — ERROR, WARNING, INFO
+- `.record.name` — module path (e.g., "yapit.gateway.api.v1.documents", "uvicorn.error")
+- `.record.message` — log message
+- `.record.extra.request_id` — 8-char hex, unique per HTTP request (for correlation)
+- `.record.extra.user_id` — user ID if authenticated
+- `.record.exception` — stack trace (when present)
+
+**Correlation strategies:**
+- If you find an error, get its request_id and pull ALL logs for that request to see the full story
+- Group errors by user_id to identify user-specific issues
+- Library logs (uvicorn, sqlalchemy, httpx) now appear — check for their warnings too
+
+**Useful jq patterns:**
+\`\`\`bash
+# All errors
+jq 'select(.record.level.name == "ERROR")' gateway.jsonl
+
+# All warnings
+jq 'select(.record.level.name == "WARNING")' gateway.jsonl
+
+# Correlate by request_id (get full request timeline)
+jq 'select(.record.extra.request_id == "a1b2c3d4")' gateway.jsonl
+
+# Errors for specific user
+jq 'select(.record.level.name == "ERROR" and .record.extra.user_id == "user_123")' gateway.jsonl
+
+# Library warnings (uvicorn, sqlalchemy, etc.)
+jq 'select(.record.level.name == "WARNING" and (.record.name | startswith("yapit") | not))' gateway.jsonl
+\`\`\`
+
+**Investigation workflow:**
+1. Start with ERROR/WARNING counts and patterns
+2. For suspicious errors, correlate by request_id to see full context
+3. If patterns emerge by user_id, check if user-specific (bad input? specific document?)
+4. Check INFO logs around the error time for additional context
 
 ## Output Format
 
