@@ -442,7 +442,7 @@ export function UnifiedInput() {
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <Info className="h-4 w-4 shrink-0" />
           <span>
-            AI Transform limit reached.{" "}
+            This request exceeds your current plan's usage limits.{" "}
             <Link to="/subscription" className="text-primary hover:underline">
               Upgrade plan
             </Link>

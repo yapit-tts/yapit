@@ -15,6 +15,7 @@ const TipsPage = () => {
       </section>
 
       {/* TODO: Getting Started section */}
+      {/* TODO: How billing works (subscription quota, rollover, negative balance/debt) */}
       {/* TODO: Document Preprocessing prompts */}
       {/* TODO: FAQ */}
     </div>
