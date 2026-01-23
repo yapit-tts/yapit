@@ -23,7 +23,6 @@ from yapit.gateway.domain_models import (
 from yapit.gateway.usage import (
     MAX_ROLLOVER_TOKENS,
     MAX_ROLLOVER_VOICE_CHARS,
-    get_or_create_usage_period,
     get_user_subscription,
 )
 
@@ -523,8 +522,23 @@ async def _handle_invoice_paid(invoice: stripe.Invoice, db: DbSession) -> None:
         )
         return
 
-    # Calculate rollover from the ending period BEFORE updating dates
-    old_period = await get_or_create_usage_period(subscription.user_id, subscription, db)
+    # Calculate rollover from the ending period using INVOICE dates (not subscription.current_period_*,
+    # which may have already been updated to the NEW period by subscription.updated webhook)
+    invoice_period_start = datetime.fromtimestamp(invoice.period_start, tz=dt.UTC)
+    result = await db.exec(
+        select(UsagePeriod).where(
+            UsagePeriod.user_id == subscription.user_id,
+            UsagePeriod.period_start == invoice_period_start,
+        )
+    )
+    old_period = result.first()
+    if not old_period:
+        # No usage recorded in ending period - user didn't use any features, so full quota is unused
+        old_period = UsagePeriod(
+            user_id=subscription.user_id,
+            period_start=invoice_period_start,
+            period_end=datetime.fromtimestamp(invoice.period_end, tz=dt.UTC),
+        )
     plan = subscription.plan
 
     # Token rollover
