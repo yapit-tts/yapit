@@ -78,7 +78,7 @@ jobs:
         with:
           python-version-file: "pyproject.toml"
           enable-cache: true
-      - run: uv venv && uv pip install ".[gateway,test]"
+      - run: uv venv && uv pip install ".[test]"
       - run: make test-unit
 
   test-integration:
