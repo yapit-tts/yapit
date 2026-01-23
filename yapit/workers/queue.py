@@ -147,6 +147,9 @@ async def requeue_job(
     logger.info(f"Re-queued job {job_id}, retry_count={new_retry_count}")
 
 
+DLQ_TTL_SECONDS = 7 * 24 * 3600  # 7 days
+
+
 async def move_to_dlq(
     client: redis.Redis,
     dlq_key: str,
@@ -154,7 +157,11 @@ async def move_to_dlq(
     raw_job: bytes,
     retry_count: int,
 ) -> None:
-    """Move a job to the dead letter queue."""
+    """Move a job to the dead letter queue.
+
+    DLQ expires 7 days after the last entry — preserves evidence for investigation
+    while preventing unbounded growth from systematic failures.
+    """
     entry = json.dumps(
         {
             "job_id": job_id,
@@ -164,4 +171,5 @@ async def move_to_dlq(
         }
     )
     await client.lpush(dlq_key, entry)
+    await client.expire(dlq_key, DLQ_TTL_SECONDS)
     logger.error(f"Job {job_id} moved to DLQ after {retry_count} retries")
