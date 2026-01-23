@@ -4,6 +4,7 @@ import io
 import math
 import re
 import shutil
+import time
 from datetime import datetime
 from email.message import EmailMessage
 from pathlib import Path
@@ -24,23 +25,25 @@ from yapit.gateway.auth import authenticate
 from yapit.gateway.cache import Cache
 from yapit.gateway.constants import SUPPORTED_WEB_MIME_TYPES
 from yapit.gateway.deps import (
-    AiProcessorDep,
+    AiExtractorConfigDep,
+    AiExtractorDep,
     AuthenticatedUser,
     CurrentDoc,
     DbSession,
     DocumentCache,
     ExtractionCache,
-    FreeProcessorDep,
-    IsAdmin,
+    RedisClient,
     SettingsDep,
 )
-from yapit.gateway.document.base import (
-    BaseDocumentProcessor,
+from yapit.gateway.document import markitdown
+from yapit.gateway.document.playwright_renderer import render_with_js
+from yapit.gateway.document.processing import (
     CachedDocument,
     DocumentExtractionResult,
     ExtractedPage,
+    ProcessorConfig,
+    process_with_billing,
 )
-from yapit.gateway.document.playwright_renderer import render_with_js
 from yapit.gateway.domain_models import Block, Document, DocumentMetadata, UserPreferences
 from yapit.gateway.exceptions import ResourceNotFoundError
 from yapit.gateway.markdown import parse_markdown, transform_to_document
@@ -149,17 +152,16 @@ class ExtractionStatusRequest(BaseModel):
 async def get_extraction_status(
     req: ExtractionStatusRequest,
     extraction_cache: ExtractionCache,
-    ai_processor: AiProcessorDep,
-    free_processor: FreeProcessorDep,
+    ai_extractor_config: AiExtractorConfigDep,
 ) -> ExtractionStatusResponse:
     """Get progress of an ongoing document extraction by checking cache directly."""
-    processor = ai_processor if req.processor_slug == "gemini" else free_processor
-    if not processor or not processor._extraction_key_prefix:
+    config = ai_extractor_config if req.processor_slug == "gemini" else markitdown.MARKITDOWN_CONFIG
+    if not config or not config.extraction_cache_prefix:
         return ExtractionStatusResponse(total_pages=len(req.pages), completed_pages=[], status="not_found")
 
     completed = []
     for page_idx in req.pages:
-        cache_key = processor._extraction_cache_key(req.content_hash, page_idx)
+        cache_key = config.extraction_cache_key(req.content_hash, page_idx)
         if await extraction_cache.exists(cache_key):
             completed.append(page_idx)
 
@@ -171,13 +173,37 @@ async def get_extraction_status(
     )
 
 
+class CancelExtractionRequest(BaseModel):
+    content_hash: str
+
+
+class CancelExtractionResponse(BaseModel):
+    status: Literal["cancelled", "not_found"]
+
+
+@router.post("/extraction/cancel", response_model=CancelExtractionResponse)
+async def cancel_extraction(
+    req: CancelExtractionRequest,
+    redis: RedisClient,
+) -> CancelExtractionResponse:
+    """Cancel an ongoing document extraction.
+
+    Sets a Redis flag that gemini.py checks before processing each page.
+    Pages already in-flight will complete, but pending pages will be skipped.
+    """
+    cancel_key = f"extraction:cancel:{req.content_hash}"
+    await redis.set(cancel_key, "1", ex=300)  # 5 minute TTL
+    logger.info(f"Extraction cancel requested for {req.content_hash}")
+    return CancelExtractionResponse(status="cancelled")
+
+
 @router.post("/prepare", response_model=DocumentPrepareResponse)
 async def prepare_document(
     request: DocumentPrepareRequest,
     file_cache: DocumentCache,
     extraction_cache: ExtractionCache,
     settings: SettingsDep,
-    ai_processor: AiProcessorDep,
+    ai_extractor_config: AiExtractorConfigDep,
 ) -> DocumentPrepareResponse:
     """Prepare a document from URL for creation."""
     url_hash = hashlib.sha256(str(request.url).encode()).hexdigest()
@@ -198,7 +224,7 @@ async def prepare_document(
                 content_hash,
                 cached_doc.metadata.total_pages,
                 extraction_cache,
-                ai_processor,
+                ai_extractor_config,
             )
             if _needs_ocr_processing(cached_doc.metadata.content_type)
             else set()
@@ -219,7 +245,7 @@ async def prepare_document(
         total_pages=page_count,
         title=title,
         url=str(request.url),
-        file_name=Path(request.url.path).name or None,
+        file_name=Path(request.url.path or "/").name or None,
         file_size=len(content),
     )
 
@@ -233,7 +259,7 @@ async def prepare_document(
             content_hash,
             metadata.total_pages,
             extraction_cache,
-            ai_processor,
+            ai_extractor_config,
         )
         if _needs_ocr_processing(content_type)
         else set()
@@ -248,7 +274,7 @@ async def prepare_document_upload(
     file: UploadFile,
     file_cache: DocumentCache,
     extraction_cache: ExtractionCache,
-    ai_processor: AiProcessorDep,
+    ai_extractor_config: AiExtractorConfigDep,
 ) -> DocumentPrepareResponse:
     """Prepare a document from file upload."""
     content = await file.read()
@@ -268,7 +294,7 @@ async def prepare_document_upload(
                 cache_key,
                 cached_doc.metadata.total_pages,
                 extraction_cache,
-                ai_processor,
+                ai_extractor_config,
             )
             if _needs_ocr_processing(cached_doc.metadata.content_type)
             else set()
@@ -301,7 +327,7 @@ async def prepare_document_upload(
             cache_key,
             metadata.total_pages,
             extraction_cache,
-            ai_processor,
+            ai_extractor_config,
         )
         if _needs_ocr_processing(content_type)
         else set()
@@ -437,9 +463,8 @@ async def create_document(
     extraction_cache: ExtractionCache,
     settings: SettingsDep,
     user: AuthenticatedUser,
-    is_admin: IsAdmin,
-    free_processor: FreeProcessorDep,
-    ai_processor: AiProcessorDep,
+    ai_extractor_config: AiExtractorConfigDep,
+    ai_extractor: AiExtractorDep,
 ) -> DocumentCreateResponse:
     """Create a document from a file (PDF, image, etc)."""
     prefs = await db.get(UserPreferences, user.id)
@@ -459,15 +484,6 @@ async def create_document(
         )
     _validate_page_numbers(req.pages, cached_doc.metadata.total_pages)
 
-    if req.ai_transform:
-        if not ai_processor:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="AI transform not configured on this server",
-            )
-        processor = ai_processor
-    else:
-        processor = free_processor
     if not cached_doc.content:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -475,17 +491,37 @@ async def create_document(
         )
 
     content_hash = hashlib.sha256(cached_doc.content).hexdigest()
-    extraction_result = await processor.process_with_billing(
+
+    if req.ai_transform:
+        if not ai_extractor or not ai_extractor_config:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="AI transform not configured on this server",
+            )
+        config = ai_extractor_config
+        extractor = ai_extractor.extract(
+            cached_doc.content,
+            cached_doc.metadata.content_type,
+            content_hash,
+            req.pages,
+        )
+    else:
+        config = markitdown.MARKITDOWN_CONFIG
+        extractor = markitdown.extract(cached_doc.content, cached_doc.metadata.content_type)
+
+    extraction_result = await process_with_billing(
+        config=config,
+        extractor=extractor,
         user_id=user.id,
-        content_hash=content_hash,
-        db=db,
-        extraction_cache=extraction_cache,
         content=cached_doc.content,
         content_type=cached_doc.metadata.content_type,
+        content_hash=content_hash,
         total_pages=cached_doc.metadata.total_pages,
+        db=db,
+        extraction_cache=extraction_cache,
+        settings=settings,
         file_size=cached_doc.metadata.file_size,
         pages=req.pages,
-        is_admin=is_admin,
     )
 
     # If all pages failed, return error
@@ -616,7 +652,7 @@ async def get_document_blocks(
     Data size is small (~200 bytes/block), so even 1000+ blocks is fine.
     """
     result = await db.exec(select(Block).where(Block.document_id == document.id).order_by(col(Block.idx)))
-    return result.all()
+    return list(result.all())
 
 
 class PositionUpdate(BaseModel):
@@ -687,7 +723,7 @@ async def get_public_document_blocks(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
 
     result = await db.exec(select(Block).where(Block.document_id == document_id).order_by(col(Block.idx)))
-    return result.all()
+    return list(result.all())
 
 
 @public_router.get("/{document_id}/og-preview", response_class=HTMLResponse)
@@ -787,6 +823,7 @@ async def _download_document(url: HttpUrl, max_size: int) -> tuple[bytes, str]:
         ValidationError: If download fails or file is too large
     """
     headers = {"User-Agent": "Yapit/1.0 (https://yapit.md; document fetcher)"}
+    start = time.monotonic()
     async with httpx.AsyncClient(
         proxy="http://smokescreen:4750",
         follow_redirects=True,
@@ -821,12 +858,24 @@ async def _download_document(url: HttpUrl, max_size: int) -> tuple[bytes, str]:
             sniffed_type = _sniff_content_type(content_bytes)
             # Trust magic bytes over header if we can detect the type
             content_type = sniffed_type if sniffed_type else header_type
+            duration_ms = int((time.monotonic() - start) * 1000)
+            await log_event(
+                "url_fetch",
+                duration_ms=duration_ms,
+                data={"content_type": content_type, "size_bytes": len(content_bytes)},
+            )
             return content_bytes, content_type
         except httpx.HTTPStatusError as e:
+            duration_ms = int((time.monotonic() - start) * 1000)
             code = e.response.status_code
+            await log_event("url_fetch", duration_ms=duration_ms, status_code=code, data={"error": "http_status"})
             detail = _get_http_error_message(code)
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=detail)
-        except httpx.RequestError:
+        except httpx.RequestError as e:
+            duration_ms = int((time.monotonic() - start) * 1000)
+            await log_event(
+                "url_fetch", duration_ms=duration_ms, status_code=0, data={"error": "request_error", "detail": str(e)}
+            )
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="Unable to reach URL - check it's correct and accessible",
@@ -900,15 +949,15 @@ async def _get_uncached_pages(
     content_hash: str,
     total_pages: int,
     extraction_cache: Cache,
-    processor: BaseDocumentProcessor | None,
+    config: ProcessorConfig | None,
 ) -> set[int]:
     """Query extraction cache to find which pages need processing."""
-    if not processor or not processor._extraction_key_prefix:
+    if not config or not config.extraction_cache_prefix:
         return set(range(total_pages))
 
     uncached = set()
     for page_idx in range(total_pages):
-        key = f"{content_hash}:{processor._extraction_key_prefix}:{page_idx}"
+        key = config.extraction_cache_key(content_hash, page_idx)
         if not await extraction_cache.exists(key):
             uncached.add(page_idx)
     return uncached

@@ -64,6 +64,7 @@ class Cache(abc.ABC):
 class SqliteCache(Cache):
     def __init__(self, config: CacheConfig):
         super().__init__(config)
+        assert config.path is not None, "SqliteCache requires a path"
         self.db_path = Path(config.path) / "cache.db"
         self._max_size_bytes = config.max_size_mb * 1024 * 1024 if config.max_size_mb else None
         self._init_db()
@@ -130,7 +131,9 @@ class SqliteCache(Cache):
 
         async with aiosqlite.connect(self.db_path) as db:
             async with db.execute("SELECT COALESCE(SUM(size), 0) FROM cache") as cursor:
-                total_size = (await cursor.fetchone())[0]
+                row = await cursor.fetchone()
+                assert row is not None  # aggregate always returns a row
+                total_size = row[0]
 
             if total_size <= self._max_size_bytes:
                 return 0
@@ -157,8 +160,8 @@ class SqliteCache(Cache):
         async with aiosqlite.connect(self.db_path) as db:
             async with db.execute("SELECT COALESCE(SUM(size), 0), COUNT(*) FROM cache") as cursor:
                 row = await cursor.fetchone()
-                data_size = row[0]
-                entry_count = row[1]
+                assert row is not None  # aggregate always returns a row
+                data_size, entry_count = row[0], row[1]
 
         file_size = self.db_path.stat().st_size if self.db_path.exists() else 0
         bloat_ratio = file_size / data_size if data_size > 0 else 1.0

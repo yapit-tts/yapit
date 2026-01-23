@@ -1,0 +1,52 @@
+# Inworld TTS
+
+Premium TTS provider. REST streaming API, 60 voices across 13 languages.
+
+## Models
+
+| Model | API ID | Our Slug | Price | Latency (P50) |
+|-------|--------|----------|-------|---------------|
+| TTS-1.5-Mini | `inworld-tts-1.5-mini` | `inworld-1.5` | $5/1M chars | ~120ms |
+| TTS-1.5-Max | `inworld-tts-1.5-max` | `inworld-1.5-max` | $10/1M chars | ~200ms |
+
+## Speaking Rate
+
+**~14 chars/sec average** (n=8 voices, ~3500 chars corpus)
+
+| Voice | chars/sec | Notes |
+|-------|-----------|-------|
+| Sarah | 15.71 | Fast-talking |
+| Craig | 15.60 | |
+| Dennis | 15.16 | |
+| Ashley | 14.30 | |
+| Olivia | 14.23 | |
+| Mark | 13.74 | |
+| Elizabeth | 13.58 | |
+| Blake | 11.21 | Intimate/deliberate |
+
+**Variance:** 11.2 - 15.7 chars/sec (~40% spread). Blake is a clear outlier (intimate reading style). Excluding Blake, range is 13.6-15.7 (~15% spread).
+
+**For quota estimation:**
+- Conservative: 12 chars/sec → 43,200 chars/hour
+- Average: 14 chars/sec → 50,400 chars/hour
+- Fast voice: 16 chars/sec → 57,600 chars/hour
+
+Benchmark: `experiments/benchmark_inworld_speaking_rate.py`
+
+## Key Files
+
+- `yapit/workers/adapters/inworld.py` — REST streaming adapter
+- `yapit/data/inworld/voices.json` — 60 voices, all languages
+- `yapit/gateway/seed.py:96-139` — model/voice definitions
+
+## Related Tasks
+
+- [[inworld-api-evaluation]] — original evaluation, API research, voice selection
+- [[inworld-frontend-integration]] — voice picker, MP3 decoding fix
+- [[2026-01-21-inworld-tts-1.5-upgrade]] — upgrade to TTS-1.5 models
+- [[2026-01-18-inworld-temperature-setting]] — temperature slider (pending)
+
+## External Docs
+
+- [API: Generating Audio](https://docs.inworld.ai/docs/tts/capabilities/generating-audio) — request format, parameters
+- [TTS-1 Technical Report](https://arxiv.org/html/2507.21138v1) — architecture, streaming, codec

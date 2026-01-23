@@ -15,8 +15,6 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { Loader2, ArrowLeft, Check, Clock } from "lucide-react";
 
-const CHARS_PER_HOUR = 61200; // ~17 chars/sec * 3600 sec/hr
-
 type PlanTier = "free" | "basic" | "plus" | "max";
 type BillingInterval = "monthly" | "yearly";
 
@@ -25,7 +23,7 @@ interface Plan {
   name: string;
   server_kokoro_characters: number | null;
   premium_voice_characters: number | null;
-  ocr_pages: number | null;
+  ocr_tokens: number | null;
   price_cents_monthly: number;
   price_cents_yearly: number;
   trial_days: number;
@@ -47,12 +45,18 @@ interface UsageSummary {
   limits: {
     server_kokoro_characters: number | null;
     premium_voice_characters: number | null;
-    ocr_pages: number | null;
+    ocr_tokens: number | null;
   };
   usage: {
     server_kokoro_characters: number;
     premium_voice_characters: number;
-    ocr_pages: number;
+    ocr_tokens: number;
+  };
+  extra_balances?: {
+    rollover_tokens: number;
+    rollover_voice_chars: number;
+    purchased_tokens: number;
+    purchased_voice_chars: number;
   };
   period: { start: string; end: string } | null;
 }
@@ -60,10 +64,10 @@ interface UsageSummary {
 const TIER_ORDER: PlanTier[] = ["free", "basic", "plus", "max"];
 
 const PLAN_FEATURES: Record<PlanTier, string[]> = {
-  free: ["Local TTS (English only)", "Unlimited documents"],
-  basic: ["Everything in Free", "Unlimited Kokoro (all languages)", "500 AI Transform pages/month", "Cancel anytime during trial"],
-  plus: ["Everything in Basic", "~20 hrs premium voices/month*", "1,500 AI Transform pages/month", "Cancel anytime during trial"],
-  max: ["Everything in Plus", "~50 hrs premium voices/month*", "3,000 AI Transform pages/month"],
+  free: ["Kokoro TTS (local, English)", "100 documents"],
+  basic: ["Unlimited Kokoro TTS", "1,000 documents", "~500 AI-transformed pages*", "Unused quota accumulates**", "Cancel anytime during trial"],
+  plus: ["Everything in Basic", "~20 hrs premium voices*", "~1,000 AI-transformed pages*", "Cancel anytime during trial"],
+  max: ["Everything in Plus", "~60 hrs premium voices*", "~1,500 AI-transformed pages*"],
 };
 
 const SubscriptionPage = () => {
@@ -139,22 +143,19 @@ const SubscriptionPage = () => {
     }).format(cents / 100);
   };
 
-  const formatCharactersAsHours = (chars: number | null, isLimit = false): string => {
-    if (chars === null) return "Unlimited";
-    if (chars === 0) return isLimit ? "Not included" : "0 hrs";
-    const hours = chars / CHARS_PER_HOUR;
-    if (hours < 1) {
-      const minutes = Math.round(hours * 60);
-      return `~${minutes} min`;
+  const formatNumber = (n: number | null, isLimit = false): string => {
+    if (n === null) return "Unlimited";
+    if (n === 0) return isLimit ? "Not included" : "0";
+    const abs = Math.abs(n);
+    const sign = n < 0 ? "-" : "";
+    if (abs >= 1_000_000) {
+      const m = abs / 1_000_000;
+      return sign + (m % 1 === 0 ? `${m}M` : `${m.toFixed(1)}M`);
     }
-    return `~${Math.round(hours)} hrs`;
-  };
-
-  const formatCharactersExact = (chars: number): string => {
-    if (chars >= 1_000_000) {
-      return `${(chars / 1_000_000).toFixed(2)}M chars`;
+    if (abs >= 1_000) {
+      return sign + `${Math.round(abs / 1_000)}K`;
     }
-    return `${chars.toLocaleString()} chars`;
+    return n.toLocaleString();
   };
 
   const getUsagePercent = (used: number, limit: number | null): number => {
@@ -258,8 +259,8 @@ const SubscriptionPage = () => {
                         <div className="flex justify-between text-sm mb-1.5">
                           <span>Premium Voice</span>
                           <span className="text-muted-foreground">
-                            {formatCharactersAsHours(subscription.usage.premium_voice_characters)} /{" "}
-                            {formatCharactersAsHours(subscription.limits.premium_voice_characters, true)}
+                            {formatNumber(subscription.usage.premium_voice_characters)} /{" "}
+                            {formatNumber(subscription.limits.premium_voice_characters, true)}
                           </span>
                         </div>
                         <Progress
@@ -268,28 +269,72 @@ const SubscriptionPage = () => {
                             subscription.limits.premium_voice_characters
                           )}
                         />
+                        {(() => {
+                          const extra = (subscription.extra_balances?.rollover_voice_chars ?? 0) + (subscription.extra_balances?.purchased_voice_chars ?? 0);
+                          if (extra === 0) return null;
+                          return (
+                            <p className={`text-sm mt-0.5 text-right ${extra > 0 ? "text-accent-success" : "text-accent-warning"}`}>
+                              {extra > 0 ? "+" : ""}{formatNumber(extra)}
+                            </p>
+                          );
+                        })()}
                       </div>
                     </TooltipTrigger>
-                    <TooltipContent side="bottom">
-                      <p>{formatCharactersExact(subscription.usage.premium_voice_characters)} / {formatCharactersExact(subscription.limits.premium_voice_characters)}</p>
-                      <p className="text-xs opacity-75">Hours are approximate (~17 chars/sec)</p>
+                    <TooltipContent side="bottom" className="text-xs">
+                      <div className="space-y-0.5">
+                        <p>Subscription: {formatNumber(subscription.usage.premium_voice_characters)} / {formatNumber(subscription.limits.premium_voice_characters)}</p>
+                        {(subscription.extra_balances?.rollover_voice_chars ?? 0) !== 0 && (
+                          <p>
+                            Rollover: {(subscription.extra_balances?.rollover_voice_chars ?? 0) > 0 ? "+" : ""}{formatNumber(subscription.extra_balances?.rollover_voice_chars ?? 0)}
+                          </p>
+                        )}
+                        {(subscription.extra_balances?.purchased_voice_chars ?? 0) > 0 && (
+                          <p>Top-up: +{formatNumber(subscription.extra_balances?.purchased_voice_chars ?? 0)}</p>
+                        )}
+                      </div>
                     </TooltipContent>
                   </Tooltip>
                 )}
 
-              {subscription.limits.ocr_pages !== null && subscription.limits.ocr_pages > 0 && (
-                <div>
-                  <div className="flex justify-between text-sm mb-1.5">
-                    <span>AI Transform</span>
-                    <span className="text-muted-foreground">
-                      {subscription.usage.ocr_pages.toLocaleString()} /{" "}
-                      {subscription.limits.ocr_pages.toLocaleString()}
-                    </span>
-                  </div>
-                  <Progress
-                    value={getUsagePercent(subscription.usage.ocr_pages, subscription.limits.ocr_pages)}
-                  />
-                </div>
+              {subscription.limits.ocr_tokens !== null && subscription.limits.ocr_tokens > 0 && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <div className="cursor-help">
+                      <div className="flex justify-between text-sm mb-1.5">
+                        <span>AI Transform</span>
+                        <span className="text-muted-foreground">
+                          {formatNumber(subscription.usage.ocr_tokens)} /{" "}
+                          {formatNumber(subscription.limits.ocr_tokens, true)}
+                        </span>
+                      </div>
+                      <Progress
+                        value={getUsagePercent(subscription.usage.ocr_tokens, subscription.limits.ocr_tokens)}
+                      />
+                      {(() => {
+                        const extra = (subscription.extra_balances?.rollover_tokens ?? 0) + (subscription.extra_balances?.purchased_tokens ?? 0);
+                        if (extra === 0) return null;
+                        return (
+                          <p className={`text-sm mt-0.5 text-right ${extra > 0 ? "text-accent-success" : "text-accent-warning"}`}>
+                            {extra > 0 ? "+" : ""}{formatNumber(extra)}
+                          </p>
+                        );
+                      })()}
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" className="text-xs">
+                    <div className="space-y-0.5">
+                      <p>Subscription: {formatNumber(subscription.usage.ocr_tokens)} / {formatNumber(subscription.limits.ocr_tokens)}</p>
+                      {(subscription.extra_balances?.rollover_tokens ?? 0) !== 0 && (
+                        <p>
+                          Rollover: {(subscription.extra_balances?.rollover_tokens ?? 0) > 0 ? "+" : ""}{formatNumber(subscription.extra_balances?.rollover_tokens ?? 0)}
+                        </p>
+                      )}
+                      {(subscription.extra_balances?.purchased_tokens ?? 0) > 0 && (
+                        <p>Top-up: +{formatNumber(subscription.extra_balances?.purchased_tokens ?? 0)}</p>
+                      )}
+                    </div>
+                  </TooltipContent>
+                </Tooltip>
               )}
             </CardContent>
           )}
@@ -304,7 +349,7 @@ const SubscriptionPage = () => {
             <TabsTrigger value="monthly">Monthly</TabsTrigger>
             <TabsTrigger value="yearly">
               Yearly
-              <span className="ml-1.5 text-sm text-primary">Save up to 50%</span>
+              <span className="ml-1.5 text-sm text-primary">Save 25%</span>
             </TabsTrigger>
           </TabsList>
         </Tabs>
@@ -312,7 +357,7 @@ const SubscriptionPage = () => {
 
       {isAnonymous && (
         <p className="text-muted-foreground mb-4">
-          Sign in to subscribe to a plan
+          <a href="/handler/signin" className="underline hover:text-foreground">Sign in</a> to subscribe to a plan
         </p>
       )}
 
@@ -415,44 +460,85 @@ const SubscriptionPage = () => {
           <table className="w-full text-sm">
             <thead className="bg-muted/50">
               <tr>
-                <th className="px-3 py-3 text-left font-medium"></th>
-                <th className="px-3 py-3 text-center font-medium">Plus Monthly</th>
-                <th className="px-3 py-3 text-center font-medium">Plus Yearly</th>
-                <th className="px-3 py-3 text-center font-medium">Max Monthly</th>
-                <th className="px-3 py-3 text-center font-medium">Max Yearly</th>
+                <th className="px-2 py-2 text-left font-medium"></th>
+                <th className="px-2 py-2 text-center font-medium">Basic Mo.</th>
+                <th className="px-2 py-2 text-center font-medium">Basic Yr.</th>
+                <th className="px-2 py-2 text-center font-medium">Plus Mo.</th>
+                <th className="px-2 py-2 text-center font-medium">Plus Yr.</th>
+                <th className="px-2 py-2 text-center font-medium">Max Mo.</th>
+                <th className="px-2 py-2 text-center font-medium">Max Yr.</th>
               </tr>
             </thead>
             <tbody className="divide-y">
               <tr>
-                <td className="px-3 py-2.5 font-medium text-muted-foreground">Price</td>
-                <td className="px-3 py-2.5 text-center">€20/mo</td>
-                <td className="px-3 py-2.5 text-center">€16/mo eff.</td>
-                <td className="px-3 py-2.5 text-center">€40/mo</td>
-                <td className="px-3 py-2.5 text-center">€20/mo eff.</td>
+                <td className="pl-2 pr-0 py-2 font-medium text-muted-foreground">Price</td>
+                <td className="px-2 py-2 text-center">€10/mo</td>
+                <td className="px-2 py-2 text-center">€7.5/mo eff.</td>
+                <td className="px-2 py-2 text-center">€20/mo</td>
+                <td className="px-2 py-2 text-center">€15/mo eff.</td>
+                <td className="px-2 py-2 text-center">€40/mo</td>
+                <td className="px-2 py-2 text-center">€30/mo eff.</td>
               </tr>
               <tr>
-                <td className="px-3 py-2.5 font-medium text-muted-foreground">Chars</td>
-                <td className="px-3 py-2.5 text-center">1.2M</td>
-                <td className="px-3 py-2.5 text-center">1.2M</td>
-                <td className="px-3 py-2.5 text-center">3M</td>
-                <td className="px-3 py-2.5 text-center">3M</td>
+                <td className="pl-2 pr-0 py-2 font-medium text-muted-foreground">Premium Voice</td>
+                <td className="px-2 py-2 text-center text-muted-foreground">—</td>
+                <td className="px-2 py-2 text-center text-muted-foreground">—</td>
+                <td className="px-2 py-2 text-center">1M</td>
+                <td className="px-2 py-2 text-center">1M</td>
+                <td className="px-2 py-2 text-center">3M</td>
+                <td className="px-2 py-2 text-center">3M</td>
               </tr>
               <tr>
-                <td className="px-3 py-2.5 font-medium text-muted-foreground">chars/€</td>
-                <td className="px-3 py-2.5 text-center">60k</td>
-                <td className="px-3 py-2.5 text-center">
+                <td className="pl-2 pr-0 py-2 font-medium text-muted-foreground">chars/€</td>
+                <td className="px-2 py-2 text-center text-muted-foreground">—</td>
+                <td className="px-2 py-2 text-center text-muted-foreground">—</td>
+                <td className="px-2 py-2 text-center">50k</td>
+                <td className="px-2 py-2 text-center">
+                  <span className="relative">
+                    67k
+                    <span className="absolute left-full ml-1 text-xs text-accent-success whitespace-nowrap">+33%</span>
+                  </span>
+                </td>
+                <td className="px-2 py-2 text-center">
                   <span className="relative">
                     75k
-                    <span className="absolute left-full ml-1 text-xs text-emerald-600 dark:text-emerald-400 whitespace-nowrap">+25%</span>
+                    <span className="absolute left-full ml-1 text-xs text-accent-success whitespace-nowrap">+50%</span>
                   </span>
                 </td>
-                <td className="px-3 py-2.5 text-center">75k</td>
-                <td className="px-3 py-2.5 text-center">
+                <td className="px-2 py-2 text-center">
                   <span className="relative">
-                    150k
-                    <span className="absolute left-full ml-1 text-xs text-emerald-600 dark:text-emerald-400 whitespace-nowrap">+100%</span>
+                    100k
+                    <span className="absolute left-full ml-1 text-xs text-accent-success whitespace-nowrap">+100%</span>
                   </span>
                 </td>
+              </tr>
+              <tr>
+                <td className="pl-2 pr-0 py-2 font-medium text-muted-foreground">AI Tokens</td>
+                <td className="px-2 py-2 text-center">5M</td>
+                <td className="px-2 py-2 text-center">5M</td>
+                <td className="px-2 py-2 text-center">10M</td>
+                <td className="px-2 py-2 text-center">10M</td>
+                <td className="px-2 py-2 text-center">15M</td>
+                <td className="px-2 py-2 text-center">15M</td>
+              </tr>
+              <tr>
+                <td className="pl-2 pr-0 py-2 font-medium text-muted-foreground">tokens/€</td>
+                <td className="px-2 py-2 text-center">500k</td>
+                <td className="px-2 py-2 text-center">
+                  <span className="relative">
+                    667k
+                    <span className="absolute left-full ml-1 text-xs text-accent-success whitespace-nowrap">+33%</span>
+                  </span>
+                </td>
+                <td className="px-2 py-2 text-center">500k</td>
+                <td className="px-2 py-2 text-center">
+                  <span className="relative">
+                    667k
+                    <span className="absolute left-full ml-1 text-xs text-accent-success whitespace-nowrap">+33%</span>
+                  </span>
+                </td>
+                <td className="px-2 py-2 text-center">375k</td>
+                <td className="px-2 py-2 text-center">500k</td>
               </tr>
             </tbody>
           </table>
@@ -460,9 +546,11 @@ const SubscriptionPage = () => {
       </div>
 
       <p className="mt-8 text-center text-sm text-muted-foreground">
-        *~20 hrs at 1× listening speed. TTS-1-Max uses 2× quota. Prices <em>include</em> VAT.
+        *Estimates vary. Typical content often yields more. TTS-1-Max uses 2× voice quota.
         <br />
-        Paid subscriptions are non-refundable after service begins. See <a href="/terms" className="underline hover:text-foreground">Terms</a>.
+        **Capped at 1M voice chars / 10M AI transformation tokens.
+        <br />
+        Fair use applies. Paid subscriptions are non-refundable. See <a href="/terms" className="underline hover:text-foreground">Terms</a>.
       </p>
     </div>
   );

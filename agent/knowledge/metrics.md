@@ -29,6 +29,7 @@ Separate TimescaleDB instance for metrics (isolated from main Postgres).
 - `detection_complete` / `detection_error` — Worker results (worker_id, processing_time)
 
 ### Extraction
+- `extraction_estimate` — Pre-check token estimate before processing (estimated_tokens, num_pages, tolerance)
 - `page_extraction_complete` — Gemini page extraction (all token counts)
 - `page_extraction_error` — Extraction failed (status codes)
 

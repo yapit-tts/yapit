@@ -23,15 +23,14 @@ from yapit.gateway.cache import Cache
 from yapit.gateway.config import Settings, get_settings
 from yapit.gateway.db import close_db, prepare_database
 from yapit.gateway.deps import create_cache
-from yapit.gateway.document.gemini import GeminiProcessor
-from yapit.gateway.document.markitdown import MarkitdownProcessor
+from yapit.gateway.document.gemini import GeminiExtractor, create_gemini_config
 from yapit.gateway.exceptions import APIError
 from yapit.gateway.metrics import init_metrics_db, start_metrics_writer, stop_metrics_writer
 from yapit.gateway.overflow_scanner import run_overflow_scanner
 from yapit.gateway.result_consumer import run_result_consumer
 from yapit.gateway.visibility_scanner import run_visibility_scanner
 from yapit.workers.adapters.inworld import InworldAdapter
-from yapit.workers.tts_loop import run_tts_worker
+from yapit.workers.tts_loop import run_api_tts_dispatcher
 
 logger.remove()
 logger.add(
@@ -80,13 +79,14 @@ async def lifespan(app: FastAPI):
     app.state.document_cache = create_cache(settings.document_cache_type, settings.document_cache_config)
     app.state.extraction_cache = create_cache(settings.extraction_cache_type, settings.extraction_cache_config)
 
-    # Document processors
-    app.state.free_processor = MarkitdownProcessor(settings=settings)
+    # Document extractors
     if settings.ai_processor == "gemini":
-        app.state.ai_processor = GeminiProcessor(redis=app.state.redis_client, settings=settings)
-        logger.info("AI processor: gemini")
+        app.state.ai_extractor_config = create_gemini_config()
+        app.state.ai_extractor = GeminiExtractor(settings=settings, redis=app.state.redis_client)
+        logger.info("AI extractor: gemini")
     else:
-        app.state.ai_processor = None
+        app.state.ai_extractor_config = None
+        app.state.ai_extractor = None
 
     background_tasks: list[asyncio.Task] = []
 
@@ -160,13 +160,20 @@ async def lifespan(app: FastAPI):
         )
         background_tasks.append(yolo_overflow_task)
 
-    # Inworld workers run in gateway (API calls, no local model)
+    # Inworld dispatchers run in gateway (API calls, unlimited parallelism)
     if settings.inworld_api_key:
         for model_id, model_slug in [("inworld-tts-1", "inworld"), ("inworld-tts-1-max", "inworld-max")]:
             adapter = InworldAdapter(api_key=settings.inworld_api_key, model_id=model_id)
-            task = asyncio.create_task(run_tts_worker(settings.redis_url, model_slug, adapter, f"inworld-{model_slug}"))
+            task = asyncio.create_task(
+                run_api_tts_dispatcher(
+                    redis_url=settings.redis_url,
+                    model=model_slug,
+                    adapter=adapter,
+                    worker_id=f"gateway-{model_slug}",
+                )
+            )
             background_tasks.append(task)
-        logger.info("Inworld workers started")
+        logger.info("Inworld dispatchers started")
 
     all_caches = [app.state.audio_cache, app.state.document_cache, app.state.extraction_cache]
     maintenance_task = asyncio.create_task(_cache_maintenance_task(all_caches))
@@ -213,7 +220,7 @@ def create_app(
     app.dependency_overrides[get_settings] = lambda: settings
 
     app.add_middleware(
-        CORSMiddleware,
+        CORSMiddleware,  # type: ignore[arg-type]  # Starlette typing limitation
         allow_origins=settings.cors_origins,
         allow_credentials=True,
         allow_methods=["*"],

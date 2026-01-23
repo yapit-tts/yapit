@@ -1,7 +1,10 @@
+"""Gemini-based document extraction with YOLO figure detection."""
+
 import asyncio
 import io
 import random
 import time
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 from google import genai
@@ -12,12 +15,7 @@ from pypdf import PdfReader
 from redis.asyncio import Redis
 
 from yapit.contracts import DetectedFigure
-from yapit.gateway.cache import Cache
-from yapit.gateway.document.base import (
-    BaseDocumentProcessor,
-    DocumentExtractionResult,
-    ExtractedPage,
-)
+from yapit.gateway.config import Settings
 from yapit.gateway.document.extraction import (
     build_figure_prompt,
     extract_single_page_pdf,
@@ -25,10 +23,8 @@ from yapit.gateway.document.extraction import (
     store_figure,
     substitute_image_placeholders,
 )
-from yapit.gateway.document.yolo_client import (
-    enqueue_detection,
-    wait_for_result,
-)
+from yapit.gateway.document.processing import ExtractedPage, PageResult, ProcessorConfig
+from yapit.gateway.document.yolo_client import enqueue_detection, wait_for_result
 from yapit.gateway.metrics import log_event
 
 RESOLUTION_MAP = {
@@ -37,75 +33,294 @@ RESOLUTION_MAP = {
     "high": types.MediaResolution.MEDIA_RESOLUTION_HIGH,
 }
 
-# Retryable HTTP status codes (transient errors)
 RETRYABLE_STATUS_CODES = {429, 500, 503, 504}
 MAX_RETRIES = 6
 BASE_DELAY_SECONDS = 1.0
 MAX_DELAY_SECONDS = 30.0  # Total retry time ~61s (1+2+4+8+16+30) to handle rate limit windows
 
+# Fallback estimates when usage_metadata is None
+FALLBACK_INPUT_TOKENS_PER_PAGE = 2500
+FALLBACK_OUTPUT_TOKENS_PER_PAGE = 1000
 
-class GeminiProcessor(BaseDocumentProcessor):
-    SUPPORTED_MIME_TYPES = {
-        "application/pdf",
-        "image/*",
-    }
+
+def create_gemini_config(
+    resolution: str = "high",
+    prompt_version: str = "v6",  # bump for prompt/processing changes to invalidate cached extractions
+) -> ProcessorConfig:
+    return ProcessorConfig(
+        slug="gemini",
+        supported_mime_types=frozenset({"application/pdf", "image/*"}),
+        max_pages=10000,
+        max_file_size=100 * 1024 * 1024,  # 100MB
+        is_paid=True,
+        output_token_multiplier=6,  # Output costs 6× input
+        extraction_cache_prefix=f"gemini:{resolution}:{prompt_version}",
+    )
+
+
+class GeminiExtractor:
+    """Extracts document content using Gemini API with YOLO figure detection."""
 
     def __init__(
         self,
+        settings: Settings,
         redis: Redis,
         model: str = "gemini-3-flash-preview",
         resolution: str = "high",
-        prompt_version: str = "v6",  # bump for prompt/processing changes to apply to future extractions of same doc
-        max_pages: int = 10000,
-        max_file_size: int = 100 * 1024 * 1024,  # 100MB
-        **kwargs,
     ):
-        super().__init__(slug="gemini", **kwargs)
-
-        if not self._settings.google_api_key:
-            raise ValueError("GOOGLE_API_KEY is required for Gemini processor")
+        if not settings.google_api_key:
+            raise ValueError("GOOGLE_API_KEY is required for Gemini extractor")
 
         self._redis = redis
-        self._client = genai.Client(api_key=self._settings.google_api_key)
+        self._client = genai.Client(api_key=settings.google_api_key)
         self._model = model
-        self._resolution_str = resolution
         self._resolution = RESOLUTION_MAP[resolution]
-        self._prompt_version = prompt_version
         self._prompt = load_prompt()
-        self._max_pages = max_pages
-        self._max_file_size = max_file_size
-        self._images_dir = Path(self._settings.images_dir)
+        self._images_dir = Path(settings.images_dir)
 
-    @property
-    def _processor_supported_mime_types(self) -> set[str]:
-        return self.SUPPORTED_MIME_TYPES
+    async def extract(
+        self,
+        content: bytes,
+        content_type: str,
+        content_hash: str,
+        pages: list[int] | None = None,
+    ) -> AsyncIterator[PageResult]:
+        """Extract pages, yielding results as each completes (parallel execution)."""
+        if content_type.startswith("image/"):
+            yield await self._extract_image(content, content_type, content_hash)
+            return
 
-    @property
-    def _extraction_key_prefix(self) -> str:
-        return f"{self._slug}:{self._resolution_str}:{self._prompt_version}"
+        async for result in self._extract_pdf(content, content_hash, pages):
+            yield result
 
-    @property
-    def max_pages(self) -> int:
-        return self._max_pages
+    async def _extract_image(self, content: bytes, content_type: str, content_hash: str) -> PageResult:
+        """Extract text from a single image."""
+        config = types.GenerateContentConfig(
+            media_resolution=self._resolution,
+            thinking_config=types.ThinkingConfig(thinking_level=types.ThinkingLevel.MINIMAL),
+        )
+        contents = [
+            types.Part.from_bytes(data=content, mime_type=content_type),
+            self._prompt,
+        ]
+        start_time = time.monotonic()
 
-    @property
-    def max_file_size(self) -> int:
-        return self._max_file_size
+        try:
+            response = await self._call_gemini_with_retry(contents, config, context="image")
+        except Exception as e:
+            duration_ms = int((time.monotonic() - start_time) * 1000)
+            logger.error(f"Gemini image extraction failed after retries: {e}")
+            await log_event(
+                "page_extraction_error",
+                processor_slug=self._model,
+                page_idx=0,
+                duration_ms=duration_ms,
+                status_code=getattr(e, "code", None),
+                data={"error": str(e), "content_hash": content_hash},
+            )
+            return PageResult(
+                page_idx=0,
+                page=None,
+                input_tokens=0,
+                output_tokens=0,
+                thoughts_tokens=0,
+                is_fallback=False,
+                cancelled=False,
+            )
 
-    @property
-    def is_paid(self) -> bool:
-        return True
+        duration_ms = int((time.monotonic() - start_time) * 1000)
+        input_tokens, output_tokens, thoughts_tokens, is_fallback = self._extract_token_usage(
+            response.usage_metadata, context="image"
+        )
+
+        if response.usage_metadata:
+            logger.info(f"Gemini image extraction: {duration_ms}ms, usage={response.usage_metadata.model_dump()}")
+        await log_event(
+            "page_extraction_complete",
+            processor_slug=self._model,
+            page_idx=0,
+            duration_ms=duration_ms,
+            prompt_token_count=input_tokens,
+            candidates_token_count=output_tokens,
+            thoughts_token_count=thoughts_tokens,
+            total_token_count=input_tokens + output_tokens + thoughts_tokens,
+            data={"content_hash": content_hash},
+        )
+
+        text = (response.text or "").strip()
+        return PageResult(
+            page_idx=0,
+            page=ExtractedPage(markdown=text, images=[]),
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            thoughts_tokens=thoughts_tokens,
+            is_fallback=is_fallback,
+            cancelled=False,
+        )
+
+    async def _extract_pdf(
+        self,
+        content: bytes,
+        content_hash: str,
+        pages: list[int] | None,
+    ) -> AsyncIterator[PageResult]:
+        """Extract text from PDF, yielding pages as they complete."""
+        pdf_reader = PdfReader(io.BytesIO(content))
+        total_pages = len(pdf_reader.pages)
+        pages_to_process = sorted(set(pages) if pages else set(range(total_pages)))
+
+        logger.info(f"Extraction: starting {len(pages_to_process)} pages (PDF has {total_pages} total)")
+
+        cancel_key = f"extraction:cancel:{content_hash}"
+
+        # Launch all pages in parallel
+        tasks = {
+            asyncio.create_task(self._process_page(pdf_reader, page_idx, content_hash, cancel_key)): page_idx
+            for page_idx in pages_to_process
+        }
+
+        # Yield results as each completes
+        for coro in asyncio.as_completed(tasks.keys()):
+            yield await coro
+
+    async def _process_page(
+        self,
+        pdf_reader: PdfReader,
+        page_idx: int,
+        content_hash: str,
+        cancel_key: str,
+    ) -> PageResult:
+        """Process a single page: YOLO detection → figure storage → Gemini extraction."""
+        if await self._redis.exists(cancel_key):
+            logger.info(f"Page {page_idx + 1} cancelled before processing")
+            return PageResult(
+                page_idx=page_idx,
+                page=None,
+                input_tokens=0,
+                output_tokens=0,
+                thoughts_tokens=0,
+                is_fallback=False,
+                cancelled=True,
+            )
+
+        try:
+            page_pdf = extract_single_page_pdf(pdf_reader, page_idx)
+
+            job_id = await enqueue_detection(self._redis, page_pdf)
+            yolo_result = await wait_for_result(self._redis, job_id)
+
+            if yolo_result.error:
+                logger.warning(f"YOLO detection failed for page {page_idx + 1}: {yolo_result.error}")
+
+            logger.info(f"YOLO: page {page_idx + 1} - detected {len(yolo_result.figures)} figures")
+
+            figure_urls: list[str] = []
+            for fig_idx, figure in enumerate(yolo_result.figures):
+                url = store_figure(figure, self._images_dir, content_hash, page_idx, fig_idx)
+                figure_urls.append(url)
+
+            return await self._call_gemini_for_page(
+                pdf_reader, page_idx, yolo_result.figures, figure_urls, content_hash
+            )
+
+        except Exception as e:
+            logger.error(f"Page {page_idx + 1} processing failed: {e}")
+            return PageResult(
+                page_idx=page_idx,
+                page=None,
+                input_tokens=0,
+                output_tokens=0,
+                thoughts_tokens=0,
+                is_fallback=False,
+                cancelled=False,
+            )
+
+    async def _call_gemini_for_page(
+        self,
+        pdf_reader: PdfReader,
+        page_idx: int,
+        figures: list[DetectedFigure],
+        figure_urls: list[str],
+        content_hash: str,
+    ) -> PageResult:
+        """Call Gemini API to extract text from a single PDF page."""
+        page_bytes = extract_single_page_pdf(pdf_reader, page_idx)
+        prompt = build_figure_prompt(self._prompt, figures)
+        config = types.GenerateContentConfig(
+            media_resolution=self._resolution,
+            thinking_config=types.ThinkingConfig(thinking_level=types.ThinkingLevel.MINIMAL),
+        )
+        contents = [
+            types.Part.from_bytes(data=page_bytes, mime_type="application/pdf"),
+            prompt,
+        ]
+
+        start_time = time.monotonic()
+        try:
+            response = await self._call_gemini_with_retry(contents, config, context=f"page {page_idx + 1}")
+        except Exception as e:
+            duration_ms = int((time.monotonic() - start_time) * 1000)
+            logger.error(f"Gemini: page {page_idx + 1} failed after retries: {e}")
+            await log_event(
+                "page_extraction_error",
+                processor_slug=self._model,
+                page_idx=page_idx,
+                duration_ms=duration_ms,
+                status_code=getattr(e, "code", None),
+                data={"error": str(e), "content_hash": content_hash},
+            )
+            return PageResult(
+                page_idx=page_idx,
+                page=None,
+                input_tokens=0,
+                output_tokens=0,
+                thoughts_tokens=0,
+                is_fallback=False,
+                cancelled=False,
+            )
+
+        duration_ms = int((time.monotonic() - start_time) * 1000)
+        text = (response.text or "").strip()
+        if figure_urls:
+            text = substitute_image_placeholders(text, figure_urls)
+
+        input_tokens, output_tokens, thoughts_tokens, is_fallback = self._extract_token_usage(
+            response.usage_metadata, context=f"page {page_idx + 1}"
+        )
+
+        if response.usage_metadata:
+            logger.info(
+                f"Gemini: page {page_idx + 1} completed in {duration_ms}ms, usage={response.usage_metadata.model_dump()}"
+            )
+        await log_event(
+            "page_extraction_complete",
+            processor_slug=self._model,
+            page_idx=page_idx,
+            duration_ms=duration_ms,
+            prompt_token_count=input_tokens,
+            candidates_token_count=output_tokens,
+            thoughts_token_count=thoughts_tokens,
+            total_token_count=input_tokens + output_tokens + thoughts_tokens,
+            data={"content_hash": content_hash},
+        )
+
+        return PageResult(
+            page_idx=page_idx,
+            page=ExtractedPage(markdown=text, images=figure_urls),
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            thoughts_tokens=thoughts_tokens,
+            is_fallback=is_fallback,
+            cancelled=False,
+        )
 
     async def _call_gemini_with_retry(
         self,
         contents: list,
         config: types.GenerateContentConfig,
-        context: str,  # for logging, e.g. "page 5" or "image"
+        context: str,
     ) -> types.GenerateContentResponse:
-        """Call Gemini API with retry logic for transient errors.
-
-        Raises the last error if all retries exhausted or non-retryable error encountered.
-        """
+        """Call Gemini API with exponential backoff retry for transient errors."""
         last_error: Exception | None = None
         for attempt in range(MAX_RETRIES):
             try:
@@ -145,205 +360,27 @@ class GeminiProcessor(BaseDocumentProcessor):
         assert last_error is not None
         raise last_error
 
-    async def _extract(
+    def _extract_token_usage(
         self,
-        content: bytes,
-        content_type: str,
-        content_hash: str,
-        extraction_cache: Cache,
-        pages: list[int] | None = None,
-    ) -> DocumentExtractionResult:
-        if content_type.startswith("image/"):
-            result = await self._extract_image(content, content_type)
-            # Cache the single image page
-            cache_key = self._extraction_cache_key(content_hash, 0)
-            await extraction_cache.store(cache_key, result.pages[0].model_dump_json().encode())
-            return result
+        usage_metadata: types.GenerateContentResponseUsageMetadata | None,
+        context: str,
+    ) -> tuple[int, int, int, bool]:
+        """Extract token counts from Gemini response. Returns (input, output, thoughts, is_fallback)."""
+        if usage_metadata is None:
+            logger.error(f"Gemini {context}: usage_metadata is None, using fallback estimates")
+            return (FALLBACK_INPUT_TOKENS_PER_PAGE, FALLBACK_OUTPUT_TOKENS_PER_PAGE, 0, True)
 
-        return await self._extract_pdf(content, pages, content_hash, extraction_cache)
+        input_tokens = usage_metadata.prompt_token_count or 0
+        output_tokens = usage_metadata.candidates_token_count or 0
+        thoughts_tokens = usage_metadata.thoughts_token_count or 0
 
-    async def _extract_image(self, content: bytes, content_type: str) -> DocumentExtractionResult:
-        """Extract text from a single image."""
-        config = types.GenerateContentConfig(
-            media_resolution=self._resolution,
-            thinking_config=types.ThinkingConfig(thinking_level=types.ThinkingLevel.MINIMAL),
-        )
-        contents = [
-            types.Part.from_bytes(data=content, mime_type=content_type),
-            self._prompt,
-        ]
-        start_time = time.monotonic()
-
-        try:
-            response = await self._call_gemini_with_retry(contents, config, context="image")
-        except Exception as e:
-            duration_ms = int((time.monotonic() - start_time) * 1000)
-            logger.error(f"Gemini image extraction failed after retries: {e}")
-            await log_event(
-                "page_extraction_error",
-                processor_slug=self._model,
-                page_idx=0,
-                duration_ms=duration_ms,
-                status_code=getattr(e, "code", None),
-                data={"error": str(e)},
+        expected_total = input_tokens + output_tokens + thoughts_tokens
+        actual_total = usage_metadata.total_token_count or 0
+        if actual_total != expected_total:
+            logger.warning(
+                f"Gemini {context}: token count mismatch - "
+                f"total={actual_total}, expected={expected_total} "
+                f"(prompt={input_tokens}, candidates={output_tokens}, thoughts={thoughts_tokens})"
             )
-            raise
 
-        duration_ms = int((time.monotonic() - start_time) * 1000)
-        usage = response.usage_metadata
-        if usage:
-            logger.info(f"Gemini image extraction: {duration_ms}ms, usage={usage.model_dump()}")
-            await log_event(
-                "page_extraction_complete",
-                processor_slug=self._model,
-                page_idx=0,
-                duration_ms=duration_ms,
-                prompt_token_count=usage.prompt_token_count,
-                candidates_token_count=usage.candidates_token_count,
-                thoughts_token_count=usage.thoughts_token_count,
-                total_token_count=usage.total_token_count,
-            )
-        else:
-            logger.warning(f"Gemini image extraction: {duration_ms}ms, no usage_metadata returned")
-
-        text = (response.text or "").strip()
-        return DocumentExtractionResult(
-            pages={0: ExtractedPage(markdown=text, images=[])},
-            extraction_method=self._slug,
-        )
-
-    async def _extract_pdf(
-        self,
-        content: bytes,
-        pages: list[int] | None,
-        content_hash: str,
-        extraction_cache: Cache,
-    ) -> DocumentExtractionResult:
-        """Extract text from PDF with YOLO figure detection and parallel Gemini processing.
-
-        Pages are processed in parallel: render → YOLO queue → Gemini API.
-        YOLO runs via containerized workers (yolo-cpu) through Redis queue.
-        """
-        start_time = time.monotonic()
-
-        pdf_reader = PdfReader(io.BytesIO(content))
-        total_pages = len(pdf_reader.pages)
-
-        pages_to_process = sorted(set(pages) if pages else set(range(total_pages)))
-        logger.info(f"Extraction: starting {len(pages_to_process)} pages (PDF has {total_pages} total)")
-
-        async def process_page(page_idx: int) -> tuple[int, ExtractedPage | None]:
-            """Process a single page: extract PDF → YOLO worker → store figures → Gemini."""
-            try:
-                # Extract single-page PDF for YOLO worker (worker renders + detects + crops)
-                page_pdf = extract_single_page_pdf(pdf_reader, page_idx)
-
-                # Queue detection and wait for result
-                job_id = await enqueue_detection(self._redis, page_pdf)
-                yolo_result = await wait_for_result(self._redis, job_id)
-
-                if yolo_result.error:
-                    logger.warning(f"YOLO detection failed for page {page_idx + 1}: {yolo_result.error}")
-
-                logger.info(f"YOLO: page {page_idx + 1} - detected {len(yolo_result.figures)} figures")
-
-                # Store each detected figure and collect URLs
-                figure_urls: list[str] = []
-                for fig_idx, figure in enumerate(yolo_result.figures):
-                    url = store_figure(figure, self._images_dir, content_hash, page_idx, fig_idx)
-                    figure_urls.append(url)
-
-                # Call Gemini API
-                page_idx, page = await self._process_page_with_figures(
-                    pdf_reader, page_idx, yolo_result.figures, figure_urls
-                )
-
-                if page is not None:
-                    cache_key = self._extraction_cache_key(content_hash, page_idx)
-                    await extraction_cache.store(cache_key, page.model_dump_json().encode())
-
-                return page_idx, page
-
-            except Exception as e:
-                logger.error(f"Page {page_idx + 1} processing failed: {e}")
-                return page_idx, None
-
-        # Process all pages in parallel
-        tasks = [asyncio.create_task(process_page(page_idx)) for page_idx in pages_to_process]
-        results = await asyncio.gather(*tasks)
-
-        # Separate successful and failed pages
-        successful_pages = {page_idx: page for page_idx, page in results if page is not None}
-        failed_pages = [page_idx for page_idx, page in results if page is None]
-
-        elapsed = time.monotonic() - start_time
-        if failed_pages:
-            logger.error(f"Extraction completed with {len(failed_pages)} failed pages: {sorted(failed_pages)}")
-        logger.info(f"Extraction: completed {len(successful_pages)}/{len(pages_to_process)} pages in {elapsed:.1f}s")
-
-        return DocumentExtractionResult(
-            pages=successful_pages,
-            extraction_method=self._slug,
-            failed_pages=failed_pages,
-        )
-
-    async def _process_page_with_figures(
-        self,
-        pdf_reader: PdfReader,
-        page_idx: int,
-        figures: list[DetectedFigure],
-        figure_urls: list[str],
-    ) -> tuple[int, ExtractedPage | None]:
-        """Process a single PDF page with YOLO-detected figures.
-
-        Returns (page_idx, ExtractedPage) on success, (page_idx, None) on failure after all retries.
-        """
-        page_bytes = extract_single_page_pdf(pdf_reader, page_idx)
-        prompt = build_figure_prompt(self._prompt, figures)
-        config = types.GenerateContentConfig(
-            media_resolution=self._resolution,
-            thinking_config=types.ThinkingConfig(thinking_level=types.ThinkingLevel.MINIMAL),
-        )
-        contents = [
-            types.Part.from_bytes(data=page_bytes, mime_type="application/pdf"),
-            prompt,
-        ]
-
-        start_time = time.monotonic()
-        try:
-            response = await self._call_gemini_with_retry(contents, config, context=f"page {page_idx + 1}")
-        except Exception as e:
-            duration_ms = int((time.monotonic() - start_time) * 1000)
-            logger.error(f"Gemini: page {page_idx + 1} failed after retries: {e}")
-            await log_event(
-                "page_extraction_error",
-                processor_slug=self._model,
-                page_idx=page_idx,
-                duration_ms=duration_ms,
-                status_code=getattr(e, "code", None),
-                data={"error": str(e)},
-            )
-            return page_idx, None
-
-        duration_ms = int((time.monotonic() - start_time) * 1000)
-        text = (response.text or "").strip()
-        if figure_urls:
-            text = substitute_image_placeholders(text, figure_urls)
-
-        usage = response.usage_metadata
-        if usage:
-            logger.info(f"Gemini: page {page_idx + 1} completed in {duration_ms}ms, usage={usage.model_dump()}")
-            await log_event(
-                "page_extraction_complete",
-                processor_slug=self._model,
-                page_idx=page_idx,
-                duration_ms=duration_ms,
-                prompt_token_count=usage.prompt_token_count,
-                candidates_token_count=usage.candidates_token_count,
-                thoughts_token_count=usage.thoughts_token_count,
-                total_token_count=usage.total_token_count,
-            )
-        else:
-            logger.warning(f"Gemini: page {page_idx + 1} completed in {duration_ms}ms, no usage_metadata returned")
-
-        return page_idx, ExtractedPage(markdown=text, images=figure_urls)
+        return input_tokens, output_tokens, thoughts_tokens, False

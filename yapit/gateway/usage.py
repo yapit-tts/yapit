@@ -3,6 +3,7 @@
 import datetime as dt
 from datetime import datetime
 
+from loguru import logger
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -24,17 +25,29 @@ FREE_PLAN = Plan(
     name="Free",
     server_kokoro_characters=0,
     premium_voice_characters=0,
-    ocr_pages=0,
+    ocr_tokens=0,
     trial_days=0,
     price_cents_monthly=0,
     price_cents_yearly=0,
     is_active=True,
 )
 
+# Rollover caps
+MAX_ROLLOVER_TOKENS = 10_000_000  # 10M tokens
+MAX_ROLLOVER_VOICE_CHARS = 1_000_000  # 1M characters
 
-async def get_user_subscription(user_id: str, db: AsyncSession) -> UserSubscription | None:
-    """Get user's subscription with plan data."""
-    result = await db.exec(select(UserSubscription).where(UserSubscription.user_id == user_id))
+
+async def get_user_subscription(user_id: str, db: AsyncSession, *, for_update: bool = False) -> UserSubscription | None:
+    """Get user's subscription with plan data.
+
+    Args:
+        for_update: If True, acquires row lock to prevent concurrent modifications.
+            Use when you need to read-then-write atomically (e.g., billing).
+    """
+    query = select(UserSubscription).where(UserSubscription.user_id == user_id)
+    if for_update:
+        query = query.with_for_update()
+    result = await db.exec(query)
     return result.first()
 
 
@@ -89,8 +102,8 @@ def _get_limit_for_usage_type(plan: Plan, usage_type: UsageType) -> int | None:
             return plan.server_kokoro_characters
         case UsageType.premium_voice:
             return plan.premium_voice_characters
-        case UsageType.ocr:
-            return plan.ocr_pages
+        case UsageType.ocr_tokens:
+            return plan.ocr_tokens
 
 
 def _get_current_usage(usage_period: UsagePeriod, usage_type: UsageType) -> int:
@@ -100,8 +113,8 @@ def _get_current_usage(usage_period: UsagePeriod, usage_type: UsageType) -> int:
             return usage_period.server_kokoro_characters
         case UsageType.premium_voice:
             return usage_period.premium_voice_characters
-        case UsageType.ocr:
-            return usage_period.ocr_pages
+        case UsageType.ocr_tokens:
+            return usage_period.ocr_tokens
 
 
 def _increment_usage(usage_period: UsagePeriod, usage_type: UsageType, amount: int) -> None:
@@ -111,8 +124,34 @@ def _increment_usage(usage_period: UsagePeriod, usage_type: UsageType, amount: i
             usage_period.server_kokoro_characters += amount
         case UsageType.premium_voice:
             usage_period.premium_voice_characters += amount
-        case UsageType.ocr:
-            usage_period.ocr_pages += amount
+        case UsageType.ocr_tokens:
+            usage_period.ocr_tokens += amount
+
+
+def _get_total_available(
+    subscription: UserSubscription | None,
+    usage_type: UsageType,
+    subscription_remaining: int,
+) -> int:
+    """Get total available: subscription remaining + rollover + purchased.
+
+    Note: rollover can be negative (debt from past overages). A negative
+    rollover reduces total_available, potentially blocking new operations.
+    """
+    if not subscription:
+        return subscription_remaining
+
+    match usage_type:
+        case UsageType.ocr_tokens:
+            rollover = subscription.rollover_tokens
+            purchased = subscription.purchased_tokens
+        case UsageType.premium_voice:
+            rollover = subscription.rollover_voice_chars
+            purchased = subscription.purchased_voice_chars
+        case _:
+            return subscription_remaining
+
+    return subscription_remaining + rollover + purchased
 
 
 async def check_usage_limit(
@@ -121,15 +160,15 @@ async def check_usage_limit(
     amount: int,
     db: AsyncSession,
     *,
-    is_admin: bool = False,
     billing_enabled: bool = True,
 ) -> None:
     """Check if user has enough remaining usage. Raises UsageLimitExceededError if not.
 
-    Admins bypass all checks. Free users (no subscription) get limit=0 for paid features.
+    For token/voice billing, checks waterfall: subscription + rollover + purchased.
+    Free users (no subscription) get limit=0 for paid features.
     When billing_enabled=False (self-hosting), all limits are bypassed.
     """
-    if not billing_enabled or is_admin:
+    if not billing_enabled:
         return
 
     subscription = await get_user_subscription(user_id, db)
@@ -147,13 +186,92 @@ async def check_usage_limit(
         usage_period = await get_or_create_usage_period(user_id, subscription, db)
         current = _get_current_usage(usage_period, usage_type)
 
-    if current + amount > limit:
+    subscription_remaining = max(0, limit - current)
+    total_available = _get_total_available(subscription, usage_type, subscription_remaining)
+
+    if amount > total_available:
         raise UsageLimitExceededError(
             usage_type=usage_type,
-            limit=limit,
+            limit=total_available,
             current=current,
             requested=amount,
         )
+
+
+def _consume_from_tiers(
+    subscription: UserSubscription,
+    usage_period: UsagePeriod,
+    plan: Plan,
+    usage_type: UsageType,
+    amount: int,
+) -> dict:
+    """Consume usage from subscription → rollover → purchased. Returns breakdown."""
+    # Get current period usage and limit
+    current = _get_current_usage(usage_period, usage_type)
+    limit = _get_limit_for_usage_type(plan, usage_type) or 0
+
+    subscription_remaining = max(0, limit - current)
+    from_subscription = min(amount, subscription_remaining)
+    remaining = amount - from_subscription
+
+    # Track breakdown for audit
+    breakdown = {"from_subscription": from_subscription, "from_rollover": 0, "from_purchased": 0}
+
+    # Increment period counter for subscription portion
+    if from_subscription > 0:
+        _increment_usage(usage_period, usage_type, from_subscription)
+
+    if remaining <= 0:
+        return breakdown
+
+    # Consume from: rollover (if positive) → purchased (pure, to 0) → rollover (debt)
+    match usage_type:
+        case UsageType.ocr_tokens:
+            # Only consume from rollover if positive
+            if subscription.rollover_tokens > 0:
+                from_rollover = min(remaining, subscription.rollover_tokens)
+                subscription.rollover_tokens -= from_rollover
+                remaining -= from_rollover
+                breakdown["from_rollover"] = from_rollover
+
+            # Consume from purchased (pure pool, stops at 0)
+            if remaining > 0 and subscription.purchased_tokens > 0:
+                from_purchased = min(remaining, subscription.purchased_tokens)
+                subscription.purchased_tokens -= from_purchased
+                remaining -= from_purchased
+                breakdown["from_purchased"] = from_purchased
+
+            # Any overflow goes to rollover as debt
+            if remaining > 0:
+                subscription.rollover_tokens -= remaining
+                breakdown["overflow_to_debt"] = remaining
+                logger.warning(
+                    f"User {subscription.user_id} rollover_tokens went to debt: "
+                    f"{subscription.rollover_tokens} (overflow {remaining})"
+                )
+
+        case UsageType.premium_voice:
+            if subscription.rollover_voice_chars > 0:
+                from_rollover = min(remaining, subscription.rollover_voice_chars)
+                subscription.rollover_voice_chars -= from_rollover
+                remaining -= from_rollover
+                breakdown["from_rollover"] = from_rollover
+
+            if remaining > 0 and subscription.purchased_voice_chars > 0:
+                from_purchased = min(remaining, subscription.purchased_voice_chars)
+                subscription.purchased_voice_chars -= from_purchased
+                remaining -= from_purchased
+                breakdown["from_purchased"] = from_purchased
+
+            if remaining > 0:
+                subscription.rollover_voice_chars -= remaining
+                breakdown["overflow_to_debt"] = remaining
+                logger.warning(
+                    f"User {subscription.user_id} rollover_voice_chars went to debt: "
+                    f"{subscription.rollover_voice_chars} (overflow {remaining})"
+                )
+
+    return breakdown
 
 
 async def record_usage(
@@ -166,25 +284,36 @@ async def record_usage(
     description: str | None = None,
     details: dict | None = None,
 ) -> None:
-    """Record usage and increment the usage counter.
+    """Record usage and consume from subscription → rollover → purchased.
 
-    Creates audit log for all users. Only increments period counters for subscribed users.
+    Creates audit log for all users. Only consumes from tiers for subscribed users.
+    Uses FOR UPDATE lock to prevent concurrent modifications (TOCTOU safety).
     """
-    subscription = await get_user_subscription(user_id, db)
+    # FOR UPDATE ensures concurrent record_usage calls serialize
+    subscription = await get_user_subscription(user_id, db, for_update=True)
+    breakdown = None
 
-    # Increment counter if user has active subscription
     if subscription and subscription.status in (SubscriptionStatus.active, SubscriptionStatus.trialing):
+        plan = await get_effective_plan(subscription, db)
         usage_period = await get_or_create_usage_period(user_id, subscription, db)
-        _increment_usage(usage_period, usage_type, amount)
+
+        if usage_type in (UsageType.ocr_tokens, UsageType.premium_voice):
+            breakdown = _consume_from_tiers(subscription, usage_period, plan, usage_type, amount)
+        else:
+            _increment_usage(usage_period, usage_type, amount)
 
     # Always create audit log (for analytics)
+    log_details = details.copy() if details else {}
+    if breakdown:
+        log_details["consumption_breakdown"] = breakdown
+
     log_entry = UsageLog(
         user_id=user_id,
         type=usage_type,
         amount=amount,
         reference_id=reference_id,
         description=description,
-        details=details,
+        details=log_details if log_details else None,
     )
     db.add(log_entry)
 
@@ -200,23 +329,33 @@ async def get_usage_summary(
     plan = await get_effective_plan(subscription, db)
 
     # Get usage if subscribed
-    usage = {"server_kokoro_characters": 0, "premium_voice_characters": 0, "ocr_pages": 0}
+    usage = {"server_kokoro_characters": 0, "premium_voice_characters": 0, "ocr_tokens": 0}
     period_info = None
+    extra_balances = {
+        "rollover_tokens": 0,
+        "rollover_voice_chars": 0,
+        "purchased_tokens": 0,
+        "purchased_voice_chars": 0,
+    }
 
     if subscription and subscription.status in (SubscriptionStatus.active, SubscriptionStatus.trialing):
         usage_period = await get_or_create_usage_period(user_id, subscription, db)
         usage = {
             "server_kokoro_characters": usage_period.server_kokoro_characters,
             "premium_voice_characters": usage_period.premium_voice_characters,
-            "ocr_pages": usage_period.ocr_pages,
+            "ocr_tokens": usage_period.ocr_tokens,
         }
         period_info = {
             "start": usage_period.period_start.isoformat(),
             "end": usage_period.period_end.isoformat(),
         }
+        extra_balances = {
+            "rollover_tokens": subscription.rollover_tokens,
+            "rollover_voice_chars": subscription.rollover_voice_chars,
+            "purchased_tokens": subscription.purchased_tokens,
+            "purchased_voice_chars": subscription.purchased_voice_chars,
+        }
 
-    # plan = effective plan (for limits, considering grace period)
-    # subscribed_tier = actual subscription tier (for UI "Current" labels)
     subscribed_tier = subscription.plan.tier if subscription else PlanTier.free
 
     return {
@@ -230,6 +369,8 @@ async def get_usage_summary(
             "current_period_start": subscription.current_period_start.isoformat(),
             "current_period_end": subscription.current_period_end.isoformat(),
             "cancel_at_period_end": subscription.cancel_at_period_end,
+            "cancel_at": subscription.cancel_at.isoformat() if subscription.cancel_at else None,
+            "is_canceling": subscription.is_canceling,
             "grace_tier": subscription.grace_tier,
             "grace_until": subscription.grace_until.isoformat() if subscription.grace_until else None,
         }
@@ -238,8 +379,9 @@ async def get_usage_summary(
         "limits": {
             "server_kokoro_characters": plan.server_kokoro_characters,
             "premium_voice_characters": plan.premium_voice_characters,
-            "ocr_pages": plan.ocr_pages,
+            "ocr_tokens": plan.ocr_tokens,
         },
         "usage": usage,
+        "extra_balances": extra_balances,
         "period": period_info,
     }

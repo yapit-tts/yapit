@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Annotated, AsyncIterator
 from uuid import UUID
 
+import stripe
 from fastapi import Depends, HTTPException, Request, status
 from redis.asyncio import Redis
 from sqlalchemy.orm import selectinload
@@ -12,8 +13,9 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from yapit.gateway.auth import authenticate
 from yapit.gateway.cache import Cache, CacheConfig, Caches, SqliteCache
 from yapit.gateway.config import Settings, get_settings
-from yapit.gateway.db import create_session, get_by_slug_or_404, get_or_404
-from yapit.gateway.document.base import BaseDocumentProcessor
+from yapit.gateway.db import create_session, get_or_404
+from yapit.gateway.document.gemini import GeminiExtractor
+from yapit.gateway.document.processing import ProcessorConfig
 from yapit.gateway.domain_models import (
     Block,
     BlockVariant,
@@ -69,7 +71,10 @@ async def get_model(
     db: DbSession,
     model_slug: str,
 ) -> TTSModel:
-    return await get_by_slug_or_404(db, TTSModel, model_slug)
+    model = (await db.exec(select(TTSModel).where(TTSModel.slug == model_slug))).first()
+    if not model:
+        raise ResourceNotFoundError(TTSModel.__name__, model_slug)
+    return model
 
 
 CurrentTTSModel = Annotated[TTSModel, Depends(get_model)]
@@ -113,51 +118,37 @@ async def get_block(
 async def get_block_variant(
     variant_hash: str,
     db: DbSession,
-    user: AuthenticatedUser,
 ) -> BlockVariant:
-    variant = await get_or_404(
+    return await get_or_404(
         db,
         BlockVariant,
         variant_hash,
-        options=[
-            selectinload(BlockVariant.block).selectinload(Block.document),  # type: ignore[arg-type]
-            selectinload(BlockVariant.model),  # type: ignore[arg-type]
-        ],
+        options=[selectinload(BlockVariant.model)],  # type: ignore[arg-type]
     )
-
-    if variant.block.document.user_id != user.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail="Cannot access block variant in another user's document"
-        )
-    return variant
-
-
-async def is_admin(user: Annotated[User, Depends(authenticate)]) -> bool:
-    """Check if the authenticated user is an admin."""
-    return bool(user.server_metadata and user.server_metadata.is_admin)
-
-
-async def require_admin(is_admin: IsAdmin) -> None:
-    """Require the authenticated user to be an admin."""
-    if not is_admin:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
 
 
 async def get_redis_client(request: Request) -> Redis:
     return request.app.state.redis_client
 
 
-async def get_free_processor(request: Request) -> BaseDocumentProcessor:
-    return request.app.state.free_processor
+async def get_ai_extractor_config(request: Request) -> ProcessorConfig | None:
+    return request.app.state.ai_extractor_config
 
 
-async def get_ai_processor(request: Request) -> BaseDocumentProcessor | None:
-    return request.app.state.ai_processor
+async def get_ai_extractor(request: Request) -> GeminiExtractor | None:
+    return request.app.state.ai_extractor
+
+
+def get_stripe_client(settings: SettingsDep) -> stripe.StripeClient | None:
+    """Stripe client for billing operations. Returns None if billing is not configured."""
+    if not settings.stripe_secret_key:
+        return None
+    return stripe.StripeClient(settings.stripe_secret_key)
 
 
 RedisClient = Annotated[Redis, Depends(get_redis_client)]
-FreeProcessorDep = Annotated[BaseDocumentProcessor, Depends(get_free_processor)]
-AiProcessorDep = Annotated[BaseDocumentProcessor | None, Depends(get_ai_processor)]
+AiExtractorConfigDep = Annotated[ProcessorConfig | None, Depends(get_ai_extractor_config)]
+AiExtractorDep = Annotated[GeminiExtractor | None, Depends(get_ai_extractor)]
 AudioCache = Annotated[Cache, Depends(get_audio_cache)]
 DocumentCache = Annotated[Cache, Depends(get_document_cache)]
 ExtractionCache = Annotated[Cache, Depends(get_extraction_cache)]
@@ -166,4 +157,4 @@ CurrentVoice = Annotated[Voice, Depends(get_voice)]
 CurrentBlock = Annotated[Block, Depends(get_block)]
 CurrentBlockVariant = Annotated[BlockVariant, Depends(get_block_variant)]
 AuthenticatedUser = Annotated[User, Depends(authenticate)]
-IsAdmin = Annotated[bool, Depends(is_admin)]
+StripeClient = Annotated[stripe.StripeClient | None, Depends(get_stripe_client)]

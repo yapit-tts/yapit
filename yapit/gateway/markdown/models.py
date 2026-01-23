@@ -210,22 +210,23 @@ class StructuredDocument(BaseModel):
         self._collect_audio_blocks(self.blocks, result)
         return result
 
-    def _collect_audio_blocks(self, blocks: list["ContentBlock"], result: list[str]) -> None:
+    def _collect_audio_blocks(self, blocks: list[ContentBlock], result: list[str]) -> None:
         """Recursively collect audio blocks."""
         for block in blocks:
-            if block.type == "blockquote":
-                self._collect_audio_blocks(block.blocks, result)
-            elif block.type == "list":
-                for item in block.items:
-                    if item.audio_block_idx is not None:
-                        result.append(item.plain_text)
-            elif block.type == "math" and block.audio_block_idx is not None:
-                result.append(block.alt)
-            elif block.type == "image" and block.audio_block_idx is not None:
-                # Prefer caption (scholarly label), fall back to alt (visual description)
-                result.append(block.caption if block.caption else block.alt)
-            elif block.audio_block_idx is not None:
-                result.append(block.plain_text)
+            match block:
+                case BlockquoteBlock():
+                    self._collect_audio_blocks(block.blocks, result)
+                case ListBlock():
+                    for item in block.items:
+                        if item.audio_block_idx is not None:
+                            result.append(item.plain_text)
+                case MathBlock() if block.audio_block_idx is not None:
+                    result.append(block.alt)
+                case ImageBlock() if block.audio_block_idx is not None:
+                    # Prefer caption (scholarly label), fall back to alt (visual description)
+                    result.append(block.caption if block.caption else block.alt)
+                case HeadingBlock() | ParagraphBlock() if block.audio_block_idx is not None:
+                    result.append(block.plain_text)
 
 
 # Rebuild models to resolve forward references

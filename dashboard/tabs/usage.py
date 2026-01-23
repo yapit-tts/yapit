@@ -39,38 +39,6 @@ def _summary_stats(df: pd.DataFrame):
         st.metric("Documents", format_number(unique_docs))
 
 
-def _volume_over_time(df: pd.DataFrame) -> go.Figure | None:
-    """Request volume over time."""
-    events = get_events_multi(df, ["synthesis_queued", "cache_hit"])
-    if events.empty:
-        return None
-
-    events = bin_by_time(events, "1h")
-    hourly = events.groupby("time_bin").size().reset_index(name="count")
-
-    fig = go.Figure()
-    fig.add_trace(
-        go.Scatter(
-            x=hourly["time_bin"],
-            y=hourly["count"],
-            mode="lines",
-            line=dict(color=COLORS["accent_teal"], width=2),
-            fill="tozeroy",
-            fillcolor="rgba(57, 217, 138, 0.15)",
-            hovertemplate="%{y} requests<extra></extra>",
-        )
-    )
-
-    fig.update_layout(
-        title="Request Volume (hourly)",
-        height=300,
-        xaxis_title="Time",
-        yaxis_title="Requests",
-    )
-    apply_plotly_theme(fig)
-    return fig
-
-
 def _usage_heatmap(df: pd.DataFrame) -> go.Figure | None:
     """Usage heatmap: hour of day × day of week."""
     events = get_events_multi(df, ["synthesis_queued", "cache_hit"])
@@ -331,10 +299,14 @@ def _unique_users_over_time(df: pd.DataFrame) -> go.Figure | None:
 
     fig = go.Figure()
     fig.add_trace(
-        go.Bar(
+        go.Scatter(
             x=daily_users["date"],
             y=daily_users["unique_users"],
-            marker_color=COLORS["accent_cyan"],
+            mode="lines+markers",
+            line=dict(color=COLORS["accent_cyan"], width=2),
+            marker=dict(size=6),
+            fill="tozeroy",
+            fillcolor="rgba(86, 212, 221, 0.15)",
             hovertemplate="%{x}: %{y} users<extra></extra>",
         )
     )
@@ -369,12 +341,7 @@ def render(df: pd.DataFrame):
     # Charts
     section_header("Charts")
 
-    # Row 1: Volume over time
-    fig = _volume_over_time(df)
-    if fig:
-        st.plotly_chart(fig, use_container_width=True)
-
-    # Row 2: Model usage over time
+    # Model usage over time (shows volume breakdown by model)
     fig = _model_usage_over_time(df)
     if fig:
         st.plotly_chart(fig, use_container_width=True)

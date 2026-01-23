@@ -1,11 +1,10 @@
-from typing import List
+from typing import List, cast
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlmodel import col, select
 
 from yapit.gateway.auth import authenticate
-from yapit.gateway.db import get_by_slug_or_404
 from yapit.gateway.deps import CurrentTTSModel, DbSession
 from yapit.gateway.domain_models import TTSModel
 
@@ -36,13 +35,13 @@ async def list_models(
     models = (await db.exec(select(TTSModel).where(col(TTSModel.is_active).is_(True)))).all()
     return [
         ModelRead(
-            id=model.id,
+            id=cast(int, model.id),
             slug=model.slug,
             name=model.name,
             description=model.description,
             voices=[
                 VoiceRead(
-                    id=voice.id,
+                    id=cast(int, voice.id),
                     slug=voice.slug,
                     name=voice.name,
                     lang=voice.lang,
@@ -62,13 +61,13 @@ async def read_model(
 ) -> ModelRead:
     """Get a specific TTS model by slug (active voices only)."""
     return ModelRead(
-        id=model.id,
+        id=cast(int, model.id),
         slug=model.slug,
         name=model.name,
         description=model.description,
         voices=[
             VoiceRead(
-                id=voice.id,
+                id=cast(int, voice.id),
                 slug=voice.slug,
                 name=voice.name,
                 lang=voice.lang,
@@ -82,15 +81,12 @@ async def read_model(
 
 @router.get("/{model_slug}/voices", response_model=List[VoiceRead])
 async def list_voices(
-    model_slug: str,
-    db: DbSession,
+    model: CurrentTTSModel,
 ) -> List[VoiceRead]:
     """Get all active voices available for a specific model."""
-    model = await get_by_slug_or_404(db, TTSModel, model_slug)
-
     return [
         VoiceRead(
-            id=voice.id,
+            id=cast(int, voice.id),
             slug=voice.slug,
             name=voice.name,
             lang=voice.lang,

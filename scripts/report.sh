@@ -27,12 +27,36 @@ done
 echo "Syncing data from prod..."
 make sync-data
 
+# Require VPS_HOST
+if [[ -z "${VPS_HOST:-}" ]]; then
+    echo "Error: VPS_HOST not set"
+    exit 1
+fi
+
+# Capture disk usage (full report + appends to history on VPS)
+echo "Gathering disk usage..."
+DISK_REPORT=$("$SCRIPT_DIR/disk-usage.sh" 2>&1 || echo "(disk-usage.sh failed)")
+
+# Fetch disk history (last 50 entries)
+echo "Fetching disk history..."
+DISK_HISTORY=$(ssh "$VPS_HOST" "tail -50 /var/log/yapit-disk-history.log 2>/dev/null" || echo "(no history yet)")
+
 # Build context
 if $AFTER_DEPLOY; then
-    EXTRA_CONTEXT="CONTEXT: You were triggered shortly after a deploy. Focus on: Are there new errors since the deploy? Any anomalies compared to before?"
+    BASE_CONTEXT="CONTEXT: You were triggered shortly after a deploy. Focus on: Are there new errors since the deploy? Any anomalies compared to before?"
 else
-    EXTRA_CONTEXT="CONTEXT: Daily health check. Look for patterns, anomalies, degradation."
+    BASE_CONTEXT="CONTEXT: Daily health check. Look for patterns, anomalies, degradation."
 fi
+
+EXTRA_CONTEXT="$BASE_CONTEXT
+
+## DISK_USAGE (current snapshot)
+
+$DISK_REPORT
+
+## DISK_HISTORY (last 50 entries)
+
+$DISK_HISTORY"
 
 # The analysis prompt
 read -r -d '' PROMPT << 'EOF' || true
@@ -55,13 +79,18 @@ Yapit is a text-to-speech platform with these components:
 
 **Reliability mechanisms:**
 - **Visibility timeout**: If worker takes too long (TTS: 30s, YOLO: 10s), job is requeued
-- **Overflow**: If job waits too long in queue (TTS: 30s, YOLO: 10s), sent to RunPod serverless
+- **Overflow**: If job waits too long in queue, sent to RunPod serverless
+  - Kokoro: 30s threshold, has RunPod overflow
+  - Inworld: NO overflow (external API, can't run on RunPod)
+  - YOLO: 10s threshold, has RunPod overflow
 - **DLQ (Dead Letter Queue)**: Jobs that fail after max retries — indicates systematic failure
 
 **Models:**
-- `kokoro` — local Kokoro TTS model
-- `inworld` — Inworld API (external)
-- YOLO — local object detection
+- `kokoro` — local Kokoro TTS, has overflow to RunPod serverless
+- `inworld` — Inworld external API, NO overflow. Jobs dispatched in parallel (no semaphore).
+  - Queue wait should be <1s (parallel dispatch). High queue wait = bug.
+  - Processing time >5s is unusual. Watch for rate limit errors.
+- YOLO — local object detection, has overflow to RunPod serverless
 
 ## Data Locations
 
@@ -70,6 +99,7 @@ Yapit is a text-to-speech platform with these components:
   - `metrics_hourly` — hourly aggregates
   - `metrics_daily` — daily aggregates
 - **Logs**: gateway-data/logs/*.jsonl (JSON lines, multiple rotated files)
+- **Disk Report**: See DISK_USAGE section below (captured at report time)
 
 **Timezones**: Metrics DB uses CET (Europe/Vienna). Logs use UTC. Report times in CET, converting as needed.
 
@@ -90,7 +120,21 @@ Yapit is a text-to-speech platform with these components:
 - `overflow_complete`, `overflow_error` — RunPod result
 
 **Extraction:**
+- `extraction_estimate` — pre-check token estimate (compare with actual for tuning)
 - `page_extraction_complete`, `page_extraction_error` — Gemini API calls
+
+**Billing/Webhooks:**
+- `stripe_webhook` — Stripe webhook processing
+  - `duration_ms` — handler latency. Nominal: <1s. Stripe times out at 20s.
+  - `data.event_type` — which event (invoice.paid, subscription.updated, etc.)
+  - `status_code=500` — handler crashed
+
+**URL/Document fetching:**
+- `url_fetch` — document URL downloads
+  - `duration_ms`, `data.content_type`, `data.size_bytes` on success
+  - `data.error` on failure (http_status or request_error)
+- `playwright_fetch` — JS rendering fallback (lower volume, expensive path)
+  - `duration_ms` on success, `data.error` on failure
 
 ## What to Analyze
 
@@ -147,22 +191,30 @@ Then:
 
 Be concise but complete. This is a diagnostic report.
 
-## Important
+## Limitations
 
-If any tool was missing or would have made analysis easier, note it:
-**Tooling gaps**: [what was missing]
+You have access to **synced static data only** (metrics DB + logs up to sync time).
+You do NOT have:
+- Live Redis access (no current queue depths)
+- Live worker status (only historical metrics)
+- Interactive prod access
+
+If any of these would help future analysis, note them:
+- Additional **metrics or log fields**
+- **Analysis tools/utilities** (scripts, queries, anything reusable)
+- **Tool permissions** you were missing
+
+Don't request live/interactive prod access — that's out of scope by design.
 EOF
 
 echo "Running Claude analysis..."
-result=$(claude -p "$PROMPT" \
+message=$(claude -p "$PROMPT" \
     --allowedTools "Read,Bash(jq:*),Bash(grep:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(duckdb:*),Bash(wc:*),Bash(sort:*),Bash(uniq:*),Bash(ls:*)" \
     --append-system-prompt "$EXTRA_CONTEXT" \
-    --output-format json 2>&1) || {
-    echo "Claude analysis failed: $result"
+    2>&1) || {
+    echo "Claude analysis failed: $message"
     exit 1
 }
-
-message=$(echo "$result" | jq -r '.result // "Analysis failed - no result"')
 
 # Save full report
 REPORT_FILE="$REPORT_DIR/report-$(date +%Y-%m-%d-%H%M%S).md"

@@ -23,6 +23,7 @@ interface MetadataBannerProps {
   onCancel?: () => void;
   isLoading: boolean;
   completedPages?: number[];
+  uncachedPages?: number[];
   className?: string;
 }
 
@@ -31,6 +32,46 @@ function formatFileSize(bytes: number | null): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/**
+ * Format cached pages as ranges for display.
+ * Returns null if >3 ranges (too scattered to display nicely).
+ * Input: 0-indexed page numbers, Output: 1-indexed display string.
+ */
+function formatCachedPages(totalPages: number, uncachedPages: number[]): string | null {
+  const uncachedSet = new Set(uncachedPages);
+  const cachedPages = Array.from({ length: totalPages }, (_, i) => i).filter(p => !uncachedSet.has(p));
+
+  if (cachedPages.length === 0) return null;
+
+  // Group into contiguous ranges
+  const ranges: [number, number][] = [];
+  let rangeStart = cachedPages[0];
+  let rangeEnd = cachedPages[0];
+
+  for (let i = 1; i < cachedPages.length; i++) {
+    if (cachedPages[i] === rangeEnd + 1) {
+      rangeEnd = cachedPages[i];
+    } else {
+      ranges.push([rangeStart, rangeEnd]);
+      rangeStart = cachedPages[i];
+      rangeEnd = cachedPages[i];
+    }
+  }
+  ranges.push([rangeStart, rangeEnd]);
+
+  // If too scattered, hide
+  if (ranges.length > 3) return null;
+
+  // Format as 1-indexed display
+  const rangeStrs = ranges.map(([start, end]) => {
+    const s = start + 1; // Convert to 1-indexed
+    const e = end + 1;
+    return s === e ? `${s}` : `${s}-${e}`;
+  });
+
+  return `Pages ${rangeStrs.join(", ")} free`;
 }
 
 /**
@@ -138,6 +179,7 @@ export function MetadataBanner({
   onCancel,
   isLoading,
   completedPages = [],
+  uncachedPages = [],
   className,
 }: MetadataBannerProps) {
   const [pageRangeInput, setPageRangeInput] = useState("");
@@ -179,6 +221,16 @@ export function MetadataBanner({
             <span>{metadata.total_pages} {metadata.total_pages === 1 ? "page" : "pages"}</span>
             <span>·</span>
             <span>{formatFileSize(metadata.file_size)}</span>
+            {(requiresAiTransform || aiTransformEnabled) && (() => {
+              const cachedText = formatCachedPages(metadata.total_pages, uncachedPages);
+              if (!cachedText) return null;
+              return (
+                <>
+                  <span>·</span>
+                  <span className="text-accent-success">{cachedText}</span>
+                </>
+              );
+            })()}
           </div>
         </div>
       </div>
@@ -194,6 +246,7 @@ export function MetadataBanner({
               id="page-range"
               value={pageRangeInput}
               onChange={(e) => setPageRangeInput(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && !isLoading && handleConfirm()}
               placeholder={`1-${metadata.total_pages}`}
               className="h-8 text-sm"
             />

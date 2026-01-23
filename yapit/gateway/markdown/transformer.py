@@ -5,7 +5,8 @@ with both HTML and AST representations for prose blocks.
 """
 
 import re
-from typing import Literal, cast
+from collections.abc import Callable, Sequence
+from typing import Literal, TypeGuard, cast
 from urllib.parse import parse_qs, urlparse
 
 from markdown_it import MarkdownIt
@@ -230,12 +231,12 @@ class DocumentTransformer:
             blocks.extend(self._transform_node(child))
         return blocks
 
-    def _transform_node(self, node: SyntaxTreeNode) -> list[ContentBlock]:
+    def _transform_node(self, node: SyntaxTreeNode) -> Sequence[ContentBlock]:
         """Transform a single AST node to ContentBlock(s).
 
-        Returns a list because large blocks may be split into multiple.
+        Returns a sequence because large blocks may be split into multiple.
         """
-        handlers = {
+        handlers: dict[str, Callable[[SyntaxTreeNode], Sequence[ContentBlock]]] = {
             "heading": self._transform_heading,
             "paragraph": self._transform_paragraph,
             "fence": self._transform_code,
@@ -257,7 +258,7 @@ class DocumentTransformer:
 
     # === PROSE BLOCKS (with audio) ===
 
-    def _transform_heading(self, node: SyntaxTreeNode) -> list[HeadingBlock]:
+    def _transform_heading(self, node: SyntaxTreeNode) -> list[ContentBlock]:
         """Transform heading node."""
         level = cast(Literal[1, 2, 3, 4, 5, 6], int(node.tag[1]))  # h1 -> 1, h2 -> 2, etc.
         inline = node.children[0] if node.children else None
@@ -277,7 +278,7 @@ class DocumentTransformer:
             )
         ]
 
-    def _transform_paragraph(self, node: SyntaxTreeNode) -> list[ContentBlock]:
+    def _transform_paragraph(self, node: SyntaxTreeNode) -> Sequence[ContentBlock]:
         """Transform paragraph node, detecting standalone images or splitting if too long."""
         inline = node.children[0] if node.children else None
 
@@ -304,7 +305,7 @@ class DocumentTransformer:
         # Split large paragraphs
         return self._split_paragraph(inline, plain_text)
 
-    def _is_standalone_image(self, inline: SyntaxTreeNode | None) -> bool:
+    def _is_standalone_image(self, inline: SyntaxTreeNode | None) -> TypeGuard[SyntaxTreeNode]:
         """Check if inline content is just a single image (no other meaningful content).
 
         Allows <yap-cap>...</yap-cap> and <yap-alt>...</yap-alt> after the image.
@@ -607,80 +608,65 @@ class DocumentTransformer:
 
     def _slice_inline_node(self, node: InlineContent, start: int, end: int) -> list[InlineContent]:
         """Slice a single inline node at given character positions."""
-        if node.type == "text":
-            content = node.content[start:end]
-            return [TextContent(content=content)] if content else []
-
-        elif node.type == "code":
-            content = node.content[start:end]
-            return [CodeSpanContent(content=content)] if content else []
-
-        elif node.type == "strong":
-            inner = self._slice_ast(node.content, start, end)
-            return [StrongContent(content=inner)] if inner else []
-
-        elif node.type == "emphasis":
-            inner = self._slice_ast(node.content, start, end)
-            return [EmphasisContent(content=inner)] if inner else []
-
-        elif node.type == "link":
-            inner = self._slice_ast(node.content, start, end)
-            if inner:
-                return [LinkContent(href=node.href, title=node.title, content=inner)]
-            return []
-
-        elif node.type == "image":
-            # Images are atomic - include fully or not at all
-            return [node] if start == 0 else []
-
-        elif node.type == "math_inline":
-            # Math is atomic - include fully or not at all
-            return [node] if start == 0 else []
-
+        match node:
+            case TextContent():
+                content = node.content[start:end]
+                return [TextContent(content=content)] if content else []
+            case CodeSpanContent():
+                content = node.content[start:end]
+                return [CodeSpanContent(content=content)] if content else []
+            case StrongContent():
+                inner = self._slice_ast(node.content, start, end)
+                return [StrongContent(content=inner)] if inner else []
+            case EmphasisContent():
+                inner = self._slice_ast(node.content, start, end)
+                return [EmphasisContent(content=inner)] if inner else []
+            case LinkContent():
+                inner = self._slice_ast(node.content, start, end)
+                return [LinkContent(href=node.href, title=node.title, content=inner)] if inner else []
+            case InlineImageContent() | MathInlineContent():
+                # Images and math are atomic units that can't be split mid-content,
+                # so we either include the whole thing (start == 0) or nothing
+                return [node] if start == 0 else []
         return []
 
     def _get_inline_length(self, node: InlineContent) -> int:
         """Get the plain text length of an inline node."""
-        if node.type == "text":
-            return len(node.content)
-        elif node.type == "code":
-            return len(node.content)
-        elif node.type in ("strong", "emphasis", "link"):
-            return sum(self._get_inline_length(child) for child in node.content)
-        elif node.type == "image":
-            return len(node.alt)
-        elif node.type == "math_inline":
-            # Math counts toward block length if it has alt text (for TTS)
-            return len(node.alt) if node.alt else 0
+        match node:
+            case TextContent() | CodeSpanContent():
+                return len(node.content)
+            case StrongContent() | EmphasisContent() | LinkContent():
+                return sum(self._get_inline_length(child) for child in node.content)
+            case InlineImageContent():
+                return len(node.alt)
+            case MathInlineContent():
+                # Math counts toward block length only if it has alt text (for TTS)
+                return len(node.alt) if node.alt else 0
         return 0
 
     def _render_ast_to_html(self, ast: list[InlineContent]) -> str:
         """Render our InlineContent AST back to HTML."""
-        parts = []
-        for node in ast:
-            parts.append(self._render_inline_content_html(node))
-        return "".join(parts)
+        return "".join(self._render_inline_content_html(node) for node in ast)
 
     def _render_inline_content_html(self, node: InlineContent) -> str:
         """Render a single InlineContent node to HTML."""
-        if node.type == "text":
-            return node.content
-        elif node.type == "code":
-            return f"<code>{node.content}</code>"
-        elif node.type == "strong":
-            inner = self._render_ast_to_html(node.content)
-            return f"<strong>{inner}</strong>"
-        elif node.type == "emphasis":
-            inner = self._render_ast_to_html(node.content)
-            return f"<em>{inner}</em>"
-        elif node.type == "link":
-            inner = self._render_ast_to_html(node.content)
-            title_attr = f' title="{node.title}"' if node.title else ""
-            return f'<a href="{node.href}"{title_attr}>{inner}</a>'
-        elif node.type == "image":
-            return f'<img src="{node.src}" alt="{node.alt}" />'
-        elif node.type == "math_inline":
-            return f'<span class="math-inline">{node.content}</span>'
+        match node:
+            case TextContent():
+                return node.content
+            case CodeSpanContent():
+                return f"<code>{node.content}</code>"
+            case StrongContent():
+                return f"<strong>{self._render_ast_to_html(node.content)}</strong>"
+            case EmphasisContent():
+                return f"<em>{self._render_ast_to_html(node.content)}</em>"
+            case LinkContent():
+                inner = self._render_ast_to_html(node.content)
+                title_attr = f' title="{node.title}"' if node.title else ""
+                return f'<a href="{node.href}"{title_attr}>{inner}</a>'
+            case InlineImageContent():
+                return f'<img src="{node.src}" alt="{node.alt}" />'
+            case MathInlineContent():
+                return f'<span class="math-inline">{node.content}</span>'
         return ""
 
     def _split_text_into_chunks(self, text: str) -> list[str]:
@@ -719,7 +705,7 @@ class DocumentTransformer:
 
         return chunks if chunks else [text]
 
-    def _transform_list(self, node: SyntaxTreeNode) -> list[ListBlock]:
+    def _transform_list(self, node: SyntaxTreeNode) -> list[ContentBlock]:
         """Transform list (bullet or ordered) node. Each item gets its own audio index."""
         ordered = node.type == "ordered_list"
         start = cast(int | None, node.attrs.get("start")) if ordered else None

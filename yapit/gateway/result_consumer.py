@@ -7,7 +7,7 @@ import uuid
 
 from loguru import logger
 from redis.asyncio import Redis
-from sqlmodel import update
+from sqlmodel import col, update
 
 from yapit.contracts import (
     TTS_INFLIGHT,
@@ -82,7 +82,7 @@ async def _handle_success(
     async for db in create_session(settings):
         await db.exec(
             update(BlockVariant)
-            .where(BlockVariant.hash == result.variant_hash)
+            .where(col(BlockVariant.hash) == result.variant_hash)
             .values(duration_ms=result.duration_ms, cache_ref=cache_ref)
         )
 

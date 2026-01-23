@@ -55,18 +55,27 @@ STRIPE_FIXED_EUR = 0.30
 
 # --- Gemini 3 Flash API (for AI Transform / OCR) ---
 # Model: gemini-3-flash-preview
-# Pricing: $0.50/M input tokens, $3.00/M output tokens
+# Pricing: $0.50/M input tokens, $3.00/M output tokens (thinking = output rate)
+#
+# Measured averages (N=208 pages):
+#   Input: 2005 tokens/page (std ±226)
+#   Output: 890 tokens/page (std ±702, high variance for math/tables)
+# Using conservative estimates to not overpromise page counts:
 GEMINI_INPUT_PRICE_PER_M_TOKENS_USD = 0.50
 GEMINI_OUTPUT_PRICE_PER_M_TOKENS_USD = 3.00
-# Resolution tiers (tokens per image): LOW=280, MEDIUM=560, HIGH=1120
-GEMINI_TOKENS_PER_IMAGE = {
-    "low": 280,
-    "medium": 560,
-    "high": 1120,
-}
-GEMINI_RESOLUTION = "high"  # Currently using high resolution
-GEMINI_PROMPT_TOKENS = 2000  # System prompt + instructions (conservative)
-GEMINI_OUTPUT_TOKENS_PER_PAGE = 1500  # Page content output (conservative)
+GEMINI_INPUT_TOKENS = 2500  # Conservative (measured 2005, buffer for growing prompt)
+GEMINI_OUTPUT_TOKENS = 1000  # Conservative (measured 890, buffer for complex pages)
+GEMINI_THINKING_TOKENS = 0  # Thinking tokens (set 0 for minimal thinking mode)
+#
+# Token-based billing model:
+# - Output tokens cost 6x input tokens, so we use "token equivalents"
+# - token_equiv = input_tokens + (output_tokens * OUTPUT_MULTIPLIER)
+# - Plans define limits in token equivalents, displayed as "~pages" to users
+OUTPUT_TOKEN_MULTIPLIER = int(GEMINI_OUTPUT_PRICE_PER_M_TOKENS_USD / GEMINI_INPUT_PRICE_PER_M_TOKENS_USD)  # 6
+#
+# Average token equivalents per page (for display conversion):
+# input=2500, output=1000 → 2500 + (1000 * 6) = 8500 token equiv/page
+TOKENS_PER_PAGE = GEMINI_INPUT_TOKENS + (GEMINI_OUTPUT_TOKENS + GEMINI_THINKING_TOKENS) * OUTPUT_TOKEN_MULTIPLIER
 
 # --- Inworld TTS API ---
 INWORLD_TTS1_PRICE_PER_M_CHARS_USD = 5.00  # $5.00 per million characters
@@ -93,15 +102,22 @@ SVS_THRESHOLD_EUR = 6000  # Annual profit threshold
 SVS_RATE = 0.27  # Social insurance rate
 
 # --- Plan Definitions ---
-# Format: (price_eur, interval, ocr_pages_per_month, premium_voice_chars_per_month)
+# Format: (price_eur, interval, ocr_token_equiv_per_month, premium_voice_chars_per_month)
+# Token equivalents = input_tokens + (output_tokens * 6)
+# Use TOKENS_PER_PAGE to convert to/from approximate pages
 PLANS = {
-    "Basic Monthly": (7, "monthly", 500, 0),
-    "Basic Yearly": (75, "yearly", 500, 0),
-    "Plus Monthly": (20, "monthly", 1500, 1_200_000),
-    "Plus Yearly": (192, "yearly", 1500, 1_200_000),
-    "Max Monthly": (40, "monthly", 3000, 3_000_000),
-    "Max Yearly": (240, "yearly", 3000, 3_000_000),
+    # Uniform 25% yearly discount, round token/char numbers
+    "Basic Monthly": (10, "monthly", 5_000_000, 0),
+    "Basic Yearly": (90, "yearly", 5_000_000, 0),  # 25% discount
+    "Plus Monthly": (20, "monthly", 10_000_000, 1_000_000),
+    "Plus Yearly": (180, "yearly", 10_000_000, 1_000_000),  # 25% discount
+    "Max Monthly": (40, "monthly", 15_000_000, 3_000_000),
+    "Max Yearly": (360, "yearly", 15_000_000, 3_000_000),  # 25% discount
 }
+
+# Voice character to hours conversion
+CHARS_PER_SECOND = 14  # see script in experiments/
+SECONDS_PER_HOUR = 3600
 
 # --- Scenario Settings ---
 DEFAULT_UTILIZATION = 0.75  # 75% average utilization of limits
@@ -133,13 +149,19 @@ def eur_to_usd(eur: float) -> float:
     return eur * EUR_USD_RATE
 
 
+def get_gemini_cost_per_token_equiv_usd() -> float:
+    """Calculate Gemini API cost per token equivalent.
+
+    Since token_equiv = input + (output * 6) and cost = input * $0.50/M + output * $3.00/M,
+    we can simplify: cost = $0.50/M * (input + output * 6) = $0.50/M * token_equiv
+    So cost per token equiv is just the input token price!
+    """
+    return GEMINI_INPUT_PRICE_PER_M_TOKENS_USD / 1_000_000
+
+
 def get_gemini_cost_per_page_usd() -> float:
-    """Calculate Gemini API cost per OCR page."""
-    image_tokens = GEMINI_TOKENS_PER_IMAGE[GEMINI_RESOLUTION]
-    input_tokens = image_tokens + GEMINI_PROMPT_TOKENS
-    input_cost = (input_tokens / 1_000_000) * GEMINI_INPUT_PRICE_PER_M_TOKENS_USD
-    output_cost = (GEMINI_OUTPUT_TOKENS_PER_PAGE / 1_000_000) * GEMINI_OUTPUT_PRICE_PER_M_TOKENS_USD
-    return input_cost + output_cost
+    """Calculate Gemini API cost per average page (for display)."""
+    return get_gemini_cost_per_token_equiv_usd() * TOKENS_PER_PAGE
 
 
 def get_inworld_cost_per_char_usd() -> float:
@@ -176,7 +198,8 @@ class PlanMetrics:
     price_eur: float
     interval: str
     months: int
-    ocr_pages: int
+    ocr_tokens: int  # Token equivalents (input + output*6)
+    ocr_pages_approx: int  # Approximate pages for display
     voice_chars: int
 
     # Costs (EUR)
@@ -201,7 +224,7 @@ def calculate_plan_metrics(
     name: str,
     price_eur: float,
     interval: str,
-    ocr_pages: int,
+    ocr_tokens: int,
     voice_chars: int,
     utilization: float = 1.0,
 ) -> PlanMetrics:
@@ -209,12 +232,15 @@ def calculate_plan_metrics(
     months = 12 if interval == "yearly" else 1
 
     # Variable costs at given utilization
-    gemini_per_page = usd_to_eur(get_gemini_cost_per_page_usd())
+    gemini_per_token = usd_to_eur(get_gemini_cost_per_token_equiv_usd())
     inworld_per_char = usd_to_eur(get_inworld_cost_per_char_usd())
 
-    ocr_cost = ocr_pages * months * gemini_per_page * utilization
+    ocr_cost = ocr_tokens * months * gemini_per_token * utilization
     voice_cost = voice_chars * months * inworld_per_char * utilization
     total_var = ocr_cost + voice_cost
+
+    # Approximate pages for display
+    ocr_pages_approx = int(ocr_tokens / TOKENS_PER_PAGE) if TOKENS_PER_PAGE > 0 else 0
 
     # Revenue and profit at each VAT rate
     gross_after_vat = {}
@@ -238,7 +264,7 @@ def calculate_plan_metrics(
         margin_percent[vat_name] = margin
 
         # Break-even utilization (at 100% variable cost)
-        full_var = ocr_pages * months * gemini_per_page + voice_chars * months * inworld_per_char
+        full_var = ocr_tokens * months * gemini_per_token + voice_chars * months * inworld_per_char
         if full_var > 0:
             breakeven_util[vat_name] = (net / full_var) * 100
         else:
@@ -249,7 +275,8 @@ def calculate_plan_metrics(
         price_eur=price_eur,
         interval=interval,
         months=months,
-        ocr_pages=ocr_pages,
+        ocr_tokens=ocr_tokens,
+        ocr_pages_approx=ocr_pages_approx,
         voice_chars=voice_chars,
         ocr_cost=ocr_cost,
         voice_cost=voice_cost,
@@ -354,18 +381,20 @@ def print_header():
 
 def print_unit_costs():
     """Print unit cost breakdown."""
+    gemini_token = get_gemini_cost_per_token_equiv_usd()
     gemini_page = get_gemini_cost_per_page_usd()
-    image_tokens = GEMINI_TOKENS_PER_IMAGE[GEMINI_RESOLUTION]
-    total_input = image_tokens + GEMINI_PROMPT_TOKENS
     runpod_max = get_runpod_max_monthly_usd()
+    thinking_label = f" + {GEMINI_THINKING_TOKENS} thinking" if GEMINI_THINKING_TOKENS > 0 else ""
 
     if PLAIN_MODE:
         print("1. UNIT COSTS")
         print("Component\tUSD\tEUR\tNotes")
         print(
-            f"Gemini OCR/page ({GEMINI_RESOLUTION})\t${gemini_page:.6f}\t€{usd_to_eur(gemini_page):.6f}\t{total_input} in + {GEMINI_OUTPUT_TOKENS_PER_PAGE} out tokens"
+            f"Gemini OCR/M tokens\t${gemini_token * 1_000_000:.2f}\t€{usd_to_eur(gemini_token * 1_000_000):.2f}\tToken equiv = in + out×{OUTPUT_TOKEN_MULTIPLIER}"
         )
-        print(f"Gemini OCR/1000 pages\t${gemini_page * 1000:.2f}\t€{usd_to_eur(gemini_page * 1000):.2f}\t")
+        print(
+            f"Gemini OCR/page (~{TOKENS_PER_PAGE} tok)\t${gemini_page:.4f}\t€{usd_to_eur(gemini_page):.4f}\t{GEMINI_INPUT_TOKENS} in + {GEMINI_OUTPUT_TOKENS} out{thinking_label}"
+        )
         print(
             f"Inworld TTS-1/M chars\t${INWORLD_TTS1_PRICE_PER_M_CHARS_USD:.2f}\t€{usd_to_eur(INWORLD_TTS1_PRICE_PER_M_CHARS_USD):.2f}\tTTS-1-Max $10/M but 2x credits"
         )
@@ -387,13 +416,16 @@ def print_unit_costs():
     table.add_column("Notes")
 
     table.add_row(
-        f"Gemini OCR (per page, {GEMINI_RESOLUTION})",
-        f"${gemini_page:.6f}",
-        f"€{usd_to_eur(gemini_page):.6f}",
-        f"{total_input} in + {GEMINI_OUTPUT_TOKENS_PER_PAGE} out tokens",
+        "Gemini OCR (per M tokens)",
+        f"${gemini_token * 1_000_000:.2f}",
+        f"€{usd_to_eur(gemini_token * 1_000_000):.2f}",
+        f"Token equiv = in + out×{OUTPUT_TOKEN_MULTIPLIER}",
     )
     table.add_row(
-        "Gemini OCR (per 1000 pages)", f"${gemini_page * 1000:.2f}", f"€{usd_to_eur(gemini_page * 1000):.2f}", ""
+        f"Gemini OCR (per page, ~{TOKENS_PER_PAGE} tok)",
+        f"${gemini_page:.4f}",
+        f"€{usd_to_eur(gemini_page):.4f}",
+        f"{GEMINI_INPUT_TOKENS} in + {GEMINI_OUTPUT_TOKENS} out{thinking_label}",
     )
 
     table.add_row(
@@ -424,13 +456,17 @@ def print_plan_limits():
     """Print current plan limits and costs at 100% utilization."""
     if PLAIN_MODE:
         print("2. PLAN LIMITS & VARIABLE COSTS (100% util)")
-        print("Plan\tPrice\tOCR/mo\tVoice/mo\tOCR Cost\tVoice Cost\tTotal Var")
-        for name, (price, interval, ocr, voice) in PLANS.items():
-            metrics = calculate_plan_metrics(name, price, interval, ocr, voice, 1.0)
+        print("Plan\tPrice\tOCR tokens\t~Pages\tVoice/mo\tOCR Cost\tVoice Cost\tTotal Var\tOCR%\tVoice%")
+        for name, (price, interval, ocr_tokens, voice) in PLANS.items():
+            metrics = calculate_plan_metrics(name, price, interval, ocr_tokens, voice, 1.0)
             voice_display = f"{voice / 1_000_000:.1f}M" if voice > 0 else "0"
+            ocr_display = f"{ocr_tokens / 1_000_000:.1f}M"
             period = "/yr" if interval == "yearly" else "/mo"
+            total = metrics.total_variable_cost
+            ocr_pct = (metrics.ocr_cost / total * 100) if total > 0 else 0
+            voice_pct = (metrics.voice_cost / total * 100) if total > 0 else 0
             print(
-                f"{name}\t€{price}{period}\t{ocr}\t{voice_display}\t€{metrics.ocr_cost:.2f}\t€{metrics.voice_cost:.2f}\t€{metrics.total_variable_cost:.2f}"
+                f"{name}\t€{price}{period}\t{ocr_display}\t~{metrics.ocr_pages_approx}\t{voice_display}\t€{metrics.ocr_cost:.2f}\t€{metrics.voice_cost:.2f}\t€{metrics.total_variable_cost:.2f}\t{ocr_pct:.0f}%\t{voice_pct:.0f}%"
             )
         print()
         return
@@ -440,29 +476,98 @@ def print_plan_limits():
     table = Table(box=box.ROUNDED, show_header=True, header_style="bold")
     table.add_column("Plan", style="cyan")
     table.add_column("Price", justify="right")
-    table.add_column("OCR/mo", justify="right")
+    table.add_column("OCR tokens", justify="right")
+    table.add_column("~Pages", justify="right")
     table.add_column("Voice/mo", justify="right")
     table.add_column("OCR Cost", justify="right")
     table.add_column("Voice Cost", justify="right")
     table.add_column("Total Var", justify="right", style="bold")
+    table.add_column("OCR%", justify="right")
+    table.add_column("Voice%", justify="right")
 
-    for name, (price, interval, ocr, voice) in PLANS.items():
-        metrics = calculate_plan_metrics(name, price, interval, ocr, voice, 1.0)
+    for name, (price, interval, ocr_tokens, voice) in PLANS.items():
+        metrics = calculate_plan_metrics(name, price, interval, ocr_tokens, voice, 1.0)
 
         voice_display = f"{voice / 1_000_000:.1f}M" if voice > 0 else "0"
+        ocr_display = f"{ocr_tokens / 1_000_000:.1f}M"
         period = "/yr" if interval == "yearly" else "/mo"
+        total = metrics.total_variable_cost
+        ocr_pct = (metrics.ocr_cost / total * 100) if total > 0 else 0
+        voice_pct = (metrics.voice_cost / total * 100) if total > 0 else 0
 
         table.add_row(
             name,
             f"€{price}{period}",
-            str(ocr),
+            ocr_display,
+            f"~{metrics.ocr_pages_approx}",
             voice_display,
             f"€{metrics.ocr_cost:.2f}",
             f"€{metrics.voice_cost:.2f}",
             f"€{metrics.total_variable_cost:.2f}",
+            f"{ocr_pct:.0f}%",
+            f"{voice_pct:.0f}%",
         )
 
     console.print(table)
+
+
+def print_value_analysis():
+    """Print value per euro analysis - what users get for their money."""
+    if PLAIN_MODE:
+        print("2b. VALUE PER EURO")
+        print("Plan\tPrice\tTokens/€\tChars/€\t~Hours\tPages/€")
+        for name, (price, interval, ocr_tokens, voice_chars) in PLANS.items():
+            months = 12 if interval == "yearly" else 1
+            monthly_price = price / months
+            tokens_per_eur = ocr_tokens / monthly_price if monthly_price > 0 else 0
+            chars_per_eur = voice_chars / monthly_price if monthly_price > 0 and voice_chars > 0 else 0
+            hours = voice_chars / CHARS_PER_SECOND / SECONDS_PER_HOUR if voice_chars > 0 else 0
+            pages_per_eur = (ocr_tokens / TOKENS_PER_PAGE) / monthly_price if monthly_price > 0 else 0
+            hours_str = f"~{hours:.0f}h" if hours > 0 else "—"
+            chars_str = f"{chars_per_eur / 1000:.0f}K" if chars_per_eur > 0 else "—"
+            period = "/yr" if interval == "yearly" else "/mo"
+            print(
+                f"{name}\t€{price}{period}\t{tokens_per_eur / 1000:.0f}K\t{chars_str}\t{hours_str}\t{pages_per_eur:.0f}"
+            )
+        print()
+        return
+
+    console.print("\n[bold yellow]2b. VALUE PER EURO[/bold yellow]")
+    console.print("[dim]What users get for their money (yearly normalized to monthly)[/dim]\n")
+
+    table = Table(box=box.ROUNDED, show_header=True, header_style="bold")
+    table.add_column("Plan", style="cyan")
+    table.add_column("Price", justify="right")
+    table.add_column("€/mo eff.", justify="right")
+    table.add_column("Tokens/€", justify="right")
+    table.add_column("Chars/€", justify="right")
+    table.add_column("~Hours", justify="right")
+    table.add_column("Pages/€", justify="right")
+
+    for name, (price, interval, ocr_tokens, voice_chars) in PLANS.items():
+        months = 12 if interval == "yearly" else 1
+        monthly_price = price / months
+        tokens_per_eur = ocr_tokens / monthly_price if monthly_price > 0 else 0
+        chars_per_eur = voice_chars / monthly_price if monthly_price > 0 and voice_chars > 0 else 0
+        hours = voice_chars / CHARS_PER_SECOND / SECONDS_PER_HOUR if voice_chars > 0 else 0
+        pages_per_eur = (ocr_tokens / TOKENS_PER_PAGE) / monthly_price if monthly_price > 0 else 0
+
+        period = "/yr" if interval == "yearly" else "/mo"
+        hours_str = f"~{hours:.0f}h" if hours > 0 else "—"
+        chars_str = f"{chars_per_eur / 1000:.0f}K" if chars_per_eur > 0 else "—"
+
+        table.add_row(
+            name,
+            f"€{price}{period}",
+            f"€{monthly_price:.2f}",
+            f"{tokens_per_eur / 1000:.0f}K",
+            chars_str,
+            hours_str,
+            f"{pages_per_eur:.0f}",
+        )
+
+    console.print(table)
+    console.print(f"[dim]Hours based on ~{CHARS_PER_SECOND} chars/second speech rate. TTS-1-Max uses 2x chars.[/dim]")
 
 
 def print_breakeven_table():
@@ -762,8 +867,9 @@ def print_config_summary():
         print(f"Default VAT: {DEFAULT_VAT} ({VAT_RATES[DEFAULT_VAT] * 100:.0f}%)")
         print(f"Default Utilization: {DEFAULT_UTILIZATION * 100:.0f}%")
         print(f"Stripe: {STRIPE_PERCENT * 100:.0f}% + €{STRIPE_FIXED_EUR}")
+        thinking_str = f", {GEMINI_THINKING_TOKENS} thinking" if GEMINI_THINKING_TOKENS > 0 else ", no thinking"
         print(
-            f"Gemini 3 Flash: ${GEMINI_INPUT_PRICE_PER_M_TOKENS_USD}/M in, ${GEMINI_OUTPUT_PRICE_PER_M_TOKENS_USD}/M out ({GEMINI_RESOLUTION} res)"
+            f"Gemini 3 Flash: ${GEMINI_INPUT_PRICE_PER_M_TOKENS_USD}/M in, ${GEMINI_OUTPUT_PRICE_PER_M_TOKENS_USD}/M out{thinking_str}"
         )
         print(f"Inworld TTS-1: ${INWORLD_TTS1_PRICE_PER_M_CHARS_USD}/M chars")
         print(f"RunPod: ${RUNPOD_COST_PER_SECOND_USD}/s × {RUNPOD_MAX_WORKERS} workers max")
@@ -781,7 +887,7 @@ def print_config_summary():
 [cyan]Default VAT:[/cyan] {DEFAULT_VAT} ({VAT_RATES[DEFAULT_VAT] * 100:.0f}%)
 [cyan]Default Utilization:[/cyan] {DEFAULT_UTILIZATION * 100:.0f}%
 [cyan]Stripe Fees:[/cyan] {STRIPE_PERCENT * 100:.0f}% + €{STRIPE_FIXED_EUR}
-[cyan]Gemini 3 Flash:[/cyan] ${GEMINI_INPUT_PRICE_PER_M_TOKENS_USD}/M in, ${GEMINI_OUTPUT_PRICE_PER_M_TOKENS_USD}/M out ({GEMINI_RESOLUTION} res)
+[cyan]Gemini 3 Flash:[/cyan] ${GEMINI_INPUT_PRICE_PER_M_TOKENS_USD}/M in, ${GEMINI_OUTPUT_PRICE_PER_M_TOKENS_USD}/M out, {GEMINI_THINKING_TOKENS} thinking tokens
 [cyan]Inworld TTS-1:[/cyan] ${INWORLD_TTS1_PRICE_PER_M_CHARS_USD}/M chars
 [cyan]RunPod:[/cyan] ${RUNPOD_COST_PER_SECOND_USD}/s × {RUNPOD_MAX_WORKERS} workers max
 [cyan]Fixed:[/cyan] €{get_fixed_costs_eur()}/month
@@ -806,6 +912,7 @@ def main():
     print_config_summary()
     print_unit_costs()
     print_plan_limits()
+    print_value_analysis()
     print_breakeven_table()
     print_profit_by_utilization()
     print_margin_breakdown()

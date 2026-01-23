@@ -149,27 +149,14 @@ def create_document_processors() -> list[DocumentProcessor]:
 
 
 def create_plans(settings: Settings) -> list[Plan]:
-    """Create subscription plans.
-
-    Pricing (EUR, tax-inclusive):
-    - Free: €0, browser Kokoro only
-    - Basic: €7/mo (€75/yr), unlimited server Kokoro, 500 OCR pages
-    - Plus: €20/mo (€192/yr), +20 hrs premium voice, 1500 OCR pages
-    - Max: €40/mo (€240/yr), +50 hrs premium voice, 3000 OCR pages
-
-    Premium voice characters: ~17 chars = 1 second of audio
-    - 20 hrs = 72,000 seconds = 1,224,000 chars
-    - 50 hrs = 180,000 seconds = 3,060,000 chars
-
-    Price IDs come from settings (env vars), different for test vs live Stripe.
-    """
+    """Create subscription plans. See margin_calculator.py for pricing analysis."""
     return [
         Plan(
             tier=PlanTier.free,
             name="Free",
             server_kokoro_characters=0,
             premium_voice_characters=0,
-            ocr_pages=0,
+            ocr_tokens=0,
             trial_days=0,
             price_cents_monthly=0,
             price_cents_yearly=0,
@@ -179,36 +166,36 @@ def create_plans(settings: Settings) -> list[Plan]:
             name="Basic",
             server_kokoro_characters=None,  # unlimited
             premium_voice_characters=0,
-            ocr_pages=500,
+            ocr_tokens=5_000_000,  # 5M tokens
             stripe_price_id_monthly=settings.stripe_price_basic_monthly,
             stripe_price_id_yearly=settings.stripe_price_basic_yearly,
-            trial_days=7,
-            price_cents_monthly=700,
-            price_cents_yearly=7500,
+            trial_days=3,
+            price_cents_monthly=1000,
+            price_cents_yearly=9000,
         ),
         Plan(
             tier=PlanTier.plus,
             name="Plus",
             server_kokoro_characters=None,  # unlimited
-            premium_voice_characters=1_200_000,  # ~20 hours
-            ocr_pages=1500,
+            premium_voice_characters=1_000_000,  # ~20 hours
+            ocr_tokens=10_000_000,  # 10M tokens
             stripe_price_id_monthly=settings.stripe_price_plus_monthly,
             stripe_price_id_yearly=settings.stripe_price_plus_yearly,
-            trial_days=7,
+            trial_days=3,
             price_cents_monthly=2000,
-            price_cents_yearly=19200,
+            price_cents_yearly=18000,
         ),
         Plan(
             tier=PlanTier.max,
             name="Max",
             server_kokoro_characters=None,  # unlimited
-            premium_voice_characters=3_000_000,  # ~50 hours
-            ocr_pages=3000,
+            premium_voice_characters=3_000_000,  # ~60 hours
+            ocr_tokens=15_000_000,  # 15M tokens
             stripe_price_id_monthly=settings.stripe_price_max_monthly,
             stripe_price_id_yearly=settings.stripe_price_max_yearly,
             trial_days=0,  # No trial for Max tier
             price_cents_monthly=4000,
-            price_cents_yearly=24000,
+            price_cents_yearly=36000,
         ),
     ]
 

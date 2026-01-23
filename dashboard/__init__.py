@@ -100,6 +100,7 @@ def main():
         # Quick stats
         filtered = filter_data(df, (start_date, end_date), selected_models)
         st.caption(f"**{len(filtered):,}** events in range")
+        st.caption(f"Filter: {start_date} to {end_date}")
         if not filtered.empty:
             span = filtered["local_time"].max() - filtered["local_time"].min()
             st.caption(f"Span: {span}")
