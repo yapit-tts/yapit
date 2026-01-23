@@ -84,16 +84,19 @@ class GeminiExtractor:
         content_type: str,
         content_hash: str,
         pages: list[int] | None = None,
+        user_id: str | None = None,
     ) -> AsyncIterator[PageResult]:
         """Extract pages, yielding results as each completes (parallel execution)."""
         if content_type.startswith("image/"):
-            yield await self._extract_image(content, content_type, content_hash)
+            yield await self._extract_image(content, content_type, content_hash, user_id)
             return
 
-        async for result in self._extract_pdf(content, content_hash, pages):
+        async for result in self._extract_pdf(content, content_hash, pages, user_id):
             yield result
 
-    async def _extract_image(self, content: bytes, content_type: str, content_hash: str) -> PageResult:
+    async def _extract_image(
+        self, content: bytes, content_type: str, content_hash: str, user_id: str | None
+    ) -> PageResult:
         """Extract text from a single image."""
         config = types.GenerateContentConfig(
             media_resolution=self._resolution,
@@ -116,6 +119,7 @@ class GeminiExtractor:
                 page_idx=0,
                 duration_ms=duration_ms,
                 status_code=getattr(e, "code", None),
+                user_id=user_id,
                 data={"error": str(e), "content_hash": content_hash},
             )
             return PageResult(
@@ -144,6 +148,7 @@ class GeminiExtractor:
             candidates_token_count=output_tokens,
             thoughts_token_count=thoughts_tokens,
             total_token_count=input_tokens + output_tokens + thoughts_tokens,
+            user_id=user_id,
             data={"content_hash": content_hash},
         )
 
@@ -163,6 +168,7 @@ class GeminiExtractor:
         content: bytes,
         content_hash: str,
         pages: list[int] | None,
+        user_id: str | None,
     ) -> AsyncIterator[PageResult]:
         """Extract text from PDF, yielding pages as they complete."""
         pdf_reader = PdfReader(io.BytesIO(content))
@@ -175,7 +181,7 @@ class GeminiExtractor:
 
         # Launch all pages in parallel
         tasks = {
-            asyncio.create_task(self._process_page(pdf_reader, page_idx, content_hash, cancel_key)): page_idx
+            asyncio.create_task(self._process_page(pdf_reader, page_idx, content_hash, cancel_key, user_id)): page_idx
             for page_idx in pages_to_process
         }
 
@@ -189,6 +195,7 @@ class GeminiExtractor:
         page_idx: int,
         content_hash: str,
         cancel_key: str,
+        user_id: str | None,
     ) -> PageResult:
         """Process a single page: YOLO detection → figure storage → Gemini extraction."""
         if await self._redis.exists(cancel_key):
@@ -220,7 +227,7 @@ class GeminiExtractor:
                 figure_urls.append(url)
 
             return await self._call_gemini_for_page(
-                pdf_reader, page_idx, yolo_result.figures, figure_urls, content_hash
+                pdf_reader, page_idx, yolo_result.figures, figure_urls, content_hash, user_id
             )
 
         except Exception as e:
@@ -242,6 +249,7 @@ class GeminiExtractor:
         figures: list[DetectedFigure],
         figure_urls: list[str],
         content_hash: str,
+        user_id: str | None,
     ) -> PageResult:
         """Call Gemini API to extract text from a single PDF page."""
         page_bytes = extract_single_page_pdf(pdf_reader, page_idx)
@@ -267,6 +275,7 @@ class GeminiExtractor:
                 page_idx=page_idx,
                 duration_ms=duration_ms,
                 status_code=getattr(e, "code", None),
+                user_id=user_id,
                 data={"error": str(e), "content_hash": content_hash},
             )
             return PageResult(
@@ -301,6 +310,7 @@ class GeminiExtractor:
             candidates_token_count=output_tokens,
             thoughts_token_count=thoughts_tokens,
             total_token_count=input_tokens + output_tokens + thoughts_tokens,
+            user_id=user_id,
             data={"content_hash": content_hash},
         )
 

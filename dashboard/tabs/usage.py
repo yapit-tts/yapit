@@ -3,6 +3,7 @@
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+from plotly.subplots import make_subplots
 
 from dashboard.components import (
     empty_state,
@@ -285,6 +286,307 @@ def _user_distribution_chart(df: pd.DataFrame) -> go.Figure | None:
     return fig
 
 
+# === Rate Limit Insights ===
+
+
+def _request_rate_distribution(df: pd.DataFrame) -> go.Figure | None:
+    """Distribution of requests per minute per user."""
+    synthesis_queued = get_events(df, "synthesis_queued")
+    if synthesis_queued.empty or "user_id" not in synthesis_queued.columns:
+        return None
+
+    # Bin by minute and user
+    synthesis_queued = synthesis_queued.copy()
+    synthesis_queued["minute"] = synthesis_queued["local_time"].dt.floor("min")
+
+    # Count requests per user per minute
+    user_minute_counts = synthesis_queued.groupby(["user_id", "minute"]).size().reset_index(name="req_per_min")
+
+    if user_minute_counts.empty:
+        return None
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Histogram(
+            x=user_minute_counts["req_per_min"],
+            nbinsx=50,
+            marker=dict(color=COLORS["accent_blue"], line=dict(width=1, color=COLORS["border"])),
+            hovertemplate="Req/min: %{x}<br>User-minutes: %{y}<extra></extra>",
+        )
+    )
+
+    # Add reference lines for rate limits
+    fig.add_vline(
+        x=100,
+        line_dash="dash",
+        line_color=COLORS["warning"],
+        annotation_text="100/min",
+        annotation_position="top right",
+    )
+    fig.add_vline(
+        x=300,
+        line_dash="dash",
+        line_color=COLORS["error"],
+        annotation_text="300/min (limit)",
+        annotation_position="top right",
+    )
+
+    fig.update_layout(
+        title="Request Rate Distribution",
+        height=350,
+        xaxis_title="Requests per Minute (per user)",
+        yaxis_title="Count",
+    )
+    apply_plotly_theme(fig)
+    return fig
+
+
+def _top_users_by_rate(df: pd.DataFrame):
+    """Table of top users by peak request rate."""
+    synthesis_queued = get_events(df, "synthesis_queued")
+    if synthesis_queued.empty or "user_id" not in synthesis_queued.columns:
+        st.caption("No request data for rate analysis")
+        return
+
+    # Bin by minute and user
+    synthesis_queued = synthesis_queued.copy()
+    synthesis_queued["minute"] = synthesis_queued["local_time"].dt.floor("min")
+
+    # Count requests per user per minute
+    user_minute_counts = synthesis_queued.groupby(["user_id", "minute"]).size().reset_index(name="req_per_min")
+
+    # Aggregate per user: peak, avg, total
+    user_stats = (
+        user_minute_counts.groupby("user_id")
+        .agg(
+            peak_req_min=("req_per_min", "max"),
+            avg_req_min=("req_per_min", "mean"),
+            active_minutes=("minute", "count"),
+        )
+        .reset_index()
+    )
+
+    # Get total requests per user
+    total_requests = synthesis_queued.groupby("user_id").size().reset_index(name="total_requests")
+    user_stats = user_stats.merge(total_requests, on="user_id")
+
+    # Sort by peak and take top 10
+    user_stats = user_stats.sort_values("peak_req_min", ascending=False).head(10)
+
+    if user_stats.empty:
+        st.caption("No data")
+        return
+
+    display_df = pd.DataFrame(
+        {
+            "User ID": user_stats["user_id"].apply(lambda x: x[:8] + "..." if len(str(x)) > 8 else x),
+            "Peak Req/Min": user_stats["peak_req_min"].astype(int),
+            "Avg Req/Min": user_stats["avg_req_min"].round(1),
+            "Active Mins": user_stats["active_minutes"].astype(int),
+            "Total Requests": user_stats["total_requests"].apply(format_number),
+        }
+    )
+
+    st.dataframe(display_df, hide_index=True, use_container_width=True)
+
+
+def _chars_per_user_by_model(df: pd.DataFrame) -> go.Figure | None:
+    """Character usage distribution per user, split by model type."""
+    synthesis_queued = get_events(df, "synthesis_queued")
+    if synthesis_queued.empty or "user_id" not in synthesis_queued.columns:
+        return None
+
+    # Classify as kokoro vs premium
+    synthesis_queued = synthesis_queued.copy()
+    synthesis_queued["model_type"] = synthesis_queued["model_slug"].apply(
+        lambda m: "kokoro" if m and "kokoro" in m.lower() else "premium"
+    )
+
+    # Sum chars per user per model type
+    user_chars = (
+        synthesis_queued.groupby(["user_id", "model_type"])["text_length"].sum().reset_index(name="total_chars")
+    )
+
+    if user_chars.empty:
+        return None
+
+    fig = make_subplots(rows=1, cols=2, subplot_titles=["Kokoro Chars/User", "Premium Chars/User"])
+
+    # Kokoro histogram
+    kokoro_data = user_chars[user_chars["model_type"] == "kokoro"]["total_chars"]
+    if not kokoro_data.empty:
+        fig.add_trace(
+            go.Histogram(
+                x=kokoro_data,
+                nbinsx=30,
+                marker=dict(color=COLORS["accent_teal"], line=dict(width=1, color=COLORS["border"])),
+                hovertemplate="Chars: %{x:,.0f}<br>Users: %{y}<extra></extra>",
+                name="Kokoro",
+            ),
+            row=1,
+            col=1,
+        )
+
+    # Premium histogram
+    premium_data = user_chars[user_chars["model_type"] == "premium"]["total_chars"]
+    if not premium_data.empty:
+        fig.add_trace(
+            go.Histogram(
+                x=premium_data,
+                nbinsx=30,
+                marker=dict(color=COLORS["accent_purple"], line=dict(width=1, color=COLORS["border"])),
+                hovertemplate="Chars: %{x:,.0f}<br>Users: %{y}<extra></extra>",
+                name="Premium",
+            ),
+            row=1,
+            col=2,
+        )
+
+    fig.update_layout(
+        title="Character Usage Distribution by Model Type",
+        height=350,
+        showlegend=False,
+    )
+    fig.update_xaxes(title_text="Characters", row=1, col=1)
+    fig.update_xaxes(title_text="Characters", row=1, col=2)
+    fig.update_yaxes(title_text="Users", row=1, col=1)
+    fig.update_yaxes(title_text="Users", row=1, col=2)
+    apply_plotly_theme(fig)
+    return fig
+
+
+def _pages_per_user_distribution(df: pd.DataFrame) -> go.Figure | None:
+    """Distribution of pages extracted per user."""
+    extraction = get_events(df, "page_extraction_complete")
+    if extraction.empty:
+        return None
+
+    # Check if user_id exists and has non-null values
+    if "user_id" not in extraction.columns or extraction["user_id"].isna().all():
+        return None
+
+    # Count pages per user (excluding null user_ids)
+    valid_extraction = extraction.dropna(subset=["user_id"])
+    if valid_extraction.empty:
+        return None
+
+    user_pages = valid_extraction.groupby("user_id").size()
+    if user_pages.empty:
+        return None
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Histogram(
+            x=user_pages,
+            nbinsx=30,
+            marker=dict(color=COLORS["accent_coral"], line=dict(width=1, color=COLORS["border"])),
+            hovertemplate="Pages: %{x}<br>Users: %{y}<extra></extra>",
+        )
+    )
+
+    fig.update_layout(
+        title="Pages Extracted per User",
+        height=300,
+        xaxis_title="Pages",
+        yaxis_title="Number of Users",
+    )
+    apply_plotly_theme(fig)
+    return fig
+
+
+def _monthly_usage_trends(df: pd.DataFrame) -> go.Figure | None:
+    """Monthly usage trends: average chars/tokens per user."""
+    synthesis_queued = get_events(df, "synthesis_queued")
+    extraction = get_events(df, "page_extraction_complete")
+
+    if synthesis_queued.empty and extraction.empty:
+        return None
+
+    # Need user_id to calculate per-user averages
+    has_voice_users = not synthesis_queued.empty and "user_id" in synthesis_queued.columns
+    has_extraction_users = not extraction.empty and "user_id" in extraction.columns
+
+    if not has_voice_users and not has_extraction_users:
+        return None
+
+    fig = make_subplots(
+        rows=1,
+        cols=2,
+        subplot_titles=["Avg Voice Chars/User by Month", "Avg Extraction Tokens/User by Month"],
+    )
+
+    # Voice characters by model type (average per user)
+    if has_voice_users:
+        synthesis_queued = synthesis_queued.copy()
+        synthesis_queued["month"] = synthesis_queued["local_time"].dt.to_period("M").astype(str)
+        synthesis_queued["model_type"] = synthesis_queued["model_slug"].apply(
+            lambda m: "Kokoro" if m and "kokoro" in m.lower() else "Premium"
+        )
+
+        # Calculate per-user average: total chars / unique users per month per model_type
+        monthly_stats = (
+            synthesis_queued.groupby(["month", "model_type"])
+            .agg(total_chars=("text_length", "sum"), unique_users=("user_id", "nunique"))
+            .reset_index()
+        )
+        monthly_stats["avg_chars_per_user"] = monthly_stats["total_chars"] / monthly_stats["unique_users"]
+
+        for model_type, color in [("Kokoro", COLORS["accent_teal"]), ("Premium", COLORS["accent_purple"])]:
+            data = monthly_stats[monthly_stats["model_type"] == model_type]
+            if not data.empty:
+                fig.add_trace(
+                    go.Bar(
+                        x=data["month"],
+                        y=data["avg_chars_per_user"],
+                        name=model_type,
+                        marker_color=color,
+                        hovertemplate=f"{model_type}: %{{y:,.0f}} chars/user<extra></extra>",
+                    ),
+                    row=1,
+                    col=1,
+                )
+
+    # Extraction tokens (average per user)
+    if has_extraction_users:
+        extraction = extraction.dropna(subset=["user_id"]).copy()
+        if not extraction.empty:
+            extraction["month"] = extraction["local_time"].dt.to_period("M").astype(str)
+
+            monthly_stats = (
+                extraction.groupby("month")
+                .agg(total_tokens=("total_token_count", "sum"), unique_users=("user_id", "nunique"))
+                .reset_index()
+            )
+            monthly_stats["avg_tokens_per_user"] = monthly_stats["total_tokens"] / monthly_stats["unique_users"]
+
+            if not monthly_stats.empty:
+                fig.add_trace(
+                    go.Bar(
+                        x=monthly_stats["month"],
+                        y=monthly_stats["avg_tokens_per_user"],
+                        name="Tokens",
+                        marker_color=COLORS["accent_coral"],
+                        hovertemplate="Avg: %{y:,.0f} tokens/user<extra></extra>",
+                        showlegend=False,
+                    ),
+                    row=1,
+                    col=2,
+                )
+
+    fig.update_layout(
+        title="Monthly Usage Trends (Average per User)",
+        height=350,
+        barmode="group",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+    )
+    fig.update_xaxes(title_text="Month", row=1, col=1)
+    fig.update_xaxes(title_text="Month", row=1, col=2)
+    fig.update_yaxes(title_text="Chars/User", row=1, col=1)
+    fig.update_yaxes(title_text="Tokens/User", row=1, col=2)
+    apply_plotly_theme(fig)
+    return fig
+
+
 def _unique_users_over_time(df: pd.DataFrame) -> go.Figure | None:
     """Unique users per day."""
     if df.empty or "user_id" not in df.columns:
@@ -338,8 +640,53 @@ def render(df: pd.DataFrame):
 
     st.divider()
 
+    # Rate limit insights
+    section_header("Rate Limit Insights", "Request rate patterns and limits")
+
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        fig = _request_rate_distribution(df)
+        if fig:
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.caption("No request rate data")
+
+    with col2:
+        st.markdown("**Top Users by Peak Rate**")
+        _top_users_by_rate(df)
+
+    st.divider()
+
+    # Monthly usage trends
+    section_header("Monthly Usage Trends", "Average usage per user by month")
+
+    fig = _monthly_usage_trends(df)
+    if fig:
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.caption("No monthly data")
+
+    st.divider()
+
+    # Usage distributions
+    section_header("Usage Distributions", "Character and page usage by user (for selected period)")
+
+    fig = _chars_per_user_by_model(df)
+    if fig:
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.caption("No character usage data")
+
+    fig = _pages_per_user_distribution(df)
+    if fig:
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.caption("No page extraction data")
+
+    st.divider()
+
     # Charts
-    section_header("Charts")
+    section_header("Activity Charts")
 
     # Model usage over time (shows volume breakdown by model)
     fig = _model_usage_over_time(df)

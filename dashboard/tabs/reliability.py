@@ -5,12 +5,142 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from dashboard.components import (
+    format_duration,
     format_number,
     format_percent,
     section_header,
 )
 from dashboard.data import bin_by_time, calculate_rate, get_events
 from dashboard.theme import COLORS, apply_plotly_theme
+
+# === Stripe Webhook Functions ===
+
+
+def _webhook_stats(df: pd.DataFrame):
+    """Display Stripe webhook summary stats."""
+    webhooks = get_events(df, "stripe_webhook")
+    if webhooks.empty:
+        st.caption("No Stripe webhook events logged yet")
+        return
+
+    # Extract data from blob
+    webhooks = webhooks.copy()
+    webhooks["duration_ms"] = webhooks["data"].apply(lambda d: d.get("duration_ms") if isinstance(d, dict) else None)
+    webhooks["event_type"] = webhooks["data"].apply(lambda d: d.get("event_type") if isinstance(d, dict) else None)
+    webhooks["has_error"] = webhooks["data"].apply(lambda d: "error" in d if isinstance(d, dict) else False)
+
+    total = len(webhooks)
+    errors = webhooks["has_error"].sum()
+    error_rate = errors / total * 100 if total > 0 else 0
+
+    latencies = webhooks["duration_ms"].dropna()
+    p50 = latencies.quantile(0.5) if not latencies.empty else 0
+    p95 = latencies.quantile(0.95) if not latencies.empty else 0
+
+    col1, col2, col3, col4, col5 = st.columns(5)
+    with col1:
+        st.metric("Total Webhooks", format_number(total))
+    with col2:
+        st.metric("Errors", format_number(errors))
+    with col3:
+        st.metric("Error Rate", format_percent(error_rate))
+    with col4:
+        st.metric("P50 Latency", format_duration(p50))
+    with col5:
+        st.metric("P95 Latency", format_duration(p95))
+        if p95 > 10000:
+            st.caption("⚠️ >10s (Stripe times out at 20s)")
+
+
+def _webhook_latency_chart(df: pd.DataFrame) -> go.Figure | None:
+    """Webhook latency histogram."""
+    webhooks = get_events(df, "stripe_webhook")
+    if webhooks.empty:
+        return None
+
+    webhooks = webhooks.copy()
+    webhooks["duration_ms"] = webhooks["data"].apply(lambda d: d.get("duration_ms") if isinstance(d, dict) else None)
+    latencies = webhooks["duration_ms"].dropna()
+
+    if latencies.empty:
+        return None
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Histogram(
+            x=latencies,
+            nbinsx=30,
+            marker=dict(color=COLORS["accent_blue"], line=dict(width=1, color=COLORS["border"])),
+            hovertemplate="Latency: %{x:.0f}ms<br>Count: %{y}<extra></extra>",
+        )
+    )
+
+    # Add warning line at 10s
+    fig.add_vline(
+        x=10000,
+        line_dash="dash",
+        line_color=COLORS["warning"],
+        annotation_text="10s",
+        annotation_position="top right",
+    )
+
+    # Add danger line at 20s (Stripe timeout)
+    fig.add_vline(
+        x=20000,
+        line_dash="dash",
+        line_color=COLORS["error"],
+        annotation_text="20s (timeout)",
+        annotation_position="top right",
+    )
+
+    fig.update_layout(
+        title="Webhook Handler Latency",
+        height=300,
+        xaxis_title="Latency (ms)",
+        yaxis_title="Count",
+    )
+    apply_plotly_theme(fig)
+    return fig
+
+
+def _webhook_errors_chart(df: pd.DataFrame) -> go.Figure | None:
+    """Webhook errors over time."""
+    webhooks = get_events(df, "stripe_webhook")
+    if webhooks.empty:
+        return None
+
+    webhooks = webhooks.copy()
+    webhooks["has_error"] = webhooks["data"].apply(lambda d: "error" in d if isinstance(d, dict) else False)
+
+    errors = webhooks[webhooks["has_error"]]
+    if errors.empty:
+        return None
+
+    errors = bin_by_time(errors, "1h")
+    hourly = errors.groupby("time_bin").size().reset_index(name="count")
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=hourly["time_bin"],
+            y=hourly["count"],
+            mode="lines+markers",
+            line=dict(color=COLORS["error"], width=2),
+            marker=dict(size=6),
+            fill="tozeroy",
+            fillcolor="rgba(248, 81, 73, 0.15)",
+            hovertemplate="%{y} errors<extra></extra>",
+        )
+    )
+
+    fig.update_layout(
+        title="Webhook Errors Over Time (hourly)",
+        height=300,
+        xaxis_title="Time",
+        yaxis_title="Errors",
+    )
+    apply_plotly_theme(fig)
+    return fig
 
 
 def _summary_stats(df: pd.DataFrame):
@@ -294,6 +424,26 @@ def render(df: pd.DataFrame):
 
     st.divider()
 
+    # Stripe webhooks
+    section_header("Stripe Webhooks", "Webhook processing health")
+    _webhook_stats(df)
+
+    col1, col2 = st.columns(2)
+    with col1:
+        fig = _webhook_latency_chart(df)
+        if fig:
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.caption("No webhook latency data")
+    with col2:
+        fig = _webhook_errors_chart(df)
+        if fig:
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.caption("No webhook errors (great!)")
+
+    st.divider()
+
     # By queue type
     section_header("By Queue Type", "Reliability breakdown")
     _reliability_by_queue(df)
@@ -301,7 +451,7 @@ def render(df: pd.DataFrame):
     st.divider()
 
     # Charts
-    section_header("Charts")
+    section_header("Job Processing Charts")
 
     # Row 1: Retry + DLQ timelines
     col1, col2 = st.columns(2)

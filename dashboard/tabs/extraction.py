@@ -489,6 +489,132 @@ def _estimate_stats(df: pd.DataFrame):
         st.metric("Avg Tolerance", f"{avg_tolerance:.0%}")
 
 
+def _estimate_vs_actual(df: pd.DataFrame) -> tuple[pd.DataFrame | None, dict]:
+    """Calculate estimate vs actual token correlation.
+
+    Returns:
+        Tuple of (correlation dataframe, stats dict)
+    """
+    estimates = get_events(df, "extraction_estimate")
+    complete = get_events(df, "page_extraction_complete")
+
+    if estimates.empty or complete.empty:
+        return None, {}
+
+    # Extract content_hash from both
+    estimates = estimates.copy()
+    estimates["content_hash"] = estimates["data"].apply(
+        lambda d: d.get("content_hash") if isinstance(d, dict) else None
+    )
+    estimates["estimated"] = estimates["data"].apply(
+        lambda d: d.get("estimated_tokens", 0) if isinstance(d, dict) else 0
+    )
+    estimates = estimates[["content_hash", "estimated"]].dropna(subset=["content_hash"])
+
+    complete = complete.copy()
+    complete["content_hash"] = complete["data"].apply(lambda d: d.get("content_hash") if isinstance(d, dict) else None)
+
+    # Aggregate actual tokens per document
+    actuals = complete.groupby("content_hash")["total_token_count"].sum().reset_index()
+    actuals.columns = ["content_hash", "actual"]
+
+    # Join
+    merged = estimates.merge(actuals, on="content_hash", how="inner")
+    if merged.empty:
+        return None, {}
+
+    # Calculate variance
+    merged["variance"] = merged["actual"] - merged["estimated"]
+    merged["pct_off"] = (merged["variance"] / merged["estimated"] * 100).round(1)
+
+    # Stats
+    stats = {
+        "count": len(merged),
+        "mean_variance": merged["variance"].mean(),
+        "median_variance": merged["variance"].median(),
+        "mean_pct_off": merged["pct_off"].mean(),
+        "median_pct_off": merged["pct_off"].median(),
+        "underestimate_count": (merged["variance"] > 0).sum(),
+        "overestimate_count": (merged["variance"] < 0).sum(),
+    }
+
+    return merged, stats
+
+
+def _estimate_accuracy_chart(df: pd.DataFrame) -> go.Figure | None:
+    """Scatter plot: estimated vs actual tokens."""
+    merged, stats = _estimate_vs_actual(df)
+    if merged is None or merged.empty:
+        return None
+
+    fig = go.Figure()
+
+    # Scatter plot
+    fig.add_trace(
+        go.Scatter(
+            x=merged["estimated"],
+            y=merged["actual"],
+            mode="markers",
+            marker=dict(
+                size=10,
+                color=merged["pct_off"],
+                colorscale="RdYlGn_r",  # Red = overshot, Green = undershot
+                cmin=-50,
+                cmax=50,
+                colorbar=dict(title="% Off"),
+                line=dict(width=1, color=COLORS["border"]),
+            ),
+            hovertemplate="Est: %{x:,.0f}<br>Actual: %{y:,.0f}<br>Off: %{customdata:.1f}%<extra></extra>",
+            customdata=merged["pct_off"],
+        )
+    )
+
+    # y=x reference line (perfect estimate)
+    max_val = max(merged["estimated"].max(), merged["actual"].max())
+    fig.add_trace(
+        go.Scatter(
+            x=[0, max_val],
+            y=[0, max_val],
+            mode="lines",
+            line=dict(color=COLORS["text_muted"], dash="dash", width=1),
+            name="Perfect estimate",
+            hoverinfo="skip",
+        )
+    )
+
+    fig.update_layout(
+        title="Estimate vs Actual Tokens (per document)",
+        height=400,
+        xaxis_title="Estimated Tokens",
+        yaxis_title="Actual Tokens",
+        showlegend=False,
+    )
+    apply_plotly_theme(fig)
+    return fig
+
+
+def _estimate_accuracy_stats(df: pd.DataFrame):
+    """Display estimate accuracy statistics."""
+    merged, stats = _estimate_vs_actual(df)
+    if merged is None:
+        st.caption("No estimate-actual pairs (need content_hash in both events)")
+        return
+
+    col1, col2, col3, col4, col5 = st.columns(5)
+    with col1:
+        st.metric("Documents", format_number(stats["count"]))
+    with col2:
+        st.metric("Mean % Off", f"{stats['mean_pct_off']:.1f}%")
+    with col3:
+        st.metric("Median % Off", f"{stats['median_pct_off']:.1f}%")
+    with col4:
+        st.metric("Underestimates", format_number(stats["underestimate_count"]))
+        st.caption("Actual > Estimate")
+    with col5:
+        st.metric("Overestimates", format_number(stats["overestimate_count"]))
+        st.caption("Actual < Estimate")
+
+
 def _processor_stats(df: pd.DataFrame):
     """Stats by processor."""
     complete = get_events(df, "page_extraction_complete")
@@ -553,6 +679,15 @@ def render(df: pd.DataFrame):
     # Estimate stats
     section_header("Extraction Estimates", "Pre-extraction document analysis")
     _estimate_stats(df)
+
+    st.divider()
+
+    # Estimate accuracy (estimate vs actual)
+    section_header("Estimate Accuracy", "How well do estimates predict actual usage?")
+    _estimate_accuracy_stats(df)
+    fig = _estimate_accuracy_chart(df)
+    if fig:
+        st.plotly_chart(fig, use_container_width=True)
 
     st.divider()
 

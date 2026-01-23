@@ -226,6 +226,44 @@ def _event_breakdown(df: pd.DataFrame):
     st.plotly_chart(fig, use_container_width=True)
 
 
+def _document_fetching(df: pd.DataFrame):
+    """Display document fetching stats."""
+    section_header("Document Fetching", "URL and JS rendering stats")
+
+    url_fetch = get_events(df, "url_fetch")
+    playwright_fetch = get_events(df, "playwright_fetch")
+
+    url_count = len(url_fetch)
+    playwright_count = len(playwright_fetch)
+
+    # Calculate error rates
+    url_errors = len(url_fetch[url_fetch["data"].apply(lambda d: "error" in d if isinstance(d, dict) else False)])
+    playwright_errors = len(
+        playwright_fetch[playwright_fetch["data"].apply(lambda d: "error" in d if isinstance(d, dict) else False)]
+    )
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("**URL Fetches**")
+        st.markdown(f"### {format_number(url_count)}")
+        if url_count > 0:
+            error_rate = url_errors / url_count * 100
+            st.caption(f"{format_number(url_errors)} errors ({error_rate:.1f}%)")
+        else:
+            st.caption("No fetches yet")
+
+    with col2:
+        st.markdown("**Playwright (JS)**")
+        st.markdown(f"### {format_number(playwright_count)}")
+        if playwright_count > 0:
+            error_rate = playwright_errors / playwright_count * 100
+            st.caption(f"{format_number(playwright_errors)} errors ({error_rate:.1f}%)")
+        elif url_count > 0:
+            st.caption("No JS rendering needed")
+        else:
+            st.caption("No fetches yet")
+
+
 def _queue_health(df: pd.DataFrame):
     """Display queue health summary."""
     section_header("Queue Health", "Current queue status")
@@ -287,6 +325,11 @@ def render(df: pd.DataFrame, comparison_df: pd.DataFrame | None = None):
         _cache_summary(df)
     with col2:
         _queue_health(df)
+
+    st.divider()
+
+    # Document fetching stats
+    _document_fetching(df)
 
     st.divider()
 

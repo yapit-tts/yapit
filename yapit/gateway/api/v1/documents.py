@@ -505,6 +505,7 @@ async def create_document(
             cached_doc.metadata.content_type,
             content_hash,
             req.pages,
+            user_id=user.id,
         )
     else:
         config = markitdown.MARKITDOWN_CONFIG

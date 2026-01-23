@@ -143,7 +143,7 @@ async def process_with_billing(
             data = await extraction_cache.retrieve_data(cache_key)
             if data:
                 cached_pages[page_idx] = ExtractedPage.model_validate_json(data)
-                await log_event("extraction_cache_hit", processor_slug=config.slug, page_idx=page_idx)
+                await log_event("extraction_cache_hit", processor_slug=config.slug, page_idx=page_idx, user_id=user_id)
             else:
                 uncached_pages.add(page_idx)
     else:
@@ -161,6 +161,7 @@ async def process_with_billing(
         await log_event(
             "extraction_estimate",
             processor_slug=config.slug,
+            user_id=user_id,
             data={
                 "content_hash": content_hash,
                 "num_pages": estimate.num_pages,
