@@ -383,6 +383,16 @@ async def _handle_checkout_completed(
         },
     )
     await db.exec(stmt)
+
+    # Create initial usage period so get_or_create becomes just "get" in normal flow
+    usage_stmt = pg_insert(UsagePeriod).values(
+        user_id=user_id,
+        period_start=period_start,
+        period_end=period_end,
+    )
+    usage_stmt = usage_stmt.on_conflict_do_nothing(index_elements=["user_id", "period_start"])
+    await db.exec(usage_stmt)
+
     await db.commit()
     logger.info(f"Upserted subscription for user {user_id}: plan={plan_tier}")
 
