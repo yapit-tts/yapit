@@ -1367,4 +1367,13 @@ async def _fetch_from_markxiv(markxiv_url: str, arxiv_id: str) -> str:
             detail="Paper conversion failed. If this persists, please report at https://github.com/yapit-tts/yapit/issues",
         )
 
-    return response.text
+    return _cleanup_markxiv_markdown(response.text)
+
+
+# Pattern to strip pandoc header anchors: "# Title {#sec:foo}" -> "# Title"
+_HEADER_ANCHOR_PATTERN = re.compile(r"^(#+\s+.+?)\s*\{#[^}]+\}\s*$", re.MULTILINE)
+
+
+def _cleanup_markxiv_markdown(md: str) -> str:
+    """Clean up pandoc-generated markdown from markxiv for TTS readability."""
+    return _HEADER_ANCHOR_PATTERN.sub(r"\1", md)
