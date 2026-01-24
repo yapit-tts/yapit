@@ -406,6 +406,33 @@ async def create_text_document(
     return DocumentCreateResponse(id=doc.id, title=doc.title)
 
 
+async def _extract_website_content(
+    content: bytes,
+    url: str | None,
+    markxiv_url: str | None,
+) -> tuple[str, str]:
+    """Extract markdown from website content. Returns (markdown, extraction_method)."""
+    arxiv_match = _detect_arxiv_url(url) if url else None
+    if arxiv_match and markxiv_url:
+        arxiv_id, _ = arxiv_match
+        return await _fetch_from_markxiv(markxiv_url, arxiv_id), "markxiv"
+
+    md = MarkItDown(enable_plugins=False)
+    result = md.convert_stream(io.BytesIO(content))
+    markdown = result.markdown
+
+    if url and _needs_js_rendering(content, markdown):
+        logger.info(f"JS rendering detected, using Playwright for {url}")
+        rendered_html = await render_with_js(url)
+        result = md.convert_stream(io.BytesIO(rendered_html.encode("utf-8")))
+        markdown = result.markdown
+
+    if url:
+        markdown = _resolve_relative_urls(markdown, url)
+
+    return markdown, "markitdown"
+
+
 @router.post("/website", response_model=DocumentCreateResponse, status_code=status.HTTP_201_CREATED)
 async def create_website_document(
     req: WebsiteDocumentCreateRequest,
@@ -430,54 +457,100 @@ async def create_website_document(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="This endpoint is for websites only. Use /document for files.",
         )
-
     if not cached_doc.content:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Cached document has no content. This should not happen.",
         )
 
-    md = MarkItDown(enable_plugins=False)
-    result = md.convert_stream(io.BytesIO(cached_doc.content))
-    markdown = result.markdown
-
-    if cached_doc.metadata.url and _needs_js_rendering(cached_doc.content, markdown):
-        logger.info(f"JS rendering detected, using Playwright for {cached_doc.metadata.url}")
-        rendered_html = await render_with_js(cached_doc.metadata.url)
-        result = md.convert_stream(io.BytesIO(rendered_html.encode("utf-8")))
-        markdown = result.markdown
-
-    if cached_doc.metadata.url:
-        markdown = _resolve_relative_urls(markdown, cached_doc.metadata.url)
-    extraction_result = DocumentExtractionResult(
-        pages={0: ExtractedPage(markdown=markdown, images=[])},
-        extraction_method="markitdown",
+    markdown, extraction_method = await _extract_website_content(
+        cached_doc.content, cached_doc.metadata.url, settings.markxiv_url
     )
 
-    extracted_text = extraction_result.pages[0].markdown  # website are just a single page
-
-    ast = parse_markdown(extracted_text)
+    ast = parse_markdown(markdown)
     structured_doc = transform_to_document(
         ast,
         max_block_chars=settings.max_block_chars,
         soft_limit_mult=settings.soft_limit_mult,
         min_chunk_size=settings.min_chunk_size,
     )
-    structured_content = structured_doc.model_dump_json()
-    text_blocks = structured_doc.get_audio_blocks()
 
     doc = await _create_document_with_blocks(
         db=db,
         user_id=user.id,
         title=cached_doc.metadata.title or req.title or cached_doc.metadata.file_name,
-        original_text=extracted_text,
-        structured_content=structured_content,
+        original_text=markdown,
+        structured_content=structured_doc.model_dump_json(),
         metadata=cached_doc.metadata,
-        extraction_method=extraction_result.extraction_method,
-        text_blocks=text_blocks,
+        extraction_method=extraction_method,
+        text_blocks=structured_doc.get_audio_blocks(),
         is_public=prefs.default_documents_public if prefs else False,
     )
     return DocumentCreateResponse(id=doc.id, title=doc.title)
+
+
+async def _extract_document_content(
+    content: bytes,
+    content_type: str,
+    content_hash: str,
+    total_pages: int,
+    file_size: int,
+    ai_transform: bool,
+    pages: list[int] | None,
+    user_id: str,
+    db: DbSession,
+    extraction_cache: ExtractionCache,
+    settings: SettingsDep,
+    ai_extractor_config: AiExtractorConfigDep,
+    ai_extractor: AiExtractorDep,
+    redis: RedisClient,
+) -> DocumentExtractionResult:
+    """Extract content from document using AI or markitdown. Handles rate limiting."""
+    if ai_transform:
+        if not ai_extractor or not ai_extractor_config:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="AI transform not configured on this server",
+            )
+        config = ai_extractor_config
+        extractor = ai_extractor.extract(
+            content,
+            content_type,
+            content_hash,
+            pages,
+            user_id=user_id,
+        )
+    else:
+        config = markitdown.MARKITDOWN_CONFIG
+        extractor = markitdown.extract(content, content_type)
+
+    ratelimit_key = RATELIMIT_EXTRACTION.format(user_id=user_id)
+    current = await redis.incr(ratelimit_key)
+    await redis.expire(ratelimit_key, 600)
+    if current > MAX_CONCURRENT_EXTRACTIONS:
+        await redis.decr(ratelimit_key)
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many concurrent document extractions. Please wait for current extractions to complete.",
+        )
+
+    try:
+        return await process_with_billing(
+            config=config,
+            extractor=extractor,
+            user_id=user_id,
+            content=content,
+            content_type=content_type,
+            content_hash=content_hash,
+            total_pages=total_pages,
+            db=db,
+            extraction_cache=extraction_cache,
+            settings=settings,
+            file_size=file_size,
+            pages=pages,
+        )
+    finally:
+        await redis.decr(ratelimit_key)
 
 
 @router.post(
@@ -514,7 +587,6 @@ async def create_document(
             detail="This endpoint is for documents only. Use /website for websites.",
         )
     _validate_page_numbers(req.pages, cached_doc.metadata.total_pages)
-
     if not cached_doc.content:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -523,54 +595,33 @@ async def create_document(
 
     content_hash = hashlib.sha256(cached_doc.content).hexdigest()
 
-    if req.ai_transform:
-        if not ai_extractor or not ai_extractor_config:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="AI transform not configured on this server",
-            )
-        config = ai_extractor_config
-        extractor = ai_extractor.extract(
-            cached_doc.content,
-            cached_doc.metadata.content_type,
-            content_hash,
-            req.pages,
-            user_id=user.id,
+    # arXiv + markxiv short-circuits standard extraction (free tier only)
+    arxiv_match = _detect_arxiv_url(cached_doc.metadata.url) if cached_doc.metadata.url else None
+    if arxiv_match and settings.markxiv_url and not req.ai_transform:
+        arxiv_id, _ = arxiv_match
+        markdown = await _fetch_from_markxiv(settings.markxiv_url, arxiv_id)
+        extraction_result = DocumentExtractionResult(
+            pages={0: ExtractedPage(markdown=markdown, images=[])},
+            extraction_method="markxiv",
         )
     else:
-        config = markitdown.MARKITDOWN_CONFIG
-        extractor = markitdown.extract(cached_doc.content, cached_doc.metadata.content_type)
-
-    # Rate limit concurrent extractions per user
-    ratelimit_key = RATELIMIT_EXTRACTION.format(user_id=user.id)
-    current = await redis.incr(ratelimit_key)
-    await redis.expire(ratelimit_key, 600)  # 10min TTL for cleanup
-    if current > MAX_CONCURRENT_EXTRACTIONS:
-        await redis.decr(ratelimit_key)
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Too many concurrent document extractions. Please wait for current extractions to complete.",
-        )
-
-    try:
-        extraction_result = await process_with_billing(
-            config=config,
-            extractor=extractor,
-            user_id=user.id,
+        extraction_result = await _extract_document_content(
             content=cached_doc.content,
             content_type=cached_doc.metadata.content_type,
             content_hash=content_hash,
             total_pages=cached_doc.metadata.total_pages,
+            file_size=cached_doc.metadata.file_size or len(cached_doc.content),
+            ai_transform=req.ai_transform,
+            pages=req.pages,
+            user_id=user.id,
             db=db,
             extraction_cache=extraction_cache,
             settings=settings,
-            file_size=cached_doc.metadata.file_size,
-            pages=req.pages,
+            ai_extractor_config=ai_extractor_config,
+            ai_extractor=ai_extractor,
+            redis=redis,
         )
-    finally:
-        await redis.decr(ratelimit_key)
 
-    # If all pages failed, return error
     if not extraction_result.pages:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -1255,3 +1306,65 @@ def _needs_js_rendering(html: bytes, markdown: str) -> bool:
         return True
 
     return False
+
+
+# arXiv URL patterns: (regex, url_type) - url_type determines flow (abs=website, pdf=document)
+_ARXIV_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"(?:www\.)?arxiv\.org/abs/([\d.]+v?\d*)"), "abs"),
+    (re.compile(r"(?:www\.)?arxiv\.org/pdf/([\d.]+v?\d*)"), "pdf"),
+    (re.compile(r"(?:www\.)?alphaxiv\.org/abs/([\d.]+v?\d*)"), "abs"),
+    (re.compile(r"(?:www\.)?alphaxiv\.org/pdf/([\d.]+v?\d*)"), "pdf"),
+    (re.compile(r"ar5iv\.labs\.google\.com/abs/([\d.]+v?\d*)"), "abs"),
+]
+
+
+def _detect_arxiv_url(url: str) -> tuple[str, str] | None:
+    """Detect if URL is an arXiv paper URL. Returns (arxiv_id, url_type) or None."""
+    for pattern, url_type in _ARXIV_PATTERNS:
+        if match := pattern.search(url):
+            return match.group(1), url_type
+    return None
+
+
+async def _fetch_from_markxiv(markxiv_url: str, arxiv_id: str) -> str:
+    """Fetch markdown from markxiv service."""
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            response = await client.get(f"{markxiv_url}/abs/{arxiv_id}")
+    except httpx.TimeoutException:
+        await log_event("markxiv_error", data={"arxiv_id": arxiv_id, "error": "timeout"})
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="arXiv paper extraction timed out. This can happen with large papers. Please try again.",
+        )
+    except httpx.RequestError as e:
+        await log_event("markxiv_error", data={"arxiv_id": arxiv_id, "error": "connection", "detail": str(e)})
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Could not connect to paper extraction service. Please try again in a few seconds.",
+        )
+
+    if response.status_code == 404:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Paper not found on arXiv")
+    if response.status_code == 422:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Paper has no source available and PDF extraction failed",
+        )
+    if response.status_code == 502:
+        await log_event("markxiv_error", data={"arxiv_id": arxiv_id, "error": "arxiv_unreachable"})
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Could not reach arXiv servers. This is usually temporary — please try again in a few seconds.",
+        )
+    if not response.is_success:
+        await log_event(
+            "markxiv_error", data={"arxiv_id": arxiv_id, "error": "conversion", "status": response.status_code}
+        )
+        logger.error(f"markxiv error for {arxiv_id}: {response.status_code} {response.text}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Paper conversion failed. If this persists, please report at https://github.com/yapit-tts/yapit/issues",
+        )
+
+    return response.text

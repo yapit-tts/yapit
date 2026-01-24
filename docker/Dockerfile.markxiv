@@ -1,0 +1,46 @@
+# Multi-stage build for markxiv (Rust arXiv paper converter)
+FROM rust:1.83-slim-bookworm AS builder
+
+WORKDIR /app
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+# Clone and build markxiv at pinned version
+ARG MARKXIV_COMMIT=f9c75fca4c8812066a900a296581bc052367bbbe
+RUN git clone https://github.com/yapit-tts/markxiv.git . && \
+    git checkout ${MARKXIV_COMMIT}
+RUN cargo build --release
+
+# Runtime image
+FROM debian:bookworm-slim
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    poppler-utils \
+    curl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install pandoc from GitHub releases (Debian's version is too old)
+RUN curl -sL https://github.com/jgm/pandoc/releases/download/3.6.2/pandoc-3.6.2-linux-amd64.tar.gz | \
+    tar xz --strip-components=1 -C /usr/local
+
+WORKDIR /app
+
+# Copy binary from builder
+COPY --from=builder /app/target/release/markxiv /app/markxiv
+
+# Create cache directory
+RUN mkdir -p /cache
+
+ENV PORT=8080
+ENV MARKXIV_CACHE_DIR=/cache
+ENV RUST_LOG=info
+
+EXPOSE 8080
+
+CMD ["/app/markxiv"]

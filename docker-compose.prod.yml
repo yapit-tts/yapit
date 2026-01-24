@@ -6,6 +6,7 @@ volumes:
   images:
   gateway-data:
   metricsdata:
+  markxiv-cache:
 
 networks:
   yapit-network:
@@ -170,6 +171,29 @@ services:
         - "traefik.http.routers.stack-auth-dashboard.priority=10"
         - "traefik.http.routers.stack-auth-dashboard.service=stack-auth-dashboard"
         - "traefik.http.services.stack-auth-dashboard.loadbalancer.server.port=8101"
+
+  markxiv:
+    image: ghcr.io/yapit-tts/markxiv:latest
+    environment:
+      PORT: "8080"
+      MARKXIV_CACHE_CAP: "500"
+      MARKXIV_DISK_CACHE_CAP_BYTES: "10737418240"  # 10GB
+      MARKXIV_CACHE_DIR: /cache
+    volumes:
+      - markxiv-cache:/cache
+    networks:
+      - yapit-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      start_period: 10s
+      interval: 30s
+      timeout: 3s
+      retries: 3
+    deploy:
+      replicas: 1
+      update_config:
+        order: start-first
+        failure_action: rollback
 
   kokoro-cpu:
     image: ghcr.io/yapit-tts/kokoro-cpu:latest

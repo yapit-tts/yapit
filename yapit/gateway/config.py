@@ -38,6 +38,8 @@ class Settings(BaseSettings):
     google_api_key: str | None = None
     images_dir: str
 
+    markxiv_url: str | None = None
+
     # Worker replica counts (for queue semaphore sizing)
     kokoro_cpu_replicas: int
     yolo_cpu_replicas: int
