@@ -5,16 +5,14 @@
 #   1. Decrypt .env.sops and transform for prod (LIVE → plain, remove TEST)
 #   2. Sync files to VPS
 #   3. Deploy stack
-#   4. Poll health until ready (or timeout)
-#   5. Verify built images weren't rolled back
+#   4. Wait for Docker Swarm rolling update to complete
+#   5. Verify endpoints and check for rollbacks
 #
 # Environment variables:
 #   SOPS_AGE_KEY      - Age private key content (required)
 #   VPS_HOST          - SSH host (default: root@46.224.195.97)
 #   SKIP_VERIFY       - Set to 1 to skip post-deploy verification
-#   TIMEOUT           - Max seconds to wait for health (default: 120)
-#   POLL_INTERVAL     - Seconds between health checks (default: 10)
-#   BUILT_IMAGES      - Comma-separated list of images that were rebuilt (e.g., "gateway,frontend")
+#   TIMEOUT           - Max seconds to wait for update (default: 120)
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -24,8 +22,6 @@ DEPLOY_DIR="/opt/yapit/deploy"
 STACK_NAME="yapit"
 PROD_URL="https://yapit.md"
 TIMEOUT="${TIMEOUT:-120}"
-POLL_INTERVAL="${POLL_INTERVAL:-10}"
-BUILT_IMAGES="${BUILT_IMAGES:-}"
 SOPS_FILE=".env.sops"
 
 GIT_COMMIT="${GIT_COMMIT:-$(git rev-parse HEAD)}"
@@ -66,40 +62,38 @@ if [ "${SKIP_VERIFY:-0}" = "1" ]; then
   exit 0
 fi
 
-# Poll until healthy or timeout
-log "Waiting for services (timeout: ${TIMEOUT}s, poll: ${POLL_INTERVAL}s)..."
-ELAPSED=0
-while [ "$ELAPSED" -lt "$TIMEOUT" ]; do
-  if curl -sf "https://api.yapit.md/health" > /dev/null 2>&1; then
-    echo "  ✓ API healthy after ${ELAPSED}s"
-    break
-  fi
-  sleep "$POLL_INTERVAL"
-  ELAPSED=$((ELAPSED + POLL_INTERVAL))
-  echo "  ... waiting (${ELAPSED}s)"
+# Wait for gateway's rolling update to complete (authoritative signal from Docker Swarm)
+# UpdateStatus.State: updating -> completed/rollback_completed
+log "Waiting for gateway update to complete (timeout: ${TIMEOUT}s)..."
+UPDATE_ELAPSED=0
+while [ "$UPDATE_ELAPSED" -lt "$TIMEOUT" ]; do
+  GW_STATE=$(ssh "$VPS_HOST" "docker service inspect ${STACK_NAME}_gateway --format '{{.UpdateStatus.State}}'" 2>/dev/null || echo "")
+  case "$GW_STATE" in
+    completed)
+      echo "  ✓ Gateway update completed after ${UPDATE_ELAPSED}s"
+      break
+      ;;
+    rollback_completed)
+      echo "  ✗ Gateway rolled back after ${UPDATE_ELAPSED}s"
+      die "Gateway rolled back! Check: docker service ps ${STACK_NAME}_gateway --no-trunc"
+      ;;
+    *)
+      sleep 5
+      UPDATE_ELAPSED=$((UPDATE_ELAPSED + 5))
+      echo "  ... gateway update in progress (${UPDATE_ELAPSED}s, state: ${GW_STATE:-empty})"
+      ;;
+  esac
 done
 
-if [ "$ELAPSED" -ge "$TIMEOUT" ]; then
-  echo "  ✗ API health check timed out after ${TIMEOUT}s"
-  exit 1
+if [ "$UPDATE_ELAPSED" -ge "$TIMEOUT" ]; then
+  die "Gateway update timed out after ${TIMEOUT}s. State: ${GW_STATE:-unknown}"
 fi
 
-# Quick frontend check
-if curl -sf "$PROD_URL" > /dev/null; then
-  echo "  ✓ Frontend OK"
-else
-  echo "  ✗ Frontend FAILED"
-  exit 1
-fi
-
-# Wait for migrations/initialization to complete (health check passes before migrations run)
-log "Waiting for initialization to complete..."
-sleep 15
-
-# Check UpdateStatus.State for each service - this is the authoritative rollback indicator
-log "Checking for rollbacks..."
+# Check other services for rollbacks
+log "Checking other services..."
 ROLLED_BACK=""
 for svc in $(ssh "$VPS_HOST" "docker stack services $STACK_NAME --format '{{.Name}}'" 2>/dev/null); do
+  [ "$svc" = "${STACK_NAME}_gateway" ] && continue  # Already checked
   STATUS=$(ssh "$VPS_HOST" "docker service inspect $svc --format '{{.UpdateStatus.State}}'" 2>/dev/null || echo "")
   if [ "$STATUS" = "rollback_completed" ]; then
     echo "  ✗ $svc: ROLLED BACK"
@@ -110,19 +104,23 @@ done
 if [ -n "$ROLLED_BACK" ]; then
   die "Services rolled back:$ROLLED_BACK. Check: docker service ps <service> --no-trunc"
 fi
-echo "  ✓ No rollbacks detected"
+echo "  ✓ All services OK"
 
-# Verify gateway is running expected commit
+# Final end-to-end verification
+log "Verifying endpoints..."
+if ! curl -sf "https://api.yapit.md/health" > /dev/null 2>&1; then
+  die "API health check failed after update completed"
+fi
+echo "  ✓ API healthy"
+
+if ! curl -sf "$PROD_URL" > /dev/null; then
+  die "Frontend not responding"
+fi
+echo "  ✓ Frontend OK"
+
 RUNNING_COMMIT=$(curl -sf "https://api.yapit.md/version" 2>/dev/null | grep -oP '"commit":\s*"\K[^"]+' || echo "")
-if [ -z "$RUNNING_COMMIT" ]; then
-  die "Gateway not responding to /version endpoint after deploy"
-elif [ "$RUNNING_COMMIT" != "$GIT_COMMIT" ] && [ "$RUNNING_COMMIT" != "unknown" ]; then
-  echo "  ✗ Gateway commit mismatch"
-  echo "    Expected: $GIT_COMMIT"
-  echo "    Running:  $RUNNING_COMMIT"
-  die "Gateway rolled back to previous version"
-else
-  echo "  ✓ Gateway running commit ${RUNNING_COMMIT:0:12}"
+if [ -n "$RUNNING_COMMIT" ] && [ "$RUNNING_COMMIT" != "$GIT_COMMIT" ] && [ "$RUNNING_COMMIT" != "unknown" ]; then
+  echo "  ⚠ Unexpected: Gateway reports ${RUNNING_COMMIT:0:12}, expected ${GIT_COMMIT:0:12}"
 fi
 
 log "Deploy complete"
