@@ -92,46 +92,37 @@ else
   exit 1
 fi
 
-# Verify built images weren't rolled back (digest comparison)
-# Check ACTUAL running task, not just the service spec
-if [ -n "$BUILT_IMAGES" ]; then
-  log "Verifying built images..."
-  FAILED=0
+# Wait for migrations/initialization to complete (health check passes before migrations run)
+log "Waiting for initialization to complete..."
+sleep 15
 
-  for svc in ${BUILT_IMAGES//,/ }; do
-    # Get expected digest from registry
-    EXPECTED=$(ssh "$VPS_HOST" "docker pull ghcr.io/yapit-tts/${svc}:latest 2>&1 | grep -oP 'Digest: \Ksha256:\w+'" || echo "")
-
-    # Get digest from ACTUALLY RUNNING task (not service spec)
-    RUNNING=$(ssh "$VPS_HOST" "docker service ps yapit_${svc} -f 'desired-state=running' --format '{{.Image}}' --no-trunc 2>/dev/null | head -1 | grep -oP 'sha256:\S+'" || echo "")
-
-    # Check for recently failed tasks (indicates deploy failure)
-    RECENT_FAILURES=$(ssh "$VPS_HOST" "docker service ps yapit_${svc} --format '{{.CurrentState}} {{.Error}}' 2>/dev/null | grep -c 'Failed.*non-zero exit'" || echo "0")
-
-    if [ -z "$EXPECTED" ]; then
-      echo "  ⚠ ${svc}: could not get expected digest"
-    elif [ -z "$RUNNING" ]; then
-      echo "  ✗ ${svc}: NO RUNNING TASK"
-      FAILED=1
-    elif [ "$EXPECTED" != "$RUNNING" ]; then
-      echo "  ✗ ${svc}: ROLLBACK DETECTED"
-      echo "    Expected: ${EXPECTED:0:32}..."
-      echo "    Running:  ${RUNNING:0:32}..."
-      FAILED=1
-    elif [ "$RECENT_FAILURES" -gt 0 ]; then
-      echo "  ✗ ${svc}: running expected version but has $RECENT_FAILURES recent failure(s)"
-      echo "    Check: docker service ps yapit_${svc} --no-trunc"
-      FAILED=1
-    else
-      echo "  ✓ ${svc}: running expected version"
-    fi
-  done
-
-  if [ "$FAILED" -eq 1 ]; then
-    die "One or more services failed verification. Check logs: docker service ps yapit_<service>"
+# Check UpdateStatus.State for each service - this is the authoritative rollback indicator
+log "Checking for rollbacks..."
+ROLLED_BACK=""
+for svc in $(ssh "$VPS_HOST" "docker stack services $STACK_NAME --format '{{.Name}}'" 2>/dev/null); do
+  STATUS=$(ssh "$VPS_HOST" "docker service inspect $svc --format '{{.UpdateStatus.State}}'" 2>/dev/null || echo "")
+  if [ "$STATUS" = "rollback_completed" ]; then
+    echo "  ✗ $svc: ROLLED BACK"
+    ROLLED_BACK="$ROLLED_BACK $svc"
   fi
+done
+
+if [ -n "$ROLLED_BACK" ]; then
+  die "Services rolled back:$ROLLED_BACK. Check: docker service ps <service> --no-trunc"
+fi
+echo "  ✓ No rollbacks detected"
+
+# Verify gateway is running expected commit
+RUNNING_COMMIT=$(curl -sf "https://api.yapit.md/version" 2>/dev/null | grep -oP '"commit":\s*"\K[^"]+' || echo "")
+if [ -z "$RUNNING_COMMIT" ]; then
+  die "Gateway not responding to /version endpoint after deploy"
+elif [ "$RUNNING_COMMIT" != "$GIT_COMMIT" ] && [ "$RUNNING_COMMIT" != "unknown" ]; then
+  echo "  ✗ Gateway commit mismatch"
+  echo "    Expected: $GIT_COMMIT"
+  echo "    Running:  $RUNNING_COMMIT"
+  die "Gateway rolled back to previous version"
 else
-  log "No BUILT_IMAGES specified, skipping rollback detection"
+  echo "  ✓ Gateway running commit ${RUNNING_COMMIT:0:12}"
 fi
 
 log "Deploy complete"
