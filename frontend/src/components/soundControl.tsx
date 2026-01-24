@@ -1,18 +1,13 @@
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Play, Pause, Volume2, SkipBack, SkipForward, Loader2, Square, WifiOff, ChevronUp } from "lucide-react";
+import { Play, Pause, Volume2, SkipBack, SkipForward, Loader2, Square, WifiOff, ChevronUp, X } from "lucide-react";
 import { useEffect, useState, useRef, useCallback, useMemo, memo } from "react";
 import { useNavigate } from "react-router";
 import { VoicePicker } from "@/components/voicePicker";
 import { SettingsDialog } from "@/components/settingsDialog";
 import { type VoiceSelection, setVoiceSelection, isInworldModel } from "@/lib/voiceSelection";
 import { useSidebar } from "@/components/ui/sidebar";
+import { useHasWebGPU } from "@/hooks/useWebGPU";
 
 type BlockState = 'pending' | 'synthesizing' | 'cached';
 
@@ -448,6 +443,7 @@ interface Props {
   isSynthesizing: boolean;
   isReconnecting?: boolean;
   connectionError?: string | null;
+  blockError?: string | null;
   onPlay: () => void;
   onPause: () => void;
   onCancelSynthesis: () => void;
@@ -482,6 +478,7 @@ const SoundControl = memo(function SoundControl({
   isSynthesizing,
   isReconnecting,
   connectionError,
+  blockError,
   onPlay,
   onPause,
   onCancelSynthesis,
@@ -505,23 +502,25 @@ const SoundControl = memo(function SoundControl({
   const [isDraggingProgressBar, setIsDraggingProgressBar] = useState(false);
   const navigate = useNavigate();
 
-  // Detect quota exceeded error
-  const isQuotaExceeded = connectionError?.includes("Usage limit exceeded");
+  // Detect quota exceeded error from either connection or block errors
+  const usageLimitError = blockError?.includes("Usage limit exceeded") ? blockError :
+                          connectionError?.includes("Usage limit exceeded") ? connectionError : null;
   const isUsingInworld = isInworldModel(voiceSelection.model);
+  const isUsingKokoroServer = voiceSelection.model === "kokoro-server";
 
-  // Show modal when quota exceeded on Inworld
+  // Banner dismissed state
   const [quotaDismissed, setQuotaDismissed] = useState(false);
 
-  // Reset dismissed when switching TO Inworld or starting new synthesis
-  const prevIsInworld = useRef(isUsingInworld);
+  // Reset dismissed when voice model changes
+  const prevModel = useRef(voiceSelection.model);
   useEffect(() => {
-    if (isUsingInworld && !prevIsInworld.current) {
+    if (voiceSelection.model !== prevModel.current) {
       setQuotaDismissed(false);
     }
-    prevIsInworld.current = isUsingInworld;
-  }, [isUsingInworld]);
+    prevModel.current = voiceSelection.model;
+  }, [voiceSelection.model]);
 
-  const showQuotaModal = isQuotaExceeded && isUsingInworld && !quotaDismissed;
+  const showQuotaBanner = usageLimitError && !quotaDismissed;
 
   // Wrap onPlay to reset dismissed state (so modal shows again on retry)
   const handlePlay = useCallback(() => {
@@ -529,7 +528,7 @@ const SoundControl = memo(function SoundControl({
     onPlay();
   }, [onPlay]);
 
-  const handleContinueWithKokoro = useCallback(() => {
+  const handleSwitchToKokoro = useCallback(() => {
     const newSelection: VoiceSelection = {
       ...voiceSelection,
       model: "kokoro-server",
@@ -538,13 +537,27 @@ const SoundControl = memo(function SoundControl({
     onVoiceChange(newSelection);
     setVoiceSelection(newSelection);
     setQuotaDismissed(true);
-    onPlay();
-  }, [voiceSelection, onVoiceChange, onPlay]);
+  }, [voiceSelection, onVoiceChange]);
 
   const handleUpgradePlan = useCallback(() => {
     setQuotaDismissed(true);
     navigate("/subscription");
   }, [navigate]);
+
+  const hasWebGPU = useHasWebGPU();
+
+  const handleSwitchToLocal = useCallback(() => {
+    const newSelection: VoiceSelection = {
+      ...voiceSelection,
+      model: "kokoro",
+      voiceSlug: voiceSelection.voiceSlug.startsWith("af_") || voiceSelection.voiceSlug.startsWith("am_")
+        ? voiceSelection.voiceSlug
+        : "af_heart",
+    };
+    onVoiceChange(newSelection);
+    setVoiceSelection(newSelection);
+    setQuotaDismissed(true);
+  }, [voiceSelection, onVoiceChange]);
 
   // Wrap onBlockHover to track hover state locally for display swap
   const handleBlockHover = useCallback((idx: number | null, isDragging: boolean) => {
@@ -586,6 +599,36 @@ const SoundControl = memo(function SoundControl({
 
   return (
     <div className={`fixed bottom-0 right-0 bg-background/80 backdrop-blur-lg border-t border-border p-4 transition-[left] duration-200 ease-linear ${playbarPositionClass}`}>
+      {/* Usage limit banner */}
+      {showQuotaBanner && (
+        <div className="flex items-center justify-center gap-2 mb-3 py-2 px-4 bg-muted-warm rounded-lg text-sm border border-border">
+          <span className="text-foreground font-medium">
+            Voice quota reached
+          </span>
+          <span className="text-muted-foreground mx-1">·</span>
+          {isUsingInworld && (
+            <Button variant="ghost" size="sm" className="h-9 px-3" onClick={handleSwitchToKokoro}>
+              Use Kokoro
+            </Button>
+          )}
+          {hasWebGPU && isUsingKokoroServer && (
+            <Button variant="ghost" size="sm" className="h-9 px-3" onClick={handleSwitchToLocal}>
+              Use free local
+            </Button>
+          )}
+          <Button variant="default" size="sm" className="h-9 px-3" onClick={handleUpgradePlan}>
+            Upgrade
+          </Button>
+          <button
+            onClick={() => setQuotaDismissed(true)}
+            className="ml-2 p-2 min-w-[44px] min-h-[44px] flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent rounded-md transition-colors"
+            aria-label="Dismiss"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
       {/* Playback controls */}
       <div className="flex items-center justify-center gap-4 mb-3">
         <Button
@@ -657,7 +700,7 @@ const SoundControl = memo(function SoundControl({
       {/* Mobile: connection status + expand toggle */}
       {isMobile && (
         <div className="flex items-center justify-end gap-2 mt-2 max-w-2xl mx-auto">
-          {(isReconnecting || (connectionError && !isQuotaExceeded)) && (
+          {(isReconnecting || (connectionError && !usageLimitError)) && (
             <span className={`flex items-center gap-1 text-xs ${connectionError ? 'text-destructive' : 'text-yellow-600'}`}>
               <WifiOff className="h-3 w-3" />
               {connectionError || 'Reconnecting...'}
@@ -718,7 +761,7 @@ const SoundControl = memo(function SoundControl({
         <div className="flex items-center justify-between mt-3 max-w-xl mx-auto">
           <div className="flex items-center gap-4">
             <VoicePicker value={voiceSelection} onChange={onVoiceChange} />
-            {(isReconnecting || (connectionError && !isQuotaExceeded)) && (
+            {(isReconnecting || (connectionError && !usageLimitError)) && (
               <span className={`flex items-center gap-1.5 text-sm ${connectionError ? 'text-destructive' : 'text-yellow-600'}`}>
                 <WifiOff className="h-4 w-4" />
                 {connectionError || 'Reconnecting...'}
@@ -754,22 +797,6 @@ const SoundControl = memo(function SoundControl({
         </div>
       )}
 
-      {/* Quota exceeded modal */}
-      <Dialog open={showQuotaModal} onOpenChange={(open) => !open && setQuotaDismissed(true)}>
-        <DialogContent showCloseButton={false} className="max-w-md">
-          <DialogHeader className="text-center">
-            <DialogTitle>You've reached your Cloud voice quota for this month.</DialogTitle>
-          </DialogHeader>
-          <div className="flex justify-center gap-3 pt-2">
-            <Button variant="outline" onClick={handleContinueWithKokoro}>
-              Continue with Kokoro
-            </Button>
-            <Button onClick={handleUpgradePlan}>
-              Upgrade Plan
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 });

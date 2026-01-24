@@ -1369,6 +1369,16 @@ const PlaybackPage = () => {
     blockStates,
   }), [actualTotalDuration, estimated_ms, numberOfBlocks, currentBlock, handleBlockChange, handleBlockHover, audioProgress, blockStates]);
 
+  // Find first usage limit error from block states
+  const blockError = useMemo(() => {
+    for (const [, entry] of ttsWS.blockStates) {
+      if (entry.status === "error" && entry.error?.includes("Usage limit exceeded")) {
+        return entry.error;
+      }
+    }
+    return null;
+  }, [ttsWS.blockStates]);
+
   if (isLoading) {
     return (
       <div className="flex grow items-center justify-center">
@@ -1470,6 +1480,7 @@ const PlaybackPage = () => {
           isSynthesizing={isSynthesizing}
           isReconnecting={ttsWS.isReconnecting}
           connectionError={ttsWS.connectionError}
+          blockError={blockError}
           onPlay={handlePlay}
           onPause={handlePause}
           onCancelSynthesis={handleCancelSynthesis}

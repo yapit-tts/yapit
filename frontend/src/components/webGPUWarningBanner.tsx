@@ -27,27 +27,27 @@ export function WebGPUWarningBanner() {
 
   // TODO make sure all these links are correct once we add the sections
   return (
-    <div className="flex items-center justify-between gap-4 bg-amber-500/10 px-4 py-3 border-b border-amber-500/20">
+    <div className="flex items-center justify-between gap-4 bg-muted-warm px-4 py-3 border-b border-border">
       <div className="flex items-center gap-3 text-sm">
-        <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
-        <p className="text-amber-800 dark:text-amber-200">
-          Your device may not support free local processing.{" "}
-          <Link to="/tips#webgpu" className="underline hover:no-underline">
-            Learn more
-          </Link>
-            , try{" "}
-          <Link to="/tips#showcase" className="underline hover:no-underline">
+        <AlertTriangle className="h-4 w-4 text-accent-warning shrink-0" />
+        <p className="text-foreground">
+          Your device may not support free local processing. Try{" "}
+          <Link to="/tips#showcase" className="text-primary font-medium hover:underline">
             these examples
           </Link>{" "}
-          for free, or{" "}
-          <Link to="/subscription" className="underline hover:no-underline">
-            upgrade.
-          </Link>{" "}
+          for free,{" "}
+          <Link to="/subscription" className="text-primary font-medium hover:underline">
+            upgrade
+          </Link>
+          , or{" "}
+          <Link to="/tips#webgpu" className="underline hover:no-underline">
+            learn more
+          </Link>.
         </p>
       </div>
       <button
         onClick={handleDismiss}
-        className="shrink-0 p-1 text-amber-600/70 hover:text-amber-600"
+        className="shrink-0 p-2 min-w-[44px] min-h-[44px] flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent rounded-md transition-colors"
         title="Don't show again"
       >
         <X className="h-4 w-4" />

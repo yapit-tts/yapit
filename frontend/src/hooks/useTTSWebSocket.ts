@@ -11,6 +11,7 @@ export interface BlockStateEntry {
   model_slug?: string;
   voice_slug?: string;
   audio_url?: string;
+  error?: string;
 }
 
 interface WSBlockStatusMessage {
@@ -113,6 +114,7 @@ export function useTTSWebSocket(): UseTTSWebSocketReturn {
           model_slug: msg.model_slug,
           voice_slug: msg.voice_slug,
           audio_url: msg.audio_url,
+          error: msg.error,
         };
         blockStatesRef.current.set(msg.block_idx, entry);
         setBlockStates((prev) => {
