@@ -93,20 +93,20 @@ def create_models() -> list[TTSModel]:
         )
     )
 
-    # Inworld TTS-1 (faster, cheaper)
+    # Inworld TTS-1.5-Mini (faster, cheaper)
     inworld = TTSModel(
-        slug="inworld",
-        name="Inworld TTS-1",
+        slug="inworld-1.5",
+        name="Inworld TTS-1.5",
         native_codec="mp3",
         sample_rate=48_000,
         channels=1,
         sample_width=2,
     )
 
-    # Inworld TTS-1-Max (slower, higher quality, 2x price)
+    # Inworld TTS-1.5-Max (slower, higher quality, 2x price)
     inworld_max = TTSModel(
-        slug="inworld-max",
-        name="Inworld TTS-1-Max",
+        slug="inworld-1.5-max",
+        name="Inworld TTS-1.5-Max",
         native_codec="mp3",
         sample_rate=48_000,
         channels=1,

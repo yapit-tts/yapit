@@ -11,7 +11,7 @@ import { useEffect, useState, useRef, useCallback, useMemo, memo } from "react";
 import { useNavigate } from "react-router";
 import { VoicePicker } from "@/components/voicePicker";
 import { SettingsDialog } from "@/components/settingsDialog";
-import { type VoiceSelection, setVoiceSelection } from "@/lib/voiceSelection";
+import { type VoiceSelection, setVoiceSelection, isInworldModel } from "@/lib/voiceSelection";
 import { useSidebar } from "@/components/ui/sidebar";
 
 type BlockState = 'pending' | 'synthesizing' | 'cached';
@@ -507,7 +507,7 @@ const SoundControl = memo(function SoundControl({
 
   // Detect quota exceeded error
   const isQuotaExceeded = connectionError?.includes("Usage limit exceeded");
-  const isUsingInworld = voiceSelection.model === "inworld" || voiceSelection.model === "inworld-max";
+  const isUsingInworld = isInworldModel(voiceSelection.model);
 
   // Show modal when quota exceeded on Inworld
   const [quotaDismissed, setQuotaDismissed] = useState(false);

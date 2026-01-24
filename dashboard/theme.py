@@ -35,8 +35,8 @@ COLORS = {
 MODEL_COLORS = {
     "kokoro": "#39d98a",  # Teal
     "higgs": "#a371f7",  # Purple
-    "inworld-max": "#58a6ff",  # Blue
-    "inworld": "#ff7b72",  # Coral
+    "inworld-1.5-max": "#58a6ff",  # Blue
+    "inworld-1.5": "#ff7b72",  # Coral
 }
 
 # Queue type colors
@@ -59,7 +59,7 @@ def get_model_color(model_slug: str) -> str:
         return COLORS["text_muted"]
     model_lower = model_slug.lower()
     # Check in order of specificity
-    for key in ["inworld-max", "kokoro", "higgs", "inworld"]:
+    for key in ["inworld-1.5-max", "kokoro", "higgs", "inworld-1.5"]:
         if key in model_lower:
             return MODEL_COLORS[key]
     return COLORS["text_secondary"]

@@ -599,6 +599,56 @@
       "description": "Professional and clean female voice, with a clear and articulate tone, moderate pace, and a polished, approachable quality.",
       "tags": [],
       "isCustom": false
+    },
+    {
+      "languages": [
+        "hi"
+      ],
+      "voiceId": "Manoj",
+      "displayName": "Manoj",
+      "description": "Clear, professional Hindi male voice. Great for narrations, news anchors, and customer service.",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "ar"
+      ],
+      "voiceId": "Nour",
+      "displayName": "Nour",
+      "description": "Polished female Arabic voice with a friendly tone, great for voice over or support.",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "ar"
+      ],
+      "voiceId": "Omar",
+      "displayName": "Omar",
+      "description": "Bright, confident Arabic male voice, great for announcements, broadcasts, and voice overs.",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "he"
+      ],
+      "voiceId": "Oren",
+      "displayName": "Oren",
+      "description": "Steady male Hebrew voice, great for podcasts, voice overs, or announcers.",
+      "tags": [],
+      "isCustom": false
+    },
+    {
+      "languages": [
+        "he"
+      ],
+      "voiceId": "Yael",
+      "displayName": "Yael",
+      "description": "Mid-range female Hebrew voice, suitable for narrations, storytelling, and more.",
+      "tags": [],
+      "isCustom": false
     }
   ]
 }

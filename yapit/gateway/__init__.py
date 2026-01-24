@@ -148,7 +148,10 @@ async def lifespan(app: FastAPI):
 
     # Inworld dispatchers run in gateway (API calls, unlimited parallelism)
     if settings.inworld_api_key:
-        for model_id, model_slug in [("inworld-tts-1", "inworld"), ("inworld-tts-1-max", "inworld-max")]:
+        for model_id, model_slug in [
+            ("inworld-tts-1.5-mini", "inworld-1.5"),
+            ("inworld-tts-1.5-max", "inworld-1.5-max"),
+        ]:
             adapter = InworldAdapter(api_key=settings.inworld_api_key, model_id=model_id)
             task = asyncio.create_task(
                 run_api_tts_dispatcher(

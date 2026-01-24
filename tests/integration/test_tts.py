@@ -9,7 +9,7 @@ import pytest
     [
         ("kokoro", "af_heart"),
         pytest.param("higgs", "en-man", marks=pytest.mark.runpod),
-        pytest.param("inworld", "ashley", marks=pytest.mark.inworld),
+        pytest.param("inworld-1.5", "ashley", marks=pytest.mark.inworld),
     ],
 )
 async def test_tts_integration(model_slug, voice_slug, subscribed_ws_client, subscribed_client, test_document):

@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { type InworldVoice, type InworldLanguageCode } from "@/lib/voiceSelection";
+import { type InworldVoice, type InworldLanguageCode, INWORLD_SLUG } from "@/lib/voiceSelection";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
 
@@ -51,7 +51,7 @@ export function useInworldVoices(): UseInworldVoicesReturn {
 
     // Avoid duplicate fetches
     if (!fetchPromise) {
-      fetchPromise = fetchVoices("inworld");
+      fetchPromise = fetchVoices(INWORLD_SLUG);
     }
 
     fetchPromise

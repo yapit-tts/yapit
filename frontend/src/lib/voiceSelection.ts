@@ -1,35 +1,39 @@
 // Voice selection types and localStorage utilities
 
-export type ModelType = "kokoro" | "kokoro-server" | "higgs" | "inworld" | "inworld-max";
+// Inworld model slugs - update these for version upgrades
+export const INWORLD_SLUG = "inworld-1.5" as const;
+export const INWORLD_MAX_SLUG = "inworld-1.5-max" as const;
+
+export type ModelType = "kokoro" | "kokoro-server" | typeof INWORLD_SLUG | typeof INWORLD_MAX_SLUG;
+
+// Check if model is an Inworld model (any variant)
+export function isInworldModel(model: ModelType): boolean {
+  return model.startsWith("inworld");
+}
 
 // Map frontend model types to backend model slugs
-// Frontend uses "kokoro" (browser), "kokoro-server" (server), "higgs" (server)
-// Backend database has "kokoro", "higgs", "inworld", "inworld-max" as model slugs
+// Frontend uses "kokoro" (browser), "kokoro-server" (server)
+// Backend database has "kokoro" plus Inworld slugs
 export function getBackendModelSlug(model: ModelType): string {
   switch (model) {
     case "kokoro":
     case "kokoro-server":
       return "kokoro";
-    case "higgs":
-      return "higgs";
-    case "inworld":
-      return "inworld";
-    case "inworld-max":
-      return "inworld-max";
+    case INWORLD_SLUG:
+      return INWORLD_SLUG;
+    case INWORLD_MAX_SLUG:
+      return INWORLD_MAX_SLUG;
   }
 }
 
 // Check if model uses server-side synthesis
 export function isServerSideModel(model: ModelType): boolean {
-  return model === "higgs" || model === "kokoro-server" || model === "inworld" || model === "inworld-max";
+  return model === "kokoro-server" || isInworldModel(model);
 }
 
 export interface VoiceSelection {
   model: ModelType;
   voiceSlug: string;
-  // HIGGS-specific settings
-  temperature?: number;
-  scene?: string;
 }
 
 // Kokoro language codes (from voice naming: af=American Female, jm=Japanese Male, etc.)
@@ -53,12 +57,6 @@ export interface KokoroVoice {
   language: KokoroLanguageCode;
   gender: "Female" | "Male";
   grade?: string; // A, B-, C+, etc. - optional since some voices don't have grades
-}
-
-export interface HiggsPreset {
-  slug: string;
-  name: string;
-  description?: string;
 }
 
 const VOICE_SELECTION_KEY = "yapit_voice_selection";
@@ -193,18 +191,6 @@ export const KOKORO_VOICES: KokoroVoice[] = [
   { index: "pm_santa", name: "Santa", language: "p", gender: "Male" },
 ];
 
-export const HIGGS_PRESETS: HiggsPreset[] = [
-  { slug: "en-man", name: "English Man", description: "Male, US" },
-  { slug: "en-woman", name: "English Woman", description: "Female, US" },
-];
-
-export const HIGGS_SCENES = [
-  { value: "Audio is recorded from a quiet room.", label: "Quiet room" },
-  { value: "Audio is a podcast recording with professional quality.", label: "Podcast studio" },
-  { value: "Audio is recorded in a noisy cafe.", label: "Noisy cafe" },
-  { value: "Audio is recorded from a vintage radio broadcast.", label: "Vintage radio" },
-];
-
 export interface VoiceLanguageGroup {
   language: KokoroLanguageCode;
   label: string;
@@ -251,7 +237,7 @@ export function isHighQualityVoice(voice: KokoroVoice): boolean {
 }
 
 // Inworld voice types (fetched from API)
-export type InworldLanguageCode = "en" | "zh" | "nl" | "fr" | "de" | "it" | "ja" | "ko" | "pl" | "pt" | "es" | "ru" | "hi";
+export type InworldLanguageCode = "en" | "zh" | "nl" | "fr" | "de" | "it" | "ja" | "ko" | "pl" | "pt" | "es" | "ru" | "hi" | "ar" | "he";
 
 export const INWORLD_LANGUAGE_INFO: Record<InworldLanguageCode, { label: string; flag: string }> = {
   en: { label: "English", flag: "🇺🇸" },
@@ -267,10 +253,14 @@ export const INWORLD_LANGUAGE_INFO: Record<InworldLanguageCode, { label: string;
   es: { label: "Spanish", flag: "🇪🇸" },
   ru: { label: "Russian", flag: "🇷🇺" },
   hi: { label: "Hindi", flag: "🇮🇳" },
+  ar: { label: "Arabic", flag: "🇸🇦" },
+  he: { label: "Hebrew", flag: "🇮🇱" },
 };
 
 // Sorted by global speaker count
-const INWORLD_LANGUAGE_ORDER: InworldLanguageCode[] = ["en", "zh", "hi", "es", "fr", "pt", "ru", "ja", "de", "ko", "it", "pl", "nl"];
+// Sorted by total speakers (Ethnologue 2025)
+// https://en.wikipedia.org/wiki/List_of_languages_by_total_number_of_speakers
+const INWORLD_LANGUAGE_ORDER: InworldLanguageCode[] = ["en", "zh", "hi", "es", "ar", "fr", "pt", "ru", "de", "ja", "ko", "it", "pl", "nl", "he"];
 
 export interface InworldVoice {
   slug: string;

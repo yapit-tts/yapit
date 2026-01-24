@@ -1,23 +1,19 @@
 import { useState, useEffect, useMemo, memo, startTransition, useRef, useCallback } from "react";
 import { ChevronDown, Star, ChevronRight, Monitor, Cloud, Loader2, Info, Play, Square } from "lucide-react";
 import { useApi } from "@/api";
-
-// HIGGS backend is flaky and more expensive than Inworld - hide for now
-const SHOW_HIGGS_TAB = false;
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { Slider } from "@/components/ui/slider";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   type VoiceSelection,
   type ModelType,
   type KokoroLanguageCode,
   type InworldLanguageCode,
+  INWORLD_SLUG,
+  INWORLD_MAX_SLUG,
   KOKORO_VOICES,
-  HIGGS_PRESETS,
-  HIGGS_SCENES,
   LANGUAGE_INFO,
   INWORLD_LANGUAGE_INFO,
   groupKokoroVoicesByLanguage,
@@ -36,7 +32,6 @@ interface VoicePickerProps {
 
 export function VoicePicker({ value, onChange }: VoicePickerProps) {
   const [open, setOpen] = useState(false);
-  const [advancedOpen, setAdvancedOpen] = useState(false);
   // Track which language sections are expanded (user manages, we just remember)
   const [expandedKokoroLangs, setExpandedKokoroLangs] = useState<Set<KokoroLanguageCode>>(new Set(["a"]));
   const [expandedInworldLangs, setExpandedInworldLangs] = useState<Set<InworldLanguageCode>>(new Set(["en"]));
@@ -151,19 +146,16 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
   // Track model type for tab logic
   const isKokoroServer = value.model === "kokoro-server";
   const isKokoroModel = value.model === "kokoro" || value.model === "kokoro-server";
-  const isInworldModel = value.model === "inworld" || value.model === "inworld-max";
-  const isInworldMax = value.model === "inworld-max";
-  const activeTab = isKokoroModel ? "kokoro" : isInworldModel ? "inworld" : "higgs";
+  const isInworldMax = value.model === INWORLD_MAX_SLUG;
+  const activeTab = isKokoroModel ? "kokoro" : "inworld";
 
   const handleVoiceSelect = (voiceSlug: string) => {
     // Preserve current model variant when selecting voice
     let model: ModelType;
     if (activeTab === "kokoro") {
       model = isKokoroServer ? "kokoro-server" : "kokoro";
-    } else if (activeTab === "inworld") {
-      model = isInworldMax ? "inworld-max" : "inworld";
     } else {
-      model = "higgs";
+      model = isInworldMax ? INWORLD_MAX_SLUG : INWORLD_SLUG;
     }
     const newSelection: VoiceSelection = {
       ...value,
@@ -183,20 +175,12 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
     if (tab === "kokoro") {
       defaultVoice = "af_heart";
       model = isKokoroServer ? "kokoro-server" : "kokoro";
-    } else if (tab === "inworld") {
-      defaultVoice = inworldVoices.length > 0 ? inworldVoices[0].slug : "Ashley";
-      model = isInworldMax ? "inworld-max" : "inworld";
     } else {
-      defaultVoice = "en-man";
-      model = "higgs";
+      defaultVoice = inworldVoices.length > 0 ? inworldVoices[0].slug : "Ashley";
+      model = isInworldMax ? INWORLD_MAX_SLUG : INWORLD_SLUG;
     }
 
-    const newSelection: VoiceSelection = {
-      model,
-      voiceSlug: defaultVoice,
-      temperature: tab === "higgs" ? value.temperature ?? 0.3 : undefined,
-      scene: tab === "higgs" ? value.scene : undefined,
-    };
+    const newSelection: VoiceSelection = { model, voiceSlug: defaultVoice };
     onChange(newSelection);
     setVoiceSelection(newSelection);
   };
@@ -227,23 +211,8 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
   };
 
   const handleInworldModelToggle = () => {
-    const newModel: ModelType = isInworldMax ? "inworld" : "inworld-max";
-    const newSelection: VoiceSelection = {
-      ...value,
-      model: newModel,
-    };
-    onChange(newSelection);
-    setVoiceSelection(newSelection);
-  };
-
-  const handleTemperatureChange = (temp: number) => {
-    const newSelection = { ...value, temperature: temp };
-    onChange(newSelection);
-    setVoiceSelection(newSelection);
-  };
-
-  const handleSceneChange = (scene: string) => {
-    const newSelection = { ...value, scene };
+    const newModel: ModelType = isInworldMax ? INWORLD_SLUG : INWORLD_MAX_SLUG;
+    const newSelection: VoiceSelection = { ...value, model: newModel };
     onChange(newSelection);
     setVoiceSelection(newSelection);
   };
@@ -252,19 +221,15 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
   let currentVoiceName: string;
   if (isKokoroModel) {
     currentVoiceName = KOKORO_VOICES.find(v => v.index === value.voiceSlug)?.name ?? value.voiceSlug;
-  } else if (isInworldModel) {
-    currentVoiceName = inworldVoices.find(v => v.slug === value.voiceSlug)?.name ?? value.voiceSlug;
   } else {
-    currentVoiceName = HIGGS_PRESETS.find(p => p.slug === value.voiceSlug)?.name ?? value.voiceSlug;
+    currentVoiceName = inworldVoices.find(v => v.slug === value.voiceSlug)?.name ?? value.voiceSlug;
   }
 
   let modelLabel: string;
   if (isKokoroModel) {
     modelLabel = `Kokoro${isKokoroServer ? "" : " (Local)"}`;
-  } else if (isInworldModel) {
-    modelLabel = isInworldMax ? "Inworld Max" : "Inworld";
   } else {
-    modelLabel = "HIGGS";
+    modelLabel = isInworldMax ? "Inworld Max" : "Inworld";
   }
 
   // Local mode only supports English (browser WASM limitation)
@@ -280,7 +245,6 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
     () => KOKORO_VOICES.filter(v => pinnedVoices.includes(v.index) && (!englishOnly || isEnglishLang(v.language))),
     [pinnedVoices, englishOnly]
   );
-  const pinnedHiggs = useMemo(() => HIGGS_PRESETS.filter(p => pinnedVoices.includes(p.slug)), [pinnedVoices]);
   const pinnedInworld = useMemo(() => inworldVoices.filter(v => pinnedVoices.includes(v.slug)), [inworldVoices, pinnedVoices]);
 
   return (
@@ -298,7 +262,6 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
           <TabsList className="w-full h-11 rounded-none border-b">
             <TabsTrigger value="kokoro" className="flex-1 text-sm py-2.5">Kokoro</TabsTrigger>
             <TabsTrigger value="inworld" className="flex-1 text-sm py-2.5">Inworld</TabsTrigger>
-            {SHOW_HIGGS_TAB && <TabsTrigger value="higgs" className="flex-1 text-sm py-2.5">HIGGS</TabsTrigger>}
           </TabsList>
 
           <TabsContent value="kokoro" className="m-0 max-h-[28rem] overflow-y-auto">
@@ -396,7 +359,7 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
           </TabsContent>
 
           <TabsContent value="inworld" className="m-0 max-h-[28rem] overflow-y-auto">
-            {/* Model toggle: inworld vs inworld-max */}
+            {/* Model toggle: TTS-1.5 vs TTS-1.5-Max */}
             <div className="flex items-center justify-between px-4 py-3 border-b bg-muted/30">
               <div className="flex items-center gap-1.5">
                 <span className="text-sm text-muted-foreground">Quality</span>
@@ -407,7 +370,7 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
                     </button>
                   </TooltipTrigger>
                   <TooltipContent side="top" className="max-w-xs">
-                    <p>TTS-1-Max uses a larger model for more natural speech and better multilingual pronunciation. Uses 2× your voice quota.</p>
+                    <p>TTS-1.5-Max uses a larger model for more natural speech and better multilingual pronunciation. Uses 2× your voice quota.</p>
                   </TooltipContent>
                 </Tooltip>
               </div>
@@ -418,7 +381,7 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
                     !isInworldMax ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
                   }`}
                 >
-                  TTS-1
+                  TTS-1.5
                 </button>
                 <button
                   onClick={() => !isInworldMax && handleInworldModelToggle()}
@@ -426,7 +389,7 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
                     isInworldMax ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
                   }`}
                 >
-                  TTS-1-Max
+                  TTS-1.5-Max
                 </button>
               </div>
             </div>
@@ -450,10 +413,10 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
                         detail={voice.description ?? undefined}
                         isPinned={true}
                         isSelected={value.voiceSlug === voice.slug}
-                        isPlaying={previewingVoice === `inworld:${voice.slug}`}
+                        isPlaying={previewingVoice === `${INWORLD_SLUG}:${voice.slug}`}
                         onSelect={() => handleVoiceSelect(voice.slug)}
                         onPinToggle={() => togglePinnedVoice(voice.slug)}
-                        onPreviewClick={() => playPreview("inworld", voice.slug)}
+                        onPreviewClick={() => playPreview(INWORLD_SLUG, voice.slug)}
                       />
                     ))}
                   </div>
@@ -481,10 +444,10 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
                           detail={voice.description ?? undefined}
                           isPinned={pinnedVoices.includes(voice.slug)}
                           isSelected={value.voiceSlug === voice.slug}
-                          isPlaying={previewingVoice === `inworld:${voice.slug}`}
+                          isPlaying={previewingVoice === `${INWORLD_SLUG}:${voice.slug}`}
                           onSelect={() => handleVoiceSelect(voice.slug)}
                           onPinToggle={() => togglePinnedVoice(voice.slug)}
-                          onPreviewClick={() => playPreview("inworld", voice.slug)}
+                          onPreviewClick={() => playPreview(INWORLD_SLUG, voice.slug)}
                         />
                       ))}
                     </CollapsibleContent>
@@ -493,88 +456,6 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
               </>
             )}
           </TabsContent>
-
-          {SHOW_HIGGS_TAB && (
-            <TabsContent value="higgs" className="m-0 max-h-[28rem] overflow-y-auto">
-              {/* Pinned section */}
-              {pinnedHiggs.length > 0 && (
-                <div className="border-b">
-                  <div className="px-4 py-2 text-sm font-medium text-muted-foreground">Pinned</div>
-                  {pinnedHiggs.map(preset => (
-                    <VoiceRow
-                      key={preset.slug}
-                      name={preset.name}
-                      detail={preset.description}
-                      isPinned={true}
-                      isSelected={value.voiceSlug === preset.slug}
-                      isPlaying={previewingVoice === `higgs:${preset.slug}`}
-                      onSelect={() => handleVoiceSelect(preset.slug)}
-                      onPinToggle={() => togglePinnedVoice(preset.slug)}
-                      onPreviewClick={() => playPreview("higgs", preset.slug)}
-                    />
-                  ))}
-                </div>
-              )}
-
-              {/* Presets */}
-              <div className="border-b">
-                <div className="px-4 py-2 text-sm font-medium text-muted-foreground">Presets</div>
-                {HIGGS_PRESETS.map(preset => (
-                  <VoiceRow
-                    key={preset.slug}
-                    name={preset.name}
-                    detail={preset.description}
-                    isPinned={pinnedVoices.includes(preset.slug)}
-                    isSelected={value.voiceSlug === preset.slug}
-                    isPlaying={previewingVoice === `higgs:${preset.slug}`}
-                    onSelect={() => handleVoiceSelect(preset.slug)}
-                    onPinToggle={() => togglePinnedVoice(preset.slug)}
-                    onPreviewClick={() => playPreview("higgs", preset.slug)}
-                  />
-                ))}
-              </div>
-
-              {/* Advanced settings */}
-              <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
-                <CollapsibleTrigger asChild>
-                  <button className="flex w-full items-center gap-2 px-4 py-2.5 text-sm font-medium text-muted-foreground hover:bg-accent">
-                    <ChevronRight className={`h-4 w-4 transition-transform ${advancedOpen ? "rotate-90" : ""}`} />
-                    Advanced Settings
-                  </button>
-                </CollapsibleTrigger>
-                <CollapsibleContent className="px-4 pb-4 space-y-4">
-                  {/* Temperature */}
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-muted-foreground">Temperature</span>
-                      <span className="font-mono tabular-nums">{(value.temperature ?? 0.3).toFixed(1)}</span>
-                    </div>
-                    <Slider
-                      value={[value.temperature ?? 0.3]}
-                      min={0.1}
-                      max={1.0}
-                      step={0.1}
-                      onValueChange={([v]) => handleTemperatureChange(v)}
-                    />
-                  </div>
-
-                  {/* Scene */}
-                  <div className="space-y-2">
-                    <span className="text-sm text-muted-foreground">Scene</span>
-                    <select
-                      value={value.scene ?? HIGGS_SCENES[0].value}
-                      onChange={(e) => handleSceneChange(e.target.value)}
-                      className="w-full rounded-md border bg-background px-3 py-2 text-sm"
-                    >
-                      {HIGGS_SCENES.map(scene => (
-                        <option key={scene.value} value={scene.value}>{scene.label}</option>
-                      ))}
-                    </select>
-                  </div>
-                </CollapsibleContent>
-              </Collapsible>
-            </TabsContent>
-          )}
         </Tabs>
       </PopoverContent>
     </Popover>
@@ -584,7 +465,7 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
 interface VoiceRowProps {
   name: string;
   flag?: string; // language flag for starred section
-  detail?: string; // for HIGGS
+  detail?: string; // voice description
   isHighQuality?: boolean; // for Kokoro A/B tier
   gender?: "Female" | "Male"; // for Kokoro
   isPinned: boolean;
