@@ -4,11 +4,12 @@ import httpx
 import pytest
 from fastapi import HTTPException
 
-from yapit.gateway.api.v1.documents import _download_document, _extract_document_info
+from yapit.gateway.api.v1.documents import _extract_document_info
+from yapit.gateway.document.http import download_document
 
 
 class TestDownloadDocument:
-    """Test _download_document function."""
+    """Test download_document function."""
 
     @pytest.mark.asyncio
     async def test_successful_download(self):
@@ -28,7 +29,7 @@ class TestDownloadDocument:
         with patch("httpx.AsyncClient") as mock_client_class:
             mock_client_class.return_value.__aenter__.return_value = mock_client
 
-            result_content, content_type = await _download_document("https://example.com/test.pdf", 100 * 1024 * 1024)
+            result_content, content_type = await download_document("https://example.com/test.pdf", 100 * 1024 * 1024)
 
             assert result_content == content
             assert content_type == "application/pdf"
@@ -49,7 +50,7 @@ class TestDownloadDocument:
             mock_client_class.return_value.__aenter__.return_value = mock_client
 
             with pytest.raises(HTTPException, match="File too large"):
-                await _download_document("https://example.com/huge.pdf", 100 * 1024 * 1024)
+                await download_document("https://example.com/huge.pdf", 100 * 1024 * 1024)
 
             mock_client.get.assert_not_called()
 
@@ -76,7 +77,7 @@ class TestDownloadDocument:
             mock_client_class.return_value.__aenter__.return_value = mock_client
 
             with pytest.raises(HTTPException, match="File too large"):
-                await _download_document("https://example.com/test.pdf", 100 * 1024 * 1024)
+                await download_document("https://example.com/test.pdf", 100 * 1024 * 1024)
 
     @pytest.mark.asyncio
     async def test_download_http_error(self):
@@ -95,7 +96,7 @@ class TestDownloadDocument:
             mock_client_class.return_value.__aenter__.return_value = mock_client
 
             with pytest.raises(HTTPException) as exc_info:
-                await _download_document("https://example.com/missing.pdf", 100 * 1024 * 1024)
+                await download_document("https://example.com/missing.pdf", 100 * 1024 * 1024)
             assert exc_info.value.status_code == 422
 
     @pytest.mark.asyncio
@@ -108,7 +109,7 @@ class TestDownloadDocument:
             mock_client_class.return_value.__aenter__.return_value = mock_client
 
             with pytest.raises(HTTPException) as exc_info:
-                await _download_document("https://example.com/test.pdf", 100 * 1024 * 1024)
+                await download_document("https://example.com/test.pdf", 100 * 1024 * 1024)
             assert exc_info.value.status_code == 422
 
     @pytest.mark.asyncio
@@ -129,7 +130,7 @@ class TestDownloadDocument:
         with patch("httpx.AsyncClient") as mock_client_class:
             mock_client_class.return_value.__aenter__.return_value = mock_client
 
-            result_content, content_type = await _download_document("https://example.com/test", 100 * 1024 * 1024)
+            result_content, content_type = await download_document("https://example.com/test", 100 * 1024 * 1024)
 
             assert result_content == content
             assert content_type == "application/octet-stream"

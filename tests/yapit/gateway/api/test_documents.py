@@ -33,7 +33,7 @@ async def test_prepare_and_create_document_from_url(client, as_test_user, sessio
     mock_content = b"Test document content"
     mock_content_type = "text/plain"
 
-    with patch("yapit.gateway.api.v1.documents._download_document") as mock_download:
+    with patch("yapit.gateway.api.v1.documents.download_document") as mock_download:
         mock_download.return_value = (mock_content, mock_content_type)
 
         # Step 1: Prepare document from URL
@@ -67,7 +67,7 @@ async def test_prepare_caching(client, as_test_user):
     """Test that prepare endpoint uses cache on repeated calls."""
     mock_content = b"Test content"
 
-    with patch("yapit.gateway.api.v1.documents._download_document") as mock_download:
+    with patch("yapit.gateway.api.v1.documents.download_document") as mock_download:
         mock_download.return_value = (mock_content, "text/plain")
 
         # First call - should download
@@ -110,7 +110,7 @@ async def test_document_create_invalid_page_numbers(client, as_test_user):
     mock_content = b"fake pdf"
 
     with (
-        patch("yapit.gateway.api.v1.documents._download_document") as mock_download,
+        patch("yapit.gateway.api.v1.documents.download_document") as mock_download,
         patch("yapit.gateway.api.v1.documents._extract_document_info") as mock_extract,
     ):
         mock_download.return_value = (mock_content, "application/pdf")
@@ -187,7 +187,7 @@ async def test_prepare_detects_html_with_charset_as_website(client, as_test_user
     """Test that HTML pages with charset parameters are correctly detected as websites."""
     mock_html = b"<!DOCTYPE html><html><body>Test</body></html>"
 
-    with patch("yapit.gateway.api.v1.documents._download_document") as mock_download:
+    with patch("yapit.gateway.api.v1.documents.download_document") as mock_download:
         mock_download.return_value = (mock_html, content_type)
 
         response = await client.post("/v1/documents/prepare", json={"url": "https://example.com/page.html"})
@@ -203,7 +203,7 @@ async def test_prepare_website_returns_empty_uncached_pages(client, as_test_user
     """Test that preparing a website always returns empty uncached pages."""
     mock_html = b"<!DOCTYPE html><html><body>Test</body></html>"
 
-    with patch("yapit.gateway.api.v1.documents._download_document") as mock_download:
+    with patch("yapit.gateway.api.v1.documents.download_document") as mock_download:
         mock_download.return_value = (mock_html, "text/html")
 
         # Test without processor_slug

@@ -4,16 +4,13 @@ import io
 import math
 import re
 import shutil
-import time
 from datetime import datetime
 from email.message import EmailMessage
 from html import escape as html_escape
 from pathlib import Path
 from typing import Annotated, Literal
-from urllib.parse import urljoin, urlparse
 from uuid import UUID
 
-import httpx
 import pymupdf
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
 from fastapi.responses import HTMLResponse
@@ -44,6 +41,8 @@ from yapit.gateway.deps import (
     SettingsDep,
 )
 from yapit.gateway.document import markitdown
+from yapit.gateway.document.http import download_document, resolve_relative_urls
+from yapit.gateway.document.markxiv import detect_arxiv_url, fetch_from_markxiv
 from yapit.gateway.document.playwright_renderer import render_with_js
 from yapit.gateway.document.processing import (
     CachedDocument,
@@ -264,7 +263,7 @@ async def prepare_document(
             uncached_pages=uncached_pages,
         )
 
-    content, content_type = await _download_document(request.url, settings.document_max_download_size)
+    content, content_type = await download_document(request.url, settings.document_max_download_size)
 
     page_count, title = _extract_document_info(content, content_type)
     metadata = DocumentMetadata(
@@ -412,10 +411,10 @@ async def _extract_website_content(
     markxiv_url: str | None,
 ) -> tuple[str, str]:
     """Extract markdown from website content. Returns (markdown, extraction_method)."""
-    arxiv_match = _detect_arxiv_url(url) if url else None
+    arxiv_match = detect_arxiv_url(url) if url else None
     if arxiv_match and markxiv_url:
         arxiv_id, _ = arxiv_match
-        return await _fetch_from_markxiv(markxiv_url, arxiv_id), "markxiv"
+        return await fetch_from_markxiv(markxiv_url, arxiv_id), "markxiv"
 
     md = MarkItDown(enable_plugins=False)
     result = md.convert_stream(io.BytesIO(content))
@@ -428,7 +427,7 @@ async def _extract_website_content(
         markdown = result.markdown
 
     if url:
-        markdown = _resolve_relative_urls(markdown, url)
+        markdown = resolve_relative_urls(markdown, url)
 
     return markdown, "markitdown"
 
@@ -596,10 +595,10 @@ async def create_document(
     content_hash = hashlib.sha256(cached_doc.content).hexdigest()
 
     # arXiv + markxiv short-circuits standard extraction (free tier only)
-    arxiv_match = _detect_arxiv_url(cached_doc.metadata.url) if cached_doc.metadata.url else None
+    arxiv_match = detect_arxiv_url(cached_doc.metadata.url) if cached_doc.metadata.url else None
     if arxiv_match and settings.markxiv_url and not req.ai_transform:
         arxiv_id, _ = arxiv_match
-        markdown = await _fetch_from_markxiv(settings.markxiv_url, arxiv_id)
+        markdown = await fetch_from_markxiv(settings.markxiv_url, arxiv_id)
         extraction_result = DocumentExtractionResult(
             pages={0: ExtractedPage(markdown=markdown, images=[])},
             extraction_method="markxiv",
@@ -947,79 +946,6 @@ async def import_document(
     return DocumentImportResponse(id=new_doc.id, title=new_doc.title)
 
 
-async def _download_document(url: HttpUrl, max_size: int) -> tuple[bytes, str]:
-    """Download a document from URL within size limits.
-
-    Args:
-        url: URL to download from
-        max_size: Maximum allowed file size in bytes
-
-    Returns:
-        tuple of (content bytes, content-type header)
-
-    Raises:
-        ValidationError: If download fails or file is too large
-    """
-    headers = {"User-Agent": "Yapit/1.0 (https://yapit.md; document fetcher)"}
-    start = time.monotonic()
-    async with httpx.AsyncClient(
-        proxy="http://smokescreen:4750",
-        follow_redirects=True,
-        timeout=30.0,
-        headers=headers,
-    ) as client:
-        try:
-            head_response = await client.head(str(url))
-            if head_response.status_code != 200:
-                logger.debug(f"HEAD request failed with {head_response.status_code}, falling back to GET")
-            else:
-                content_length = head_response.headers.get("content-length")
-                if content_length and int(content_length) > max_size:
-                    raise HTTPException(
-                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                        detail=f"File too large: {int(content_length)} bytes exceeds maximum of {max_size} bytes",
-                    )
-            response = await client.get(str(url))
-            response.raise_for_status()
-            content = io.BytesIO()
-            downloaded = 0
-            async for chunk in response.aiter_bytes(chunk_size=8192):
-                downloaded += len(chunk)
-                if downloaded > max_size:
-                    raise HTTPException(
-                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                        detail=f"File too large: downloaded {downloaded} bytes exceeds maximum of {max_size} bytes",
-                    )
-                content.write(chunk)
-            content_bytes = content.getvalue()
-            header_type = response.headers.get("content-type", "application/octet-stream")
-            sniffed_type = _sniff_content_type(content_bytes)
-            # Trust magic bytes over header if we can detect the type
-            content_type = sniffed_type if sniffed_type else header_type
-            duration_ms = int((time.monotonic() - start) * 1000)
-            await log_event(
-                "url_fetch",
-                duration_ms=duration_ms,
-                data={"content_type": content_type, "size_bytes": len(content_bytes)},
-            )
-            return content_bytes, content_type
-        except httpx.HTTPStatusError as e:
-            duration_ms = int((time.monotonic() - start) * 1000)
-            code = e.response.status_code
-            await log_event("url_fetch", duration_ms=duration_ms, status_code=code, data={"error": "http_status"})
-            detail = _get_http_error_message(code)
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=detail)
-        except httpx.RequestError as e:
-            duration_ms = int((time.monotonic() - start) * 1000)
-            await log_event(
-                "url_fetch", duration_ms=duration_ms, status_code=0, data={"error": "request_error", "detail": str(e)}
-            )
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Unable to reach URL - check it's correct and accessible",
-            )
-
-
 def _extract_document_info(content: bytes, content_type: str) -> tuple[int, str | None]:
     """Extract page count and title from document content.
 
@@ -1164,113 +1090,6 @@ def _validate_page_numbers(pages: list[int] | None, total_pages: int) -> None:
         )
 
 
-def _resolve_relative_urls(markdown: str, base_url: str) -> str:
-    """Resolve relative URLs in markdown images and links to absolute URLs.
-
-    When converting webpages, MarkItDown preserves URLs as-is. Relative paths
-    like `/images/foo.png` would resolve to Yapit's domain when rendered in the browser.
-    This function resolves them to absolute URLs using the source webpage's URL.
-
-    Also:
-    - Encodes spaces in URLs since markdown parsers don't handle unencoded spaces
-    - Converts same-page links (https://site.com/page/#section) to anchor links (#section)
-    """
-    # Parse base URL to detect same-page anchors
-    parsed_base = urlparse(base_url)
-    base_without_fragment = f"{parsed_base.scheme}://{parsed_base.netloc}{parsed_base.path}"
-    # Normalize: remove trailing slash for comparison
-    base_normalized = base_without_fragment.rstrip("/")
-
-    def make_resolver(is_image: bool):
-        def resolve(match: re.Match) -> str:
-            text, url = match.group(1), match.group(2)
-            # Encode spaces in URL - markdown parsers choke on unencoded spaces
-            url_encoded = url.replace(" ", "%20")
-
-            if url.startswith(("#", "data:")):
-                prefix = "!" if is_image else ""
-                return f"{prefix}[{text}]({url_encoded})"
-
-            # Check if it's an absolute URL pointing to same page with fragment
-            if url.startswith(("http://", "https://")):
-                parsed = urlparse(url)
-                url_without_fragment = f"{parsed.scheme}://{parsed.netloc}{parsed.path}".rstrip("/")
-                if url_without_fragment == base_normalized and parsed.fragment:
-                    # Same page anchor - convert to just the fragment
-                    return f"[{text}](#{parsed.fragment})"
-                # Different page - keep as external link
-                prefix = "!" if is_image else ""
-                return f"{prefix}[{text}]({url_encoded})"
-
-            # Relative URL - resolve against base
-            resolved = urljoin(base_url, url_encoded)
-            # Check if resolved URL points to same page (for relative anchors like /page/#section)
-            parsed_resolved = urlparse(resolved)
-            resolved_without_fragment = (
-                f"{parsed_resolved.scheme}://{parsed_resolved.netloc}{parsed_resolved.path}".rstrip("/")
-            )
-            if resolved_without_fragment == base_normalized and parsed_resolved.fragment:
-                return f"[{text}](#{parsed_resolved.fragment})"
-            prefix = "!" if is_image else ""
-            return f"{prefix}[{text}]({resolved})"
-
-        return resolve
-
-    # Images: ![alt](url) - MarkItDown doesn't output titles, so just match to closing paren
-    markdown = re.sub(r"!\[([^\]]*)\]\(([^)]+)\)", make_resolver(True), markdown)
-    # Links: [text](url)
-    markdown = re.sub(r"(?<!!)\[([^\]]*)\]\(([^)]+)\)", make_resolver(False), markdown)
-    return markdown
-
-
-def _sniff_content_type(content: bytes) -> str | None:
-    """Detect content type from magic bytes. Returns None if unknown."""
-    if content.startswith(b"%PDF"):
-        return "application/pdf"
-    if content.startswith(b"\x89PNG\r\n\x1a\n"):
-        return "image/png"
-    if content.startswith(b"\xff\xd8\xff"):
-        return "image/jpeg"
-    if content.startswith(b"GIF87a") or content.startswith(b"GIF89a"):
-        return "image/gif"
-    if content.startswith(b"RIFF") and content[8:12] == b"WEBP":
-        return "image/webp"
-    # HTML detection (check first 1KB for common patterns)
-    head = content[:1024].lstrip()
-    if head.startswith(b"<!DOCTYPE") or head.startswith(b"<html") or head.startswith(b"<HTML"):
-        return "text/html"
-    return None
-
-
-def _get_http_error_message(status_code: int) -> str:
-    """Return a user-friendly error message for HTTP status codes."""
-    messages = {
-        300: "Document has multiple versions - try a more specific URL",
-        301: "Page has moved permanently",
-        302: "Page has moved temporarily",
-        400: "Invalid request to the website",
-        401: "This page requires authentication",
-        403: "Access to this page is forbidden",
-        404: "Page not found - check the URL",
-        407: "URL points to a blocked destination",
-        408: "Request timed out - the website took too long to respond",
-        410: "This page no longer exists",
-        429: "Site is rate limiting requests - try again later",
-        451: "Content unavailable for legal reasons",
-        500: "The target website is having internal issues - try again later",
-        502: "The target website's server is not responding - try again later",
-        503: "The target website is temporarily unavailable - try again later",
-        504: "The target website took too long to respond - try again later",
-    }
-    if status_code in messages:
-        return messages[status_code]
-    if 400 <= status_code < 500:
-        return f"Website returned client error (HTTP {status_code})"
-    if 500 <= status_code < 600:
-        return f"Website returned server error (HTTP {status_code})"
-    return f"URL returned unexpected status: HTTP {status_code}"
-
-
 _JS_RENDERING_PATTERNS = [
     r"marked\.parse",  # marked.js
     r"markdown-it",  # markdown-it
@@ -1306,74 +1125,3 @@ def _needs_js_rendering(html: bytes, markdown: str) -> bool:
         return True
 
     return False
-
-
-# arXiv URL patterns: (regex, url_type) - url_type determines flow (abs=website, pdf=document)
-_ARXIV_PATTERNS: list[tuple[re.Pattern[str], str]] = [
-    (re.compile(r"(?:www\.)?arxiv\.org/abs/([\d.]+v?\d*)"), "abs"),
-    (re.compile(r"(?:www\.)?arxiv\.org/pdf/([\d.]+v?\d*)"), "pdf"),
-    (re.compile(r"(?:www\.)?alphaxiv\.org/abs/([\d.]+v?\d*)"), "abs"),
-    (re.compile(r"(?:www\.)?alphaxiv\.org/pdf/([\d.]+v?\d*)"), "pdf"),
-    (re.compile(r"ar5iv\.labs\.google\.com/abs/([\d.]+v?\d*)"), "abs"),
-]
-
-
-def _detect_arxiv_url(url: str) -> tuple[str, str] | None:
-    """Detect if URL is an arXiv paper URL. Returns (arxiv_id, url_type) or None."""
-    for pattern, url_type in _ARXIV_PATTERNS:
-        if match := pattern.search(url):
-            return match.group(1), url_type
-    return None
-
-
-async def _fetch_from_markxiv(markxiv_url: str, arxiv_id: str) -> str:
-    """Fetch markdown from markxiv service."""
-    try:
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            response = await client.get(f"{markxiv_url}/abs/{arxiv_id}")
-    except httpx.TimeoutException:
-        await log_event("markxiv_error", data={"arxiv_id": arxiv_id, "error": "timeout"})
-        raise HTTPException(
-            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-            detail="arXiv paper extraction timed out. This can happen with large papers. Please try again.",
-        )
-    except httpx.RequestError as e:
-        await log_event("markxiv_error", data={"arxiv_id": arxiv_id, "error": "connection", "detail": str(e)})
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Could not connect to paper extraction service. Please try again in a few seconds.",
-        )
-
-    if response.status_code == 404:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Paper not found on arXiv")
-    if response.status_code == 422:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Paper has no source available and PDF extraction failed",
-        )
-    if response.status_code == 502:
-        await log_event("markxiv_error", data={"arxiv_id": arxiv_id, "error": "arxiv_unreachable"})
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Could not reach arXiv servers. This is usually temporary — please try again in a few seconds.",
-        )
-    if not response.is_success:
-        await log_event(
-            "markxiv_error", data={"arxiv_id": arxiv_id, "error": "conversion", "status": response.status_code}
-        )
-        logger.error(f"markxiv error for {arxiv_id}: {response.status_code} {response.text}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Paper conversion failed. If this persists, please report at https://github.com/yapit-tts/yapit/issues",
-        )
-
-    return _cleanup_markxiv_markdown(response.text)
-
-
-# Pattern to strip pandoc header anchors: "# Title {#sec:foo}" -> "# Title"
-_HEADER_ANCHOR_PATTERN = re.compile(r"^(#+\s+.+?)\s*\{#[^}]+\}\s*$", re.MULTILINE)
-
-
-def _cleanup_markxiv_markdown(md: str) -> str:
-    """Clean up pandoc-generated markdown from markxiv for TTS readability."""
-    return _HEADER_ANCHOR_PATTERN.sub(r"\1", md)
