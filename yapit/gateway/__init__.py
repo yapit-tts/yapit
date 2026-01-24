@@ -1,5 +1,7 @@
 import asyncio
+import datetime as dt
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import redis.asyncio as redis
@@ -11,6 +13,7 @@ from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
+from sqlmodel import col, delete
 
 from yapit.contracts import (
     TTS_JOB_INDEX,
@@ -24,9 +27,10 @@ from yapit.contracts import (
 from yapit.gateway.api.v1 import routers as v1_routers
 from yapit.gateway.cache import Cache
 from yapit.gateway.config import Settings, get_settings
-from yapit.gateway.db import close_db, prepare_database
+from yapit.gateway.db import close_db, create_session, prepare_database
 from yapit.gateway.deps import create_cache
 from yapit.gateway.document.gemini import GeminiExtractor, create_gemini_config
+from yapit.gateway.domain_models import UsageLog
 from yapit.gateway.exceptions import APIError
 from yapit.gateway.logging_config import (
     RequestContextMiddleware,
@@ -48,6 +52,7 @@ YOLO_OVERFLOW_THRESHOLD_S = 10
 VISIBILITY_SCAN_INTERVAL_S = 15
 OVERFLOW_SCAN_INTERVAL_S = 5
 MAX_RETRIES = 3
+USAGE_LOG_RETENTION_DAYS = 31
 
 
 @asynccontextmanager
@@ -168,6 +173,8 @@ async def lifespan(app: FastAPI):
     maintenance_task = asyncio.create_task(_cache_maintenance_task(all_caches))
     background_tasks.append(maintenance_task)
 
+    background_tasks.append(asyncio.create_task(_usage_log_cleanup_task(settings)))
+
     yield
 
     for task in background_tasks:
@@ -188,6 +195,25 @@ async def _cache_maintenance_task(caches: list[Cache]) -> None:
                 await cache.vacuum_if_needed(bloat_threshold=2.0)
             except Exception as e:
                 logger.exception(f"Cache vacuum failed: {e}")
+        await asyncio.sleep(86400)
+
+
+async def _usage_log_cleanup_task(settings: Settings) -> None:
+    """Delete UsageLog entries older than retention period."""
+    await asyncio.sleep(3600)  # Wait 1h after startup before first run
+    while True:
+        try:
+            cutoff = datetime.now(tz=dt.UTC) - timedelta(days=USAGE_LOG_RETENTION_DAYS)
+            async for db in create_session(settings):
+                result = await db.exec(delete(UsageLog).where(col(UsageLog.created) < cutoff))
+                await db.commit()
+                if result.rowcount:
+                    logger.info(
+                        f"UsageLog cleanup: deleted {result.rowcount} rows older than {USAGE_LOG_RETENTION_DAYS} days"
+                    )
+                break
+        except Exception as e:
+            logger.exception(f"UsageLog cleanup failed: {e}")
         await asyncio.sleep(86400)
 
 
