@@ -28,6 +28,15 @@ Production-ready Stripe Managed Payments integration with:
 
 ## Sources (MUST READ for All Agents)
 
+### Webhook Handling & Race Conditions
+
+| URL | Why |
+|-----|-----|
+| [Stripe Webhooks](https://docs.stripe.com/webhooks) | Event ordering NOT guaranteed, duplicate delivery possible |
+| [The Race Condition You're Shipping](https://dev.to/belazy/the-race-condition-youre-probably-shipping-right-now-with-stripe-webhooks-mj4) | Deep dive on checkout/subscription webhook races |
+| [Stripe Webhook Best Practices (Stigg)](https://www.stigg.io/blog-posts/best-practices-i-wish-we-knew-when-integrating-stripe-webhooks) | Practical patterns for idempotency and ordering |
+| [PostgreSQL INSERT ON CONFLICT](https://www.postgresql.org/docs/current/sql-insert.html) | Atomic upsert guarantees we rely on |
+
 ### Stripe Documentation
 
 | URL | Why |
@@ -259,7 +268,9 @@ Fix: With Issue 1 fixed, script now reaches product updates. Re-run `stripe_setu
 
 ### Debugging Webhook Issues
 - **Webhook 500 errors** — Check gateway container logs for the actual traceback, not just Stripe dashboard/CLI status codes.
-- **Webhook event ordering** — Stripe doesn't guarantee order. Use upsert patterns (e.g., `subscription.updated` may arrive before `subscription.created`). See billing.py for examples.
+- **Webhook event ordering** — Stripe doesn't guarantee order. `checkout.session.completed` and `customer.subscription.created` can race. We use PostgreSQL `INSERT ON CONFLICT` upserts by `user_id` to handle this atomically.
+- **Webhook idempotency** — Handlers must be idempotent (Stripe retries on non-2xx). We use database upserts for UserSubscription and UsagePeriod (with UniqueConstraint on `user_id, period_start`). No event ID tracking needed.
+- **subscription.deleted not found** — If the subscription row doesn't exist yet (checkout.completed hasn't committed), we raise an exception to return 500, triggering Stripe retry.
 
 ### Assumptions / Corners Cut
 - Portal config `schedule_at_period_end` clearing uses raw HTTP instead of SDK — workaround for SDK limitation

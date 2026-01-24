@@ -4,6 +4,7 @@ import datetime as dt
 from datetime import datetime
 
 from loguru import logger
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -74,25 +75,25 @@ async def get_or_create_usage_period(
     subscription: UserSubscription,
     db: AsyncSession,
 ) -> UsagePeriod:
-    """Get or create the current usage period for a subscribed user."""
+    """Get or create the current usage period using atomic upsert."""
     period_start = subscription.current_period_start
     period_end = subscription.current_period_end
 
-    result = await db.exec(
-        select(UsagePeriod).where(UsagePeriod.user_id == user_id).where(UsagePeriod.period_start == period_start)
+    # Atomic upsert prevents race condition on concurrent requests
+    stmt = pg_insert(UsagePeriod).values(
+        user_id=user_id,
+        period_start=period_start,
+        period_end=period_end,
     )
-    usage_period = result.first()
+    stmt = stmt.on_conflict_do_nothing(index_elements=["user_id", "period_start"])
+    await db.exec(stmt)
+    await db.flush()
 
-    if not usage_period:
-        usage_period = UsagePeriod(
-            user_id=user_id,
-            period_start=period_start,
-            period_end=period_end,
-        )
-        db.add(usage_period)
-        await db.flush()
-
-    return usage_period
+    # Fetch the row (either just inserted or already existed)
+    result = await db.exec(
+        select(UsagePeriod).where(UsagePeriod.user_id == user_id, UsagePeriod.period_start == period_start)
+    )
+    return result.one()
 
 
 def _get_limit_for_usage_type(plan: Plan, usage_type: UsageType) -> int | None:

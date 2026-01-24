@@ -9,6 +9,7 @@ import stripe
 from fastapi import APIRouter, HTTPException, Request, status
 from loguru import logger
 from pydantic import BaseModel
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlmodel import col, select
 from stripe.params.checkout._session_create_params import SessionCreateParams
 
@@ -310,12 +311,11 @@ async def _handle_checkout_completed(
     client: stripe.StripeClient,
     db: DbSession,
 ) -> None:
-    """Handle successful checkout - create or update subscription."""
+    """Handle successful checkout using atomic database upsert."""
     if session.mode != "subscription":
         return
 
     user_id = session.metadata.get("user_id") if session.metadata else None
-    # Extract string IDs (Stripe returns str or expanded object depending on expand params)
     subscription_id = (
         session.subscription
         if isinstance(session.subscription, str)
@@ -329,7 +329,6 @@ async def _handle_checkout_completed(
         logger.warning("Checkout completed but missing user_id or subscription_id")
         return
 
-    # Fetch full subscription details from Stripe
     stripe_sub = client.v1.subscriptions.retrieve(subscription_id)
     plan_tier = stripe_sub.metadata.get("plan_tier") if stripe_sub.metadata else None
 
@@ -346,70 +345,78 @@ async def _handle_checkout_completed(
     first_item = stripe_sub["items"].data[0]
     period_start = datetime.fromtimestamp(first_item.current_period_start, tz=dt.UTC)
     period_end = datetime.fromtimestamp(first_item.current_period_end, tz=dt.UTC)
-
-    existing = await db.get(UserSubscription, user_id)
+    cancel_at = datetime.fromtimestamp(stripe_sub.cancel_at, tz=dt.UTC) if stripe_sub.cancel_at else None
     now = datetime.now(tz=dt.UTC)
 
-    status = _map_stripe_status(stripe_sub.status)
-    is_paid = status == SubscriptionStatus.active  # active = paid, trialing = not yet paid
+    sub_status = _map_stripe_status(stripe_sub.status)
+    is_paid = sub_status == SubscriptionStatus.active
 
-    if existing:
-        existing.plan_id = plan.id
-        existing.status = status
-        existing.stripe_customer_id = customer_id
-        existing.stripe_subscription_id = subscription_id
-        existing.current_period_start = period_start
-        existing.current_period_end = period_end
-        existing.cancel_at_period_end = stripe_sub.cancel_at_period_end
-        existing.cancel_at = datetime.fromtimestamp(stripe_sub.cancel_at, tz=dt.UTC) if stripe_sub.cancel_at else None
-        existing.updated = now
-        if _rank(plan.tier) > _rank(existing.highest_tier_subscribed):
-            existing.highest_tier_subscribed = plan.tier
-        if is_paid and not existing.ever_paid:
-            existing.ever_paid = True
-            logger.info(f"First payment received for user {user_id}")
-    else:
-        subscription = UserSubscription(
-            user_id=user_id,
-            plan_id=plan.id,
-            status=status,
-            stripe_customer_id=customer_id,
-            stripe_subscription_id=subscription_id,
-            current_period_start=period_start,
-            current_period_end=period_end,
-            cancel_at_period_end=stripe_sub.cancel_at_period_end,
-            cancel_at=datetime.fromtimestamp(stripe_sub.cancel_at, tz=dt.UTC) if stripe_sub.cancel_at else None,
-            highest_tier_subscribed=plan.tier,
-            ever_paid=is_paid,
-            created=now,
-            updated=now,
-        )
-        db.add(subscription)
-        if is_paid:
-            logger.info(f"First payment received for user {user_id}")
-
+    # Atomic upsert prevents race with subscription.created/updated webhooks
+    stmt = pg_insert(UserSubscription).values(
+        user_id=user_id,
+        plan_id=plan.id,
+        status=sub_status,
+        stripe_customer_id=customer_id,
+        stripe_subscription_id=subscription_id,
+        current_period_start=period_start,
+        current_period_end=period_end,
+        cancel_at_period_end=stripe_sub.cancel_at_period_end,
+        cancel_at=cancel_at,
+        highest_tier_subscribed=plan.tier,
+        ever_paid=is_paid,
+        created=now,
+        updated=now,
+    )
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["user_id"],
+        set_={
+            "plan_id": stmt.excluded.plan_id,
+            "status": stmt.excluded.status,
+            "stripe_customer_id": stmt.excluded.stripe_customer_id,
+            "stripe_subscription_id": stmt.excluded.stripe_subscription_id,
+            "current_period_start": stmt.excluded.current_period_start,
+            "current_period_end": stmt.excluded.current_period_end,
+            "cancel_at_period_end": stmt.excluded.cancel_at_period_end,
+            "cancel_at": stmt.excluded.cancel_at,
+            "updated": stmt.excluded.updated,
+            # highest_tier_subscribed, ever_paid, created: preserved from existing row
+        },
+    )
+    await db.exec(stmt)
     await db.commit()
-    logger.info(f"Created/updated subscription for user {user_id}: plan={plan_tier}")
+    logger.info(f"Upserted subscription for user {user_id}: plan={plan_tier}")
 
 
 async def _handle_subscription_updated(stripe_sub: stripe.Subscription, db: DbSession) -> None:
-    """Handle subscription updates (plan change, status change, etc.). Creates subscription if not found (upsert)."""
-    result = await db.exec(select(UserSubscription).where(UserSubscription.stripe_subscription_id == stripe_sub.id))
-    subscription = result.first()
+    """Handle subscription updates using user_id as consistent lookup key with atomic upsert for creation."""
+    user_id = stripe_sub.metadata.get("user_id") if stripe_sub.metadata else None
+
+    # Look up by user_id (consistent with checkout handler) or fall back to stripe_subscription_id
+    if user_id:
+        subscription = await db.get(UserSubscription, user_id)
+    else:
+        result = await db.exec(select(UserSubscription).where(UserSubscription.stripe_subscription_id == stripe_sub.id))
+        subscription = result.first()
+        if subscription:
+            user_id = subscription.user_id
 
     first_item = stripe_sub["items"].data[0]
     now = datetime.now(tz=dt.UTC)
     period_start = datetime.fromtimestamp(first_item.current_period_start, tz=dt.UTC)
     period_end = datetime.fromtimestamp(first_item.current_period_end, tz=dt.UTC)
     price_id = first_item.price.id if first_item.price else None
+    cancel_at = datetime.fromtimestamp(stripe_sub.cancel_at, tz=dt.UTC) if stripe_sub.cancel_at else None
+    customer_id = (
+        stripe_sub.customer
+        if isinstance(stripe_sub.customer, str)
+        else (stripe_sub.customer.id if stripe_sub.customer else None)
+    )
 
-    # Upsert: create subscription if not found (handles race condition with checkout.session.completed)
     if not subscription:
-        user_id = stripe_sub.metadata.get("user_id") if stripe_sub.metadata else None
+        # Row doesn't exist - use atomic upsert to create (prevents race with checkout.completed)
         if not user_id:
             logger.error(f"Subscription {stripe_sub.id} not in DB and missing user_id in metadata - cannot create")
             return
-
         if not price_id:
             logger.error(f"Subscription {stripe_sub.id} not in DB and missing price_id - cannot create")
             return
@@ -422,44 +429,51 @@ async def _handle_subscription_updated(stripe_sub: stripe.Subscription, db: DbSe
             logger.error(f"Subscription {stripe_sub.id} not in DB and price {price_id} not found - cannot create")
             return
 
-        customer_id = (
-            stripe_sub.customer
-            if isinstance(stripe_sub.customer, str)
-            else (stripe_sub.customer.id if stripe_sub.customer else None)
-        )
-
-        subscription = UserSubscription(
+        sub_status = _map_stripe_status(stripe_sub.status)
+        stmt = pg_insert(UserSubscription).values(
             user_id=user_id,
             plan_id=plan.id,
-            status=_map_stripe_status(stripe_sub.status),
+            status=sub_status,
             stripe_customer_id=customer_id,
             stripe_subscription_id=stripe_sub.id,
             current_period_start=period_start,
             current_period_end=period_end,
             cancel_at_period_end=stripe_sub.cancel_at_period_end,
-            cancel_at=datetime.fromtimestamp(stripe_sub.cancel_at, tz=dt.UTC) if stripe_sub.cancel_at else None,
+            cancel_at=cancel_at,
             highest_tier_subscribed=plan.tier,
             created=now,
             updated=now,
         )
-        db.add(subscription)
-        await db.commit()
-        logger.info(
-            f"Created subscription for user {user_id} via subscription.updated event (upsert): plan={plan.tier}"
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["user_id"],
+            set_={
+                "plan_id": stmt.excluded.plan_id,
+                "status": stmt.excluded.status,
+                "stripe_customer_id": stmt.excluded.stripe_customer_id,
+                "stripe_subscription_id": stmt.excluded.stripe_subscription_id,
+                "current_period_start": stmt.excluded.current_period_start,
+                "current_period_end": stmt.excluded.current_period_end,
+                "cancel_at_period_end": stmt.excluded.cancel_at_period_end,
+                "cancel_at": stmt.excluded.cancel_at,
+                "updated": stmt.excluded.updated,
+            },
         )
+        await db.exec(stmt)
+        await db.commit()
+        logger.info(f"Upserted subscription for user {user_id} via subscription.updated: plan={plan.tier}")
         return
 
+    # Row exists - apply updates with grace period logic
     old_status = subscription.status
 
     subscription.status = _map_stripe_status(stripe_sub.status)
     subscription.current_period_start = period_start
     subscription.current_period_end = period_end
     subscription.cancel_at_period_end = stripe_sub.cancel_at_period_end
-    subscription.cancel_at = datetime.fromtimestamp(stripe_sub.cancel_at, tz=dt.UTC) if stripe_sub.cancel_at else None
+    subscription.cancel_at = cancel_at
     if stripe_sub.canceled_at:
         subscription.canceled_at = datetime.fromtimestamp(stripe_sub.canceled_at, tz=dt.UTC)
 
-    # Update plan if price changed (handles upgrades/downgrades)
     if price_id:
         plan_result = await db.exec(
             select(Plan).where((Plan.stripe_price_id_monthly == price_id) | (Plan.stripe_price_id_yearly == price_id))
@@ -491,18 +505,25 @@ async def _handle_subscription_updated(stripe_sub: stripe.Subscription, db: DbSe
             logger.info(f"Plan changed: {old_tier} -> {new_plan.tier}")
 
     subscription.updated = now
-
     await db.commit()
-
     logger.info(f"Updated subscription {stripe_sub.id}: status={subscription.status}")
 
 
 async def _handle_subscription_deleted(stripe_sub: stripe.Subscription, db: DbSession) -> None:
-    result = await db.exec(select(UserSubscription).where(UserSubscription.stripe_subscription_id == stripe_sub.id))
-    subscription = result.first()
+    """Handle subscription deletion. Raises if not found to trigger Stripe retry."""
+    user_id = stripe_sub.metadata.get("user_id") if stripe_sub.metadata else None
+
+    # Look up by user_id (consistent key) or fall back to stripe_subscription_id
+    if user_id:
+        subscription = await db.get(UserSubscription, user_id)
+    else:
+        result = await db.exec(select(UserSubscription).where(UserSubscription.stripe_subscription_id == stripe_sub.id))
+        subscription = result.first()
+
     if not subscription:
-        logger.warning(f"Subscription {stripe_sub.id} not found for deletion")
-        return
+        # Raise exception to return 500 — Stripe will retry until checkout.completed creates the row
+        logger.warning(f"Subscription {stripe_sub.id} not found for deletion - Stripe will retry")
+        raise ValueError(f"Subscription {stripe_sub.id} not found")
 
     now = datetime.now(tz=dt.UTC)
     subscription.status = SubscriptionStatus.canceled
@@ -606,20 +627,15 @@ async def _handle_invoice_paid(invoice: stripe.Invoice, db: DbSession) -> None:
         subscription.grace_tier = None
         subscription.grace_until = None
 
-    # Create new usage period if it doesn't exist (idempotency for webhook retries)
-    existing_period = await db.exec(
-        select(UsagePeriod).where(
-            UsagePeriod.user_id == subscription.user_id,
-            UsagePeriod.period_start == subscription.current_period_start,
-        )
+    # Create new usage period using atomic upsert (prevents race on webhook retries)
+    stmt = pg_insert(UsagePeriod).values(
+        user_id=subscription.user_id,
+        period_start=subscription.current_period_start,
+        period_end=subscription.current_period_end,
     )
-    if not existing_period.first():
-        new_period = UsagePeriod(
-            user_id=subscription.user_id,
-            period_start=subscription.current_period_start,
-            period_end=subscription.current_period_end,
-        )
-        db.add(new_period)
+    stmt = stmt.on_conflict_do_nothing(index_elements=["user_id", "period_start"])
+    result = await db.exec(stmt)
+    if result.rowcount > 0:
         logger.info(f"Created new usage period for subscription {subscription_id}")
 
     await db.commit()

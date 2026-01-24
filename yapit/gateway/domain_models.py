@@ -299,7 +299,10 @@ class UsagePeriod(SQLModel, table=True):
     premium_voice_characters: int = Field(default=0)
     ocr_tokens: int = Field(default=0)  # Token equivalents consumed this period
 
-    __table_args__ = (Index("idx_usage_period_user_period", "user_id", "period_start"),)
+    __table_args__ = (
+        UniqueConstraint("user_id", "period_start", name="uq_usage_period_user_period"),
+        Index("idx_usage_period_user_period", "user_id", "period_start"),
+    )
 
 
 class UsageType(StrEnum):
