@@ -1,6 +1,7 @@
 volumes:
   pgdata:
   metricsdata:
+  markxiv-cache:
 
 services:
   # -------- database
@@ -71,6 +72,8 @@ services:
         condition: service_started
       smokescreen:
         condition: service_started
+      markxiv:
+        condition: service_healthy
     restart: unless-stopped
     expose: ["8000"]
     healthcheck:
@@ -104,6 +107,26 @@ services:
   #   image: svix/svix-server
   #   restart: unless-stopped
   #   env_file: ./.env.prod
+
+  # -------- arxiv processor
+  markxiv:
+    init: true
+    build:
+      dockerfile: ./docker/Dockerfile.markxiv
+    restart: unless-stopped
+    environment:
+      PORT: "8080"
+      MARKXIV_CACHE_CAP: "500"
+      MARKXIV_DISK_CACHE_CAP_BYTES: "10737418240"  # 10GB
+      MARKXIV_CACHE_DIR: /cache
+    volumes:
+      - markxiv-cache:/cache
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      start_period: 10s
+      interval: 30s
+      timeout: 3s
+      retries: 3
 
   # -------- workers
   kokoro-cpu:
