@@ -216,7 +216,7 @@ def create_app(
         allow_headers=["*"],
     )
     app.add_middleware(SlowAPIMiddleware)  # type: ignore[arg-type]
-    app.add_middleware(RequestContextMiddleware)
+    app.add_middleware(RequestContextMiddleware)  # type: ignore[arg-type]
 
     @app.exception_handler(RateLimitExceeded)
     async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
