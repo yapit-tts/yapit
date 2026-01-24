@@ -1,5 +1,6 @@
 import { SoundControl } from '@/components/soundControl';
 import { StructuredDocumentView } from '@/components/structuredDocument';
+import { WebGPUWarningBanner } from '@/components/webGPUWarningBanner';
 import { useParams, useLocation, Link, useNavigate } from "react-router";
 import { useRef, useState, useEffect, useLayoutEffect, useCallback, useMemo } from "react";
 import { useApi } from '@/api';
@@ -1398,6 +1399,9 @@ const PlaybackPage = () => {
 
   return (
     <div className="flex grow flex-col">
+      {/* WebGPU warning for users without local TTS capability */}
+      <WebGPUWarningBanner />
+
       {/* Public document import banner */}
       {isPublicView && showImportBanner && (
         <div className="flex items-center justify-between gap-4 bg-muted px-4 py-2 border-b border-border">

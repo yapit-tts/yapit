@@ -25,10 +25,8 @@ function post(message: WorkerMessage, transfer?: Transferable[]) {
 }
 
 async function detectWebGPU(): Promise<boolean> {
-  // @ts-expect-error - WebGPU types not included in lib
   if (!navigator.gpu) return false;
   try {
-    // @ts-expect-error - WebGPU types not included in lib
     const adapter = await navigator.gpu.requestAdapter();
     return adapter !== null;
   } catch {

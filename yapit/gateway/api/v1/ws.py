@@ -1,13 +1,9 @@
 import asyncio
-import base64
-import io
 import json
-import pickle
 import time
 import uuid
 from typing import Literal, cast
 
-import numpy as np
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 from loguru import logger
 from pydantic import BaseModel, ValidationError
@@ -18,13 +14,10 @@ from starlette.applications import Starlette
 from yapit.contracts import (
     MAX_TTS_REQUESTS_PER_MINUTE,
     RATELIMIT_TTS,
-    TTS_INFLIGHT,
     TTS_JOB_INDEX,
     TTS_JOBS,
     TTS_PENDING,
-    TTS_SUBSCRIBERS,
     SynthesisJob,
-    SynthesisParameters,
     get_pubsub_channel,
     get_queue_name,
 )
@@ -32,19 +25,12 @@ from yapit.gateway.auth import authenticate_ws
 from yapit.gateway.cache import Cache
 from yapit.gateway.config import Settings, get_settings
 from yapit.gateway.deps import get_db_session
-from yapit.gateway.domain_models import Block, BlockVariant, Document, TTSModel, UsageType, Voice
-from yapit.gateway.exceptions import UsageLimitExceededError
+from yapit.gateway.domain_models import Block, Document, TTSModel, Voice
 from yapit.gateway.metrics import log_event
 from yapit.gateway.stack_auth.users import User
-from yapit.gateway.usage import check_usage_limit
-from yapit.workers.queue import QueueConfig, push_job
+from yapit.gateway.synthesis import request_synthesis
 
 router = APIRouter(tags=["websocket"])
-
-# HIGGS voice consistency: number of preceding blocks to use for context.
-# 3 was found sufficient in manual testing (experiments/test_higgs_context_fixed.py)
-CONTEXT_BUFFER_SIZE = 3
-
 
 SynthesisMode = Literal["browser", "server"]
 BlockStatus = Literal["queued", "processing", "cached", "skipped", "error"]
@@ -134,7 +120,6 @@ async def tts_websocket(
 
 
 async def _get_model_and_voice(db, model_slug: str, voice_slug: str) -> tuple[TTSModel, Voice]:
-    """Fetch model and voice from DB."""
     model = (await db.exec(select(TTSModel).where(TTSModel.slug == model_slug))).first()
     if not model:
         raise ValueError(f"Model {model_slug!r} not found")
@@ -144,105 +129,6 @@ async def _get_model_and_voice(db, model_slug: str, voice_slug: str) -> tuple[TT
         raise ValueError(f"Voice {voice_slug!r} not found for model {model_slug!r}")
 
     return model, voice
-
-
-async def _queue_synthesis_job(
-    db,
-    redis: Redis,
-    cache: Cache,
-    user: User,
-    block: Block,
-    model: TTSModel,
-    voice: Voice,
-    variant_hash: str,
-    variant: BlockVariant | None,
-) -> str:
-    """Queue a synthesis job for an uncached block. Returns variant_hash.
-
-    Caller must check cache first and only call this for uncached blocks.
-    """
-    served_codec = model.native_codec
-
-    if variant is None:
-        variant = BlockVariant(
-            hash=variant_hash,
-            model_id=model.id,
-            voice_id=voice.id,
-        )
-        db.add(variant)
-        await db.commit()
-
-    # Track this block as subscriber to be notified when synthesis completes
-    subscriber_key = TTS_SUBSCRIBERS.format(hash=variant_hash)
-    subscriber_entry = f"{user.id}:{block.document_id}:{block.idx}"
-    await redis.sadd(subscriber_key, subscriber_entry)
-    await redis.expire(subscriber_key, 600)
-
-    # Already processing - we're now subscribed and will be notified
-    if await redis.exists(TTS_INFLIGHT.format(hash=variant_hash)):
-        return variant_hash
-    # TTL covers max time in system (queue wait + processing + retries) with buffer.
-    # Increase if visibility/overflow/retry timeouts are raised significantly.
-    await redis.set(TTS_INFLIGHT.format(hash=variant_hash), 1, ex=200, nx=True)
-
-    context_tokens = None
-    if model.slug.startswith("higgs"):
-        context_tokens = await _build_context_tokens(
-            db=db,
-            cache=cache,
-            document_id=block.document_id,
-            current_block_idx=block.idx,
-            model=model,
-            voice=voice,
-            codec=served_codec,
-        )
-
-    job = SynthesisJob(
-        job_id=uuid.uuid4(),
-        variant_hash=variant_hash,
-        user_id=user.id,
-        document_id=block.document_id,
-        block_idx=block.idx,
-        model_slug=model.slug,
-        voice_slug=voice.slug,
-        usage_multiplier=model.usage_multiplier,
-        synthesis_parameters=SynthesisParameters(
-            model=model.slug,
-            voice=voice.slug,
-            text=block.text,
-            kwargs=voice.parameters,
-            codec=served_codec,
-            context_tokens=context_tokens,
-        ),
-    )
-
-    job_id = str(job.job_id)
-    queue_name = get_queue_name(model.slug)
-    index_key = f"{user.id}:{block.document_id}:{block.idx}"
-
-    pending_key = TTS_PENDING.format(user_id=user.id, document_id=block.document_id)
-    await redis.sadd(pending_key, block.idx)
-    await redis.expire(pending_key, 600)
-
-    # Queue: sorted set (job_id -> timestamp) + hash (job_id -> wrapped job) + index (block -> job_id)
-    tts_config = QueueConfig(queue_name=queue_name, jobs_key=TTS_JOBS, job_index_key=TTS_JOB_INDEX)
-    await push_job(redis, tts_config, job_id, job.model_dump_json().encode(), index_key=index_key)
-
-    queue_depth = await redis.zcard(queue_name)
-    await log_event(
-        "synthesis_queued",
-        variant_hash=variant_hash,
-        model_slug=model.slug,
-        voice_slug=voice.slug,
-        text_length=len(block.text),
-        user_id=user.id,
-        document_id=str(block.document_id),
-        block_idx=block.idx,
-        queue_depth=queue_depth,
-        queue_type="tts",
-    )
-
-    return variant_hash
 
 
 async def _handle_synthesize(
@@ -284,9 +170,6 @@ async def _handle_synthesize(
 
         block_map = {b.idx: b for b in blocks}
 
-        # Process each block: check cache → check budget → queue (per-block)
-        usage_type = UsageType.server_kokoro if model.slug.startswith("kokoro") else UsageType.premium_voice
-
         for idx in msg.block_indices:
             block = block_map.get(idx)
             if not block:
@@ -303,77 +186,34 @@ async def _handle_synthesize(
                 continue
 
             try:
-                # Check cache first (without queuing)
-                served_codec = model.native_codec
-                variant_hash = BlockVariant.get_hash(
+                result = await request_synthesis(
+                    db=db,
+                    redis=redis,
+                    cache=cache,
+                    user_id=user.id,
                     text=block.text,
-                    model_slug=model.slug,
-                    voice_slug=voice.slug,
-                    codec=served_codec,
-                    parameters=voice.parameters,
+                    model=model,
+                    voice=voice,
+                    synthesis_mode=msg.synthesis_mode,
+                    billing_enabled=settings.billing_enabled,
+                    document_id=msg.document_id,
+                    block_idx=idx,
+                    track_for_websocket=True,
                 )
-                variant = (await db.exec(select(BlockVariant).where(BlockVariant.hash == variant_hash))).first()
-                cached_data = await cache.retrieve_data(variant_hash)
-                is_cached = cached_data is not None and variant is not None
-
-                if is_cached:
-                    await log_event(
-                        "cache_hit",
-                        variant_hash=variant_hash,
-                        model_slug=model.slug,
-                        voice_slug=voice.slug,
-                        user_id=user.id,
-                        document_id=str(msg.document_id),
-                        block_idx=idx,
-                    )
-                    await ws.send_json(
-                        WSBlockStatus(
-                            document_id=msg.document_id,
-                            block_idx=idx,
-                            status="cached",
-                            audio_url=f"/v1/audio/{variant_hash}",
-                            model_slug=model.slug,
-                            voice_slug=voice.slug,
-                        ).model_dump(mode="json")
-                    )
-                    continue
-
-                # Check usage limit BEFORE queuing, only for uncached server-side synthesis
-                if msg.synthesis_mode != "browser":
-                    block_chars = int(len(block.text) * model.usage_multiplier)
-                    await check_usage_limit(
-                        user.id,
-                        usage_type,
-                        block_chars,
-                        db,
-                        billing_enabled=settings.billing_enabled,
-                    )
-
-                # Queue for synthesis (not cached)
-                await _queue_synthesis_job(db, redis, cache, user, block, model, voice, variant_hash, variant)
 
                 await ws.send_json(
                     WSBlockStatus(
                         document_id=msg.document_id,
                         block_idx=idx,
-                        status="queued",
-                        model_slug=model.slug,
-                        voice_slug=voice.slug,
-                    ).model_dump(mode="json")
-                )
-            except UsageLimitExceededError as e:
-                await ws.send_json(
-                    WSBlockStatus(
-                        document_id=msg.document_id,
-                        block_idx=idx,
-                        status="error",
-                        error=str(e),
+                        status=result.status,
+                        audio_url=result.audio_url,
+                        error=getattr(result, "error", None),
                         model_slug=model.slug,
                         voice_slug=voice.slug,
                     ).model_dump(mode="json")
                 )
             except Exception as e:
-                logger.error(f"Failed to queue block {idx}: {e}")
+                logger.error(f"Failed to process block {idx}: {e}")
                 await ws.send_json(
                     WSBlockStatus(
                         document_id=msg.document_id,
@@ -474,54 +314,3 @@ async def _pubsub_listener(ws: WebSocket, redis: Redis, user_id: str):
     finally:
         await pubsub.unsubscribe(channel)
         await pubsub.close()
-
-
-async def _build_context_tokens(
-    db,
-    cache: Cache,
-    document_id: uuid.UUID,
-    current_block_idx: int,
-    model: TTSModel,
-    voice: Voice,
-    codec: str,
-) -> str | None:
-    """Build serialized context tokens from preceding blocks for HIGGS voice consistency."""
-    if current_block_idx == 0:
-        return None
-
-    start_idx = max(0, current_block_idx - CONTEXT_BUFFER_SIZE)
-    result = await db.exec(
-        select(Block)
-        .where(Block.document_id == document_id)
-        .where(Block.idx >= start_idx)
-        .where(Block.idx < current_block_idx)
-        .order_by(col(Block.idx))
-    )
-    preceding_blocks = result.all()
-
-    if not preceding_blocks:
-        return None
-
-    context_items: list[tuple[str, np.ndarray]] = []
-    for blk in preceding_blocks:
-        variant_hash = BlockVariant.get_hash(
-            text=blk.text,
-            model_slug=model.slug,
-            voice_slug=voice.slug,
-            codec=codec,
-            parameters=voice.parameters,
-        )
-        token_data = await cache.retrieve_data(f"{variant_hash}:tokens")
-        if token_data is None:
-            continue
-        b64_str = token_data.decode("utf-8")
-        buffer = io.BytesIO(base64.b64decode(b64_str))
-        arr = np.load(buffer, allow_pickle=False)
-        context_items.append((blk.text, arr))
-
-    if not context_items:
-        return None
-
-    buffer = io.BytesIO()
-    pickle.dump(context_items, buffer)
-    return base64.b64encode(buffer.getvalue()).decode("utf-8")

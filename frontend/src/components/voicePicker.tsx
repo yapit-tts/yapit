@@ -1,5 +1,6 @@
-import { useState, useEffect, useMemo, memo, startTransition } from "react";
-import { ChevronDown, Star, ChevronRight, Monitor, Cloud, Loader2, Info, Lock } from "lucide-react";
+import { useState, useEffect, useMemo, memo, startTransition, useRef, useCallback } from "react";
+import { ChevronDown, Star, ChevronRight, Monitor, Cloud, Loader2, Info, Play, Square } from "lucide-react";
+import { useApi } from "@/api";
 
 // HIGGS backend is flaky and more expensive than Inworld - hide for now
 const SHOW_HIGGS_TAB = false;
@@ -43,11 +44,75 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
   // Fetch Inworld voices from API
   const { voices: inworldVoices, isLoading: inworldLoading } = useInworldVoices();
 
-  // Subscription state for gating Cloud/Inworld features
-  const { canUseCloudKokoro, canUseInworld, isLoading: subLoading } = useSubscription();
+  // Subscription state for auto-switching subscribers to Cloud
+  const { canUseCloudKokoro, isLoading: subLoading } = useSubscription();
 
   // Use synced preferences (cross-device sync for authenticated users)
   const { pinnedVoices, togglePinnedVoice } = useUserPreferences();
+
+  // Voice preview audio playback
+  const { api } = useApi();
+  const previewAudioRef = useRef<HTMLAudioElement | null>(null);
+  const [previewingVoice, setPreviewingVoice] = useState<string | null>(null); // "model:voice" key
+  const sentenceIdxRef = useRef(0);
+  const requestIdRef = useRef(0);
+
+  const playPreview = useCallback(async (modelSlug: string, voiceSlug: string) => {
+    const key = `${modelSlug}:${voiceSlug}`;
+    const currentRequestId = ++requestIdRef.current;
+
+    // Stop current preview if any
+    if (previewAudioRef.current) {
+      previewAudioRef.current.pause();
+      URL.revokeObjectURL(previewAudioRef.current.src);
+      previewAudioRef.current = null;
+    }
+
+    // If clicking same voice that's playing, just stop
+    if (previewingVoice === key) {
+      setPreviewingVoice(null);
+      return;
+    }
+
+    setPreviewingVoice(key);
+    const idx = sentenceIdxRef.current;
+    sentenceIdxRef.current = (idx + 1) % 5;
+
+    try {
+      const { data } = await api.get<{ audio_url: string | null; error: string | null }>(`/v1/models/${modelSlug}/voices/${voiceSlug}/preview`, {
+        params: { sentence_idx: idx },
+      });
+
+      // Ignore stale response if user clicked another voice
+      if (currentRequestId !== requestIdRef.current) return;
+
+      if (!data.audio_url) {
+        console.error("Voice preview failed:", data.error);
+        setPreviewingVoice(null);
+        return;
+      }
+      const audioResponse = await api.get(data.audio_url, { responseType: "blob" });
+
+      if (currentRequestId !== requestIdRef.current) return;
+
+      const blobUrl = URL.createObjectURL(audioResponse.data);
+      const audio = new Audio(blobUrl);
+      previewAudioRef.current = audio;
+      audio.onended = () => {
+        setPreviewingVoice(null);
+        URL.revokeObjectURL(blobUrl);
+      };
+      audio.onerror = () => {
+        setPreviewingVoice(null);
+        URL.revokeObjectURL(blobUrl);
+      };
+      await audio.play();
+    } catch {
+      if (currentRequestId === requestIdRef.current) {
+        setPreviewingVoice(null);
+      }
+    }
+  }, [api, previewingVoice]);
 
   // Default subscribers to Cloud on first load
   useEffect(() => {
@@ -232,21 +297,7 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
         <Tabs value={activeTab} onValueChange={handleModelChange}>
           <TabsList className="w-full h-11 rounded-none border-b">
             <TabsTrigger value="kokoro" className="flex-1 text-sm py-2.5">Kokoro</TabsTrigger>
-            {canUseInworld ? (
-              <TabsTrigger value="inworld" className="flex-1 text-sm py-2.5">Inworld</TabsTrigger>
-            ) : (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span className="flex-1 inline-flex items-center justify-center text-sm py-2.5 text-muted-foreground/50 cursor-not-allowed">
-                    <Lock className="h-3 w-3 mr-1" />
-                    Inworld
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">
-                  <p>Requires Plus or Max subscription</p>
-                </TooltipContent>
-              </Tooltip>
-            )}
+            <TabsTrigger value="inworld" className="flex-1 text-sm py-2.5">Inworld</TabsTrigger>
             {SHOW_HIGGS_TAB && <TabsTrigger value="higgs" className="flex-1 text-sm py-2.5">HIGGS</TabsTrigger>}
           </TabsList>
 
@@ -277,32 +328,15 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
                   <Monitor className="h-4 w-4" />
                   Local
                 </button>
-                {canUseCloudKokoro ? (
-                  <button
-                    onClick={() => !isKokoroServer && handleKokoroSourceToggle()}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-r-md transition-colors ${
-                      isKokoroServer ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
-                    }`}
-                  >
-                    <Cloud className="h-4 w-4" />
-                    Cloud
-                  </button>
-                ) : (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button
-                        className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-r-md text-muted-foreground/50 cursor-not-allowed"
-                        disabled
-                      >
-                        <Lock className="h-3.5 w-3.5" />
-                        Cloud
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent side="top">
-                      <p>Requires subscription</p>
-                    </TooltipContent>
-                  </Tooltip>
-                )}
+                <button
+                  onClick={() => !isKokoroServer && handleKokoroSourceToggle()}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-r-md transition-colors ${
+                    isKokoroServer ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <Cloud className="h-4 w-4" />
+                  Cloud
+                </button>
               </div>
             </div>
             {/* Starred section */}
@@ -318,8 +352,10 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
                     gender={voice.gender}
                     isPinned={true}
                     isSelected={value.voiceSlug === voice.index}
+                    isPlaying={previewingVoice === `kokoro:${voice.index}`}
                     onSelect={() => handleVoiceSelect(voice.index)}
                     onPinToggle={() => togglePinnedVoice(voice.index)}
+                    onPreviewClick={() => playPreview("kokoro", voice.index)}
                   />
                 ))}
               </div>
@@ -348,8 +384,10 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
                       gender={voice.gender}
                       isPinned={pinnedVoices.includes(voice.index)}
                       isSelected={value.voiceSlug === voice.index}
+                      isPlaying={previewingVoice === `kokoro:${voice.index}`}
                       onSelect={() => handleVoiceSelect(voice.index)}
                       onPinToggle={() => togglePinnedVoice(voice.index)}
+                      onPreviewClick={() => playPreview("kokoro", voice.index)}
                     />
                   ))}
                 </CollapsibleContent>
@@ -412,8 +450,10 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
                         detail={voice.description ?? undefined}
                         isPinned={true}
                         isSelected={value.voiceSlug === voice.slug}
+                        isPlaying={previewingVoice === `inworld:${voice.slug}`}
                         onSelect={() => handleVoiceSelect(voice.slug)}
                         onPinToggle={() => togglePinnedVoice(voice.slug)}
+                        onPreviewClick={() => playPreview("inworld", voice.slug)}
                       />
                     ))}
                   </div>
@@ -441,8 +481,10 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
                           detail={voice.description ?? undefined}
                           isPinned={pinnedVoices.includes(voice.slug)}
                           isSelected={value.voiceSlug === voice.slug}
+                          isPlaying={previewingVoice === `inworld:${voice.slug}`}
                           onSelect={() => handleVoiceSelect(voice.slug)}
                           onPinToggle={() => togglePinnedVoice(voice.slug)}
+                          onPreviewClick={() => playPreview("inworld", voice.slug)}
                         />
                       ))}
                     </CollapsibleContent>
@@ -465,8 +507,10 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
                       detail={preset.description}
                       isPinned={true}
                       isSelected={value.voiceSlug === preset.slug}
+                      isPlaying={previewingVoice === `higgs:${preset.slug}`}
                       onSelect={() => handleVoiceSelect(preset.slug)}
                       onPinToggle={() => togglePinnedVoice(preset.slug)}
+                      onPreviewClick={() => playPreview("higgs", preset.slug)}
                     />
                   ))}
                 </div>
@@ -482,8 +526,10 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
                     detail={preset.description}
                     isPinned={pinnedVoices.includes(preset.slug)}
                     isSelected={value.voiceSlug === preset.slug}
+                    isPlaying={previewingVoice === `higgs:${preset.slug}`}
                     onSelect={() => handleVoiceSelect(preset.slug)}
                     onPinToggle={() => togglePinnedVoice(preset.slug)}
+                    onPreviewClick={() => playPreview("higgs", preset.slug)}
                   />
                 ))}
               </div>
@@ -543,48 +589,55 @@ interface VoiceRowProps {
   gender?: "Female" | "Male"; // for Kokoro
   isPinned: boolean;
   isSelected: boolean;
+  isPlaying?: boolean; // preview is playing
   onSelect: () => void;
   onPinToggle: () => void;
+  onPreviewClick?: () => void;
 }
 
-// Memoized to prevent re-renders when only function props change
-const VoiceRow = memo(function VoiceRow({ name, flag, detail, isHighQuality, gender, isPinned, isSelected, onSelect, onPinToggle }: VoiceRowProps) {
-  // Two-line layout for voices with descriptions (Inworld)
-  // Single-line layout for voices without descriptions (Kokoro)
-  const hasTwoLineLayout = !!detail;
-
+const VoiceRow = memo(function VoiceRow({ name, flag, detail, isHighQuality, gender, isPinned, isSelected, isPlaying, onSelect, onPinToggle, onPreviewClick }: VoiceRowProps) {
   return (
     <div
       className={`flex gap-1 px-2 py-1 cursor-pointer hover:bg-accent ${isSelected ? "bg-accent" : ""} items-center`}
       onClick={onSelect}
     >
+      {onPreviewClick && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onPreviewClick();
+          }}
+          className="p-1 text-muted-foreground hover:text-foreground flex-shrink-0 touch-manipulation"
+          title="Preview voice"
+        >
+          {isPlaying ? <Square className="h-4 w-4 fill-current" /> : <Play className="h-4 w-4" />}
+        </button>
+      )}
+      {detail ? (
+        <div className="flex-1 min-w-0 py-0.5">
+          <div className="flex items-center gap-2">
+            {flag && <span className="text-sm">{flag}</span>}
+            <span className="text-sm font-medium">{name}</span>
+          </div>
+          <p className="text-xs text-muted-foreground leading-snug">{detail}</p>
+        </div>
+      ) : (
+        <div className="flex-1 flex items-center gap-2 py-0.5">
+          {flag && <span className="text-sm">{flag}</span>}
+          <span className="text-sm">{name}</span>
+          {isHighQuality && <span className="text-xs" title="High quality">✨</span>}
+          {gender && <span className="text-xs text-muted-foreground">{gender === "Female" ? "♀" : "♂"}</span>}
+        </div>
+      )}
       <button
         onClick={(e) => {
           e.stopPropagation();
           onPinToggle();
         }}
-        className="p-2 -m-1 text-muted-foreground hover:text-foreground flex-shrink-0 touch-manipulation"
+        className="p-1.5 text-muted-foreground hover:text-foreground flex-shrink-0 touch-manipulation"
       >
-        <Star className={`h-4 w-4 ${isPinned ? "fill-current text-yellow-500" : ""}`} />
+        <Star className={`h-5 w-5 ${isPinned ? "fill-current text-yellow-500" : ""}`} />
       </button>
-      {hasTwoLineLayout ? (
-        <div className="flex-1 min-w-0 py-1.5 pl-1">
-          <div className="flex items-center gap-2">
-            {flag && <span className="text-sm">{flag}</span>}
-            <span className="text-base font-medium">{name}</span>
-          </div>
-          <p className="text-sm text-muted-foreground mt-0.5 leading-snug">{detail}</p>
-        </div>
-      ) : (
-        <>
-          <span className="text-base flex-1 flex items-center gap-2 py-1.5 pl-1">
-            {flag && <span className="text-sm">{flag}</span>}
-            {name}
-            {isHighQuality && <span className="text-sm" title="High quality">✨</span>}
-          </span>
-          {gender && <span className="text-sm text-muted-foreground pr-2">{gender === "Female" ? "♀" : "♂"}</span>}
-        </>
-      )}
     </div>
   );
 }, (prev, next) => {
@@ -595,5 +648,6 @@ const VoiceRow = memo(function VoiceRow({ name, flag, detail, isHighQuality, gen
     prev.isHighQuality === next.isHighQuality &&
     prev.gender === next.gender &&
     prev.isPinned === next.isPinned &&
-    prev.isSelected === next.isSelected;
+    prev.isSelected === next.isSelected &&
+    prev.isPlaying === next.isPlaying;
 });
