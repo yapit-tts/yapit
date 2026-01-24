@@ -34,6 +34,8 @@ interface SubscriptionInfo {
   current_period_start: string;
   current_period_end: string;
   cancel_at_period_end: boolean;
+  cancel_at: string | null;
+  is_canceling: boolean;
   grace_tier: PlanTier | null;
   grace_until: string | null;
 }
@@ -173,7 +175,8 @@ const SubscriptionPage = () => {
   const isCanceled = subscription?.subscription?.status === "canceled";
   const isSubscribed = !!subscription?.subscription && !isCanceled;
   const isTrialing = subscription?.subscription?.status === "trialing";
-  const isCanceling = subscription?.subscription?.cancel_at_period_end && !isCanceled;
+  const isCanceling = subscription?.subscription?.is_canceling && !isCanceled;
+  const cancelAt = subscription?.subscription?.cancel_at;
   const graceTier = subscription?.subscription?.grace_tier;
   const graceUntil = subscription?.subscription?.grace_until;
 
@@ -223,10 +226,10 @@ const SubscriptionPage = () => {
                   )}
                 </CardTitle>
                 <CardDescription>
-                  {isTrialing
+                  {isCanceling
+                    ? `Access until ${new Date(cancelAt || subscription.subscription!.current_period_end).toLocaleDateString()}`
+                    : isTrialing
                     ? `Trial ends in ${getDaysRemaining(subscription.subscription!.current_period_end)} days`
-                    : isCanceling
-                    ? `Access until ${new Date(subscription.subscription!.current_period_end).toLocaleDateString()}`
                     : graceTier && graceUntil
                     ? `${graceTier.charAt(0).toUpperCase() + graceTier.slice(1)} access until ${new Date(graceUntil).toLocaleDateString()}`
                     : `Renews ${new Date(subscription.subscription!.current_period_end).toLocaleDateString()}`}
