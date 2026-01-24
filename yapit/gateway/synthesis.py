@@ -26,8 +26,6 @@ from yapit.gateway.metrics import log_event
 from yapit.gateway.usage import check_usage_limit
 from yapit.workers.queue import QueueConfig, push_job
 
-PREVIEW_DOCUMENT_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
-
 
 @dataclass
 class CachedResult:
@@ -222,6 +220,8 @@ async def synthesize_and_wait(
     model: TTSModel,
     voice: Voice,
     billing_enabled: bool,
+    document_id: uuid.UUID,
+    block_idx: int,
     timeout_seconds: float,
     poll_interval: float,
 ) -> SynthesisResult:
@@ -236,8 +236,8 @@ async def synthesize_and_wait(
         voice=voice,
         synthesis_mode="server",
         billing_enabled=billing_enabled,
-        document_id=PREVIEW_DOCUMENT_ID,
-        block_idx=0,
+        document_id=document_id,
+        block_idx=block_idx,
         track_for_websocket=False,
     )
 

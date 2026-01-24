@@ -1,3 +1,4 @@
+import uuid
 from typing import List, cast
 
 from fastapi import APIRouter, Depends, Query
@@ -12,7 +13,8 @@ from yapit.gateway.synthesis import synthesize_and_wait
 
 router = APIRouter(prefix="/v1/models", tags=["Models"])
 
-# Voice preview sentences — cycled through on each click in UI
+VOICE_PREVIEW_DOCUMENT_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
+
 VOICE_PREVIEW_SENTENCES = [
     "Hello, this is a sample of my voice.",
     "The quick brown fox jumps over the lazy dog.",
@@ -138,6 +140,8 @@ async def get_voice_preview(
         model=model,
         voice=voice,
         billing_enabled=settings.billing_enabled,
+        document_id=VOICE_PREVIEW_DOCUMENT_ID,
+        block_idx=sentence_idx,
         timeout_seconds=15.0,
         poll_interval=0.1,
     )
