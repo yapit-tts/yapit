@@ -40,17 +40,16 @@ make migration-new MSG="description"
 
 After generating: `make dev-cpu` to restart and apply.
 
-**Enum gotcha:** `ALTER TYPE ADD VALUE` requires autocommit. Use Alembic's `autocommit_block`:
+**Enum gotcha:** `ALTER TYPE ADD VALUE` requires autocommit. Use `op.get_context().autocommit_block()`:
 
 ```python
-from alembic.runtime.migration import MigrationContext
-
 def upgrade() -> None:
-    ctx = MigrationContext.configure(op.get_bind())
-    with ctx.autocommit_block():
+    with op.get_context().autocommit_block():
         op.execute("ALTER TYPE myenum ADD VALUE IF NOT EXISTS 'newval'")
     op.execute("UPDATE mytable SET col = 'newval' WHERE ...")
 ```
+
+Ref: https://github.com/sqlalchemy/alembic/discussions/1578
 
 ## Deploying
 

@@ -12,7 +12,6 @@ ocr_tokens, causing "invalid input value for enum usagetype: ocr_tokens" errors.
 from typing import Sequence, Union
 
 from alembic import op
-from alembic.runtime.migration import MigrationContext
 
 revision: str = "a1b2c3d4e5f6"
 down_revision: Union[str, None] = "1a82735db431"
@@ -21,8 +20,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    ctx = MigrationContext.configure(op.get_bind())
-    with ctx.autocommit_block():
+    with op.get_context().autocommit_block():
         op.execute("ALTER TYPE usagetype ADD VALUE IF NOT EXISTS 'ocr_tokens'")
 
     op.execute("UPDATE usagelog SET type = 'ocr_tokens' WHERE type = 'ocr'")
