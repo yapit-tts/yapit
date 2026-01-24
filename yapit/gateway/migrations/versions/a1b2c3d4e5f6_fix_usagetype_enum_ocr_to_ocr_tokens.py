@@ -21,12 +21,12 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # ALTER TYPE ADD VALUE: new value isn't usable until transaction commits.
-    # Commit current transaction, add value, start new transaction for UPDATE.
+    # ALTER TYPE ADD VALUE can't run inside a transaction.
+    # Switch to AUTOCOMMIT, add value, switch back for the UPDATE.
     conn = op.get_bind()
-    conn.execute(text("COMMIT"))
+    conn.execution_options(isolation_level="AUTOCOMMIT")
     conn.execute(text("ALTER TYPE usagetype ADD VALUE IF NOT EXISTS 'ocr_tokens'"))
-    conn.execute(text("BEGIN"))
+    conn.execution_options(isolation_level="READ COMMITTED")
     op.execute("UPDATE usagelog SET type = 'ocr_tokens' WHERE type = 'ocr'")
 
 

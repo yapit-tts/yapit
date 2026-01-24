@@ -34,11 +34,21 @@ make migration-new MSG="description"
 | Renames show as drop + create | Autogenerate can't detect renames | Manual `op.rename_table()` or `op.alter_column()` |
 | Table drops not generated | Deleted model = not in `MANAGED_TABLES` = ignored | Manual `op.drop_table()` |
 | Data migrations missing | Autogenerate only handles schema | Add `op.execute()` for data changes |
-| Enum changes broken | Autogenerate doesn't detect enum value changes | `ALTER TYPE x ADD VALUE 'y'` in migration |
+| Enum changes broken | Autogenerate doesn't detect enum value changes | See "Enum gotcha" below |
 | Column constraint fails on prod | Existing data may violate new constraint | Check prod data first: `SELECT ... WHERE length(col) > N` |
 | NOT NULL column on existing table | Prod has rows, can't add NOT NULL without default | Use `server_default=sa.false()` then `op.alter_column(..., server_default=None)` |
 
 After generating: `make dev-cpu` to restart and apply.
+
+**Enum gotcha:** `ALTER TYPE ADD VALUE` can't run inside a transaction. Use AUTOCOMMIT:
+
+```python
+conn = op.get_bind()
+conn.execution_options(isolation_level="AUTOCOMMIT")
+conn.execute(text("ALTER TYPE myenum ADD VALUE IF NOT EXISTS 'newval'"))
+conn.execution_options(isolation_level="READ COMMITTED")
+op.execute("UPDATE mytable SET col = 'newval' WHERE ...")
+```
 
 ## Deploying
 
