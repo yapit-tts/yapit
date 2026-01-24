@@ -12,6 +12,7 @@ ocr_tokens, causing "invalid input value for enum usagetype: ocr_tokens" errors.
 from typing import Sequence, Union
 
 from alembic import op
+from sqlalchemy import text
 
 revision: str = "a1b2c3d4e5f6"
 down_revision: Union[str, None] = "1a82735db431"
@@ -20,7 +21,12 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.execute("ALTER TYPE usagetype ADD VALUE IF NOT EXISTS 'ocr_tokens'")
+    # ALTER TYPE ADD VALUE: new value isn't usable until transaction commits.
+    # Commit current transaction, add value, start new transaction for UPDATE.
+    conn = op.get_bind()
+    conn.execute(text("COMMIT"))
+    conn.execute(text("ALTER TYPE usagetype ADD VALUE IF NOT EXISTS 'ocr_tokens'"))
+    conn.execute(text("BEGIN"))
     op.execute("UPDATE usagelog SET type = 'ocr_tokens' WHERE type = 'ocr'")
 
 
