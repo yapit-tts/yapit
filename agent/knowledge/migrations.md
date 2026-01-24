@@ -40,14 +40,16 @@ make migration-new MSG="description"
 
 After generating: `make dev-cpu` to restart and apply.
 
-**Enum gotcha:** `ALTER TYPE ADD VALUE` can't run inside a transaction. Use AUTOCOMMIT:
+**Enum gotcha:** `ALTER TYPE ADD VALUE` requires autocommit. Use Alembic's `autocommit_block`:
 
 ```python
-conn = op.get_bind()
-conn.execution_options(isolation_level="AUTOCOMMIT")
-conn.execute(text("ALTER TYPE myenum ADD VALUE IF NOT EXISTS 'newval'"))
-conn.execution_options(isolation_level="READ COMMITTED")
-op.execute("UPDATE mytable SET col = 'newval' WHERE ...")
+from alembic.runtime.migration import MigrationContext
+
+def upgrade() -> None:
+    ctx = MigrationContext.configure(op.get_bind())
+    with ctx.autocommit_block():
+        op.execute("ALTER TYPE myenum ADD VALUE IF NOT EXISTS 'newval'")
+    op.execute("UPDATE mytable SET col = 'newval' WHERE ...")
 ```
 
 ## Deploying
