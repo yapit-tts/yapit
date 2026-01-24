@@ -33,8 +33,8 @@ make migration-new MSG="description"
 |-------|-----|-----|
 | Renames show as drop + create | Autogenerate can't detect renames | Manual `op.rename_table()` or `op.alter_column()` |
 | Table drops not generated | Deleted model = not in `MANAGED_TABLES` = ignored | Manual `op.drop_table()` |
-| Data migrations missing | Autogenerate only handles schema | Add manual data migration code |
-| Enum changes broken | Postgres enum handling is tricky | Manual enum ops |
+| Data migrations missing | Autogenerate only handles schema | Add `op.execute()` for data changes |
+| Enum changes broken | Autogenerate doesn't detect enum value changes | `ALTER TYPE x ADD VALUE 'y'` in migration |
 | Column constraint fails on prod | Existing data may violate new constraint | Check prod data first: `SELECT ... WHERE length(col) > N` |
 | NOT NULL column on existing table | Prod has rows, can't add NOT NULL without default | Use `server_default=sa.false()` then `op.alter_column(..., server_default=None)` |
 
