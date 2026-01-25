@@ -152,7 +152,7 @@ async def _handle_synthesize(
     async for db in get_db_session(settings):
         # Validate document ownership
         doc = (await db.exec(select(Document).where(Document.id == msg.document_id))).first()
-        if not doc or doc.user_id != user.id:
+        if not doc or (doc.user_id != user.id and not doc.is_public):
             await ws.send_json({"type": "error", "error": "Document not found or access denied"})
             return
 
