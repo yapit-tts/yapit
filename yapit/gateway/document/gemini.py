@@ -45,7 +45,7 @@ FALLBACK_OUTPUT_TOKENS_PER_PAGE = 1000
 
 def create_gemini_config(
     resolution: str = "high",
-    prompt_version: str = "v6",  # bump for prompt/processing changes to invalidate cached extractions
+    prompt_version: str = "v7",  # bump for prompt/processing changes to invalidate cached extractions
 ) -> ProcessorConfig:
     return ProcessorConfig(
         slug="gemini",

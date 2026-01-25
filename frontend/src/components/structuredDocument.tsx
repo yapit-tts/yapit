@@ -21,13 +21,35 @@ function generateSlug(text: string): string {
     .replace(/^-|-$/g, ""); // Trim leading/trailing hyphens
 }
 
+// Extract plain text from AST for slug generation
+function extractTextFromAst(nodes: InlineContent[]): string {
+  return nodes.map(node => {
+    switch (node.type) {
+      case "text":
+      case "code_span":
+        return node.content;
+      case "strong":
+      case "emphasis":
+      case "link":
+        return extractTextFromAst(node.content);
+      case "inline_image":
+        return node.alt;
+      case "math_inline":
+        return ""; // Math doesn't contribute to slug
+      default:
+        return "";
+    }
+  }).join("");
+}
+
 function buildSlugMap(blocks: ContentBlock[]): Map<string, string> {
   const slugMap = new Map<string, string>();
   const slugCounts = new Map<string, number>();
 
   for (const block of blocks) {
     if (block.type === "heading") {
-      const baseSlug = generateSlug(block.plain_text);
+      const plainText = extractTextFromAst(block.ast);
+      const baseSlug = generateSlug(plainText);
       if (!baseSlug) continue;
 
       const count = slugCounts.get(baseSlug) || 0;
@@ -42,19 +64,24 @@ function buildSlugMap(blocks: ContentBlock[]): Map<string, string> {
 
 // === TypeScript types matching backend Pydantic models ===
 
+interface AudioChunk {
+  text: string;
+  audio_block_idx: number;
+}
+
 type InlineContent =
   | { type: "text"; content: string }
+  | { type: "code_span"; content: string }
   | { type: "strong"; content: InlineContent[] }
   | { type: "emphasis"; content: InlineContent[] }
-  | { type: "code"; content: string }
   | { type: "link"; href: string; title?: string; content: InlineContent[] }
-  | { type: "image"; src: string; alt: string };
+  | { type: "inline_image"; src: string; alt: string }
+  | { type: "math_inline"; content: string };
 
 interface ListItem {
   html: string;
   ast: InlineContent[];
-  plain_text: string;
-  audio_block_idx: number | null;
+  audio_chunks: AudioChunk[];
 }
 
 interface HeadingBlock {
@@ -63,18 +90,15 @@ interface HeadingBlock {
   level: 1 | 2 | 3 | 4 | 5 | 6;
   html: string;
   ast: InlineContent[];
-  plain_text: string;
-  audio_block_idx: number | null;
+  audio_chunks: AudioChunk[];
 }
 
 interface ParagraphBlock {
   type: "paragraph";
   id: string;
-  html: string;
+  html: string;  // Contains <span data-audio-idx="N"> wrappers if split
   ast: InlineContent[];
-  plain_text: string;
-  audio_block_idx: number | null;
-  visual_group_id?: string;
+  audio_chunks: AudioChunk[];
 }
 
 interface ListBlock {
@@ -83,16 +107,14 @@ interface ListBlock {
   ordered: boolean;
   start?: number;
   items: ListItem[];
-  plain_text: string;
-  audio_block_idx: number | null;
+  audio_chunks: AudioChunk[];  // Always empty (items have chunks)
 }
 
 interface BlockquoteBlock {
   type: "blockquote";
   id: string;
   blocks: ContentBlock[];
-  plain_text: string;
-  audio_block_idx: number | null;
+  audio_chunks: AudioChunk[];  // Always empty (nested blocks have chunks)
 }
 
 interface CodeBlock {
@@ -100,16 +122,15 @@ interface CodeBlock {
   id: string;
   language?: string;
   content: string;
-  audio_block_idx: null;
+  audio_chunks: AudioChunk[];  // Always empty
 }
 
 interface MathBlock {
   type: "math";
   id: string;
-  content: string;
-  alt?: string;  // TTS text (read aloud if present)
+  content: string;  // LaTeX
   display_mode: boolean;
-  audio_block_idx: number | null;  // Has audio if alt is provided
+  audio_chunks: AudioChunk[];
 }
 
 interface TableBlock {
@@ -117,25 +138,26 @@ interface TableBlock {
   id: string;
   headers: string[];
   rows: string[][];
-  audio_block_idx: null;
+  audio_chunks: AudioChunk[];  // Always empty
 }
 
 interface ImageBlock {
   type: "image";
   id: string;
   src: string;
-  alt: string;  // Accessible text for TTS (not displayed)
-  caption?: string;  // Visible figcaption for TTS and display
+  alt: string;
+  caption?: string;  // Display caption (with LaTeX)
+  caption_html?: string;  // Caption with span wrappers if split
   title?: string;
   width_pct?: number;  // Figure width as % of page (from YOLO detection)
   row_group?: string;  // "row0", "row1", etc. - figures in same row are side-by-side
-  audio_block_idx: number | null;  // Has audio if alt or caption present
+  audio_chunks: AudioChunk[];
 }
 
 interface ThematicBreak {
   type: "hr";
   id: string;
-  audio_block_idx: null;
+  audio_chunks: AudioChunk[];  // Always empty
 }
 
 type ContentBlock =
@@ -222,15 +244,16 @@ function ListBlockView({
       start={block.ordered ? block.start : undefined}
     >
       {block.items.map((item, idx) => {
-        const isClickable = item.audio_block_idx !== null;
+        const hasAudio = item.audio_chunks.length > 0;
+        const firstAudioIdx = hasAudio ? item.audio_chunks[0].audio_block_idx : undefined;
         return (
           <li
             key={idx}
-            className={cn("my-1", isClickable && "cursor-pointer hover:bg-accent/50 rounded px-1 -mx-1")}
-            data-audio-block-idx={item.audio_block_idx ?? undefined}
+            className={cn("my-1", hasAudio && "cursor-pointer hover:bg-accent/50 rounded px-1 -mx-1")}
+            data-audio-block-idx={firstAudioIdx}
             onClick={
-              isClickable
-                ? () => onBlockClick?.(item.audio_block_idx!)
+              hasAudio
+                ? () => onBlockClick?.(firstAudioIdx!)
                 : undefined
             }
             dangerouslySetInnerHTML={{ __html: sanitize(item.html) }}
@@ -245,22 +268,14 @@ function BlockquoteBlockView({ block, onBlockClick }: {
   block: BlockquoteBlock;
   onBlockClick?: (audioIdx: number) => void;
 }) {
-  // Group nested blocks by visual_group_id and row_group (same as top-level)
+  // Group nested blocks by row_group for side-by-side images
   const groupedBlocks = groupBlocks(block.blocks);
 
   // Blockquote is a visual container - nested blocks have their own audio indices
   return (
     <blockquote className="my-4 border-l-4 border-muted-foreground/30 pl-4 italic text-muted-foreground py-1">
       {groupedBlocks.map((grouped) => {
-        if (grouped.kind === "paragraph-group") {
-          return (
-            <ParagraphGroupView
-              key={grouped.blocks[0].id}
-              blocks={grouped.blocks}
-              onBlockClick={onBlockClick}
-            />
-          );
-        } else if (grouped.kind === "image-row") {
+        if (grouped.kind === "image-row") {
           return (
             <ImageRowView
               key={grouped.blocks[0].id}
@@ -270,12 +285,14 @@ function BlockquoteBlockView({ block, onBlockClick }: {
           );
         } else {
           const b = grouped.block;
+          const hasAudio = b.audio_chunks.length > 0;
+          const firstAudioIdx = hasAudio ? b.audio_chunks[0].audio_block_idx : undefined;
           return (
             <div
               key={b.id}
-              data-audio-block-idx={b.audio_block_idx ?? undefined}
-              className={cn(blockBaseClass, b.audio_block_idx !== null && onBlockClick && clickableClass)}
-              onClick={b.audio_block_idx !== null && onBlockClick ? () => onBlockClick(b.audio_block_idx as number) : undefined}
+              data-audio-block-idx={firstAudioIdx}
+              className={cn(blockBaseClass, hasAudio && onBlockClick && clickableClass)}
+              onClick={hasAudio && onBlockClick ? () => onBlockClick(firstAudioIdx!) : undefined}
             >
               <BlockView
                 block={b}
@@ -373,6 +390,9 @@ function processInlineMath(text: string): string {
 }
 
 function ImageBlockView({ block, inRow }: BlockProps & { block: ImageBlock; inRow?: boolean }) {
+  // Use caption_html if available (has audio span wrappers), otherwise process caption
+  const captionContent = block.caption_html || (block.caption ? processInlineMath(block.caption) : null);
+
   return (
     <figure className={cn("flex flex-col items-center", !inRow && "my-4")}>
       <img
@@ -381,10 +401,10 @@ function ImageBlockView({ block, inRow }: BlockProps & { block: ImageBlock; inRo
         title={block.title}
         className="max-w-full max-h-96 h-auto object-contain rounded"
       />
-      {block.caption && (
+      {captionContent && (
         <figcaption
           className="text-sm text-muted-foreground mt-2 text-center"
-          dangerouslySetInnerHTML={{ __html: sanitize(processInlineMath(block.caption)) }}
+          dangerouslySetInnerHTML={{ __html: sanitize(captionContent) }}
         />
       )}
     </figure>
@@ -399,25 +419,12 @@ function ThematicBreakView() {
 
 type GroupedBlock =
   | { kind: "single"; block: ContentBlock }
-  | { kind: "paragraph-group"; blocks: ParagraphBlock[] }
   | { kind: "image-row"; blocks: ImageBlock[] };
 
 function groupBlocks(blocks: ContentBlock[]): GroupedBlock[] {
   const result: GroupedBlock[] = [];
-  let currentParagraphGroup: ParagraphBlock[] = [];
-  let currentParagraphGroupId: string | null = null;
   let currentImageRow: ImageBlock[] = [];
   let currentImageRowGroup: string | null = null;
-
-  const flushParagraphGroup = () => {
-    if (currentParagraphGroup.length > 1) {
-      result.push({ kind: "paragraph-group", blocks: currentParagraphGroup });
-    } else if (currentParagraphGroup.length === 1) {
-      result.push({ kind: "single", block: currentParagraphGroup[0] });
-    }
-    currentParagraphGroup = [];
-    currentParagraphGroupId = null;
-  };
 
   const flushImageRow = () => {
     if (currentImageRow.length > 1) {
@@ -430,22 +437,8 @@ function groupBlocks(blocks: ContentBlock[]): GroupedBlock[] {
   };
 
   for (const block of blocks) {
-    // Handle paragraph visual groups
-    if (block.type === "paragraph" && block.visual_group_id) {
-      flushImageRow(); // Flush any pending image row
-      if (block.visual_group_id === currentParagraphGroupId) {
-        currentParagraphGroup.push(block);
-      } else {
-        flushParagraphGroup();
-        currentParagraphGroup = [block];
-        currentParagraphGroupId = block.visual_group_id;
-      }
-      continue;
-    }
-
     // Handle image row groups
     if (block.type === "image" && block.row_group) {
-      flushParagraphGroup(); // Flush any pending paragraph group
       if (block.row_group === currentImageRowGroup) {
         currentImageRow.push(block);
       } else {
@@ -456,13 +449,11 @@ function groupBlocks(blocks: ContentBlock[]): GroupedBlock[] {
       continue;
     }
 
-    // Single block - flush any pending groups first
-    flushParagraphGroup();
+    // Single block - flush any pending image row first
     flushImageRow();
     result.push({ kind: "single", block });
   }
 
-  flushParagraphGroup();
   flushImageRow();
   return result;
 }
@@ -479,13 +470,15 @@ function ImageRowView({ blocks, onBlockClick }: { blocks: ImageBlock[]; onBlockC
     <div className="my-4 flex gap-4 justify-center items-start flex-wrap">
       {blocks.map((block) => {
         const scaledWidth = Math.min((block.width_pct || 50) * scaleFactor, 100);
-        const handleClick = block.audio_block_idx !== null && onBlockClick
-          ? () => onBlockClick(block.audio_block_idx as number)
+        const hasAudio = block.audio_chunks.length > 0;
+        const firstAudioIdx = hasAudio ? block.audio_chunks[0].audio_block_idx : undefined;
+        const handleClick = hasAudio && onBlockClick
+          ? () => onBlockClick(firstAudioIdx!)
           : undefined;
         return (
           <div
             key={block.id}
-            data-audio-block-idx={block.audio_block_idx ?? undefined}
+            data-audio-block-idx={firstAudioIdx}
             className={cn(blockBaseClass, handleClick && clickableClass)}
             style={{ width: `${scaledWidth}%` }}
             onClick={handleClick}
@@ -498,40 +491,6 @@ function ImageRowView({ blocks, onBlockClick }: { blocks: ImageBlock[]; onBlockC
         );
       })}
     </div>
-  );
-}
-
-// Renders multiple paragraph blocks as spans within a single <p>
-interface ParagraphGroupViewProps {
-  blocks: ParagraphBlock[];
-  onBlockClick?: (audioIdx: number) => void;
-}
-
-function ParagraphGroupView({ blocks, onBlockClick }: ParagraphGroupViewProps) {
-  return (
-    <p className="my-3 py-1 leading-relaxed">
-      {blocks.map((block, idx) => {
-        const handleClick = block.audio_block_idx !== null && onBlockClick
-          ? () => onBlockClick(block.audio_block_idx as number)
-          : undefined;
-
-        return (
-          <span
-            key={block.id}
-            data-audio-block-idx={block.audio_block_idx ?? undefined}
-            className={cn(
-              "transition-colors duration-150",
-              handleClick && "cursor-pointer clickable-span"
-            )}
-            onClick={handleClick}
-          >
-            {/* Add space between consecutive spans (lost during sentence splitting) */}
-            {idx > 0 && " "}
-            <span dangerouslySetInnerHTML={{ __html: sanitize(block.html) }} />
-          </span>
-        );
-      })}
-    </p>
   );
 }
 
@@ -841,7 +800,7 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
     );
   }
 
-  // Group consecutive paragraphs with same visual_group_id
+  // Group consecutive images with same row_group for side-by-side display
   const groupedBlocks = groupBlocks(doc.blocks);
 
   return (
@@ -925,15 +884,7 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
       )}
       <div ref={contentRef} className="structured-content px-3 break-words" onClick={handleContentClick}>
         {groupedBlocks.map((grouped) => {
-          if (grouped.kind === "paragraph-group") {
-            return (
-              <ParagraphGroupView
-                key={grouped.blocks[0].id}
-                blocks={grouped.blocks}
-                onBlockClick={onBlockClick}
-              />
-            );
-          } else if (grouped.kind === "image-row") {
+          if (grouped.kind === "image-row") {
             return (
               <ImageRowView
                 key={grouped.blocks[0].id}
@@ -943,13 +894,15 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
             );
           } else {
             const block = grouped.block;
-            const handleWrapperClick = block.audio_block_idx !== null && onBlockClick
-              ? () => onBlockClick(block.audio_block_idx as number)
+            const hasAudio = block.audio_chunks.length > 0;
+            const firstAudioIdx = hasAudio ? block.audio_chunks[0].audio_block_idx : undefined;
+            const handleWrapperClick = hasAudio && onBlockClick
+              ? () => onBlockClick(firstAudioIdx!)
               : undefined;
             return (
               <div
                 key={block.id}
-                data-audio-block-idx={block.audio_block_idx ?? undefined}
+                data-audio-block-idx={firstAudioIdx}
                 className={cn(blockBaseClass, handleWrapperClick && clickableClass)}
                 onClick={handleWrapperClick}
               >

@@ -1,0 +1,67 @@
+Extract the text from this document page as clean markdown.
+
+Rules:
+- Preserve the original text exactly — do not paraphrase, interpret, or rewrite
+- Use standard markdown formatting (headings, lists, emphasis, bold, etc.)
+- Mathematical notation: use LaTeX with dollar signs ($inline$ for inline, $$display$$ for display)
+- If equation has a number in the original (e.g., "(1)" next to it), include inside LaTeX: $$E=mc^2 \tag{1}$$
+- Keep hyperlinks in markdown format: [text](url)
+- For raw URLs, use descriptive link text: "https://github.com/..." → [GitHub](url), "https://arxiv.org/..." → [arXiv](url)
+- Tables: use markdown table syntax
+- Skip page numbers, headers/footers, and watermarks
+
+Citations:
+- Omit bracketed reference numbers entirely: "[1]", "[1, 2]", "[1-3]" → remove
+- Author citations in running text: naturalize for speech
+  - "(Smith et al., 2020)" → "Smith and colleagues"
+  - "As [1] showed" → "As prior work showed" or rewrite naturally
+- Reference/Bibliography sections: do NOT extract individual references
+  - Page with "References" header: output "## References\n\n[references omitted]"
+  - Page that's just continuation of references (no header): output only "[references omitted]"
+
+Images:
+- The number of detected images on this page will be provided below
+- For each image, output exactly one image placeholder at the position where it appears
+- Format: ![alt](detected-image)<yap-cap>caption</yap-cap>
+  - alt = short visual description of what the image shows
+  - <yap-cap>...</yap-cap> = figure caption from the document (omit if no caption)
+  - CRITICAL: <yap-cap> must be on the SAME LINE as the image, no newline between
+- If no image count is provided, do not output any image placeholders
+
+Output only the markdown, no commentary or explanations.
+
+
+TTS annotations for math — use <yap-alt>...</yap-alt> tags:
+
+INLINE: $latex$<yap-alt>alt</yap-alt> — immediately after closing $
+  Example: $\alpha$<yap-alt>alpha</yap-alt>
+
+DISPLAY: $$latex$$ then <yap-alt>alt</yap-alt> on next line. Blank line required BEFORE each $$block$$.
+  Example:
+    $$E=mc^2$$
+    <yap-alt>E equals m c squared</yap-alt>
+
+MULTILINE: For grouped equations (e.g., equation + "where" clause), use aligned environment:
+  Example:
+    $$\begin{aligned}
+    f(x) &= ax^2 + bx + c \\
+    \text{where } a &> 0
+    \end{aligned}$$
+    <yap-alt>f of x equals a x squared plus b x plus c, where a is greater than zero</yap-alt>
+
+Math alt-text guidelines:
+- LaTeX must be accurate to original. Alt-text is optimized for listening — it can simplify or be omitted entirely when speaking adds no value.
+- Omit alt-text for: footnote markers ($^\dagger$, $^*$, $^1$), math already explained by surrounding text, or repetitive similar notation
+  - "their dot product, $q \cdot k = \sum ...$" → no alt needed, context explains it
+  - Write as a human would read: $W_i^Q \in \mathbb{R}^{d \times k}$ → "W Q", $\mathcal{O}(n^2)$ → "order n squared"
+- Simple math still needs alt-text: $Q$<yap-alt>Q</yap-alt>, $\alpha$<yap-alt>alpha</yap-alt>, $n=5$<yap-alt>n equals 5</yap-alt>
+- Ignore visual-only formatting: $\mathbf{z}$ → "z" not "bold z", $\mathcal{L}$ → "L" not "script L"
+- Accurate but listenable: $\sum_{t=0}^{T} \gamma^t r_t$ → "the sum of gamma t times r t, from t equals zero to T"
+- Well-known formulas can be semantic: $\frac{e^{x_i}}{\sum_j e^{x_j}}$ → "the softmax of x sub i"
+- Use context: if surrounding text explains what a formula represents, prefer describing its meaning
+  Example: text says "the value function V^π measures expected return" → $V^\pi(s) = E_{a \sim \pi}\{...\}$ can be "the value of state s under policy pi is the expected discounted return when starting in s and taking actions according to pi"
+- Figure captions may contain math — use <yap-alt> inside <yap-cap>:
+  Example: <yap-cap>Figure 1 shows $\beta$<yap-alt>beta</yap-alt> values</yap-cap>
+
+IMPORTANT: Keep all tag content on a single line (no line breaks inside <yap-alt> or <yap-cap>)
+
