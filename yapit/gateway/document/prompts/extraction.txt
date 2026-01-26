@@ -14,25 +14,25 @@ Special tags exist for cases where visual display and audio should differ to enh
 - Follow standard markdown: headings (#, ##), lists, *emphasis*, **strong emphasis**, tables, etc.
 - Footnotes and callouts are currently not supported.
 
-Display elements that are both shown and spoken:
+Elements that are both shown and spoken:
 - Paragraphs
 - Headings 
 - Linktext
 - List items
 - Text within Quote blocks
 
-Display elements that are shown but not spoken:
+Elements that are shown but not spoken:
 - Tables
 - $inline$ and $$display$$ math
 - `inline` code and code blocks
 - Images - ![alt](detected-image)
 - Markdown elements within <yap-show> tags
 
-Display elements that are not shown but spoken:
+Elements that are not shown but spoken:
 - Text within <yap-speak> tags
 - Image alt-text (spoken if the image does not have a caption)
 
-Display elements that are not shown and not spoken:
+Elements that are not shown and not spoken:
 - Links without linktext [](url) -> nothing (worthless) 
 
 Other:
@@ -53,7 +53,7 @@ Other:
 
 - Tables
   - Standard markdown table syntax, inline math, code, emphasis, all allowed
-  - No yap tags inside - since tables are skipped by TTS, yap show would be redundant (just use normal markdown) and yap speak pointless (not registered)
+  - Do not use <yap-show> or <yap-speak> inside tables, since tables are already entirely visual-only
 
 - Noise to skip
   - Page numbers
@@ -71,6 +71,7 @@ Other:
   - Wraps inline content
   - Must be single-line - no newlines inside tag content
   - Use for inline visual elements that should not be spoken
+  - Do not use this for or within elements that are already not spoken (such as images, math, code blocks, tables)
 
 - <yap-speak>
   - Wraps raw text that is passed to TTS
@@ -154,7 +155,6 @@ NOTE how
 </example>
 
 <example>
-Good example:
 "Where the projections are parameter matrices $W_i^Q \in \mathbb{R}^{d_{\text{model}} \times d_k}, W_i^K \in \mathbb{R}^{d_{\text{model}} \times d_k}, W_i^V \in \mathbb{R}^{d_{\text{model}} \times d_v}$<yap-speak>W Q and W K of dimensions d model by d k, and W V of dimensions d model by d v</yap-speak>, and $W^O \in \mathbb{R}^{h d_v \times d_{\text{model}}}$<yap-speak>W O of dimensions h times d v by d model</yap-speak>."
 
 NOTE how
