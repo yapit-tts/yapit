@@ -1455,11 +1455,7 @@ const PlaybackPage = () => {
     onBlockHover: handleBlockHover,
     audioProgress,
     blockStates,
-    // Pass section info for playbar gaps (Phase 6)
-    sections: shouldShowOutliner ? sections : undefined,
-    expandedSections: shouldShowOutliner ? expandedSections : undefined,
-    onSectionExpand: shouldShowOutliner ? handleSectionToggle : undefined,
-  }), [actualTotalDuration, estimated_ms, numberOfBlocks, currentBlock, handleBlockChange, handleBlockHover, audioProgress, blockStates, shouldShowOutliner, sections, expandedSections, handleSectionToggle]);
+  }), [actualTotalDuration, estimated_ms, numberOfBlocks, currentBlock, handleBlockChange, handleBlockHover, audioProgress, blockStates]);
 
   // Find first usage limit error from block states
   const blockError = useMemo(() => {

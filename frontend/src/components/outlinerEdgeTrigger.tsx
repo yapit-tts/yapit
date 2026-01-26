@@ -146,46 +146,37 @@ export function OutlinerEdgeTrigger() {
     );
   }
 
-  // Desktop: when outliner is open, show close button (larger to avoid scrollbar overlap)
-  if (open) {
-    return (
-      <button
-        onClick={toggleOutliner}
-        className="fixed top-1/2 -translate-y-1/2 z-20
-          w-8 h-20 flex items-center justify-center
-          bg-background/70 backdrop-blur-sm
-          border-y border-l border-border rounded-l-xl
-          shadow-sm hover:bg-muted/80
-          transition-[right] duration-200 ease-out"
-        style={{
-          right: OUTLINER_WIDTH,
-        }}
-        aria-label="Close outline"
-      >
-        <span className="text-muted-foreground text-2xl font-extralight">›</span>
-      </button>
-    );
-  }
+  // Desktop: single button that transitions between closed/open positions
+  // When closed: at right edge, fades in on hover
+  // When open: slides to sidebar edge with sidebar
+  const isVisible = open || revealed;
 
-  // Desktop closed: edge-triggered reveal on right side
   return (
     <>
-      <div
-        className="fixed right-0 top-0 h-full z-20"
-        style={{ width: `${EDGE_WIDTH}px` }}
-      />
+      {/* Invisible trigger zone when closed */}
+      {!open && (
+        <div
+          className="fixed right-0 top-0 h-full z-20"
+          style={{ width: `${EDGE_WIDTH}px` }}
+        />
+      )}
 
       <button
         onClick={toggleOutliner}
-        className={`fixed right-0 top-1/2 -translate-y-1/2 z-20
+        className={`fixed top-1/2 -translate-y-1/2
           w-8 h-20 flex items-center justify-center
-          bg-background/70 backdrop-blur-md
-          border-y border-l border-border rounded-l-xl
-          shadow-lg hover:bg-muted/80
+          rounded-l-xl
           transition-all duration-200 ease-out
           focus:outline-none focus-visible:ring-2 focus-visible:ring-ring
-          ${revealed ? "opacity-100 translate-x-0" : "opacity-0 translate-x-4 pointer-events-none"}`}
-        aria-label="Open outline"
+          ${open
+            ? "z-[9] bg-sidebar border border-border hover:bg-muted/80"
+            : `z-20 bg-background/70 backdrop-blur-md border-y border-l border-border shadow-lg hover:bg-muted/80
+               ${isVisible ? "opacity-100 translate-x-0" : "opacity-0 translate-x-4 pointer-events-none"}`
+          }`}
+        style={{
+          right: open ? `calc(${OUTLINER_WIDTH} - 4px)` : 0,
+        }}
+        aria-label={open ? "Close outline" : "Open outline"}
       >
         <span className="text-muted-foreground text-2xl font-extralight">›</span>
       </button>

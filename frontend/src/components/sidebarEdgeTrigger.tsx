@@ -135,52 +135,39 @@ export function SidebarEdgeTrigger() {
     );
   }
 
-  // Desktop: when sidebar is open, show close button at sidebar edge
-  if (open) {
-    return (
-      <button
-        onClick={toggleSidebar}
-        className="fixed top-1/2 -translate-y-1/2 z-20
-          w-8 h-20 flex items-center justify-center
-          bg-background/70 backdrop-blur-sm
-          border-y border-r border-border rounded-r-xl
-          shadow-sm hover:bg-muted/80
-          transition-[left] duration-200 ease-out"
-        style={{
-          left: SIDEBAR_WIDTH,
-        }}
-        aria-label="Close sidebar"
-      >
-        <span className="text-muted-foreground text-2xl font-extralight">‹</span>
-      </button>
-    );
-  }
+  // Desktop: single button that transitions between closed/open positions
+  // When closed: at left edge, fades in on hover
+  // When open: slides to sidebar edge with sidebar
+  const isVisible = open || revealed;
 
-  // Desktop closed: edge-triggered reveal
   return (
     <>
-      {/* Invisible trigger zone - full height */}
-      <div
-        className="fixed left-0 top-0 h-full z-20"
-        style={{ width: `${EDGE_WIDTH}px` }}
-      />
+      {/* Invisible trigger zone when closed */}
+      {!open && (
+        <div
+          className="fixed left-0 top-0 h-full z-20"
+          style={{ width: `${EDGE_WIDTH}px` }}
+        />
+      )}
 
-      {/* Chevron - revealed after delay, stable position */}
       <button
         onClick={toggleSidebar}
-        className={`fixed left-0 top-1/2 -translate-y-1/2 z-20
+        className={`fixed top-1/2 -translate-y-1/2
           w-8 h-20 flex items-center justify-center
-          bg-background/70 backdrop-blur-md
-          border-y border-r border-border rounded-r-xl
-          shadow-lg hover:bg-muted/80
+          rounded-r-xl
           transition-all duration-200 ease-out
           focus:outline-none focus-visible:ring-2 focus-visible:ring-ring
-          ${revealed ? 'opacity-100 translate-x-0' : 'opacity-0 -translate-x-4 pointer-events-none'}`}
-        aria-label="Open sidebar"
+          ${open
+            ? "z-[9] bg-sidebar border border-border hover:bg-muted/80"
+            : `z-20 bg-background/70 backdrop-blur-md border-y border-r border-border shadow-lg hover:bg-muted/80
+               ${isVisible ? "opacity-100 translate-x-0" : "opacity-0 -translate-x-4 pointer-events-none"}`
+          }`}
+        style={{
+          left: open ? `calc(${SIDEBAR_WIDTH} - 4px)` : 0,
+        }}
+        aria-label={open ? "Close sidebar" : "Open sidebar"}
       >
-        <span className="text-muted-foreground text-2xl font-extralight">
-          ‹
-        </span>
+        <span className="text-muted-foreground text-2xl font-extralight">‹</span>
       </button>
     </>
   );

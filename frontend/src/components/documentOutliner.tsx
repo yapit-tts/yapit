@@ -56,8 +56,8 @@ export function DocumentOutliner({
   return (
     <div className="flex flex-col h-full">
       {/* Header with expand/collapse all */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-border">
-        <span className="text-sm font-medium text-muted-foreground">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+        <span className="font-medium text-muted-foreground">
           Outline
         </span>
         <div className="flex gap-1">
@@ -65,7 +65,7 @@ export function DocumentOutliner({
             <TooltipTrigger asChild>
               <button
                 onClick={onCollapseAll}
-                className="p-1 rounded hover:bg-accent"
+                className="p-1.5 rounded hover:bg-accent"
                 aria-label="Collapse all sections"
               >
                 <Minus className="w-4 h-4" />
@@ -77,7 +77,7 @@ export function DocumentOutliner({
             <TooltipTrigger asChild>
               <button
                 onClick={onExpandAll}
-                className="p-1 rounded hover:bg-accent"
+                className="p-1.5 rounded hover:bg-accent"
                 aria-label="Expand all sections"
               >
                 <Plus className="w-4 h-4" />
@@ -99,13 +99,13 @@ export function DocumentOutliner({
           const sectionHeader = (
             <div
               className={cn(
-                "flex items-center gap-1 px-2 py-1.5 hover:bg-accent/50 rounded-sm mx-1",
+                "flex items-center gap-2 pl-2 pr-4 py-2.5 hover:bg-accent/50 rounded-md mx-1",
                 isCurrent && "bg-accent"
               )}
             >
               {/* Chevron only if has subsections, otherwise invisible placeholder */}
               {hasSubsections ? (
-                <CollapsibleTrigger className="p-0.5 hover:bg-accent rounded">
+                <CollapsibleTrigger className="p-1 hover:bg-accent rounded">
                   {isExpanded ? (
                     <ChevronDown className="w-4 h-4 text-muted-foreground" />
                   ) : (
@@ -113,18 +113,18 @@ export function DocumentOutliner({
                   )}
                 </CollapsibleTrigger>
               ) : (
-                <span className="w-5 h-5" /> // Placeholder for alignment
+                <span className="w-6 h-6" /> // Placeholder for alignment
               )}
 
               <button
                 onClick={() => onNavigate(section.startBlockIdx)}
-                className="flex-1 text-left text-sm truncate hover:underline"
+                className="flex-1 text-left truncate hover:underline"
                 title={section.title}
               >
                 {section.title}
               </button>
 
-              <span className="text-xs text-muted-foreground whitespace-nowrap">
+              <span className="text-sm text-muted-foreground whitespace-nowrap">
                 {formatDuration(section.durationMs)}
               </span>
             </div>
@@ -145,7 +145,7 @@ export function DocumentOutliner({
 
               {/* Subsections */}
               <CollapsibleContent>
-                <div className="ml-6 border-l border-border/50">
+                <div className="ml-7 border-l border-border/50">
                   {section.subsections.map((subsection) => {
                     const isSubsectionCurrent =
                       currentBlockIdx >= subsection.blockIdx &&
@@ -159,7 +159,7 @@ export function DocumentOutliner({
                         key={subsection.id}
                         onClick={() => onNavigate(subsection.blockIdx)}
                         className={cn(
-                          "w-full text-left text-sm py-1 pl-3 pr-2 hover:bg-accent/50 truncate",
+                          "w-full text-left py-2 pl-3 pr-5 hover:bg-accent/50 truncate",
                           isSubsectionCurrent && "bg-accent/30"
                         )}
                         title={subsection.title}
