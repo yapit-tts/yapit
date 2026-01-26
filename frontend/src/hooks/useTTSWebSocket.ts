@@ -109,6 +109,16 @@ export function useTTSWebSocket(): UseTTSWebSocketReturn {
         const msg = data as WSBlockStatusMessage;
         console.log(`[TTS WS] Block ${msg.block_idx} status: ${msg.status}${msg.audio_url ? ` (url: ${msg.audio_url})` : ''}${msg.voice_slug ? ` [${msg.model_slug}/${msg.voice_slug}]` : ''}`);
 
+        // Check if this notification matches what we requested for this block
+        // (prevents cross-tab contamination when multiple tabs use different voices)
+        const existingEntry = blockStatesRef.current.get(msg.block_idx);
+        if (existingEntry?.model_slug && existingEntry?.voice_slug) {
+          if (existingEntry.model_slug !== msg.model_slug || existingEntry.voice_slug !== msg.voice_slug) {
+            console.log(`[TTS WS] Ignoring stale notification for block ${msg.block_idx}: expected ${existingEntry.model_slug}/${existingEntry.voice_slug}, got ${msg.model_slug}/${msg.voice_slug}`);
+            return;
+          }
+        }
+
         const entry: BlockStateEntry = {
           status: msg.status,
           model_slug: msg.model_slug,
