@@ -103,6 +103,9 @@ class GeminiExtractor:
             media_resolution=self._resolution,
             thinking_config=types.ThinkingConfig(thinking_level=types.ThinkingLevel.MINIMAL),
         )
+        # TODO: Google docs say media-first yields better extraction quality, but this blocks
+        # prompt caching. With our ~3k token prompt, text-first would enable caching across
+        # requests. Investigate whether media-first actually improves quality for our use case.
         contents = [
             types.Part.from_bytes(data=content, mime_type=content_type),
             self._prompt,
@@ -259,6 +262,9 @@ class GeminiExtractor:
             media_resolution=self._resolution,
             thinking_config=types.ThinkingConfig(thinking_level=types.ThinkingLevel.MINIMAL),
         )
+        # TODO: Google docs say media-first yields better extraction quality, but this blocks
+        # prompt caching. With our ~3k token prompt, text-first would enable caching across
+        # requests. Investigate whether media-first actually improves quality for our use case.
         contents = [
             types.Part.from_bytes(data=page_bytes, mime_type="application/pdf"),
             prompt,
