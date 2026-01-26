@@ -719,27 +719,6 @@ async def update_document(
     return DocumentUpdateResponse(id=document.id, title=document.title, is_public=document.is_public)
 
 
-@router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_document(
-    document: CurrentDoc,
-    db: DbSession,
-    settings: SettingsDep,
-) -> None:
-    """Delete a document and all its blocks. Cleans up images if last doc with this content."""
-    content_hash = document.content_hash
-
-    await db.delete(document)
-    await db.commit()
-
-    # Clean up images if no other documents use this content
-    if content_hash:
-        other_docs = await db.exec(select(Document).where(Document.content_hash == content_hash).limit(1))
-        if not other_docs.first():
-            images_dir = Path(settings.images_dir) / content_hash
-            if images_dir.exists():
-                shutil.rmtree(images_dir)
-
-
 class BulkDeleteResponse(BaseModel):
     deleted_count: int
 
@@ -778,6 +757,27 @@ async def bulk_delete_documents(
                 shutil.rmtree(images_dir)
 
     return BulkDeleteResponse(deleted_count=len(documents))
+
+
+@router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_document(
+    document: CurrentDoc,
+    db: DbSession,
+    settings: SettingsDep,
+) -> None:
+    """Delete a document and all its blocks. Cleans up images if last doc with this content."""
+    content_hash = document.content_hash
+
+    await db.delete(document)
+    await db.commit()
+
+    # Clean up images if no other documents use this content
+    if content_hash:
+        other_docs = await db.exec(select(Document).where(Document.content_hash == content_hash).limit(1))
+        if not other_docs.first():
+            images_dir = Path(settings.images_dir) / content_hash
+            if images_dir.exists():
+                shutil.rmtree(images_dir)
 
 
 @router.get("/{document_id}/blocks")
