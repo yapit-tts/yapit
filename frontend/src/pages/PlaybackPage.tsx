@@ -152,6 +152,19 @@ const PlaybackPage = () => {
   const isDraggingProgressBarRef = useRef(false);
   const lastHoverScrollTimeRef = useRef<number>(0);
 
+  // Helper to find elements by audio index
+  // Prioritizes data-audio-idx (inner spans) over data-audio-block-idx (wrapper)
+  // to avoid double-highlighting when both exist for the same index
+  const findElementsByAudioIdx = useCallback((idx: number) => {
+    // First try inner spans (split content)
+    const innerSpans = window.document.querySelectorAll(`[data-audio-idx="${idx}"]`);
+    if (innerSpans.length > 0) {
+      return innerSpans;
+    }
+    // Fall back to wrapper divs (non-split content)
+    return window.document.querySelectorAll(`[data-audio-block-idx="${idx}"]`);
+  }, []);
+
   // Handler for progress bar hover/drag - direct DOM manipulation, no state
   const handleBlockHover = useCallback((idx: number | null, isDragging: boolean) => {
     const prevHovered = hoveredBlockRef.current;
@@ -162,21 +175,18 @@ const PlaybackPage = () => {
 
     // Remove hover class from previous block
     if (prevHovered !== null && prevHovered !== idx) {
-      window.document.querySelectorAll(`[data-audio-block-idx="${prevHovered}"]`)
-        .forEach(el => el.classList.remove(HOVER_BLOCK_CLASS));
+      findElementsByAudioIdx(prevHovered).forEach(el => el.classList.remove(HOVER_BLOCK_CLASS));
     }
 
     // Add hover class to currently hovered block (if not same as active playing block)
     if (idx !== null && idx !== currentBlockRef.current) {
-      window.document.querySelectorAll(`[data-audio-block-idx="${idx}"]`)
-        .forEach(el => el.classList.add(HOVER_BLOCK_CLASS));
+      findElementsByAudioIdx(idx).forEach(el => el.classList.add(HOVER_BLOCK_CLASS));
     }
 
     // Clear hover class if hovering over the active block or leaving
     if (idx === null || idx === currentBlockRef.current) {
       if (prevHovered !== null) {
-        window.document.querySelectorAll(`[data-audio-block-idx="${prevHovered}"]`)
-          .forEach(el => el.classList.remove(HOVER_BLOCK_CLASS));
+        findElementsByAudioIdx(prevHovered).forEach(el => el.classList.remove(HOVER_BLOCK_CLASS));
       }
     }
 
@@ -185,7 +195,8 @@ const PlaybackPage = () => {
       const SCROLL_THROTTLE_MS = 500;
       const now = Date.now();
       if (now - lastHoverScrollTimeRef.current >= SCROLL_THROTTLE_MS) {
-        const element = window.document.querySelector(`[data-audio-block-idx="${idx}"]`);
+        const elements = findElementsByAudioIdx(idx);
+        const element = elements[0];
         if (element) {
           const rect = element.getBoundingClientRect();
           const margin = 50;
@@ -197,7 +208,7 @@ const PlaybackPage = () => {
         }
       }
     }
-  }, []);
+  }, [findElementsByAudioIdx]);
 
   // Parallel prefetch tracking
   const prefetchedUpToRef = useRef<number>(-1); // Highest block index we've triggered prefetch for
@@ -229,22 +240,18 @@ const PlaybackPage = () => {
 
     // Remove active class from previous block
     if (prevBlockIdxRef.current >= 0) {
-      const prevElements = window.document.querySelectorAll(
-        `[data-audio-block-idx="${prevBlockIdxRef.current}"]`
-      );
+      const prevElements = findElementsByAudioIdx(prevBlockIdxRef.current);
       prevElements.forEach((el) => el.classList.remove(ACTIVE_BLOCK_CLASS));
     }
 
     // Add active class to current block
     if (currentBlock >= 0) {
-      const currentElements = window.document.querySelectorAll(
-        `[data-audio-block-idx="${currentBlock}"]`
-      );
+      const currentElements = findElementsByAudioIdx(currentBlock);
       currentElements.forEach((el) => el.classList.add(ACTIVE_BLOCK_CLASS));
     }
 
     prevBlockIdxRef.current = currentBlock;
-  }, [currentBlock]);
+  }, [currentBlock, findElementsByAudioIdx]);
 
   // Fetch document and blocks on mount (wait for auth to be ready)
   useEffect(() => {
@@ -392,9 +399,9 @@ const PlaybackPage = () => {
       // Scroll to restored block after React renders the blocks
       if (settings.scrollOnRestore) {
         setTimeout(() => {
-          const blockElement = window.document.querySelector(
-            `[data-audio-block-idx="${restoreBlock}"]`
-          );
+          // Prefer inner spans over wrapper divs
+          const blockElement = window.document.querySelector(`[data-audio-idx="${restoreBlock}"]`)
+            || window.document.querySelector(`[data-audio-block-idx="${restoreBlock}"]`);
           if (blockElement) {
             blockElement.scrollIntoView({ behavior: "smooth", block: "center" });
           }
@@ -435,13 +442,12 @@ const PlaybackPage = () => {
   // Helper to scroll to a specific block
   const scrollToBlock = useCallback((blockIdx: number, behavior: ScrollBehavior = "smooth") => {
     if (blockIdx < 0 || !settings.liveScrollTracking) return;
-    const blockElement = window.document.querySelector(
-      `[data-audio-block-idx="${blockIdx}"]`
-    );
+    const elements = findElementsByAudioIdx(blockIdx);
+    const blockElement = elements[0];
     if (blockElement) {
       blockElement.scrollIntoView({ behavior, block: "center" });
     }
-  }, [settings.liveScrollTracking]);
+  }, [settings.liveScrollTracking, findElementsByAudioIdx]);
 
   // Live scroll tracking - keep current block visible during playback
   useEffect(() => {

@@ -154,6 +154,8 @@ async def _process_via_runpod(
             timeout=runpod_timeout,
         )
 
+        if result is None:
+            raise RuntimeError("RunPod returned None (empty response)")
         if isinstance(result, dict) and "error" in result:
             raise RuntimeError(f"RunPod error: {result['error']}")
 

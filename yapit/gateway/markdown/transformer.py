@@ -1,24 +1,32 @@
 """Transform markdown AST to StructuredDocument.
 
-Walks the markdown-it-py SyntaxTreeNode and produces our structured JSON format
-with both HTML and AST representations for prose blocks.
+Core concepts:
+- yap-show: content goes to display only
+- yap-speak: content goes to TTS only
+- yap-cap: caption container for images (supports both)
+- Math: display only (silent unless followed by yap-speak)
+
+All audio content respects max_block_chars splitting.
+Split content gets <span data-audio-idx="N"> wrappers in HTML.
 """
 
 import re
-from collections.abc import Callable, Sequence
-from typing import Literal, TypeGuard, cast
+from collections.abc import Sequence
+from typing import Literal, cast
 from urllib.parse import parse_qs, urlparse
 
-from markdown_it import MarkdownIt
 from markdown_it.tree import SyntaxTreeNode
-from mdit_py_plugins.dollarmath import dollarmath_plugin
 
 from yapit.gateway.markdown.models import (
+    AudioChunk,
     BlockquoteBlock,
     CodeBlock,
     CodeSpanContent,
     ContentBlock,
     EmphasisContent,
+    FootnoteItem,
+    FootnoteRefContent,
+    FootnotesBlock,
     HeadingBlock,
     ImageBlock,
     InlineContent,
@@ -29,6 +37,7 @@ from yapit.gateway.markdown.models import (
     MathBlock,
     MathInlineContent,
     ParagraphBlock,
+    SpeakContent,
     StrongContent,
     StructuredDocument,
     TableBlock,
@@ -36,423 +45,390 @@ from yapit.gateway.markdown.models import (
     ThematicBreak,
 )
 
-# Patterns for yap annotation tags
-_YAP_ALT_OPEN = "<yap-alt>"
-_YAP_ALT_CLOSE = "</yap-alt>"
-_YAP_CAP_OPEN = "<yap-cap>"
-_YAP_CAP_CLOSE = "</yap-cap>"
+# === TAG CONSTANTS ===
+
+YAP_SHOW_OPEN = "<yap-show>"
+YAP_SHOW_CLOSE = "</yap-show>"
+YAP_SPEAK_OPEN = "<yap-speak>"
+YAP_SPEAK_CLOSE = "</yap-speak>"
+YAP_CAP_OPEN = "<yap-cap>"
+YAP_CAP_CLOSE = "</yap-cap>"
 
 
-def _is_html_tag(node: SyntaxTreeNode, tag: str) -> bool:
+def _is_tag(node: SyntaxTreeNode, tag: str) -> bool:
     """Check if node is an html_inline containing the specified tag."""
     return node.type == "html_inline" and node.content == tag
 
 
-def _extract_yap_alt(children: list[SyntaxTreeNode], start_idx: int) -> tuple[str, int]:
-    """Extract <yap-alt>...</yap-alt> starting at start_idx.
+# === INLINE PROCESSING ===
 
-    Returns (alt_text, num_nodes_consumed). If no yap-alt found, returns ("", 0).
+
+class InlineProcessor:
+    """Processes inline content to produce display HTML and TTS text.
+
+    Handles yap-show (display only), yap-speak (TTS only), and math (display only).
     """
-    if start_idx >= len(children):
-        return "", 0
 
-    if not _is_html_tag(children[start_idx], _YAP_ALT_OPEN):
-        return "", 0
+    def __init__(self) -> None:
+        self.display_parts: list[str] = []
+        self.tts_parts: list[str] = []
+        self.in_show: int = 0  # Depth counter for nested show tags
 
-    # Collect content until </yap-alt>
-    alt_parts = []
-    i = start_idx + 1
-    while i < len(children):
-        node = children[i]
-        if _is_html_tag(node, _YAP_ALT_CLOSE):
-            return "".join(alt_parts), i - start_idx + 1
-        elif node.type == "text":
-            alt_parts.append(node.content or "")
-        # Skip other node types (shouldn't happen in well-formed yap-alt)
-        i += 1
+    def process(self, nodes: list[SyntaxTreeNode]) -> tuple[str, str]:
+        """Process nodes and return (display_html, tts_text)."""
+        self.display_parts = []
+        self.tts_parts = []
+        self.in_show = 0
+        self._process_nodes(nodes)
+        return "".join(self.display_parts), "".join(self.tts_parts)
 
-    # No closing tag found - malformed, return nothing
-    return "", 0
+    def _process_nodes(self, nodes: list[SyntaxTreeNode]) -> None:
+        """Walk through nodes, routing content appropriately."""
+        i = 0
+        while i < len(nodes):
+            node = nodes[i]
+
+            # Handle yap-show open
+            if _is_tag(node, YAP_SHOW_OPEN):
+                self.in_show += 1
+                i += 1
+                continue
+
+            # Handle yap-show close
+            if _is_tag(node, YAP_SHOW_CLOSE):
+                self.in_show = max(0, self.in_show - 1)
+                i += 1
+                continue
+
+            # Handle yap-speak: extract content, add to TTS only (unless in show zone)
+            if _is_tag(node, YAP_SPEAK_OPEN):
+                speak_content, consumed = self._extract_tag_content(nodes, i, YAP_SPEAK_OPEN, YAP_SPEAK_CLOSE)
+                if speak_content and self.in_show == 0:
+                    self.tts_parts.append(speak_content)
+                i += consumed
+                continue
+
+            # Handle orphaned close tags gracefully
+            if _is_tag(node, YAP_SPEAK_CLOSE) or _is_tag(node, YAP_CAP_CLOSE):
+                i += 1
+                continue
+
+            # Handle yap-cap (shouldn't appear in regular inline, but skip if it does)
+            if _is_tag(node, YAP_CAP_OPEN):
+                _, consumed = self._extract_tag_content(nodes, i, YAP_CAP_OPEN, YAP_CAP_CLOSE)
+                i += consumed
+                continue
+
+            # Regular node processing
+            self._process_node(node)
+            i += 1
+
+    def _process_node(self, node: SyntaxTreeNode) -> None:
+        """Process a single node, adding to display and/or TTS."""
+        display_html = self._node_to_html(node)
+        tts_text = self._node_to_tts(node)
+
+        # Always add to display
+        self.display_parts.append(display_html)
+
+        # Only add to TTS if not in show zone
+        if self.in_show == 0:
+            self.tts_parts.append(tts_text)
+
+    def _node_to_html(self, node: SyntaxTreeNode) -> str:
+        """Convert node to HTML string."""
+        if node.type == "text":
+            return node.content or ""
+        elif node.type == "strong":
+            inner = "".join(self._node_to_html(c) for c in node.children)
+            return f"<strong>{inner}</strong>"
+        elif node.type == "em":
+            inner = "".join(self._node_to_html(c) for c in node.children)
+            return f"<em>{inner}</em>"
+        elif node.type == "s":
+            inner = "".join(self._node_to_html(c) for c in node.children)
+            return f"<s>{inner}</s>"
+        elif node.type == "code_inline":
+            return f"<code>{node.content or ''}</code>"
+        elif node.type == "link":
+            href = node.attrs.get("href", "")
+            title = node.attrs.get("title", "")
+            inner = "".join(self._node_to_html(c) for c in node.children)
+            title_attr = f' title="{title}"' if title else ""
+            return f'<a href="{href}"{title_attr}>{inner}</a>'
+        elif node.type == "image":
+            src = node.attrs.get("src", "")
+            alt = node.content or ""
+            title = node.attrs.get("title", "")
+            title_attr = f' title="{title}"' if title else ""
+            return f'<img src="{src}" alt="{alt}"{title_attr} />'
+        elif node.type == "softbreak":
+            return " "
+        elif node.type == "hardbreak":
+            return "<br />"
+        elif node.type == "math_inline":
+            return f'<span class="math-inline">{node.content or ""}</span>'
+        elif node.type == "html_inline":
+            # Pass through HTML that isn't our tags
+            return node.content or ""
+        elif node.type == "footnote_ref":
+            # Footnote reference - render as superscript link
+            label = node.meta.get("label", "") if node.meta else ""
+            return f'<sup class="footnote-ref"><a href="#fn-{label}" id="fnref-{label}">[{label}]</a></sup>'
+        elif node.type == "footnote_anchor":
+            # Back-link anchor in footnote content - skip in HTML
+            return ""
+        else:
+            return node.content or ""
+
+    def _node_to_tts(self, node: SyntaxTreeNode) -> str:
+        """Extract TTS text from node. Math and footnote refs are silent."""
+        if node.type == "text":
+            return node.content or ""
+        elif node.type in ("strong", "em", "s", "link"):
+            return "".join(self._node_to_tts(c) for c in node.children)
+        elif node.type == "code_inline":
+            return node.content or ""
+        elif node.type == "image":
+            return node.content or ""  # Alt text
+        elif node.type in ("softbreak", "hardbreak"):
+            return " "
+        elif node.type == "math_inline":
+            return ""  # Math is silent
+        elif node.type == "html_inline":
+            return ""  # Skip HTML tags
+        elif node.type == "footnote_ref":
+            return ""  # Footnote refs are silent
+        elif node.type == "footnote_anchor":
+            return ""  # Back-link anchors are silent
+        else:
+            return node.content or ""
+
+    def _extract_tag_content(
+        self, nodes: list[SyntaxTreeNode], start_idx: int, open_tag: str, close_tag: str
+    ) -> tuple[str, int]:
+        """Extract text content between open and close tags.
+
+        Returns (content_text, nodes_consumed). If malformed, returns ("", 1).
+        """
+        if start_idx >= len(nodes) or not _is_tag(nodes[start_idx], open_tag):
+            return "", 1
+
+        parts: list[str] = []
+        i = start_idx + 1
+        while i < len(nodes):
+            node = nodes[i]
+            if _is_tag(node, close_tag):
+                return "".join(parts), i - start_idx + 1
+            # Extract plain text from content
+            parts.append(self._node_to_tts(node))
+            i += 1
+
+        # Unclosed tag - treat as consumed but return nothing
+        return "", i - start_idx
 
 
-def _extract_yap_cap(children: list[SyntaxTreeNode], start_idx: int) -> tuple[list[SyntaxTreeNode], int]:
-    """Extract <yap-cap>...</yap-cap> starting at start_idx.
+# === CAPTION PROCESSING ===
 
-    Returns (list of nodes inside caption, num_nodes_consumed).
-    If no yap-cap found, returns ([], 0).
+
+def process_caption(nodes: list[SyntaxTreeNode]) -> tuple[str, str]:
+    """Process caption nodes to get (display_caption, tts_caption).
+
+    Captions support full inline markdown including yap-show and yap-speak.
+    """
+    processor = InlineProcessor()
+    return processor.process(nodes)
+
+
+def extract_caption_nodes(children: list[SyntaxTreeNode], start_idx: int) -> tuple[list[SyntaxTreeNode], int]:
+    """Extract nodes inside <yap-cap>...</yap-cap>.
+
+    Returns (caption_nodes, nodes_consumed). If no caption, returns ([], 0).
     """
     if start_idx >= len(children):
         return [], 0
 
-    if not _is_html_tag(children[start_idx], _YAP_CAP_OPEN):
+    if not _is_tag(children[start_idx], YAP_CAP_OPEN):
         return [], 0
 
-    # Collect nodes until </yap-cap>
-    caption_nodes = []
+    caption_nodes: list[SyntaxTreeNode] = []
     i = start_idx + 1
     while i < len(children):
         node = children[i]
-        if _is_html_tag(node, _YAP_CAP_CLOSE):
+        if _is_tag(node, YAP_CAP_CLOSE):
             return caption_nodes, i - start_idx + 1
         caption_nodes.append(node)
         i += 1
 
-    # No closing tag found - malformed, return nothing
+    # Unclosed - return nothing
     return [], 0
 
 
-def _extract_plain_text_from_caption_nodes(nodes: list[SyntaxTreeNode]) -> tuple[str, str]:
-    """Extract display text and TTS text from caption nodes.
+# === AST TRANSFORMATION ===
 
-    Handles <yap-alt> within captions for math alt text.
-    Returns (display_text, tts_text) where:
-    - display_text: includes math LaTeX for rendering
-    - tts_text: replaces math with alt text for speech
+
+def transform_inline_to_ast(nodes: list[SyntaxTreeNode]) -> list[InlineContent]:
+    """Transform inline nodes to our AST representation.
+
+    - yap-show content is skipped (display-only, no TTS length)
+    - yap-speak content becomes SpeakContent (TTS-only, has TTS length)
+    - yap-cap is skipped (handled separately for images)
     """
-    display_parts = []
-    tts_parts = []
+    result: list[InlineContent] = []
     i = 0
+
     while i < len(nodes):
         node = nodes[i]
 
-        if node.type == "math_inline":
-            # Check if followed by <yap-alt>
-            alt, consumed = _extract_yap_alt(nodes, i + 1)
-            display_parts.append(f"${node.content}$")
-            tts_parts.append(alt if alt else node.content or "")
-            i += 1 + consumed
-        elif node.type == "text":
-            display_parts.append(node.content or "")
-            tts_parts.append(node.content or "")
+        # Skip yap-show content entirely (display-only, no TTS contribution)
+        if _is_tag(node, YAP_SHOW_OPEN):
+            depth = 1
             i += 1
-        elif _is_html_tag(node, _YAP_ALT_OPEN):
-            # Orphaned yap-alt (not after math) - skip it
-            _, consumed = _extract_yap_alt(nodes, i)
-            i += consumed if consumed else 1
-        else:
-            # Other nodes - include content if any
-            if node.content:
-                display_parts.append(node.content)
-                tts_parts.append(node.content)
+            while i < len(nodes) and depth > 0:
+                if _is_tag(nodes[i], YAP_SHOW_OPEN):
+                    depth += 1
+                elif _is_tag(nodes[i], YAP_SHOW_CLOSE):
+                    depth -= 1
+                i += 1
+            continue
+
+        # yap-speak: extract text content and add as SpeakContent
+        # This has TTS length but renders as empty HTML
+        if _is_tag(node, YAP_SPEAK_OPEN):
+            depth = 1
             i += 1
+            speak_text_parts: list[str] = []
+            while i < len(nodes) and depth > 0:
+                inner_node = nodes[i]
+                if _is_tag(inner_node, YAP_SPEAK_OPEN):
+                    depth += 1
+                elif _is_tag(inner_node, YAP_SPEAK_CLOSE):
+                    depth -= 1
+                elif depth == 1 and inner_node.type == "text":
+                    speak_text_parts.append(inner_node.content or "")
+                i += 1
+            speak_text = "".join(speak_text_parts)
+            if speak_text:
+                result.append(SpeakContent(content=speak_text))
+            continue
 
-    return "".join(display_parts), "".join(tts_parts)
+        # Skip yap-cap content (handled separately for images)
+        if _is_tag(node, YAP_CAP_OPEN):
+            depth = 1
+            i += 1
+            while i < len(nodes) and depth > 0:
+                if _is_tag(nodes[i], YAP_CAP_OPEN):
+                    depth += 1
+                elif _is_tag(nodes[i], YAP_CAP_CLOSE):
+                    depth -= 1
+                i += 1
+            continue
+
+        # Skip orphaned close tags
+        if node.type == "html_inline" and node.content in (YAP_SHOW_CLOSE, YAP_SPEAK_CLOSE, YAP_CAP_CLOSE):
+            i += 1
+            continue
+
+        # Transform regular nodes
+        ast_node = _transform_inline_node(node)
+        if ast_node:
+            result.append(ast_node)
+        i += 1
+
+    return result
 
 
-class DocumentTransformer:
-    """Transforms markdown AST to StructuredDocument."""
-
-    def __init__(
-        self,
-        max_block_chars: int,
-        soft_limit_mult: float,
-        min_chunk_size: int,
-    ):
-        self.max_block_chars = max_block_chars
-        self.soft_limit_mult = soft_limit_mult
-        self.min_chunk_size = min_chunk_size
-        self._block_counter = 0
-        self._audio_idx_counter = 0
-        self._visual_group_counter = 0
-        self._md = self._create_renderer()
-        # Annotations extracted from AST (node_id -> alt text)
-        self._math_block_alts: dict[int, str] = {}
-
-    def _create_renderer(self) -> MarkdownIt:
-        """Create markdown renderer for HTML output."""
-        md = MarkdownIt("commonmark")
-        md.enable("table")
-        md.enable("strikethrough")
-        dollarmath_plugin(md)
-        return md
-
-    def _next_block_id(self) -> str:
-        id_ = f"b{self._block_counter}"
-        self._block_counter += 1
-        return id_
-
-    def _next_audio_idx(self, plain_text: str) -> int | None:
-        """Get next audio block index, or None if text is empty/unspeakable."""
-        if not plain_text.strip():
-            return None
-        idx = self._audio_idx_counter
-        self._audio_idx_counter += 1
-        return idx
-
-    def _next_visual_group_id(self) -> str:
-        id_ = f"vg{self._visual_group_counter}"
-        self._visual_group_counter += 1
-        return id_
-
-    def transform(self, ast: SyntaxTreeNode) -> StructuredDocument:
-        """Transform AST root to StructuredDocument."""
-        self._block_counter = 0
-        self._audio_idx_counter = 0
-        self._visual_group_counter = 0
-        self._math_block_alts = {}
-        # Pre-process: extract {alt} annotations for math_blocks
-        self._extract_math_block_annotations(ast)
-        blocks = self._transform_children(ast)
-        return StructuredDocument(blocks=blocks)
-
-    def _extract_math_block_annotations(self, ast: SyntaxTreeNode) -> None:
-        """Extract <yap-alt> annotations from paragraphs following math_blocks.
-
-        When display math ($$...$$) is followed by a paragraph containing only
-        <yap-alt>...</yap-alt>, we extract the alt text and mark that paragraph for skipping.
-        """
-        children = ast.children
-        skip_indices: set[int] = set()
-
-        for i, child in enumerate(children):
-            if child.type == "math_block" and i + 1 < len(children):
-                next_child = children[i + 1]
-                # Check if next is a paragraph with just <yap-alt>...</yap-alt>
-                if next_child.type == "paragraph" and next_child.children:
-                    inline = next_child.children[0]
-                    if inline.type == "inline" and inline.children:
-                        # Look for <yap-alt>...</yap-alt> pattern
-                        alt, consumed = _extract_yap_alt(inline.children, 0)
-                        if alt and consumed == len(inline.children):
-                            # Entire inline is just the yap-alt annotation
-                            self._math_block_alts[id(child)] = alt
-                            skip_indices.add(i + 1)
-
-        # Store indices to skip during transform
-        self._skip_child_indices = skip_indices
-
-    def _transform_children(self, node: SyntaxTreeNode) -> list[ContentBlock]:
-        """Transform all children of a node."""
-        blocks: list[ContentBlock] = []
-        for i, child in enumerate(node.children):
-            # Skip paragraphs that were consumed as {alt} annotations
-            if i in getattr(self, "_skip_child_indices", set()):
-                continue
-            blocks.extend(self._transform_node(child))
-        return blocks
-
-    def _transform_node(self, node: SyntaxTreeNode) -> Sequence[ContentBlock]:
-        """Transform a single AST node to ContentBlock(s).
-
-        Returns a sequence because large blocks may be split into multiple.
-        """
-        handlers: dict[str, Callable[[SyntaxTreeNode], Sequence[ContentBlock]]] = {
-            "heading": self._transform_heading,
-            "paragraph": self._transform_paragraph,
-            "fence": self._transform_code,
-            "code_block": self._transform_code,
-            "bullet_list": self._transform_list,
-            "ordered_list": self._transform_list,
-            "blockquote": self._transform_blockquote,
-            "table": self._transform_table,
-            "hr": self._transform_hr,
-            "math_block": self._transform_math,
-        }
-
-        handler = handlers.get(node.type)
-        if handler:
-            return handler(node)
-
-        # Skip unknown node types
-        return []
-
-    # === PROSE BLOCKS (with audio) ===
-
-    def _transform_heading(self, node: SyntaxTreeNode) -> list[ContentBlock]:
-        """Transform heading node."""
-        level = cast(Literal[1, 2, 3, 4, 5, 6], int(node.tag[1]))  # h1 -> 1, h2 -> 2, etc.
-        inline = node.children[0] if node.children else None
-
-        html = self._render_inline_html(inline)
-        ast = self._transform_inline(inline)
-        plain_text = self._extract_plain_text(inline)
-
-        return [
-            HeadingBlock(
-                id=self._next_block_id(),
-                level=level,
-                html=html,
-                ast=ast,
-                plain_text=plain_text,
-                audio_block_idx=self._next_audio_idx(plain_text),
-            )
-        ]
-
-    def _transform_paragraph(self, node: SyntaxTreeNode) -> Sequence[ContentBlock]:
-        """Transform paragraph node, detecting standalone images or splitting if too long."""
-        inline = node.children[0] if node.children else None
-
-        # Check for standalone image (paragraph containing only an image)
-        if self._is_standalone_image(inline):
-            return [self._create_image_block(inline)]
-
-        plain_text = self._extract_plain_text(inline)
-
-        # Check if splitting is needed
-        if len(plain_text) <= self.max_block_chars:
-            html = self._render_inline_html(inline)
-            ast = self._transform_inline(inline)
-            return [
-                ParagraphBlock(
-                    id=self._next_block_id(),
-                    html=html,
-                    ast=ast,
-                    plain_text=plain_text,
-                    audio_block_idx=self._next_audio_idx(plain_text),
-                )
-            ]
-
-        # Split large paragraphs
-        return self._split_paragraph(inline, plain_text)
-
-    def _is_standalone_image(self, inline: SyntaxTreeNode | None) -> TypeGuard[SyntaxTreeNode]:
-        """Check if inline content is just a single image (no other meaningful content).
-
-        Allows <yap-cap>...</yap-cap> and <yap-alt>...</yap-alt> after the image.
-        """
-        if not inline or not inline.children:
-            return False
-
-        # Filter out whitespace-only text, line breaks, and yap annotation tags/content
-        children = inline.children
-        yap_depth = 0  # Track nesting depth of yap tags
-        meaningful = []
-
-        for c in children:
-            # Track entry/exit of yap tags (use depth for nested tags)
-            if c.type == "html_inline":
-                content = c.content or ""
-                if content in (_YAP_CAP_OPEN, _YAP_ALT_OPEN):
-                    yap_depth += 1
-                    continue
-                elif content in (_YAP_CAP_CLOSE, _YAP_ALT_CLOSE):
-                    yap_depth = max(0, yap_depth - 1)
-                    continue
-
-            # Skip content inside yap tags
-            if yap_depth > 0:
-                continue
-
-            # Skip whitespace and breaks
-            if c.type in ("softbreak", "hardbreak"):
-                continue
-            if c.type == "text" and not (c.content or "").strip():
-                continue
-
-            meaningful.append(c)
-
-        return len(meaningful) == 1 and meaningful[0].type == "image"
-
-    def _create_image_block(self, inline: SyntaxTreeNode) -> ImageBlock:
-        """Create an ImageBlock from a standalone image paragraph."""
-        # Find the image node
-        children = inline.children
-        img_idx = next(i for i, c in enumerate(children) if c.type == "image")
-        img_node = children[img_idx]
-
-        src = img_node.attrs.get("src", "")
-        alt = img_node.content or ""
-        title = img_node.attrs.get("title")
-
-        # Extract caption from <yap-cap>...</yap-cap> following the image
-        caption = ""
-        caption_tts = ""
-        caption_nodes, _ = _extract_yap_cap(children, img_idx + 1)
-        if caption_nodes:
-            caption, caption_tts = _extract_plain_text_from_caption_nodes(caption_nodes)
-
-        # Parse layout metadata from URL query params
-        width_pct, row_group = self._parse_image_metadata(src)
-
-        # Strip query params from src for clean URL
-        clean_src = src.split("?")[0] if "?" in src else src
-
-        # TTS: use caption_tts if available (math replaced with alt), else caption, else alt
-        tts_text = caption_tts if caption_tts else (caption if caption else alt)
-
-        return ImageBlock(
-            id=self._next_block_id(),
-            src=clean_src,
-            alt=alt,
-            caption=caption,
-            title=title,
-            width_pct=width_pct,
-            row_group=row_group,
-            audio_block_idx=self._next_audio_idx(tts_text),
+def _transform_inline_node(node: SyntaxTreeNode) -> InlineContent | None:
+    """Transform a single inline node to InlineContent."""
+    if node.type == "text":
+        return TextContent(content=node.content or "")
+    elif node.type == "strong":
+        inner = []
+        for child in node.children:
+            ast = _transform_inline_node(child)
+            if ast:
+                inner.append(ast)
+        return StrongContent(content=inner)
+    elif node.type == "em":
+        inner = []
+        for child in node.children:
+            ast = _transform_inline_node(child)
+            if ast:
+                inner.append(ast)
+        return EmphasisContent(content=inner)
+    elif node.type == "code_inline":
+        return CodeSpanContent(content=node.content or "")
+    elif node.type == "link":
+        inner = []
+        for child in node.children:
+            ast = _transform_inline_node(child)
+            if ast:
+                inner.append(ast)
+        return LinkContent(
+            href=cast(str, node.attrs.get("href", "")),
+            title=cast(str | None, node.attrs.get("title")),
+            content=inner,
         )
+    elif node.type == "image":
+        return InlineImageContent(
+            src=cast(str, node.attrs.get("src", "")),
+            alt=node.content or "",
+        )
+    elif node.type == "math_inline":
+        return MathInlineContent(content=node.content or "")
+    elif node.type in ("softbreak", "hardbreak"):
+        return TextContent(content=" ")
+    elif node.type == "footnote_ref":
+        label = node.meta.get("label", "") if node.meta else ""
+        return FootnoteRefContent(label=label)
+    elif node.type == "footnote_anchor":
+        # Back-link anchors don't contribute to AST (they're navigational)
+        return None
+    return None
 
-    def _parse_image_metadata(self, src: str) -> tuple[float | None, str | None]:
-        """Parse width_pct and row_group from image URL query params."""
-        parsed = urlparse(src)
-        params = parse_qs(parsed.query)
 
-        width_pct = None
-        if "w" in params:
-            try:
-                width_pct = float(params["w"][0])
-            except (ValueError, IndexError):
-                pass
+# === SPLITTING ===
 
-        row_group = params.get("row", [None])[0]
 
-        return width_pct, row_group
+class TextSplitter:
+    """Splits text into chunks respecting max_block_chars.
 
-    def _split_paragraph(self, inline: SyntaxTreeNode | None, plain_text: str) -> list[ParagraphBlock]:
-        """Split a large paragraph into multiple blocks at sentence boundaries.
+    Splitting strategy (in order of preference):
+    1. Sentence boundaries (.!?)
+    2. Clause separators (,—:;) - when sentences are too long
+    3. Word boundaries - last resort for very long clauses
+    """
 
-        Preserves inline formatting (bold, italic, etc.) across splits.
-        """
-        # Get chunk boundaries as character positions
-        chunk_ranges = self._get_chunk_ranges(plain_text)
-
-        # Transform full AST once
-        full_ast = self._transform_inline(inline)
-
-        blocks = []
-        visual_group_id = self._next_visual_group_id()
-
-        for start, end in chunk_ranges:
-            # Slice AST to get content for this chunk
-            chunk_ast = self._slice_ast(full_ast, start, end)
-            chunk_text = plain_text[start:end].strip()
-            chunk_html = self._render_ast_to_html(chunk_ast)
-
-            blocks.append(
-                ParagraphBlock(
-                    id=self._next_block_id(),
-                    html=chunk_html,
-                    ast=chunk_ast,
-                    plain_text=chunk_text,
-                    audio_block_idx=self._next_audio_idx(chunk_text),
-                    visual_group_id=visual_group_id,
-                )
-            )
-
-        return blocks
+    # Sentence-ending punctuation
+    SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
 
     # Pause pattern: clause separators optionally followed by closing quotes/parens
     # This ensures we don't orphan closing punctuation at the start of the next chunk
     # Includes straight quotes, curly quotes (U+201C/D, U+2018/9), parens, brackets
-    _PAUSE_PATTERN = re.compile(r"[,—:;][\"')\]\u201c\u201d\u2018\u2019]?")
+    PAUSE_PATTERN = re.compile(r"[,—:;][\"')\]\u201c\u201d\u2018\u2019]?")
 
-    def _get_chunk_ranges(self, text: str) -> list[tuple[int, int]]:
-        """Get (start, end) character ranges for each chunk.
+    def __init__(
+        self,
+        max_chars: int,
+        soft_limit_mult: float = 1.3,
+        min_chunk_size: int = 40,
+    ):
+        self.max_chars = max_chars
+        self.soft_max = int(max_chars * soft_limit_mult)
+        self.min_chunk_size = min_chunk_size
 
-        Splitting strategy (in order of preference):
-        1. Sentence boundaries (.!?)
-        2. Clause separators (,—:;) - when sentences are too long
-        3. Word boundaries - last resort for very long clauses
-        """
-        sentences = re.split(r"(?<=[.!?])\s+", text)
+    def get_chunk_ranges(self, text: str) -> list[tuple[int, int]]:
+        """Get (start, end) character ranges for each chunk."""
+        if not text or len(text) <= self.max_chars:
+            return [(0, len(text))] if text else []
 
-        soft_max = int(self.max_block_chars * self.soft_limit_mult)
-        min_chunk_size = self.min_chunk_size
+        sentences = self.SENTENCE_END.split(text)
 
         ranges: list[tuple[int, int]] = []
         current_start = 0
         current_end = 0
-
         pos = 0
+
         for sentence in sentences:
             if not sentence.strip():
                 continue
@@ -465,21 +441,20 @@ class DocumentTransformer:
             pos = sent_end
 
             # Check if this sentence alone exceeds the soft limit
-            if len(sentence) > soft_max:
+            if len(sentence) > self.soft_max:
                 # Flush current chunk if any
                 if current_end > current_start:
                     ranges.append((current_start, current_end))
                 # Split the long sentence at natural pause points
-                self._split_long_sentence(sentence, sent_start, ranges, min_chunk_size)
+                self._split_long_sentence(sentence, sent_start, ranges)
                 current_start = sent_end
                 current_end = sent_end
                 continue
 
             # Check if adding this sentence would exceed limit
-            potential_end = sent_end
-            potential_len = potential_end - current_start
-            if potential_len <= self.max_block_chars:
-                current_end = potential_end
+            potential_len = sent_end - current_start
+            if potential_len <= self.max_chars:
+                current_end = sent_end
             else:
                 # Flush current chunk and start new one
                 if current_end > current_start:
@@ -493,25 +468,23 @@ class DocumentTransformer:
 
         return ranges if ranges else [(0, len(text))]
 
-    def _split_long_sentence(
-        self, sentence: str, sent_start: int, ranges: list[tuple[int, int]], min_chunk_size: int
-    ) -> None:
+    def _split_long_sentence(self, sentence: str, sent_start: int, ranges: list[tuple[int, int]]) -> None:
         """Split a long sentence at natural pause points, falling back to word boundaries."""
         # Find all pause points (comma, m-dash, colon, semicolon)
-        pause_matches = list(self._PAUSE_PATTERN.finditer(sentence))
-        # Positions after the pause character (where next clause starts, after stripping space)
+        pause_matches = list(self.PAUSE_PATTERN.finditer(sentence))
+        # Positions after the pause character (where next clause starts)
         pause_positions = [m.end() for m in pause_matches]
 
         chunk_pos = 0
         while chunk_pos < len(sentence):
             remaining = len(sentence) - chunk_pos
-            if remaining <= self.max_block_chars:
+            if remaining <= self.max_chars:
                 # Remaining text fits in one chunk
                 ranges.append((sent_start + chunk_pos, sent_start + len(sentence)))
                 break
 
             # Look for a natural pause point
-            split_pos = self._find_pause_split(sentence, chunk_pos, pause_positions, min_chunk_size)
+            split_pos = self._find_pause_split(sentence, chunk_pos, pause_positions)
 
             if split_pos is not None:
                 # Split at the pause point (include the pause char, trim trailing space)
@@ -522,13 +495,13 @@ class DocumentTransformer:
                     chunk_pos += 1
             else:
                 # Fall back to word boundary split
-                target_end = min(chunk_pos + self.max_block_chars, len(sentence))
+                target_end = min(chunk_pos + self.max_chars, len(sentence))
                 if target_end < len(sentence):
                     boundary = sentence.rfind(" ", chunk_pos, target_end)
                     if boundary > chunk_pos:
                         # Check if this would leave a tiny orphan
                         orphan_len = len(sentence) - (boundary + 1)
-                        if orphan_len < min_chunk_size:
+                        if orphan_len < self.min_chunk_size:
                             # Include the orphan rather than creating a bad split
                             target_end = len(sentence)
                         else:
@@ -536,13 +509,11 @@ class DocumentTransformer:
                 ranges.append((sent_start + chunk_pos, sent_start + target_end))
                 chunk_pos = target_end
 
-    def _find_pause_split(
-        self, sentence: str, chunk_pos: int, pause_positions: list[int], min_chunk_size: int
-    ) -> int | None:
+    def _find_pause_split(self, sentence: str, chunk_pos: int, pause_positions: list[int]) -> int | None:
         """Find the best pause point to split at, or None if none suitable.
 
         Prefers pause points that:
-        1. Are within max_block_chars from chunk_pos
+        1. Are within max_chars from chunk_pos
         2. Leave at least min_chunk_size chars for the next chunk (avoid tiny orphans)
         3. Are as late as possible (to keep more text together)
         """
@@ -556,11 +527,11 @@ class DocumentTransformer:
             next_chunk_len = remaining - chunk_len
 
             # Skip if this chunk would be too long
-            if chunk_len > self.max_block_chars:
+            if chunk_len > self.max_chars:
                 continue
 
             # Skip if this would leave a tiny orphan (unless it's the only option)
-            if next_chunk_len < min_chunk_size and next_chunk_len > 0:
+            if next_chunk_len < self.min_chunk_size and next_chunk_len > 0:
                 # Only consider this if we have no better option
                 if best_pos is None:
                     best_pos = pos
@@ -571,246 +542,824 @@ class DocumentTransformer:
 
         return best_pos
 
-    def _slice_ast(self, ast: list[InlineContent], start: int, end: int) -> list[InlineContent]:
-        """Slice AST to extract content between character positions.
 
-        Handles nested formatting - if a split falls inside a bold/italic span,
-        the span is properly closed in the first chunk and reopened in the second.
-        """
-        result: list[InlineContent] = []
-        pos = 0
+def split_with_spans(
+    text: str,
+    html: str,
+    ast: list[InlineContent],
+    splitter: TextSplitter,
+    start_idx: int,
+) -> tuple[str, list[AudioChunk]]:
+    """Split text and wrap HTML in span tags, preserving formatting.
 
-        for node in ast:
-            node_len = self._get_inline_length(node)
-            node_end = pos + node_len
+    Returns (html_with_spans, audio_chunks).
+    If text doesn't need splitting, returns original HTML (no spans).
+    """
+    text = text.strip()
+    if not text:
+        return html, []
 
-            # Skip nodes entirely before our range
-            if node_end <= start:
-                pos = node_end
-                continue
+    chunk_ranges = splitter.get_chunk_ranges(text)
 
-            # Stop if we're past our range
-            if pos >= end:
-                break
+    if len(chunk_ranges) <= 1:
+        # No splitting needed
+        return html, [AudioChunk(text=text, audio_block_idx=start_idx)]
 
-            # Calculate overlap
-            overlap_start = max(0, start - pos)
-            overlap_end = min(node_len, end - pos)
+    # AST may have trailing 0-length nodes (math, footnote refs) past the stripped text length.
+    # Extend last chunk's end to include them.
+    ast_len = sum(get_inline_length(n) for n in ast)
 
-            # Slice the node
-            sliced = self._slice_inline_node(node, overlap_start, overlap_end)
-            if sliced:
-                result.extend(sliced)
+    # Slice AST for each chunk and render to HTML with span wrappers
+    audio_chunks: list[AudioChunk] = []
+    html_parts: list[str] = []
 
+    for i, (chunk_start, chunk_end) in enumerate(chunk_ranges):
+        chunk_text = text[chunk_start:chunk_end].strip()
+        idx = start_idx + i
+
+        # For the last chunk, extend end to include trailing 0-length display elements
+        is_last = i == len(chunk_ranges) - 1
+        ast_end = max(chunk_end, ast_len) if is_last else chunk_end
+
+        # Slice AST and render to HTML
+        sliced_ast = slice_ast(ast, chunk_start, ast_end)
+        chunk_html = render_ast_to_html(sliced_ast)
+
+        html_parts.append(f'<span data-audio-idx="{idx}">{chunk_html}</span>')
+        audio_chunks.append(AudioChunk(text=chunk_text, audio_block_idx=idx))
+
+    return " ".join(html_parts), audio_chunks
+
+
+# === AST SLICING ===
+
+
+def slice_ast(ast: list[InlineContent], start: int, end: int) -> list[InlineContent]:
+    """Slice AST to extract content between character positions.
+
+    Handles nested formatting - if a split falls inside a bold/italic span,
+    the span is properly closed in the first chunk and reopened in the second.
+
+    0-length nodes (math, footnote refs) need special handling at boundaries:
+    they should be included when at the start or end of a range, not skipped.
+    """
+    result: list[InlineContent] = []
+    pos = 0
+
+    for node in ast:
+        node_len = get_inline_length(node)
+        node_end = pos + node_len
+
+        # Skip nodes entirely before our range
+        # For 0-length nodes at pos==start: don't skip (they're AT the boundary, not before)
+        if node_end < start or (node_end == start and node_len > 0):
             pos = node_end
+            continue
 
-        return result
+        # Stop if we're past our range (use > not >= to include 0-length nodes at boundary)
+        if pos > end:
+            break
 
-    def _slice_inline_node(self, node: InlineContent, start: int, end: int) -> list[InlineContent]:
-        """Slice a single inline node at given character positions."""
-        match node:
-            case TextContent():
-                content = node.content[start:end]
-                return [TextContent(content=content)] if content else []
-            case CodeSpanContent():
-                content = node.content[start:end]
-                return [CodeSpanContent(content=content)] if content else []
-            case StrongContent():
-                inner = self._slice_ast(node.content, start, end)
-                return [StrongContent(content=inner)] if inner else []
-            case EmphasisContent():
-                inner = self._slice_ast(node.content, start, end)
-                return [EmphasisContent(content=inner)] if inner else []
-            case LinkContent():
-                inner = self._slice_ast(node.content, start, end)
-                return [LinkContent(href=node.href, title=node.title, content=inner)] if inner else []
-            case InlineImageContent() | MathInlineContent():
-                # Images and math are atomic units that can't be split mid-content,
-                # so we either include the whole thing (start == 0) or nothing
-                return [node] if start == 0 else []
+        # Calculate overlap
+        overlap_start = max(0, start - pos)
+        overlap_end = min(node_len, end - pos)
+
+        # Slice the node
+        sliced = slice_inline_node(node, overlap_start, overlap_end)
+        if sliced:
+            result.extend(sliced)
+
+        pos = node_end
+
+    return result
+
+
+def slice_inline_node(node: InlineContent, start: int, end: int) -> list[InlineContent]:
+    """Slice a single inline node at given character positions."""
+    match node:
+        case TextContent():
+            content = node.content[start:end]
+            return [TextContent(content=content)] if content else []
+        case CodeSpanContent():
+            content = node.content[start:end]
+            return [CodeSpanContent(content=content)] if content else []
+        case StrongContent():
+            inner = slice_ast(node.content, start, end)
+            return [StrongContent(content=inner)] if inner else []
+        case EmphasisContent():
+            inner = slice_ast(node.content, start, end)
+            return [EmphasisContent(content=inner)] if inner else []
+        case LinkContent():
+            inner = slice_ast(node.content, start, end)
+            return [LinkContent(href=node.href, title=node.title, content=inner)] if inner else []
+        case InlineImageContent():
+            # Images are atomic - include whole thing if start of slice
+            return [node] if start == 0 else []
+        case MathInlineContent():
+            # Math has 0 TTS length but should be displayed.
+            # Include it if the slice starts at position 0 (i.e., we're at
+            # the position where this math appears in the TTS stream)
+            return [node] if start == 0 else []
+        case SpeakContent():
+            # Speak content is sliced like text (contributes to TTS length)
+            content = node.content[start:end]
+            return [SpeakContent(content=content)] if content else []
+        case FootnoteRefContent():
+            # Footnote refs have 0 TTS length, include at slice start
+            return [node] if start == 0 else []
+    return []
+
+
+def get_inline_length(node: InlineContent) -> int:
+    """Get the TTS text length of an inline node."""
+    match node:
+        case TextContent() | CodeSpanContent():
+            return len(node.content)
+        case StrongContent() | EmphasisContent() | LinkContent():
+            return sum(get_inline_length(child) for child in node.content)
+        case InlineImageContent():
+            return len(node.alt)
+        case MathInlineContent():
+            # Math is silent in TTS, so it contributes 0 to TTS length
+            return 0
+        case SpeakContent():
+            # Speak content contributes its full length to TTS
+            return len(node.content)
+        case FootnoteRefContent():
+            # Footnote refs are silent (display-only)
+            return 0
+    return 0
+
+
+def render_ast_to_html(ast: list[InlineContent]) -> str:
+    """Render our InlineContent AST back to HTML."""
+    return "".join(render_inline_content_html(node) for node in ast)
+
+
+def render_inline_content_html(node: InlineContent) -> str:
+    """Render a single InlineContent node to HTML."""
+    match node:
+        case TextContent():
+            return node.content
+        case CodeSpanContent():
+            return f"<code>{node.content}</code>"
+        case StrongContent():
+            return f"<strong>{render_ast_to_html(node.content)}</strong>"
+        case EmphasisContent():
+            return f"<em>{render_ast_to_html(node.content)}</em>"
+        case LinkContent():
+            inner = render_ast_to_html(node.content)
+            title_attr = f' title="{node.title}"' if node.title else ""
+            return f'<a href="{node.href}"{title_attr}>{inner}</a>'
+        case InlineImageContent():
+            return f'<img src="{node.src}" alt="{node.alt}" />'
+        case MathInlineContent():
+            return f'<span class="math-inline">{node.content}</span>'
+        case SpeakContent():
+            # Speak content is TTS-only, doesn't render to display HTML
+            return ""
+        case FootnoteRefContent():
+            # Render as superscript link to footnote, with id for back-navigation
+            if node.has_content:
+                return f'<sup class="footnote-ref"><a href="#fn-{node.label}" id="fnref-{node.label}">[{node.label}]</a></sup>'
+            else:
+                # No matching footnote - render as plain text (no link)
+                return f'<sup class="footnote-ref-orphan">[{node.label}]</sup>'
+    return ""
+
+
+# === DOCUMENT TRANSFORMER ===
+
+
+class DocumentTransformer:
+    """Transforms markdown AST to StructuredDocument."""
+
+    def __init__(
+        self,
+        max_block_chars: int = 150,
+        soft_limit_mult: float = 1.2,
+        min_chunk_size: int = 30,
+    ):
+        self.splitter = TextSplitter(max_block_chars, soft_limit_mult, min_chunk_size)
+        self._block_counter = 0
+        self._audio_idx_counter = 0
+        self._skip_indices: set[int] = set()
+
+    def _next_block_id(self) -> str:
+        id_ = f"b{self._block_counter}"
+        self._block_counter += 1
+        return id_
+
+    def _next_audio_idx(self) -> int:
+        idx = self._audio_idx_counter
+        self._audio_idx_counter += 1
+        return idx
+
+    def transform(self, ast: SyntaxTreeNode) -> StructuredDocument:
+        """Transform AST root to StructuredDocument."""
+        self._block_counter = 0
+        self._audio_idx_counter = 0
+        self._skip_indices = set()
+
+        # Pre-process: find display math followed by yap-speak paragraphs
+        self._find_math_annotations(ast)
+
+        blocks = self._transform_children(ast)
+        doc = StructuredDocument(blocks=blocks)
+
+        # Post-process: deduplicate footnote labels and match refs with content
+        self._process_footnotes(doc)
+
+        return doc
+
+    def _process_footnotes(self, doc: StructuredDocument) -> None:
+        """Post-process footnotes: deduplicate labels and match refs with content.
+
+        - If multiple footnotes have the same label, rename them: "1" -> "1", "1" -> "1-2", etc.
+        - Mark inline refs that have no matching footnote content (has_content=False)
+        - Mark footnote content that has no matching inline ref (has_ref=False)
+        - Update HTML to use deduplicated labels
+        """
+        # Collect all footnote refs and content
+        refs: list[tuple[FootnoteRefContent, str]] = []  # (ref, original_label)
+        footnote_items: list[FootnoteItem] = []
+
+        def collect_refs_from_block(block: ContentBlock) -> None:
+            """Recursively collect footnote refs from block AST."""
+            if hasattr(block, "ast"):
+                collect_refs_from_ast(block.ast)
+            if isinstance(block, ListBlock):
+                for item in block.items:
+                    collect_refs_from_ast(item.ast)
+            if isinstance(block, BlockquoteBlock):
+                for nested in block.blocks:
+                    collect_refs_from_block(nested)
+            if isinstance(block, FootnotesBlock):
+                footnote_items.extend(block.items)
+
+        def collect_refs_from_ast(ast: list[InlineContent]) -> None:
+            """Recursively collect footnote refs from inline AST."""
+            for node in ast:
+                if isinstance(node, FootnoteRefContent):
+                    refs.append((node, node.label))
+                elif hasattr(node, "content") and isinstance(node.content, list):
+                    collect_refs_from_ast(node.content)
+
+        for block in doc.blocks:
+            collect_refs_from_block(block)
+
+        if not refs and not footnote_items:
+            return
+
+        # Deduplicate footnote content labels
+        label_counts: dict[str, int] = {}
+        label_map: dict[str, str] = {}  # original_label -> deduplicated_label
+
+        for item in footnote_items:
+            original_label = item.label
+            count = label_counts.get(original_label, 0)
+            label_counts[original_label] = count + 1
+
+            if count == 0:
+                # First occurrence, keep original
+                label_map[f"{original_label}:{count}"] = original_label
+            else:
+                # Subsequent occurrences, add suffix
+                new_label = f"{original_label}-{count + 1}"
+                label_map[f"{original_label}:{count}"] = new_label
+                item.label = new_label
+
+        # Build set of content labels for matching
+        content_labels = {item.label for item in footnote_items}
+
+        # Deduplicate refs and match with content
+        ref_label_counts: dict[str, int] = {}
+        for ref, original_label in refs:
+            count = ref_label_counts.get(original_label, 0)
+            ref_label_counts[original_label] = count + 1
+
+            # Get the deduplicated label for this occurrence
+            deduped_label = label_map.get(f"{original_label}:{count}", original_label)
+            ref.label = deduped_label
+
+            # Check if matching content exists
+            ref.has_content = deduped_label in content_labels
+
+        # Mark footnotes without matching refs
+        ref_labels = {ref.label for ref, _ in refs}
+        for item in footnote_items:
+            item.has_ref = item.label in ref_labels
+
+    def _find_math_annotations(self, ast: SyntaxTreeNode) -> None:
+        """Find display math blocks followed by yap-speak annotation paragraphs.
+
+        Marks those paragraphs for skipping.
+        """
+        children = ast.children
+        for i, child in enumerate(children):
+            if child.type == "math_block" and i + 1 < len(children):
+                next_child = children[i + 1]
+                if self._is_speak_only_paragraph(next_child):
+                    self._skip_indices.add(i + 1)
+
+    def _is_speak_only_paragraph(self, node: SyntaxTreeNode) -> bool:
+        """Check if paragraph contains only <yap-speak>...</yap-speak>."""
+        if node.type != "paragraph" or not node.children:
+            return False
+        inline = node.children[0]
+        if inline.type != "inline" or not inline.children:
+            return False
+
+        children = inline.children
+        # Must be: <yap-speak>...</yap-speak> only
+        if len(children) < 2:
+            return False
+        if not _is_tag(children[0], YAP_SPEAK_OPEN):
+            return False
+
+        # Find closing tag
+        for i, child in enumerate(children[1:], 1):
+            if _is_tag(child, YAP_SPEAK_CLOSE):
+                # Check nothing meaningful after
+                remaining = children[i + 1 :]
+                return all(c.type == "text" and not (c.content or "").strip() for c in remaining)
+        return False
+
+    def _extract_speak_from_paragraph(self, node: SyntaxTreeNode) -> str:
+        """Extract yap-speak content from a speak-only paragraph."""
+        if not node.children:
+            return ""
+        inline = node.children[0]
+        if not inline.children:
+            return ""
+
+        children = inline.children
+        parts: list[str] = []
+        in_speak = False
+
+        for child in children:
+            if _is_tag(child, YAP_SPEAK_OPEN):
+                in_speak = True
+            elif _is_tag(child, YAP_SPEAK_CLOSE):
+                in_speak = False
+            elif in_speak and child.type == "text":
+                parts.append(child.content or "")
+
+        return "".join(parts)
+
+    def _transform_children(self, node: SyntaxTreeNode) -> list[ContentBlock]:
+        """Transform all children of a node."""
+        blocks: list[ContentBlock] = []
+        for i, child in enumerate(node.children):
+            if i in self._skip_indices:
+                continue
+            blocks.extend(self._transform_node(child, parent=node, index=i))
+        return blocks
+
+    def _transform_node(
+        self,
+        node: SyntaxTreeNode,
+        parent: SyntaxTreeNode | None = None,
+        index: int = 0,
+    ) -> Sequence[ContentBlock]:
+        """Transform a single AST node to ContentBlock(s)."""
+        handlers = {
+            "heading": self._transform_heading,
+            "paragraph": self._transform_paragraph,
+            "fence": self._transform_code,
+            "code_block": self._transform_code,
+            "bullet_list": self._transform_list,
+            "ordered_list": self._transform_list,
+            "blockquote": self._transform_blockquote,
+            "table": self._transform_table,
+            "hr": self._transform_hr,
+            "math_block": lambda n: self._transform_math(n, parent, index),
+            "footnote_block": self._transform_footnote_block,
+        }
+
+        handler = handlers.get(node.type)
+        if handler:
+            return handler(node)
         return []
 
-    def _get_inline_length(self, node: InlineContent) -> int:
-        """Get the plain text length of an inline node."""
-        match node:
-            case TextContent() | CodeSpanContent():
-                return len(node.content)
-            case StrongContent() | EmphasisContent() | LinkContent():
-                return sum(self._get_inline_length(child) for child in node.content)
-            case InlineImageContent():
-                return len(node.alt)
-            case MathInlineContent():
-                # Math counts toward block length only if it has alt text (for TTS)
-                return len(node.alt) if node.alt else 0
-        return 0
+    def _transform_heading(self, node: SyntaxTreeNode) -> list[ContentBlock]:
+        """Transform heading node."""
+        level = cast(Literal[1, 2, 3, 4, 5, 6], int(node.tag[1]))
+        inline = node.children[0] if node.children else None
+        children = inline.children if inline else []
 
-    def _render_ast_to_html(self, ast: list[InlineContent]) -> str:
-        """Render our InlineContent AST back to HTML."""
-        return "".join(self._render_inline_content_html(node) for node in ast)
+        processor = InlineProcessor()
+        html, tts_text = processor.process(children)
+        ast = transform_inline_to_ast(children)
 
-    def _render_inline_content_html(self, node: InlineContent) -> str:
-        """Render a single InlineContent node to HTML."""
-        match node:
-            case TextContent():
-                return node.content
-            case CodeSpanContent():
-                return f"<code>{node.content}</code>"
-            case StrongContent():
-                return f"<strong>{self._render_ast_to_html(node.content)}</strong>"
-            case EmphasisContent():
-                return f"<em>{self._render_ast_to_html(node.content)}</em>"
-            case LinkContent():
-                inner = self._render_ast_to_html(node.content)
-                title_attr = f' title="{node.title}"' if node.title else ""
-                return f'<a href="{node.href}"{title_attr}>{inner}</a>'
-            case InlineImageContent():
-                return f'<img src="{node.src}" alt="{node.alt}" />'
-            case MathInlineContent():
-                return f'<span class="math-inline">{node.content}</span>'
-        return ""
+        audio_chunks: list[AudioChunk] = []
+        if tts_text.strip():
+            html, audio_chunks = split_with_spans(tts_text, html, ast, self.splitter, self._audio_idx_counter)
+            self._audio_idx_counter += len(audio_chunks)
 
-    def _split_text_into_chunks(self, text: str) -> list[str]:
-        """Split text into chunks at sentence boundaries, respecting max_block_chars."""
-        # Split at sentence boundaries: . ! ? followed by space or end
-        sentences = re.split(r"(?<=[.!?])\s+", text)
+        return [
+            HeadingBlock(
+                id=self._next_block_id(),
+                level=level,
+                html=html,
+                ast=ast,
+                audio_chunks=audio_chunks,
+            )
+        ]
 
-        chunks = []
-        current_chunk = ""
+    def _transform_paragraph(self, node: SyntaxTreeNode) -> Sequence[ContentBlock]:
+        """Transform paragraph node."""
+        inline = node.children[0] if node.children else None
+        children = inline.children if inline else []
 
-        for sentence in sentences:
-            if not sentence.strip():
+        # Check for standalone image
+        if self._is_standalone_image(children):
+            return [self._create_image_block(children)]
+
+        processor = InlineProcessor()
+        html, tts_text = processor.process(children)
+        ast = transform_inline_to_ast(children)
+
+        audio_chunks: list[AudioChunk] = []
+        if tts_text.strip():
+            html, audio_chunks = split_with_spans(tts_text, html, ast, self.splitter, self._audio_idx_counter)
+            self._audio_idx_counter += len(audio_chunks)
+
+        return [
+            ParagraphBlock(
+                id=self._next_block_id(),
+                html=html,
+                ast=ast,
+                audio_chunks=audio_chunks,
+            )
+        ]
+
+    def _is_standalone_image(self, children: list[SyntaxTreeNode]) -> bool:
+        """Check if children represent a standalone image (with optional caption)."""
+        yap_depth = 0
+        meaningful = []
+
+        for child in children:
+            if child.type == "html_inline":
+                content = child.content or ""
+                if content in (YAP_CAP_OPEN, YAP_SHOW_OPEN, YAP_SPEAK_OPEN):
+                    yap_depth += 1
+                    continue
+                elif content in (YAP_CAP_CLOSE, YAP_SHOW_CLOSE, YAP_SPEAK_CLOSE):
+                    yap_depth = max(0, yap_depth - 1)
+                    continue
+
+            if yap_depth > 0:
                 continue
 
-            # If this sentence alone exceeds limit, split it further
-            if len(sentence) > self.max_block_chars:
-                if current_chunk:
-                    chunks.append(current_chunk.strip())
-                    current_chunk = ""
-                # Hard split at max_block_chars
-                for i in range(0, len(sentence), self.max_block_chars):
-                    chunks.append(sentence[i : i + self.max_block_chars].strip())
+            if child.type in ("softbreak", "hardbreak"):
+                continue
+            if child.type == "text" and not (child.content or "").strip():
                 continue
 
-            # Check if adding this sentence would exceed limit
-            test_chunk = f"{current_chunk} {sentence}".strip() if current_chunk else sentence
-            if len(test_chunk) <= self.max_block_chars:
-                current_chunk = test_chunk
-            else:
-                if current_chunk:
-                    chunks.append(current_chunk.strip())
-                current_chunk = sentence
+            meaningful.append(child)
 
-        if current_chunk:
-            chunks.append(current_chunk.strip())
+        return len(meaningful) == 1 and meaningful[0].type == "image"
 
-        return chunks if chunks else [text]
+    def _create_image_block(self, children: list[SyntaxTreeNode]) -> ImageBlock:
+        """Create ImageBlock from image paragraph children."""
+        # Find the image
+        img_idx = next(i for i, c in enumerate(children) if c.type == "image")
+        img_node = children[img_idx]
+
+        src = img_node.attrs.get("src", "")
+        alt = img_node.content or ""
+        title = img_node.attrs.get("title")
+
+        # Parse layout from URL
+        width_pct, row_group = self._parse_image_metadata(src)
+        clean_src = src.split("?")[0] if "?" in src else src
+
+        # Extract caption
+        caption_nodes, _ = extract_caption_nodes(children, img_idx + 1)
+        caption = ""
+        caption_html = ""
+        caption_ast: list[InlineContent] = []
+        tts_text = ""
+
+        if caption_nodes:
+            caption, tts_text = process_caption(caption_nodes)
+            caption_html = caption  # Will be updated if splitting needed
+            caption_ast = transform_inline_to_ast(caption_nodes)
+        else:
+            tts_text = alt  # Fall back to alt text
+            # For plain alt text, create simple text AST
+            caption_ast = [TextContent(content=alt)] if alt else []
+
+        # Create audio chunks
+        audio_chunks: list[AudioChunk] = []
+        if tts_text.strip():
+            caption_html, audio_chunks = split_with_spans(
+                tts_text, caption_html or tts_text, caption_ast, self.splitter, self._audio_idx_counter
+            )
+            self._audio_idx_counter += len(audio_chunks)
+
+        return ImageBlock(
+            id=self._next_block_id(),
+            src=clean_src,
+            alt=alt,
+            caption=caption if caption else None,
+            caption_html=caption_html if caption_nodes and len(audio_chunks) > 1 else None,
+            title=title,
+            width_pct=width_pct,
+            row_group=row_group,
+            audio_chunks=audio_chunks,
+        )
+
+    def _parse_image_metadata(self, src: str) -> tuple[float | None, str | None]:
+        """Parse width_pct and row_group from URL query params."""
+        parsed = urlparse(src)
+        params = parse_qs(parsed.query)
+
+        width_pct = None
+        if "w" in params:
+            try:
+                width_pct = float(params["w"][0])
+            except (ValueError, IndexError):
+                pass
+
+        row_group = params.get("row", [None])[0]
+        return width_pct, row_group
 
     def _transform_list(self, node: SyntaxTreeNode) -> list[ContentBlock]:
-        """Transform list (bullet or ordered) node. Each item gets its own audio index."""
+        """Transform list node."""
         ordered = node.type == "ordered_list"
         start = cast(int | None, node.attrs.get("start")) if ordered else None
 
-        items = []
-        plain_texts = []
+        items: list[ListItem] = []
 
         for list_item in node.children:
-            item_html_parts = []
+            item_html_parts: list[str] = []
+            item_tts_parts: list[str] = []
             item_ast: list[InlineContent] = []
-            item_plain_parts = []
 
             for child in list_item.children:
                 if child.type == "paragraph":
                     inline = child.children[0] if child.children else None
-                    item_html_parts.append(self._render_inline_html(inline))
-                    item_ast.extend(self._transform_inline(inline))
-                    item_plain_parts.append(self._extract_plain_text(inline))
-                elif child.type in ("bullet_list", "ordered_list"):
-                    nested_html, nested_plain = self._render_list_html(child)
-                    item_html_parts.append(nested_html)
-                    item_plain_parts.append(nested_plain)
+                    children = inline.children if inline else []
 
-            item_plain_text = " ".join(item_plain_parts)
+                    processor = InlineProcessor()
+                    html, tts = processor.process(children)
+                    item_html_parts.append(html)
+                    item_tts_parts.append(tts)
+                    item_ast.extend(transform_inline_to_ast(children))
+
+                elif child.type in ("bullet_list", "ordered_list"):
+                    nested_html, nested_tts = self._render_nested_list(child)
+                    item_html_parts.append(nested_html)
+                    item_tts_parts.append(nested_tts)
+
+            full_html = " ".join(item_html_parts)
+            full_tts = " ".join(item_tts_parts)
+
+            audio_chunks: list[AudioChunk] = []
+            if full_tts.strip():
+                full_html, audio_chunks = split_with_spans(
+                    full_tts, full_html, item_ast, self.splitter, self._audio_idx_counter
+                )
+                self._audio_idx_counter += len(audio_chunks)
+
             items.append(
                 ListItem(
-                    html=" ".join(item_html_parts),
+                    html=full_html,
                     ast=item_ast,
-                    plain_text=item_plain_text,
-                    audio_block_idx=self._next_audio_idx(item_plain_text),
+                    audio_chunks=audio_chunks,
                 )
             )
-            plain_texts.append(item_plain_text)
 
-        combined_plain_text = " ".join(plain_texts)
         return [
             ListBlock(
                 id=self._next_block_id(),
                 ordered=ordered,
                 start=start,
                 items=items,
-                plain_text=combined_plain_text,
             )
         ]
 
-    def _render_list_html(self, node: SyntaxTreeNode) -> tuple[str, str]:
-        """Render a list node to HTML and plain text (for nested lists)."""
+    def _render_nested_list(self, node: SyntaxTreeNode) -> tuple[str, str]:
+        """Render nested list to HTML and TTS text."""
         ordered = node.type == "ordered_list"
         tag = "ol" if ordered else "ul"
         start_attr = f' start="{node.attrs.get("start")}"' if ordered and node.attrs.get("start") else ""
 
-        items_html = []
-        items_plain = []
+        html_parts: list[str] = []
+        tts_parts: list[str] = []
 
         for list_item in node.children:
-            item_parts_html = []
-            item_parts_plain = []
+            item_html: list[str] = []
+            item_tts: list[str] = []
 
             for child in list_item.children:
                 if child.type == "paragraph":
                     inline = child.children[0] if child.children else None
-                    item_parts_html.append(self._render_inline_html(inline))
-                    item_parts_plain.append(self._extract_plain_text(inline))
+                    children = inline.children if inline else []
+                    processor = InlineProcessor()
+                    html, tts = processor.process(children)
+                    item_html.append(html)
+                    item_tts.append(tts)
                 elif child.type in ("bullet_list", "ordered_list"):
-                    nested_html, nested_plain = self._render_list_html(child)
-                    item_parts_html.append(nested_html)
-                    item_parts_plain.append(nested_plain)
+                    nested_html, nested_tts = self._render_nested_list(child)
+                    item_html.append(nested_html)
+                    item_tts.append(nested_tts)
 
-            items_html.append(f"<li>{' '.join(item_parts_html)}</li>")
-            items_plain.append(" ".join(item_parts_plain))
+            html_parts.append(f"<li>{' '.join(item_html)}</li>")
+            tts_parts.append(" ".join(item_tts))
 
-        html = f"<{tag}{start_attr}>{''.join(items_html)}</{tag}>"
-        plain = " ".join(items_plain)
-        return html, plain
+        html = f"<{tag}{start_attr}>{''.join(html_parts)}</{tag}>"
+        tts = " ".join(tts_parts)
+        return html, tts
 
     def _transform_blockquote(self, node: SyntaxTreeNode) -> list[BlockquoteBlock]:
-        """Transform blockquote node.
+        r"""Transform blockquote node.
 
-        Blockquote is a visual container - nested blocks get their own audio indices.
-        get_audio_blocks() recurses into blockquote.blocks to collect them.
+        Detects callout syntax: > [!COLOR] Optional Title
+        Valid colors: BLUE, GREEN, PURPLE, RED, YELLOW, TEAL
+
+        In markdown, blockquote lines merge into paragraphs with softbreaks:
+        "> [!BLUE] Title\n> Content" becomes one paragraph with:
+        - text "[!BLUE] Title"
+        - softbreak
+        - text "Content"
+
+        We extract callout info from the first line, then transform content after softbreak.
         """
-        inner_blocks = self._transform_children(node)
+        result = self._extract_callout_info(node)
+        if result is None:
+            # Regular blockquote
+            inner_blocks = self._transform_children(node)
+            return [
+                BlockquoteBlock(
+                    id=self._next_block_id(),
+                    blocks=inner_blocks,
+                )
+            ]
 
-        plain_texts = []
-        for block in inner_blocks:
-            if hasattr(block, "plain_text") and block.plain_text:
-                plain_texts.append(block.plain_text)
+        callout_type, callout_title, first_para_content_nodes, remaining_children = result
 
-        combined_plain_text = " ".join(plain_texts)
+        # Generate audio for callout title FIRST (before nested content)
+        # so audio indices are in visual order: title, then content
+        title_audio: list[AudioChunk] = []
+        if callout_title:
+            title_audio = [AudioChunk(text=callout_title, audio_block_idx=self._next_audio_idx())]
+
+        # Build content blocks
+        blocks: list[ContentBlock] = []
+
+        # If there's content after the callout marker line in first paragraph, transform it
+        if first_para_content_nodes:
+            processor = InlineProcessor()
+            html, tts_text = processor.process(first_para_content_nodes)
+            ast = transform_inline_to_ast(first_para_content_nodes)
+
+            audio_chunks: list[AudioChunk] = []
+            if tts_text.strip():
+                html, audio_chunks = split_with_spans(tts_text, html, ast, self.splitter, self._audio_idx_counter)
+                self._audio_idx_counter += len(audio_chunks)
+
+            blocks.append(
+                ParagraphBlock(
+                    id=self._next_block_id(),
+                    html=html,
+                    ast=ast,
+                    audio_chunks=audio_chunks,
+                )
+            )
+
+        # Transform remaining blockquote children
+        for child in remaining_children:
+            blocks.extend(self._transform_node(child))
+
         return [
             BlockquoteBlock(
                 id=self._next_block_id(),
-                blocks=inner_blocks,
-                plain_text=combined_plain_text,
-                # No audio_block_idx - it's a container, nested blocks have their own
+                callout_type=callout_type,
+                callout_title=callout_title,
+                blocks=blocks,
+                audio_chunks=title_audio,
             )
         ]
 
-    # === NON-PROSE BLOCKS (no audio) ===
+    def _extract_callout_info(
+        self, node: SyntaxTreeNode
+    ) -> tuple[str, str | None, list[SyntaxTreeNode], list[SyntaxTreeNode]] | None:
+        """Extract callout type and title from blockquote.
+
+        Returns None if not a callout.
+        Otherwise returns (callout_type, callout_title, first_para_content_nodes, remaining_children):
+        - callout_type: "BLUE", "GREEN", etc.
+        - callout_title: Optional title text after [!COLOR]
+        - first_para_content_nodes: AST nodes after softbreak in first paragraph (may be empty)
+        - remaining_children: Blockquote children after the first paragraph
+        """
+        if not node.children:
+            return None
+
+        first_child = node.children[0]
+        if first_child.type != "paragraph":
+            return None
+
+        # Get inline content
+        inline = first_child.children[0] if first_child.children else None
+        if not inline or inline.type != "inline" or not inline.children:
+            return None
+
+        # Check first text node for callout pattern
+        first_node = inline.children[0]
+        if first_node.type != "text":
+            return None
+
+        text = first_node.content or ""
+        match = re.match(r"^\[!(\w+)\]\s*(.*)", text)
+        if not match:
+            return None
+
+        callout_type = match.group(1).upper()
+        valid_colors = {"BLUE", "GREEN", "PURPLE", "RED", "YELLOW", "TEAL"}
+        if callout_type not in valid_colors:
+            return None
+
+        # Find softbreak to separate title from content
+        # Everything before softbreak = title line
+        # Everything after softbreak = first paragraph content
+        title_parts = [match.group(2)] if match.group(2) else []
+        softbreak_idx = None
+
+        for i, child in enumerate(inline.children[1:], start=1):
+            if child.type in ("softbreak", "hardbreak"):
+                softbreak_idx = i
+                break
+            # Collect title text (before softbreak)
+            title_parts.append(self._extract_plain_text(child))
+
+        title = " ".join(title_parts).strip() or None
+
+        # Content after softbreak in first paragraph
+        first_para_content_nodes: list[SyntaxTreeNode] = []
+        if softbreak_idx is not None:
+            first_para_content_nodes = list(inline.children[softbreak_idx + 1 :])
+
+        # Remaining blockquote children (after first paragraph)
+        remaining_children = list(node.children[1:])
+
+        return callout_type, title, first_para_content_nodes, remaining_children
+
+    def _extract_plain_text(self, node: SyntaxTreeNode) -> str:
+        """Extract plain text from a node, recursively."""
+        if node.type == "text":
+            return node.content or ""
+        elif node.type == "code_inline":
+            return node.content or ""
+        elif node.children:
+            return "".join(self._extract_plain_text(c) for c in node.children)
+        return ""
+
+    def _transform_footnote_block(self, node: SyntaxTreeNode) -> list[FootnotesBlock]:
+        """Transform footnote_block container into FootnotesBlock.
+
+        The footnote_block contains multiple footnote children, each with its content.
+        """
+        items: list[FootnoteItem] = []
+
+        for footnote_node in node.children:
+            if footnote_node.type != "footnote":
+                continue
+
+            label = footnote_node.meta.get("label", "") if footnote_node.meta else ""
+
+            # Transform footnote content (paragraphs, etc.)
+            # Skip footnote_anchor nodes (back-links)
+            content_blocks: list[ContentBlock] = []
+            for child in footnote_node.children:
+                if child.type == "footnote_anchor":
+                    continue
+                content_blocks.extend(self._transform_node(child))
+
+            items.append(
+                FootnoteItem(
+                    label=label,
+                    blocks=content_blocks,
+                )
+            )
+
+        if not items:
+            return []
+
+        return [
+            FootnotesBlock(
+                id=self._next_block_id(),
+                items=items,
+            )
+        ]
 
     def _transform_code(self, node: SyntaxTreeNode) -> list[CodeBlock]:
-        """Transform fenced or indented code block."""
+        """Transform code block."""
         language = node.info if hasattr(node, "info") and node.info else None
         content = node.content or ""
-
         return [
             CodeBlock(
                 id=self._next_block_id(),
@@ -819,18 +1368,31 @@ class DocumentTransformer:
             )
         ]
 
-    def _transform_math(self, node: SyntaxTreeNode) -> list[MathBlock]:
-        """Transform math block ($$...$$)."""
+    def _transform_math(
+        self,
+        node: SyntaxTreeNode,
+        parent: SyntaxTreeNode | None,
+        index: int,
+    ) -> list[MathBlock]:
+        """Transform display math block."""
         content = node.content or ""
-        alt = self._math_block_alts.get(id(node), "")
+
+        # Check if followed by yap-speak paragraph (already marked for skipping)
+        tts_text = ""
+        if parent and index + 1 in self._skip_indices:
+            next_node = parent.children[index + 1]
+            tts_text = self._extract_speak_from_paragraph(next_node)
+
+        audio_chunks: list[AudioChunk] = []
+        if tts_text.strip():
+            audio_chunks = [AudioChunk(text=tts_text.strip(), audio_block_idx=self._next_audio_idx())]
 
         return [
             MathBlock(
                 id=self._next_block_id(),
                 content=content.strip(),
-                alt=alt,
                 display_mode=True,
-                audio_block_idx=self._next_audio_idx(alt),
+                audio_chunks=audio_chunks,
             )
         ]
 
@@ -844,13 +1406,19 @@ class DocumentTransformer:
                 for tr in child.children:
                     for th in tr.children:
                         inline = th.children[0] if th.children else None
-                        headers.append(self._render_inline_html(inline))
+                        children = inline.children if inline else []
+                        processor = InlineProcessor()
+                        html, _ = processor.process(children)
+                        headers.append(html)
             elif child.type == "tbody":
                 for tr in child.children:
-                    row = []
+                    row: list[str] = []
                     for td in tr.children:
                         inline = td.children[0] if td.children else None
-                        row.append(self._render_inline_html(inline))
+                        children = inline.children if inline else []
+                        processor = InlineProcessor()
+                        html, _ = processor.process(children)
+                        row.append(html)
                     rows.append(row)
 
         return [
@@ -865,256 +1433,15 @@ class DocumentTransformer:
         """Transform horizontal rule."""
         return [ThematicBreak(id=self._next_block_id())]
 
-    # === INLINE CONTENT HELPERS ===
 
-    def _render_inline_html(self, inline: SyntaxTreeNode | None) -> str:
-        """Render inline content to HTML string.
-
-        Skips <yap-alt> and <yap-cap> annotation nodes (not for display).
-        """
-        if not inline or not inline.children:
-            return ""
-
-        children = inline.children
-        parts = []
-        i = 0
-
-        while i < len(children):
-            child = children[i]
-
-            # Skip yap-cap sections
-            if _is_html_tag(child, _YAP_CAP_OPEN):
-                _, consumed = _extract_yap_cap(children, i)
-                i += consumed if consumed else 1
-                continue
-
-            # Skip yap-alt sections
-            if _is_html_tag(child, _YAP_ALT_OPEN):
-                _, consumed = _extract_yap_alt(children, i)
-                i += consumed if consumed else 1
-                continue
-
-            # Skip orphaned closing tags
-            if _is_html_tag(child, _YAP_CAP_CLOSE) or _is_html_tag(child, _YAP_ALT_CLOSE):
-                i += 1
-                continue
-
-            parts.append(self._render_inline_node_html(child))
-            i += 1
-
-        return "".join(parts)
-
-    def _render_inline_node_html(self, node: SyntaxTreeNode) -> str:
-        """Render a single inline node to HTML."""
-        if node.type == "text":
-            return node.content or ""
-        elif node.type == "strong":
-            inner = "".join(self._render_inline_node_html(c) for c in node.children)
-            return f"<strong>{inner}</strong>"
-        elif node.type == "em":
-            inner = "".join(self._render_inline_node_html(c) for c in node.children)
-            return f"<em>{inner}</em>"
-        elif node.type == "s":  # strikethrough
-            inner = "".join(self._render_inline_node_html(c) for c in node.children)
-            return f"<s>{inner}</s>"
-        elif node.type == "code_inline":
-            return f"<code>{node.content or ''}</code>"
-        elif node.type == "link":
-            href = node.attrs.get("href", "")
-            title = node.attrs.get("title", "")
-            inner = "".join(self._render_inline_node_html(c) for c in node.children)
-            title_attr = f' title="{title}"' if title else ""
-            return f'<a href="{href}"{title_attr}>{inner}</a>'
-        elif node.type == "image":
-            src = node.attrs.get("src", "")
-            alt = node.content or ""  # Alt text is in node.content, not attrs['alt']
-            title = node.attrs.get("title", "")
-            title_attr = f' title="{title}"' if title else ""
-            return f'<img src="{src}" alt="{alt}"{title_attr} />'
-        elif node.type == "softbreak":
-            return " "
-        elif node.type == "hardbreak":
-            return "<br />"
-        elif node.type == "math_inline":
-            return f'<span class="math-inline">{node.content or ""}</span>'
-        else:
-            # Unknown inline type, try to get content
-            return node.content or ""
-
-    def _transform_inline(self, inline: SyntaxTreeNode | None) -> list[InlineContent]:
-        """Transform inline content to AST representation.
-
-        Extracts <yap-alt> annotations from nodes following math_inline.
-        Skips <yap-cap> content (handled separately for images).
-        """
-        if not inline or not inline.children:
-            return []
-
-        children = inline.children
-        result: list[InlineContent] = []
-        i = 0
-
-        while i < len(children):
-            child = children[i]
-
-            # Skip yap-cap sections (handled by _create_image_block)
-            if _is_html_tag(child, _YAP_CAP_OPEN):
-                _, consumed = _extract_yap_cap(children, i)
-                i += consumed if consumed else 1
-                continue
-
-            # Skip orphaned yap-alt (shouldn't happen, but be safe)
-            if _is_html_tag(child, _YAP_ALT_OPEN):
-                _, consumed = _extract_yap_alt(children, i)
-                i += consumed if consumed else 1
-                continue
-
-            # Skip closing tags that might be orphaned
-            if _is_html_tag(child, _YAP_CAP_CLOSE) or _is_html_tag(child, _YAP_ALT_CLOSE):
-                i += 1
-                continue
-
-            # For math_inline, check for following <yap-alt>
-            if child.type == "math_inline":
-                alt, consumed = _extract_yap_alt(children, i + 1)
-                result.extend(self._transform_inline_node(child, alt=alt))
-                i += 1 + consumed
-                continue
-
-            # Regular node
-            result.extend(self._transform_inline_node(child))
-            i += 1
-
-        return result
-
-    def _transform_inline_node(self, node: SyntaxTreeNode, alt: str = "") -> list[InlineContent]:
-        """Transform a single inline node to InlineContent.
-
-        Args:
-            node: The AST node to transform
-            alt: Optional alt text extracted from {annotation} suffix
-        """
-        if node.type == "text":
-            return [TextContent(content=node.content or "")]
-        elif node.type == "strong":
-            inner = []
-            for child in node.children:
-                inner.extend(self._transform_inline_node(child))
-            return [StrongContent(content=inner)]
-        elif node.type == "em":
-            inner = []
-            for child in node.children:
-                inner.extend(self._transform_inline_node(child))
-            return [EmphasisContent(content=inner)]
-        elif node.type == "code_inline":
-            return [CodeSpanContent(content=node.content or "")]
-        elif node.type == "link":
-            inner = []
-            for child in node.children:
-                inner.extend(self._transform_inline_node(child))
-            return [
-                LinkContent(
-                    href=cast(str, node.attrs.get("href", "")),
-                    title=cast(str | None, node.attrs.get("title")),
-                    content=inner,
-                )
-            ]
-        elif node.type == "image":
-            # Alt text is in node.content (or children), not attrs['alt']
-            md_alt = node.content or ""
-            return [
-                InlineImageContent(
-                    src=cast(str, node.attrs.get("src", "")),
-                    alt=md_alt,
-                )
-            ]
-        elif node.type == "softbreak":
-            return [TextContent(content=" ")]
-        elif node.type == "hardbreak":
-            return [TextContent(content="\n")]
-        elif node.type == "math_inline":
-            return [MathInlineContent(content=node.content or "", alt=alt)]
-        else:
-            # Unknown type, return as text if has content
-            if node.content:
-                return [TextContent(content=node.content)]
-            return []
-
-    def _extract_plain_text(self, inline: SyntaxTreeNode | None) -> str:
-        """Extract plain text from inline content (for TTS).
-
-        Uses <yap-alt> for math alt text. Skips <yap-cap> content (handled separately).
-        """
-        if not inline or not inline.children:
-            return ""
-
-        children = inline.children
-        parts = []
-        i = 0
-
-        while i < len(children):
-            child = children[i]
-
-            # Skip yap-cap sections (handled by _create_image_block)
-            if _is_html_tag(child, _YAP_CAP_OPEN):
-                _, consumed = _extract_yap_cap(children, i)
-                i += consumed if consumed else 1
-                continue
-
-            # Skip orphaned yap-alt (shouldn't appear outside math context)
-            if _is_html_tag(child, _YAP_ALT_OPEN):
-                _, consumed = _extract_yap_alt(children, i)
-                i += consumed if consumed else 1
-                continue
-
-            # Skip closing tags
-            if _is_html_tag(child, _YAP_CAP_CLOSE) or _is_html_tag(child, _YAP_ALT_CLOSE):
-                i += 1
-                continue
-
-            # For math_inline, use <yap-alt> if present
-            if child.type == "math_inline":
-                alt, consumed = _extract_yap_alt(children, i + 1)
-                if alt:
-                    parts.append(alt)
-                # else: no alt, skip the math for TTS
-                i += 1 + consumed
-                continue
-
-            # Regular node
-            parts.append(self._extract_plain_text_node(child))
-            i += 1
-
-        return "".join(parts)
-
-    def _extract_plain_text_node(self, node: SyntaxTreeNode) -> str:
-        """Extract plain text from a single inline node."""
-        if node.type == "text":
-            return node.content or ""
-        elif node.type in ("strong", "em", "s", "link"):
-            return "".join(self._extract_plain_text_node(c) for c in node.children)
-        elif node.type == "code_inline":
-            return node.content or ""
-        elif node.type == "image":
-            # Alt text is in node.content, not attrs['alt']
-            return node.content or ""
-        elif node.type in ("softbreak", "hardbreak"):
-            return " "
-        elif node.type == "math_inline":
-            # Handled by _extract_plain_text with yap-alt lookup
-            return ""
-        elif node.type == "html_inline":
-            # Skip HTML tags (yap annotations handled at higher level)
-            return ""
-        else:
-            return node.content or ""
+# === PUBLIC API ===
 
 
 def transform_to_document(
     ast: SyntaxTreeNode,
-    max_block_chars: int = 150,
-    soft_limit_mult: float = 1.2,
-    min_chunk_size: int = 30,
+    max_block_chars: int,
+    soft_limit_mult: float,
+    min_chunk_size: int,
 ) -> StructuredDocument:
     """Transform markdown AST to StructuredDocument."""
     return DocumentTransformer(

@@ -1,18 +1,34 @@
-"""Pydantic models for structured document format.
+"""Data models for structured document representation.
 
-These models define the JSON schema for parsed markdown documents,
-used for frontend rendering and TTS block mapping.
+The core abstraction is AudioChunk - a piece of text with an audio block index.
+All blocks that produce audio have a list of AudioChunks, enabling uniform
+splitting and indexing across paragraphs, list items, image captions, etc.
 """
 
-from typing import Annotated, Literal
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
-# === INLINE CONTENT (AST for prose blocks) ===
+# === AUDIO ===
+
+
+class AudioChunk(BaseModel):
+    """A chunk of text for TTS synthesis."""
+
+    text: str
+    audio_block_idx: int
+
+
+# === INLINE CONTENT (AST) ===
 
 
 class TextContent(BaseModel):
     type: Literal["text"] = "text"
+    content: str
+
+
+class CodeSpanContent(BaseModel):
+    type: Literal["code_span"] = "code_span"
     content: str
 
 
@@ -26,11 +42,6 @@ class EmphasisContent(BaseModel):
     content: list["InlineContent"]
 
 
-class CodeSpanContent(BaseModel):
-    type: Literal["code"] = "code"
-    content: str
-
-
 class LinkContent(BaseModel):
     type: Literal["link"] = "link"
     href: str
@@ -39,198 +50,231 @@ class LinkContent(BaseModel):
 
 
 class InlineImageContent(BaseModel):
-    type: Literal["image"] = "image"
+    type: Literal["inline_image"] = "inline_image"
     src: str
     alt: str
 
 
 class MathInlineContent(BaseModel):
-    """Inline math ($...$). Atomic - never split.
+    type: Literal["math_inline"] = "math_inline"
+    content: str  # LaTeX
 
-    If alt is present, it's used for TTS. Otherwise math is skipped in TTS.
+
+class SpeakContent(BaseModel):
+    """TTS-only content from yap-speak tags.
+
+    Renders as empty HTML but has TTS length equal to content.
+    This enables correct AST slicing when splitting paragraphs.
     """
 
-    type: Literal["math_inline"] = "math_inline"
-    content: str  # LaTeX content
-    alt: str = ""  # TTS text (e.g., "alpha" for $\alpha$)
+    type: Literal["speak"] = "speak"
+    content: str  # TTS text
 
 
-InlineContent = Annotated[
+class FootnoteRefContent(BaseModel):
+    """Inline footnote reference [^label].
+
+    Display-only (renders as superscript), no TTS contribution.
+    Links to footnote content at end of document if has_content is True.
+    """
+
+    type: Literal["footnote_ref"] = "footnote_ref"
+    label: str  # Original label like "1" or "note"
+    has_content: bool = True  # False if no matching footnote definition exists
+
+
+InlineContent = (
     TextContent
+    | CodeSpanContent
     | StrongContent
     | EmphasisContent
-    | CodeSpanContent
     | LinkContent
     | InlineImageContent
-    | MathInlineContent,
-    Field(discriminator="type"),
-]
+    | MathInlineContent
+    | SpeakContent
+    | FootnoteRefContent
+)
 
 
 # === BLOCK TYPES ===
 
 
 class HeadingBlock(BaseModel):
-    """Heading (h1-h6). Has audio."""
-
     type: Literal["heading"] = "heading"
     id: str
     level: Literal[1, 2, 3, 4, 5, 6]
     html: str
     ast: list[InlineContent]
-    plain_text: str
-    audio_block_idx: int | None = None
+    audio_chunks: list[AudioChunk] = Field(default_factory=list)
 
 
 class ParagraphBlock(BaseModel):
-    """Paragraph of text. Has audio."""
-
     type: Literal["paragraph"] = "paragraph"
     id: str
-    html: str
+    html: str  # Contains <span data-audio-idx="N"> wrappers if split
     ast: list[InlineContent]
-    plain_text: str
-    audio_block_idx: int | None = None
-    visual_group_id: str | None = None  # Groups split sentences from the same paragraph
+    audio_chunks: list[AudioChunk] = Field(default_factory=list)
+
+
+class CodeBlock(BaseModel):
+    type: Literal["code"] = "code"
+    id: str
+    language: str | None = None
+    content: str
+    audio_chunks: list[AudioChunk] = Field(default_factory=list)  # Always empty
+
+
+class MathBlock(BaseModel):
+    type: Literal["math"] = "math"
+    id: str
+    content: str  # LaTeX
+    display_mode: bool = True
+    audio_chunks: list[AudioChunk] = Field(default_factory=list)
+
+
+class TableBlock(BaseModel):
+    type: Literal["table"] = "table"
+    id: str
+    headers: list[str]
+    rows: list[list[str]]
+    audio_chunks: list[AudioChunk] = Field(default_factory=list)  # Always empty
+
+
+class ThematicBreak(BaseModel):
+    type: Literal["hr"] = "hr"
+    id: str
+    audio_chunks: list[AudioChunk] = Field(default_factory=list)  # Always empty
 
 
 class ListItem(BaseModel):
-    """Single item in a list."""
-
-    html: str
+    html: str  # Contains <span data-audio-idx="N"> wrappers if split
     ast: list[InlineContent]
-    plain_text: str
-    audio_block_idx: int | None = None
+    audio_chunks: list[AudioChunk] = Field(default_factory=list)
 
 
 class ListBlock(BaseModel):
-    """Ordered or unordered list. Container for items which have their own audio."""
-
     type: Literal["list"] = "list"
     id: str
     ordered: bool
     start: int | None = None
     items: list[ListItem]
-    plain_text: str
-    audio_block_idx: None = None
-
-
-class BlockquoteBlock(BaseModel):
-    """Blockquote with nested content. Has audio."""
-
-    type: Literal["blockquote"] = "blockquote"
-    id: str
-    blocks: list["ContentBlock"]
-    plain_text: str
-    audio_block_idx: int | None = None
-
-
-class CodeBlock(BaseModel):
-    """Fenced or indented code block. No audio."""
-
-    type: Literal["code"] = "code"
-    id: str
-    language: str | None = None
-    content: str
-    audio_block_idx: None = None
-
-
-class MathBlock(BaseModel):
-    """Display math ($$...$$). Has audio if alt text is provided."""
-
-    type: Literal["math"] = "math"
-    id: str
-    content: str  # LaTeX content
-    alt: str = ""  # TTS text (read aloud if present)
-    display_mode: bool = True
-    audio_block_idx: int | None = None
-
-
-class TableBlock(BaseModel):
-    """Table with headers and rows. No audio."""
-
-    type: Literal["table"] = "table"
-    id: str
-    headers: list[str]
-    rows: list[list[str]]
-    audio_block_idx: None = None
+    audio_chunks: list[AudioChunk] = Field(default_factory=list)  # Always empty (items have chunks)
 
 
 class ImageBlock(BaseModel):
-    """Standalone image. Has audio if alt or caption is provided."""
-
     type: Literal["image"] = "image"
     id: str
     src: str
-    alt: str = ""  # Descriptive text for TTS (what the image shows)
-    caption: str = ""  # Figure caption for TTS and display (e.g., "Figure 2: Results")
+    alt: str
+    caption: str | None = None  # Display caption (with LaTeX)
+    caption_html: str | None = None  # Caption with span wrappers if split
     title: str | None = None
-    width_pct: float | None = None  # Figure width as % of page (from YOLO bbox)
-    row_group: str | None = None  # "row0", "row1", etc. - figures in same row are side-by-side
-    audio_block_idx: int | None = None
+    width_pct: float | None = None
+    row_group: str | None = None
+    audio_chunks: list[AudioChunk] = Field(default_factory=list)
 
 
-class ThematicBreak(BaseModel):
-    """Horizontal rule. No audio."""
-
-    type: Literal["hr"] = "hr"
+class BlockquoteBlock(BaseModel):
+    type: Literal["blockquote"] = "blockquote"
     id: str
-    audio_block_idx: None = None
+    callout_type: str | None = None  # "BLUE", "GREEN", "PURPLE", "RED", "YELLOW", "TEAL"
+    callout_title: str | None = None  # Optional title like "Definition 1.2"
+    blocks: list["ContentBlock"]
+    audio_chunks: list[AudioChunk] = Field(default_factory=list)  # Title audio if callout, else empty
 
 
-ContentBlock = Annotated[
+class FootnoteItem(BaseModel):
+    """A single footnote definition."""
+
+    label: str  # The footnote label (may be deduplicated like "1-2")
+    has_ref: bool = True  # False if no matching inline [^label] exists
+    blocks: list["ContentBlock"]  # Nested content
+    audio_chunks: list[AudioChunk] = Field(default_factory=list)
+
+
+class FootnotesBlock(BaseModel):
+    """Container for all footnotes, placed at document end.
+
+    Footnotes are collected from [^label]: definitions throughout the document.
+    Inline refs [^label] link to these footnotes.
+    """
+
+    type: Literal["footnotes"] = "footnotes"
+    id: str
+    items: list[FootnoteItem]
+    audio_chunks: list[AudioChunk] = Field(default_factory=list)  # Always empty (items have chunks)
+
+
+ContentBlock = (
     HeadingBlock
     | ParagraphBlock
-    | ListBlock
-    | BlockquoteBlock
     | CodeBlock
     | MathBlock
     | TableBlock
+    | ThematicBreak
+    | ListBlock
     | ImageBlock
-    | ThematicBreak,
-    Field(discriminator="type"),
-]
+    | BlockquoteBlock
+    | FootnotesBlock
+)
+
+# Update forward references
+HeadingBlock.model_rebuild()
+ParagraphBlock.model_rebuild()
+CodeBlock.model_rebuild()
+MathBlock.model_rebuild()
+TableBlock.model_rebuild()
+ThematicBreak.model_rebuild()
+ListBlock.model_rebuild()
+ImageBlock.model_rebuild()
+BlockquoteBlock.model_rebuild()
+FootnoteItem.model_rebuild()
+FootnotesBlock.model_rebuild()
 
 
-# === ROOT DOCUMENT ===
+# === DOCUMENT ===
 
 
 class StructuredDocument(BaseModel):
-    """Root document containing all content blocks."""
+    """The full structured representation of a markdown document."""
 
-    version: Literal["1.0"] = "1.0"
+    version: str = "1.0"
     blocks: list[ContentBlock]
 
     def get_audio_blocks(self) -> list[str]:
-        """Extract plain_text from blocks that have audio (prose only).
+        """Get list of text content for audio blocks, in order.
 
-        Recurses into container blocks (blockquotes) to collect nested audio.
+        Returns a flat list of strings indexed by audio_block_idx.
+        Collects from all blocks and nested structures (list items, blockquotes, footnotes).
         """
-        result = []
-        self._collect_audio_blocks(self.blocks, result)
-        return result
+        # Collect all chunks with their indices
+        all_chunks: list[tuple[int, str]] = []
 
-    def _collect_audio_blocks(self, blocks: list[ContentBlock], result: list[str]) -> None:
-        """Recursively collect audio blocks."""
-        for block in blocks:
-            match block:
-                case BlockquoteBlock():
-                    self._collect_audio_blocks(block.blocks, result)
-                case ListBlock():
-                    for item in block.items:
-                        if item.audio_block_idx is not None:
-                            result.append(item.plain_text)
-                case MathBlock() if block.audio_block_idx is not None:
-                    result.append(block.alt)
-                case ImageBlock() if block.audio_block_idx is not None:
-                    # Prefer caption (scholarly label), fall back to alt (visual description)
-                    result.append(block.caption if block.caption else block.alt)
-                case HeadingBlock() | ParagraphBlock() if block.audio_block_idx is not None:
-                    result.append(block.plain_text)
+        def collect_from_block(block: ContentBlock) -> None:
+            # Direct audio chunks on the block
+            for chunk in block.audio_chunks:
+                all_chunks.append((chunk.audio_block_idx, chunk.text))
 
+            # Nested structures
+            if isinstance(block, ListBlock):
+                for item in block.items:
+                    for chunk in item.audio_chunks:
+                        all_chunks.append((chunk.audio_block_idx, chunk.text))
 
-# Rebuild models to resolve forward references
-StrongContent.model_rebuild()
-EmphasisContent.model_rebuild()
-LinkContent.model_rebuild()
-BlockquoteBlock.model_rebuild()
+            if isinstance(block, BlockquoteBlock):
+                for nested in block.blocks:
+                    collect_from_block(nested)
+
+            if isinstance(block, FootnotesBlock):
+                for item in block.items:
+                    for chunk in item.audio_chunks:
+                        all_chunks.append((chunk.audio_block_idx, chunk.text))
+                    for nested in item.blocks:
+                        collect_from_block(nested)
+
+        for block in self.blocks:
+            collect_from_block(block)
+
+        # Sort by index and return texts
+        all_chunks.sort(key=lambda x: x[0])
+        return [text for _, text in all_chunks]

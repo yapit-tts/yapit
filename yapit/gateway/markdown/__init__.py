@@ -1,43 +1,11 @@
-"""Markdown parsing and transformation to structured document format."""
+"""Markdown parsing and transformation.
 
-from yapit.gateway.markdown.models import (
-    BlockquoteBlock,
-    CodeBlock,
-    ContentBlock,
-    HeadingBlock,
-    ImageBlock,
-    InlineContent,
-    ListBlock,
-    MathBlock,
-    ParagraphBlock,
-    StructuredDocument,
-    TableBlock,
-    ThematicBreak,
-)
-from yapit.gateway.markdown.parser import parse_markdown, render_html
-from yapit.gateway.markdown.transformer import (
-    DocumentTransformer,
-    transform_to_document,
-)
+Public API:
+- parse_markdown: Parse markdown text to AST
+- transform_to_document: Transform AST to StructuredDocument
+"""
 
-__all__ = [
-    # Parser
-    "parse_markdown",
-    "render_html",
-    # Transformer
-    "DocumentTransformer",
-    "transform_to_document",
-    # Models
-    "StructuredDocument",
-    "ContentBlock",
-    "InlineContent",
-    "HeadingBlock",
-    "ParagraphBlock",
-    "ListBlock",
-    "BlockquoteBlock",
-    "CodeBlock",
-    "MathBlock",
-    "TableBlock",
-    "ImageBlock",
-    "ThematicBreak",
-]
+from yapit.gateway.markdown.parser import parse_markdown
+from yapit.gateway.markdown.transformer import transform_to_document
+
+__all__ = ["parse_markdown", "transform_to_document"]

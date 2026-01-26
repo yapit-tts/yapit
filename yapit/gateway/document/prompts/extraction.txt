@@ -1,67 +1,215 @@
-Extract the text from this document page as clean markdown.
+<goal>
+Extract the document page as clean markdown.
 
-Rules:
-- Preserve the original text exactly — do not paraphrase, interpret, or rewrite
-- Use standard markdown formatting (headings, lists, emphasis, bold, etc.)
-- Mathematical notation: use LaTeX with dollar signs ($inline$ for inline, $$display$$ for display)
-- If equation has a number in the original (e.g., "(1)" next to it), include inside LaTeX: $$E=mc^2 \tag{1}$$
-- Keep hyperlinks in markdown format: [text](url)
-- For raw URLs, use descriptive link text: "https://github.com/..." → [GitHub](url), "https://arxiv.org/..." → [arXiv](url)
-- Tables: use markdown table syntax
-- Skip page numbers, headers/footers, and watermarks
+Your output serves two purposes: visual display and text-to-speech (TTS) audio.
+The visual appearance must be faithful to the source.
+The audio should sound natural.
 
-Citations:
-- Omit bracketed reference numbers entirely: "[1]", "[1, 2]", "[1-3]" → remove
-- Author citations in running text: naturalize for speech
-  - "(Smith et al., 2020)" → "Smith and colleagues"
-  - "As [1] showed" → "As prior work showed" or rewrite naturally
-- Reference/Bibliography sections: do NOT extract individual references
-  - Page with "References" header: output "## References\n\n[references omitted]"
-  - Page that's just continuation of references (no header): output only "[references omitted]"
-
-Images:
-- The number of detected images on this page will be provided below
-- For each image, output exactly one image placeholder at the position where it appears
-- Format: ![alt](detected-image)<yap-cap>caption</yap-cap>
-  - alt = short visual description of what the image shows
-  - <yap-cap>...</yap-cap> = figure caption from the document (omit if no caption)
-  - CRITICAL: <yap-cap> must be on the SAME LINE as the image, no newline between
-- If no image count is provided, do not output any image placeholders
-
-Output only the markdown, no commentary or explanations.
+Most content needs no special handling — just accurate markdown.
+Special tags exist for cases where visual display and audio should differ to enhance listening experience.
+</goal>
 
 
-TTS annotations for math — use <yap-alt>...</yap-alt> tags:
+<contex>
+- Follow standard markdown: headings (#, ##), lists, *emphasis*, **strong emphasis**, tables, footnotes, blockquotes, code blocks, inline code, links, images, rules (---), etc.
 
-INLINE: $latex$<yap-alt>alt</yap-alt> — immediately after closing $
-  Example: $\alpha$<yap-alt>alpha</yap-alt>
+Elements that are both shown and spoken:
+- Paragraphs
+- Headings 
+- Linktext
+- List items
+- Text within Quote blocks
 
-DISPLAY: $$latex$$ then <yap-alt>alt</yap-alt> on next line. Blank line required BEFORE each $$block$$.
-  Example:
-    $$E=mc^2$$
-    <yap-alt>E equals m c squared</yap-alt>
+Elements that are shown but not spoken:
+- Tables
+- $inline$ and $$display$$ math
+- `inline` code and code blocks
+- Images - ![alt](detected-image)
+- Markdown elements within <yap-show> tags
 
-MULTILINE: For grouped equations (e.g., equation + "where" clause), use aligned environment:
-  Example:
-    $$\begin{aligned}
-    f(x) &= ax^2 + bx + c \\
-    \text{where } a &> 0
-    \end{aligned}$$
-    <yap-alt>f of x equals a x squared plus b x plus c, where a is greater than zero</yap-alt>
+Elements that are not shown but spoken:
+- Text within <yap-speak> tags
+- Image alt-text (spoken if the image does not have a caption)
 
-Math alt-text guidelines:
-- LaTeX must be accurate to original. Alt-text is optimized for listening — it can simplify or be omitted entirely when speaking adds no value.
-- Omit alt-text for: footnote markers ($^\dagger$, $^*$, $^1$), math already explained by surrounding text, or repetitive similar notation
-  - "their dot product, $q \cdot k = \sum ...$" → no alt needed, context explains it
-  - Write as a human would read: $W_i^Q \in \mathbb{R}^{d \times k}$ → "W Q", $\mathcal{O}(n^2)$ → "order n squared"
-- Simple math still needs alt-text: $Q$<yap-alt>Q</yap-alt>, $\alpha$<yap-alt>alpha</yap-alt>, $n=5$<yap-alt>n equals 5</yap-alt>
-- Ignore visual-only formatting: $\mathbf{z}$ → "z" not "bold z", $\mathcal{L}$ → "L" not "script L"
-- Accurate but listenable: $\sum_{t=0}^{T} \gamma^t r_t$ → "the sum of gamma t times r t, from t equals zero to T"
-- Well-known formulas can be semantic: $\frac{e^{x_i}}{\sum_j e^{x_j}}$ → "the softmax of x sub i"
-- Use context: if surrounding text explains what a formula represents, prefer describing its meaning
-  Example: text says "the value function V^π measures expected return" → $V^\pi(s) = E_{a \sim \pi}\{...\}$ can be "the value of state s under policy pi is the expected discounted return when starting in s and taking actions according to pi"
-- Figure captions may contain math — use <yap-alt> inside <yap-cap>:
-  Example: <yap-cap>Figure 1 shows $\beta$<yap-alt>beta</yap-alt> values</yap-cap>
+Elements that are not shown and not spoken:
+- Links without linktext [](url) -> nothing (worthless) 
 
-IMPORTANT: Keep all tag content on a single line (no line breaks inside <yap-alt> or <yap-cap>)
+Other:
+- The <yap-cap> tags is a wrapper for inline markdown content, used to style figures with their captions.
+- Emphasis is visual, the emphasized text is spoken normally.
+</contex>
+
+
+<formatting_guide>
+
+- Links
+  - Format: [descriptive text](url)
+  - Link test is read oud, make it sound natural, e.g.:
+    - "https://github.com/..." → [GitHub](url)
+    - "https://arxiv.org/..." → [arXiv](url)
+    - "Project website with videos: https://..." -> "[Project website](https://...) with videos"
+  - Raw urls ("https://...") without link text are read literally - this is ususally undesirable
+
+- Tables
+  - Standard markdown table syntax, inline math, code, emphasis, all allowed
+  - Do not use <yap-show> or <yap-speak> inside tables, since tables are already entirely visual-only
+
+- Noise to skip
+  - Page numbers
+  - Headers/footers
+  - Watermarks
+
+- Math / KaTeX compatibility
+  - If an equation has a number in the original (e.g., "(1)" next to it), include inside LaTeX: $$E=mc^2 \tag{1}$$
+  - Use \begin{align} not \begin{aligned} when equations have \tag{}
+  - A blank line is required BEFORE each $$block$$.
+  - $$block$$ must be standalone, i.e. no other content (be it text, yap tags) on the same line
+  - Prefer to group equations that appear together in the source into a single $$...$$ block with \begin{align} ... \end{align} rather than multiple separate $$...$$ blocks.
+
+- <yap-show> 
+  - Wraps inline content
+  - Must be single-line - no newlines inside tag content
+    - Good: <yap-show>...</yap-show> 
+    - Bad: <yap-show>\n...\n</yap-show>
+  - Use for inline visual content that should not be spoken
+  - Do not use this for or within elements that are already not spoken (such as images, math, code blocks, tables)
+
+- <yap-speak>
+  - Wraps raw text that is passed to TTS
+  - Must be single-line - no newlines inside tag content
+  - Content must not contain any markdown formatting
+  - Content can include punctuation (mainly periods, commas) to guide TTS prosody
+  - Combine with math or yap-show to enhance the listening experience
+
+- <yap-cap>
+  - Wrapps inline content (including yap-show, yap-speak) that is displayed as figure caption
+  - Must be single-line - no newlines inside tag content
+  - Accompanies an image placeholder: ![alt](detected-image)<yap-cap>caption</yap-cap>
+
+- Images
+  - Format: ![alt](detected-image)<yap-cap>caption</yap-cap>
+    - alt = short visual description of what the image shows
+    - <yap-cap>...</yap-cap> = figure caption from the document (omit if no caption)
+    - IMPORTANT: <yap-cap> must be on the SAME LINE as the image, no newline between
+  - You will be provided with the number of detected images on the page.
+  - If no image count is provided, do not output any image placeholders.
+  - For each detected image, output exactly one image placeholder at the position where it appears in source.
+  - All images share the same "detected-image" placeholder.
+
+- Callouts 
+  - Use for framed/boxed content, or content visually distinguished from the rest of the page with colored background/shading/highlighting
+  - Syntax: > [!COLOR] Optional Title
+    - EVERY line of the callout block must start with "> "
+    - Can be nested, can any block and inline elements inside.
+  - Available colors: BLUE, GREEN, PURPLE, RED, YELLOW, TEAL
+  - Pick color based on what most closely matches the source
+
+- Footnotes
+  - Use for inline references within running text that link to explanatory content
+  - Syntax: [^label] for refs, [^label]: for definitions
+  - Place ALL definitions at END of your output
+  - Refs appear as superscript (not spoken)
+
+- Reference sections
+  - If page has "References" header: output "## References\n\n[references omitted]"
+  - If page is just continuation of references: output only "[references omitted]"
+
+- Citations
+  - Wrap citations that do not fit naturally into running text with <yap-show>
+    - "..., long short-term memory [13] and ..." → "..., long short-term memory <yap-show>[13]</yap-show> and ..."
+    - "The Abstraction and Reasoning Corpus (ARC; Figure 1) (Chollet, 2019) offers ..." → "The Abstraction and Reasoning Corpus <yap-show>(ARC; Figure 1) (Chollet, 2019)</yap-show> offers ..."
+  - Author citations in running text: naturalize for speech
+    - "Concurrently to this work, Smith et al. (2020) ..." → "Concurrently to this work, Smith and colleagues ..."
+    - "As [1] showed" → "As prior work showed"
+
+- Heading levels
+  - H1 (#): Document title only
+  - H2 (##): Major divisions — chapters, parts, top-level sections
+  - H3 (###): Use this for most things — regular sections, subsections
+  - H4 (####) and deeper: only when necessary for sub-subsections
+  
+- TOC / anchors
+  - Convert to navigation links — strip page numbers and dot leaders entirely
+  - Use GitHub-style anchors: lowercase, spaces→hyphens, remove special chars, do not include math 
+    - "2.1 Hello woRld" → #21-hello-world
+    - "Local $\sigma$-fields" → #local-fields
+    - "Discussion and Open Problems" → #discussion-and-open-problems
+  - Preserve hierarchy with nested lists
+
+- Title pages
+  - Academic papers
+    - Author lists: use LaTeX superscripts (no need for yap tags) for affiliation markers (`Author Name$^1$`, `Author Name$^{1,2,*,\dagger}$`). Do NOT use footnotes for this.
+    - Keep authors comma-separated on single line.
+    - Keep emails comma-separated on single line (in a separate line after authors).
+    - Keep affiliations comma-separated on single line (in a separate line after emails).
+    - Metadata links (Code, Blogpost, etc.): wrap in `<yap-show>` (one on each line) — visual reference info, not useful to hear, but important to be nicely formatted visually.
+</formatting_guide>
+
+<speech_for_math>
+
+As math is never read aloud, speech tags are sometimes needed to avoid awkward gaps in narration and enhance the listening experience.
+
+- Add speech when:
+  - The math is a natural part of the sentence structure/text, e.g., introduces a symbol, variable, or value
+  - Omitting would leave an awkward gap or lose information
+
+- When to skip speech:
+  - Visual markers ($^1$, $^\dagger$)
+  - Complex equations that can't be meaningfully verbalized - derivations, proofs, multi-line formulas where a reader would pause to study visually rather than listen
+  - Cases where it would lead to stutters or repetition
+    - "The greek letter $\alpha$ alpha ..." - "alpha" is already in the text, so no need to repeat
+
+- How to write speech:
+  - Write as a human would read
+  - Ignore visual formatting: $\mathbf{z}$ → "z", NOT "bold z", $\mathcal{L}$ → "L" not "script L"
+  - Literal for simple math: $Q$ → "Q", $\alpha$ → "alpha", $n=5$ → "n equals 5"
+  - Naturalize / reword to improve flow IFF contextually appropriate
+    - "$$h = \frac{v}{n} \times 360 \quad \text{(Hue calculation)}$$<yap-speak>The hue h is calculated as v over n times 360</yap-speak>"
+    - "The state of the system can be represented as the set $S = \{s_1, s_2, \ldots, s_n\}$<yap-speak>S, defined as s one, s two, up to s n</yap-speak>"
+    - "Given $z$<yap-speak>z</yap-speak>, the decoder then generates an output sequence $(y_1, \ldots, y_m)$<yap-speak>y one through y m</yap-speak>"
+    - "$\mathcal{O}(n^2)$<yap-speak>big O of n squared</yap-speak>" (or "order n squared")
+    - "$W_i^Q \in \mathbb{R}^{d_{\text{model}} \times d_k}$<yap-speak>W Q of dimensions d model by d k</yap-speak>"
+
+<example>
+Contrast the following examples:
+
+- Standalone:
+  - $$V^\pi(s) = \mathbb{E}_{a \sim \pi}\left\{\sum_{t=0}^\infty \gamma^t r_t\right\}$$ → <yap-speak>the value of state s under policy pi is the expected discounted return when starting in s and taking actions according to pi</yap-speak>
+- Embedded in text:
+  - "We calculate the value function $V^\pi(s)$ as $V^\pi(s) = \mathbb{E}_{a \sim \pi}\left\{\sum_{t=0}^\infty \gamma^t r_t\right\}$" → "We calculate the value function $V^\pi(s)$<yap-speak>V pi of s</yap-speak> as $V^\pi(s) = \mathbb{E}_{a \sim \pi}\left\{\sum_{t=0}^\infty \gamma^t r_t\right\}$<yap-speak>the expected discounted return when starting in s and taking actions according to pi</yap-speak>"
+
+NOTE how
+- Both examples verbalize the same formula with surrounding context (omitted for brevity), but the embedded version breaks it up to fit naturally into the sentence structure.
+</example>
+
+<example>
+"Assume that the components of $q$<yap-speak>q</yap-speak> and $k$<yap-speak>k</yap-speak> are independent random variables with mean $0$<yap-speak>zero</yap-speak> and variance $1$<yap-speak>one</yap-speak>. Then their dot product, $q \cdot k = \sum_{i=1}^{d_k} q_i k_i$, has mean $0$<yap-speak>zero</yap-speak> and variance $d_k$<yap-speak>d sub k</yap-speak>."
+
+NOTE how
+- The dot product formula COULD have been verbalized as <yap-speak>the sum of q i times k i, from i equals one to d k</yap-speak>
+- BUT was skipped, since the context already explains what the formula represents, and verbalizing it would be redundant and disrupt the flow
+</example>
+
+<example>
+"Where the projections are parameter matrices $W_i^Q \in \mathbb{R}^{d_{\text{model}} \times d_k}, W_i^K \in \mathbb{R}^{d_{\text{model}} \times d_k}, W_i^V \in \mathbb{R}^{d_{\text{model}} \times d_v}$<yap-speak>W Q and W K of dimensions d model by d k, and W V of dimensions d model by d v</yap-speak>, and $W^O \in \mathbb{R}^{h d_v \times d_{\text{model}}}$<yap-speak>W O of dimensions h times d v by d model</yap-speak>."
+
+NOTE how
+- Math and yap tags are not unnecessarily interleaved.
+- The speech is not a literal reading, but naturalizes - in this example - by grouping parts that share context ("of dimensions ...").
+</example>
+
+<example>
+"""
+We compute the matrix of outputs as:
+
+$$\text{Attention}(Q, K, V) = \text{softmax}\left(\frac{QK^T}{\sqrt{d_k}}\right)V \tag{1}$$
+<yap-speak>the softmax of Q K transpose over the square root of d k, all times V</yap-speak>
+"""
+
+NOTE how:
+- Since the formula is introduced in the sentence before AND it is simple enough, it is spoken.
+- The formula is slightly reworded to follow the preceding text naturally (omitted "Attention equals"; dropped equation number).
+- Were the formula any more complex (in terms of natural verbalization) it would be better to skip the speech entirely, even though it is introduced in text.
+</example>
+</speech_for_math>
 

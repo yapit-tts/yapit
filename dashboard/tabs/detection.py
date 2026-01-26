@@ -19,6 +19,7 @@ def _summary_stats(df: pd.DataFrame):
     queued = get_events(df, "detection_queued")
     complete = get_events(df, "detection_complete")
     errors = get_events(df, "detection_error")
+    mismatches = get_events(df, "figure_count_mismatch")
 
     total = len(queued)
     completed = len(complete)
@@ -30,7 +31,7 @@ def _summary_stats(df: pd.DataFrame):
     if not complete.empty:
         figures_total = complete["data"].apply(lambda d: d.get("figures_count", 0) if isinstance(d, dict) else 0).sum()
 
-    col1, col2, col3, col4, col5 = st.columns(5)
+    col1, col2, col3, col4, col5, col6 = st.columns(6)
     with col1:
         st.metric("Jobs Queued", format_number(total))
     with col2:
@@ -41,6 +42,8 @@ def _summary_stats(df: pd.DataFrame):
         st.metric("Error Rate", f"{error_rate:.1f}%")
     with col5:
         st.metric("Figures Detected", format_number(figures_total))
+    with col6:
+        st.metric("Figure Mismatches", format_number(len(mismatches)))
 
 
 def _worker_stats_table(df: pd.DataFrame):
@@ -218,6 +221,73 @@ def _figures_per_page_chart(df: pd.DataFrame) -> go.Figure | None:
     return fig
 
 
+def _figure_mismatch_chart(df: pd.DataFrame) -> go.Figure | None:
+    """Figure count mismatch: YOLO vs Gemini placeholders."""
+    mismatches = get_events(df, "figure_count_mismatch")
+    if mismatches.empty:
+        return None
+
+    # Extract counts from data blob
+    mismatches = mismatches.copy()
+    mismatches["yolo_count"] = mismatches["data"].apply(lambda d: d.get("yolo_count", 0) if isinstance(d, dict) else 0)
+    mismatches["gemini_count"] = mismatches["data"].apply(
+        lambda d: d.get("gemini_count", 0) if isinstance(d, dict) else 0
+    )
+    mismatches["delta"] = mismatches["data"].apply(lambda d: d.get("delta", 0) if isinstance(d, dict) else 0)
+
+    fig = go.Figure()
+
+    # Scatter: x=YOLO count, y=Gemini count, color by direction of mismatch
+    # Points above diagonal = Gemini hallucinated, below = Gemini missed
+    colors = mismatches["delta"].apply(lambda d: COLORS["error"] if d > 0 else COLORS["accent_teal"])
+
+    fig.add_trace(
+        go.Scatter(
+            x=mismatches["yolo_count"],
+            y=mismatches["gemini_count"],
+            mode="markers",
+            marker=dict(size=10, color=colors, opacity=0.7, line=dict(width=1, color=COLORS["border"])),
+            hovertemplate="YOLO: %{x}<br>Gemini: %{y}<br>Delta: %{customdata}<extra></extra>",
+            customdata=mismatches["delta"],
+        )
+    )
+
+    # Add diagonal reference line (perfect match)
+    max_val = max(mismatches["yolo_count"].max(), mismatches["gemini_count"].max(), 1) + 1
+    fig.add_trace(
+        go.Scatter(
+            x=[0, max_val],
+            y=[0, max_val],
+            mode="lines",
+            line=dict(color=COLORS["muted"], width=1, dash="dash"),
+            showlegend=False,
+            hoverinfo="skip",
+        )
+    )
+
+    fig.update_layout(
+        title="Figure Count: YOLO vs Gemini",
+        height=300,
+        xaxis_title="YOLO Detected",
+        yaxis_title="Gemini Placeholders",
+        annotations=[
+            dict(
+                x=0.02,
+                y=0.98,
+                xref="paper",
+                yref="paper",
+                text=f"<span style='color:{COLORS['error']}'>● Gemini extra</span>  "
+                f"<span style='color:{COLORS['accent_teal']}'>● Gemini missed</span>",
+                showarrow=False,
+                font=dict(size=10),
+                align="left",
+            )
+        ],
+    )
+    apply_plotly_theme(fig)
+    return fig
+
+
 def _latency_over_time(df: pd.DataFrame) -> go.Figure | None:
     """Latency scatter over time."""
     complete = get_events(df, "detection_complete")
@@ -306,3 +376,8 @@ def render(df: pd.DataFrame):
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.caption("No figures data")
+
+    # Row 4: Figure count mismatch
+    fig = _figure_mismatch_chart(df)
+    if fig:
+        st.plotly_chart(fig, use_container_width=True)

@@ -143,3 +143,22 @@
   }
 }
 
+/* Footnote reference styling */
+.footnote-ref {
+  font-size: 0.85em;
+  vertical-align: super;
+  line-height: 0;
+}
+.footnote-ref a {
+  color: var(--primary);
+  text-decoration: none;
+  font-weight: 500;
+}
+.footnote-ref a:hover {
+  text-decoration: underline;
+}
+.footnote-ref-orphan {
+  color: var(--muted-foreground);
+  font-size: 0.85em;
+}
+

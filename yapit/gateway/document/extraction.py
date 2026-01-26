@@ -60,7 +60,7 @@ def store_figure(
 def build_figure_prompt(base_prompt: str, figures: list[DetectedFigure]) -> str:
     """Build prompt with figure placement hints for Gemini."""
     if not figures:
-        return base_prompt
+        return f"{base_prompt}\n\nNo figures detected on this page — do not output any image placeholders."
 
     # Build position hints for each figure
     hints = []
@@ -357,3 +357,74 @@ def stitch_pages(page_texts: list[str]) -> str:
         result.append(curr_text)
 
     return "".join(result)
+
+
+# Footnote patterns: [^label] for refs, [^label]: for definitions
+_FOOTNOTE_REF_PATTERN = re.compile(r"\[\^([^\]]+)\](?!:)")
+_FOOTNOTE_DEF_PATTERN = re.compile(r"^\[\^([^\]]+)\]:", re.MULTILINE)
+
+
+def deduplicate_footnotes(pages: dict[int, str]) -> dict[int, str]:
+    """Deduplicate footnote labels across pages to prevent collisions.
+
+    When pages are processed independently, each may have [^1], [^2], etc.
+    This prefixes each page's footnote labels with page number to ensure
+    uniqueness after merge: [^1] on page 3 becomes [^p3-1].
+
+    Only renames if there would be collisions across pages.
+
+    Args:
+        pages: Dict mapping page index to markdown content
+
+    Returns:
+        Dict with same structure, footnotes deduplicated if needed
+    """
+    if len(pages) <= 1:
+        return pages
+
+    # Collect all footnote labels per page
+    page_labels: dict[int, set[str]] = {}
+    for page_idx, markdown in pages.items():
+        refs = set(_FOOTNOTE_REF_PATTERN.findall(markdown))
+        defs = set(_FOOTNOTE_DEF_PATTERN.findall(markdown))
+        page_labels[page_idx] = refs | defs
+
+    # Check for collisions
+    all_labels: set[str] = set()
+    has_collision = False
+    for labels in page_labels.values():
+        if all_labels & labels:
+            has_collision = True
+            break
+        all_labels |= labels
+
+    if not has_collision:
+        return pages
+
+    # Rename footnotes with page prefix
+    result: dict[int, str] = {}
+    for page_idx, markdown in pages.items():
+        labels = page_labels[page_idx]
+        if not labels:
+            result[page_idx] = markdown
+            continue
+
+        renamed = markdown
+        for label in labels:
+            new_label = f"p{page_idx}-{label}"
+            # Replace refs: [^label] (not followed by :)
+            renamed = re.sub(
+                rf"\[\^{re.escape(label)}\](?!:)",
+                f"[^{new_label}]",
+                renamed,
+            )
+            # Replace defs: [^label]:
+            renamed = re.sub(
+                rf"^\[\^{re.escape(label)}\]:",
+                f"[^{new_label}]:",
+                renamed,
+                flags=re.MULTILINE,
+            )
+        result[page_idx] = renamed
+
+    return result

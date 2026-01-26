@@ -41,6 +41,7 @@ from yapit.gateway.deps import (
     SettingsDep,
 )
 from yapit.gateway.document import markitdown
+from yapit.gateway.document.extraction import deduplicate_footnotes
 from yapit.gateway.document.http import download_document, resolve_relative_urls
 from yapit.gateway.document.markxiv import detect_arxiv_url, fetch_from_markxiv
 from yapit.gateway.document.playwright_renderer import render_with_js
@@ -627,7 +628,9 @@ async def create_document(
             detail="Document extraction failed. Please try again later.",
         )
 
-    extracted_text: str = "\n\n".join(page.markdown for page in extraction_result.pages.values())
+    page_markdowns = {idx: page.markdown for idx, page in extraction_result.pages.items()}
+    deduped_markdowns = deduplicate_footnotes(page_markdowns)
+    extracted_text: str = "\n\n".join(deduped_markdowns[idx] for idx in sorted(deduped_markdowns.keys()))
 
     ast = parse_markdown(extracted_text)
     structured_doc = transform_to_document(

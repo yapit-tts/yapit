@@ -36,7 +36,7 @@ async def test_tts_usage_limit_exceeded(regular_ws_client, regular_document):
     await asyncio.sleep(0.5)  # Wait for message
 
     error_msgs = [m for m in regular_ws_client.messages if m.get("status") == "error"]
-    assert len(error_msgs) > 0
+    assert len(error_msgs) > 0, "If you set BILLING_ENABLED=false for dev, this test is expected to fail."
     assert "usage limit exceeded" in error_msgs[0]["error"].lower()
 
 
