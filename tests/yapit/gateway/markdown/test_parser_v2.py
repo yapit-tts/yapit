@@ -654,3 +654,496 @@ We used standard approaches <yap-show>[1-5]</yap-show>.
         assert "alpha" in full_audio
         assert "beta" in full_audio
         assert "[1-5]" not in full_audio
+
+
+# === CALLOUTS ===
+
+
+class TestCallouts:
+    """Tests for callout blockquotes: > [!COLOR] Title"""
+
+    def test_basic_callout_blue(self):
+        """Basic blue callout with title."""
+        md = """> [!BLUE] Definition 1.2
+> A **group** is a set with a binary operation.
+"""
+        ast = parse_markdown(md)
+        doc = transform(ast)
+        assert len(doc.blocks) == 1
+        block = doc.blocks[0]
+        assert block.type == "blockquote"
+        assert block.callout_type == "BLUE"
+        assert block.callout_title == "Definition 1.2"
+        # Title should have audio
+        assert len(block.audio_chunks) == 1
+        assert block.audio_chunks[0].text == "Definition 1.2"
+        # Content should be in nested blocks
+        assert len(block.blocks) == 1
+        assert block.blocks[0].type == "paragraph"
+
+    def test_callout_all_colors(self):
+        """All valid callout colors are recognized."""
+        colors = ["BLUE", "GREEN", "PURPLE", "RED", "YELLOW", "TEAL"]
+        for color in colors:
+            md = f"> [!{color}] Test\n> Content"
+            ast = parse_markdown(md)
+            doc = transform(ast)
+            block = doc.blocks[0]
+            assert block.callout_type == color, f"Failed for {color}"
+
+    def test_callout_case_insensitive(self):
+        """Callout color detection is case-insensitive."""
+        md = """> [!blue] Title
+> Content
+"""
+        ast = parse_markdown(md)
+        doc = transform(ast)
+        block = doc.blocks[0]
+        assert block.callout_type == "BLUE"
+
+    def test_callout_without_title(self):
+        """Callout with color but no title."""
+        md = """> [!GREEN]
+> This is a green callout without a title.
+"""
+        ast = parse_markdown(md)
+        doc = transform(ast)
+        block = doc.blocks[0]
+        assert block.callout_type == "GREEN"
+        assert block.callout_title is None
+        # No title = no audio on the blockquote itself
+        assert len(block.audio_chunks) == 0
+        # Content still present
+        assert len(block.blocks) == 1
+
+    def test_callout_invalid_color(self):
+        """Invalid color is not recognized as callout."""
+        md = """> [!ORANGE] Not a valid color
+> Content
+"""
+        ast = parse_markdown(md)
+        doc = transform(ast)
+        block = doc.blocks[0]
+        # Should be regular blockquote
+        assert block.callout_type is None
+        assert block.callout_title is None
+
+    def test_regular_blockquote_unchanged(self):
+        """Regular blockquote without callout marker."""
+        md = """> This is a regular quote.
+> With multiple lines.
+"""
+        ast = parse_markdown(md)
+        doc = transform(ast)
+        block = doc.blocks[0]
+        assert block.callout_type is None
+        assert block.callout_title is None
+        assert len(block.audio_chunks) == 0
+
+    def test_callout_nested_content(self):
+        """Callout with nested blocks (list, code, etc.)."""
+        md = """> [!PURPLE] Remark
+> Key points:
+> - First point
+> - Second point
+"""
+        ast = parse_markdown(md)
+        doc = transform(ast)
+        block = doc.blocks[0]
+        assert block.callout_type == "PURPLE"
+        assert block.callout_title == "Remark"
+        # Should have paragraph + list
+        assert len(block.blocks) >= 1
+
+    def test_callout_title_with_formatting(self):
+        """Callout title can contain inline formatting."""
+        md = """> [!RED] **Important** Warning
+> Be careful!
+"""
+        ast = parse_markdown(md)
+        doc = transform(ast)
+        block = doc.blocks[0]
+        assert block.callout_type == "RED"
+        # Title should include the formatted text
+        assert "Important" in (block.callout_title or "")
+        assert "Warning" in (block.callout_title or "")
+
+    def test_callout_content_has_audio(self):
+        """Content inside callout has audio."""
+        md = """> [!BLUE] Definition
+> A vector space is a set V.
+"""
+        ast = parse_markdown(md)
+        doc = transform(ast)
+        block = doc.blocks[0]
+        # Title audio
+        assert block.audio_chunks[0].text == "Definition"
+        # Content audio (in nested paragraph)
+        assert len(block.blocks) == 1
+        content_block = block.blocks[0]
+        assert len(content_block.audio_chunks) == 1
+        assert "vector space" in content_block.audio_chunks[0].text
+
+
+# === FOOTNOTES ===
+
+
+class TestFootnotes:
+    """Tests for footnotes: [^label] refs and [^label]: content definitions."""
+
+    def test_basic_footnote(self):
+        """Basic footnote with ref and content."""
+        md = """This has a footnote[^1].
+
+[^1]: This is the footnote content.
+"""
+        ast = parse_markdown(md)
+        doc = transform(ast)
+        # Should have paragraph + footnotes block
+        assert len(doc.blocks) == 2
+        assert doc.blocks[0].type == "paragraph"
+        assert doc.blocks[1].type == "footnotes"
+
+        # Check footnotes block
+        footnotes = doc.blocks[1]
+        assert len(footnotes.items) == 1
+        assert footnotes.items[0].label == "1"
+        assert footnotes.items[0].has_ref is True
+
+    def test_footnote_ref_in_paragraph_html(self):
+        """Footnote ref renders as superscript in HTML."""
+        md = """Text with[^1] footnote.
+
+[^1]: Content.
+"""
+        ast = parse_markdown(md)
+        doc = transform(ast)
+        para = doc.blocks[0]
+        assert "footnote-ref" in para.html
+        assert "[1]" in para.html
+
+    def test_footnote_ref_silent_in_tts(self):
+        """Footnote ref does not contribute to TTS."""
+        md = """This has a footnote[^1] in the middle.
+
+[^1]: Content.
+"""
+        ast = parse_markdown(md)
+        doc = transform(ast)
+        para = doc.blocks[0]
+        tts = " ".join(chunk.text for chunk in para.audio_chunks)
+        # Should not contain the footnote marker
+        assert "[^1]" not in tts
+        assert "[1]" not in tts
+        # Should contain the surrounding text
+        assert "footnote" in tts
+        assert "middle" in tts
+
+    def test_footnote_content_has_audio(self):
+        """Footnote content should have audio."""
+        md = """Text[^1].
+
+[^1]: This footnote has important content.
+"""
+        ast = parse_markdown(md)
+        doc = transform(ast)
+        footnotes = doc.blocks[1]
+        item = footnotes.items[0]
+        # Footnote content is in nested blocks
+        assert len(item.blocks) == 1
+        content_para = item.blocks[0]
+        assert len(content_para.audio_chunks) == 1
+        assert "important content" in content_para.audio_chunks[0].text
+
+    def test_footnote_content_in_get_audio_blocks(self):
+        """Footnote content should appear in get_audio_blocks()."""
+        md = """Text[^1].
+
+[^1]: Footnote audio.
+"""
+        ast = parse_markdown(md)
+        doc = transform(ast)
+        audio = doc.get_audio_blocks()
+        assert any("Footnote audio" in text for text in audio)
+
+    def test_named_footnote(self):
+        """Footnote with named label."""
+        md = """Reference[^note] here.
+
+[^note]: Named footnote content.
+"""
+        ast = parse_markdown(md)
+        doc = transform(ast)
+        footnotes = doc.blocks[1]
+        assert footnotes.items[0].label == "note"
+
+    def test_multiple_footnotes(self):
+        """Multiple footnotes in same document."""
+        md = """First[^1] and second[^2].
+
+[^1]: First footnote.
+
+[^2]: Second footnote.
+"""
+        ast = parse_markdown(md)
+        doc = transform(ast)
+        footnotes = doc.blocks[1]
+        assert len(footnotes.items) == 2
+        assert footnotes.items[0].label == "1"
+        assert footnotes.items[1].label == "2"
+
+    def test_footnote_ref_without_content_is_literal(self):
+        """Footnote ref without matching content is kept as literal text.
+
+        markdown-it-footnote validates at parse time - refs without content
+        are left as literal text, not parsed as footnote_ref nodes.
+        """
+        md = """Text with orphan ref[^missing].
+"""
+        ast = parse_markdown(md)
+        doc = transform(ast)
+        para = doc.blocks[0]
+        # Should be literal text, not a footnote ref
+        assert "[^missing]" in para.html
+        # No footnotes block (no valid footnotes)
+        assert len(doc.blocks) == 1
+
+    def test_footnote_content_without_ref_is_ignored(self):
+        """Footnote content without matching ref is ignored by markdown-it.
+
+        markdown-it-footnote validates at parse time - content without refs
+        is not included in the output.
+        """
+        md = """Regular text without refs.
+
+[^orphan]: Orphan footnote content.
+"""
+        ast = parse_markdown(md)
+        doc = transform(ast)
+        # Should only have the paragraph, no footnotes block
+        assert len(doc.blocks) == 1
+        assert doc.blocks[0].type == "paragraph"
+
+    def test_footnote_duplicate_label_last_wins(self):
+        """Duplicate footnote labels: last definition wins (markdown-it behavior).
+
+        markdown-it-footnote replaces earlier definitions with later ones.
+        True collision handling (for per-page processing) happens at the
+        document merge layer, not the parser layer.
+        """
+        md = """First ref[^1].
+
+[^1]: First content.
+
+[^1]: Second content (replaces first).
+"""
+        ast = parse_markdown(md)
+        doc = transform(ast)
+        footnotes = doc.blocks[1]
+        # Only one footnote (second definition replaced first)
+        assert len(footnotes.items) == 1
+        assert footnotes.items[0].label == "1"
+        # Content should be from the last definition
+        content = footnotes.items[0].blocks[0]
+        assert "Second content" in content.audio_chunks[0].text
+
+    def test_footnote_in_ast(self):
+        """FootnoteRefContent appears in paragraph AST."""
+        md = """Text[^1].
+
+[^1]: Content.
+"""
+        ast = parse_markdown(md)
+        doc = transform(ast)
+        para = doc.blocks[0]
+        # Find FootnoteRefContent in AST
+        has_footnote_ref = any(hasattr(node, "type") and node.type == "footnote_ref" for node in para.ast)
+        assert has_footnote_ref
+
+
+# === 12. ZERO-LENGTH ELEMENTS AT CHUNK BOUNDARIES ===
+
+
+class TestZeroLengthAtBoundaries:
+    """0-length elements (footnote refs, math) at chunk split boundaries.
+
+    These elements have 0 TTS length but must still appear in the display HTML.
+    When splitting long paragraphs, they can end up exactly at chunk boundaries
+    and must not be dropped.
+    """
+
+    def test_footnote_ref_at_end_of_split_paragraph(self):
+        """Footnote ref at the very end of a split paragraph is preserved.
+
+        This is the primary bug case: a 671-char paragraph ending with [^1]
+        would split into chunks, and the footnote ref at position 671 was
+        being dropped because `pos >= end` caused an early break.
+        """
+        # Create text long enough to split, ending with footnote
+        long_text = "A" * 100 + " " + "B" * 100 + " " + "C" * 100
+        md = f"""{long_text}.[^1]
+
+[^1]: Footnote content here.
+"""
+        ast = parse_markdown(md)
+        doc = transform(ast, max_block_chars=150)  # Force split
+        para = doc.blocks[0]
+
+        # Paragraph should be split
+        assert len(para.audio_chunks) > 1, "Paragraph should split into multiple chunks"
+
+        # Footnote ref must appear in HTML
+        assert "footnote-ref" in para.html, "Footnote ref missing from split paragraph"
+        assert 'href="#fn-1"' in para.html, "Footnote link missing"
+
+    def test_footnote_ref_at_start_of_paragraph(self):
+        """Footnote ref at the very start of a paragraph is preserved."""
+        md = """[^1]Start of paragraph with more text here.
+
+[^1]: Footnote at start.
+"""
+        ast = parse_markdown(md)
+        doc = transform(ast)
+        para = doc.blocks[0]
+        assert "footnote-ref" in para.html
+
+    def test_math_at_end_of_split_paragraph(self):
+        """Math at the end of a split paragraph is preserved."""
+        long_text = "A" * 100 + " " + "B" * 100 + " " + "C" * 100
+        md = f"{long_text} $x^2$"
+        ast = parse_markdown(md)
+        doc = transform(ast, max_block_chars=150)
+        para = doc.blocks[0]
+
+        assert len(para.audio_chunks) > 1, "Paragraph should split"
+        # Math should be in HTML (as KaTeX or raw)
+        assert "x^2" in para.html or "katex" in para.html.lower()
+
+    def test_math_at_start_of_split_paragraph(self):
+        """Math at the start of a split paragraph is preserved."""
+        long_text = "B" * 100 + " " + "C" * 100 + " " + "D" * 100
+        md = f"$x^2$ {long_text}"
+        ast = parse_markdown(md)
+        doc = transform(ast, max_block_chars=150)
+        para = doc.blocks[0]
+
+        assert len(para.audio_chunks) > 1, "Paragraph should split"
+        assert "x^2" in para.html or "katex" in para.html.lower()
+
+    def test_multiple_footnotes_in_split_paragraph(self):
+        """Multiple footnotes across a split paragraph are all preserved."""
+        text_a = "A" * 80
+        text_b = "B" * 80
+        text_c = "C" * 80
+        md = f"""{text_a}[^1] {text_b}[^2] {text_c}[^3]
+
+[^1]: First.
+[^2]: Second.
+[^3]: Third.
+"""
+        ast = parse_markdown(md)
+        doc = transform(ast, max_block_chars=100)
+        para = doc.blocks[0]
+
+        # All three footnote refs should be in HTML
+        assert para.html.count("footnote-ref") == 3, f"Expected 3 footnote refs, got {para.html.count('footnote-ref')}"
+
+    def test_footnote_ref_between_chunks(self):
+        """Footnote ref exactly at a chunk boundary (between words) is preserved."""
+        # Construct so footnote falls exactly at chunk boundary
+        text_before = "Word " * 25  # ~125 chars
+        text_after = "more " * 25  # ~125 chars
+        md = f"""{text_before}[^1]{text_after}
+
+[^1]: Middle footnote.
+"""
+        ast = parse_markdown(md)
+        doc = transform(ast, max_block_chars=130)
+        para = doc.blocks[0]
+        assert "footnote-ref" in para.html
+
+    def test_math_with_yap_speak_at_boundary(self):
+        """Math followed by yap-speak at chunk boundary works correctly."""
+        long_text = "A" * 150
+        md = f"{long_text} $E=mc^2$<yap-speak>E equals m c squared</yap-speak> more text here."
+        ast = parse_markdown(md)
+        doc = transform(ast, max_block_chars=160)
+        para = doc.blocks[0]
+
+        # Math should be displayed, speak text should be in TTS
+        assert "E=mc^2" in para.html or "mc" in para.html
+        tts_text = " ".join(c.text for c in para.audio_chunks)
+        assert "E equals m c squared" in tts_text
+
+    def test_consecutive_zero_length_elements(self):
+        """Multiple 0-length elements in sequence are all preserved."""
+        md = """Text $a$ $b$ $c$ end.
+
+More text[^1][^2] here.
+
+[^1]: First.
+[^2]: Second.
+"""
+        ast = parse_markdown(md)
+        doc = transform(ast)
+
+        # First paragraph should have all three math elements
+        para1 = doc.blocks[0]
+        assert "a" in para1.html and "b" in para1.html and "c" in para1.html
+
+        # Second paragraph should have both footnote refs
+        para2 = doc.blocks[1]
+        assert para2.html.count("footnote-ref") == 2
+
+
+# === KNOWN LIMITATIONS ===
+
+
+class TestKnownLimitations:
+    """Tests documenting known parser limitations.
+
+    These are xfail tests — they define correct behavior that we don't support yet.
+    When we hit a real-world case that needs one of these, we can implement the fix.
+    """
+
+    import pytest
+
+    @pytest.mark.xfail(reason="yap-tags inside nested inline elements not supported")
+    def test_yap_speak_inside_link(self):
+        """yap-speak inside link text should be TTS-only.
+
+        Currently broken: yap-speak content appears in both display AND TTS
+        because recursive HTML/TTS extraction doesn't track yap-tag state.
+        """
+        md = "[click <yap-speak>here for more</yap-speak>](https://example.com)"
+        display, tts = get_display_and_tts(md)
+
+        # Expected: display shows "click", TTS says "click here for more"
+        assert "here for more" not in display, "yap-speak content should not display"
+        assert "click" in display
+        assert "click here for more" in tts
+
+    @pytest.mark.xfail(reason="yap-tags inside nested inline elements not supported")
+    def test_yap_show_inside_link(self):
+        """yap-show inside link text should be display-only.
+
+        Currently broken: yap-show content appears in both display AND TTS.
+        """
+        md = "[visible <yap-show>(ref)</yap-show>](url)"
+        display, tts = get_display_and_tts(md)
+
+        # Expected: display shows "visible (ref)", TTS says "visible"
+        assert "(ref)" in display
+        assert "(ref)" not in tts, "yap-show content should not be in TTS"
+
+    @pytest.mark.xfail(reason="yap-tags inside nested inline elements not supported")
+    def test_yap_speak_inside_strong_inside_link(self):
+        """Deeply nested yap-speak should still work.
+
+        Currently broken at any nesting level inside container elements.
+        """
+        md = "[**bold <yap-speak>spoken</yap-speak>**](url)"
+        display, tts = get_display_and_tts(md)
+
+        assert "spoken" not in display, "yap-speak content should not display"
+        assert "bold spoken" in tts

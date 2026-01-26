@@ -4,11 +4,13 @@ Configures markdown-it with the plugins we need:
 - CommonMark base
 - GFM tables and strikethrough
 - Dollar math ($inline$ and $$display$$)
+- Footnotes ([^label] refs and [^label]: content definitions)
 """
 
 from markdown_it import MarkdownIt
 from markdown_it.tree import SyntaxTreeNode
 from mdit_py_plugins.dollarmath import dollarmath_plugin
+from mdit_py_plugins.footnote import footnote_plugin
 
 
 def create_parser() -> MarkdownIt:
@@ -17,6 +19,7 @@ def create_parser() -> MarkdownIt:
     md.enable("table")
     md.enable("strikethrough")
     dollarmath_plugin(md)
+    footnote_plugin(md)
     return md
 
 

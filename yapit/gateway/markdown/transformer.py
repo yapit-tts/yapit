@@ -24,6 +24,9 @@ from yapit.gateway.markdown.models import (
     CodeSpanContent,
     ContentBlock,
     EmphasisContent,
+    FootnoteItem,
+    FootnoteRefContent,
+    FootnotesBlock,
     HeadingBlock,
     ImageBlock,
     InlineContent,
@@ -168,11 +171,18 @@ class InlineProcessor:
         elif node.type == "html_inline":
             # Pass through HTML that isn't our tags
             return node.content or ""
+        elif node.type == "footnote_ref":
+            # Footnote reference - render as superscript link
+            label = node.meta.get("label", "") if node.meta else ""
+            return f'<sup class="footnote-ref"><a href="#fn-{label}" id="fnref-{label}">[{label}]</a></sup>'
+        elif node.type == "footnote_anchor":
+            # Back-link anchor in footnote content - skip in HTML
+            return ""
         else:
             return node.content or ""
 
     def _node_to_tts(self, node: SyntaxTreeNode) -> str:
-        """Extract TTS text from node. Math is silent."""
+        """Extract TTS text from node. Math and footnote refs are silent."""
         if node.type == "text":
             return node.content or ""
         elif node.type in ("strong", "em", "s", "link"):
@@ -187,6 +197,10 @@ class InlineProcessor:
             return ""  # Math is silent
         elif node.type == "html_inline":
             return ""  # Skip HTML tags
+        elif node.type == "footnote_ref":
+            return ""  # Footnote refs are silent
+        elif node.type == "footnote_anchor":
+            return ""  # Back-link anchors are silent
         else:
             return node.content or ""
 
@@ -364,6 +378,12 @@ def _transform_inline_node(node: SyntaxTreeNode) -> InlineContent | None:
         return MathInlineContent(content=node.content or "")
     elif node.type in ("softbreak", "hardbreak"):
         return TextContent(content=" ")
+    elif node.type == "footnote_ref":
+        label = node.meta.get("label", "") if node.meta else ""
+        return FootnoteRefContent(label=label)
+    elif node.type == "footnote_anchor":
+        # Back-link anchors don't contribute to AST (they're navigational)
+        return None
     return None
 
 
@@ -545,6 +565,10 @@ def split_with_spans(
         # No splitting needed
         return html, [AudioChunk(text=text, audio_block_idx=start_idx)]
 
+    # AST may have trailing 0-length nodes (math, footnote refs) past the stripped text length.
+    # Extend last chunk's end to include them.
+    ast_len = sum(get_inline_length(n) for n in ast)
+
     # Slice AST for each chunk and render to HTML with span wrappers
     audio_chunks: list[AudioChunk] = []
     html_parts: list[str] = []
@@ -553,8 +577,12 @@ def split_with_spans(
         chunk_text = text[chunk_start:chunk_end].strip()
         idx = start_idx + i
 
+        # For the last chunk, extend end to include trailing 0-length display elements
+        is_last = i == len(chunk_ranges) - 1
+        ast_end = max(chunk_end, ast_len) if is_last else chunk_end
+
         # Slice AST and render to HTML
-        sliced_ast = slice_ast(ast, chunk_start, chunk_end)
+        sliced_ast = slice_ast(ast, chunk_start, ast_end)
         chunk_html = render_ast_to_html(sliced_ast)
 
         html_parts.append(f'<span data-audio-idx="{idx}">{chunk_html}</span>')
@@ -571,6 +599,9 @@ def slice_ast(ast: list[InlineContent], start: int, end: int) -> list[InlineCont
 
     Handles nested formatting - if a split falls inside a bold/italic span,
     the span is properly closed in the first chunk and reopened in the second.
+
+    0-length nodes (math, footnote refs) need special handling at boundaries:
+    they should be included when at the start or end of a range, not skipped.
     """
     result: list[InlineContent] = []
     pos = 0
@@ -580,12 +611,13 @@ def slice_ast(ast: list[InlineContent], start: int, end: int) -> list[InlineCont
         node_end = pos + node_len
 
         # Skip nodes entirely before our range
-        if node_end <= start:
+        # For 0-length nodes at pos==start: don't skip (they're AT the boundary, not before)
+        if node_end < start or (node_end == start and node_len > 0):
             pos = node_end
             continue
 
-        # Stop if we're past our range
-        if pos >= end:
+        # Stop if we're past our range (use > not >= to include 0-length nodes at boundary)
+        if pos > end:
             break
 
         # Calculate overlap
@@ -632,6 +664,9 @@ def slice_inline_node(node: InlineContent, start: int, end: int) -> list[InlineC
             # Speak content is sliced like text (contributes to TTS length)
             content = node.content[start:end]
             return [SpeakContent(content=content)] if content else []
+        case FootnoteRefContent():
+            # Footnote refs have 0 TTS length, include at slice start
+            return [node] if start == 0 else []
     return []
 
 
@@ -650,6 +685,9 @@ def get_inline_length(node: InlineContent) -> int:
         case SpeakContent():
             # Speak content contributes its full length to TTS
             return len(node.content)
+        case FootnoteRefContent():
+            # Footnote refs are silent (display-only)
+            return 0
     return 0
 
 
@@ -680,6 +718,13 @@ def render_inline_content_html(node: InlineContent) -> str:
         case SpeakContent():
             # Speak content is TTS-only, doesn't render to display HTML
             return ""
+        case FootnoteRefContent():
+            # Render as superscript link to footnote, with id for back-navigation
+            if node.has_content:
+                return f'<sup class="footnote-ref"><a href="#fn-{node.label}" id="fnref-{node.label}">[{node.label}]</a></sup>'
+            else:
+                # No matching footnote - render as plain text (no link)
+                return f'<sup class="footnote-ref-orphan">[{node.label}]</sup>'
     return ""
 
 
@@ -720,7 +765,90 @@ class DocumentTransformer:
         self._find_math_annotations(ast)
 
         blocks = self._transform_children(ast)
-        return StructuredDocument(blocks=blocks)
+        doc = StructuredDocument(blocks=blocks)
+
+        # Post-process: deduplicate footnote labels and match refs with content
+        self._process_footnotes(doc)
+
+        return doc
+
+    def _process_footnotes(self, doc: StructuredDocument) -> None:
+        """Post-process footnotes: deduplicate labels and match refs with content.
+
+        - If multiple footnotes have the same label, rename them: "1" -> "1", "1" -> "1-2", etc.
+        - Mark inline refs that have no matching footnote content (has_content=False)
+        - Mark footnote content that has no matching inline ref (has_ref=False)
+        - Update HTML to use deduplicated labels
+        """
+        # Collect all footnote refs and content
+        refs: list[tuple[FootnoteRefContent, str]] = []  # (ref, original_label)
+        footnote_items: list[FootnoteItem] = []
+
+        def collect_refs_from_block(block: ContentBlock) -> None:
+            """Recursively collect footnote refs from block AST."""
+            if hasattr(block, "ast"):
+                collect_refs_from_ast(block.ast)
+            if isinstance(block, ListBlock):
+                for item in block.items:
+                    collect_refs_from_ast(item.ast)
+            if isinstance(block, BlockquoteBlock):
+                for nested in block.blocks:
+                    collect_refs_from_block(nested)
+            if isinstance(block, FootnotesBlock):
+                footnote_items.extend(block.items)
+
+        def collect_refs_from_ast(ast: list[InlineContent]) -> None:
+            """Recursively collect footnote refs from inline AST."""
+            for node in ast:
+                if isinstance(node, FootnoteRefContent):
+                    refs.append((node, node.label))
+                elif hasattr(node, "content") and isinstance(node.content, list):
+                    collect_refs_from_ast(node.content)
+
+        for block in doc.blocks:
+            collect_refs_from_block(block)
+
+        if not refs and not footnote_items:
+            return
+
+        # Deduplicate footnote content labels
+        label_counts: dict[str, int] = {}
+        label_map: dict[str, str] = {}  # original_label -> deduplicated_label
+
+        for item in footnote_items:
+            original_label = item.label
+            count = label_counts.get(original_label, 0)
+            label_counts[original_label] = count + 1
+
+            if count == 0:
+                # First occurrence, keep original
+                label_map[f"{original_label}:{count}"] = original_label
+            else:
+                # Subsequent occurrences, add suffix
+                new_label = f"{original_label}-{count + 1}"
+                label_map[f"{original_label}:{count}"] = new_label
+                item.label = new_label
+
+        # Build set of content labels for matching
+        content_labels = {item.label for item in footnote_items}
+
+        # Deduplicate refs and match with content
+        ref_label_counts: dict[str, int] = {}
+        for ref, original_label in refs:
+            count = ref_label_counts.get(original_label, 0)
+            ref_label_counts[original_label] = count + 1
+
+            # Get the deduplicated label for this occurrence
+            deduped_label = label_map.get(f"{original_label}:{count}", original_label)
+            ref.label = deduped_label
+
+            # Check if matching content exists
+            ref.has_content = deduped_label in content_labels
+
+        # Mark footnotes without matching refs
+        ref_labels = {ref.label for ref, _ in refs}
+        for item in footnote_items:
+            item.has_ref = item.label in ref_labels
 
     def _find_math_annotations(self, ast: SyntaxTreeNode) -> None:
         """Find display math blocks followed by yap-speak annotation paragraphs.
@@ -806,6 +934,7 @@ class DocumentTransformer:
             "table": self._transform_table,
             "hr": self._transform_hr,
             "math_block": lambda n: self._transform_math(n, parent, index),
+            "footnote_block": self._transform_footnote_block,
         }
 
         handler = handlers.get(node.type)
@@ -1046,12 +1175,184 @@ class DocumentTransformer:
         return html, tts
 
     def _transform_blockquote(self, node: SyntaxTreeNode) -> list[BlockquoteBlock]:
-        """Transform blockquote node."""
-        inner_blocks = self._transform_children(node)
+        r"""Transform blockquote node.
+
+        Detects callout syntax: > [!COLOR] Optional Title
+        Valid colors: BLUE, GREEN, PURPLE, RED, YELLOW, TEAL
+
+        In markdown, blockquote lines merge into paragraphs with softbreaks:
+        "> [!BLUE] Title\n> Content" becomes one paragraph with:
+        - text "[!BLUE] Title"
+        - softbreak
+        - text "Content"
+
+        We extract callout info from the first line, then transform content after softbreak.
+        """
+        result = self._extract_callout_info(node)
+        if result is None:
+            # Regular blockquote
+            inner_blocks = self._transform_children(node)
+            return [
+                BlockquoteBlock(
+                    id=self._next_block_id(),
+                    blocks=inner_blocks,
+                )
+            ]
+
+        callout_type, callout_title, first_para_content_nodes, remaining_children = result
+
+        # Generate audio for callout title FIRST (before nested content)
+        # so audio indices are in visual order: title, then content
+        title_audio: list[AudioChunk] = []
+        if callout_title:
+            title_audio = [AudioChunk(text=callout_title, audio_block_idx=self._next_audio_idx())]
+
+        # Build content blocks
+        blocks: list[ContentBlock] = []
+
+        # If there's content after the callout marker line in first paragraph, transform it
+        if first_para_content_nodes:
+            processor = InlineProcessor()
+            html, tts_text = processor.process(first_para_content_nodes)
+            ast = transform_inline_to_ast(first_para_content_nodes)
+
+            audio_chunks: list[AudioChunk] = []
+            if tts_text.strip():
+                html, audio_chunks = split_with_spans(tts_text, html, ast, self.splitter, self._audio_idx_counter)
+                self._audio_idx_counter += len(audio_chunks)
+
+            blocks.append(
+                ParagraphBlock(
+                    id=self._next_block_id(),
+                    html=html,
+                    ast=ast,
+                    audio_chunks=audio_chunks,
+                )
+            )
+
+        # Transform remaining blockquote children
+        for child in remaining_children:
+            blocks.extend(self._transform_node(child))
+
         return [
             BlockquoteBlock(
                 id=self._next_block_id(),
-                blocks=inner_blocks,
+                callout_type=callout_type,
+                callout_title=callout_title,
+                blocks=blocks,
+                audio_chunks=title_audio,
+            )
+        ]
+
+    def _extract_callout_info(
+        self, node: SyntaxTreeNode
+    ) -> tuple[str, str | None, list[SyntaxTreeNode], list[SyntaxTreeNode]] | None:
+        """Extract callout type and title from blockquote.
+
+        Returns None if not a callout.
+        Otherwise returns (callout_type, callout_title, first_para_content_nodes, remaining_children):
+        - callout_type: "BLUE", "GREEN", etc.
+        - callout_title: Optional title text after [!COLOR]
+        - first_para_content_nodes: AST nodes after softbreak in first paragraph (may be empty)
+        - remaining_children: Blockquote children after the first paragraph
+        """
+        if not node.children:
+            return None
+
+        first_child = node.children[0]
+        if first_child.type != "paragraph":
+            return None
+
+        # Get inline content
+        inline = first_child.children[0] if first_child.children else None
+        if not inline or inline.type != "inline" or not inline.children:
+            return None
+
+        # Check first text node for callout pattern
+        first_node = inline.children[0]
+        if first_node.type != "text":
+            return None
+
+        text = first_node.content or ""
+        match = re.match(r"^\[!(\w+)\]\s*(.*)", text)
+        if not match:
+            return None
+
+        callout_type = match.group(1).upper()
+        valid_colors = {"BLUE", "GREEN", "PURPLE", "RED", "YELLOW", "TEAL"}
+        if callout_type not in valid_colors:
+            return None
+
+        # Find softbreak to separate title from content
+        # Everything before softbreak = title line
+        # Everything after softbreak = first paragraph content
+        title_parts = [match.group(2)] if match.group(2) else []
+        softbreak_idx = None
+
+        for i, child in enumerate(inline.children[1:], start=1):
+            if child.type in ("softbreak", "hardbreak"):
+                softbreak_idx = i
+                break
+            # Collect title text (before softbreak)
+            title_parts.append(self._extract_plain_text(child))
+
+        title = " ".join(title_parts).strip() or None
+
+        # Content after softbreak in first paragraph
+        first_para_content_nodes: list[SyntaxTreeNode] = []
+        if softbreak_idx is not None:
+            first_para_content_nodes = list(inline.children[softbreak_idx + 1 :])
+
+        # Remaining blockquote children (after first paragraph)
+        remaining_children = list(node.children[1:])
+
+        return callout_type, title, first_para_content_nodes, remaining_children
+
+    def _extract_plain_text(self, node: SyntaxTreeNode) -> str:
+        """Extract plain text from a node, recursively."""
+        if node.type == "text":
+            return node.content or ""
+        elif node.type == "code_inline":
+            return node.content or ""
+        elif node.children:
+            return "".join(self._extract_plain_text(c) for c in node.children)
+        return ""
+
+    def _transform_footnote_block(self, node: SyntaxTreeNode) -> list[FootnotesBlock]:
+        """Transform footnote_block container into FootnotesBlock.
+
+        The footnote_block contains multiple footnote children, each with its content.
+        """
+        items: list[FootnoteItem] = []
+
+        for footnote_node in node.children:
+            if footnote_node.type != "footnote":
+                continue
+
+            label = footnote_node.meta.get("label", "") if footnote_node.meta else ""
+
+            # Transform footnote content (paragraphs, etc.)
+            # Skip footnote_anchor nodes (back-links)
+            content_blocks: list[ContentBlock] = []
+            for child in footnote_node.children:
+                if child.type == "footnote_anchor":
+                    continue
+                content_blocks.extend(self._transform_node(child))
+
+            items.append(
+                FootnoteItem(
+                    label=label,
+                    blocks=content_blocks,
+                )
+            )
+
+        if not items:
+            return []
+
+        return [
+            FootnotesBlock(
+                id=self._next_block_id(),
+                items=items,
             )
         ]
 

@@ -71,6 +71,18 @@ class SpeakContent(BaseModel):
     content: str  # TTS text
 
 
+class FootnoteRefContent(BaseModel):
+    """Inline footnote reference [^label].
+
+    Display-only (renders as superscript), no TTS contribution.
+    Links to footnote content at end of document if has_content is True.
+    """
+
+    type: Literal["footnote_ref"] = "footnote_ref"
+    label: str  # Original label like "1" or "note"
+    has_content: bool = True  # False if no matching footnote definition exists
+
+
 InlineContent = (
     TextContent
     | CodeSpanContent
@@ -80,6 +92,7 @@ InlineContent = (
     | InlineImageContent
     | MathInlineContent
     | SpeakContent
+    | FootnoteRefContent
 )
 
 
@@ -164,8 +177,32 @@ class ImageBlock(BaseModel):
 class BlockquoteBlock(BaseModel):
     type: Literal["blockquote"] = "blockquote"
     id: str
+    callout_type: str | None = None  # "BLUE", "GREEN", "PURPLE", "RED", "YELLOW", "TEAL"
+    callout_title: str | None = None  # Optional title like "Definition 1.2"
     blocks: list["ContentBlock"]
-    audio_chunks: list[AudioChunk] = Field(default_factory=list)  # Always empty (nested blocks have chunks)
+    audio_chunks: list[AudioChunk] = Field(default_factory=list)  # Title audio if callout, else empty
+
+
+class FootnoteItem(BaseModel):
+    """A single footnote definition."""
+
+    label: str  # The footnote label (may be deduplicated like "1-2")
+    has_ref: bool = True  # False if no matching inline [^label] exists
+    blocks: list["ContentBlock"]  # Nested content
+    audio_chunks: list[AudioChunk] = Field(default_factory=list)
+
+
+class FootnotesBlock(BaseModel):
+    """Container for all footnotes, placed at document end.
+
+    Footnotes are collected from [^label]: definitions throughout the document.
+    Inline refs [^label] link to these footnotes.
+    """
+
+    type: Literal["footnotes"] = "footnotes"
+    id: str
+    items: list[FootnoteItem]
+    audio_chunks: list[AudioChunk] = Field(default_factory=list)  # Always empty (items have chunks)
 
 
 ContentBlock = (
@@ -178,6 +215,7 @@ ContentBlock = (
     | ListBlock
     | ImageBlock
     | BlockquoteBlock
+    | FootnotesBlock
 )
 
 # Update forward references
@@ -190,6 +228,8 @@ ThematicBreak.model_rebuild()
 ListBlock.model_rebuild()
 ImageBlock.model_rebuild()
 BlockquoteBlock.model_rebuild()
+FootnoteItem.model_rebuild()
+FootnotesBlock.model_rebuild()
 
 
 # === DOCUMENT ===
@@ -205,7 +245,7 @@ class StructuredDocument(BaseModel):
         """Get list of text content for audio blocks, in order.
 
         Returns a flat list of strings indexed by audio_block_idx.
-        Collects from all blocks and nested structures (list items, blockquotes).
+        Collects from all blocks and nested structures (list items, blockquotes, footnotes).
         """
         # Collect all chunks with their indices
         all_chunks: list[tuple[int, str]] = []
@@ -224,6 +264,13 @@ class StructuredDocument(BaseModel):
             if isinstance(block, BlockquoteBlock):
                 for nested in block.blocks:
                     collect_from_block(nested)
+
+            if isinstance(block, FootnotesBlock):
+                for item in block.items:
+                    for chunk in item.audio_chunks:
+                        all_chunks.append((chunk.audio_block_idx, chunk.text))
+                    for nested in item.blocks:
+                        collect_from_block(nested)
 
         for block in self.blocks:
             collect_from_block(block)
