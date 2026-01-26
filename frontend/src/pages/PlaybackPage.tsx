@@ -4,6 +4,7 @@ import { WebGPUWarningBanner } from '@/components/webGPUWarningBanner';
 import { DocumentOutliner } from '@/components/documentOutliner';
 import { OutlinerSidebar } from '@/components/outlinerSidebar';
 import { useOutliner } from '@/hooks/useOutliner';
+import { useFilteredPlayback } from '@/hooks/useFilteredPlayback';
 import { useParams, useLocation, Link, useNavigate } from "react-router";
 import { useRef, useState, useEffect, useLayoutEffect, useCallback, useMemo } from "react";
 import { useApi } from '@/api';
@@ -1446,16 +1447,40 @@ const PlaybackPage = () => {
     return () => outliner.setEnabled(false);
   }, [shouldShowOutliner, outliner]);
 
-  // Memoize progressBarValues to prevent SoundControl re-renders when unrelated state changes
-  const progressBarValues = useMemo(() => ({
-    estimated_ms: actualTotalDuration > 0 ? actualTotalDuration : estimated_ms,
-    numberOfBlocks,
-    currentBlock: currentBlock >= 0 ? currentBlock : 0,
-    setCurrentBlock: handleBlockChange,
-    onBlockHover: handleBlockHover,
-    audioProgress,
+  // Filtered playback for scoped progress bar (only shows expanded sections)
+  const filteredPlayback = useFilteredPlayback(
+    documentBlocks,
+    sections,
+    expandedSections,
     blockStates,
-  }), [actualTotalDuration, estimated_ms, numberOfBlocks, currentBlock, handleBlockChange, handleBlockHover, audioProgress, blockStates]);
+    currentBlock
+  );
+
+  // Memoize progressBarValues to prevent SoundControl re-renders when unrelated state changes
+  // When outliner is active, use filtered data so progress bar reflects expanded sections only
+  const progressBarValues = useMemo(() => {
+    if (shouldShowOutliner) {
+      return {
+        estimated_ms: filteredPlayback.filteredDuration,
+        numberOfBlocks: filteredPlayback.filteredBlockCount,
+        currentBlock: filteredPlayback.visualCurrentBlock ?? 0,
+        setCurrentBlock: handleBlockChange, // Receives absolute index after translation
+        onBlockHover: handleBlockHover,
+        audioProgress,
+        blockStates: filteredPlayback.filteredBlockStates,
+        visualToAbsolute: filteredPlayback.visualToAbsolute,
+      };
+    }
+    return {
+      estimated_ms: actualTotalDuration > 0 ? actualTotalDuration : estimated_ms,
+      numberOfBlocks,
+      currentBlock: currentBlock >= 0 ? currentBlock : 0,
+      setCurrentBlock: handleBlockChange,
+      onBlockHover: handleBlockHover,
+      audioProgress,
+      blockStates,
+    };
+  }, [shouldShowOutliner, filteredPlayback, actualTotalDuration, estimated_ms, numberOfBlocks, currentBlock, handleBlockChange, handleBlockHover, audioProgress, blockStates]);
 
   // Find first usage limit error from block states
   const blockError = useMemo(() => {

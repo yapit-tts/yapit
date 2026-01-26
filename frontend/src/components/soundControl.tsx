@@ -92,10 +92,11 @@ interface ProgressBarProps {
   currentBlock: number;
   onBlockClick: (idx: number) => void;
   onBlockHover?: (idx: number | null, isDragging: boolean) => void;
+  visualToAbsolute?: (visualIdx: number) => number; // For filtered playback
 }
 
 // Smooth gradient visualization for large documents
-function SmoothProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHover }: ProgressBarProps) {
+function SmoothProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHover, visualToAbsolute }: ProgressBarProps) {
   const barRef = useRef<HTMLDivElement>(null);
   const numBlocks = blockStates.length;
 
@@ -142,8 +143,9 @@ function SmoothProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
   };
 
   const handleEnd = (clientX: number) => {
-    const blockIdx = getBlockFromX(clientX);
-    onBlockClick(blockIdx);
+    const visualIdx = getBlockFromX(clientX);
+    const absoluteIdx = visualToAbsolute ? visualToAbsolute(visualIdx) : visualIdx;
+    onBlockClick(absoluteIdx);
     setIsDragging(false);
     setSeekPosition(null);
     dragStartXRef.current = null;
@@ -287,7 +289,7 @@ function SmoothProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
 }
 
 // Individual block visualization for smaller documents
-function BlockyProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHover }: ProgressBarProps) {
+function BlockyProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHover, visualToAbsolute }: ProgressBarProps) {
   const barRef = useRef<HTMLDivElement>(null);
   const numBlocks = blockStates.length;
 
@@ -333,8 +335,9 @@ function BlockyProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
   };
 
   const handleEnd = (clientX: number) => {
-    const blockIdx = getBlockFromX(clientX);
-    onBlockClick(blockIdx);
+    const visualIdx = getBlockFromX(clientX);
+    const absoluteIdx = visualToAbsolute ? visualToAbsolute(visualIdx) : visualIdx;
+    onBlockClick(absoluteIdx);
     setIsDragging(false);
     setSeekPosition(null);
     dragStartXRef.current = null;
@@ -435,6 +438,7 @@ interface ProgressBarValues {
   onBlockHover?: (idx: number | null, isDragging: boolean) => void;
   audioProgress: number;
   blockStates: BlockState[];
+  visualToAbsolute?: (visualIdx: number) => number; // For filtered playback
 }
 
 interface Props {
@@ -492,7 +496,7 @@ const SoundControl = memo(function SoundControl({
   voiceSelection,
   onVoiceChange,
 }: Props) {
-  const { estimated_ms, numberOfBlocks, currentBlock, setCurrentBlock, onBlockHover, audioProgress, blockStates } = progressBarValues;
+  const { estimated_ms, numberOfBlocks, currentBlock, setCurrentBlock, onBlockHover, audioProgress, blockStates, visualToAbsolute } = progressBarValues;
   const [progressDisplay, setProgressDisplay] = useState("0:00");
   const [durationDisplay, setDurationDisplay] = useState("0:00");
   const [isHoveringSpinner, setIsHoveringSpinner] = useState(false);
@@ -683,6 +687,7 @@ const SoundControl = memo(function SoundControl({
             currentBlock={currentBlock ?? 0}
             onBlockClick={setCurrentBlock}
             onBlockHover={handleBlockHover}
+            visualToAbsolute={visualToAbsolute}
           />
         ) : (
           <BlockyProgressBar
@@ -690,6 +695,7 @@ const SoundControl = memo(function SoundControl({
             currentBlock={currentBlock ?? 0}
             onBlockClick={setCurrentBlock}
             onBlockHover={handleBlockHover}
+            visualToAbsolute={visualToAbsolute}
           />
         )}
         <span className="text-sm text-muted-foreground w-12 tabular-nums">
