@@ -6,6 +6,38 @@
 | `<yap-speak>content</yap-speak>` | Speak but don't show | ❌ hidden | ✅ content |
 | `<yap-cap>content</yap-cap>` | Image caption | ✅ content | ✅ content |
 
+# Footnotes
+
+**Syntax:** `text[^label]` for refs, `[^label]: content` for definitions
+
+| Element | Display | TTS |
+|---|---|---|
+| `[^1]` (ref) | Superscript link to footnote | ❌ silent |
+| `[^1]: content` (definition) | Footnote section at document end | ✅ content |
+
+**Behavior:**
+- Refs render as `<sup class="footnote-ref"><a href="#fn-{label}">[label]</a></sup>`
+- Definitions collected in `FootnotesBlock` at document end
+- Backlinks (↩) from footnotes to refs
+- Cross-page deduplication: colliding labels renamed to `p{N}-{label}`
+
+**Edge cases:**
+- Ref without content → plain text superscript (no link)
+- Content without ref → displayed but dimmed (orphan footnote)
+
+# Callouts
+
+**Syntax:** `> [!COLOR] Optional Title` followed by blockquote content
+
+**Colors:** BLUE, GREEN, PURPLE, RED, YELLOW, TEAL
+
+| Element | Display | TTS |
+|---|---|---|
+| Title | Colored header | ✅ title text |
+| Content | Colored blockquote | ✅ content |
+
+Colors are purely visual styling — pick based on aesthetics, not semantic meaning. This deliberately avoids the NOTE/WARNING/TIP pattern from dev docs.
+
 # Core Rules
 
 1. Math is always silent  
@@ -63,6 +95,7 @@ Image + caption:
 
 # What Parser Cannot Handle
 
-- Tags split across lines → becomes `html_block`, inner content not parsed  
+- Tags split across lines → becomes `html_block`, inner content not parsed
 - Deeply nested same tags → undefined behavior (treat as text)
+- **yap-tags inside container elements** (links, strong, em) → semantics ignored, content appears in both display AND TTS. The recursive HTML/TTS extractors don't track yap-tag state. See `TestKnownLimitations` in test_parser_v2.py.
 
