@@ -34,6 +34,7 @@ from yapit.gateway.markdown.models import (
     MathBlock,
     MathInlineContent,
     ParagraphBlock,
+    SpeakContent,
     StrongContent,
     StructuredDocument,
     TableBlock,
@@ -255,7 +256,9 @@ def extract_caption_nodes(children: list[SyntaxTreeNode], start_idx: int) -> tup
 def transform_inline_to_ast(nodes: list[SyntaxTreeNode]) -> list[InlineContent]:
     """Transform inline nodes to our AST representation.
 
-    Skips yap tags (they're handled separately for display/TTS routing).
+    - yap-show content is skipped (display-only, no TTS length)
+    - yap-speak content becomes SpeakContent (TTS-only, has TTS length)
+    - yap-cap is skipped (handled separately for images)
     """
     result: list[InlineContent] = []
     i = 0
@@ -263,7 +266,7 @@ def transform_inline_to_ast(nodes: list[SyntaxTreeNode]) -> list[InlineContent]:
     while i < len(nodes):
         node = nodes[i]
 
-        # Skip all yap tags and their content
+        # Skip yap-show content entirely (display-only, no TTS contribution)
         if _is_tag(node, YAP_SHOW_OPEN):
             depth = 1
             i += 1
@@ -275,17 +278,27 @@ def transform_inline_to_ast(nodes: list[SyntaxTreeNode]) -> list[InlineContent]:
                 i += 1
             continue
 
+        # yap-speak: extract text content and add as SpeakContent
+        # This has TTS length but renders as empty HTML
         if _is_tag(node, YAP_SPEAK_OPEN):
             depth = 1
             i += 1
+            speak_text_parts: list[str] = []
             while i < len(nodes) and depth > 0:
-                if _is_tag(nodes[i], YAP_SPEAK_OPEN):
+                inner_node = nodes[i]
+                if _is_tag(inner_node, YAP_SPEAK_OPEN):
                     depth += 1
-                elif _is_tag(nodes[i], YAP_SPEAK_CLOSE):
+                elif _is_tag(inner_node, YAP_SPEAK_CLOSE):
                     depth -= 1
+                elif depth == 1 and inner_node.type == "text":
+                    speak_text_parts.append(inner_node.content or "")
                 i += 1
+            speak_text = "".join(speak_text_parts)
+            if speak_text:
+                result.append(SpeakContent(content=speak_text))
             continue
 
+        # Skip yap-cap content (handled separately for images)
         if _is_tag(node, YAP_CAP_OPEN):
             depth = 1
             i += 1
@@ -615,11 +628,15 @@ def slice_inline_node(node: InlineContent, start: int, end: int) -> list[InlineC
             # Include it if the slice starts at position 0 (i.e., we're at
             # the position where this math appears in the TTS stream)
             return [node] if start == 0 else []
+        case SpeakContent():
+            # Speak content is sliced like text (contributes to TTS length)
+            content = node.content[start:end]
+            return [SpeakContent(content=content)] if content else []
     return []
 
 
 def get_inline_length(node: InlineContent) -> int:
-    """Get the plain text length of an inline node."""
+    """Get the TTS text length of an inline node."""
     match node:
         case TextContent() | CodeSpanContent():
             return len(node.content)
@@ -630,6 +647,9 @@ def get_inline_length(node: InlineContent) -> int:
         case MathInlineContent():
             # Math is silent in TTS, so it contributes 0 to TTS length
             return 0
+        case SpeakContent():
+            # Speak content contributes its full length to TTS
+            return len(node.content)
     return 0
 
 
@@ -657,6 +677,9 @@ def render_inline_content_html(node: InlineContent) -> str:
             return f'<img src="{node.src}" alt="{node.alt}" />'
         case MathInlineContent():
             return f'<span class="math-inline">{node.content}</span>'
+        case SpeakContent():
+            # Speak content is TTS-only, doesn't render to display HTML
+            return ""
     return ""
 
 

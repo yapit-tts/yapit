@@ -76,7 +76,8 @@ type InlineContent =
   | { type: "emphasis"; content: InlineContent[] }
   | { type: "link"; href: string; title?: string; content: InlineContent[] }
   | { type: "inline_image"; src: string; alt: string }
-  | { type: "math_inline"; content: string };
+  | { type: "math_inline"; content: string }
+  | { type: "speak"; content: string };  // TTS-only, doesn't render
 
 interface ListItem {
   html: string;
@@ -245,17 +246,16 @@ function ListBlockView({
     >
       {block.items.map((item, idx) => {
         const hasAudio = item.audio_chunks.length > 0;
+        const hasSingleChunk = item.audio_chunks.length === 1;
         const firstAudioIdx = hasAudio ? item.audio_chunks[0].audio_block_idx : undefined;
+        // Only make list item clickable/hoverable if single chunk (not split)
+        const isClickable = hasSingleChunk && onBlockClick;
         return (
           <li
             key={idx}
-            className={cn("my-1", hasAudio && "cursor-pointer hover:bg-accent/50 rounded px-1 -mx-1")}
-            data-audio-block-idx={firstAudioIdx}
-            onClick={
-              hasAudio
-                ? () => onBlockClick?.(firstAudioIdx!)
-                : undefined
-            }
+            className={cn("my-1", isClickable && "cursor-pointer hover:bg-accent/50 rounded px-1 -mx-1")}
+            data-audio-block-idx={hasSingleChunk ? firstAudioIdx : undefined}
+            onClick={isClickable ? () => onBlockClick?.(firstAudioIdx!) : undefined}
             dangerouslySetInnerHTML={{ __html: sanitize(item.html) }}
           />
         );
@@ -286,13 +286,16 @@ function BlockquoteBlockView({ block, onBlockClick }: {
         } else {
           const b = grouped.block;
           const hasAudio = b.audio_chunks.length > 0;
+          const hasSingleChunk = b.audio_chunks.length === 1;
           const firstAudioIdx = hasAudio ? b.audio_chunks[0].audio_block_idx : undefined;
+          // Only make wrapper clickable/hoverable if single chunk (not split)
+          const handleClick = hasSingleChunk && onBlockClick ? () => onBlockClick(firstAudioIdx!) : undefined;
           return (
             <div
               key={b.id}
-              data-audio-block-idx={firstAudioIdx}
-              className={cn(blockBaseClass, hasAudio && onBlockClick && clickableClass)}
-              onClick={hasAudio && onBlockClick ? () => onBlockClick(firstAudioIdx!) : undefined}
+              data-audio-block-idx={hasSingleChunk ? firstAudioIdx : undefined}
+              className={cn(blockBaseClass, handleClick && clickableClass)}
+              onClick={handleClick}
             >
               <BlockView
                 block={b}
@@ -471,14 +474,16 @@ function ImageRowView({ blocks, onBlockClick }: { blocks: ImageBlock[]; onBlockC
       {blocks.map((block) => {
         const scaledWidth = Math.min((block.width_pct || 50) * scaleFactor, 100);
         const hasAudio = block.audio_chunks.length > 0;
+        const hasSingleChunk = block.audio_chunks.length === 1;
         const firstAudioIdx = hasAudio ? block.audio_chunks[0].audio_block_idx : undefined;
-        const handleClick = hasAudio && onBlockClick
+        // Only make wrapper clickable/hoverable if single chunk (not split caption)
+        const handleClick = hasSingleChunk && onBlockClick
           ? () => onBlockClick(firstAudioIdx!)
           : undefined;
         return (
           <div
             key={block.id}
-            data-audio-block-idx={firstAudioIdx}
+            data-audio-block-idx={hasSingleChunk ? firstAudioIdx : undefined}
             className={cn(blockBaseClass, handleClick && clickableClass)}
             style={{ width: `${scaledWidth}%` }}
             onClick={handleClick}
@@ -701,9 +706,24 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
     return () => clearTimeout(timeoutId);
   }, [structuredContent]);
 
-  // Handle clicks on links within document content
+  // Handle clicks on links and audio spans within document content
   const handleContentClick = useCallback((e: React.MouseEvent) => {
     const target = e.target as HTMLElement;
+
+    // Check for clicks on inner audio spans (data-audio-idx)
+    // These are spans inside split paragraphs/captions that have their own audio index
+    const audioSpan = target.closest("[data-audio-idx]") as HTMLElement | null;
+    if (audioSpan && onBlockClick) {
+      const audioIdx = audioSpan.getAttribute("data-audio-idx");
+      if (audioIdx !== null) {
+        e.preventDefault();
+        e.stopPropagation();
+        onBlockClick(parseInt(audioIdx, 10));
+        return;
+      }
+    }
+
+    // Handle link clicks
     const anchor = target.closest("a") as HTMLAnchorElement | null;
     if (!anchor) return;
 
@@ -732,7 +752,7 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
       e.preventDefault();
       window.open(href, "_blank", "noopener,noreferrer");
     }
-  }, []);
+  }, [onBlockClick]);
 
   // Action buttons toolbar - always rendered
   const ActionButtons = () => (
@@ -895,14 +915,17 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
           } else {
             const block = grouped.block;
             const hasAudio = block.audio_chunks.length > 0;
+            const hasSingleChunk = block.audio_chunks.length === 1;
             const firstAudioIdx = hasAudio ? block.audio_chunks[0].audio_block_idx : undefined;
-            const handleWrapperClick = hasAudio && onBlockClick
+            // Only make wrapper clickable/hoverable if single chunk (not split)
+            // Split blocks have inner spans that handle click/hover
+            const handleWrapperClick = hasSingleChunk && onBlockClick
               ? () => onBlockClick(firstAudioIdx!)
               : undefined;
             return (
               <div
                 key={block.id}
-                data-audio-block-idx={firstAudioIdx}
+                data-audio-block-idx={hasSingleChunk ? firstAudioIdx : undefined}
                 className={cn(blockBaseClass, handleWrapperClick && clickableClass)}
                 onClick={handleWrapperClick}
               >
@@ -1020,13 +1043,15 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
           margin-right: -0.625rem;
           border-radius: 0.5rem;
         }
-        /* Inline spans - minimal padding for subtle highlight extension */
-        .structured-content span[data-audio-block-idx] {
-          padding-left: 0.0625rem;
-          padding-right: 0.0625rem;
-          margin-left: -0.0625rem;
-          margin-right: -0.0625rem;
+        /* Inner audio spans (within split paragraphs/captions) - clickable and highlightable */
+        .structured-content [data-audio-idx] {
+          cursor: pointer;
+          padding-left: 0.125rem;
+          padding-right: 0.125rem;
+          margin-left: -0.125rem;
+          margin-right: -0.125rem;
           border-radius: 0.25rem;
+          transition: background-color 0.15s;
         }
 
         /* Active audio block highlighting - just toggle background */
@@ -1046,6 +1071,10 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
           background: oklch(0.55 0.1 133.7 / 0.1);
         }
         .structured-content .clickable-span:hover:not(.audio-block-active) {
+          background: oklch(0.55 0.1 133.7 / 0.1);
+        }
+        /* Native hover on inner audio spans */
+        .structured-content [data-audio-idx]:hover:not(.audio-block-active) {
           background: oklch(0.55 0.1 133.7 / 0.1);
         }
       `}</style>

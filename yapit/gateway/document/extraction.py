@@ -60,7 +60,7 @@ def store_figure(
 def build_figure_prompt(base_prompt: str, figures: list[DetectedFigure]) -> str:
     """Build prompt with figure placement hints for Gemini."""
     if not figures:
-        return base_prompt
+        return f"{base_prompt}\n\nNo figures detected on this page — do not output any image placeholders."
 
     # Build position hints for each figure
     hints = []

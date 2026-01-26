@@ -60,6 +60,17 @@ class MathInlineContent(BaseModel):
     content: str  # LaTeX
 
 
+class SpeakContent(BaseModel):
+    """TTS-only content from yap-speak tags.
+
+    Renders as empty HTML but has TTS length equal to content.
+    This enables correct AST slicing when splitting paragraphs.
+    """
+
+    type: Literal["speak"] = "speak"
+    content: str  # TTS text
+
+
 InlineContent = (
     TextContent
     | CodeSpanContent
@@ -68,6 +79,7 @@ InlineContent = (
     | LinkContent
     | InlineImageContent
     | MathInlineContent
+    | SpeakContent
 )
 
 
