@@ -17,6 +17,7 @@ from redis.asyncio import Redis
 from yapit.contracts import DetectedFigure
 from yapit.gateway.config import Settings
 from yapit.gateway.document.extraction import (
+    IMAGE_PLACEHOLDER_PATTERN,
     build_figure_prompt,
     extract_single_page_pdf,
     load_prompt,
@@ -290,6 +291,28 @@ class GeminiExtractor:
 
         duration_ms = int((time.monotonic() - start_time) * 1000)
         text = (response.text or "").strip()
+
+        # Check for figure count mismatch before substitution
+        placeholder_count = len(IMAGE_PLACEHOLDER_PATTERN.findall(text))
+        yolo_count = len(figure_urls)
+        if placeholder_count != yolo_count:
+            logger.warning(
+                f"Figure count mismatch on page {page_idx + 1}: "
+                f"YOLO detected {yolo_count}, Gemini output {placeholder_count} placeholders "
+                f"(content_hash={content_hash}, user_id={user_id})"
+            )
+            await log_event(
+                "figure_count_mismatch",
+                page_idx=page_idx,
+                user_id=user_id,
+                data={
+                    "content_hash": content_hash,
+                    "yolo_count": yolo_count,
+                    "gemini_count": placeholder_count,
+                    "delta": placeholder_count - yolo_count,
+                },
+            )
+
         if figure_urls:
             text = substitute_image_placeholders(text, figure_urls)
 

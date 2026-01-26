@@ -32,6 +32,7 @@ Separate TimescaleDB instance for metrics (isolated from main Postgres).
 - `extraction_estimate` — Pre-check token estimate before processing (estimated_tokens, num_pages, tolerance)
 - `page_extraction_complete` — Gemini page extraction (all token counts)
 - `page_extraction_error` — Extraction failed (status codes)
+- `figure_count_mismatch` — YOLO detected N figures but Gemini output M placeholders (page_idx, yolo_count, gemini_count, delta, content_hash)
 
 ### Cache
 - `document_cache_hit` — URL/upload cache hit
