@@ -87,11 +87,161 @@ function useRepeatOnHold(callback: () => void, disabled?: boolean) {
 // Switch to smooth gradient visualization for documents with many blocks
 const SMOOTH_THRESHOLD = 200;
 
+// Minimum width for collapsed sections (in pixels)
+const COLLAPSED_SECTION_WIDTH = 4;
+
 interface ProgressBarProps {
   blockStates: BlockState[];
   currentBlock: number;
   onBlockClick: (idx: number) => void;
   onBlockHover?: (idx: number | null, isDragging: boolean) => void;
+}
+
+interface SectionedProgressBarProps extends ProgressBarProps {
+  sections: Section[];
+  expandedSections: Set<string>;
+  onSectionExpand: (sectionId: string) => void;
+}
+
+// Progress bar with section gaps for collapsed sections
+function SectionedProgressBar({
+  blockStates,
+  currentBlock,
+  onBlockClick,
+  // onBlockHover, // TODO: implement hover handling for sectioned bar
+  sections,
+  expandedSections,
+  onSectionExpand,
+}: SectionedProgressBarProps) {
+  const barRef = useRef<HTMLDivElement>(null);
+
+  // Calculate total expanded blocks for width calculation
+  const expandedBlockCount = useMemo(() => {
+    return sections.reduce((sum, section) => {
+      if (expandedSections.has(section.id)) {
+        return sum + (section.endBlockIdx - section.startBlockIdx + 1);
+      }
+      return sum;
+    }, 0);
+  }, [sections, expandedSections]);
+
+  // const collapsedCount = sections.length - expandedSections.size; // TODO: use for visual indicators
+
+  // Build gradient for a single section
+  const buildSectionGradient = useCallback((section: Section) => {
+    const stateToColor = (state: BlockState, isCurrent: boolean) => {
+      if (isCurrent) return 'var(--primary)';
+      if (state === 'cached') return 'var(--muted)';
+      if (state === 'synthesizing') return 'oklch(0.85 0.12 90 / 0.5)';
+      return 'color-mix(in oklch, var(--muted-warm) 50%, transparent)';
+    };
+
+    const sectionBlocks = section.endBlockIdx - section.startBlockIdx + 1;
+    if (sectionBlocks === 0) return 'transparent';
+
+    const stops: string[] = [];
+    let currentState = blockStates[section.startBlockIdx] ?? 'pending';
+    let currentIsCurrent = currentBlock === section.startBlockIdx;
+    let startPct = 0;
+
+    for (let i = section.startBlockIdx + 1; i <= section.endBlockIdx + 1; i++) {
+      const isCurrent = i === currentBlock;
+      const state = i <= section.endBlockIdx ? (blockStates[i] ?? 'pending') : currentState;
+      const nextIsCurrent = i <= section.endBlockIdx ? i === currentBlock : false;
+
+      if (i > section.endBlockIdx || state !== currentState || isCurrent !== currentIsCurrent) {
+        const relativeIdx = i - section.startBlockIdx;
+        const endPct = (relativeIdx / sectionBlocks) * 100;
+        const color = stateToColor(currentState, currentIsCurrent);
+        stops.push(`${color} ${startPct}%`);
+        stops.push(`${color} ${endPct}%`);
+        startPct = endPct;
+        currentState = state;
+        currentIsCurrent = nextIsCurrent;
+      }
+    }
+
+    return `linear-gradient(to right, ${stops.join(', ')})`;
+  }, [blockStates, currentBlock]);
+
+  // Handle click on expanded section
+  const handleSectionClick = useCallback((section: Section, e: React.MouseEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const pct = Math.max(0, Math.min(1, x / rect.width));
+    const sectionBlocks = section.endBlockIdx - section.startBlockIdx + 1;
+    const relativeIdx = Math.min(sectionBlocks - 1, Math.floor(pct * sectionBlocks));
+    const absoluteIdx = section.startBlockIdx + relativeIdx;
+    onBlockClick(absoluteIdx);
+  }, [onBlockClick]);
+
+  // Current position indicator
+  const currentSectionIdx = useMemo(() => {
+    return sections.findIndex(s => currentBlock >= s.startBlockIdx && currentBlock <= s.endBlockIdx);
+  }, [sections, currentBlock]);
+
+  return (
+    <div
+      ref={barRef}
+      className="w-full h-2 rounded-full flex overflow-hidden bg-muted/30"
+    >
+      {sections.map((section, idx) => {
+        const isExpanded = expandedSections.has(section.id);
+        const sectionBlocks = section.endBlockIdx - section.startBlockIdx + 1;
+        const isCurrent = idx === currentSectionIdx;
+
+        if (isExpanded) {
+          // Expanded section: show full gradient
+          const gradient = buildSectionGradient(section);
+          const widthPct = expandedBlockCount > 0
+            ? (sectionBlocks / expandedBlockCount) * 100
+            : 0;
+
+          // Calculate current position within section
+          const currentPct = isCurrent && currentBlock >= section.startBlockIdx
+            ? ((currentBlock - section.startBlockIdx) / sectionBlocks) * 100
+            : null;
+
+          return (
+            <div
+              key={section.id}
+              className="relative h-full cursor-pointer transition-all duration-200"
+              style={{
+                flex: `${widthPct} 0 0%`,
+                background: gradient,
+                minWidth: '8px',
+              }}
+              onClick={(e) => handleSectionClick(section, e)}
+            >
+              {/* Current position indicator */}
+              {currentPct !== null && (
+                <div
+                  className="absolute top-0 bottom-0 w-0.5 bg-primary z-10"
+                  style={{ left: `${currentPct}%` }}
+                />
+              )}
+            </div>
+          );
+        } else {
+          // Collapsed section: thin gap
+          return (
+            <div
+              key={section.id}
+              className="h-full cursor-pointer transition-all duration-200 hover:bg-muted-foreground/30"
+              style={{
+                width: `${COLLAPSED_SECTION_WIDTH}px`,
+                flexShrink: 0,
+                background: isCurrent ? 'var(--primary)' : 'var(--muted-foreground)',
+                opacity: isCurrent ? 0.8 : 0.3,
+              }}
+              onClick={() => onSectionExpand(section.id)}
+              title="Click to expand section"
+            />
+          );
+        }
+      })}
+    </div>
+  );
 }
 
 // Smooth gradient visualization for large documents
@@ -427,6 +577,13 @@ function BlockyProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
   );
 }
 
+// Section type for outliner integration
+interface Section {
+  id: string;
+  startBlockIdx: number;
+  endBlockIdx: number;
+}
+
 interface ProgressBarValues {
   estimated_ms: number | undefined;
   numberOfBlocks: number | undefined;
@@ -435,6 +592,10 @@ interface ProgressBarValues {
   onBlockHover?: (idx: number | null, isDragging: boolean) => void;
   audioProgress: number;
   blockStates: BlockState[];
+  // Section support for outliner gaps
+  sections?: Section[];
+  expandedSections?: Set<string>;
+  onSectionExpand?: (sectionId: string) => void;
 }
 
 interface Props {
@@ -492,7 +653,7 @@ const SoundControl = memo(function SoundControl({
   voiceSelection,
   onVoiceChange,
 }: Props) {
-  const { estimated_ms, numberOfBlocks, currentBlock, setCurrentBlock, onBlockHover, audioProgress, blockStates } = progressBarValues;
+  const { estimated_ms, numberOfBlocks, currentBlock, setCurrentBlock, onBlockHover, audioProgress, blockStates, sections, expandedSections, onSectionExpand } = progressBarValues;
   const [progressDisplay, setProgressDisplay] = useState("0:00");
   const [durationDisplay, setDurationDisplay] = useState("0:00");
   const [isHoveringSpinner, setIsHoveringSpinner] = useState(false);
@@ -677,7 +838,17 @@ const SoundControl = memo(function SoundControl({
             ? (isDraggingProgressBar && hoveredBlock !== null ? hoveredBlock + 1 : blockNum)
             : progressDisplay}
         </span>
-        {blockStates.length > SMOOTH_THRESHOLD ? (
+        {sections && expandedSections && onSectionExpand ? (
+          <SectionedProgressBar
+            blockStates={blockStates}
+            currentBlock={currentBlock ?? 0}
+            onBlockClick={setCurrentBlock}
+            onBlockHover={handleBlockHover}
+            sections={sections}
+            expandedSections={expandedSections}
+            onSectionExpand={onSectionExpand}
+          />
+        ) : blockStates.length > SMOOTH_THRESHOLD ? (
           <SmoothProgressBar
             blockStates={blockStates}
             currentBlock={currentBlock ?? 0}

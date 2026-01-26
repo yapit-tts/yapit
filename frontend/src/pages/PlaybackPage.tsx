@@ -1,6 +1,9 @@
 import { SoundControl } from '@/components/soundControl';
 import { StructuredDocumentView } from '@/components/structuredDocument';
 import { WebGPUWarningBanner } from '@/components/webGPUWarningBanner';
+import { DocumentOutliner } from '@/components/documentOutliner';
+import { OutlinerSidebar } from '@/components/outlinerSidebar';
+import { useOutliner } from '@/hooks/useOutliner';
 import { useParams, useLocation, Link, useNavigate } from "react-router";
 import { useRef, useState, useEffect, useLayoutEffect, useCallback, useMemo } from "react";
 import { useApi } from '@/api';
@@ -8,6 +11,7 @@ import { Loader2, FileQuestion, Download, X } from "lucide-react";
 import { AxiosError } from "axios";
 import { AudioPlayer } from '@/lib/audio';
 import { useBrowserTTS } from '@/lib/browserTTS';
+import { buildSectionIndex, findSectionForBlock, type Section } from '@/lib/sectionIndex';
 import { type VoiceSelection, getVoiceSelection, getBackendModelSlug, isServerSideModel } from '@/lib/voiceSelection';
 import { useSettings } from '@/hooks/useSettings';
 import { useUserPreferences } from '@/hooks/useUserPreferences';
@@ -92,6 +96,7 @@ const PlaybackPage = () => {
   const { settings } = useSettings();
   const { autoImportSharedDocuments } = useUserPreferences();
   const ttsWS = useTTSWebSocket();
+  const outliner = useOutliner();
 
   // Document data fetched from API
   const [document, setDocument] = useState<DocumentResponse | null>(null);
@@ -104,6 +109,10 @@ const PlaybackPage = () => {
   const [showImportBanner, setShowImportBanner] = useState(true);
   const [showFailedPagesBanner, setShowFailedPagesBanner] = useState(true);
   const [isImporting, setIsImporting] = useState(false);
+
+  // Outliner state - sections derived from H1/H2 headings
+  const [sections, setSections] = useState<Section[]>([]);
+  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
 
   // Derived state
   const documentTitle = document?.title ?? initialTitle;
@@ -498,6 +507,41 @@ const PlaybackPage = () => {
     });
     setBlockStates(states);
   }, [documentBlocks, blockStateVersion, isServerMode, ttsWS.blockStates]);
+
+  // Build section index when document loads
+  useEffect(() => {
+    if (!structuredContent || documentBlocks.length === 0) {
+      setSections([]);
+      return;
+    }
+    try {
+      const parsed = JSON.parse(structuredContent);
+      const sectionIndex = buildSectionIndex(parsed, documentBlocks);
+      setSections(sectionIndex);
+
+      // Initially expand section containing current block (or first section)
+      if (sectionIndex.length > 0) {
+        const initialSection = currentBlock >= 0
+          ? findSectionForBlock(sectionIndex, currentBlock)
+          : sectionIndex[0];
+        if (initialSection) {
+          setExpandedSections(new Set([initialSection.id]));
+        }
+      }
+    } catch {
+      setSections([]);
+    }
+  }, [structuredContent, documentBlocks]); // Note: currentBlock intentionally excluded to avoid re-running on playback
+
+  // Auto-expand section when currentBlock changes (playback progression)
+  useEffect(() => {
+    if (sections.length === 0 || currentBlock < 0) return;
+
+    const currentSection = findSectionForBlock(sections, currentBlock);
+    if (currentSection && !expandedSections.has(currentSection.id)) {
+      setExpandedSections(prev => new Set([...prev, currentSection.id]));
+    }
+  }, [currentBlock, sections, expandedSections]);
 
   // Refs for keyboard handler to avoid stale closures
   const handlePlayRef = useRef<() => void>(() => {});
@@ -1364,6 +1408,44 @@ const PlaybackPage = () => {
     }
   }, [isPublicView, autoImportSharedDocuments, isImporting, handleImportDocument]);
 
+  // Outliner callbacks
+  const handleSectionToggle = useCallback((sectionId: string) => {
+    setExpandedSections(prev => {
+      const next = new Set(prev);
+      if (next.has(sectionId)) {
+        next.delete(sectionId);
+      } else {
+        next.add(sectionId);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleExpandAllSections = useCallback(() => {
+    setExpandedSections(new Set(sections.map(s => s.id)));
+  }, [sections]);
+
+  const handleCollapseAllSections = useCallback(() => {
+    // Keep current section expanded
+    const currentSection = currentBlock >= 0 ? findSectionForBlock(sections, currentBlock) : null;
+    setExpandedSections(currentSection ? new Set([currentSection.id]) : new Set());
+  }, [sections, currentBlock]);
+
+  const handleOutlinerNavigate = useCallback((blockIdx: number) => {
+    handleBlockChange(blockIdx);
+    scrollToBlock(blockIdx);
+  }, [handleBlockChange, scrollToBlock]);
+
+  // Should show outliner: document has sections and enough content
+  const shouldShowOutliner = sections.length > 0 && documentBlocks.length >= 30;
+
+  // Sync outliner enabled state with shouldShowOutliner
+  useEffect(() => {
+    outliner.setEnabled(shouldShowOutliner);
+    // Cleanup: disable outliner when leaving page
+    return () => outliner.setEnabled(false);
+  }, [shouldShowOutliner, outliner]);
+
   // Memoize progressBarValues to prevent SoundControl re-renders when unrelated state changes
   const progressBarValues = useMemo(() => ({
     estimated_ms: actualTotalDuration > 0 ? actualTotalDuration : estimated_ms,
@@ -1373,7 +1455,11 @@ const PlaybackPage = () => {
     onBlockHover: handleBlockHover,
     audioProgress,
     blockStates,
-  }), [actualTotalDuration, estimated_ms, numberOfBlocks, currentBlock, handleBlockChange, handleBlockHover, audioProgress, blockStates]);
+    // Pass section info for playbar gaps (Phase 6)
+    sections: shouldShowOutliner ? sections : undefined,
+    expandedSections: shouldShowOutliner ? expandedSections : undefined,
+    onSectionExpand: shouldShowOutliner ? handleSectionToggle : undefined,
+  }), [actualTotalDuration, estimated_ms, numberOfBlocks, currentBlock, handleBlockChange, handleBlockHover, audioProgress, blockStates, shouldShowOutliner, sections, expandedSections, handleSectionToggle]);
 
   // Find first usage limit error from block states
   const blockError = useMemo(() => {
@@ -1500,6 +1586,19 @@ const PlaybackPage = () => {
           voiceSelection={voiceSelection}
           onVoiceChange={setVoiceSelection}
         />
+        {shouldShowOutliner && (
+          <OutlinerSidebar>
+            <DocumentOutliner
+              sections={sections}
+              expandedSections={expandedSections}
+              currentBlockIdx={currentBlock}
+              onSectionToggle={handleSectionToggle}
+              onExpandAll={handleExpandAllSections}
+              onCollapseAll={handleCollapseAllSections}
+              onNavigate={handleOutlinerNavigate}
+            />
+          </OutlinerSidebar>
+        )}
       </div>
     </div>
   );
