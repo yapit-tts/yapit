@@ -65,6 +65,7 @@ Other:
   - Use \begin{align} not \begin{aligned} when equations have \tag{}
   - A blank line is required BEFORE each $$block$$.
   - $$block$$ must be standalone, i.e. no other content (be it text, yap tags) on the same line
+  - Prefer to group equations that appear together in the source into a single $$...$$ block with \begin{align} ... \end{align} rather than multiple separate $$...$$ blocks.
 
 - <yap-show> 
   - Wraps inline content
@@ -124,11 +125,13 @@ As math is never read aloud, speech tags are sometimes needed to avoid awkward g
 - How to write speech:
   - Write as a human would read
   - Ignore visual formatting: $\mathbf{z}$ → "z", NOT "bold z", $\mathcal{L}$ → "L" not "script L"
-  - Literal for simple math: $W_i^Q$ → "W sub i Q", $\mathcal{O}(n^2)$ → "order n squared"
+  - Literal for simple math: $Q$ → "Q", $\alpha$ → "alpha", $n=5$ → "n equals 5"
   - Naturalize / reword to improve flow IFF contextually appropriate
     - $$h = \frac{v}{n} \times 360 \quad \text{(Hue calculation)}$$ → "<yap-speak>The hue h is calculated as v over n times 360</yap-speak>"
     - "The state of the system can be represented as the set $S = \{s_1, s_2, \ldots, s_n\}$" → "The state of the system can be represented as the set<yap-speak>S, defined as s one, s two, up to s n</yap-speak>"
     - "Given $z$, the decoder then generates an output sequence $(y_1, \ldots, y_m)$" → "Given $z$<yap-speak>z</yap-speak>, the decoder then generates an output sequence<yap-speak>y one, up to y m</yap-speak>"
+    - $\mathcal{O}(n^2)$ → "order n squared"
+    - $W_i^Q \in \mathbb{R}^{d_{\text{model}} \times d_k}$<yap-speak>W Q of dimensions d model by d k</yap-speak>
 
 <example>
 Contrast the following examples:
@@ -138,13 +141,39 @@ Contrast the following examples:
 - Embedded in text:
   - "We calculate the value function $V^\pi(s)$ as $V^\pi(s) = \mathbb{E}_{a \sim \pi}\left\{\sum_{t=0}^\infty \gamma^t r_t\right\}$" → "We calculate the value function $V^\pi(s)$<yap-speak>V pi of s</yap-speak> as $V^\pi(s) = \mathbb{E}_{a \sim \pi}\left\{\sum_{t=0}^\infty \gamma^t r_t\right\}$<yap-speak>the expected discounted return when starting in s and taking actions according to pi</yap-speak>"
 
-Both examples verbalize the same formula with surrounding context (omitted for brevity), but the embedded version breaks it up to fit naturally into the sentence structure.
+NOTE how
+- Both examples verbalize the same formula with surrounding context (omitted for brevity), but the embedded version breaks it up to fit naturally into the sentence structure.
 </example>
 
 <example>
-"Assume that the components of $q$ and $k$ are independent random variables with mean $0$ and variance $1$. Then their dot product, $q \cdot k = \sum_{i=1}^{d_k} q_i k_i$, has mean $0$ and variance $d_k$."
-→
 "Assume that the components of $q$<yap-speak>q</yap-speak> and $k$<yap-speak>k</yap-speak> are independent random variables with mean $0$<yap-speak>zero</yap-speak> and variance $1$<yap-speak>one</yap-speak>. Then their dot product, $q \cdot k = \sum_{i=1}^{d_k} q_i k_i$, has mean $0$<yap-speak>zero</yap-speak> and variance $d_k$<yap-speak>d sub k</yap-speak>."
+
+NOTE how
+- The dot product formula COULD have been verbalized as <yap-speak>the sum of q i times k i, from i equals one to d k</yap-speak>
+- BUT was skipped, since the context already explains what the formula represents, and verbalizing it would be redundant and disrupt the flow
+</example>
+
+<example>
+Good example:
+"Where the projections are parameter matrices $W_i^Q \in \mathbb{R}^{d_{\text{model}} \times d_k}, W_i^K \in \mathbb{R}^{d_{\text{model}} \times d_k}, W_i^V \in \mathbb{R}^{d_{\text{model}} \times d_v}$<yap-speak>W Q and W K of dimensions d model by d k, and W V of dimensions d model by d v</yap-speak>, and $W^O \in \mathbb{R}^{h d_v \times d_{\text{model}}}$<yap-speak>W O of dimensions h times d v by d model</yap-speak>."
+
+NOTE how
+- Math and yap tags are not unnecessarily interleaved.
+- The speech is not a literal reading, but naturalizes - in this example - by grouping parts that share context ("of dimensions ...").
+</example>
+
+<example>
+"""
+We compute the matrix of outputs as:
+
+$$\text{Attention}(Q, K, V) = \text{softmax}\left(\frac{QK^T}{\sqrt{d_k}}\right)V \tag{1}$$
+<yap-speak>the softmax of Q K transpose over the square root of d k, all times V</yap-speak>
+"""
+
+NOTE how:
+- Since the formula is introduced in the sentence before AND it is simple enough, it is spoken.
+- The formula is slightly reworded to follow the preceding text naturally (omitted "Attention equals"; dropped equation number).
+- Were the formula any more complex (in terms of natural verbalization) it would be better to skip the speech entirely, even though it is introduced in text.
 </example>
 </speech_for_math>
 
