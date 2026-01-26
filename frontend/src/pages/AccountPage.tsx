@@ -50,6 +50,7 @@ const AccountPage = () => {
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
   const [bulkDeleteDays, setBulkDeleteDays] = useState<number | null>(null);
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
+  const [bulkDeleteDropdownOpen, setBulkDeleteDropdownOpen] = useState(false);
 
   useEffect(() => {
     if (!isAuthReady) return;
@@ -101,6 +102,7 @@ const AccountPage = () => {
   };
 
   const openBulkDeleteDialog = (days: number | null) => {
+    setBulkDeleteDropdownOpen(false); // Close dropdown first to avoid Radix portal conflict
     setBulkDeleteDays(days);
     setBulkDeleteDialogOpen(true);
   };
@@ -354,7 +356,7 @@ const AccountPage = () => {
                 Delete all or old documents from your library
               </p>
             </div>
-            <DropdownMenu>
+            <DropdownMenu open={bulkDeleteDropdownOpen} onOpenChange={setBulkDeleteDropdownOpen}>
               <DropdownMenuTrigger asChild>
                 <Button variant="outline">
                   <Trash2 className="h-4 w-4 mr-2" />
