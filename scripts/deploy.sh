@@ -124,3 +124,7 @@ if [ -n "$RUNNING_COMMIT" ] && [ "$RUNNING_COMMIT" != "$GIT_COMMIT" ] && [ "$RUN
 fi
 
 log "Deploy complete"
+
+# Clean up old containers and images (keep last 24h for rollback)
+log "Cleaning up old images..."
+ssh "$VPS_HOST" "docker container prune -f >/dev/null && docker image prune -af --filter 'until=24h'" | tail -1
