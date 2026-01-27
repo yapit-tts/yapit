@@ -23,6 +23,13 @@ _REFERENCE_ATTR_PATTERN = re.compile(r'\{reference-type="[^"]*"\s+reference="[^"
 _ORPHAN_LABEL_REF_PATTERN = re.compile(
     r"\s*\[(?:fig|tab|sec|eq|alg|lst|thm|lem|def|prop|cor|rem|ex|app):[^\]]+\]", re.IGNORECASE
 )
+# Raw URLs not already in markdown link syntax - negative lookbehind avoids [text](url) and <url>
+_RAW_URL_PATTERN = re.compile(r"(?<![(<])https?://[^\s)>\]]+")
+
+
+def _wrap_raw_url(match: re.Match[str]) -> str:
+    url = match.group(0)
+    return f"<yap-show>[{url}]({url})</yap-show>"
 
 
 def detect_arxiv_url(url: str) -> tuple[str, str] | None:
@@ -84,4 +91,5 @@ def cleanup_markxiv_markdown(md: str) -> str:
     md = _CITATION_PATTERN.sub("", md)
     md = _REFERENCE_ATTR_PATTERN.sub("", md)
     md = _ORPHAN_LABEL_REF_PATTERN.sub("", md)
+    md = _RAW_URL_PATTERN.sub(_wrap_raw_url, md)
     return md
