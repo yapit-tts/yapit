@@ -25,18 +25,21 @@ export interface FilteredPlayback {
 }
 
 /**
- * Derives filtered playback data based on expanded sections.
+ * Derives filtered playback data based on expanded and skipped sections.
  *
- * When sections are collapsed in the outliner, their blocks are excluded
- * from the progress bar. This hook handles the filtering and provides
+ * When sections are collapsed or skipped in the outliner, their blocks are
+ * excluded from the progress bar. This hook handles the filtering and provides
  * bidirectional index mapping for click-to-seek.
+ *
+ * A block is visible if its section is expanded AND not skipped.
  */
 export function useFilteredPlayback(
   documentBlocks: Block[],
   sections: Section[],
   expandedSections: Set<string>,
   blockStates: BlockState[],
-  currentBlock: number
+  currentBlock: number,
+  skippedSections?: Set<string>
 ): FilteredPlayback {
   return useMemo(() => {
     // No sections = no filtering, return identity mapping
@@ -52,12 +55,16 @@ export function useFilteredPlayback(
       };
     }
 
+    const skipped = skippedSections ?? new Set<string>();
+
     // Build set of visible absolute block indices
+    // A block is visible if its section is expanded AND not skipped
     const visibleAbsoluteIndices: number[] = [];
     const absoluteToVisualMap = new Map<number, number>();
 
     for (const section of sections) {
       if (!expandedSections.has(section.id)) continue;
+      if (skipped.has(section.id)) continue;
 
       for (let absIdx = section.startBlockIdx; absIdx <= section.endBlockIdx; absIdx++) {
         if (absIdx >= 0 && absIdx < documentBlocks.length) {
@@ -101,5 +108,5 @@ export function useFilteredPlayback(
       visualCurrentBlock,
       isCurrentBlockHidden,
     };
-  }, [documentBlocks, sections, expandedSections, blockStates, currentBlock]);
+  }, [documentBlocks, sections, expandedSections, blockStates, currentBlock, skippedSections]);
 }

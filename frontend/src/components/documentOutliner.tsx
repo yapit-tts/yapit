@@ -1,5 +1,5 @@
 import * as React from "react";
-import { ChevronRight, ChevronDown, Minus, Plus } from "lucide-react";
+import { ChevronRight, ChevronDown, Minus, Plus, EyeOff, Eye } from "lucide-react";
 import {
   Collapsible,
   CollapsibleContent,
@@ -10,14 +10,21 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  Popover,
+  PopoverContent,
+  PopoverAnchor,
+} from "@/components/ui/popover";
 import { Section, formatDuration } from "@/lib/sectionIndex";
 import { cn } from "@/lib/utils";
 
 interface DocumentOutlinerProps {
   sections: Section[];
   expandedSections: Set<string>;
+  skippedSections: Set<string>;
   currentBlockIdx: number;
   onSectionToggle: (sectionId: string) => void;
+  onSectionSkip: (sectionId: string) => void;
   onExpandAll: () => void;
   onCollapseAll: () => void;
   onNavigate: (blockIdx: number) => void;
@@ -26,13 +33,17 @@ interface DocumentOutlinerProps {
 export function DocumentOutliner({
   sections,
   expandedSections,
+  skippedSections,
   currentBlockIdx,
   onSectionToggle,
+  onSectionSkip,
   onExpandAll,
   onCollapseAll,
   onNavigate,
 }: DocumentOutlinerProps) {
-  // Find current section for highlighting
+  const [popoverOpen, setPopoverOpen] = React.useState<string | null>(null);
+  const longPressTimerRef = React.useRef<number | null>(null);
+
   const currentSectionId = React.useMemo(() => {
     for (const section of sections) {
       if (
@@ -45,6 +56,29 @@ export function DocumentOutliner({
     return null;
   }, [sections, currentBlockIdx]);
 
+  const handleContextMenu = (e: React.MouseEvent, sectionId: string) => {
+    e.preventDefault();
+    setPopoverOpen(sectionId);
+  };
+
+  const handleTouchStart = (sectionId: string) => {
+    longPressTimerRef.current = window.setTimeout(() => {
+      setPopoverOpen(sectionId);
+    }, 500);
+  };
+
+  const handleTouchEnd = () => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  };
+
+  const handleSkipToggle = (sectionId: string) => {
+    onSectionSkip(sectionId);
+    setPopoverOpen(null);
+  };
+
   if (sections.length === 0) {
     return (
       <div className="p-4 text-sm text-muted-foreground">
@@ -55,7 +89,6 @@ export function DocumentOutliner({
 
   return (
     <div className="flex flex-col h-full">
-      {/* Header with expand/collapse all */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border">
         <span className="font-medium text-muted-foreground">
           Outline
@@ -88,62 +121,123 @@ export function DocumentOutliner({
         </div>
       </div>
 
-      {/* Sections list */}
       <div className="flex-1 overflow-y-auto py-2">
         {sections.map((section) => {
           const isExpanded = expandedSections.has(section.id);
+          const isSkipped = skippedSections.has(section.id);
           const isCurrent = section.id === currentSectionId;
           const hasSubsections = section.subsections.length > 0;
+          // Can't collapse the current section (playback is in it)
+          const canCollapse = !isCurrent || !isExpanded;
 
-          // Section header content (shared between collapsible and non-collapsible)
-          const sectionHeader = (
-            <div
-              className={cn(
-                "flex items-center gap-1.5 pl-1 pr-3 py-2 hover:bg-accent/50 rounded-md mx-0.5",
-                isCurrent && "bg-accent"
-              )}
-            >
-              {/* Chevron only if has subsections, otherwise invisible placeholder */}
-              {hasSubsections ? (
-                <CollapsibleTrigger className="p-0.5 hover:bg-accent rounded shrink-0">
-                  {isExpanded ? (
-                    <ChevronDown className="w-4 h-4 text-muted-foreground" />
-                  ) : (
-                    <ChevronRight className="w-4 h-4 text-muted-foreground" />
+          const sectionContent = (
+            <Popover open={popoverOpen === section.id} onOpenChange={(open) => setPopoverOpen(open ? section.id : null)}>
+              <PopoverAnchor asChild>
+                <div
+                  className={cn(
+                    "flex items-center gap-1.5 pl-1 pr-3 py-2 hover:bg-accent/50 rounded-md mx-0.5 cursor-default",
+                    isCurrent && !isSkipped && "bg-accent",
+                    isSkipped && "opacity-50"
                   )}
-                </CollapsibleTrigger>
-              ) : (
-                <span className="w-5 h-5 shrink-0" /> // Placeholder for alignment
-              )}
+                  onContextMenu={(e) => handleContextMenu(e, section.id)}
+                  onTouchStart={() => handleTouchStart(section.id)}
+                  onTouchEnd={handleTouchEnd}
+                  onTouchCancel={handleTouchEnd}
+                >
+                  {/* Collapse toggle: chevron for sections with subsections, +/- for those without */}
+                  {/* Hidden/disabled when: skipped, or can't collapse (current section) */}
+                  {hasSubsections ? (
+                    <CollapsibleTrigger
+                      className={cn(
+                        "p-0.5 hover:bg-accent rounded shrink-0",
+                        (isSkipped || !canCollapse) && "pointer-events-none opacity-30"
+                      )}
+                      disabled={isSkipped || !canCollapse}
+                    >
+                      {isExpanded && !isSkipped ? (
+                        <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                      ) : (
+                        <ChevronRight className="w-4 h-4 text-muted-foreground" />
+                      )}
+                    </CollapsibleTrigger>
+                  ) : (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (!isSkipped && canCollapse) onSectionToggle(section.id);
+                      }}
+                      className={cn(
+                        "p-0.5 hover:bg-accent rounded shrink-0",
+                        (isSkipped || !canCollapse) && "pointer-events-none opacity-30"
+                      )}
+                      disabled={isSkipped || !canCollapse}
+                    >
+                      {isExpanded && !isSkipped ? (
+                        <Minus className="w-4 h-4 text-muted-foreground" />
+                      ) : (
+                        <Plus className="w-4 h-4 text-muted-foreground" />
+                      )}
+                    </button>
+                  )}
 
-              <button
-                onClick={() => onNavigate(section.startBlockIdx)}
-                className="flex-1 text-left truncate hover:underline min-w-0"
-                title={section.title}
+                  <span
+                    onClick={() => {
+                      if (!isSkipped) onNavigate(section.startBlockIdx);
+                    }}
+                    className={cn(
+                      "flex-1 text-left truncate min-w-0 cursor-pointer",
+                      !isSkipped && "hover:underline",
+                      isSkipped && "line-through cursor-default"
+                    )}
+                    title={section.title}
+                  >
+                    {section.title}
+                  </span>
+
+                  <span className="text-sm text-muted-foreground whitespace-nowrap shrink-0 pl-2">
+                    {formatDuration(section.durationMs)}
+                  </span>
+                </div>
+              </PopoverAnchor>
+              <PopoverContent
+                className="w-auto p-1"
+                side="bottom"
+                align="start"
               >
-                {section.title}
-              </button>
-
-              <span className="text-sm text-muted-foreground whitespace-nowrap shrink-0 pl-2">
-                {formatDuration(section.durationMs)}
-              </span>
-            </div>
+                <button
+                  onClick={() => handleSkipToggle(section.id)}
+                  className="flex items-center gap-2 px-3 py-2 text-sm rounded hover:bg-accent w-full text-left"
+                >
+                  {isSkipped ? (
+                    <>
+                      <Eye className="w-4 h-4" />
+                      Include in playback
+                    </>
+                  ) : (
+                    <>
+                      <EyeOff className="w-4 h-4" />
+                      Exclude from playback
+                    </>
+                  )}
+                </button>
+              </PopoverContent>
+            </Popover>
           );
 
-          // If no subsections, don't wrap in Collapsible (cleaner)
           if (!hasSubsections) {
-            return <div key={section.id}>{sectionHeader}</div>;
+            return <div key={section.id}>{sectionContent}</div>;
           }
 
           return (
             <Collapsible
               key={section.id}
-              open={isExpanded}
-              onOpenChange={() => onSectionToggle(section.id)}
+              open={isExpanded && !isSkipped}
+              onOpenChange={() => {
+                if (!isSkipped) onSectionToggle(section.id);
+              }}
             >
-              {sectionHeader}
+              {sectionContent}
 
-              {/* Subsections */}
               <CollapsibleContent>
                 <div className="ml-5 border-l border-border/50">
                   {section.subsections.map((subsection) => {
