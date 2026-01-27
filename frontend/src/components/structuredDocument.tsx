@@ -208,7 +208,20 @@ interface BlockProps {
 const blockBaseClass = "border-l-4 border-l-transparent -ml-1 transition-colors duration-150";
 const clickableClass = "cursor-pointer clickable-block";
 
-function HeadingBlockView({ block, slugId }: { block: HeadingBlock; slugId?: string }) {
+interface HeadingBlockViewProps {
+  block: HeadingBlock;
+  slugId?: string;
+  // Section collapse props (only for H1/H2 section headers)
+  isCollapsed?: boolean;
+  canCollapse?: boolean; // false if current block is in this section
+  onToggleCollapse?: () => void;
+}
+
+function HeadingBlockView({ block, slugId, isCollapsed, canCollapse = true, onToggleCollapse }: HeadingBlockViewProps) {
+  const [isHovered, setIsHovered] = useState(false);
+  const isSectionHeader = onToggleCollapse !== undefined;
+  const showChevron = isSectionHeader && canCollapse;
+
   const sizeClasses: Record<number, string> = {
     1: "text-3xl font-bold mt-8 mb-4",
     2: "text-2xl font-semibold mt-6 mb-3",
@@ -218,25 +231,70 @@ function HeadingBlockView({ block, slugId }: { block: HeadingBlock; slugId?: str
     6: "text-sm font-medium mt-2 mb-1",
   };
 
-  const className = cn(
+  const headingClassName = cn(
     sizeClasses[block.level],
-    "py-1"
+    "py-1",
+    // Collapsed headers have muted text and are clickable to expand
+    isCollapsed && "text-muted-foreground cursor-pointer"
   );
 
-  const props = {
-    id: slugId,
-    className,
-    dangerouslySetInnerHTML: { __html: sanitize(block.html) },
+  // Handle click on collapsed header to expand
+  const handleHeaderClick = (e: React.MouseEvent) => {
+    if (isCollapsed && onToggleCollapse) {
+      e.stopPropagation(); // Don't trigger audio block click
+      onToggleCollapse();
+    }
   };
 
-  switch (block.level) {
-    case 1: return <h1 {...props} />;
-    case 2: return <h2 {...props} />;
-    case 3: return <h3 {...props} />;
-    case 4: return <h4 {...props} />;
-    case 5: return <h5 {...props} />;
-    case 6: return <h6 {...props} />;
+  const HeadingTag = `h${block.level}` as 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6';
+
+  // If not a section header or can't collapse, render plain heading
+  if (!showChevron) {
+    return (
+      <HeadingTag
+        id={slugId}
+        className={headingClassName}
+        onClick={isCollapsed ? handleHeaderClick : undefined}
+        dangerouslySetInnerHTML={{ __html: sanitize(block.html) }}
+      />
+    );
   }
+
+  // Section header with collapse chevron
+  // Wrapper is relative, chevron is absolute - heading content is unaffected
+  return (
+    <div
+      className="relative"
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+    >
+      {/* Chevron - hidden on mobile (md:flex), users use outliner sidebar there */}
+      {/* Uses rotation instead of icon swap to prevent layout shift */}
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          onToggleCollapse?.();
+        }}
+        className={cn(
+          "absolute -left-8 top-1/2 -translate-y-1/2 hidden md:flex items-center justify-center w-6 h-6 text-muted-foreground hover:text-foreground",
+          // Always visible when collapsed, only on hover when expanded
+          isCollapsed ? "opacity-100" : (isHovered ? "opacity-70" : "opacity-0")
+        )}
+        title={isCollapsed ? "Expand section" : "Collapse section"}
+      >
+        <ChevronDown className={cn(
+          "w-4 h-4 transition-transform duration-150",
+          isCollapsed && "-rotate-90"
+        )} />
+      </button>
+      <HeadingTag
+        id={slugId}
+        className={headingClassName}
+        onClick={handleHeaderClick}
+        dangerouslySetInnerHTML={{ __html: sanitize(block.html) }}
+      />
+    </div>
+  );
 }
 
 function ParagraphBlockView({ block }: { block: ParagraphBlock }) {
@@ -634,12 +692,24 @@ interface BlockViewProps {
   block: ContentBlock;
   onBlockClick?: (audioIdx: number) => void;
   slugMap?: Map<string, string>;
+  // Section collapse props for headings
+  isCollapsed?: boolean;
+  canCollapse?: boolean;
+  onToggleCollapse?: () => void;
 }
 
-function BlockView({ block, onBlockClick, slugMap }: BlockViewProps) {
+function BlockView({ block, onBlockClick, slugMap, isCollapsed, canCollapse, onToggleCollapse }: BlockViewProps) {
   switch (block.type) {
     case "heading":
-      return <HeadingBlockView block={block} slugId={slugMap?.get(block.id)} />;
+      return (
+        <HeadingBlockView
+          block={block}
+          slugId={slugMap?.get(block.id)}
+          isCollapsed={isCollapsed}
+          canCollapse={canCollapse}
+          onToggleCollapse={onToggleCollapse}
+        />
+      );
     case "paragraph":
       return <ParagraphBlockView block={block} />;
     case "list":
@@ -682,6 +752,7 @@ interface StructuredDocumentViewProps {
   sections?: Section[];
   expandedSections?: Set<string>;
   onSectionExpand?: (sectionId: string) => void;
+  currentBlockIdx?: number; // To prevent collapsing section containing current block
 }
 
 // Memoized to prevent re-renders from parent's audioProgress updates
@@ -696,6 +767,7 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
   sections,
   expandedSections,
   onSectionExpand,
+  currentBlockIdx,
 }: StructuredDocumentViewProps) {
   const contentRef = useRef<HTMLDivElement>(null);
   const [copied, setCopied] = useState(false);
@@ -960,15 +1032,22 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
     );
   }
 
-  // Filter blocks by expanded sections and determine where to show expand buttons
-  const { visibleBlocks, collapsedSectionsMap, trailingCollapsed } = useMemo(() => {
+  // Build map from heading block ID to section (for collapse/expand UI)
+  const sectionByHeadingId = useMemo(() => {
+    const map = new Map<string, Section>();
+    if (sections) {
+      for (const section of sections) {
+        map.set(section.id, section); // Section ID is the heading block ID
+      }
+    }
+    return map;
+  }, [sections]);
+
+  // Filter blocks: always show section headers (H1/H2), hide content of collapsed sections
+  const visibleBlocks = useMemo(() => {
     // No sections or no filtering = show all blocks
     if (!sections || sections.length === 0 || !expandedSections) {
-      return {
-        visibleBlocks: doc.blocks,
-        collapsedSectionsMap: new Map<string, Section[]>(),
-        trailingCollapsed: [] as Section[],
-      };
+      return doc.blocks;
     }
 
     // Helper to find which section a block belongs to
@@ -977,12 +1056,16 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
     };
 
     const visible: ContentBlock[] = [];
-    const collapsedMap = new Map<string, Section[]>();
-    let pendingCollapsed: Section[] = [];
     let lastSeenSectionId: string | null = null;
 
-    // Process blocks in order, tracking which collapsed sections we pass through
     for (const block of doc.blocks) {
+      // Section headers (H1/H2) are always visible
+      if (block.type === "heading" && sectionByHeadingId.has(block.id)) {
+        visible.push(block);
+        lastSeenSectionId = block.id;
+        continue;
+      }
+
       const audioIdx = block.audio_chunks?.[0]?.audio_block_idx;
       if (audioIdx === undefined) {
         // Blocks without audio (e.g., thematic breaks) - include if prev section was expanded
@@ -993,32 +1076,21 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
       }
 
       const section = findSectionForAudioIdx(audioIdx);
-      if (!section) continue; // Block not in any section (shouldn't happen)
+      if (!section) continue;
 
-      // Check if we've entered a new section
+      // Track current section
       if (section.id !== lastSeenSectionId) {
-        if (!expandedSections.has(section.id)) {
-          // Entering a collapsed section - track it
-          if (!pendingCollapsed.some(s => s.id === section.id)) {
-            pendingCollapsed.push(section);
-          }
-        }
         lastSeenSectionId = section.id;
       }
 
-      // If section is expanded, include the block
+      // Include block only if its section is expanded
       if (expandedSections.has(section.id)) {
-        // Attach pending collapsed sections to this first visible block
-        if (pendingCollapsed.length > 0) {
-          collapsedMap.set(block.id, [...pendingCollapsed]);
-          pendingCollapsed = [];
-        }
         visible.push(block);
       }
     }
 
-    return { visibleBlocks: visible, collapsedSectionsMap: collapsedMap, trailingCollapsed: pendingCollapsed };
-  }, [doc.blocks, sections, expandedSections]);
+    return visible;
+  }, [doc.blocks, sections, expandedSections, sectionByHeadingId]);
 
   // Group consecutive images with same row_group for side-by-side display
   const groupedBlocks = groupBlocks(visibleBlocks);
@@ -1102,44 +1174,29 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
           </div>
         </div>
       )}
-      <div ref={contentRef} className="structured-content px-3 break-words" onClick={handleContentClick}>
+      <div ref={contentRef} className="structured-content px-3 md:pl-10 break-words" onClick={handleContentClick}>
         {groupedBlocks.map((grouped) => {
-          const blockId = grouped.kind === "image-row" ? grouped.blocks[0].id : grouped.block.id;
-          const collapsedBefore = collapsedSectionsMap.get(blockId);
-
-          // Render expand buttons for collapsed sections before this block
-          const expandButtons = collapsedBefore && onSectionExpand ? (
-            <div className="my-4">
-              {collapsedBefore.map((section) => (
-                <button
-                  key={section.id}
-                  onClick={() => onSectionExpand(section.id)}
-                  className="w-full flex items-center justify-center gap-2 py-2 px-4
-                    text-sm text-muted-foreground
-                    border border-dashed border-border rounded-md
-                    hover:bg-muted/50 hover:text-foreground
-                    transition-colors"
-                >
-                  <ChevronDown className="w-4 h-4" />
-                  <span>Show "{section.title}"</span>
-                  <ChevronDown className="w-4 h-4" />
-                </button>
-              ))}
-            </div>
-          ) : null;
-
           if (grouped.kind === "image-row") {
             return (
-              <div key={grouped.blocks[0].id}>
-                {expandButtons}
-                <ImageRowView
-                  blocks={grouped.blocks}
-                  onBlockClick={onBlockClick}
-                />
-              </div>
+              <ImageRowView
+                key={grouped.blocks[0].id}
+                blocks={grouped.blocks}
+                onBlockClick={onBlockClick}
+              />
             );
           } else {
             const block = grouped.block;
+            // Check if this is a section header (H1/H2)
+            const section = sectionByHeadingId.get(block.id);
+            const isCollapsed = section ? !expandedSections?.has(section.id) : false;
+            // Can't collapse section if current block is in it
+            const canCollapse = section && currentBlockIdx !== undefined
+              ? !(currentBlockIdx >= section.startBlockIdx && currentBlockIdx <= section.endBlockIdx)
+              : true;
+            const handleToggleCollapse = section && onSectionExpand
+              ? () => onSectionExpand(section.id)
+              : undefined;
+
             // Container blocks (blockquote, list, footnotes) handle their own inner highlighting
             // Don't add data-audio-block-idx to their wrapper - it causes double highlight
             const isContainerBlock = block.type === "blockquote" || block.type === "list" || block.type === "footnotes";
@@ -1147,47 +1204,29 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
             const hasSingleChunk = block.audio_chunks.length === 1;
             const firstAudioIdx = hasAudio ? block.audio_chunks[0].audio_block_idx : undefined;
             // Only make wrapper clickable/hoverable if single chunk AND not a container block
-            const handleWrapperClick = hasSingleChunk && !isContainerBlock && onBlockClick
+            // Don't make collapsed headers clickable as audio blocks (they expand instead)
+            const handleWrapperClick = hasSingleChunk && !isContainerBlock && !isCollapsed && onBlockClick
               ? () => onBlockClick(firstAudioIdx!)
               : undefined;
             return (
-              <div key={block.id}>
-                {expandButtons}
-                <div
-                  data-audio-block-idx={hasSingleChunk && !isContainerBlock ? firstAudioIdx : undefined}
-                  className={cn(blockBaseClass, handleWrapperClick && clickableClass)}
-                  onClick={handleWrapperClick}
-                >
-                  <BlockView
-                    block={block}
-                    onBlockClick={onBlockClick}
-                    slugMap={slugMap}
-                  />
-                </div>
+              <div
+                key={block.id}
+                data-audio-block-idx={hasSingleChunk && !isContainerBlock && !isCollapsed ? firstAudioIdx : undefined}
+                className={cn(blockBaseClass, handleWrapperClick && clickableClass)}
+                onClick={handleWrapperClick}
+              >
+                <BlockView
+                  block={block}
+                  onBlockClick={onBlockClick}
+                  slugMap={slugMap}
+                  isCollapsed={isCollapsed}
+                  canCollapse={canCollapse}
+                  onToggleCollapse={handleToggleCollapse}
+                />
               </div>
             );
           }
         })}
-        {/* Trailing collapsed sections (at end of document) */}
-        {trailingCollapsed.length > 0 && onSectionExpand && (
-          <div className="my-4">
-            {trailingCollapsed.map((section) => (
-              <button
-                key={section.id}
-                onClick={() => onSectionExpand(section.id)}
-                className="w-full flex items-center justify-center gap-2 py-2 px-4
-                  text-sm text-muted-foreground
-                  border border-dashed border-border rounded-md
-                  hover:bg-muted/50 hover:text-foreground
-                  transition-colors"
-              >
-                <ChevronDown className="w-4 h-4" />
-                <span>Show "{section.title}"</span>
-                <ChevronDown className="w-4 h-4" />
-              </button>
-            ))}
-          </div>
-        )}
       </div>
 
       {/* Inline styles for HTML content */}

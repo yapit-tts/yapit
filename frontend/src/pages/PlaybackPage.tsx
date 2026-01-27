@@ -520,14 +520,9 @@ const PlaybackPage = () => {
       const sectionIndex = buildSectionIndex(parsed, documentBlocks);
       setSections(sectionIndex);
 
-      // Initially expand section containing current block (or first section)
+      // Initially expand all sections
       if (sectionIndex.length > 0) {
-        const initialSection = currentBlock >= 0
-          ? findSectionForBlock(sectionIndex, currentBlock)
-          : sectionIndex[0];
-        if (initialSection) {
-          setExpandedSections(new Set([initialSection.id]));
-        }
+        setExpandedSections(new Set(sectionIndex.map(s => s.id)));
       }
     } catch {
       setSections([]);
@@ -1589,6 +1584,7 @@ const PlaybackPage = () => {
           sections={shouldShowOutliner ? sections : undefined}
           expandedSections={shouldShowOutliner ? expandedSections : undefined}
           onSectionExpand={shouldShowOutliner ? handleSectionToggle : undefined}
+          currentBlockIdx={shouldShowOutliner ? currentBlock : undefined}
         />
         <SoundControl
           isPlaying={isPlaying}

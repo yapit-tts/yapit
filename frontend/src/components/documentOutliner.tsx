@@ -99,13 +99,13 @@ export function DocumentOutliner({
           const sectionHeader = (
             <div
               className={cn(
-                "flex items-center gap-2 pl-2 pr-4 py-2.5 hover:bg-accent/50 rounded-md mx-1",
+                "flex items-center gap-1.5 pl-1 pr-3 py-2 hover:bg-accent/50 rounded-md mx-0.5",
                 isCurrent && "bg-accent"
               )}
             >
               {/* Chevron only if has subsections, otherwise invisible placeholder */}
               {hasSubsections ? (
-                <CollapsibleTrigger className="p-1 hover:bg-accent rounded">
+                <CollapsibleTrigger className="p-0.5 hover:bg-accent rounded shrink-0">
                   {isExpanded ? (
                     <ChevronDown className="w-4 h-4 text-muted-foreground" />
                   ) : (
@@ -113,18 +113,18 @@ export function DocumentOutliner({
                   )}
                 </CollapsibleTrigger>
               ) : (
-                <span className="w-6 h-6" /> // Placeholder for alignment
+                <span className="w-5 h-5 shrink-0" /> // Placeholder for alignment
               )}
 
               <button
                 onClick={() => onNavigate(section.startBlockIdx)}
-                className="flex-1 text-left truncate hover:underline"
+                className="flex-1 text-left truncate hover:underline min-w-0"
                 title={section.title}
               >
                 {section.title}
               </button>
 
-              <span className="text-sm text-muted-foreground whitespace-nowrap">
+              <span className="text-sm text-muted-foreground whitespace-nowrap shrink-0 pl-2">
                 {formatDuration(section.durationMs)}
               </span>
             </div>
@@ -145,7 +145,7 @@ export function DocumentOutliner({
 
               {/* Subsections */}
               <CollapsibleContent>
-                <div className="ml-7 border-l border-border/50">
+                <div className="ml-5 border-l border-border/50">
                   {section.subsections.map((subsection) => {
                     const isSubsectionCurrent =
                       currentBlockIdx >= subsection.blockIdx &&
@@ -159,7 +159,7 @@ export function DocumentOutliner({
                         key={subsection.id}
                         onClick={() => onNavigate(subsection.blockIdx)}
                         className={cn(
-                          "w-full text-left py-2 pl-3 pr-5 hover:bg-accent/50 truncate",
+                          "w-full text-left py-1.5 pl-2 pr-3 hover:bg-accent/50 truncate text-sm",
                           isSubsectionCurrent && "bg-accent/30"
                         )}
                         title={subsection.title}

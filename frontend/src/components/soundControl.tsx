@@ -127,7 +127,7 @@ function SmoothProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
   };
 
   const handleMove = (clientX: number) => {
-    const blockIdx = getBlockFromX(clientX);
+    const visualIdx = getBlockFromX(clientX);
 
     let currentlyDragging = isDragging;
     if (dragStartXRef.current !== null && !isDragging) {
@@ -138,8 +138,10 @@ function SmoothProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
       }
     }
 
-    setSeekPosition(blockIdx);
-    onBlockHover?.(blockIdx, currentlyDragging);
+    setSeekPosition(visualIdx);
+    // Translate to absolute index for hover callback (DOM elements use absolute indices)
+    const absoluteIdx = visualToAbsolute ? visualToAbsolute(visualIdx) : visualIdx;
+    onBlockHover?.(absoluteIdx, currentlyDragging);
   };
 
   const handleEnd = (clientX: number) => {
@@ -172,11 +174,13 @@ function SmoothProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
       handleMove(e.clientX);
     } else {
       // Just hovering - show indicator but only update if block changed
-      const blockIdx = getBlockFromX(e.clientX);
-      if (blockIdx !== lastHoverBlockRef.current) {
-        lastHoverBlockRef.current = blockIdx;
-        setSeekPosition(blockIdx);
-        onBlockHover?.(blockIdx, false);
+      const visualIdx = getBlockFromX(e.clientX);
+      if (visualIdx !== lastHoverBlockRef.current) {
+        lastHoverBlockRef.current = visualIdx;
+        setSeekPosition(visualIdx);
+        // Translate to absolute index for hover callback
+        const absoluteIdx = visualToAbsolute ? visualToAbsolute(visualIdx) : visualIdx;
+        onBlockHover?.(absoluteIdx, false);
       }
     }
   };
@@ -293,7 +297,7 @@ function BlockyProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
   const barRef = useRef<HTMLDivElement>(null);
   const numBlocks = blockStates.length;
 
-  // Drag state
+  // Drag state (matches SmoothProgressBar exactly)
   const [isDragging, setIsDragging] = useState(false);
   const [seekPosition, setSeekPosition] = useState<number | null>(null);
   const dragStartXRef = useRef<number | null>(null);
@@ -321,7 +325,7 @@ function BlockyProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
   };
 
   const handleMove = (clientX: number) => {
-    const blockIdx = getBlockFromX(clientX);
+    const visualIdx = getBlockFromX(clientX);
     let currentlyDragging = isDragging;
     if (dragStartXRef.current !== null && !isDragging) {
       const moved = Math.abs(clientX - dragStartXRef.current) > DRAG_THRESHOLD;
@@ -330,8 +334,10 @@ function BlockyProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
         currentlyDragging = true;
       }
     }
-    setSeekPosition(blockIdx);
-    onBlockHover?.(blockIdx, currentlyDragging);
+    setSeekPosition(visualIdx);
+    // Translate to absolute index for hover callback (DOM elements use absolute indices)
+    const absoluteIdx = visualToAbsolute ? visualToAbsolute(visualIdx) : visualIdx;
+    onBlockHover?.(absoluteIdx, currentlyDragging);
   };
 
   const handleEnd = (clientX: number) => {
@@ -351,7 +357,7 @@ function BlockyProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
     onBlockHover?.(null, false);
   };
 
-  // Mouse events
+  // Mouse events (matches SmoothProgressBar)
   const handleMouseDown = (e: React.MouseEvent) => {
     e.preventDefault();
     handleStart(e.clientX);
@@ -360,12 +366,16 @@ function BlockyProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
     if (dragStartXRef.current !== null) {
       handleMove(e.clientX);
     } else {
-      const blockIdx = getBlockFromX(e.clientX);
-      setSeekPosition(blockIdx);
-      onBlockHover?.(blockIdx, false);
+      const visualIdx = getBlockFromX(e.clientX);
+      setSeekPosition(visualIdx);
+      // Translate to absolute index for hover callback
+      const absoluteIdx = visualToAbsolute ? visualToAbsolute(visualIdx) : visualIdx;
+      onBlockHover?.(absoluteIdx, false);
     }
   };
-  const handleMouseUp = (e: React.MouseEvent) => handleEnd(e.clientX);
+  const handleMouseUp = (e: React.MouseEvent) => {
+    handleEnd(e.clientX);
+  };
   const handleMouseLeave = () => {
     setSeekPosition(null);
     if (!isDragging) onBlockHover?.(null, false);
@@ -380,12 +390,14 @@ function BlockyProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
     e.preventDefault();
     handleMove(getClientX(e));
   };
-  const handleTouchEnd = (e: React.TouchEvent) => handleEnd(getClientX(e));
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    handleEnd(getClientX(e));
+  };
 
   return (
     <div
       ref={barRef}
-      className="flex-1 flex items-center h-10 md:h-5 bg-muted/30 rounded overflow-hidden touch-none"
+      className="flex-1 flex items-center h-10 md:h-5 bg-muted/30 rounded overflow-hidden touch-none cursor-pointer"
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
