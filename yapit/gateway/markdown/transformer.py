@@ -37,6 +37,7 @@ from yapit.gateway.markdown.models import (
     MathBlock,
     MathInlineContent,
     ParagraphBlock,
+    ShowContent,
     SpeakContent,
     StrongContent,
     StructuredDocument,
@@ -270,7 +271,7 @@ def extract_caption_nodes(children: list[SyntaxTreeNode], start_idx: int) -> tup
 def transform_inline_to_ast(nodes: list[SyntaxTreeNode]) -> list[InlineContent]:
     """Transform inline nodes to our AST representation.
 
-    - yap-show content is skipped (display-only, no TTS length)
+    - yap-show content becomes ShowContent (display-only, 0 TTS length)
     - yap-speak content becomes SpeakContent (TTS-only, has TTS length)
     - yap-cap is skipped (handled separately for images)
     """
@@ -280,16 +281,23 @@ def transform_inline_to_ast(nodes: list[SyntaxTreeNode]) -> list[InlineContent]:
     while i < len(nodes):
         node = nodes[i]
 
-        # Skip yap-show content entirely (display-only, no TTS contribution)
+        # yap-show: collect inner nodes and create ShowContent (display-only, 0 TTS length)
         if _is_tag(node, YAP_SHOW_OPEN):
             depth = 1
             i += 1
+            inner_nodes: list[SyntaxTreeNode] = []
             while i < len(nodes) and depth > 0:
                 if _is_tag(nodes[i], YAP_SHOW_OPEN):
                     depth += 1
                 elif _is_tag(nodes[i], YAP_SHOW_CLOSE):
                     depth -= 1
+                if depth > 0:  # Don't include the close tag
+                    inner_nodes.append(nodes[i])
                 i += 1
+            # Recursively transform inner content
+            inner_ast = transform_inline_to_ast(inner_nodes)
+            if inner_ast:
+                result.append(ShowContent(content=inner_ast))
             continue
 
         # yap-speak: extract text content and add as SpeakContent
@@ -667,6 +675,9 @@ def slice_inline_node(node: InlineContent, start: int, end: int) -> list[InlineC
         case FootnoteRefContent():
             # Footnote refs have 0 TTS length, include at slice start
             return [node] if start == 0 else []
+        case ShowContent():
+            # ShowContent has 0 TTS length (display-only), include at slice start
+            return [node] if start == 0 else []
     return []
 
 
@@ -687,6 +698,9 @@ def get_inline_length(node: InlineContent) -> int:
             return len(node.content)
         case FootnoteRefContent():
             # Footnote refs are silent (display-only)
+            return 0
+        case ShowContent():
+            # ShowContent is display-only, no TTS contribution
             return 0
     return 0
 
@@ -725,6 +739,9 @@ def render_inline_content_html(node: InlineContent) -> str:
             else:
                 # No matching footnote - render as plain text (no link)
                 return f'<sup class="footnote-ref-orphan">[{node.label}]</sup>'
+        case ShowContent():
+            # ShowContent renders its inner content (display-only)
+            return render_ast_to_html(node.content)
     return ""
 
 
@@ -786,15 +803,15 @@ class DocumentTransformer:
 
         def collect_refs_from_block(block: ContentBlock) -> None:
             """Recursively collect footnote refs from block AST."""
-            if hasattr(block, "ast"):
+            if isinstance(block, (ParagraphBlock, HeadingBlock)):
                 collect_refs_from_ast(block.ast)
-            if isinstance(block, ListBlock):
+            elif isinstance(block, ListBlock):
                 for item in block.items:
                     collect_refs_from_ast(item.ast)
-            if isinstance(block, BlockquoteBlock):
+            elif isinstance(block, BlockquoteBlock):
                 for nested in block.blocks:
                     collect_refs_from_block(nested)
-            if isinstance(block, FootnotesBlock):
+            elif isinstance(block, FootnotesBlock):
                 footnote_items.extend(block.items)
 
         def collect_refs_from_ast(ast: list[InlineContent]) -> None:
@@ -802,7 +819,7 @@ class DocumentTransformer:
             for node in ast:
                 if isinstance(node, FootnoteRefContent):
                     refs.append((node, node.label))
-                elif hasattr(node, "content") and isinstance(node.content, list):
+                elif isinstance(node, (StrongContent, EmphasisContent, LinkContent, ShowContent)):
                     collect_refs_from_ast(node.content)
 
         for block in doc.blocks:

@@ -1095,6 +1095,30 @@ More text[^1][^2] here.
         para2 = doc.blocks[1]
         assert para2.html.count("footnote-ref") == 2
 
+    def test_yap_show_at_end_of_split_paragraph(self):
+        """yap-show content at end of split paragraph is preserved.
+
+        This was a real bug: long paragraphs ending with <yap-show>[link](url)</yap-show>
+        would lose the link because ShowContent wasn't tracked in the AST.
+        """
+        # Long text that forces splitting, ending with yap-show wrapped link
+        long_text = "A" * 300
+        md = f"{long_text} Project website: <yap-show>[https://example.com](https://example.com)</yap-show>"
+
+        ast = parse_markdown(md)
+        doc = transform(ast, max_block_chars=200)
+
+        # Find the block containing "Project website"
+        para = doc.blocks[0]
+        assert "Project website" in para.html
+
+        # Link should be present in HTML (display)
+        assert 'href="https://example.com"' in para.html, "yap-show link should be displayed"
+
+        # Link should NOT be in TTS
+        tts_text = " ".join(c.text for c in para.audio_chunks)
+        assert "example.com" not in tts_text, "yap-show content should not be in TTS"
+
 
 # === KNOWN LIMITATIONS ===
 
@@ -1147,3 +1171,25 @@ class TestKnownLimitations:
 
         assert "spoken" not in display, "yap-speak content should not display"
         assert "bold spoken" in tts
+
+    @pytest.mark.xfail(reason="callout titles are plain strings, footnote refs get stripped")
+    def test_footnote_in_callout_title(self):
+        """Footnote refs in callout titles should be preserved.
+
+        Currently not supported: callout_title is extracted as plain text,
+        so footnote refs like [^1] are silently stripped instead of being
+        rendered as superscript links.
+        """
+        md = """> [!BLUE] Important Note[^1]
+> Some content here.
+
+[^1]: This is a footnote.
+"""
+        ast = parse_markdown(md)
+        doc = transform(ast)
+
+        callout = doc.blocks[0]
+
+        # Footnote ref should be preserved in the callout title
+        # Currently FAILS: callout_title becomes "Important Note" (ref stripped)
+        assert "[^1]" in callout.callout_title

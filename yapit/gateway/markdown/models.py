@@ -71,6 +71,17 @@ class SpeakContent(BaseModel):
     content: str  # TTS text
 
 
+class ShowContent(BaseModel):
+    """Display-only content from yap-show tags.
+
+    Renders inner content to HTML but has 0 TTS length.
+    This enables display of clickable links without reading them aloud.
+    """
+
+    type: Literal["show"] = "show"
+    content: list["InlineContent"]
+
+
 class FootnoteRefContent(BaseModel):
     """Inline footnote reference [^label].
 
@@ -92,6 +103,7 @@ InlineContent = (
     | InlineImageContent
     | MathInlineContent
     | SpeakContent
+    | ShowContent
     | FootnoteRefContent
 )
 
