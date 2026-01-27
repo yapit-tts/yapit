@@ -54,7 +54,11 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "100.87.244.58:6379:6379"  # Tailscale only - for external workers
+      - target: 6379
+        published: 6379
+        protocol: tcp
+        mode: host  # Bypass Swarm ingress - short syntax IP binding doesn't work with ingress
+        host_ip: 100.87.244.58  # Tailscale IP only - external workers connect via VPN
     networks:
       - yapit-network
     deploy:

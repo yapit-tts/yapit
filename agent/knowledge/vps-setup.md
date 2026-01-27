@@ -152,7 +152,50 @@ docker run -d \
 
 **Note:** `DOCKER_API_VERSION=1.44` is required - newer Docker versions have API changes that break older Traefik images.
 
+## Security Hardening
+
+### SSH
+
+Config at `/etc/ssh/sshd_config.d/hardening.conf`:
+```
+PasswordAuthentication no
+X11Forwarding no
+```
+
+Key-only auth. X11 forwarding disabled (headless server, no GUI needed).
+
+### Firewall
+
+**Two layers:** Hetzner Cloud Firewall (edge) + UFW (host).
+
+Hetzner allows: 22 (SSH), 80 (HTTP), 443 (HTTPS), ICMP.
+
+UFW mirrors this:
+```bash
+ufw default deny incoming
+ufw default allow outgoing
+ufw allow 22/tcp
+ufw allow 80/tcp
+ufw allow 443/tcp
+ufw enable
+```
+
+Tailscale traffic bypasses UFW (uses its own tun interface + routing rules).
+
 ## Gotchas
+
+### Docker Swarm port binding ignores host IP
+
+Short syntax like `"100.87.244.58:6379:6379"` doesn't work in Swarm — ingress mode publishes on all interfaces regardless.
+
+Use long syntax with `mode: host` to actually bind to a specific IP:
+```yaml
+ports:
+  - target: 6379
+    published: 6379
+    mode: host      # Bypasses ingress, respects host_ip
+    host_ip: 100.87.244.58
+```
 
 ### Container IP caching after redeploy
 
