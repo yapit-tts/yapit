@@ -21,9 +21,9 @@ from sqlmodel import col, func, select
 
 from yapit.contracts import (
     MAX_CONCURRENT_EXTRACTIONS,
-    MAX_DOCUMENTS_FREE,
-    MAX_DOCUMENTS_GUEST,
-    MAX_DOCUMENTS_PAID,
+    MAX_STORAGE_FREE,
+    MAX_STORAGE_GUEST,
+    MAX_STORAGE_PAID,
     RATELIMIT_EXTRACTION,
 )
 from yapit.gateway.auth import authenticate
@@ -61,22 +61,40 @@ router = APIRouter(prefix="/v1/documents", tags=["Documents"], dependencies=[Dep
 public_router = APIRouter(prefix="/v1/documents", tags=["Documents"])
 
 
-async def check_document_limit(user_id: str, is_anonymous: bool, db: DbSession) -> None:
-    """Check if user can create more documents. Raises HTTPException if at limit."""
+def _format_size(bytes_: int) -> str:
+    """Format bytes as human-readable string."""
+    if bytes_ >= 1024 * 1024:
+        return f"{bytes_ / (1024 * 1024):.1f}MB"
+    if bytes_ >= 1024:
+        return f"{bytes_ / 1024:.1f}KB"
+    return f"{bytes_}B"
+
+
+async def check_storage_limit(user_id: str, is_anonymous: bool, db: DbSession) -> None:
+    """Check if user has storage capacity. Raises HTTPException if at limit."""
     if is_anonymous:
-        limit = MAX_DOCUMENTS_GUEST
+        limit = MAX_STORAGE_GUEST
     else:
         result = await db.exec(select(UserSubscription).where(UserSubscription.user_id == user_id))
         subscription = result.first()
-        limit = MAX_DOCUMENTS_PAID if subscription and subscription.ever_paid else MAX_DOCUMENTS_FREE
+        limit = MAX_STORAGE_PAID if subscription and subscription.ever_paid else MAX_STORAGE_FREE
 
-    count_result = await db.exec(select(func.count()).where(Document.user_id == user_id))
-    count = count_result.one()
+    # Sum of original_text + structured_content for all user's documents
+    usage_result = await db.exec(
+        select(
+            func.coalesce(func.sum(func.length(Document.original_text)), 0)
+            + func.coalesce(func.sum(func.length(Document.structured_content)), 0)
+        ).where(Document.user_id == user_id)
+    )
+    usage = usage_result.one()
 
-    if count >= limit:
+    if usage >= limit:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Document limit reached ({limit}). Delete some documents to create new ones.",
+            detail={
+                "code": "STORAGE_LIMIT_EXCEEDED",
+                "message": f"Storage limit reached ({_format_size(usage)} / {_format_size(limit)}). Delete some documents to free up space.",
+            },
         )
 
 
@@ -372,7 +390,7 @@ async def create_text_document(
     user: AuthenticatedUser,
 ) -> DocumentCreateResponse:
     """Create a document from direct text input."""
-    await check_document_limit(user.id, user.is_anonymous, db)
+    await check_storage_limit(user.id, user.is_anonymous, db)
     prefs = await db.get(UserPreferences, user.id)
 
     ast = parse_markdown(req.content)
@@ -442,7 +460,7 @@ async def create_website_document(
     user: AuthenticatedUser,
 ) -> DocumentCreateResponse:
     """Create a document from a live website."""
-    await check_document_limit(user.id, user.is_anonymous, db)
+    await check_storage_limit(user.id, user.is_anonymous, db)
     prefs = await db.get(UserPreferences, user.id)
     cached_data = await file_cache.retrieve_data(req.hash)
     if not cached_data:
@@ -570,7 +588,7 @@ async def create_document(
     redis: RedisClient,
 ) -> DocumentCreateResponse:
     """Create a document from a file (PDF, image, etc)."""
-    await check_document_limit(user.id, user.is_anonymous, db)
+    await check_storage_limit(user.id, user.is_anonymous, db)
     prefs = await db.get(UserPreferences, user.id)
     cached_data = await file_cache.retrieve_data(req.hash)
     if not cached_data:
@@ -913,7 +931,7 @@ async def import_document(
     user: AuthenticatedUser,
 ) -> DocumentImportResponse:
     """Import (clone) a public document to the authenticated user's library."""
-    await check_document_limit(user.id, user.is_anonymous, db)
+    await check_storage_limit(user.id, user.is_anonymous, db)
     result = await db.exec(select(Document).where(Document.id == document_id, col(Document.is_public).is_(True)))
     source_doc = result.first()
     if not source_doc:

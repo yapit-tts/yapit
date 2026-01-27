@@ -13,14 +13,14 @@ TTS_PENDING: Final[str] = "tts:pending:{user_id}:{document_id}"
 
 # Rate limiting
 RATELIMIT_EXTRACTION: Final[str] = "ratelimit:extraction:{user_id}"
-MAX_CONCURRENT_EXTRACTIONS: Final[int] = 3
+MAX_CONCURRENT_EXTRACTIONS: Final[int] = 10
 RATELIMIT_TTS: Final[str] = "ratelimit:tts:{user_id}"
 MAX_TTS_REQUESTS_PER_MINUTE: Final[int] = 300
 
-# Document storage limits
-MAX_DOCUMENTS_GUEST: Final[int] = 50
-MAX_DOCUMENTS_FREE: Final[int] = 100
-MAX_DOCUMENTS_PAID: Final[int] = 1000
+# Document storage limits (bytes) - DB text only (original_text + structured_content)
+MAX_STORAGE_GUEST: Final[int] = 10 * 1024 * 1024  # 10MB
+MAX_STORAGE_FREE: Final[int] = 50 * 1024 * 1024  # 50MB
+MAX_STORAGE_PAID: Final[int] = 500 * 1024 * 1024  # 500MB
 
 # Queue structure (sorted set + hashes for efficient eviction)
 TTS_QUEUE: Final[str] = "tts:queue:{model}"  # sorted set: job_id -> timestamp
