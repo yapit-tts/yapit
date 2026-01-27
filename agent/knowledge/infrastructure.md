@@ -18,6 +18,8 @@ Cloudflare (edge SSL)
 
 ## Docker Compose
 
+**Prefer `docker exec` for ad-hoc commands.** `docker compose exec` parses all compose files first — fails on unset env vars (e.g., `KOKORO_CPU_REPLICAS`). `docker exec yapit-postgres-1 psql ...` bypasses compose entirely.
+
 Layered compose files via `-f` flags:
 
 - `docker-compose.yml` — Base services (postgres, redis, gateway, stack-auth, kokoro-cpu, yolo-cpu)
@@ -95,5 +97,23 @@ When **adding or removing** config files or Settings fields, check ALL of these:
 | `scripts/deploy.sh` | Production deploy |
 | `.github/workflows/deploy.yml` | CI/CD |
 | `yapit/gateway/migrations/` | Alembic migrations |
+
+## Scripts
+
+**Operations** (use `VPS_HOST` env var):
+- `disk-usage.sh` — Comprehensive disk report (volumes, caches, DBs, logs). Appends history to VPS.
+- `document_storage.py` — Per-document storage (DB + images). Flags: `--id`, `--all`, `--summary`, `--json`, `-v`
+
+**Automated agents:**
+- `report.sh` — Health diagnostics agent. Syncs prod data, runs Claude analysis, posts to Discord. Flags: `--after-deploy`
+
+**Billing:**
+- `stripe_setup.py` — Stripe IaC (products, prices, coupons, portal). Flags: `--test`, `--prod`
+- `margin_calculator.py` — Profitability analysis. Flags: `--plain`
+- `test_clock_setup.py` — Stripe test clock for billing tests. Flags: `--tier`, `--usage-tokens`, `--advance-days`, `--cleanup`
+
+**Development:**
+- `load_test.py` — TTS load testing (stale; should be rewritten for prod). Flags: `--users`, `--blocks`, `--burst`, `--base-url`
+- `deploy.sh` — Production deploy (called by CI)
 
 For VPS setup, Traefik config, debugging: [[vps-setup]].
