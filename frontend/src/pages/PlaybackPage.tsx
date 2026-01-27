@@ -1,6 +1,10 @@
 import { SoundControl } from '@/components/soundControl';
 import { StructuredDocumentView } from '@/components/structuredDocument';
 import { WebGPUWarningBanner } from '@/components/webGPUWarningBanner';
+import { DocumentOutliner } from '@/components/documentOutliner';
+import { OutlinerSidebar } from '@/components/outlinerSidebar';
+import { useOutliner } from '@/hooks/useOutliner';
+import { useFilteredPlayback } from '@/hooks/useFilteredPlayback';
 import { useParams, useLocation, Link, useNavigate } from "react-router";
 import { useRef, useState, useEffect, useLayoutEffect, useCallback, useMemo } from "react";
 import { useApi } from '@/api';
@@ -8,13 +12,15 @@ import { Loader2, FileQuestion, Download, X } from "lucide-react";
 import { AxiosError } from "axios";
 import { AudioPlayer } from '@/lib/audio';
 import { useBrowserTTS } from '@/lib/browserTTS';
+import { buildSectionIndex, findSectionForBlock, type Section } from '@/lib/sectionIndex';
 import { type VoiceSelection, getVoiceSelection, getBackendModelSlug, isServerSideModel } from '@/lib/voiceSelection';
 import { useSettings } from '@/hooks/useSettings';
 import { useUserPreferences } from '@/hooks/useUserPreferences';
 import { useTTSWebSocket } from '@/hooks/useTTSWebSocket';
 
-// Playback position persistence
+// Persistence keys
 const POSITION_KEY_PREFIX = "yapit_playback_position_";
+const OUTLINER_STATE_KEY_PREFIX = "yapit_outliner_state_";
 
 // Parallel prefetch configuration
 const BATCH_SIZE = 8;           // Blocks per request
@@ -92,6 +98,7 @@ const PlaybackPage = () => {
   const { settings } = useSettings();
   const { autoImportSharedDocuments } = useUserPreferences();
   const ttsWS = useTTSWebSocket();
+  const outliner = useOutliner();
 
   // Document data fetched from API
   const [document, setDocument] = useState<DocumentResponse | null>(null);
@@ -104,6 +111,16 @@ const PlaybackPage = () => {
   const [showImportBanner, setShowImportBanner] = useState(true);
   const [showFailedPagesBanner, setShowFailedPagesBanner] = useState(true);
   const [isImporting, setIsImporting] = useState(false);
+
+  // Outliner state - sections derived from H1/H2 headings
+  const [sections, setSections] = useState<Section[]>([]);
+  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
+  const [skippedSections, setSkippedSections] = useState<Set<string>>(new Set());
+  // Refs for use in async callbacks (avoid stale closures)
+  const sectionsRef = useRef<Section[]>([]);
+  sectionsRef.current = sections;
+  const skippedSectionsRef = useRef<Set<string>>(new Set());
+  skippedSectionsRef.current = skippedSections;
 
   // Derived state
   const documentTitle = document?.title ?? initialTitle;
@@ -231,6 +248,27 @@ const PlaybackPage = () => {
       blockStateVersionTimeoutRef.current = null;
     }, 50); // 50ms debounce - fast enough to feel responsive, slow enough to batch
   }, []);
+
+  // Helpers for skipping over blocks in skipped sections during playback
+  const isBlockSkipped = useCallback((blockIdx: number): boolean => {
+    if (sections.length === 0 || skippedSections.size === 0) return false;
+    const section = findSectionForBlock(sections, blockIdx);
+    return section ? skippedSections.has(section.id) : false;
+  }, [sections, skippedSections]);
+
+  const findNextPlayableBlock = useCallback((fromIdx: number): number => {
+    for (let idx = fromIdx; idx < documentBlocks.length; idx++) {
+      if (!isBlockSkipped(idx)) return idx;
+    }
+    return -1;
+  }, [documentBlocks.length, isBlockSkipped]);
+
+  const findPrevPlayableBlock = useCallback((fromIdx: number): number => {
+    for (let idx = fromIdx; idx >= 0; idx--) {
+      if (!isBlockSkipped(idx)) return idx;
+    }
+    return -1;
+  }, [isBlockSkipped]);
 
   // DOM-based active block highlighting - directly manipulate CSS classes
   // This runs synchronously before browser paint to avoid flicker
@@ -498,6 +536,64 @@ const PlaybackPage = () => {
     });
     setBlockStates(states);
   }, [documentBlocks, blockStateVersion, isServerMode, ttsWS.blockStates]);
+
+  // Build section index when document loads, restore persisted outliner state
+  useEffect(() => {
+    if (!structuredContent || documentBlocks.length === 0 || !documentId) {
+      setSections([]);
+      return;
+    }
+    try {
+      const parsed = JSON.parse(structuredContent);
+      const sectionIndex = buildSectionIndex(parsed, documentBlocks);
+      setSections(sectionIndex);
+
+      // Try to restore persisted outliner state
+      const savedState = localStorage.getItem(OUTLINER_STATE_KEY_PREFIX + documentId);
+      if (savedState) {
+        try {
+          const { expanded, skipped } = JSON.parse(savedState);
+          // Validate that saved section IDs still exist
+          const validSectionIds = new Set(sectionIndex.map(s => s.id));
+          const validExpanded = (expanded as string[]).filter(id => validSectionIds.has(id));
+          const validSkipped = (skipped as string[]).filter(id => validSectionIds.has(id));
+          setExpandedSections(new Set(validExpanded));
+          setSkippedSections(new Set(validSkipped));
+        } catch {
+          // Invalid saved state, expand all
+          setExpandedSections(new Set(sectionIndex.map(s => s.id)));
+          setSkippedSections(new Set());
+        }
+      } else {
+        // No saved state, expand all
+        setExpandedSections(new Set(sectionIndex.map(s => s.id)));
+        setSkippedSections(new Set());
+      }
+    } catch {
+      setSections([]);
+    }
+  }, [structuredContent, documentBlocks, documentId]);
+
+  // Auto-expand section when currentBlock changes (playback progression)
+  // Skipped sections are NOT auto-expanded - they're excluded from playback
+  useEffect(() => {
+    if (sections.length === 0 || currentBlock < 0) return;
+
+    const currentSection = findSectionForBlock(sections, currentBlock);
+    if (currentSection && !expandedSections.has(currentSection.id) && !skippedSections.has(currentSection.id)) {
+      setExpandedSections(prev => new Set([...prev, currentSection.id]));
+    }
+  }, [currentBlock, sections, expandedSections, skippedSections]);
+
+  // Persist outliner state when it changes
+  useEffect(() => {
+    if (!documentId || sections.length === 0) return;
+    const state = {
+      expanded: Array.from(expandedSections),
+      skipped: Array.from(skippedSections),
+    };
+    localStorage.setItem(OUTLINER_STATE_KEY_PREFIX + documentId, JSON.stringify(state));
+  }, [documentId, sections.length, expandedSections, skippedSections]);
 
   // Refs for keyboard handler to avoid stale closures
   const handlePlayRef = useRef<() => void>(() => {});
@@ -889,9 +985,22 @@ const PlaybackPage = () => {
       blockStartTimeRef.current += currentBlockDurationRef.current;
 
       setCurrentBlock(prev => {
-        if (documentBlocks && prev < documentBlocks.length - 1) {
-          return prev + 1;
+        // Find next playable block (not in skipped section)
+        const sections = sectionsRef.current;
+        const skipped = skippedSectionsRef.current;
+        let nextBlock = -1;
+        for (let idx = prev + 1; idx < documentBlocks.length; idx++) {
+          const section = sections.length > 0 ? findSectionForBlock(sections, idx) : null;
+          const isSkipped = section ? skipped.has(section.id) : false;
+          if (!isSkipped) {
+            nextBlock = idx;
+            break;
+          }
+        }
+        if (nextBlock >= 0) {
+          return nextBlock;
         } else {
+          // No more playable blocks
           setIsPlaying(false);
           setAudioProgress(0);
           blockStartTimeRef.current = 0;
@@ -940,15 +1049,17 @@ const PlaybackPage = () => {
       if (audioData && isPlayingRef.current) {
         playAudioBuffer(audioData);
       } else if (!audioData && isPlayingRef.current) {
-        // Synthesis failed after voice change - auto-advance
+        // Synthesis failed after voice change - auto-advance to next playable block
         console.error(`[Playback] SYNTHESIS FAILED after voice change for block ${blockId}, auto-advancing`);
         setCurrentBlock(prev => {
-          if (documentBlocks && prev < documentBlocks.length - 1) {
-            return prev + 1;
-          } else {
-            setIsPlaying(false);
-            return -1;
+          const sections = sectionsRef.current;
+          const skipped = skippedSectionsRef.current;
+          for (let idx = prev + 1; idx < documentBlocks.length; idx++) {
+            const section = sections.length > 0 ? findSectionForBlock(sections, idx) : null;
+            if (!section || !skipped.has(section.id)) return idx;
           }
+          setIsPlaying(false);
+          return -1;
         });
       }
     });
@@ -1026,6 +1137,20 @@ const PlaybackPage = () => {
       return;
     }
 
+    // Skip over blocks in skipped sections
+    const currentSection = sections.length > 0 ? findSectionForBlock(sections, currentBlock) : null;
+    if (currentSection && skippedSections.has(currentSection.id)) {
+      console.log(`[Playback] Block ${currentBlock} is in skipped section, advancing`);
+      const nextBlock = findNextPlayableBlock(currentBlock + 1);
+      if (nextBlock >= 0) {
+        setCurrentBlock(nextBlock);
+      } else {
+        setIsPlaying(false);
+        setCurrentBlock(-1);
+      }
+      return;
+    }
+
     // For server mode: if WS is disconnected, we can still play cached blocks
     // Only skip if we need to synthesize AND WS is down
     const currentBlockId = documentBlocks[currentBlock]?.id;
@@ -1047,17 +1172,19 @@ const PlaybackPage = () => {
         return;
       }
 
-      // Auto-advance if this block is marked as skipped (empty audio)
+      // Auto-advance if this block is marked as skipped (empty audio from TTS)
       if (ttsWS.blockStates.get(currentBlock)?.status === "skipped") {
-        console.log(`[Playback] Block ${currentBlock} is skipped, advancing to next`);
+        console.log(`[Playback] Block ${currentBlock} is skipped (empty audio), advancing to next`);
         playingBlockRef.current = currentBlock;
         setCurrentBlock(prev => {
-          if (documentBlocks && prev < documentBlocks.length - 1) {
-            return prev + 1;
-          } else {
-            setIsPlaying(false);
-            return -1;
+          const sections = sectionsRef.current;
+          const skipped = skippedSectionsRef.current;
+          for (let idx = prev + 1; idx < documentBlocks.length; idx++) {
+            const section = sections.length > 0 ? findSectionForBlock(sections, idx) : null;
+            if (!section || !skipped.has(section.id)) return idx;
           }
+          setIsPlaying(false);
+          return -1;
         });
         return;
       }
@@ -1085,15 +1212,17 @@ const PlaybackPage = () => {
           if (audioData && isPlayingRef.current) {
             playAudioBuffer(audioData);
           } else if (!audioData && isPlayingRef.current) {
-            // Synthesis failed (empty block, network error, etc.) - auto-advance
+            // Synthesis failed (empty block, network error, etc.) - auto-advance to next playable block
             console.error(`[Playback] SYNTHESIS FAILED for block ${currentBlockId} (idx ${currentBlock}), auto-advancing to next block`);
             setCurrentBlock(prev => {
-              if (documentBlocks && prev < documentBlocks.length - 1) {
-                return prev + 1;
-              } else {
-                setIsPlaying(false);
-                return -1;
+              const sections = sectionsRef.current;
+              const skipped = skippedSectionsRef.current;
+              for (let idx = prev + 1; idx < documentBlocks.length; idx++) {
+                const section = sections.length > 0 ? findSectionForBlock(sections, idx) : null;
+                if (!section || !skipped.has(section.id)) return idx;
               }
+              setIsPlaying(false);
+              return -1;
             });
           }
         });
@@ -1113,7 +1242,7 @@ const PlaybackPage = () => {
         }
       }
     }
-  }, [currentBlock, isPlaying, documentBlocks, playAudioBuffer, synthesizeBlock, triggerPrefetchBatch, checkAndRefillBuffer, isServerMode, ttsWS.isConnected, ttsWS.blockStates]);
+  }, [currentBlock, isPlaying, documentBlocks, playAudioBuffer, synthesizeBlock, triggerPrefetchBatch, checkAndRefillBuffer, isServerMode, ttsWS.isConnected, ttsWS.blockStates, sections, skippedSections, findNextPlayableBlock]);
 
 
   // Helper: count resolved blocks ahead (cached or skipped)
@@ -1139,12 +1268,26 @@ const PlaybackPage = () => {
       await audioContextRef.current.resume();
     }
 
-    // Determine starting position
-    const startBlock = currentBlock === -1 ? 0 : currentBlock;
+    // Determine starting position (skip over skipped sections)
+    let startBlock = currentBlock;
     if (currentBlock === -1) {
-      setCurrentBlock(0);
+      // Starting fresh - find first playable block
+      startBlock = findNextPlayableBlock(0);
+      if (startBlock < 0) {
+        console.log('[Playback] No playable blocks');
+        return;
+      }
+      setCurrentBlock(startBlock);
       setAudioProgress(0);
       blockStartTimeRef.current = 0;
+    } else if (isBlockSkipped(currentBlock)) {
+      // Current block is now in a skipped section, find next playable
+      startBlock = findNextPlayableBlock(currentBlock + 1);
+      if (startBlock < 0) {
+        console.log('[Playback] No playable blocks after current');
+        return;
+      }
+      setCurrentBlock(startBlock);
     }
 
     const isServer = isServerSideModel(voiceSelection.model);
@@ -1222,22 +1365,24 @@ const PlaybackPage = () => {
   const handleCancelSynthesis = handleCancelBuffering;
 
   const handleSkipBack = () => {
-    // Stop current audio
     audioPlayerRef.current?.stop();
 
-    // Don't modify progress if we're in an invalid state
     if (currentBlock < 0 || !documentBlocks.length) {
       console.log('[SkipBack] Invalid state, currentBlock:', currentBlock);
       return;
     }
 
-    if (currentBlock > 0) {
-      // Calculate progress up to the new block
-      const newBlock = currentBlock - 1;
+    // Find previous playable block (not in skipped section)
+    const newBlock = findPrevPlayableBlock(currentBlock - 1);
+
+    if (newBlock >= 0) {
+      // Calculate progress up to the new block (excluding skipped blocks)
       let progressMs = 0;
       for (let i = 0; i < newBlock; i++) {
-        const blockData = audioBuffersRef.current.get(documentBlocks[i].id);
-        progressMs += blockData?.duration_ms ?? documentBlocks[i].est_duration_ms ?? 0;
+        if (!isBlockSkipped(i)) {
+          const blockData = audioBuffersRef.current.get(documentBlocks[i].id);
+          progressMs += blockData?.duration_ms ?? documentBlocks[i].est_duration_ms ?? 0;
+        }
       }
       console.log('[SkipBack] Going to block', newBlock, 'progress:', progressMs);
       blockStartTimeRef.current = progressMs;
@@ -1245,14 +1390,19 @@ const PlaybackPage = () => {
       setCurrentBlock(newBlock);
       scrollToBlock(newBlock);
     } else {
-      // At first block (currentBlock === 0) - restart from beginning
-      console.log('[SkipBack] At first block, restarting');
+      // No previous playable block, restart current or first playable
+      const firstPlayable = findNextPlayableBlock(0);
+      if (firstPlayable < 0) return;
+
+      console.log('[SkipBack] At first playable block, restarting');
       blockStartTimeRef.current = 0;
       setAudioProgress(0);
-      scrollToBlock(0);
-      if (isPlaying && documentBlocks.length > 0) {
+      scrollToBlock(firstPlayable);
+      if (currentBlock !== firstPlayable) {
+        setCurrentBlock(firstPlayable);
+      } else if (isPlaying) {
         // Restart current block - directly play since effect won't re-trigger
-        const blockId = documentBlocks[0].id;
+        const blockId = documentBlocks[firstPlayable].id;
         const audioData = audioBuffersRef.current.get(blockId);
         if (audioData) {
           playAudioBuffer(audioData);
@@ -1270,22 +1420,26 @@ const PlaybackPage = () => {
   };
 
   const handleSkipForward = () => {
-    if (documentBlocks && currentBlock < documentBlocks.length - 1) {
-      // Stop current audio
-      audioPlayerRef.current?.stop();
+    if (!documentBlocks || currentBlock >= documentBlocks.length - 1) return;
 
-      // Calculate progress up to the new block
-      const newBlock = currentBlock + 1;
-      let progressMs = 0;
-      for (let i = 0; i < newBlock; i++) {
+    // Find next playable block (not in skipped section)
+    const newBlock = findNextPlayableBlock(currentBlock + 1);
+    if (newBlock < 0) return;
+
+    audioPlayerRef.current?.stop();
+
+    // Calculate progress up to the new block (excluding skipped blocks)
+    let progressMs = 0;
+    for (let i = 0; i < newBlock; i++) {
+      if (!isBlockSkipped(i)) {
         const blockData = audioBuffersRef.current.get(documentBlocks[i].id);
         progressMs += blockData?.duration_ms ?? documentBlocks[i].est_duration_ms ?? 0;
       }
-      blockStartTimeRef.current = progressMs;
-      setAudioProgress(progressMs);
-      setCurrentBlock(newBlock);
-      scrollToBlock(newBlock);
     }
+    blockStartTimeRef.current = progressMs;
+    setAudioProgress(progressMs);
+    setCurrentBlock(newBlock);
+    scrollToBlock(newBlock);
   };
 
   // Memoized to prevent StructuredDocumentView re-renders from audioProgress updates
@@ -1377,16 +1531,98 @@ const PlaybackPage = () => {
     }
   }, [isPublicView, autoImportSharedDocuments, isImporting, handleImportDocument]);
 
-  // Memoize progressBarValues to prevent SoundControl re-renders when unrelated state changes
-  const progressBarValues = useMemo(() => ({
-    estimated_ms: actualTotalDuration > 0 ? actualTotalDuration : estimated_ms,
-    numberOfBlocks,
-    currentBlock: currentBlock >= 0 ? currentBlock : 0,
-    setCurrentBlock: handleBlockChange,
-    onBlockHover: handleBlockHover,
-    audioProgress,
+  // Outliner callbacks
+  const handleSectionToggle = useCallback((sectionId: string) => {
+    setExpandedSections(prev => {
+      const next = new Set(prev);
+      if (next.has(sectionId)) {
+        next.delete(sectionId);
+      } else {
+        next.add(sectionId);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleSectionSkip = useCallback((sectionId: string) => {
+    setSkippedSections(prev => {
+      const next = new Set(prev);
+      if (next.has(sectionId)) {
+        // Un-skip: just remove from skipped, keep collapsed
+        next.delete(sectionId);
+      } else {
+        // Skip: add to skipped AND collapse
+        next.add(sectionId);
+        setExpandedSections(expanded => {
+          const newExpanded = new Set(expanded);
+          newExpanded.delete(sectionId);
+          return newExpanded;
+        });
+      }
+      return next;
+    });
+  }, []);
+
+  const handleExpandAllSections = useCallback(() => {
+    setExpandedSections(new Set(sections.map(s => s.id)));
+  }, [sections]);
+
+  const handleCollapseAllSections = useCallback(() => {
+    // Keep current section expanded
+    const currentSection = currentBlock >= 0 ? findSectionForBlock(sections, currentBlock) : null;
+    setExpandedSections(currentSection ? new Set([currentSection.id]) : new Set());
+  }, [sections, currentBlock]);
+
+  const handleOutlinerNavigate = useCallback((blockIdx: number) => {
+    handleBlockChange(blockIdx);
+    scrollToBlock(blockIdx);
+  }, [handleBlockChange, scrollToBlock]);
+
+  // Should show outliner: document has sections and enough content
+  const shouldShowOutliner = sections.length > 0 && documentBlocks.length >= 30;
+
+  // Sync outliner enabled state with shouldShowOutliner
+  useEffect(() => {
+    outliner.setEnabled(shouldShowOutliner);
+    // Cleanup: disable outliner when leaving page
+    return () => outliner.setEnabled(false);
+  }, [shouldShowOutliner, outliner]);
+
+  // Filtered playback for scoped progress bar (excludes collapsed and skipped sections)
+  const filteredPlayback = useFilteredPlayback(
+    documentBlocks,
+    sections,
+    expandedSections,
     blockStates,
-  }), [actualTotalDuration, estimated_ms, numberOfBlocks, currentBlock, handleBlockChange, handleBlockHover, audioProgress, blockStates]);
+    currentBlock,
+    skippedSections
+  );
+
+  // Memoize progressBarValues to prevent SoundControl re-renders when unrelated state changes
+  // When outliner is active, use filtered data so progress bar reflects expanded sections only
+  const progressBarValues = useMemo(() => {
+    if (shouldShowOutliner) {
+      return {
+        estimated_ms: filteredPlayback.filteredDuration,
+        numberOfBlocks: filteredPlayback.filteredBlockCount,
+        currentBlock: filteredPlayback.visualCurrentBlock ?? 0,
+        setCurrentBlock: handleBlockChange, // Receives absolute index after translation
+        onBlockHover: handleBlockHover,
+        audioProgress,
+        blockStates: filteredPlayback.filteredBlockStates,
+        visualToAbsolute: filteredPlayback.visualToAbsolute,
+      };
+    }
+    return {
+      estimated_ms: actualTotalDuration > 0 ? actualTotalDuration : estimated_ms,
+      numberOfBlocks,
+      currentBlock: currentBlock >= 0 ? currentBlock : 0,
+      setCurrentBlock: handleBlockChange,
+      onBlockHover: handleBlockHover,
+      audioProgress,
+      blockStates,
+    };
+  }, [shouldShowOutliner, filteredPlayback, actualTotalDuration, estimated_ms, numberOfBlocks, currentBlock, handleBlockChange, handleBlockHover, audioProgress, blockStates]);
 
   // Find first usage limit error from block states
   const blockError = useMemo(() => {
@@ -1492,6 +1728,11 @@ const PlaybackPage = () => {
           onBlockClick={handleDocumentBlockClick}
           fallbackContent={fallbackContent}
           onTitleChange={isPublicView ? undefined : handleTitleChange}
+          sections={shouldShowOutliner ? sections : undefined}
+          expandedSections={shouldShowOutliner ? expandedSections : undefined}
+          skippedSections={shouldShowOutliner ? skippedSections : undefined}
+          onSectionExpand={shouldShowOutliner ? handleSectionToggle : undefined}
+          currentBlockIdx={shouldShowOutliner ? currentBlock : undefined}
         />
         <SoundControl
           isPlaying={isPlaying}
@@ -1513,6 +1754,21 @@ const PlaybackPage = () => {
           voiceSelection={voiceSelection}
           onVoiceChange={setVoiceSelection}
         />
+        {shouldShowOutliner && (
+          <OutlinerSidebar>
+            <DocumentOutliner
+              sections={sections}
+              expandedSections={expandedSections}
+              skippedSections={skippedSections}
+              currentBlockIdx={currentBlock}
+              onSectionToggle={handleSectionToggle}
+              onSectionSkip={handleSectionSkip}
+              onExpandAll={handleExpandAllSections}
+              onCollapseAll={handleCollapseAllSections}
+              onNavigate={handleOutlinerNavigate}
+            />
+          </OutlinerSidebar>
+        )}
       </div>
     </div>
   );

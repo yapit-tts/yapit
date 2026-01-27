@@ -1,8 +1,9 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import DOMPurify from "dompurify";
 import katex from "katex";
-import { Copy, Download, Music, Check } from "lucide-react";
+import { Copy, Download, Music, Check, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
+import type { Section } from "@/lib/sectionIndex";
 
 // Sanitize HTML to prevent XSS attacks
 const sanitize = (html: string): string => DOMPurify.sanitize(html);
@@ -207,7 +208,20 @@ interface BlockProps {
 const blockBaseClass = "border-l-4 border-l-transparent -ml-1 transition-colors duration-150";
 const clickableClass = "cursor-pointer clickable-block";
 
-function HeadingBlockView({ block, slugId }: { block: HeadingBlock; slugId?: string }) {
+interface HeadingBlockViewProps {
+  block: HeadingBlock;
+  slugId?: string;
+  // Section collapse props (only for H1/H2 section headers)
+  isCollapsed?: boolean;
+  canCollapse?: boolean; // false if current block is in this section
+  onToggleCollapse?: () => void;
+}
+
+function HeadingBlockView({ block, slugId, isCollapsed, canCollapse = true, onToggleCollapse }: HeadingBlockViewProps) {
+  const [isHovered, setIsHovered] = useState(false);
+  const isSectionHeader = onToggleCollapse !== undefined;
+  const showChevron = isSectionHeader && canCollapse;
+
   const sizeClasses: Record<number, string> = {
     1: "text-3xl font-bold mt-8 mb-4",
     2: "text-2xl font-semibold mt-6 mb-3",
@@ -217,25 +231,66 @@ function HeadingBlockView({ block, slugId }: { block: HeadingBlock; slugId?: str
     6: "text-sm font-medium mt-2 mb-1",
   };
 
-  const className = cn(
+  const headingClassName = cn(
     sizeClasses[block.level],
-    "py-1"
+    "py-1",
+    isCollapsed && "text-muted-foreground cursor-pointer"
   );
 
-  const props = {
-    id: slugId,
-    className,
-    dangerouslySetInnerHTML: { __html: sanitize(block.html) },
+  const handleHeaderClick = (e: React.MouseEvent) => {
+    if (isCollapsed && onToggleCollapse) {
+      e.stopPropagation();
+      onToggleCollapse();
+    }
   };
 
-  switch (block.level) {
-    case 1: return <h1 {...props} />;
-    case 2: return <h2 {...props} />;
-    case 3: return <h3 {...props} />;
-    case 4: return <h4 {...props} />;
-    case 5: return <h5 {...props} />;
-    case 6: return <h6 {...props} />;
+  const HeadingTag = `h${block.level}` as 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6';
+
+  if (!showChevron) {
+    return (
+      <HeadingTag
+        id={slugId}
+        className={headingClassName}
+        onClick={isCollapsed ? handleHeaderClick : undefined}
+        dangerouslySetInnerHTML={{ __html: sanitize(block.html) }}
+      />
+    );
   }
+
+  // Chevron in fixed-position box, heading unaffected
+  return (
+    <div
+      className="relative"
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+    >
+      {/* Chevron box - fixed size, fixed position, only opacity and internal rotation change */}
+      <div className="absolute -left-6 top-0 bottom-0 w-5 hidden md:flex items-center justify-center">
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleCollapse?.();
+          }}
+          className={cn(
+            "flex items-center justify-center w-5 h-5 text-muted-foreground hover:text-foreground transition-opacity",
+            isCollapsed ? "opacity-100" : (isHovered ? "opacity-70" : "opacity-0")
+          )}
+          title={isCollapsed ? "Expand section" : "Collapse section"}
+        >
+          <ChevronRight className={cn(
+            "w-4 h-4 transition-transform duration-200",
+            !isCollapsed && "rotate-90"
+          )} />
+        </button>
+      </div>
+      <HeadingTag
+        id={slugId}
+        className={headingClassName}
+        onClick={handleHeaderClick}
+        dangerouslySetInnerHTML={{ __html: sanitize(block.html) }}
+      />
+    </div>
+  );
 }
 
 function ParagraphBlockView({ block }: { block: ParagraphBlock }) {
@@ -633,12 +688,24 @@ interface BlockViewProps {
   block: ContentBlock;
   onBlockClick?: (audioIdx: number) => void;
   slugMap?: Map<string, string>;
+  // Section collapse props for headings
+  isCollapsed?: boolean;
+  canCollapse?: boolean;
+  onToggleCollapse?: () => void;
 }
 
-function BlockView({ block, onBlockClick, slugMap }: BlockViewProps) {
+function BlockView({ block, onBlockClick, slugMap, isCollapsed, canCollapse, onToggleCollapse }: BlockViewProps) {
   switch (block.type) {
     case "heading":
-      return <HeadingBlockView block={block} slugId={slugMap?.get(block.id)} />;
+      return (
+        <HeadingBlockView
+          block={block}
+          slugId={slugMap?.get(block.id)}
+          isCollapsed={isCollapsed}
+          canCollapse={canCollapse}
+          onToggleCollapse={onToggleCollapse}
+        />
+      );
     case "paragraph":
       return <ParagraphBlockView block={block} />;
     case "list":
@@ -677,6 +744,12 @@ interface StructuredDocumentViewProps {
   onBlockClick?: (audioIdx: number) => void;
   fallbackContent?: string;
   onTitleChange?: (newTitle: string) => void;
+  // Section filtering for outliner integration
+  sections?: Section[];
+  expandedSections?: Set<string>;
+  skippedSections?: Set<string>;
+  onSectionExpand?: (sectionId: string) => void;
+  currentBlockIdx?: number; // To prevent collapsing section containing current block
 }
 
 // Memoized to prevent re-renders from parent's audioProgress updates
@@ -688,6 +761,11 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
   onBlockClick,
   fallbackContent,
   onTitleChange,
+  sections,
+  expandedSections,
+  skippedSections,
+  onSectionExpand,
+  currentBlockIdx,
 }: StructuredDocumentViewProps) {
   const contentRef = useRef<HTMLDivElement>(null);
   const [copied, setCopied] = useState(false);
@@ -919,6 +997,68 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
   // pb-52 (208px) provides clearance above the fixed SoundControl bar (~177px)
   const containerClass = "w-full flex flex-col overflow-y-auto px-4 sm:px-[8%] md:px-[10%] pt-4 sm:pt-[4%] pb-52";
 
+  // Build map from heading block ID to section (for collapse/expand UI)
+  // Must be before early return to satisfy React hooks rules
+  const sectionByHeadingId = useMemo(() => {
+    const map = new Map<string, Section>();
+    if (sections) {
+      for (const section of sections) {
+        map.set(section.id, section);
+      }
+    }
+    return map;
+  }, [sections]);
+
+  // Filter blocks based on section state (must be before early return)
+  const visibleBlocks = useMemo(() => {
+    if (!doc?.blocks || !sections || sections.length === 0 || !expandedSections) {
+      return doc?.blocks ?? [];
+    }
+
+    const skipped = skippedSections ?? new Set<string>();
+
+    const findSectionForAudioIdx = (audioIdx: number): Section | undefined => {
+      return sections.find(s => audioIdx >= s.startBlockIdx && audioIdx <= s.endBlockIdx);
+    };
+
+    const visible: ContentBlock[] = [];
+    let lastSeenSectionId: string | null = null;
+
+    for (const block of doc.blocks) {
+      if (block.type === "heading" && sectionByHeadingId.has(block.id)) {
+        const sectionId = block.id;
+        if (skipped.has(sectionId)) {
+          lastSeenSectionId = sectionId;
+          continue;
+        }
+        visible.push(block);
+        lastSeenSectionId = sectionId;
+        continue;
+      }
+
+      const audioIdx = block.audio_chunks?.[0]?.audio_block_idx;
+      if (audioIdx === undefined) {
+        if (lastSeenSectionId && expandedSections.has(lastSeenSectionId) && !skipped.has(lastSeenSectionId)) {
+          visible.push(block);
+        }
+        continue;
+      }
+
+      const section = findSectionForAudioIdx(audioIdx);
+      if (!section) continue;
+
+      if (section.id !== lastSeenSectionId) {
+        lastSeenSectionId = section.id;
+      }
+
+      if (expandedSections.has(section.id) && !skipped.has(section.id)) {
+        visible.push(block);
+      }
+    }
+
+    return visible;
+  }, [doc?.blocks, sections, expandedSections, skippedSections, sectionByHeadingId]);
+
   // Fallback to plain text rendering
   if (!doc || !doc.blocks || doc.blocks.length === 0) {
     return (
@@ -953,7 +1093,7 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
   }
 
   // Group consecutive images with same row_group for side-by-side display
-  const groupedBlocks = groupBlocks(doc.blocks);
+  const groupedBlocks = groupBlocks(visibleBlocks);
 
   return (
     <article className={cn(containerClass, "prose-container")}>
@@ -1046,20 +1186,33 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
             );
           } else {
             const block = grouped.block;
+            // Check if this is a section header (H1/H2)
+            const section = sectionByHeadingId.get(block.id);
+            const isCollapsed = section ? !expandedSections?.has(section.id) : false;
+            // Can't collapse section if current block is in it
+            const canCollapse = section && currentBlockIdx !== undefined
+              ? !(currentBlockIdx >= section.startBlockIdx && currentBlockIdx <= section.endBlockIdx)
+              : true;
+            const handleToggleCollapse = section && onSectionExpand
+              ? () => onSectionExpand(section.id)
+              : undefined;
+
             // Container blocks (blockquote, list, footnotes) handle their own inner highlighting
             // Don't add data-audio-block-idx to their wrapper - it causes double highlight
             const isContainerBlock = block.type === "blockquote" || block.type === "list" || block.type === "footnotes";
             const hasAudio = block.audio_chunks.length > 0;
             const hasSingleChunk = block.audio_chunks.length === 1;
             const firstAudioIdx = hasAudio ? block.audio_chunks[0].audio_block_idx : undefined;
-            // Only make wrapper clickable/hoverable if single chunk AND not a container block
-            const handleWrapperClick = hasSingleChunk && !isContainerBlock && onBlockClick
+            // Section headers (with collapse toggle) are not clickable audio blocks
+            const isSectionHeader = handleToggleCollapse !== undefined;
+            // Only make wrapper clickable/hoverable if single chunk AND not a container block AND not a section header
+            const handleWrapperClick = hasSingleChunk && !isContainerBlock && !isSectionHeader && onBlockClick
               ? () => onBlockClick(firstAudioIdx!)
               : undefined;
             return (
               <div
                 key={block.id}
-                data-audio-block-idx={hasSingleChunk && !isContainerBlock ? firstAudioIdx : undefined}
+                data-audio-block-idx={hasSingleChunk && !isContainerBlock && !isSectionHeader ? firstAudioIdx : undefined}
                 className={cn(blockBaseClass, handleWrapperClick && clickableClass)}
                 onClick={handleWrapperClick}
               >
@@ -1067,6 +1220,9 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
                   block={block}
                   onBlockClick={onBlockClick}
                   slugMap={slugMap}
+                  isCollapsed={isCollapsed}
+                  canCollapse={canCollapse}
+                  onToggleCollapse={handleToggleCollapse}
                 />
               </div>
             );

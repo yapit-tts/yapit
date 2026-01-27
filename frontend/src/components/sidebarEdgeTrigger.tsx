@@ -6,6 +6,7 @@ const EDGE_WIDTH = 60; // Trigger zone width (px)
 const SWIPE_THRESHOLD = 50; // Mobile swipe distance to trigger (px)
 const REVEAL_DELAY = 150; // ms cursor must stay in zone before reveal
 const MOBILE_EDGE_INSET = 20; // Mobile: inset from edge to avoid browser back gesture
+const SIDEBAR_WIDTH = "16rem"; // Must match shadcn sidebar default width
 
 export function SidebarEdgeTrigger() {
   const { toggleSidebar, open } = useSidebar();
@@ -122,68 +123,51 @@ export function SidebarEdgeTrigger() {
       <button
         onClick={toggleSidebar}
         className="fixed left-0 z-20
-          w-5 h-11 flex items-center justify-center
+          w-6 h-14 flex items-center justify-center
           bg-background/60 backdrop-blur-sm
           border-y border-r border-border rounded-r-lg
           active:bg-muted/80 transition-colors"
         style={{ top: '65%' }}
         aria-label="Toggle sidebar"
       >
-        <span className="text-muted-foreground text-sm font-light">›</span>
+        <span className="text-muted-foreground text-base font-light">›</span>
       </button>
     );
   }
 
-  // Desktop: when sidebar is open, show close button that slides with sidebar
-  if (open) {
-    return (
-      <button
-        onClick={toggleSidebar}
-        className="fixed top-1/2 -translate-y-1/2 z-20
-          w-6 h-16 flex items-center justify-center
-          bg-background/70 backdrop-blur-sm
-          border-y border-r border-border rounded-r-lg
-          shadow-sm hover:bg-muted/80
-          transition-[left] duration-200 ease-out"
-        style={{
-          left: 'var(--sidebar-width, 256px)',
-          // Start from 0 and animate to sidebar width via CSS
-          animation: 'slideToSidebarEdge 200ms ease-out forwards'
-        }}
-        aria-label="Close sidebar"
-      >
-        <span className="text-muted-foreground text-xl font-light">
-          ‹
-        </span>
-      </button>
-    );
-  }
+  // Desktop: single button that transitions between closed/open positions
+  // When closed: at left edge, fades in on hover
+  // When open: slides to sidebar edge with sidebar
+  const isVisible = open || revealed;
 
-  // Desktop closed: edge-triggered reveal
   return (
     <>
-      {/* Invisible trigger zone - full height */}
-      <div
-        className="fixed left-0 top-0 h-full z-20"
-        style={{ width: `${EDGE_WIDTH}px` }}
-      />
+      {/* Invisible trigger zone when closed */}
+      {!open && (
+        <div
+          className="fixed left-0 top-0 h-full z-20"
+          style={{ width: `${EDGE_WIDTH}px` }}
+        />
+      )}
 
-      {/* Chevron - revealed after delay, stable position */}
       <button
         onClick={toggleSidebar}
-        className={`fixed left-0 top-1/2 -translate-y-1/2 z-20
+        className={`fixed top-1/2 -translate-y-1/2
           w-8 h-20 flex items-center justify-center
-          bg-background/70 backdrop-blur-md
-          border-y border-r border-border rounded-r-xl
-          shadow-lg hover:bg-muted/80
+          rounded-r-xl
           transition-all duration-200 ease-out
           focus:outline-none focus-visible:ring-2 focus-visible:ring-ring
-          ${revealed ? 'opacity-100 translate-x-0' : 'opacity-0 -translate-x-4 pointer-events-none'}`}
-        aria-label="Open sidebar"
+          ${open
+            ? "z-[9] bg-sidebar border border-border hover:bg-muted/80"
+            : `z-20 bg-background/70 backdrop-blur-md border-y border-r border-border shadow-lg hover:bg-muted/80
+               ${isVisible ? "opacity-100 translate-x-0" : "opacity-0 -translate-x-4 pointer-events-none"}`
+          }`}
+        style={{
+          left: open ? `calc(${SIDEBAR_WIDTH} - 4px)` : 0,
+        }}
+        aria-label={open ? "Close sidebar" : "Open sidebar"}
       >
-        <span className="text-muted-foreground text-2xl font-extralight">
-          ‹
-        </span>
+        <span className="text-muted-foreground text-2xl font-extralight">‹</span>
       </button>
     </>
   );
