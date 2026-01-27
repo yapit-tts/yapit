@@ -19,7 +19,7 @@ const POSITION_KEY_PREFIX = "yapit_playback_position_";
 // Parallel prefetch configuration
 const BATCH_SIZE = 8;           // Blocks per request
 const REFILL_THRESHOLD = 8;     // When ready_ahead < this, request more
-const MIN_BUFFER_TO_START = 4;  // Minimum cached blocks before starting playback
+const MIN_BUFFER_TO_START = 2;  // Blocks to buffer before starting (when current block not cached)
 
 interface PlaybackPosition {
   block: number;
@@ -1157,22 +1157,35 @@ const PlaybackPage = () => {
       return;
     }
 
-    // Server mode: check if we have enough cached blocks to start playing
-    // For short documents, don't require more blocks than exist
-    const cachedAhead = countCachedAhead(startBlock);
-    const remainingBlocks = documentBlocks.length - startBlock;
-    const requiredBuffer = Math.min(MIN_BUFFER_TO_START, remainingBlocks);
+    // Server mode: start immediately if current block is cached, otherwise buffer
+    const startBlockId = documentBlocks[startBlock]?.id;
+    const currentBlockCached = startBlockId && audioBuffersRef.current.has(startBlockId);
 
-    if (cachedAhead >= requiredBuffer) {
-      console.log(`[Playback] Buffer ready: ${cachedAhead} blocks cached, starting playback`);
+    if (currentBlockCached) {
+      // Current block ready - start immediately, prefetch will handle the rest
+      console.log(`[Playback] Current block cached, starting immediately`);
       setIsPlaying(true);
-    } else {
-      console.log(`[Playback] Buffer insufficient: ${cachedAhead}/${requiredBuffer} blocks, entering buffering state`);
-      setIsBuffering(true);
-
-      // Request initial batch for server mode
+      // Trigger prefetch for upcoming blocks
       if (ttsWS.isConnected) {
-        triggerPrefetchBatch(startBlock, BATCH_SIZE);
+        triggerPrefetchBatch(startBlock + 1, BATCH_SIZE);
+      }
+    } else {
+      // Need to buffer - wait for MIN_BUFFER_TO_START blocks
+      const cachedAhead = countCachedAhead(startBlock);
+      const remainingBlocks = documentBlocks.length - startBlock;
+      const requiredBuffer = Math.min(MIN_BUFFER_TO_START, remainingBlocks);
+
+      if (cachedAhead >= requiredBuffer) {
+        console.log(`[Playback] Buffer ready: ${cachedAhead} blocks cached, starting playback`);
+        setIsPlaying(true);
+      } else {
+        console.log(`[Playback] Buffer insufficient: ${cachedAhead}/${requiredBuffer} blocks, entering buffering state`);
+        setIsBuffering(true);
+
+        // Request initial batch for server mode
+        if (ttsWS.isConnected) {
+          triggerPrefetchBatch(startBlock, BATCH_SIZE);
+        }
       }
     }
   };
