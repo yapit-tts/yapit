@@ -73,6 +73,7 @@ export function UnifiedInput() {
     return stored !== null ? stored === "true" : true;
   });
   const [usageLimitExceeded, setUsageLimitExceeded] = useState(false);
+  const [storageLimitError, setStorageLimitError] = useState<string | null>(null);
   const [completedPages, setCompletedPages] = useState<number[]>([]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -96,6 +97,7 @@ export function UnifiedInput() {
       setMode("idle");
       setPrepareData(null);
       setError(null);
+      setStorageLimitError(null);
       return;
     }
 
@@ -105,10 +107,12 @@ export function UnifiedInput() {
     if (isUrl(trimmed)) {
       setMode("url");
       setUrlState("detecting");
-    } else {
+    } else if (mode !== "text") {
+      // Only reset when transitioning TO text mode, not when already in text mode
       setMode("text");
       setPrepareData(null);
       setError(null);
+      setStorageLimitError(null);
     }
   }, [value, isUrl, mode, isCreating, urlState]);
 
@@ -224,9 +228,14 @@ export function UnifiedInput() {
         return;
       }
 
-      if (err instanceof AxiosError && err.response?.status === 402) {
+      const axiosErr = err as AxiosError<{ detail?: { code?: string; message?: string } | string }>;
+      const detail = axiosErr.response?.data?.detail;
+      if (axiosErr.response?.status === 402) {
         setAiTransformEnabled(false);
         setUsageLimitExceeded(true);
+        setError(null);
+      } else if (typeof detail === "object" && detail?.code === "STORAGE_LIMIT_EXCEEDED") {
+        setStorageLimitError(detail.message || "Storage limit reached");
         setError(null);
       } else {
         setError(err instanceof Error ? err.message : "Failed to create document");
@@ -254,7 +263,14 @@ export function UnifiedInput() {
       });
     } catch (err) {
       setIsCreating(false);
-      setError(err instanceof Error ? err.message : "Failed to create document");
+      const axiosErr = err as AxiosError<{ detail?: { code?: string; message?: string } | string }>;
+      const detail = axiosErr.response?.data?.detail;
+      if (typeof detail === "object" && detail?.code === "STORAGE_LIMIT_EXCEEDED") {
+        setStorageLimitError(detail.message || "Storage limit reached");
+        setError(null);
+      } else {
+        setError(err instanceof Error ? err.message : "Failed to create document");
+      }
     }
   };
 
@@ -300,14 +316,17 @@ export function UnifiedInput() {
     } catch (err) {
       setUrlState("error");
       setIsCreating(false);
-      if (err instanceof AxiosError) {
-        if (err.response?.status === 413) {
-          setError(`File too large. Maximum size is ${MAX_FILE_SIZE_MB} MB.`);
-        } else if (err.response?.data?.detail) {
-          setError(err.response.data.detail);
-        } else {
-          setError(err.message);
-        }
+      const axiosErr = err as AxiosError<{ detail?: { code?: string; message?: string } | string }>;
+      const detail = axiosErr.response?.data?.detail;
+      if (typeof detail === "object" && detail?.code === "STORAGE_LIMIT_EXCEEDED") {
+        setStorageLimitError(detail.message || "Storage limit reached");
+        setError(null);
+      } else if (axiosErr.response?.status === 413) {
+        setError(`File too large. Maximum size is ${MAX_FILE_SIZE_MB} MB.`);
+      } else if (typeof detail === "string") {
+        setError(detail);
+      } else if (typeof detail === "object" && detail?.message) {
+        setError(detail.message);
       } else {
         setError(err instanceof Error ? err.message : "Failed to upload file");
       }
@@ -445,6 +464,18 @@ export function UnifiedInput() {
             This request exceeds your current plan's usage limits.{" "}
             <Link to="/subscription" className="text-primary hover:underline">
               Upgrade plan
+            </Link>
+          </span>
+        </div>
+      )}
+
+      {storageLimitError && (
+        <div className="flex items-center gap-2 text-sm text-destructive">
+          <AlertCircle className="h-4 w-4 shrink-0" />
+          <span>
+            {storageLimitError}{" "}
+            <Link to="/account" className="text-primary hover:underline">
+              Manage documents
             </Link>
           </span>
         </div>
