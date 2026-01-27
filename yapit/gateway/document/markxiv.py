@@ -17,6 +17,7 @@ ARXIV_PATTERNS: list[tuple[re.Pattern[str], str]] = [
 ]
 
 _HEADER_ANCHOR_PATTERN = re.compile(r"^(#+\s+.+?)\s*\{#[^}]+\}\s*$", re.MULTILINE)
+_STANDALONE_ANCHOR_PATTERN = re.compile(r"\s*\{#[^}]+\}")  # {#fig:model-arch}, {#tab:...}
 _CITATION_PATTERN = re.compile(r"\s*\[@[^\]]+\]")  # [@author_year] or [@a; @b; @c]
 _REFERENCE_ATTR_PATTERN = re.compile(r'\{reference-type="[^"]*"\s+reference="[^"]*"\}')
 _ORPHAN_LABEL_REF_PATTERN = re.compile(
@@ -78,7 +79,8 @@ async def fetch_from_markxiv(markxiv_url: str, arxiv_id: str) -> str:
 
 def cleanup_markxiv_markdown(md: str) -> str:
     """Clean up pandoc-generated markdown from markxiv for TTS readability."""
-    md = _HEADER_ANCHOR_PATTERN.sub(r"\1", md)
+    md = _HEADER_ANCHOR_PATTERN.sub(r"\1", md)  # Must run before standalone anchor
+    md = _STANDALONE_ANCHOR_PATTERN.sub("", md)
     md = _CITATION_PATTERN.sub("", md)
     md = _REFERENCE_ATTR_PATTERN.sub("", md)
     md = _ORPHAN_LABEL_REF_PATTERN.sub("", md)
