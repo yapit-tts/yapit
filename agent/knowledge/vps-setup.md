@@ -184,18 +184,24 @@ Tailscale traffic bypasses UFW (uses its own tun interface + routing rules).
 
 ## Gotchas
 
-### Docker Swarm port binding ignores host IP
+### Docker Swarm cannot bind ports to specific IPs
 
-Short syntax like `"100.87.244.58:6379:6379"` doesn't work in Swarm — ingress mode publishes on all interfaces regardless.
+Swarm **fundamentally cannot** bind published ports to specific host IPs — not with short syntax, not with long syntax, not with `mode: host`. The `host_ip` field is a Compose Specification v2 feature not supported by Swarm.
 
-Use long syntax with `mode: host` to actually bind to a specific IP:
+Both of these bind to `0.0.0.0` (all interfaces):
 ```yaml
+# Short syntax - IP is silently ignored
+ports:
+  - "100.87.244.58:6379:6379"
+
+# Long syntax with mode: host - still binds to 0.0.0.0
 ports:
   - target: 6379
     published: 6379
-    mode: host      # Bypasses ingress, respects host_ip
-    host_ip: 100.87.244.58
+    mode: host
 ```
+
+**Security model:** Use firewalls (Hetzner + UFW) to block external access. Tailscale bypasses UFW by design, allowing VPN-connected workers to reach services.
 
 ### Container IP caching after redeploy
 

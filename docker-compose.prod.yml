@@ -57,8 +57,9 @@ services:
       - target: 6379
         published: 6379
         protocol: tcp
-        mode: host  # Bypass Swarm ingress - short syntax IP binding doesn't work with ingress
-        host_ip: 100.87.244.58  # Tailscale IP only - external workers connect via VPN
+        mode: host  # Bypass Swarm ingress; binds to 0.0.0.0 on this node only
+    # Security: Swarm cannot bind to specific IPs. External access blocked by
+    # Hetzner firewall + UFW. Tailscale workers connect via VPN (bypasses UFW).
     networks:
       - yapit-network
     deploy:
