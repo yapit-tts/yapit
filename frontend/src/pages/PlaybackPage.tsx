@@ -1586,6 +1586,9 @@ const PlaybackPage = () => {
           onBlockClick={handleDocumentBlockClick}
           fallbackContent={fallbackContent}
           onTitleChange={isPublicView ? undefined : handleTitleChange}
+          sections={shouldShowOutliner ? sections : undefined}
+          expandedSections={shouldShowOutliner ? expandedSections : undefined}
+          onSectionExpand={shouldShowOutliner ? handleSectionToggle : undefined}
         />
         <SoundControl
           isPlaying={isPlaying}

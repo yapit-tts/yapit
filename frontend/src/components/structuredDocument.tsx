@@ -1,8 +1,9 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import DOMPurify from "dompurify";
 import katex from "katex";
-import { Copy, Download, Music, Check } from "lucide-react";
+import { Copy, Download, Music, Check, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
+import type { Section } from "@/lib/sectionIndex";
 
 // Sanitize HTML to prevent XSS attacks
 const sanitize = (html: string): string => DOMPurify.sanitize(html);
@@ -677,6 +678,10 @@ interface StructuredDocumentViewProps {
   onBlockClick?: (audioIdx: number) => void;
   fallbackContent?: string;
   onTitleChange?: (newTitle: string) => void;
+  // Section filtering for outliner integration
+  sections?: Section[];
+  expandedSections?: Set<string>;
+  onSectionExpand?: (sectionId: string) => void;
 }
 
 // Memoized to prevent re-renders from parent's audioProgress updates
@@ -688,6 +693,9 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
   onBlockClick,
   fallbackContent,
   onTitleChange,
+  sections,
+  expandedSections,
+  onSectionExpand,
 }: StructuredDocumentViewProps) {
   const contentRef = useRef<HTMLDivElement>(null);
   const [copied, setCopied] = useState(false);
@@ -952,8 +960,68 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
     );
   }
 
+  // Filter blocks by expanded sections and determine where to show expand buttons
+  const { visibleBlocks, collapsedSectionsMap, trailingCollapsed } = useMemo(() => {
+    // No sections or no filtering = show all blocks
+    if (!sections || sections.length === 0 || !expandedSections) {
+      return {
+        visibleBlocks: doc.blocks,
+        collapsedSectionsMap: new Map<string, Section[]>(),
+        trailingCollapsed: [] as Section[],
+      };
+    }
+
+    // Helper to find which section a block belongs to
+    const findSectionForAudioIdx = (audioIdx: number): Section | undefined => {
+      return sections.find(s => audioIdx >= s.startBlockIdx && audioIdx <= s.endBlockIdx);
+    };
+
+    const visible: ContentBlock[] = [];
+    const collapsedMap = new Map<string, Section[]>();
+    let pendingCollapsed: Section[] = [];
+    let lastSeenSectionId: string | null = null;
+
+    // Process blocks in order, tracking which collapsed sections we pass through
+    for (const block of doc.blocks) {
+      const audioIdx = block.audio_chunks?.[0]?.audio_block_idx;
+      if (audioIdx === undefined) {
+        // Blocks without audio (e.g., thematic breaks) - include if prev section was expanded
+        if (lastSeenSectionId && expandedSections.has(lastSeenSectionId)) {
+          visible.push(block);
+        }
+        continue;
+      }
+
+      const section = findSectionForAudioIdx(audioIdx);
+      if (!section) continue; // Block not in any section (shouldn't happen)
+
+      // Check if we've entered a new section
+      if (section.id !== lastSeenSectionId) {
+        if (!expandedSections.has(section.id)) {
+          // Entering a collapsed section - track it
+          if (!pendingCollapsed.some(s => s.id === section.id)) {
+            pendingCollapsed.push(section);
+          }
+        }
+        lastSeenSectionId = section.id;
+      }
+
+      // If section is expanded, include the block
+      if (expandedSections.has(section.id)) {
+        // Attach pending collapsed sections to this first visible block
+        if (pendingCollapsed.length > 0) {
+          collapsedMap.set(block.id, [...pendingCollapsed]);
+          pendingCollapsed = [];
+        }
+        visible.push(block);
+      }
+    }
+
+    return { visibleBlocks: visible, collapsedSectionsMap: collapsedMap, trailingCollapsed: pendingCollapsed };
+  }, [doc.blocks, sections, expandedSections]);
+
   // Group consecutive images with same row_group for side-by-side display
-  const groupedBlocks = groupBlocks(doc.blocks);
+  const groupedBlocks = groupBlocks(visibleBlocks);
 
   return (
     <article className={cn(containerClass, "prose-container")}>
@@ -1036,13 +1104,39 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
       )}
       <div ref={contentRef} className="structured-content px-3 break-words" onClick={handleContentClick}>
         {groupedBlocks.map((grouped) => {
+          const blockId = grouped.kind === "image-row" ? grouped.blocks[0].id : grouped.block.id;
+          const collapsedBefore = collapsedSectionsMap.get(blockId);
+
+          // Render expand buttons for collapsed sections before this block
+          const expandButtons = collapsedBefore && onSectionExpand ? (
+            <div className="my-4">
+              {collapsedBefore.map((section) => (
+                <button
+                  key={section.id}
+                  onClick={() => onSectionExpand(section.id)}
+                  className="w-full flex items-center justify-center gap-2 py-2 px-4
+                    text-sm text-muted-foreground
+                    border border-dashed border-border rounded-md
+                    hover:bg-muted/50 hover:text-foreground
+                    transition-colors"
+                >
+                  <ChevronDown className="w-4 h-4" />
+                  <span>Show "{section.title}"</span>
+                  <ChevronDown className="w-4 h-4" />
+                </button>
+              ))}
+            </div>
+          ) : null;
+
           if (grouped.kind === "image-row") {
             return (
-              <ImageRowView
-                key={grouped.blocks[0].id}
-                blocks={grouped.blocks}
-                onBlockClick={onBlockClick}
-              />
+              <div key={grouped.blocks[0].id}>
+                {expandButtons}
+                <ImageRowView
+                  blocks={grouped.blocks}
+                  onBlockClick={onBlockClick}
+                />
+              </div>
             );
           } else {
             const block = grouped.block;
@@ -1057,21 +1151,43 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
               ? () => onBlockClick(firstAudioIdx!)
               : undefined;
             return (
-              <div
-                key={block.id}
-                data-audio-block-idx={hasSingleChunk && !isContainerBlock ? firstAudioIdx : undefined}
-                className={cn(blockBaseClass, handleWrapperClick && clickableClass)}
-                onClick={handleWrapperClick}
-              >
-                <BlockView
-                  block={block}
-                  onBlockClick={onBlockClick}
-                  slugMap={slugMap}
-                />
+              <div key={block.id}>
+                {expandButtons}
+                <div
+                  data-audio-block-idx={hasSingleChunk && !isContainerBlock ? firstAudioIdx : undefined}
+                  className={cn(blockBaseClass, handleWrapperClick && clickableClass)}
+                  onClick={handleWrapperClick}
+                >
+                  <BlockView
+                    block={block}
+                    onBlockClick={onBlockClick}
+                    slugMap={slugMap}
+                  />
+                </div>
               </div>
             );
           }
         })}
+        {/* Trailing collapsed sections (at end of document) */}
+        {trailingCollapsed.length > 0 && onSectionExpand && (
+          <div className="my-4">
+            {trailingCollapsed.map((section) => (
+              <button
+                key={section.id}
+                onClick={() => onSectionExpand(section.id)}
+                className="w-full flex items-center justify-center gap-2 py-2 px-4
+                  text-sm text-muted-foreground
+                  border border-dashed border-border rounded-md
+                  hover:bg-muted/50 hover:text-foreground
+                  transition-colors"
+              >
+                <ChevronDown className="w-4 h-4" />
+                <span>Show "{section.title}"</span>
+                <ChevronDown className="w-4 h-4" />
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Inline styles for HTML content */}
