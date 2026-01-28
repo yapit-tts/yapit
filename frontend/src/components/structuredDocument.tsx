@@ -4,6 +4,14 @@ import katex from "katex";
 import { Copy, Download, Music, Check, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Section } from "@/lib/sectionIndex";
+import { useSettings, type ContentWidth } from "@/hooks/useSettings";
+
+const contentWidthClasses: Record<ContentWidth, string> = {
+  narrow: "max-w-2xl",  // 672px
+  medium: "max-w-4xl",  // 896px
+  wide: "max-w-6xl",    // 1152px
+  full: "",             // no limit
+};
 
 // Sanitize HTML to prevent XSS attacks
 const sanitize = (html: string): string => DOMPurify.sanitize(html);
@@ -993,9 +1001,16 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
     </div>
   );
 
-  // Responsive margins: larger on desktop, smaller on mobile
+  const { settings } = useSettings();
+
   // pb-52 (208px) provides clearance above the fixed SoundControl bar (~177px)
-  const containerClass = "w-full flex flex-col overflow-y-auto px-4 sm:px-[8%] md:px-[10%] pt-4 sm:pt-[4%] pb-52";
+  // Content width is user-configurable; when constrained, use fixed padding instead of percentage
+  const hasMaxWidth = settings.contentWidth !== "full";
+  const containerClass = cn(
+    "w-full flex flex-col overflow-y-auto pt-4 sm:pt-[4%] pb-52",
+    hasMaxWidth ? "px-4 sm:px-6 mx-auto" : "px-4 sm:px-[8%] md:px-[10%]",
+    contentWidthClasses[settings.contentWidth]
+  );
 
   // Build map from heading block ID to section (for collapse/expand UI)
   // Must be before early return to satisfy React hooks rules

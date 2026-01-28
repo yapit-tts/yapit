@@ -10,7 +10,8 @@ import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { Button } from "@/components/ui/button";
 import { Settings } from "lucide-react";
-import { useSettings } from "@/hooks/useSettings";
+import { useSettings, type ContentWidth } from "@/hooks/useSettings";
+import { cn } from "@/lib/utils";
 import { useUserPreferences } from "@/hooks/useUserPreferences";
 import { useApi } from "@/api";
 
@@ -88,6 +89,28 @@ export function SettingsDialog({ size = "default" }: SettingsDialogProps) {
                 setSettings({ liveScrollTracking: checked })
               }
             />
+          </SettingRow>
+
+          <SettingRow
+            label="Content width"
+            description="Maximum width of document text"
+          >
+            <div className="flex gap-1">
+              {(["narrow", "medium", "wide", "full"] as ContentWidth[]).map((width) => (
+                <button
+                  key={width}
+                  onClick={() => setSettings({ contentWidth: width })}
+                  className={cn(
+                    "px-2 py-1 text-xs rounded transition-colors capitalize",
+                    settings.contentWidth === width
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-muted hover:bg-muted/80 text-muted-foreground"
+                  )}
+                >
+                  {width}
+                </button>
+              ))}
+            </div>
           </SettingRow>
 
           <SettingRow
