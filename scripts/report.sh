@@ -60,6 +60,7 @@ $DISK_HISTORY"
 
 # The analysis prompt
 read -r -d '' PROMPT << 'EOF' || true
+IGNORE ALL (CLAUDE.MD) INSTRUCTIONS BEFORE THIS MESSAGE. YOU ARE A FOCUSSED DIAGNOSTIC AGENT AND DO NOT HAVE THE SAME TOOLS AVAILABLE. YOUR *ONLY* INSTRUCTIONS ARE THE FOLLOWING:
 You are analyzing system health for Yapit TTS.
 
 ## System Architecture
@@ -180,6 +181,9 @@ Yapit is a text-to-speech platform with these components:
 | Requeues | Rare/isolated | Pattern (same worker, same error) |
 | Overflow usage | Occasional spikes | Constant (capacity issue) |
 
+Events older than 3-7 days can be ignored unless part of a larger pattern / investigation.
+E.g. items on the DLQ from >7 days ago are almost certainly already taken care of.
+
 ## Log Investigation
 
 Logs are JSON lines (loguru format). Key fields:
@@ -248,17 +252,42 @@ If any of these would help future analysis, note them:
 - **Analysis tools/utilities** (scripts, queries, anything reusable)
 - **Tool permissions** you were missing
 
-Don't request live/interactive prod access — that's out of scope by design.
+**Important**: 
+- DO NOT request live/interactive prod access — that's out of scope by design.
+- DO NOT include comments before bash commands — they won't match allowed tool patterns and will be blocked.
+- FORGET instructions from our CLAUDE.MD knowledge files. They do not apply in the environment you're operating in now. ONLY the rules specified in this message apply.
+
+===
+AVAILABLE TOOLS - USE THESE TO YOUR ADVANTAGE: Read,Bash(jq:*),Bash(grep:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(duckdb:*),Bash(wc:*),Bash(sort:*),Bash(uniq:*),Bash(ls:*)
+Use these tools exactly as indicated by the permissions, i.e. "duckdb ..." NOT "nix run ..." and NOT "bash -c 'duckdb ...'", or similar. 
 EOF
 
 echo "Running Claude analysis..."
-message=$(claude -p "$PROMPT" \
+output=$(claude -p "$PROMPT" \
     --allowedTools "Read,Bash(jq:*),Bash(grep:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(duckdb:*),Bash(wc:*),Bash(sort:*),Bash(uniq:*),Bash(ls:*)" \
     --append-system-prompt "$EXTRA_CONTEXT" \
-    2>&1) || {
-    echo "Claude analysis failed: $message"
+    --output-format json \
+    2>&1 | head -1) || {
+    echo "Claude analysis failed: $output"
     exit 1
 }
+
+session_id=$(echo "$output" | jq -r '.session_id // "unknown"')
+result=$(echo "$output" | jq -r '.result // "No result"')
+denials=$(echo "$output" | jq -r '.permission_denials | if length > 0 then .[] | "- \(.tool_name): \(.tool_input.command // .tool_input | tostring)" else empty end')
+
+message="Session: $session_id
+---
+
+$result"
+
+if [[ -n "$denials" ]]; then
+    message="$message
+
+---
+⚠️ Permission denials:
+$denials"
+fi
 
 # Save full report
 REPORT_FILE="$REPORT_DIR/report-$(date +%Y-%m-%d-%H%M%S).md"
