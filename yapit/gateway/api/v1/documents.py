@@ -894,6 +894,8 @@ async def get_og_preview(document_id: UUID, db: DbSession) -> HTMLResponse:
     title = html_escape(document.title or "Untitled")
     url = f"https://yapit.md/listen/{document_id}"
 
+    # No meta refresh - bots don't follow redirects, and caching could cause redirect loops
+    # if Safari/iOS serves a cached bot response to regular users
     html = f"""<!DOCTYPE html>
 <html>
 <head>
@@ -907,14 +909,16 @@ async def get_og_preview(document_id: UUID, db: DbSession) -> HTMLResponse:
     <meta name="twitter:title" content="{title}" />
     <meta name="twitter:description" content="Listen on Yapit" />
     <meta name="twitter:image" content="https://yapit.md/og-image.png" />
-    <meta http-equiv="refresh" content="0;url={url}">
     <title>{title}</title>
 </head>
 <body>
-    <p>Redirecting to <a href="{url}">{url}</a>...</p>
+    <p>Visit <a href="{url}">{title}</a> on Yapit</p>
 </body>
 </html>"""
-    return HTMLResponse(content=html)
+    return HTMLResponse(
+        content=html,
+        headers={"Cache-Control": "no-store, max-age=0"},
+    )
 
 
 class DocumentImportResponse(BaseModel):
