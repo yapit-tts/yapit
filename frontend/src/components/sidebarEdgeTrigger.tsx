@@ -1,4 +1,5 @@
 import { useRef, useCallback, useEffect, useState } from "react";
+import { useLocation } from "react-router";
 import { useSidebar } from "@/components/ui/sidebar";
 import { useIsMobile } from "@/hooks/use-mobile";
 
@@ -11,6 +12,8 @@ const SIDEBAR_WIDTH = "16rem"; // Must match shadcn sidebar default width
 export function SidebarEdgeTrigger() {
   const { toggleSidebar, open } = useSidebar();
   const isMobile = useIsMobile();
+  const location = useLocation();
+  const isPlaybackPage = location.pathname.startsWith("/listen/");
   const [revealed, setRevealed] = useState(false);
   const revealTimeoutRef = useRef<number | null>(null);
 
@@ -117,9 +120,24 @@ export function SidebarEdgeTrigger() {
     };
   }, [isMobile, handleTouchStart, handleTouchMove, handleTouchEnd]);
 
-  // Mobile: no floating button (moved to playbar), but swipe gesture still active
+  // Mobile on playback page: no floating button (playbar has it), swipe gesture still active
+  // Mobile elsewhere (dashboard etc.): show always-visible edge button like desktop
   if (isMobile) {
-    return null;
+    if (isPlaybackPage) return null;
+
+    return (
+      <button
+        onClick={toggleSidebar}
+        className="fixed left-0 top-1/2 -translate-y-1/2 z-20
+          w-8 h-20 flex items-center justify-center
+          rounded-r-xl
+          bg-background/70 backdrop-blur-md border-y border-r border-border shadow-lg
+          active:bg-muted/80 transition-colors"
+        aria-label="Open sidebar"
+      >
+        <span className="text-muted-foreground text-2xl font-extralight">›</span>
+      </button>
+    );
   }
 
   // Desktop: single button that transitions between closed/open positions
