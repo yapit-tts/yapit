@@ -205,7 +205,7 @@ interface BlockProps {
 
 // Always have border-l-4 to prevent layout shift when active state changes
 // Active state is managed via DOM manipulation in PlaybackPage, not React props (avoids re-renders)
-const blockBaseClass = "border-l-4 border-l-transparent -ml-1 transition-colors duration-150";
+const blockBaseClass = "border-l-4 border-l-transparent transition-colors duration-150";
 const clickableClass = "cursor-pointer clickable-block";
 
 interface HeadingBlockViewProps {
@@ -1203,16 +1203,13 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
             const hasAudio = block.audio_chunks.length > 0;
             const hasSingleChunk = block.audio_chunks.length === 1;
             const firstAudioIdx = hasAudio ? block.audio_chunks[0].audio_block_idx : undefined;
-            // Section headers (with collapse toggle) are not clickable audio blocks
-            const isSectionHeader = handleToggleCollapse !== undefined;
-            // Only make wrapper clickable/hoverable if single chunk AND not a container block AND not a section header
-            const handleWrapperClick = hasSingleChunk && !isContainerBlock && !isSectionHeader && onBlockClick
+            const handleWrapperClick = hasSingleChunk && !isContainerBlock && onBlockClick
               ? () => onBlockClick(firstAudioIdx!)
               : undefined;
             return (
               <div
                 key={block.id}
-                data-audio-block-idx={hasSingleChunk && !isContainerBlock && !isSectionHeader ? firstAudioIdx : undefined}
+                data-audio-block-idx={hasSingleChunk && !isContainerBlock ? firstAudioIdx : undefined}
                 className={cn(blockBaseClass, handleWrapperClick && clickableClass)}
                 onClick={handleWrapperClick}
               >
