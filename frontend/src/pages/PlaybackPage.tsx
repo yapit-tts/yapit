@@ -8,7 +8,7 @@ import { useFilteredPlayback } from '@/hooks/useFilteredPlayback';
 import { useParams, useLocation, Link, useNavigate } from "react-router";
 import { useRef, useState, useEffect, useLayoutEffect, useCallback, useMemo } from "react";
 import { useApi } from '@/api';
-import { Loader2, FileQuestion, Download, X } from "lucide-react";
+import { Loader2, FileQuestion, Download, X, AudioLines } from "lucide-react";
 import { AxiosError } from "axios";
 import { AudioPlayer } from '@/lib/audio';
 import { useBrowserTTS } from '@/lib/browserTTS';
@@ -168,6 +168,12 @@ const PlaybackPage = () => {
   const hoveredBlockRef = useRef<number | null>(null);
   const isDraggingProgressBarRef = useRef(false);
   const lastHoverScrollTimeRef = useRef<number>(0);
+
+  // Scroll detach state - for "Back to Reading" feature
+  const [isScrollDetached, setIsScrollDetached] = useState(false);
+  const [backToReadingDismissed, setBackToReadingDismissed] = useState(false);
+  // Cooldown to ignore scroll events from smooth scroll animations (800ms covers most browsers)
+  const scrollCooldownRef = useRef(false);
 
   // Helper to find elements by audio index
   // Prioritizes data-audio-idx (inner spans) over data-audio-block-idx (wrapper)
@@ -479,27 +485,67 @@ const PlaybackPage = () => {
 
   // Helper to scroll to a specific block
   const scrollToBlock = useCallback((blockIdx: number, behavior: ScrollBehavior = "smooth") => {
-    if (blockIdx < 0 || !settings.liveScrollTracking) return;
+    if (blockIdx < 0) return;
     const elements = findElementsByAudioIdx(blockIdx);
     const blockElement = elements[0];
     if (blockElement) {
       blockElement.scrollIntoView({ behavior, block: "center" });
     }
-  }, [settings.liveScrollTracking, findElementsByAudioIdx]);
+  }, [findElementsByAudioIdx]);
 
   // Live scroll tracking - keep current block visible during playback
+  // Only when: playing, tracking enabled, not detached, not already scrolling
   useEffect(() => {
-    // Scroll when block changes during playback
-    if (currentBlock < 0 || !isPlayingRef.current || !settings.liveScrollTracking) return;
+    if (currentBlock < 0 || !isPlayingRef.current) return;
+    if (!settings.liveScrollTracking || isScrollDetached) return;
+    if (scrollCooldownRef.current) return; // Already scrolling, don't double-scroll
+    scrollCooldownRef.current = true;
     scrollToBlock(currentBlock);
-  }, [currentBlock, settings.liveScrollTracking, scrollToBlock]);
+    setTimeout(() => { scrollCooldownRef.current = false; }, 800);
+  }, [currentBlock, settings.liveScrollTracking, isScrollDetached, scrollToBlock]);
 
   // Scroll to current block immediately when playback starts
   useEffect(() => {
-    if (isPlaying && settings.liveScrollTracking && currentBlock >= 0) {
-      scrollToBlock(currentBlock);
+    if (!isPlaying || !settings.liveScrollTracking || isScrollDetached || currentBlock < 0) return;
+    if (scrollCooldownRef.current) return; // Already scrolling
+    scrollCooldownRef.current = true;
+    scrollToBlock(currentBlock);
+    setTimeout(() => { scrollCooldownRef.current = false; }, 800);
+  }, [isPlaying, settings.liveScrollTracking, isScrollDetached, currentBlock, scrollToBlock]);
+
+  // Detect user scroll to trigger detach during playback
+  useEffect(() => {
+    const handleScroll = () => {
+      // During cooldown (programmatic scroll in progress), ignore
+      if (scrollCooldownRef.current) return;
+      // Only during active playback with tracking enabled
+      if (!isPlayingRef.current || !settings.liveScrollTracking) return;
+      // Already detached? Don't re-trigger
+      if (isScrollDetached) return;
+      // User scrolled during playback - detach
+      setIsScrollDetached(true);
+      setBackToReadingDismissed(false);
+    };
+
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, [settings.liveScrollTracking, isScrollDetached]);
+
+  // When playback resumes while detached, re-show the button
+  useEffect(() => {
+    if (isPlaying && isScrollDetached) {
+      setBackToReadingDismissed(false);
     }
-  }, [isPlaying, settings.liveScrollTracking, currentBlock, scrollToBlock]);
+  }, [isPlaying, isScrollDetached]);
+
+  // Handler for "Back to Reading" button
+  const handleBackToReading = useCallback(() => {
+    // Set cooldown before scrolling to prevent re-trigger
+    scrollCooldownRef.current = true;
+    setIsScrollDetached(false);
+    scrollToBlock(currentBlock, "smooth");
+    setTimeout(() => { scrollCooldownRef.current = false; }, 800);
+  }, [currentBlock, scrollToBlock]);
 
   // Derive block states from refs (browser mode) or WS (server mode)
   const isServerMode = isServerSideModel(voiceSelection.model);
@@ -1734,6 +1780,27 @@ const PlaybackPage = () => {
           onSectionExpand={shouldShowOutliner ? handleSectionToggle : undefined}
           currentBlockIdx={shouldShowOutliner ? currentBlock : undefined}
         />
+        {/* "Back to Reading" button - appears when user scrolls away during playback */}
+        {isPlaying && isScrollDetached && !backToReadingDismissed && (
+          <div className="fixed bottom-[200px] left-1/2 -translate-x-1/2 z-50">
+            <div className="flex items-center gap-2 bg-background/95 backdrop-blur-sm border border-border rounded-full px-4 py-2 shadow-lg">
+              <button
+                onClick={handleBackToReading}
+                className="flex items-center gap-2 text-sm font-medium text-foreground hover:text-primary transition-colors"
+              >
+                <AudioLines className="h-4 w-4 text-primary" />
+                Back to Reading
+              </button>
+              <button
+                onClick={() => setBackToReadingDismissed(true)}
+                className="p-1 text-muted-foreground hover:text-foreground transition-colors"
+                aria-label="Dismiss"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+        )}
         <SoundControl
           isPlaying={isPlaying}
           isBuffering={isBuffering}
