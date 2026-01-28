@@ -38,6 +38,7 @@ Workers pull jobs from Redis. Gateway doesn't need to know about them.
 |---------|---------|-------|
 | `kokoro-cpu` | Kokoro TTS on CPU | `tts:queue:kokoro` |
 | `yolo-cpu` | Figure detection | `yolo:queue` |
+| `markxiv` | arXiv paper extraction via pandoc | HTTP (no queue) |
 | Gateway background tasks | Inworld TTS (parallel dispatcher), visibility/overflow scanners | `tts:queue:inworld*` |
 
 **Adding workers:** Just connect to Redis (via Tailscale for external machines) and start pulling. No gateway config needed.
@@ -65,6 +66,15 @@ On push to `main`:
 Skip tests: `[skip tests]` in commit message.
 
 ~10 min total (tests ~5 min, build+deploy ~5 min).
+
+## Image Storage
+
+Extracted images (from Gemini+YOLO) stored via `ImageStorage` abstraction (`yapit/gateway/storage.py`):
+
+- **Local** (`image_storage_type=local`) — Filesystem at `/data/images/`, served by gateway API. Default for dev/self-hosting.
+- **R2** (`image_storage_type=r2`) — Cloudflare R2 bucket, served via CDN (images.yapit.md). Used in prod.
+
+Images keyed by document `content_hash`. Deleted when last document with that hash is deleted.
 
 ## Migrations
 

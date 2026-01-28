@@ -1,6 +1,8 @@
 ---
-status: active
+status: done
 started: 2026-01-12
+completed: 2026-01-27
+pr: https://github.com/yapit-tts/yapit/pull/63
 ---
 
 # Task: Document Outliner / Chapter Navigation
@@ -39,27 +41,38 @@ Only show outliner for documents that would benefit:
 
 If pages are processed independently (parallel VLM extraction), heading levels might be inconsistent across pages. Page 10's "Chapter 1" might be H2, page 50's "Chapter 2" might be H1.
 
-### Approaches - What to Try
+### Solution: Flat Outliner with Binary Heading Classification
 
-**1. Test first, see how bad it is**
-VLM sees the visual styling (font size, bold, centering). Might be more consistent than we fear. Test before over-engineering.
+**Key insight:** We don't need deep nesting for navigation. A 30-hour book with 20 chapters just needs chapter-level collapse, not Part > Chapter > Section > Subsection hierarchy.
 
-**2. Constrained heading levels in prompt**
-Instead of "be consistent" (useless without context), constrain to fewer levels: "Only use H1 for major divisions, H3 for subdivisions." Forces coarser granularity but more consistency.
+**Approach:**
+- Only H1/H2 ("major headings") become collapsible sections in the outliner
+- Everything between two major headings = that section's content
+- H3+ are styled headings within sections, but don't create nesting
+- Binary classification (major vs minor) is much more robust than multi-level consistency
 
-**3. Post-processing normalization**
-After parallel extraction completes, analyze all headings:
-- Detect patterns: "Chapter N" text → normalize to same level
-- Heuristics based on heading text patterns
-- Doesn't break parallelism, just adds cleanup pass
+**Prompt guidance (needs to be added to extraction prompt):**
+- "Use H2 for major divisions (chapters, parts). Use H3+ for subdivisions."
+- VLM still uses H3, H4, etc. for visual styling — we just don't rely on them for outliner structure
+
+**For TOC rendering:**
+- Flat list of links: `- [Chapter 1](#chapter-1)`
+- No nesting needed, no level detection needed
+- Anchors work regardless of actual heading level (`[](#header)` links work for any Hn)
+
+This sidesteps the consistency problem entirely — we only need VLM to consistently identify "is this a major division?" rather than maintaining perfect H1/H2/H3/H4 hierarchy across pages.
 
 ### Approaches - Rejected
+
+**Deep nesting based on heading levels**: Too brittle — requires consistent H1/H2/H3/H4 assignment across independently-processed pages.
 
 **TOC-first extraction**: Extract table of contents first, use as reference. Rejected - detecting/parsing TOCs reliably is its own problem.
 
 **Naive "be consistent" prompting**: Telling VLM to be consistent without context doesn't help - it has no knowledge of other pages.
 
 **Injecting prior headers into prompt**: Would require sequential processing or wave-based batching, breaks parallelism speedups.
+
+**Post-processing normalization via regex/heuristics**: Brittle — not all documents use numbered sections or consistent text patterns.
 
 ## Implementation Notes
 

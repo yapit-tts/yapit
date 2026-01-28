@@ -47,6 +47,11 @@ cd frontend && npm run dev  # Start frontend separately
 
 Use info logs or set log level to debug before restarting the backend.
 
+## Frontend (npm)
+
+- **onnxruntime CUDA issue:** Fresh `npm install` may fail with "CUDA 11 binaries not supported". Fix: `npm install --onnxruntime-node-install-cuda=skip`
+- **Version drift:** Always copy `package-lock.json` when setting up worktrees to avoid dependency version mismatches
+
 ## Dependencies (uv)
 
 **Project structure:** `pyproject.toml` has optional dependency groups:

@@ -9,8 +9,10 @@ Three ways content enters the system:
 | Endpoint | Input | Processing |
 |----------|-------|------------|
 | `POST /v1/documents/text` | Direct text/markdown | Parse directly |
-| `POST /v1/documents/website` | URL | Download → (Playwright) → MarkItDown → Parse |
+| `POST /v1/documents/website` | URL | See below* |
 | `POST /v1/documents/document` | File upload | Gemini extraction → Parse |
+
+*Website flow branches: arXiv URLs → markxiv (sidecar) → cleanup → Parse. Other URLs → httpx (+ Playwright if JS-heavy) → MarkItDown → Parse.
 
 For URLs and files, there's a **prepare → create** pattern:
 1. `POST /prepare` or `/prepare/upload` — Downloads/caches content, returns hash + metadata
@@ -19,6 +21,14 @@ For URLs and files, there's a **prepare → create** pattern:
 This allows showing page count, title, OCR cost estimate before committing.
 
 MarkItDown runs synchronously on the gateway; Gemini uses parallel async tasks per page. See [[2026-01-21-markitdown-parallel-extraction-analysis]] for why parallelizing MarkItDown isn't worth it.
+
+### arXiv URLs (markxiv)
+
+`yapit/gateway/document/markxiv.py`
+
+arXiv URLs (arxiv.org, alphaxiv.org, ar5iv) are routed to markxiv — a Docker sidecar that extracts papers from LaTeX source via pandoc. Produces cleaner markdown than MarkItDown for free-tier users.
+
+The markxiv service runs as a separate container (built from `docker/Dockerfile.markxiv`). Strips pandoc cruft like `{#sec:foo}` anchors, `{reference-type="..."}` attributes, citations `[@author]`, and orphan label refs `[fig:X]`.
 
 ## URL Fetching & JS Rendering
 
@@ -112,75 +122,44 @@ Returns a `SyntaxTreeNode` AST.
 
 The `DocumentTransformer` walks the AST and produces `StructuredDocument`:
 
-**Blocks with audio** (have `audio_block_idx`):
-- heading, paragraph, list, blockquote
+**Blocks with audio** (have non-empty `audio_chunks`):
+- heading, paragraph, list items, blockquote (callout titles), footnote items, images (captions)
 
-**Blocks without audio** (`audio_block_idx = None`):
-- code, math, table, image, hr
+**Blocks without audio** (empty `audio_chunks`):
+- code, math, table, hr
 
 Each block gets:
 - `id` — Unique block ID (`b0`, `b1`, ...)
-- `html` — Rendered HTML for display
+- `html` — Rendered HTML (may contain `<span data-audio-idx="N">` wrappers for split content)
 - `ast` — InlineContent array (for AST slicing during splits)
-- `plain_text` — Text for TTS synthesis
-- `audio_block_idx` — Index into the audio blocks array (or null if not spoken)
+- `audio_chunks` — List of `AudioChunk(text, audio_block_idx)` for TTS synthesis
 
 ## TTS Annotations
 
-Some content needs alternative text for speech synthesis:
+Content can be routed differently for display vs speech using yap tags:
 
-- **Math expressions** — `$\alpha$` should be spoken as "alpha"
-- **Figure captions** — Images need scholarly captions read aloud
-- **Nested case** — Captions can contain math, each needing its own alt
+- `<yap-show>` — display only, silent in TTS (citations, refs)
+- `<yap-speak>` — TTS only, hidden in display (math pronunciation)
+- `<yap-cap>` — image captions (both display and TTS)
 
-### Annotation Format
+Math is always silent; pronunciation via adjacent `<yap-speak>`.
 
-Uses distinct HTML-like tags (parsed as `html_inline` by markdown-it):
+For detailed tag semantics, composition rules, and edge cases: [[markdown-parser-spec]]
 
-```markdown
-$\alpha$<yap-alt>alpha</yap-alt>           # Inline math
-$$E = mc^2$$
-<yap-alt>E equals m c squared</yap-alt>    # Display math
-
-![Diagram](url)<yap-cap>Figure 1 shows $\beta$<yap-alt>beta</yap-alt> values</yap-cap>
-```
-
-- `<yap-alt>` — Math alt text (short, inline)
-- `<yap-cap>` — Figure captions (can contain `<yap-alt>` inside)
-
-Distinct tags allow unambiguous nesting. No newlines allowed inside tags (would become `html_block`).
-
-### Extraction
-
-Helper functions in `transformer.py`:
-- `_extract_yap_alt()` — Returns (alt_text, nodes_consumed)
-- `_extract_yap_cap()` — Returns (caption_nodes, nodes_consumed)
-- `_extract_plain_text_from_caption_nodes()` — Returns (display_text, tts_text)
-
-Captions produce two outputs:
-- **display_text** — Keeps LaTeX for visual rendering (`$\beta$`)
-- **tts_text** — Replaces math with alt for speech ("beta")
-
-### Design Notes
-
-Earlier approaches failed:
-- `{tts:...}` — Conflicted with LaTeX braces
-- Single `<tts>` tag — Nesting broke regex matching
-
-See [[2026-01-15-tts-annotation-syntax-pivot]] for full history.
+Historical context: [[2026-01-15-tts-annotation-syntax-pivot]]
 
 ## Block Splitting
 
-Long paragraphs are split to keep synthesis chunks manageable:
+Long content is split to keep synthesis chunks manageable (applies to paragraphs, list items, captions):
 
 ```
-if len(plain_text) > max_block_chars:
+if len(tts_text) > max_block_chars:
     split at sentence boundaries (.!?)
     if sentence still too long:
         hard split at word boundaries
 ```
 
-Split paragraphs share a `visual_group_id` — frontend renders them as spans within a single `<p>` so they flow naturally as prose.
+Split content gets multiple `AudioChunk` entries with consecutive `audio_block_idx` values. The HTML contains `<span data-audio-idx="N">` wrappers so frontend can highlight the currently-playing chunk.
 
 **AST slicing:** When splitting, the transformer slices the inline AST to preserve formatting. A bold phrase split across chunks becomes two separate `<strong>` tags.
 
@@ -198,14 +177,17 @@ Split paragraphs share a `visual_group_id` — frontend renders them as spans wi
       "level": 1,
       "html": "<strong>Title</strong>",
       "ast": [{"type": "strong", "content": [...]}],
-      "plain_text": "Title",
-      "audio_block_idx": 0
+      "audio_chunks": [{"text": "Title", "audio_block_idx": 0}]
     },
     {
       "type": "paragraph",
       "id": "b1",
-      ...
-      "visual_group_id": "vg0"  // if split from a larger paragraph
+      "html": "<span data-audio-idx=\"1\">First sentence.</span> <span data-audio-idx=\"2\">Second sentence.</span>",
+      "ast": [...],
+      "audio_chunks": [
+        {"text": "First sentence.", "audio_block_idx": 1},
+        {"text": "Second sentence.", "audio_block_idx": 2}
+      ]
     }
   ]
 }
@@ -235,14 +217,13 @@ Stored as JSON in `Document.structured_content`.
 
 The `StructuredDocumentView` component:
 1. Parses `structured_content` JSON
-2. Groups split paragraphs by `visual_group_id`
-3. Renders each block type with appropriate styling
-4. Attaches `data-audio-block-idx` to clickable blocks for playback navigation
-5. Memoized automatically by React Compiler
-
-**Block grouping:** Consecutive paragraphs with same `visual_group_id` render as `<span>` elements within a single `<p>`, preserving prose flow.
+2. Renders each block type with appropriate styling
+3. Uses `data-audio-idx` spans (baked into HTML) for playback highlighting
+4. Memoized automatically by React Compiler
 
 **Image rows:** Consecutive ImageBlocks with same `row_group` render in a flex row, scaling widths to fill 95% of available space.
+
+**Click handling:** Clicks on `data-audio-idx` spans trigger playback seek to that audio chunk.
 
 ## Key Files
 

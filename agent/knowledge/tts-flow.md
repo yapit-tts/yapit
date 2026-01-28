@@ -126,7 +126,7 @@ Frontend can also synthesize locally via Kokoro WASM and submit audio via `POST 
 
 See [[models-voices]] for model configuration, voice parameters, usage multipliers.
 
-Current models: kokoro, higgs, inworld, inworld-max.
+Current models: kokoro, inworld-1.5, inworld-1.5-max. HIGGS removed (API models simpler to support as premium, avoiding RunPod complexity and higher costs).
 
 ## Key Files
 
@@ -154,3 +154,4 @@ Current models: kokoro, higgs, inworld, inworld-max.
 - **Voice change race condition:** WebSocket status messages include `model_slug` and `voice_slug` to prevent stale cache hits when user changes voice mid-playback. Without this, status messages from old voice arriving after reset would incorrectly mark blocks as cached.
 - **Double billing prevention:** Inflight key deletion happens at START of result processing. First result atomically deletes key and proceeds; duplicates (from visibility timeout requeue + original completion) see delete() return 0 and skip.
 - **Inworld duration is estimated:** Calculated from MP3 file size (~16KB/sec). Frontend uses decoded AudioBuffer for accurate playback timing.
+- **Cross-tab voice contamination:** Multiple tabs playing the same document with different voices share the same Redis pubsub channel. A notification from one voice would incorrectly update the other tab. Fix: Compare incoming `model_slug` and `voice_slug` against what was requested; ignore mismatched notifications.

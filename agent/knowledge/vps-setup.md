@@ -323,6 +323,18 @@ ssh root@46.224.195.97 "docker service ps yapit_gateway --no-trunc"
 ssh root@46.224.195.97 "docker service logs yapit_gateway --tail 100"
 ```
 
+### Database access
+
+**NOT `postgres`!** Prod uses `yapit_prod` for BOTH user AND database:
+
+```bash
+# Interactive psql
+ssh root@46.224.195.97 'docker exec -it $(docker ps -qf "name=yapit_postgres") psql -U yapit_prod yapit_prod'
+
+# One-off query
+ssh root@46.224.195.97 'docker exec $(docker ps -qf "name=yapit_postgres") psql -U yapit_prod yapit_prod -c "SELECT count(*) FROM document;"'
+```
+
 ### Rollback
 
 ```bash

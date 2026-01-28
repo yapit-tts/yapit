@@ -1,3 +1,24 @@
+# Frontend
+
+React SPA with Vite, shadcn/ui components, Tailwind CSS.
+
+## Document Outliner
+
+Right sidebar for navigating large documents. Shows section index from H1/H2 headings.
+
+**Key features:**
+- Collapse/expand sections — hides content in document view
+- Skip sections — exclude from playback entirely (right-click/long-press)
+- Filtered playback — progress bar scoped to expanded sections only
+- State persisted to localStorage per document
+
+**Key files:**
+- `frontend/src/components/documentOutliner.tsx` — section tree with collapse/skip controls
+- `frontend/src/hooks/useOutliner.tsx` — section state management
+- `frontend/src/hooks/useFilteredPlayback.ts` — maps visual↔absolute block indices
+- `frontend/src/lib/sectionIndex.ts` — builds section tree from structured content
+
+**Design:** H1/H2 are "major headings" that create collapsible sections. H3+ are styled headings within sections but don't create nesting. Binary classification (major vs minor) is more robust than requiring consistent H1/H2/H3/H4 hierarchy across independently-processed pages.
 
 ## Chrome DevTools MCP
 

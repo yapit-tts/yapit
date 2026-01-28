@@ -1,6 +1,12 @@
 # Inworld TTS
 
-Premium TTS provider. REST streaming API, 60 voices across 13 languages.
+Premium TTS provider. REST streaming API, 65 voices across 15 languages.
+
+## Gotchas
+
+**Model ID format uses dots, not dashes:** The API model IDs are `inworld-tts-1.5-mini` and `inworld-tts-1.5-max` (with dots in "1.5"). Using dashes like `inworld-tts-1-5-mini` returns 400 Bad Request.
+
+**Voice listing requires separate API scope:** The synthesis API key doesn't have permissions to call `/voices/v1/voices`. Need a key with voice management scope, or check the [TTS Playground](https://platform.inworld.ai/tts-playground) manually.
 
 ## Models
 
@@ -36,8 +42,11 @@ Benchmark: `experiments/benchmark_inworld_speaking_rate.py`
 ## Key Files
 
 - `yapit/workers/adapters/inworld.py` — REST streaming adapter
-- `yapit/data/inworld/voices.json` — 60 voices, all languages
+- `yapit/data/inworld/voices.json` — 65 voices (en, zh, nl, fr, de, it, ja, ko, pl, pt, es, ru, hi, ar, he)
 - `yapit/gateway/seed.py:96-139` — model/voice definitions
+- `frontend/src/lib/voiceSelection.ts` — `INWORLD_SLUG`, `INWORLD_MAX_SLUG` constants + `isInworldModel()` helper
+
+**For model version upgrades:** Update the two slug constants in `voiceSelection.ts` — all comparison sites use the helper or constants, so only one file changes.
 
 ## Related Tasks
 

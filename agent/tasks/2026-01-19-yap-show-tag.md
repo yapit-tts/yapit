@@ -1,6 +1,8 @@
 ---
-status: active
+status: done
 started: 2026-01-19
+completed: 2026-01-26
+see: [[markdown-feature-extensions]]
 ---
 
 # Task: Implement `<yap-show>` tag for display-only text
@@ -84,6 +86,17 @@ Add `<yap-show>` section with examples for citations.
 - [ ] Transformer extracts display vs speech text correctly
 - [ ] Frontend renders displayed text, excludes from TTS
 - [ ] Hover shows spoken text (or indicates silent)
+
+## Planning Considerations
+
+**Explicit goal:** `yap-show + yap-alt` composition must work.
+
+**During implementation planning, consider:**
+- Can yap tags be freely composable? Does that simplify things?
+- Current parser has explicit skip logic for "orphaned" yap-alt — is that necessary?
+- Are there other ways to write this parser more simply while meeting all requirements?
+- Could we write tests first for all expected behavior, then potentially rewrite the parser from scratch if cleaner?
+- Check if current test coverage is comprehensive for expected behavior.
 
 ## Considered & Rejected
 
