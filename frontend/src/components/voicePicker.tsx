@@ -3,9 +3,11 @@ import { ChevronDown, Star, ChevronRight, Monitor, Cloud, Loader2, Info, Play, S
 import { useApi } from "@/api";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useIsMobile } from "@/hooks/use-mobile";
 import {
   type VoiceSelection,
   type ModelType,
@@ -32,6 +34,7 @@ interface VoicePickerProps {
 
 export function VoicePicker({ value, onChange }: VoicePickerProps) {
   const [open, setOpen] = useState(false);
+  const isMobile = useIsMobile();
   // Track which language sections are expanded (user manages, we just remember)
   const [expandedKokoroLangs, setExpandedKokoroLangs] = useState<Set<KokoroLanguageCode>>(new Set(["a"]));
   const [expandedInworldLangs, setExpandedInworldLangs] = useState<Set<InworldLanguageCode>>(new Set(["en"]));
@@ -247,93 +250,190 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
   );
   const pinnedInworld = useMemo(() => inworldVoices.filter(v => pinnedVoices.includes(v.slug)), [inworldVoices, pinnedVoices]);
 
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button variant="ghost" size="sm" className="h-9 gap-1.5 text-sm text-muted-foreground hover:text-foreground">
-          <span className="font-medium">{modelLabel}</span>
-          <span className="text-muted-foreground">·</span>
-          <span>{currentVoiceName}</span>
-          <ChevronDown className="h-4 w-4 ml-0.5" />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent className="w-96 p-0" align="start">
-        <Tabs value={activeTab} onValueChange={handleModelChange}>
-          <TabsList className="w-full h-11 rounded-none border-b">
-            <TabsTrigger value="kokoro" className="flex-1 text-sm py-2.5">Kokoro</TabsTrigger>
-            <TabsTrigger value="inworld" className="flex-1 text-sm py-2.5">Inworld</TabsTrigger>
-          </TabsList>
+  const triggerButton = (
+    <Button variant="ghost" size="sm" className="h-9 gap-1.5 text-sm text-muted-foreground hover:text-foreground">
+      <span className="font-medium">{modelLabel}</span>
+      <span className="text-muted-foreground">·</span>
+      <span>{currentVoiceName}</span>
+      <ChevronDown className="h-4 w-4 ml-0.5" />
+    </Button>
+  );
 
-          <TabsContent value="kokoro" className="m-0 max-h-[28rem] overflow-y-auto">
-            {/* Local/Cloud toggle */}
-            <div className="flex items-center justify-between px-4 py-3 border-b bg-muted/30">
-              <div className="flex items-center gap-1.5">
-                <span className="text-sm text-muted-foreground">Run on</span>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button className="text-muted-foreground hover:text-foreground">
-                      <Info className="h-3.5 w-3.5" />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side="top" className="max-w-xs">
-                    <p><strong>Local:</strong> English voices only.</p>
-                    <p><strong>Cloud:</strong> All available languages and voices.</p>
-                  </TooltipContent>
-                </Tooltip>
-              </div>
-              <div className="flex rounded-md border bg-background">
-                <button
-                  onClick={() => isKokoroServer && handleKokoroSourceToggle()}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-l-md transition-colors ${
-                    !isKokoroServer ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  <Monitor className="h-4 w-4" />
-                  Local
+  const voicePickerContent = (
+    <Tabs value={activeTab} onValueChange={handleModelChange}>
+      <TabsList className="w-full h-11 rounded-none border-b">
+        <TabsTrigger value="kokoro" className="flex-1 text-sm py-2.5">Kokoro</TabsTrigger>
+        <TabsTrigger value="inworld" className="flex-1 text-sm py-2.5">Inworld</TabsTrigger>
+      </TabsList>
+
+      <TabsContent value="kokoro" className="m-0 max-h-[60vh] sm:max-h-[28rem] overflow-y-auto">
+        {/* Local/Cloud toggle */}
+        <div className="flex items-center justify-between px-4 py-3 border-b bg-muted/30">
+          <div className="flex items-center gap-1.5">
+            <span className="text-sm text-muted-foreground">Run on</span>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button className="text-muted-foreground hover:text-foreground">
+                  <Info className="h-3.5 w-3.5" />
                 </button>
-                <button
-                  onClick={() => !isKokoroServer && handleKokoroSourceToggle()}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-r-md transition-colors ${
-                    isKokoroServer ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  <Cloud className="h-4 w-4" />
-                  Cloud
+              </TooltipTrigger>
+              <TooltipContent side="top" className="max-w-xs">
+                <p><strong>Local:</strong> English voices only.</p>
+                <p><strong>Cloud:</strong> All available languages and voices.</p>
+              </TooltipContent>
+            </Tooltip>
+          </div>
+          <div className="flex rounded-md border bg-background">
+            <button
+              onClick={() => isKokoroServer && handleKokoroSourceToggle()}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-l-md transition-colors ${
+                !isKokoroServer ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <Monitor className="h-4 w-4" />
+              Local
+            </button>
+            <button
+              onClick={() => !isKokoroServer && handleKokoroSourceToggle()}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-r-md transition-colors ${
+                isKokoroServer ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <Cloud className="h-4 w-4" />
+              Cloud
+            </button>
+          </div>
+        </div>
+        {/* Starred section */}
+        {pinnedKokoro.length > 0 && (
+          <div className="border-b">
+            <div className="px-4 py-2 text-sm font-medium text-muted-foreground">Starred</div>
+            {pinnedKokoro.map(voice => (
+              <VoiceRow
+                key={voice.index}
+                name={voice.name}
+                flag={LANGUAGE_INFO[voice.language].flag}
+                isHighQuality={isHighQualityVoice(voice)}
+                gender={voice.gender}
+                isPinned={true}
+                isSelected={value.voiceSlug === voice.index}
+                isPlaying={previewingVoice === `kokoro:${voice.index}`}
+                onSelect={() => handleVoiceSelect(voice.index)}
+                onPinToggle={() => togglePinnedVoice(voice.index)}
+                onPreviewClick={() => playPreview("kokoro", voice.index)}
+              />
+            ))}
+          </div>
+        )}
+
+        {/* Language sections (non-English hidden in Local mode via CSS to avoid flicker) */}
+        {kokoroVoiceGroups.map(group => (
+          <Collapsible
+            key={group.language}
+            open={expandedKokoroLangs.has(group.language)}
+            onOpenChange={() => toggleKokoroLangExpanded(group.language)}
+            className={`border-b last:border-b-0 ${englishOnly && !isEnglishLang(group.language) ? "hidden" : ""}`}
+          >
+            <CollapsibleTrigger className="flex w-full items-center gap-2 px-4 py-2.5 text-sm font-medium hover:bg-accent">
+              <ChevronRight className={`h-4 w-4 transition-transform ${expandedKokoroLangs.has(group.language) ? "rotate-90" : ""}`} />
+              <span>{group.flag}</span>
+              <span className="flex-1 text-left">{group.label}</span>
+              <span className="text-muted-foreground">({group.voices.length})</span>
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              {group.voices.map(voice => (
+                <VoiceRow
+                  key={voice.index}
+                  name={voice.name}
+                  isHighQuality={isHighQualityVoice(voice)}
+                  gender={voice.gender}
+                  isPinned={pinnedVoices.includes(voice.index)}
+                  isSelected={value.voiceSlug === voice.index}
+                  isPlaying={previewingVoice === `kokoro:${voice.index}`}
+                  onSelect={() => handleVoiceSelect(voice.index)}
+                  onPinToggle={() => togglePinnedVoice(voice.index)}
+                  onPreviewClick={() => playPreview("kokoro", voice.index)}
+                />
+              ))}
+            </CollapsibleContent>
+          </Collapsible>
+        ))}
+      </TabsContent>
+
+      <TabsContent value="inworld" className="m-0 max-h-[60vh] sm:max-h-[28rem] overflow-y-auto">
+        {/* Model toggle: TTS-1.5 vs TTS-1.5-Max */}
+        <div className="flex items-center justify-between px-4 py-3 border-b bg-muted/30">
+          <div className="flex items-center gap-1.5">
+            <span className="text-sm text-muted-foreground">Quality</span>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button className="text-muted-foreground hover:text-foreground">
+                  <Info className="h-3.5 w-3.5" />
                 </button>
-              </div>
-            </div>
+              </TooltipTrigger>
+              <TooltipContent side="top" className="max-w-xs">
+                <p>TTS-1.5-Max uses a larger model for more natural speech and better multilingual pronunciation. Uses 2× your voice quota.</p>
+              </TooltipContent>
+            </Tooltip>
+          </div>
+          <div className="flex rounded-md border bg-background">
+            <button
+              onClick={() => isInworldMax && handleInworldModelToggle()}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-l-md transition-colors ${
+                !isInworldMax ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              TTS-1.5
+            </button>
+            <button
+              onClick={() => !isInworldMax && handleInworldModelToggle()}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-r-md transition-colors ${
+                isInworldMax ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              TTS-1.5-Max
+            </button>
+          </div>
+        </div>
+
+        {inworldLoading ? (
+          <div className="flex items-center justify-center py-8 text-muted-foreground">
+            <Loader2 className="h-5 w-5 animate-spin mr-2" />
+            <span className="text-sm">Loading voices...</span>
+          </div>
+        ) : (
+          <>
             {/* Starred section */}
-            {pinnedKokoro.length > 0 && (
+            {pinnedInworld.length > 0 && (
               <div className="border-b">
                 <div className="px-4 py-2 text-sm font-medium text-muted-foreground">Starred</div>
-                {pinnedKokoro.map(voice => (
+                {pinnedInworld.map(voice => (
                   <VoiceRow
-                    key={voice.index}
+                    key={voice.slug}
                     name={voice.name}
-                    flag={LANGUAGE_INFO[voice.language].flag}
-                    isHighQuality={isHighQualityVoice(voice)}
-                    gender={voice.gender}
+                    flag={INWORLD_LANGUAGE_INFO[voice.lang]?.flag}
+                    detail={voice.description ?? undefined}
                     isPinned={true}
-                    isSelected={value.voiceSlug === voice.index}
-                    isPlaying={previewingVoice === `kokoro:${voice.index}`}
-                    onSelect={() => handleVoiceSelect(voice.index)}
-                    onPinToggle={() => togglePinnedVoice(voice.index)}
-                    onPreviewClick={() => playPreview("kokoro", voice.index)}
+                    isSelected={value.voiceSlug === voice.slug}
+                    isPlaying={previewingVoice === `${INWORLD_SLUG}:${voice.slug}`}
+                    onSelect={() => handleVoiceSelect(voice.slug)}
+                    onPinToggle={() => togglePinnedVoice(voice.slug)}
+                    onPreviewClick={() => playPreview(INWORLD_SLUG, voice.slug)}
                   />
                 ))}
               </div>
             )}
 
-            {/* Language sections (non-English hidden in Local mode via CSS to avoid flicker) */}
-            {kokoroVoiceGroups.map(group => (
+            {/* Language sections */}
+            {inworldVoiceGroups.map(group => (
               <Collapsible
                 key={group.language}
-                open={expandedKokoroLangs.has(group.language)}
-                onOpenChange={() => toggleKokoroLangExpanded(group.language)}
-                className={`border-b last:border-b-0 ${englishOnly && !isEnglishLang(group.language) ? "hidden" : ""}`}
+                open={expandedInworldLangs.has(group.language)}
+                onOpenChange={() => toggleInworldLangExpanded(group.language)}
+                className="border-b last:border-b-0"
               >
                 <CollapsibleTrigger className="flex w-full items-center gap-2 px-4 py-2.5 text-sm font-medium hover:bg-accent">
-                  <ChevronRight className={`h-4 w-4 transition-transform ${expandedKokoroLangs.has(group.language) ? "rotate-90" : ""}`} />
+                  <ChevronRight className={`h-4 w-4 transition-transform ${expandedInworldLangs.has(group.language) ? "rotate-90" : ""}`} />
                   <span>{group.flag}</span>
                   <span className="flex-1 text-left">{group.label}</span>
                   <span className="text-muted-foreground">({group.voices.length})</span>
@@ -341,122 +441,47 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
                 <CollapsibleContent>
                   {group.voices.map(voice => (
                     <VoiceRow
-                      key={voice.index}
+                      key={voice.slug}
                       name={voice.name}
-                      isHighQuality={isHighQualityVoice(voice)}
-                      gender={voice.gender}
-                      isPinned={pinnedVoices.includes(voice.index)}
-                      isSelected={value.voiceSlug === voice.index}
-                      isPlaying={previewingVoice === `kokoro:${voice.index}`}
-                      onSelect={() => handleVoiceSelect(voice.index)}
-                      onPinToggle={() => togglePinnedVoice(voice.index)}
-                      onPreviewClick={() => playPreview("kokoro", voice.index)}
+                      detail={voice.description ?? undefined}
+                      isPinned={pinnedVoices.includes(voice.slug)}
+                      isSelected={value.voiceSlug === voice.slug}
+                      isPlaying={previewingVoice === `${INWORLD_SLUG}:${voice.slug}`}
+                      onSelect={() => handleVoiceSelect(voice.slug)}
+                      onPinToggle={() => togglePinnedVoice(voice.slug)}
+                      onPreviewClick={() => playPreview(INWORLD_SLUG, voice.slug)}
                     />
                   ))}
                 </CollapsibleContent>
               </Collapsible>
             ))}
-          </TabsContent>
+          </>
+        )}
+      </TabsContent>
+    </Tabs>
+  );
 
-          <TabsContent value="inworld" className="m-0 max-h-[28rem] overflow-y-auto">
-            {/* Model toggle: TTS-1.5 vs TTS-1.5-Max */}
-            <div className="flex items-center justify-between px-4 py-3 border-b bg-muted/30">
-              <div className="flex items-center gap-1.5">
-                <span className="text-sm text-muted-foreground">Quality</span>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button className="text-muted-foreground hover:text-foreground">
-                      <Info className="h-3.5 w-3.5" />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side="top" className="max-w-xs">
-                    <p>TTS-1.5-Max uses a larger model for more natural speech and better multilingual pronunciation. Uses 2× your voice quota.</p>
-                  </TooltipContent>
-                </Tooltip>
-              </div>
-              <div className="flex rounded-md border bg-background">
-                <button
-                  onClick={() => isInworldMax && handleInworldModelToggle()}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-l-md transition-colors ${
-                    !isInworldMax ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  TTS-1.5
-                </button>
-                <button
-                  onClick={() => !isInworldMax && handleInworldModelToggle()}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-r-md transition-colors ${
-                    isInworldMax ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  TTS-1.5-Max
-                </button>
-              </div>
-            </div>
+  if (isMobile) {
+    return (
+      <Sheet open={open} onOpenChange={setOpen}>
+        <SheetTrigger asChild>
+          {triggerButton}
+        </SheetTrigger>
+        <SheetContent side="bottom" className="p-0 gap-0 max-h-[85vh]">
+          <SheetTitle className="sr-only">Voice Selection</SheetTitle>
+          {voicePickerContent}
+        </SheetContent>
+      </Sheet>
+    );
+  }
 
-            {inworldLoading ? (
-              <div className="flex items-center justify-center py-8 text-muted-foreground">
-                <Loader2 className="h-5 w-5 animate-spin mr-2" />
-                <span className="text-sm">Loading voices...</span>
-              </div>
-            ) : (
-              <>
-                {/* Starred section */}
-                {pinnedInworld.length > 0 && (
-                  <div className="border-b">
-                    <div className="px-4 py-2 text-sm font-medium text-muted-foreground">Starred</div>
-                    {pinnedInworld.map(voice => (
-                      <VoiceRow
-                        key={voice.slug}
-                        name={voice.name}
-                        flag={INWORLD_LANGUAGE_INFO[voice.lang]?.flag}
-                        detail={voice.description ?? undefined}
-                        isPinned={true}
-                        isSelected={value.voiceSlug === voice.slug}
-                        isPlaying={previewingVoice === `${INWORLD_SLUG}:${voice.slug}`}
-                        onSelect={() => handleVoiceSelect(voice.slug)}
-                        onPinToggle={() => togglePinnedVoice(voice.slug)}
-                        onPreviewClick={() => playPreview(INWORLD_SLUG, voice.slug)}
-                      />
-                    ))}
-                  </div>
-                )}
-
-                {/* Language sections */}
-                {inworldVoiceGroups.map(group => (
-                  <Collapsible
-                    key={group.language}
-                    open={expandedInworldLangs.has(group.language)}
-                    onOpenChange={() => toggleInworldLangExpanded(group.language)}
-                    className="border-b last:border-b-0"
-                  >
-                    <CollapsibleTrigger className="flex w-full items-center gap-2 px-4 py-2.5 text-sm font-medium hover:bg-accent">
-                      <ChevronRight className={`h-4 w-4 transition-transform ${expandedInworldLangs.has(group.language) ? "rotate-90" : ""}`} />
-                      <span>{group.flag}</span>
-                      <span className="flex-1 text-left">{group.label}</span>
-                      <span className="text-muted-foreground">({group.voices.length})</span>
-                    </CollapsibleTrigger>
-                    <CollapsibleContent>
-                      {group.voices.map(voice => (
-                        <VoiceRow
-                          key={voice.slug}
-                          name={voice.name}
-                          detail={voice.description ?? undefined}
-                          isPinned={pinnedVoices.includes(voice.slug)}
-                          isSelected={value.voiceSlug === voice.slug}
-                          isPlaying={previewingVoice === `${INWORLD_SLUG}:${voice.slug}`}
-                          onSelect={() => handleVoiceSelect(voice.slug)}
-                          onPinToggle={() => togglePinnedVoice(voice.slug)}
-                          onPreviewClick={() => playPreview(INWORLD_SLUG, voice.slug)}
-                        />
-                      ))}
-                    </CollapsibleContent>
-                  </Collapsible>
-                ))}
-              </>
-            )}
-          </TabsContent>
-        </Tabs>
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        {triggerButton}
+      </PopoverTrigger>
+      <PopoverContent className="w-96 p-0" align="start">
+        {voicePickerContent}
       </PopoverContent>
     </Popover>
   );
