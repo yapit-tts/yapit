@@ -86,20 +86,44 @@ export function UnifiedInput() {
 
   const isUrl = useCallback((text: string) => URL_REGEX.test(text.trim()), []);
 
+  // Reset state when home button clicked while on home
+  useEffect(() => {
+    const handleReset = () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+      }
+      setValue("");
+      setMode("idle");
+      setUrlState("detecting");
+      setPrepareData(null);
+      setError(null);
+      setIsCreating(false);
+      setStorageLimitError(null);
+      setUsageLimitExceeded(false);
+      setCompletedPages([]);
+    };
+    window.addEventListener("reset-input", handleReset);
+    return () => window.removeEventListener("reset-input", handleReset);
+  }, []);
+
   // Detect input type and update mode
   useEffect(() => {
     // Don't change mode while processing or loading
     if (isCreating) return;
-    if (urlState === "loading" || urlState === "ready") return;
 
     const trimmed = value.trim();
     if (!trimmed) {
       setMode("idle");
+      setUrlState("detecting");
       setPrepareData(null);
       setError(null);
       setStorageLimitError(null);
       return;
     }
+
+    // Don't change mode while URL metadata is loading or ready
+    if (urlState === "loading" || urlState === "ready") return;
 
     // If in file mode, only reset if value is completely cleared (handled above)
     if (mode === "file") return;

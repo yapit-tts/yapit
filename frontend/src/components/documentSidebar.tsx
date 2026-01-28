@@ -184,14 +184,21 @@ function DocumentSidebar() {
       <SidebarHeader className="border-b border-sidebar-border">
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton asChild size="lg">
-              <Link to="/">
-                <img src="/favicon.svg" alt="Yapit" className="size-10" />
-                <div className="flex flex-col gap-0.5 leading-none">
-                  <span className="font-semibold text-lg">yapit</span>
-                  <span className="text-sm text-muted-foreground">text to speech</span>
-                </div>
-              </Link>
+            <SidebarMenuButton
+              size="lg"
+              onClick={() => {
+                if (location.pathname === "/") {
+                  window.dispatchEvent(new CustomEvent("reset-input"));
+                } else {
+                  navigate("/");
+                }
+              }}
+            >
+              <img src="/favicon.svg" alt="Yapit" className="size-10" />
+              <div className="flex flex-col gap-0.5 leading-none">
+                <span className="font-semibold text-lg">yapit</span>
+                <span className="text-sm text-muted-foreground">text to speech</span>
+              </div>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
