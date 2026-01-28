@@ -78,6 +78,7 @@ async def warm_model_voices(
                 logger.warning(f"Failed {model.slug}/{voice.slug}[{idx}]: {result.error}")
 
         logger.info(f"  {voice.slug}: done")
+        await asyncio.sleep(0.5)
 
 
 async def main() -> int:
