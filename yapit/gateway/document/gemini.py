@@ -5,7 +5,6 @@ import io
 import random
 import time
 from collections.abc import AsyncIterator
-from pathlib import Path
 
 from google import genai
 from google.genai import errors as genai_errors
@@ -27,6 +26,7 @@ from yapit.gateway.document.extraction import (
 from yapit.gateway.document.processing import ExtractedPage, PageResult, ProcessorConfig
 from yapit.gateway.document.yolo_client import enqueue_detection, wait_for_result
 from yapit.gateway.metrics import log_event
+from yapit.gateway.storage import ImageStorage
 
 RESOLUTION_MAP = {
     "low": types.MediaResolution.MEDIA_RESOLUTION_LOW,
@@ -46,7 +46,7 @@ FALLBACK_OUTPUT_TOKENS_PER_PAGE = 1000
 
 def create_gemini_config(
     resolution: str = "high",
-    prompt_version: str = "v8",  # bump for prompt/processing changes to invalidate cached extractions
+    prompt_version: str = "v9",  # bump for prompt/processing changes to invalidate cached extractions
 ) -> ProcessorConfig:
     return ProcessorConfig(
         slug="gemini",
@@ -66,6 +66,7 @@ class GeminiExtractor:
         self,
         settings: Settings,
         redis: Redis,
+        image_storage: ImageStorage,
         model: str = "gemini-3-flash-preview",
         resolution: str = "high",
     ):
@@ -77,7 +78,7 @@ class GeminiExtractor:
         self._model = model
         self._resolution = RESOLUTION_MAP[resolution]
         self._prompt = load_prompt()
-        self._images_dir = Path(settings.images_dir)
+        self._image_storage = image_storage
 
     async def extract(
         self,
@@ -227,7 +228,7 @@ class GeminiExtractor:
 
             figure_urls: list[str] = []
             for fig_idx, figure in enumerate(yolo_result.figures):
-                url = store_figure(figure, self._images_dir, content_hash, page_idx, fig_idx)
+                url = await store_figure(self._image_storage, figure, content_hash, page_idx, fig_idx)
                 figure_urls.append(url)
 
             return await self._call_gemini_for_page(

@@ -9,6 +9,7 @@ import pytest
 
 from yapit.gateway.document.processing import ExtractedPage, PageResult, ProcessorConfig, process_with_billing
 from yapit.gateway.exceptions import ValidationError
+from yapit.gateway.storage import ImageStorage
 
 
 def make_config(
@@ -106,15 +107,15 @@ def mock_cache():
 
 
 @pytest.fixture
-def mock_settings():
-    settings = Mock()
-    settings.billing_enabled = True
-    return settings
+def mock_image_storage():
+    storage = AsyncMock(spec=ImageStorage)
+    storage.exists = AsyncMock(return_value=True)
+    return storage
 
 
 class TestValidation:
     @pytest.mark.asyncio
-    async def test_rejects_unsupported_content_type(self, mock_db, mock_cache, mock_settings):
+    async def test_rejects_unsupported_content_type(self, mock_db, mock_cache, mock_image_storage):
         config = make_config()
 
         with pytest.raises(ValidationError, match="Unsupported content type"):
@@ -128,11 +129,12 @@ class TestValidation:
                 total_pages=1,
                 db=mock_db,
                 extraction_cache=mock_cache,
-                settings=mock_settings,
+                image_storage=mock_image_storage,
+                billing_enabled=True,
             )
 
     @pytest.mark.asyncio
-    async def test_rejects_too_many_pages(self, mock_db, mock_cache, mock_settings):
+    async def test_rejects_too_many_pages(self, mock_db, mock_cache, mock_image_storage):
         config = make_config()
 
         with pytest.raises(ValidationError, match="maximum of 100 pages"):
@@ -146,13 +148,14 @@ class TestValidation:
                 total_pages=101,  # Exceeds max_pages=100
                 db=mock_db,
                 extraction_cache=mock_cache,
-                settings=mock_settings,
+                image_storage=mock_image_storage,
+                billing_enabled=True,
             )
 
 
 class TestCaching:
     @pytest.mark.asyncio
-    async def test_returns_cached_pages_without_extraction(self, mock_db, mock_cache, mock_settings):
+    async def test_returns_cached_pages_without_extraction(self, mock_db, mock_cache, mock_image_storage):
         config = make_config()
 
         # Simulate cache hit for page 0
@@ -177,14 +180,15 @@ class TestCaching:
             total_pages=1,
             db=mock_db,
             extraction_cache=mock_cache,
-            settings=mock_settings,
+            image_storage=mock_image_storage,
+            billing_enabled=True,
         )
 
         assert not extractor_called
         assert result.pages[0].markdown == "Cached content"
 
     @pytest.mark.asyncio
-    async def test_stores_extracted_pages_to_cache(self, mock_db, mock_cache, mock_settings):
+    async def test_stores_extracted_pages_to_cache(self, mock_db, mock_cache, mock_image_storage):
         config = make_config()
 
         result = await process_with_billing(
@@ -197,7 +201,8 @@ class TestCaching:
             total_pages=1,
             db=mock_db,
             extraction_cache=mock_cache,
-            settings=mock_settings,
+            image_storage=mock_image_storage,
+            billing_enabled=True,
         )
 
         mock_cache.store.assert_called_once()
@@ -206,7 +211,7 @@ class TestCaching:
 
 class TestBilling:
     @pytest.mark.asyncio
-    async def test_paid_processor_checks_usage_limit(self, mock_db, mock_cache, mock_settings):
+    async def test_paid_processor_checks_usage_limit(self, mock_db, mock_cache, mock_image_storage):
         config = make_config(is_paid=True)
 
         mock_estimate = Mock()
@@ -226,13 +231,14 @@ class TestBilling:
                         total_pages=1,
                         db=mock_db,
                         extraction_cache=mock_cache,
-                        settings=mock_settings,
+                        image_storage=mock_image_storage,
+                        billing_enabled=True,
                     )
 
                 mock_check.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_paid_processor_records_usage_per_page(self, mock_db, mock_cache, mock_settings):
+    async def test_paid_processor_records_usage_per_page(self, mock_db, mock_cache, mock_image_storage):
         config = make_config(is_paid=True)
 
         mock_estimate = Mock()
@@ -252,13 +258,14 @@ class TestBilling:
                         total_pages=3,
                         db=mock_db,
                         extraction_cache=mock_cache,
-                        settings=mock_settings,
+                        image_storage=mock_image_storage,
+                        billing_enabled=True,
                     )
 
                 assert mock_record.call_count == 3  # One per page
 
     @pytest.mark.asyncio
-    async def test_free_processor_skips_billing(self, mock_db, mock_cache, mock_settings):
+    async def test_free_processor_skips_billing(self, mock_db, mock_cache, mock_image_storage):
         config = make_config(is_paid=False)
 
         with patch("yapit.gateway.document.processing.check_usage_limit", new_callable=AsyncMock) as mock_check:
@@ -273,7 +280,8 @@ class TestBilling:
                     total_pages=1,
                     db=mock_db,
                     extraction_cache=mock_cache,
-                    settings=mock_settings,
+                    image_storage=mock_image_storage,
+                    billing_enabled=True,
                 )
 
             mock_check.assert_not_called()
@@ -282,7 +290,7 @@ class TestBilling:
 
 class TestFailedPages:
     @pytest.mark.asyncio
-    async def test_tracks_failed_pages(self, mock_db, mock_cache, mock_settings):
+    async def test_tracks_failed_pages(self, mock_db, mock_cache, mock_image_storage):
         config = make_config()
 
         result = await process_with_billing(
@@ -295,7 +303,8 @@ class TestFailedPages:
             total_pages=3,
             db=mock_db,
             extraction_cache=mock_cache,
-            settings=mock_settings,
+            image_storage=mock_image_storage,
+            billing_enabled=True,
         )
 
         assert set(result.pages.keys()) == {0, 2}
@@ -304,7 +313,7 @@ class TestFailedPages:
 
 class TestCancellation:
     @pytest.mark.asyncio
-    async def test_cancelled_pages_not_billed(self, mock_db, mock_cache, mock_settings):
+    async def test_cancelled_pages_not_billed(self, mock_db, mock_cache, mock_image_storage):
         """Cancelled pages should not incur billing charges."""
         config = make_config(is_paid=True)
 
@@ -325,7 +334,8 @@ class TestCancellation:
                         total_pages=4,
                         db=mock_db,
                         extraction_cache=mock_cache,
-                        settings=mock_settings,
+                        image_storage=mock_image_storage,
+                        billing_enabled=True,
                     )
 
                     # Only pages 0 and 1 should be billed (pages 2, 3 cancelled)

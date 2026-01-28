@@ -28,7 +28,7 @@ from yapit.gateway.api.v1 import routers as v1_routers
 from yapit.gateway.cache import Cache
 from yapit.gateway.config import Settings, get_settings
 from yapit.gateway.db import close_db, create_session, prepare_database
-from yapit.gateway.deps import create_cache
+from yapit.gateway.deps import create_cache, create_image_storage
 from yapit.gateway.document.gemini import GeminiExtractor, create_gemini_config
 from yapit.gateway.domain_models import UsageLog
 from yapit.gateway.exceptions import APIError
@@ -69,11 +69,14 @@ async def lifespan(app: FastAPI):
     app.state.audio_cache = create_cache(settings.audio_cache_type, settings.audio_cache_config)
     app.state.document_cache = create_cache(settings.document_cache_type, settings.document_cache_config)
     app.state.extraction_cache = create_cache(settings.extraction_cache_type, settings.extraction_cache_config)
+    app.state.image_storage = create_image_storage(settings)
 
     # Document extractors
     if settings.ai_processor == "gemini":
         app.state.ai_extractor_config = create_gemini_config()
-        app.state.ai_extractor = GeminiExtractor(settings=settings, redis=app.state.redis_client)
+        app.state.ai_extractor = GeminiExtractor(
+            settings=settings, redis=app.state.redis_client, image_storage=app.state.image_storage
+        )
         logger.info("AI extractor: gemini")
     else:
         app.state.ai_extractor_config = None

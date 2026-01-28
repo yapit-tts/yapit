@@ -36,7 +36,17 @@ class Settings(BaseSettings):
 
     ai_processor: str | None = None
     google_api_key: str | None = None
-    images_dir: str
+
+    # Image storage: "local" or "r2"
+    image_storage_type: str
+    images_dir: str | None = None  # Required for local storage
+
+    # R2 config (required if image_storage_type == "r2")
+    r2_account_id: str | None = None
+    r2_access_key_id: str | None = None
+    r2_secret_access_key: str | None = None
+    r2_bucket_name: str | None = None
+    r2_public_url: str | None = None
 
     markxiv_url: str | None = None
 
@@ -79,9 +89,6 @@ class Settings(BaseSettings):
     )
 
 
-def get_settings() -> Settings:  # ty: ignore[invalid-return-type]
-    """This is only used for dependency references, see __init__.py:
-
-    app.dependency_overrides[get_settings] = lambda: Settings()  # type: ignore
-    """
-    ...
+def get_settings() -> Settings:
+    """Dependency injection placeholder - always overridden in create_app()."""
+    raise NotImplementedError("get_settings should be overridden via dependency_overrides")

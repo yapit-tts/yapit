@@ -8,6 +8,7 @@ import pymupdf
 from pypdf import PdfReader, PdfWriter
 
 from yapit.contracts import DetectedFigure
+from yapit.gateway.storage import ImageStorage
 
 PROMPTS_DIR = Path(__file__).parent / "prompts"
 
@@ -18,34 +19,20 @@ IMAGE_PLACEHOLDER = "![alt](detected-image)<yap-cap>caption</yap-cap>"
 IMAGE_PLACEHOLDER_PATTERN = re.compile(r"!\[([^\]]*)\]\(detected-image\)(<yap-cap>.*?</yap-cap>)?")
 
 
-def store_image(data: bytes, format: str, images_dir: Path, content_hash: str, page_idx: int, img_idx: int) -> str:
-    """Store image to filesystem and return URL path."""
-    doc_dir = images_dir / content_hash
-    doc_dir.mkdir(parents=True, exist_ok=True)
-
-    filename = f"{page_idx}_{img_idx}.{format}"
-    (doc_dir / filename).write_bytes(data)
-
-    return f"/images/{content_hash}/{filename}"
-
-
-def store_figure(
+async def store_figure(
+    storage: "ImageStorage",
     figure: DetectedFigure,
-    images_dir: Path,
     content_hash: str,
     page_idx: int,
     fig_idx: int,
 ) -> str:
     """Store a detected figure and return URL with layout query params."""
-    doc_dir = images_dir / content_hash
-    doc_dir.mkdir(parents=True, exist_ok=True)
-
     filename = f"{page_idx}_{fig_idx}.png"
     cropped_bytes = base64.b64decode(figure.cropped_image_base64)
-    (doc_dir / filename).write_bytes(cropped_bytes)
 
-    # Build URL with layout info as query params
-    base_url = f"/images/{content_hash}/{filename}"
+    base_url = await storage.store(content_hash, filename, cropped_bytes, "image/png")
+
+    # Add layout info as query params
     params = []
     if figure.width_pct:
         params.append(f"w={figure.width_pct}")

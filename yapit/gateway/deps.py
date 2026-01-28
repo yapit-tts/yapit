@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Annotated, AsyncIterator
 from uuid import UUID
 
@@ -25,6 +26,7 @@ from yapit.gateway.domain_models import (
 )
 from yapit.gateway.exceptions import ResourceNotFoundError
 from yapit.gateway.stack_auth.users import User
+from yapit.gateway.storage import ImageStorage, LocalImageStorage, R2ImageStorage
 
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 
@@ -34,6 +36,29 @@ def create_cache(cache_type: Caches, config: CacheConfig) -> Cache:
     match cache_type:
         case Caches.SQLITE:
             return SqliteCache(config)
+
+
+def create_image_storage(settings: Settings) -> ImageStorage:
+    """Create image storage backend based on settings."""
+    match settings.image_storage_type:
+        case "local":
+            assert settings.images_dir, "IMAGES_DIR required for local storage"
+            return LocalImageStorage(Path(settings.images_dir))
+        case "r2":
+            assert settings.r2_account_id, "R2_ACCOUNT_ID required for r2 storage"
+            assert settings.r2_access_key_id, "R2_ACCESS_KEY_ID required for r2 storage"
+            assert settings.r2_secret_access_key, "R2_SECRET_ACCESS_KEY required for r2 storage"
+            assert settings.r2_bucket_name, "R2_BUCKET_NAME required for r2 storage"
+            assert settings.r2_public_url, "R2_PUBLIC_URL required for r2 storage"
+            return R2ImageStorage(
+                account_id=settings.r2_account_id,
+                access_key_id=settings.r2_access_key_id,
+                secret_access_key=settings.r2_secret_access_key,
+                bucket_name=settings.r2_bucket_name,
+                public_url=settings.r2_public_url,
+            )
+        case _:
+            raise ValueError(f"Unknown image storage type: {settings.image_storage_type}")
 
 
 async def get_audio_cache(request: Request) -> Cache:
@@ -46,6 +71,10 @@ async def get_document_cache(request: Request) -> Cache:
 
 async def get_extraction_cache(request: Request) -> Cache:
     return request.app.state.extraction_cache
+
+
+async def get_image_storage(request: Request) -> ImageStorage:
+    return request.app.state.image_storage
 
 
 async def get_db_session(settings: Settings = Depends(get_settings)) -> AsyncIterator[AsyncSession]:
@@ -152,6 +181,7 @@ AiExtractorDep = Annotated[GeminiExtractor | None, Depends(get_ai_extractor)]
 AudioCache = Annotated[Cache, Depends(get_audio_cache)]
 DocumentCache = Annotated[Cache, Depends(get_document_cache)]
 ExtractionCache = Annotated[Cache, Depends(get_extraction_cache)]
+ImageStorageDep = Annotated[ImageStorage, Depends(get_image_storage)]
 CurrentDoc = Annotated[Document, Depends(get_doc)]
 CurrentVoice = Annotated[Voice, Depends(get_voice)]
 CurrentBlock = Annotated[Block, Depends(get_block)]

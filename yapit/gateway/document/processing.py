@@ -2,19 +2,18 @@
 
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from pathlib import Path
 
 from loguru import logger
 from pydantic import BaseModel, ConfigDict
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from yapit.gateway.cache import Cache
-from yapit.gateway.config import Settings
 from yapit.gateway.constants import SUPPORTED_DOCUMENT_MIME_TYPES
 from yapit.gateway.document.extraction import PER_PAGE_TOLERANCE, estimate_document_tokens
 from yapit.gateway.domain_models import DocumentMetadata, UsageType
 from yapit.gateway.exceptions import ValidationError
 from yapit.gateway.metrics import log_event
+from yapit.gateway.storage import ImageStorage
 from yapit.gateway.usage import check_usage_limit, record_usage
 
 
@@ -107,7 +106,8 @@ async def process_with_billing(
     total_pages: int,
     db: AsyncSession,
     extraction_cache: Cache,
-    settings: Settings,
+    image_storage: ImageStorage,
+    billing_enabled: bool,
     file_size: int | None = None,
     pages: list[int] | None = None,
 ) -> DocumentExtractionResult:
@@ -150,12 +150,10 @@ async def process_with_billing(
 
         # Invalidate cache if images were deleted (e.g., after document deletion)
         has_cached_images = any(page.images for page in cached_pages.values())
-        if has_cached_images:
-            images_dir = Path(settings.images_dir) / content_hash
-            if not images_dir.exists():
-                logger.info(f"Images directory missing for {content_hash}, invalidating extraction cache")
-                cached_pages = {}
-                uncached_pages = requested_pages
+        if has_cached_images and not await image_storage.exists(content_hash):
+            logger.info(f"Images missing for {content_hash}, invalidating extraction cache")
+            cached_pages = {}
+            uncached_pages = requested_pages
     else:
         uncached_pages = requested_pages
 
@@ -189,7 +187,7 @@ async def process_with_billing(
             UsageType.ocr_tokens,
             amount_to_check,
             db,
-            billing_enabled=settings.billing_enabled,
+            billing_enabled=billing_enabled,
         )
 
     # 4. Extract, cache, and bill each page as it completes

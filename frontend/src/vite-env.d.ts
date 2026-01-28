@@ -15,4 +15,5 @@ interface GPU {
 	requestAdapter(): Promise<GPUAdapter | null>;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
 interface GPUAdapter {}

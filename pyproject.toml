@@ -41,6 +41,7 @@ dependencies = [
   "playwright~=1.57",
   "pillow~=12.1",
   "aiosqlite~=0.22.1",
+  "aioboto3>=15.5.0",
 ]
 
 [project.optional-dependencies]

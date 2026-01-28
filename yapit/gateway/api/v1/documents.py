@@ -3,7 +3,6 @@ import hashlib
 import io
 import math
 import re
-import shutil
 from datetime import datetime
 from email.message import EmailMessage
 from html import escape as html_escape
@@ -37,6 +36,7 @@ from yapit.gateway.deps import (
     DbSession,
     DocumentCache,
     ExtractionCache,
+    ImageStorageDep,
     RedisClient,
     SettingsDep,
 )
@@ -518,6 +518,7 @@ async def _extract_document_content(
     user_id: str,
     db: DbSession,
     extraction_cache: ExtractionCache,
+    image_storage: ImageStorageDep,
     settings: SettingsDep,
     ai_extractor_config: AiExtractorConfigDep,
     ai_extractor: AiExtractorDep,
@@ -563,7 +564,8 @@ async def _extract_document_content(
             total_pages=total_pages,
             db=db,
             extraction_cache=extraction_cache,
-            settings=settings,
+            image_storage=image_storage,
+            billing_enabled=settings.billing_enabled,
             file_size=file_size,
             pages=pages,
         )
@@ -581,6 +583,7 @@ async def create_document(
     db: DbSession,
     file_cache: DocumentCache,
     extraction_cache: ExtractionCache,
+    image_storage: ImageStorageDep,
     settings: SettingsDep,
     user: AuthenticatedUser,
     ai_extractor_config: AiExtractorConfigDep,
@@ -634,6 +637,7 @@ async def create_document(
             user_id=user.id,
             db=db,
             extraction_cache=extraction_cache,
+            image_storage=image_storage,
             settings=settings,
             ai_extractor_config=ai_extractor_config,
             ai_extractor=ai_extractor,
@@ -744,7 +748,7 @@ class BulkDeleteResponse(BaseModel):
 @router.delete("/bulk", response_model=BulkDeleteResponse)
 async def bulk_delete_documents(
     db: DbSession,
-    settings: SettingsDep,
+    image_storage: ImageStorageDep,
     user: AuthenticatedUser,
     older_than_days: int | None = Query(None, ge=1, description="Only delete documents older than X days"),
 ) -> BulkDeleteResponse:
@@ -770,9 +774,7 @@ async def bulk_delete_documents(
     for content_hash in content_hashes:
         other_docs = await db.exec(select(Document).where(Document.content_hash == content_hash).limit(1))
         if not other_docs.first():
-            images_dir = Path(settings.images_dir) / content_hash
-            if images_dir.exists():
-                shutil.rmtree(images_dir)
+            await image_storage.delete_all(content_hash)
 
     return BulkDeleteResponse(deleted_count=len(documents))
 
@@ -781,7 +783,7 @@ async def bulk_delete_documents(
 async def delete_document(
     document: CurrentDoc,
     db: DbSession,
-    settings: SettingsDep,
+    image_storage: ImageStorageDep,
 ) -> None:
     """Delete a document and all its blocks. Cleans up images if last doc with this content."""
     content_hash = document.content_hash
@@ -793,9 +795,7 @@ async def delete_document(
     if content_hash:
         other_docs = await db.exec(select(Document).where(Document.content_hash == content_hash).limit(1))
         if not other_docs.first():
-            images_dir = Path(settings.images_dir) / content_hash
-            if images_dir.exists():
-                shutil.rmtree(images_dir)
+            await image_storage.delete_all(content_hash)
 
 
 @router.get("/{document_id}/blocks")

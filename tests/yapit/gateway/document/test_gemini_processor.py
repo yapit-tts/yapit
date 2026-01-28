@@ -17,6 +17,7 @@ from yapit.gateway.document.gemini import (
     MAX_RETRIES,
     GeminiExtractor,
 )
+from yapit.gateway.storage import LocalImageStorage
 
 FIXTURES_DIR = Path("tests/fixtures/documents")
 
@@ -29,11 +30,11 @@ def extractor(tmp_path):
 
     mock_settings = Mock()
     mock_settings.google_api_key = os.getenv("GOOGLE_API_KEY")
-    mock_settings.images_dir = str(tmp_path / "images")
     mock_redis = AsyncMock()
     mock_redis.exists = AsyncMock(return_value=False)  # Not cancelled
+    image_storage = LocalImageStorage(tmp_path / "images")
 
-    return GeminiExtractor(settings=mock_settings, redis=mock_redis, resolution="low")
+    return GeminiExtractor(settings=mock_settings, redis=mock_redis, image_storage=image_storage, resolution="low")
 
 
 def _mock_yolo_result() -> YoloResult:
@@ -133,11 +134,13 @@ def mock_extractor(tmp_path):
     """Create a GeminiExtractor with mocked client for unit testing."""
     mock_settings = Mock()
     mock_settings.google_api_key = "fake-key-for-testing"
-    mock_settings.images_dir = str(tmp_path / "images")
     mock_redis = AsyncMock()
+    image_storage = LocalImageStorage(tmp_path / "images")
 
     with patch("yapit.gateway.document.gemini.genai.Client"):
-        extractor = GeminiExtractor(settings=mock_settings, redis=mock_redis, resolution="low")
+        extractor = GeminiExtractor(
+            settings=mock_settings, redis=mock_redis, image_storage=image_storage, resolution="low"
+        )
     return extractor
 
 
