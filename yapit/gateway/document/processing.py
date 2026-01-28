@@ -2,6 +2,7 @@
 
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from pathlib import Path
 
 from loguru import logger
 from pydantic import BaseModel, ConfigDict
@@ -146,6 +147,15 @@ async def process_with_billing(
                 await log_event("extraction_cache_hit", processor_slug=config.slug, page_idx=page_idx, user_id=user_id)
             else:
                 uncached_pages.add(page_idx)
+
+        # Invalidate cache if images were deleted (e.g., after document deletion)
+        has_cached_images = any(page.images for page in cached_pages.values())
+        if has_cached_images:
+            images_dir = Path(settings.images_dir) / content_hash
+            if not images_dir.exists():
+                logger.info(f"Images directory missing for {content_hash}, invalidating extraction cache")
+                cached_pages = {}
+                uncached_pages = requested_pages
     else:
         uncached_pages = requested_pages
 
