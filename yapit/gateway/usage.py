@@ -357,7 +357,8 @@ async def get_usage_summary(
             "purchased_voice_chars": subscription.purchased_voice_chars,
         }
 
-    subscribed_tier = subscription.plan.tier if subscription else PlanTier.free
+    is_active_sub = subscription and subscription.status in (SubscriptionStatus.active, SubscriptionStatus.trialing)
+    subscribed_tier = subscription.plan.tier if is_active_sub else PlanTier.free
 
     return {
         "plan": {

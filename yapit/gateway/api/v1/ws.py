@@ -103,8 +103,10 @@ async def tts_websocket(
                     await ws.send_json({"type": "error", "error": f"Unknown message type: {msg_type}"})
 
             except ValidationError as e:
+                logger.error(f"WS validation error from user {user.id}: {e}")
                 await ws.send_json({"type": "error", "error": str(e)})
             except json.JSONDecodeError:
+                logger.error(f"WS invalid JSON from user {user.id}")
                 await ws.send_json({"type": "error", "error": "Invalid JSON"})
 
     except WebSocketDisconnect:
