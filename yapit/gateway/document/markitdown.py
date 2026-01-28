@@ -1,5 +1,6 @@
 """MarkItDown-based document extraction."""
 
+import asyncio
 import io
 from collections.abc import AsyncIterator
 
@@ -40,7 +41,7 @@ MARKITDOWN_CONFIG = ProcessorConfig(
 async def extract(content: bytes, content_type: str) -> AsyncIterator[PageResult]:
     """Extract content using MarkItDown library. Yields single page."""
     md = MarkItDown(enable_plugins=False)
-    result = md.convert_stream(io.BytesIO(content))
+    result = await asyncio.to_thread(md.convert_stream, io.BytesIO(content))
 
     yield PageResult(
         page_idx=0,

@@ -1,3 +1,4 @@
+import asyncio
 import datetime as dt
 import hashlib
 import io
@@ -436,13 +437,13 @@ async def _extract_website_content(
         return await fetch_from_markxiv(markxiv_url, arxiv_id), "markxiv"
 
     md = MarkItDown(enable_plugins=False)
-    result = md.convert_stream(io.BytesIO(content))
+    result = await asyncio.to_thread(md.convert_stream, io.BytesIO(content))
     markdown = result.markdown
 
     if url and _needs_js_rendering(content, markdown):
         logger.info(f"JS rendering detected, using Playwright for {url}")
         rendered_html = await render_with_js(url)
-        result = md.convert_stream(io.BytesIO(rendered_html.encode("utf-8")))
+        result = await asyncio.to_thread(md.convert_stream, io.BytesIO(rendered_html.encode("utf-8")))
         markdown = result.markdown
 
     if url:
