@@ -1,0 +1,12 @@
+# /etc/systemd/system/yapit-cache-warm.service
+# Copy to VPS, then: systemctl daemon-reload
+
+[Unit]
+Description=Warm Yapit TTS cache (voice previews)
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -c 'docker exec $$(docker ps -qf "name=yapit_gateway") python -m yapit.gateway.warm_cache'
+TimeoutStartSec=1800
