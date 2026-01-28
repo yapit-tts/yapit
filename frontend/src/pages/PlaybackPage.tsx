@@ -1654,7 +1654,7 @@ const PlaybackPage = () => {
         currentBlock: filteredPlayback.visualCurrentBlock ?? 0,
         setCurrentBlock: handleBlockChange, // Receives absolute index after translation
         onBlockHover: handleBlockHover,
-        audioProgress,
+        audioProgress: filteredPlayback.filteredElapsedMs, // Use filtered elapsed time
         blockStates: filteredPlayback.filteredBlockStates,
         visualToAbsolute: filteredPlayback.visualToAbsolute,
       };

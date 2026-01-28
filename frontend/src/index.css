@@ -127,9 +127,12 @@
   html {
     /* Prevent layout shift when overlay scrollbar appears/disappears (macOS) */
     scrollbar-gutter: stable;
+    /* Prevent horizontal rubber-band bouncing on iOS Safari */
+    overscroll-behavior-x: none;
   }
   body {
     @apply bg-background text-foreground overflow-x-hidden;
+    overscroll-behavior-x: none;
   }
 }
 

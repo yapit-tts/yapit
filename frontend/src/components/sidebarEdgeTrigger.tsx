@@ -117,22 +117,9 @@ export function SidebarEdgeTrigger() {
     };
   }, [isMobile, handleTouchStart, handleTouchMove, handleTouchEnd]);
 
-  // Mobile: visible button in thumb zone since swipe may conflict with browser gestures
+  // Mobile: no floating button (moved to playbar), but swipe gesture still active
   if (isMobile) {
-    return (
-      <button
-        onClick={toggleSidebar}
-        className="fixed left-0 z-20
-          w-6 h-14 flex items-center justify-center
-          bg-background/60 backdrop-blur-sm
-          border-y border-r border-border rounded-r-lg
-          active:bg-muted/80 transition-colors"
-        style={{ top: '65%' }}
-        aria-label="Toggle sidebar"
-      >
-        <span className="text-muted-foreground text-base font-light">›</span>
-      </button>
-    );
+    return null;
   }
 
   // Desktop: single button that transitions between closed/open positions

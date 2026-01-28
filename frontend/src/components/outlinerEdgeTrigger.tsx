@@ -128,22 +128,9 @@ export function OutlinerEdgeTrigger() {
   // Don't render if not enabled
   if (!enabled) return null;
 
-  // Mobile: visible button on right side (larger for easier tapping)
+  // Mobile: no floating button (moved to playbar), but swipe gesture still active
   if (isMobile) {
-    return (
-      <button
-        onClick={toggleOutliner}
-        className="fixed right-0 z-20
-          w-6 h-14 flex items-center justify-center
-          bg-background/60 backdrop-blur-sm
-          border-y border-l border-border rounded-l-lg
-          active:bg-muted/80 transition-colors"
-        style={{ top: "65%" }}
-        aria-label="Toggle outline"
-      >
-        <span className="text-muted-foreground text-base font-light">‹</span>
-      </button>
-    );
+    return null;
   }
 
   // Desktop: single button that transitions between closed/open positions

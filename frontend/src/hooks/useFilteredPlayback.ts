@@ -22,6 +22,9 @@ export interface FilteredPlayback {
   // Current block position
   visualCurrentBlock: number | null; // null if current block is in collapsed section
   isCurrentBlockHidden: boolean;
+
+  // Elapsed time (sum of visible blocks before current)
+  filteredElapsedMs: number;
 }
 
 /**
@@ -44,6 +47,11 @@ export function useFilteredPlayback(
   return useMemo(() => {
     // No sections = no filtering, return identity mapping
     if (sections.length === 0) {
+      // Calculate elapsed time: sum of blocks before currentBlock
+      let elapsedMs = 0;
+      for (let i = 0; i < currentBlock && i < documentBlocks.length; i++) {
+        elapsedMs += documentBlocks[i]?.est_duration_ms ?? 0;
+      }
       return {
         filteredBlockStates: blockStates,
         filteredDuration: documentBlocks.reduce((sum, b) => sum + (b.est_duration_ms ?? 0), 0),
@@ -52,6 +60,7 @@ export function useFilteredPlayback(
         absoluteToVisual: (idx: number) => idx,
         visualCurrentBlock: currentBlock >= 0 ? currentBlock : null,
         isCurrentBlockHidden: false,
+        filteredElapsedMs: elapsedMs,
       };
     }
 
@@ -99,6 +108,15 @@ export function useFilteredPlayback(
     const visualCurrentBlock = currentBlock >= 0 ? absoluteToVisualMap.get(currentBlock) ?? null : null;
     const isCurrentBlockHidden = currentBlock >= 0 && visualCurrentBlock === null;
 
+    // Calculate elapsed time: sum of visible blocks before visualCurrentBlock
+    let filteredElapsedMs = 0;
+    if (visualCurrentBlock !== null && visualCurrentBlock > 0) {
+      for (let i = 0; i < visualCurrentBlock; i++) {
+        const absIdx = visibleAbsoluteIndices[i];
+        filteredElapsedMs += documentBlocks[absIdx]?.est_duration_ms ?? 0;
+      }
+    }
+
     return {
       filteredBlockStates,
       filteredDuration,
@@ -107,6 +125,7 @@ export function useFilteredPlayback(
       absoluteToVisual,
       visualCurrentBlock,
       isCurrentBlockHidden,
+      filteredElapsedMs,
     };
   }, [documentBlocks, sections, expandedSections, blockStates, currentBlock, skippedSections]);
 }

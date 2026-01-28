@@ -6,11 +6,6 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
-import {
   Popover,
   PopoverContent,
   PopoverAnchor,
@@ -94,30 +89,22 @@ export function DocumentOutliner({
           Outline
         </span>
         <div className="flex gap-1">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                onClick={onCollapseAll}
-                className="p-1.5 rounded hover:bg-accent"
-                aria-label="Collapse all sections"
-              >
-                <Minus className="w-4 h-4" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">Collapse all</TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                onClick={onExpandAll}
-                className="p-1.5 rounded hover:bg-accent"
-                aria-label="Expand all sections"
-              >
-                <Plus className="w-4 h-4" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">Expand all</TooltipContent>
-          </Tooltip>
+          <button
+            onClick={onCollapseAll}
+            className="p-1.5 rounded hover:bg-accent"
+            aria-label="Collapse all sections"
+            title="Collapse all"
+          >
+            <Minus className="w-4 h-4" />
+          </button>
+          <button
+            onClick={onExpandAll}
+            className="p-1.5 rounded hover:bg-accent"
+            aria-label="Expand all sections"
+            title="Expand all"
+          >
+            <Plus className="w-4 h-4" />
+          </button>
         </div>
       </div>
 

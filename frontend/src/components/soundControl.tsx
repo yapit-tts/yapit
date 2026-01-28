@@ -1,12 +1,13 @@
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
-import { Play, Pause, Volume2, SkipBack, SkipForward, Loader2, Square, WifiOff, ChevronUp, X } from "lucide-react";
+import { Play, Pause, Volume2, SkipBack, SkipForward, Loader2, Square, WifiOff, ChevronUp, X, PanelLeft, List } from "lucide-react";
 import { useEffect, useState, useRef, useCallback, useMemo, memo } from "react";
 import { useNavigate } from "react-router";
 import { VoicePicker } from "@/components/voicePicker";
 import { SettingsDialog } from "@/components/settingsDialog";
 import { type VoiceSelection, setVoiceSelection, isInworldModel } from "@/lib/voiceSelection";
 import { useSidebar } from "@/components/ui/sidebar";
+import { useOutlinerOptional } from "@/hooks/useOutliner";
 import { useHasWebGPU } from "@/hooks/useWebGPU";
 
 type BlockState = 'pending' | 'synthesizing' | 'cached';
@@ -583,8 +584,11 @@ const SoundControl = memo(function SoundControl({
     onBlockHover?.(idx, isDragging);
   }, [onBlockHover]);
 
-  // Get sidebar state for responsive positioning
-  const { state: sidebarState, isMobile } = useSidebar();
+  // Get sidebar state for responsive positioning and mobile toggle
+  const { state: sidebarState, isMobile, toggleSidebar } = useSidebar();
+
+  // Get outliner state for mobile toggle (optional - only available when document has sections)
+  const outliner = useOutlinerOptional();
 
   const numBlocks = numberOfBlocks ?? 0;
 
@@ -645,50 +649,79 @@ const SoundControl = memo(function SoundControl({
         </div>
       )}
 
-      {/* Playback controls */}
-      <div className="flex items-center justify-center gap-4 mb-3">
-        <Button
-          variant="ghost"
-          size="icon"
-          disabled={(currentBlock ?? 0) <= 0 && !isPlaying}
-          {...skipBackProps}
-        >
-          <SkipBack className="h-5 w-5" />
-        </Button>
-        <Button
-          variant="secondary"
-          size="lg"
-          className="rounded-full w-14 h-14"
-          onClick={isBuffering || isSynthesizing ? onCancelSynthesis : isPlaying ? onPause : handlePlay}
-          onMouseEnter={handleSpinnerMouseEnter}
-          onMouseLeave={handleSpinnerMouseLeave}
-        >
-          {isBuffering || isSynthesizing ? (
-            isHoveringSpinner ? (
-              <Square className="h-5 w-5 fill-current" />
+      {/* Playback controls - same layout as progress bar below for alignment */}
+      <div className="flex items-center gap-4 mb-3 max-w-2xl mx-auto">
+        {/* Left slot: sidebar toggle on mobile only - matches time display width and alignment */}
+        {isMobile && (
+          <button
+            onClick={toggleSidebar}
+            aria-label="Toggle sidebar"
+            className="w-16 h-10 flex items-center justify-end text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <PanelLeft className="h-5 w-5" />
+          </button>
+        )}
+
+        {/* Center: playback controls (flex-1 to match progress bar layout) */}
+        <div className="flex items-center justify-center gap-4 flex-1">
+          <Button
+            variant="ghost"
+            size="icon"
+            disabled={(currentBlock ?? 0) <= 0 && !isPlaying}
+            {...skipBackProps}
+          >
+            <SkipBack className="h-5 w-5" />
+          </Button>
+          <Button
+            variant="secondary"
+            size="lg"
+            className="rounded-full w-14 h-14"
+            onClick={isBuffering || isSynthesizing ? onCancelSynthesis : isPlaying ? onPause : handlePlay}
+            onMouseEnter={handleSpinnerMouseEnter}
+            onMouseLeave={handleSpinnerMouseLeave}
+          >
+            {isBuffering || isSynthesizing ? (
+              isHoveringSpinner ? (
+                <Square className="h-5 w-5 fill-current" />
+              ) : (
+                <Loader2 className="h-6 w-6 animate-spin" />
+              )
+            ) : isPlaying ? (
+              <Pause className="h-6 w-6" />
             ) : (
-              <Loader2 className="h-6 w-6 animate-spin" />
-            )
-          ) : isPlaying ? (
-            <Pause className="h-6 w-6" />
-          ) : (
-            <Play className="h-6 w-6 ml-1" />
-          )}
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          disabled={(currentBlock ?? 0) >= numBlocks - 1}
-          {...skipForwardProps}
-        >
-          <SkipForward className="h-5 w-5" />
-        </Button>
+              <Play className="h-6 w-6 ml-1" />
+            )}
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            disabled={(currentBlock ?? 0) >= numBlocks - 1}
+            {...skipForwardProps}
+          >
+            <SkipForward className="h-5 w-5" />
+          </Button>
+        </div>
+
+        {/* Right slot: always render on mobile to keep layout symmetric */}
+        {isMobile && (
+          <div className="w-16 h-10 flex items-center justify-start">
+            {outliner?.enabled && (
+              <button
+                onClick={outliner.toggleOutliner}
+                aria-label="Toggle outline"
+                className="text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <List className="h-5 w-5" />
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Progress bar - smooth gradient for large docs, blocky for smaller ones */}
       {/* On hover: swap time displays with block numbers (current / total) */}
       <div className="flex items-center gap-4 max-w-2xl mx-auto">
-        <span className="text-sm text-muted-foreground w-12 text-right tabular-nums">
+        <span className="text-sm text-muted-foreground w-16 text-right tabular-nums">
           {isHoveringProgressBar
             ? (isDraggingProgressBar && hoveredBlock !== null ? hoveredBlock + 1 : blockNum)
             : progressDisplay}
@@ -710,7 +743,7 @@ const SoundControl = memo(function SoundControl({
             visualToAbsolute={visualToAbsolute}
           />
         )}
-        <span className="text-sm text-muted-foreground w-12 tabular-nums">
+        <span className="text-sm text-muted-foreground w-16 tabular-nums">
           {isHoveringProgressBar ? numBlocks : durationDisplay}
         </span>
       </div>
@@ -741,9 +774,9 @@ const SoundControl = memo(function SoundControl({
           <div className="flex justify-center">
             <VoicePicker value={voiceSelection} onChange={onVoiceChange} />
           </div>
-          {/* All rows use same column widths: w-12 left, flex-1 middle, w-12 right */}
+          {/* All rows use same column widths: w-16 left, flex-1 middle, w-16 right */}
           <div className="flex items-center gap-4">
-            <span className="text-sm text-muted-foreground font-mono tabular-nums w-12 text-right flex-shrink-0">
+            <span className="text-sm text-muted-foreground font-mono tabular-nums w-16 text-right flex-shrink-0">
               {playbackSpeed.toFixed(1)}x
             </span>
             <Slider
@@ -754,10 +787,10 @@ const SoundControl = memo(function SoundControl({
               onValueChange={(values) => onSpeedChange(values[0])}
               className="flex-1"
             />
-            <div className="w-12 flex-shrink-0" />
+            <div className="w-16 flex-shrink-0" />
           </div>
           <div className="flex items-center gap-4">
-            <div className="w-12 flex-shrink-0 flex justify-end">
+            <div className="w-16 flex-shrink-0 flex justify-end">
               <Volume2 className="h-5 w-5 text-muted-foreground" />
             </div>
             <Slider
@@ -767,7 +800,7 @@ const SoundControl = memo(function SoundControl({
               onValueChange={(values) => onVolumeChange(values[0])}
               className="flex-1"
             />
-            <div className="w-12 flex-shrink-0 flex justify-end">
+            <div className="w-16 flex-shrink-0 flex justify-end">
               <SettingsDialog size="lg" />
             </div>
           </div>
@@ -788,7 +821,7 @@ const SoundControl = memo(function SoundControl({
           </div>
           <div className="flex items-center gap-5">
             <div className="flex items-center gap-2">
-              <span className="text-sm text-muted-foreground font-mono tabular-nums w-12">
+              <span className="text-sm text-muted-foreground font-mono tabular-nums w-16">
                 {playbackSpeed.toFixed(1)}x
               </span>
               <Slider

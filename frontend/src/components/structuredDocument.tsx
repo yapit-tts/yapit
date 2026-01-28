@@ -1094,7 +1094,10 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
             </div>
           </div>
         ) : (
-          <div className="-mx-4 px-4 sm:-mx-[8%] sm:px-[8%] md:-mx-[10%] md:px-[10%] mb-4 pb-2 border-b border-b-border">
+          <div className={cn(
+            "mb-4 pb-2 border-b border-b-border",
+            !hasMaxWidth && "-mx-4 px-4 sm:-mx-[8%] sm:px-[8%] md:-mx-[10%] md:px-[10%]"
+          )}>
             <div className="w-full flex justify-end">
               <ActionButtons />
             </div>
@@ -1159,7 +1162,11 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
           </div>
         </div>
       ) : (
-        <div className="-mx-4 px-4 sm:-mx-[8%] sm:px-[8%] md:-mx-[10%] md:px-[10%] mb-6 pb-2 border-b border-b-border">
+        <div className={cn(
+          "mb-6 pb-2 border-b border-b-border",
+          // Only use negative margin trick for full width (percentage padding); constrained widths use fixed padding
+          !hasMaxWidth && "-mx-4 px-4 sm:-mx-[8%] sm:px-[8%] md:-mx-[10%] md:px-[10%]"
+        )}>
           <div className="w-full flex items-center justify-between gap-4">
             {isEditingTitle ? (
               <input
