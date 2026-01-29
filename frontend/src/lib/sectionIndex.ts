@@ -215,12 +215,12 @@ export function formatDuration(ms: number): string {
   const minutes = totalMinutes % 60;
 
   if (hours === 0) {
-    return `~${minutes}m`;
+    return `${minutes}m`;
   }
 
   if (minutes === 0) {
     return `~${hours}h`;
   }
 
-  return `~${hours}h ${minutes}m`;
+  return `${hours}h ${minutes}m`;
 }
