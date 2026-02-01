@@ -1,34 +1,24 @@
 // Voice selection types and localStorage utilities
 
-// Inworld model slugs - update these for version upgrades
+export const KOKORO_BROWSER_SLUG = "kokoro-browser" as const;
+export const KOKORO_SLUG = "kokoro" as const;
 export const INWORLD_SLUG = "inworld-1.5" as const;
 export const INWORLD_MAX_SLUG = "inworld-1.5-max" as const;
 
-export type ModelType = "kokoro" | "kokoro-server" | typeof INWORLD_SLUG | typeof INWORLD_MAX_SLUG;
+export type ModelType = typeof KOKORO_BROWSER_SLUG | typeof KOKORO_SLUG | typeof INWORLD_SLUG | typeof INWORLD_MAX_SLUG;
 
 // Check if model is an Inworld model (any variant)
 export function isInworldModel(model: ModelType): boolean {
   return model.startsWith("inworld");
 }
 
-// Map frontend model types to backend model slugs
-// Frontend uses "kokoro" (browser), "kokoro-server" (server)
-// Backend database has "kokoro" plus Inworld slugs
-export function getBackendModelSlug(model: ModelType): string {
-  switch (model) {
-    case "kokoro":
-    case "kokoro-server":
-      return "kokoro";
-    case INWORLD_SLUG:
-      return INWORLD_SLUG;
-    case INWORLD_MAX_SLUG:
-      return INWORLD_MAX_SLUG;
-  }
+
+export function isServerSideModel(model: ModelType): boolean {
+  return model !== KOKORO_BROWSER_SLUG;
 }
 
-// Check if model uses server-side synthesis
-export function isServerSideModel(model: ModelType): boolean {
-  return model === "kokoro-server" || isInworldModel(model);
+export function isKokoroModel(model: ModelType): boolean {
+  return model === KOKORO_BROWSER_SLUG || model === KOKORO_SLUG;
 }
 
 export interface VoiceSelection {
@@ -63,7 +53,7 @@ const VOICE_SELECTION_KEY = "yapit_voice_selection";
 const PINNED_VOICES_KEY = "yapit_pinned_voices";
 
 const DEFAULT_SELECTION: VoiceSelection = {
-  model: "kokoro",
+  model: KOKORO_SLUG,
   voiceSlug: "af_heart",
 };
 
@@ -71,11 +61,11 @@ export function getVoiceSelection(): VoiceSelection {
   try {
     const stored = localStorage.getItem(VOICE_SELECTION_KEY);
     if (stored) {
-      return JSON.parse(stored);
+      const parsed = JSON.parse(stored) as VoiceSelection;
+      if (parsed.model === ("kokoro-server" as string)) parsed.model = KOKORO_SLUG;
+      return parsed;
     }
-  } catch {
-    // Ignore parse errors
-  }
+  } catch {}
   return DEFAULT_SELECTION;
 }
 

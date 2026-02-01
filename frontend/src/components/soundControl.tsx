@@ -5,7 +5,7 @@ import { useEffect, useState, useRef, useCallback, useMemo, memo } from "react";
 import { useNavigate } from "react-router";
 import { VoicePicker } from "@/components/voicePicker";
 import { SettingsDialog } from "@/components/settingsDialog";
-import { type VoiceSelection, setVoiceSelection, isInworldModel } from "@/lib/voiceSelection";
+import { type VoiceSelection, setVoiceSelection, isInworldModel, KOKORO_SLUG, KOKORO_BROWSER_SLUG } from "@/lib/voiceSelection";
 import { useSidebar } from "@/components/ui/sidebar";
 import { useOutlinerOptional } from "@/hooks/useOutliner";
 import { useHasWebGPU } from "@/hooks/useWebGPU";
@@ -523,7 +523,7 @@ const SoundControl = memo(function SoundControl({
   const usageLimitError = blockError?.includes("Usage limit exceeded") ? blockError :
                           connectionError?.includes("Usage limit exceeded") ? connectionError : null;
   const isUsingInworld = isInworldModel(voiceSelection.model);
-  const isUsingKokoroServer = voiceSelection.model === "kokoro-server";
+  const isUsingKokoroServer = voiceSelection.model === KOKORO_SLUG;
 
   // Banner dismissed state
   const [quotaDismissed, setQuotaDismissed] = useState(false);
@@ -548,7 +548,7 @@ const SoundControl = memo(function SoundControl({
   const handleSwitchToKokoro = useCallback(() => {
     const newSelection: VoiceSelection = {
       ...voiceSelection,
-      model: "kokoro-server",
+      model: KOKORO_SLUG,
       voiceSlug: "af_heart",
     };
     onVoiceChange(newSelection);
@@ -566,7 +566,7 @@ const SoundControl = memo(function SoundControl({
   const handleSwitchToLocal = useCallback(() => {
     const newSelection: VoiceSelection = {
       ...voiceSelection,
-      model: "kokoro",
+      model: KOKORO_BROWSER_SLUG,
       voiceSlug: voiceSelection.voiceSlug.startsWith("af_") || voiceSelection.voiceSlug.startsWith("am_")
         ? voiceSelection.voiceSlug
         : "af_heart",
