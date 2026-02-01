@@ -73,6 +73,8 @@ const PlaybackPage = () => {
   const { api, isAuthReady, isAnonymous } = useApi();
   const { settings } = useSettings();
   const { autoImportSharedDocuments } = useUserPreferences();
+  const scrollBlockPosition: ScrollLogicalPosition = settings.scrollPosition === "top" ? "start"
+    : settings.scrollPosition === "bottom" ? "end" : "center";
   const outliner = useOutliner();
 
   // Document data
@@ -271,7 +273,7 @@ const PlaybackPage = () => {
         setTimeout(() => {
           const blockElement = window.document.querySelector(`[data-audio-idx="${restoreBlock}"]`)
             || window.document.querySelector(`[data-audio-block-idx="${restoreBlock}"]`);
-          if (blockElement) blockElement.scrollIntoView({ behavior: "smooth", block: "center" });
+          if (blockElement) blockElement.scrollIntoView({ behavior: "smooth", block: scrollBlockPosition });
         }, 100);
       }
     }
@@ -300,8 +302,13 @@ const PlaybackPage = () => {
   const scrollToBlock = useCallback((blockIdx: number, behavior: ScrollBehavior = "smooth") => {
     if (blockIdx < 0) return;
     const element = findElementsByAudioIdx(blockIdx)[0];
-    if (element) element.scrollIntoView({ behavior, block: "center" });
-  }, [findElementsByAudioIdx]);
+    if (element) element.scrollIntoView({ behavior, block: scrollBlockPosition });
+  }, [findElementsByAudioIdx, scrollBlockPosition]);
+
+  // Preview scroll position change immediately
+  useEffect(() => {
+    if (currentBlock >= 0) scrollToBlock(currentBlock);
+  }, [scrollBlockPosition]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (currentBlock < 0 || !isPlaying) return;

@@ -165,3 +165,10 @@
   font-size: 0.85em;
 }
 
+/* Offset scroll-snap for playbar (bottom) and header (top) */
+[data-audio-block-idx],
+[data-audio-idx] {
+  scroll-margin-top: 7rem;
+  scroll-margin-bottom: 15rem;
+}
+

@@ -1,6 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
-import { Play, Pause, Volume2, SkipBack, SkipForward, Loader2, Square, WifiOff, ChevronUp, X, PanelLeft, List } from "lucide-react";
+import { Play, Pause, Volume2, Volume1, VolumeX, SkipBack, SkipForward, Loader2, Square, WifiOff, ChevronUp, X, PanelLeft, List } from "lucide-react";
 import { useEffect, useState, useRef, useCallback, useMemo, memo } from "react";
 import { useNavigate } from "react-router";
 import { VoicePicker } from "@/components/voicePicker";
@@ -791,7 +791,7 @@ const SoundControl = memo(function SoundControl({
           </div>
           <div className="flex items-center gap-4">
             <div className="w-16 flex-shrink-0 flex justify-end">
-              <Volume2 className="h-5 w-5 text-muted-foreground" />
+              {volume === 0 ? <VolumeX className="h-5 w-5 text-muted-foreground" /> : volume <= 50 ? <Volume1 className="h-5 w-5 text-muted-foreground" /> : <Volume2 className="h-5 w-5 text-muted-foreground" />}
             </div>
             <Slider
               value={[volume]}
@@ -834,7 +834,7 @@ const SoundControl = memo(function SoundControl({
               />
             </div>
             <div className="flex items-center gap-2">
-              <Volume2 className="h-5 w-5 text-muted-foreground" />
+              {volume === 0 ? <VolumeX className="h-5 w-5 text-muted-foreground" /> : volume <= 50 ? <Volume1 className="h-5 w-5 text-muted-foreground" /> : <Volume2 className="h-5 w-5 text-muted-foreground" />}
               <Slider
                 value={[volume]}
                 max={100}
