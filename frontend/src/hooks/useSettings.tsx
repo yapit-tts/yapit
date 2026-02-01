@@ -5,8 +5,6 @@ export type ContentWidth = "narrow" | "medium" | "wide" | "full";
 export interface AppSettings {
   scrollOnRestore: boolean;
   liveScrollTracking: boolean;
-  defaultSpeed: number;
-  defaultVoice: string;
   contentWidth: ContentWidth;
 }
 
@@ -15,8 +13,6 @@ const SETTINGS_KEY = "yapit-settings";
 const defaultSettings: AppSettings = {
   scrollOnRestore: true,
   liveScrollTracking: true,
-  defaultSpeed: 1.0,
-  defaultVoice: "heart", // Kokoro default
   contentWidth: "medium",
 };
 

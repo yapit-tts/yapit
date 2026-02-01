@@ -12,7 +12,7 @@ import { useApi } from '@/api';
 import { Loader2, FileQuestion, Download, X, AudioLines } from "lucide-react";
 import { AxiosError } from "axios";
 import { buildSectionIndex, findSectionForBlock, type Section } from '@/lib/sectionIndex';
-import { type VoiceSelection, getVoiceSelection } from '@/lib/voiceSelection';
+import { type VoiceSelection, getVoiceSelection, getPlaybackSpeed, setPlaybackSpeed as savePlaybackSpeed, getVolume, setVolume as saveVolume } from '@/lib/voiceSelection';
 import { useSettings } from '@/hooks/useSettings';
 import { useUserPreferences } from '@/hooks/useUserPreferences';
 
@@ -94,8 +94,11 @@ const PlaybackPage = () => {
 
   // Voice and playback settings (UI-owned, synced into engine)
   const [voiceSelection, setVoiceSelection] = useState<VoiceSelection>(getVoiceSelection);
-  const [volume, setVolume] = useState<number>(50);
-  const [playbackSpeed, setPlaybackSpeed] = useState<number>(settings.defaultSpeed);
+  const [volume, setVolume_] = useState<number>(getVolume);
+  const [playbackSpeed, setPlaybackSpeed_] = useState<number>(getPlaybackSpeed);
+
+  const setVolume = useCallback((v: number) => { setVolume_(v); saveVolume(v); }, []);
+  const setPlaybackSpeed = useCallback((s: number) => { setPlaybackSpeed_(s); savePlaybackSpeed(s); }, []);
 
   // Scroll detach state
   const [isScrollDetached, setIsScrollDetached] = useState(false);

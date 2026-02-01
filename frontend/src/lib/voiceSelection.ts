@@ -51,6 +51,8 @@ export interface KokoroVoice {
 
 const VOICE_SELECTION_KEY = "yapit_voice_selection";
 const PINNED_VOICES_KEY = "yapit_pinned_voices";
+const PLAYBACK_SPEED_KEY = "yapit_playback_speed";
+const VOLUME_KEY = "yapit_volume";
 
 const DEFAULT_SELECTION: VoiceSelection = {
   model: KOKORO_SLUG,
@@ -71,6 +73,30 @@ export function getVoiceSelection(): VoiceSelection {
 
 export function setVoiceSelection(selection: VoiceSelection): void {
   localStorage.setItem(VOICE_SELECTION_KEY, JSON.stringify(selection));
+}
+
+export function getPlaybackSpeed(): number {
+  try {
+    const stored = localStorage.getItem(PLAYBACK_SPEED_KEY);
+    if (stored) return Math.max(0.5, Math.min(3.0, parseFloat(stored)));
+  } catch {}
+  return 1.0;
+}
+
+export function setPlaybackSpeed(speed: number): void {
+  localStorage.setItem(PLAYBACK_SPEED_KEY, String(speed));
+}
+
+export function getVolume(): number {
+  try {
+    const stored = localStorage.getItem(VOLUME_KEY);
+    if (stored) return Math.max(0, Math.min(100, parseInt(stored)));
+  } catch {}
+  return 50;
+}
+
+export function setVolume(volume: number): void {
+  localStorage.setItem(VOLUME_KEY, String(volume));
 }
 
 export function getPinnedVoices(): string[] {

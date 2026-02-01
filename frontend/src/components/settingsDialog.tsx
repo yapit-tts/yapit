@@ -7,7 +7,6 @@ import {
 } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
-import { Slider } from "@/components/ui/slider";
 import { Button } from "@/components/ui/button";
 import { Settings } from "lucide-react";
 import { useSettings, type ContentWidth } from "@/hooks/useSettings";
@@ -111,20 +110,6 @@ export function SettingsDialog({ size = "default" }: SettingsDialogProps) {
                 </button>
               ))}
             </div>
-          </SettingRow>
-
-          <SettingRow
-            label="Default playback speed"
-            description={`${settings.defaultSpeed.toFixed(1)}x`}
-          >
-            <Slider
-              className="w-24"
-              value={[settings.defaultSpeed]}
-              onValueChange={([value]) => setSettings({ defaultSpeed: value })}
-              min={0.5}
-              max={3}
-              step={0.1}
-            />
           </SettingRow>
 
           {/* Sharing settings - only for signed-in users */}
