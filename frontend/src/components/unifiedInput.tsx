@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { MetadataBanner } from "@/components/metadataBanner";
 import { useDebounce } from "@/hooks/useDebounce";
+import { useSubscription } from "@/hooks/useSubscription";
 import { useApi } from "@/api";
 import { cn } from "@/lib/utils";
 import { AxiosError } from "axios";
@@ -80,7 +81,8 @@ export function UnifiedInput() {
   const dragCounterRef = useRef(0);
   const abortControllerRef = useRef<AbortController | null>(null);
   const navigate = useNavigate();
-  const { api } = useApi();
+  const { api, isAnonymous } = useApi();
+  const { tier } = useSubscription();
 
   const debouncedValue = useDebounce(value, 400);
 
@@ -498,9 +500,24 @@ export function UnifiedInput() {
           <AlertCircle className="h-4 w-4 shrink-0" />
           <span>
             {storageLimitError}{" "}
-            <Link to="/account" className="text-primary hover:underline">
-              Manage documents
-            </Link>
+            {isAnonymous ? (
+              <>
+                <Link to="/handler/signin" className="text-primary hover:underline">Sign in</Link>
+                {" for more storage or "}
+                <Link to="/account" className="text-primary hover:underline">delete old documents</Link>.
+              </>
+            ) : tier === "free" ? (
+              <>
+                <Link to="/subscription" className="text-primary hover:underline">Upgrade</Link>
+                {" for more storage or "}
+                <Link to="/account" className="text-primary hover:underline">delete old documents</Link>.
+              </>
+            ) : (
+              <>
+                <Link to="/account" className="text-primary hover:underline">Delete old documents</Link>
+                {" to free up space."}
+              </>
+            )}
           </span>
         </div>
       )}
