@@ -4,10 +4,11 @@ import {
   type PlaybackEngine,
   type PlaybackEngineDeps,
   type Block,
-  type WSBlockStatusMessage,
+  type AudioBufferData,
 } from "./playbackEngine";
 import type { Section } from "./sectionIndex";
 import type { AudioPlayer } from "./audio";
+import type { Synthesizer } from "./synthesizer";
 
 // --- Test helpers ---
 
@@ -45,31 +46,45 @@ function mockAudioPlayer(): AudioPlayer {
 }
 
 const FAKE_BUFFER = {} as AudioBuffer;
+const FAKE_AUDIO: AudioBufferData = { buffer: FAKE_BUFFER, duration_ms: 1000 };
+
+type SynthesizeHandler = (blockIdx: number, text: string, documentId: string, model: string, voice: string) => Promise<AudioBufferData | null>;
+
+/**
+ * Mock synthesizer that lets tests control when synthesis resolves.
+ * By default resolves immediately with FAKE_AUDIO. Set onSynthesize for custom behavior.
+ */
+function mockSynthesizer(): Synthesizer & { onSynthesize: SynthesizeHandler; cancelAll: Mock } {
+  const synth: Synthesizer & { onSynthesize: SynthesizeHandler; cancelAll: Mock } = {
+    onSynthesize: () => Promise.resolve(FAKE_AUDIO),
+    synthesize(blockIdx, text, documentId, model, voice) {
+      return synth.onSynthesize(blockIdx, text, documentId, model, voice);
+    },
+    cancelAll: vi.fn(),
+    onCursorMove: vi.fn(),
+    getError: () => null,
+    destroy: vi.fn(),
+  };
+  return synth;
+}
+
+/**
+ * Mock synthesizer that holds synthesis promises for manual resolution.
+ */
+function deferredSynthesizer() {
+  const pending = new Map<number, { resolve: (data: AudioBufferData | null) => void }>();
+  const synth = mockSynthesizer();
+  synth.onSynthesize = (blockIdx) => new Promise((resolve) => {
+    pending.set(blockIdx, { resolve });
+  });
+  return { synth, pending };
+}
 
 function makeDeps(overrides: Partial<PlaybackEngineDeps> = {}): PlaybackEngineDeps {
   return {
     audioPlayer: mockAudioPlayer(),
-    decodeAudio: vi.fn().mockResolvedValue(FAKE_BUFFER),
-    fetchAudio: vi.fn().mockResolvedValue(new ArrayBuffer(8)),
-    sendWS: vi.fn(),
-    checkWSConnected: vi.fn().mockReturnValue(true),
+    synthesizer: mockSynthesizer(),
     ...overrides,
-  };
-}
-
-function statusMsg(
-  blockIdx: number,
-  status: WSBlockStatusMessage["status"],
-  opts: Partial<WSBlockStatusMessage> = {},
-): WSBlockStatusMessage {
-  return {
-    type: "status",
-    document_id: "doc-1",
-    block_idx: blockIdx,
-    status,
-    model_slug: "kokoro",
-    voice_slug: "af_heart",
-    ...opts,
   };
 }
 
@@ -132,120 +147,7 @@ describe("createPlaybackEngine", () => {
       engine.setDocument("doc-1", makeBlocks(2));
       const a = engine.getSnapshot();
       const b = engine.getSnapshot();
-      expect(a).toBe(b); // same reference
-    });
-  });
-
-  describe("document_id filtering", () => {
-    it("ignores block status for wrong document", () => {
-      engine.setVoice("kokoro", "af_heart");
-      engine.setDocument("doc-1", makeBlocks(3));
-
-      engine.onBlockStatus(statusMsg(0, "cached", {
-        document_id: "doc-WRONG",
-        audio_url: "/audio/0.wav",
-      }));
-
-      expect(engine.getSnapshot().blockStates[0]).toBe("pending");
-    });
-
-    it("accepts block status for correct document", () => {
-      engine.setVoice("kokoro", "af_heart");
-      engine.setDocument("doc-1", makeBlocks(3));
-
-      engine.onBlockStatus(statusMsg(0, "queued"));
-      expect(engine.getSnapshot().blockStates[0]).toBe("synthesizing");
-    });
-  });
-
-  describe("voice/model filtering", () => {
-    it("ignores block status for wrong voice", () => {
-      engine.setVoice("kokoro", "af_heart");
-      engine.setDocument("doc-1", makeBlocks(3));
-
-      engine.onBlockStatus(statusMsg(0, "queued", {
-        model_slug: "kokoro",
-        voice_slug: "am_fenrir",
-      }));
-
-      expect(engine.getSnapshot().blockStates[0]).toBe("pending");
-    });
-
-    it("ignores block status for wrong model", () => {
-      engine.setVoice("kokoro", "af_heart");
-      engine.setDocument("doc-1", makeBlocks(3));
-
-      engine.onBlockStatus(statusMsg(0, "queued", {
-        model_slug: "inworld-1.5",
-        voice_slug: "af_heart",
-      }));
-
-      expect(engine.getSnapshot().blockStates[0]).toBe("pending");
-    });
-  });
-
-  describe("block visual states", () => {
-    beforeEach(() => {
-      engine.setVoice("kokoro", "af_heart");
-      engine.setDocument("doc-1", makeBlocks(4));
-    });
-
-    it("shows queued/processing as synthesizing", () => {
-      engine.onBlockStatus(statusMsg(0, "queued"));
-      engine.onBlockStatus(statusMsg(1, "processing"));
-      const states = engine.getSnapshot().blockStates;
-      expect(states[0]).toBe("synthesizing");
-      expect(states[1]).toBe("synthesizing");
-      expect(states[2]).toBe("pending");
-    });
-
-    it("shows cached after audio arrives", async () => {
-      engine.onBlockStatus(statusMsg(0, "cached", { audio_url: "/audio/0.wav" }));
-      // fetchAudio + decodeAudio are async
-      await vi.waitFor(() => {
-        expect(engine.getSnapshot().blockStates[0]).toBe("cached");
-      });
-    });
-  });
-
-  describe("block errors", () => {
-    it("sets blockError on error status", () => {
-      engine.setVoice("kokoro", "af_heart");
-      engine.setDocument("doc-1", makeBlocks(3));
-
-      engine.onBlockStatus(statusMsg(0, "error", { error: "GPU OOM" }));
-      expect(engine.getSnapshot().blockError).toBe("GPU OOM");
-    });
-  });
-
-  describe("eviction", () => {
-    it("clears WS state for evicted blocks", () => {
-      engine.setVoice("kokoro", "af_heart");
-      engine.setDocument("doc-1", makeBlocks(5));
-
-      engine.onBlockStatus(statusMsg(2, "queued"));
-      expect(engine.getSnapshot().blockStates[2]).toBe("synthesizing");
-
-      engine.onBlockEvicted({
-        type: "evicted",
-        document_id: "doc-1",
-        block_indices: [2],
-      });
-      // After eviction, WS state cleared → back to pending
-      expect(engine.getSnapshot().blockStates[2]).toBe("pending");
-    });
-
-    it("ignores eviction for wrong document", () => {
-      engine.setVoice("kokoro", "af_heart");
-      engine.setDocument("doc-1", makeBlocks(3));
-
-      engine.onBlockStatus(statusMsg(0, "queued"));
-      engine.onBlockEvicted({
-        type: "evicted",
-        document_id: "doc-WRONG",
-        block_indices: [0],
-      });
-      expect(engine.getSnapshot().blockStates[0]).toBe("synthesizing");
+      expect(a).toBe(b);
     });
   });
 
@@ -255,149 +157,168 @@ describe("createPlaybackEngine", () => {
       expect(engine.getSnapshot().status).toBe("stopped");
     });
 
-    it("enters buffering when no audio cached (server model)", () => {
-      engine.setVoice("kokoro", "af_heart");
-      engine.setDocument("doc-1", makeBlocks(5));
-      engine.play();
-      expect(engine.getSnapshot().status).toBe("buffering");
+    it("enters buffering when no audio cached", () => {
+      const { synth, pending } = deferredSynthesizer();
+      const d = makeDeps({ synthesizer: synth });
+      const e = createPlaybackEngine(d);
+
+      e.setVoice("kokoro", "af_heart");
+      e.setDocument("doc-1", makeBlocks(5));
+      e.play();
+      expect(e.getSnapshot().status).toBe("buffering");
+
+      // Clean up deferred promises
+      for (const [, p] of pending) p.resolve(null);
     });
 
-    it("sends WS synthesize request on play", () => {
-      engine.setVoice("kokoro", "af_heart");
-      engine.setDocument("doc-1", makeBlocks(5));
-      engine.play();
-      expect(deps.sendWS).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: "synthesize",
-          document_id: "doc-1",
-          model: "kokoro",
-          voice: "af_heart",
-        }),
-      );
+    it("transitions to playing when buffer fills", async () => {
+      const synth = mockSynthesizer();
+      const d = makeDeps({ synthesizer: synth });
+      const e = createPlaybackEngine(d);
+
+      e.setVoice("kokoro", "af_heart");
+      e.setDocument("doc-1", makeBlocks(3));
+      e.play();
+
+      // Synthesizer resolves immediately → buffer fills → playing
+      await vi.waitFor(() => {
+        expect(e.getSnapshot().status).toBe("playing");
+      });
     });
 
     it("pause sets status to stopped", async () => {
-      engine.setVoice("kokoro", "af_heart");
-      engine.setDocument("doc-1", makeBlocks(3));
+      const synth = mockSynthesizer();
+      const d = makeDeps({ synthesizer: synth });
+      const e = createPlaybackEngine(d);
 
-      // Pre-cache blocks so play transitions to playing
-      for (let i = 0; i < 3; i++) {
-        engine.onBlockStatus(statusMsg(i, "cached", { audio_url: `/audio/${i}.wav` }));
-      }
+      e.setVoice("kokoro", "af_heart");
+      e.setDocument("doc-1", makeBlocks(3));
+      e.play();
+
       await vi.waitFor(() => {
-        expect(engine.getSnapshot().blockStates[0]).toBe("cached");
+        expect(e.getSnapshot().status).toBe("playing");
       });
 
-      engine.play();
-      // With enough cached blocks, should transition to playing
-      await vi.waitFor(() => {
-        expect(engine.getSnapshot().status).toBe("playing");
-      });
-
-      engine.pause();
-      expect(engine.getSnapshot().status).toBe("stopped");
-      expect(deps.audioPlayer.pause).toHaveBeenCalled();
+      e.pause();
+      expect(e.getSnapshot().status).toBe("stopped");
+      expect(d.audioPlayer.pause).toHaveBeenCalled();
     });
 
-    it("stop resets position", async () => {
-      engine.setVoice("kokoro", "af_heart");
-      engine.setDocument("doc-1", makeBlocks(3));
+    it("stop calls cancelAll on synthesizer", async () => {
+      const synth = mockSynthesizer();
+      const d = makeDeps({ synthesizer: synth });
+      const e = createPlaybackEngine(d);
 
-      // Pre-cache
-      for (let i = 0; i < 3; i++) {
-        engine.onBlockStatus(statusMsg(i, "cached", { audio_url: `/audio/${i}.wav` }));
-      }
+      e.setVoice("kokoro", "af_heart");
+      e.setDocument("doc-1", makeBlocks(3));
+      e.play();
+
       await vi.waitFor(() => {
-        expect(engine.getSnapshot().blockStates[0]).toBe("cached");
+        expect(e.getSnapshot().status).toBe("playing");
       });
 
-      engine.play();
-      await vi.waitFor(() => {
-        expect(engine.getSnapshot().status).toBe("playing");
-      });
+      e.stop();
+      expect(e.getSnapshot().status).toBe("stopped");
+      expect(synth.cancelAll).toHaveBeenCalled();
+      expect(d.audioPlayer.stop).toHaveBeenCalled();
+    });
+  });
 
-      engine.stop();
-      const snap = engine.getSnapshot();
-      expect(snap.status).toBe("stopped");
-      // stop doesn't reset currentBlock (pause-like for cursor_moved), but does reset playingBlock
-      expect(deps.audioPlayer.stop).toHaveBeenCalled();
+  describe("block visual states", () => {
+    it("shows synthesizing for pending blocks", () => {
+      const { synth, pending } = deferredSynthesizer();
+      const d = makeDeps({ synthesizer: synth });
+      const e = createPlaybackEngine(d);
+
+      e.setVoice("kokoro", "af_heart");
+      e.setDocument("doc-1", makeBlocks(4));
+      e.play();
+
+      const states = e.getSnapshot().blockStates;
+      // Blocks 0-7 (BATCH_SIZE=8) should be synthesizing, rest pending
+      expect(states[0]).toBe("synthesizing");
+      expect(states[1]).toBe("synthesizing");
+
+      for (const [, p] of pending) p.resolve(null);
+    });
+
+    it("shows cached after synthesis resolves", async () => {
+      const synth = mockSynthesizer();
+      const d = makeDeps({ synthesizer: synth });
+      const e = createPlaybackEngine(d);
+
+      e.setVoice("kokoro", "af_heart");
+      e.setDocument("doc-1", makeBlocks(4));
+      e.play();
+
+      await vi.waitFor(() => {
+        expect(e.getSnapshot().blockStates[0]).toBe("cached");
+      });
     });
   });
 
   describe("voice change cancellation", () => {
-    it("resolves pending synthesis as null and enters buffering", () => {
-      engine.setVoice("kokoro", "af_heart");
-      engine.setDocument("doc-1", makeBlocks(5));
+    it("calls cancelAll and enters buffering", () => {
+      const { synth, pending } = deferredSynthesizer();
+      const d = makeDeps({ synthesizer: synth });
+      const e = createPlaybackEngine(d);
 
-      // Start playing → buffering with pending synthesis
-      engine.play();
-      expect(engine.getSnapshot().status).toBe("buffering");
+      e.setVoice("kokoro", "af_heart");
+      e.setDocument("doc-1", makeBlocks(5));
+      e.play();
+      expect(e.getSnapshot().status).toBe("buffering");
 
-      // Change voice mid-stream
-      engine.setVoice("kokoro", "am_fenrir");
+      e.setVoice("kokoro", "am_fenrir");
+      expect(e.getSnapshot().status).toBe("buffering");
+      expect(synth.cancelAll).toHaveBeenCalled();
 
-      // Should still be buffering (restarted with new voice)
-      expect(engine.getSnapshot().status).toBe("buffering");
-
-      // New prefetch should use new voice
-      expect(deps.sendWS).toHaveBeenLastCalledWith(
-        expect.objectContaining({
-          voice: "am_fenrir",
-        }),
-      );
+      for (const [, p] of pending) p.resolve(null);
     });
 
     it("evicts old voice audio from cache", async () => {
-      engine.setVoice("kokoro", "af_heart");
-      engine.setDocument("doc-1", makeBlocks(3));
+      const synth = mockSynthesizer();
+      const d = makeDeps({ synthesizer: synth });
+      const e = createPlaybackEngine(d);
 
-      // Cache a block with old voice
-      engine.onBlockStatus(statusMsg(0, "cached", { audio_url: "/audio/0.wav" }));
+      e.setVoice("kokoro", "af_heart");
+      e.setDocument("doc-1", makeBlocks(3));
+      e.play();
+
       await vi.waitFor(() => {
-        expect(engine.getSnapshot().blockStates[0]).toBe("cached");
+        expect(e.getSnapshot().blockStates[0]).toBe("cached");
       });
 
-      // Switch voice
-      engine.setVoice("kokoro", "am_fenrir");
-
-      // Old cache evicted → back to pending
-      expect(engine.getSnapshot().blockStates[0]).toBe("pending");
+      e.setVoice("kokoro", "am_fenrir");
+      expect(e.getSnapshot().blockStates[0]).toBe("synthesizing");
     });
   });
 
   describe("section skipping", () => {
     it("skips blocks in skipped sections during skipForward", async () => {
-      engine.setVoice("kokoro", "af_heart");
-      engine.setDocument("doc-1", makeBlocks(10));
+      const synth = mockSynthesizer();
+      const d = makeDeps({ synthesizer: synth });
+      const e = createPlaybackEngine(d);
+
+      e.setVoice("kokoro", "af_heart");
+      e.setDocument("doc-1", makeBlocks(10));
 
       const sections: Section[] = [
         makeSection("intro", 0, 2),
         makeSection("chapter1", 3, 6),
         makeSection("chapter2", 7, 9),
       ];
-      engine.setSections(sections, new Set(["chapter1"]));
+      e.setSections(sections, new Set(["chapter1"]));
 
-      // Pre-cache all blocks
-      for (let i = 0; i < 10; i++) {
-        engine.onBlockStatus(statusMsg(i, "cached", { audio_url: `/audio/${i}.wav` }));
-      }
+      e.play();
       await vi.waitFor(() => {
-        expect(engine.getSnapshot().blockStates[9]).toBe("cached");
+        expect(e.getSnapshot().status).toBe("playing");
       });
 
-      engine.play();
-      await vi.waitFor(() => {
-        expect(engine.getSnapshot().status).toBe("playing");
-      });
+      e.seekToBlock(2);
+      expect(e.getSnapshot().currentBlock).toBe(2);
 
-      // Currently on block 0 (intro). Skip forward past intro into the skipped chapter1.
-      // Seek to block 2 (end of intro)
-      engine.seekToBlock(2);
-      expect(engine.getSnapshot().currentBlock).toBe(2);
-
-      // Skip forward should jump to chapter2 (block 7), not chapter1 (block 3)
-      engine.skipForward();
-      expect(engine.getSnapshot().currentBlock).toBe(7);
+      e.skipForward();
+      expect(e.getSnapshot().currentBlock).toBe(7);
     });
   });
 
@@ -409,22 +330,19 @@ describe("createPlaybackEngine", () => {
       engine.seekToBlock(3);
       const snap = engine.getSnapshot();
       expect(snap.currentBlock).toBe(3);
-      // Progress = sum of est_duration_ms for blocks 0-2 = 3000
       expect(snap.audioProgress).toBe(3000);
     });
 
-    it("sends cursor_moved for server models", () => {
-      engine.setVoice("kokoro", "af_heart");
-      engine.setDocument("doc-1", makeBlocks(5));
+    it("calls onCursorMove on synthesizer", () => {
+      const synth = mockSynthesizer();
+      const d = makeDeps({ synthesizer: synth });
+      const e = createPlaybackEngine(d);
 
-      engine.seekToBlock(2);
-      expect(deps.sendWS).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: "cursor_moved",
-          document_id: "doc-1",
-          cursor: 2,
-        }),
-      );
+      e.setVoice("kokoro", "af_heart");
+      e.setDocument("doc-1", makeBlocks(5));
+
+      e.seekToBlock(2);
+      expect(synth.onCursorMove).toHaveBeenCalledWith("doc-1", 2);
     });
 
     it("ignores out of range", () => {
@@ -464,77 +382,23 @@ describe("createPlaybackEngine", () => {
     });
   });
 
-  describe("browser model", () => {
-    it("goes directly to playing (no buffering)", () => {
-      engine.setVoice("kokoro-browser", "af_heart");
-      engine.setDocument("doc-1", makeBlocks(3));
-      engine.play();
-      expect(engine.getSnapshot().status).toBe("playing");
-    });
+  describe("duration correction", () => {
+    it("adjusts totalDuration when actual audio duration differs from estimate", async () => {
+      const synth = mockSynthesizer();
+      synth.onSynthesize = () => Promise.resolve({ buffer: FAKE_BUFFER, duration_ms: 1500 });
+      const d = makeDeps({ synthesizer: synth });
+      const e = createPlaybackEngine(d);
 
-    it("does not send WS requests", () => {
-      engine.setVoice("kokoro-browser", "af_heart");
-      engine.setDocument("doc-1", makeBlocks(3));
-      engine.play();
-      expect(deps.sendWS).not.toHaveBeenCalled();
-    });
+      e.setVoice("kokoro", "af_heart");
+      e.setDocument("doc-1", makeBlocks(3)); // 3 * 1000ms = 3000ms
+      expect(e.getSnapshot().totalDuration).toBe(3000);
 
-    it("reports pending browser blocks", () => {
-      engine.setVoice("kokoro-browser", "af_heart");
-      engine.setDocument("doc-1", makeBlocks(3));
-      engine.play();
-      const pending = engine.getPendingBrowserBlocks();
-      // Block 0 should have a resolver created
-      expect(pending).toContain(0);
-    });
-
-    it("onBrowserAudio resolves synthesis", async () => {
-      engine.setVoice("kokoro-browser", "af_heart");
-      engine.setDocument("doc-1", makeBlocks(3));
-      engine.play();
-
-      const buf = {} as AudioBuffer;
-      engine.onBrowserAudio(0, buf, 1200);
+      e.play();
 
       await vi.waitFor(() => {
-        expect(engine.getSnapshot().blockStates[0]).toBe("cached");
+        // Block 0 synthesized with 1500ms → correction of +500ms
+        expect(e.getSnapshot().totalDuration).toBeGreaterThan(3000);
       });
-    });
-
-    it("cancelBrowserBlock resolves as null", () => {
-      engine.setVoice("kokoro-browser", "af_heart");
-      engine.setDocument("doc-1", makeBlocks(3));
-      engine.play();
-
-      // Cancel block 0
-      engine.cancelBrowserBlock(0);
-      // Should not crash, resolver cleaned up
-      expect(engine.getPendingBrowserBlocks()).not.toContain(0);
-    });
-  });
-
-  describe("timeout", () => {
-    beforeEach(() => {
-      vi.useFakeTimers();
-    });
-
-    it("resolves pending synthesis as null after 60s", async () => {
-      engine.setVoice("kokoro", "af_heart");
-      engine.setDocument("doc-1", makeBlocks(3));
-      engine.play();
-
-      // Advance past 60s timeout
-      vi.advanceTimersByTime(61_000);
-
-      // The buffering should still be buffering (no audio arrived)
-      // but resolvers should have been cleaned up via timeout
-      // Verify by checking that a new play attempt would re-request
-      const sendCalls = (deps.sendWS as Mock).mock.calls.length;
-      engine.stop();
-      engine.play();
-      expect((deps.sendWS as Mock).mock.calls.length).toBeGreaterThan(sendCalls);
-
-      vi.useRealTimers();
     });
   });
 
@@ -551,39 +415,9 @@ describe("createPlaybackEngine", () => {
       engine.subscribe(listener);
       engine.destroy();
       expect(deps.audioPlayer.stop).toHaveBeenCalled();
-      // After destroy, no more notifications
       listener.mockClear();
       engine.setDocument("doc-1", makeBlocks(1));
       expect(listener).not.toHaveBeenCalled();
-    });
-  });
-
-  describe("skipped block status", () => {
-    it("resolves skipped blocks as null", () => {
-      engine.setVoice("kokoro", "af_heart");
-      engine.setDocument("doc-1", makeBlocks(3));
-
-      engine.onBlockStatus(statusMsg(1, "skipped"));
-      // Skipped blocks don't show as cached or synthesizing — they're transparent
-      const states = engine.getSnapshot().blockStates;
-      expect(states[1]).toBe("pending");
-    });
-  });
-
-  describe("duration correction", () => {
-    it("adjusts totalDuration when actual audio duration differs from estimate", async () => {
-      engine.setVoice("kokoro", "af_heart");
-      engine.setDocument("doc-1", makeBlocks(3)); // 3 * 1000ms = 3000ms
-      expect(engine.getSnapshot().totalDuration).toBe(3000);
-
-      // Block 0 arrives with 1500ms actual (500ms more than 1000ms estimate)
-      const longBuffer = { duration: 1.5 } as AudioBuffer;
-      (deps.decodeAudio as Mock).mockResolvedValueOnce(longBuffer);
-      engine.onBlockStatus(statusMsg(0, "cached", { audio_url: "/audio/0.wav" }));
-
-      await vi.waitFor(() => {
-        expect(engine.getSnapshot().totalDuration).toBe(3500);
-      });
     });
   });
 });

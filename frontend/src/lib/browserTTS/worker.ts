@@ -1,11 +1,9 @@
 /**
  * Web Worker for browser-side TTS using Kokoro.js
  *
- * Responsibilities:
- * 1. Detect WebGPU vs WASM
- * 2. Load model lazily on first request
- * 3. Process synthesis requests
- * 4. Return audio as transferable ArrayBuffer
+ * Processes synthesis requests sequentially. Supports cancellation
+ * between requests via generation counter — cancel(N) drops all
+ * requests with generation <= N.
  */
 
 import { KokoroTTS } from "kokoro-js";
@@ -13,6 +11,7 @@ import type { WorkerMessage, MainMessage } from "./types";
 
 let tts: KokoroTTS | null = null;
 let loadingPromise: Promise<KokoroTTS> | null = null;
+let cancelledGeneration = -1;
 
 const MODEL_ID = "onnx-community/Kokoro-82M-v1.0-ONNX";
 
@@ -28,7 +27,7 @@ async function detectWebGPU(): Promise<boolean> {
   if (!navigator.gpu) return false;
   try {
     const adapter = await navigator.gpu.requestAdapter();
-    return adapter !== null;
+    return adapter !== null && !adapter.isFallbackAdapter;
   } catch {
     return false;
   }
@@ -46,7 +45,6 @@ async function loadModel(): Promise<KokoroTTS> {
     dtype,
     device,
     progress_callback: (progress) => {
-      // Progress info varies by stage - extract progress percentage when available
       const pct = "progress" in progress ? (progress.progress ?? 0) : 0;
       post({ type: "progress", progress: pct });
     },
@@ -58,12 +56,20 @@ async function loadModel(): Promise<KokoroTTS> {
 self.addEventListener("message", async (e: MessageEvent<MainMessage>) => {
   const { type } = e.data;
 
+  if (type === "cancel") {
+    cancelledGeneration = e.data.generation;
+    return;
+  }
+
   if (type === "synthesize") {
-    const { text, voice, requestId } = e.data;
-    const synthStart = performance.now();
+    const { text, voice, requestId, generation } = e.data;
+
+    if (generation < cancelledGeneration) {
+      post({ type: "error", requestId, error: "cancelled" });
+      return;
+    }
 
     try {
-      // Lazy load model on first synthesis
       if (!tts) {
         if (!loadingPromise) {
           console.log("[TTS Worker] Starting model load...");
@@ -75,21 +81,22 @@ self.addEventListener("message", async (e: MessageEvent<MainMessage>) => {
         }
         tts = await loadingPromise;
 
-        // Get available voices from the model
         const voices = Object.keys(tts.voices ?? {});
         post({ type: "ready", voices });
       }
 
-      // Synthesize audio - voice type is checked at runtime
       console.log(`[TTS Worker] Synthesizing ${text.length} chars...`);
       const genStart = performance.now();
       const audio = await tts.generate(text, { voice: voice as "af_heart" });
       console.log(`[TTS Worker] Generated in ${(performance.now() - genStart).toFixed(0)}ms`);
 
-      // Transfer audio data (zero-copy)
-      // RawAudio has .audio (Float32Array) and .sampling_rate
+      // Stale check after generation (voice may have changed mid-synthesis)
+      if (generation < cancelledGeneration) {
+        post({ type: "error", requestId, error: "cancelled" });
+        return;
+      }
+
       const audioData = audio.audio.buffer.slice(0);
-      console.log(`[TTS Worker] Total request time: ${(performance.now() - synthStart).toFixed(0)}ms`);
       post(
         { type: "audio", requestId, audioData, sampleRate: audio.sampling_rate },
         [audioData]
