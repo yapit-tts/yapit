@@ -125,6 +125,18 @@ fi
 
 log "Deploy complete"
 
-# Clean up old containers and images (keep last 24h for rollback)
+# Clean up old images. `docker image prune` doesn't work in Swarm — all `:latest` duplicates
+# are considered "in use" by service specs. Instead, compare against running container images.
 log "Cleaning up old images..."
-ssh "$VPS_HOST" "docker container prune -f >/dev/null && docker image prune -af --filter 'until=24h'" | tail -1
+ssh "$VPS_HOST" bash -s << 'CLEANUP'
+docker container prune -f >/dev/null
+RUNNING=$(docker ps -q | xargs docker inspect --format '{{.Image}}' 2>/dev/null | sort -u)
+REMOVED=0
+for img_id in $(docker images 'ghcr.io/yapit-tts/*' --format '{{.ID}}'); do
+  full_id=$(docker image inspect --format '{{.Id}}' "$img_id" 2>/dev/null) || continue
+  if ! echo "$RUNNING" | grep -q "$full_id"; then
+    docker rmi "$img_id" >/dev/null 2>&1 && REMOVED=$((REMOVED + 1))
+  fi
+done
+echo "Removed $REMOVED old image(s)"
+CLEANUP
