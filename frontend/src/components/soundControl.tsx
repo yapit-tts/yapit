@@ -18,6 +18,7 @@ function useRepeatOnHold(callback: () => void, disabled?: boolean) {
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const currentDelayRef = useRef(400);
   const isActiveRef = useRef(false);
+  const isTouchRef = useRef(false); // Suppress synthesized mouse events after touch
   const callbackRef = useRef(callback);
 
   // Keep callback ref up to date
@@ -32,6 +33,7 @@ function useRepeatOnHold(callback: () => void, disabled?: boolean) {
 
   const stop = useCallback(() => {
     isActiveRef.current = false;
+    isTouchRef.current = false;
     if (intervalRef.current) {
       clearInterval(intervalRef.current);
       intervalRef.current = null;
@@ -57,18 +59,19 @@ function useRepeatOnHold(callback: () => void, disabled?: boolean) {
   }, [disabled]); // Remove callback from deps since we use ref
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    if (disabled) return;
+    if (disabled || isTouchRef.current) return;
     e.preventDefault();
     isActiveRef.current = true;
-    callbackRef.current(); // Use ref
+    callbackRef.current();
     startRepeating();
   }, [disabled, startRepeating]);
 
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
     if (disabled) return;
     e.preventDefault();
+    isTouchRef.current = true;
     isActiveRef.current = true;
-    callbackRef.current(); // Use ref
+    callbackRef.current();
     startRepeating();
   }, [disabled, startRepeating]);
 
