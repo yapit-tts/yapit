@@ -459,6 +459,36 @@ const PlaybackPage = () => {
     };
   }, [engine]);
 
+  // MediaSession metadata — shows title/artwork in OS media controls (lock screen, dynamic island, etc.)
+  useEffect(() => {
+    if (!("mediaSession" in navigator)) return;
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: documentTitle ?? "Untitled",
+      artist: "Yapit",
+      artwork: [
+        { src: "/icon-192.png", sizes: "192x192", type: "image/png" },
+        { src: "/icon-512.png", sizes: "512x512", type: "image/png" },
+      ],
+    });
+  }, [documentTitle]);
+
+  // MediaSession playback state + position — enables progress bar and play/pause icon in OS controls
+  useEffect(() => {
+    if (!("mediaSession" in navigator)) return;
+    navigator.mediaSession.playbackState = isPlaying ? "playing" : "paused";
+    if (snapshot.totalDuration > 0) {
+      try {
+        const durationSec = snapshot.totalDuration / 1000;
+        const positionSec = Math.min(snapshot.audioProgress / 1000, durationSec);
+        navigator.mediaSession.setPositionState({
+          duration: durationSec,
+          playbackRate: playbackSpeed,
+          position: positionSec,
+        });
+      } catch { /* setPositionState can throw on invalid values */ }
+    }
+  }, [isPlaying, snapshot.audioProgress, snapshot.totalDuration, playbackSpeed]);
+
   // --- Outliner ---
 
   useEffect(() => {
