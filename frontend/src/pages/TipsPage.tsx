@@ -5,11 +5,14 @@ const codeClass = "text-sm font-mono px-1.5 py-0.5 rounded" as const;
 const codeStyle = { background: "var(--muted-brown)" } as const;
 
 const sections = [
+  { id: "controls", label: "Controls" },
   { id: "local-tts", label: "Local TTS" },
   { id: "premium-voices", label: "Premium voices" },
   { id: "document-processing", label: "Document processing" },
   { id: "billing", label: "Billing & quota" },
 ] as const;
+
+const kbdClass = codeClass;
 
 const extLink = (href: string, children: React.ReactNode) => (
   <a href={href} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">{children}</a>
@@ -42,6 +45,42 @@ const TipsPage = () => {
           </a>
         ))}
       </nav>
+
+      <section id="controls" className="mb-12 scroll-mt-24">
+        <h2 className="text-2xl font-semibold mb-4">Controls</h2>
+
+        <h3 className="text-xl font-semibold mb-3">Keyboard shortcuts</h3>
+        <p className="text-muted-foreground mb-3">
+          Press <kbd className={kbdClass} style={codeStyle}>?</kbd> while reading a document to see all shortcuts.
+        </p>
+        <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm mb-6">
+          {([
+            ["Space", "Play / pause"],
+            ["j ↓", "Next block"],
+            ["k ↑", "Previous block"],
+            ["l →", "Speed up"],
+            ["h ←", "Speed down"],
+            ["m", "Mute / unmute"],
+            ["+ / =", "Volume up"],
+            ["-", "Volume down"],
+            ["s", "Toggle sidebar"],
+            ["o", "Toggle outliner"],
+            ["r", "Back to reading"],
+          ] as const).map(([keys, action]) => (
+            <div key={keys} className="contents">
+              <kbd className={kbdClass} style={codeStyle}>{keys}</kbd>
+              <span className="text-muted-foreground">{action}</span>
+            </div>
+          ))}
+        </div>
+
+        <h3 className="text-xl font-semibold mb-3">Headphone & media controls</h3>
+        <p className="text-muted-foreground">
+          Bluetooth headphones and media keys work out of the box.
+          Play/pause, skip forward, and skip back are supported
+          through your device's standard media controls.
+        </p>
+      </section>
 
       <section id="local-tts" className="mb-12 scroll-mt-24">
         <h2 className="text-2xl font-semibold mb-4">Local text-to-speech</h2>

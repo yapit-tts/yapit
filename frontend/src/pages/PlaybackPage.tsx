@@ -4,6 +4,7 @@ import { WebGPUWarningBanner } from '@/components/webGPUWarningBanner';
 import { DocumentOutliner } from '@/components/documentOutliner';
 import { OutlinerSidebar } from '@/components/outlinerSidebar';
 import { useOutliner } from '@/hooks/useOutliner';
+import { useSidebar } from '@/components/ui/sidebar';
 import { useFilteredPlayback } from '@/hooks/useFilteredPlayback';
 import { usePlaybackEngine, type Block } from '@/hooks/usePlaybackEngine';
 import { useParams, useLocation, Link, useNavigate } from "react-router";
@@ -76,6 +77,7 @@ const PlaybackPage = () => {
   const scrollBlockPosition: ScrollLogicalPosition = settings.scrollPosition === "top" ? "start"
     : settings.scrollPosition === "bottom" ? "end" : "center";
   const outliner = useOutliner();
+  const sidebar = useSidebar();
 
   // Document data
   const [document, setDocument] = useState<DocumentResponse | null>(null);
@@ -365,6 +367,12 @@ const PlaybackPage = () => {
   scrollToBlockRef.current = scrollToBlock;
   const showKeybindingsRef = useRef(false);
   showKeybindingsRef.current = showKeybindings;
+  const handleBackToReadingRef = useRef(handleBackToReading);
+  handleBackToReadingRef.current = handleBackToReading;
+  const toggleSidebarRef = useRef(sidebar.toggleSidebar);
+  toggleSidebarRef.current = sidebar.toggleSidebar;
+  const toggleOutlinerRef = useRef(outliner.toggleOutliner);
+  toggleOutlinerRef.current = outliner.toggleOutliner;
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -405,6 +413,14 @@ const PlaybackPage = () => {
           e.preventDefault();
           setVolume(Math.max(0, volumeRef.current - 5));
           break;
+        case "o":
+          e.preventDefault();
+          toggleOutlinerRef.current();
+          break;
+        case "r":
+          e.preventDefault();
+          handleBackToReadingRef.current();
+          break;
         case "?":
           e.preventDefault();
           setShowKeybindings(prev => !prev);
@@ -423,11 +439,23 @@ const PlaybackPage = () => {
 
   useEffect(() => {
     if (!("mediaSession" in navigator)) return;
-    navigator.mediaSession.setActionHandler("play", () => engine.play());
-    navigator.mediaSession.setActionHandler("pause", () => engine.pause());
+    const handlers: [MediaSessionAction, MediaSessionActionHandler][] = [
+      ["play", () => engine.play()],
+      ["pause", () => engine.pause()],
+      ["nexttrack", () => engine.skipForward()],
+      ["previoustrack", () => engine.skipBack()],
+      ["seekforward", () => engine.skipForward()],
+      ["seekbackward", () => engine.skipBack()],
+    ];
+    for (const [action, handler] of handlers) {
+      try { navigator.mediaSession.setActionHandler(action, handler); }
+      catch { /* unsupported action */ }
+    }
     return () => {
-      navigator.mediaSession.setActionHandler("play", null);
-      navigator.mediaSession.setActionHandler("pause", null);
+      for (const [action] of handlers) {
+        try { navigator.mediaSession.setActionHandler(action, null); }
+        catch { /* unsupported action */ }
+      }
     };
   }, [engine]);
 
@@ -763,6 +791,9 @@ const PlaybackPage = () => {
                 ["m", "Mute / unmute"],
                 ["+ / =", "Volume up"],
                 ["-", "Volume down"],
+                ["s", "Toggle sidebar"],
+                ["o", "Toggle outliner"],
+                ["r", "Back to reading"],
                 ["?", "This dialog"],
               ] as const).map(([keys, action]) => (
                 <div key={keys} className="contents">
