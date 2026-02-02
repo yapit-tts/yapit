@@ -128,7 +128,7 @@ export function SidebarEdgeTrigger() {
     return (
       <button
         onClick={toggleSidebar}
-        className="fixed left-0 top-1/2 -translate-y-1/2 z-20
+        className="fixed left-0 bottom-[25vh] z-20
           w-8 h-20 flex items-center justify-center
           rounded-r-xl
           bg-background/70 backdrop-blur-md border-y border-r border-border shadow-lg
