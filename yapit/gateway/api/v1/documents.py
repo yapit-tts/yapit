@@ -285,7 +285,7 @@ async def prepare_document(
 
     content, content_type = await download_document(request.url, settings.document_max_download_size)
 
-    page_count, title = _extract_document_info(content, content_type)
+    page_count, title = await asyncio.to_thread(_extract_document_info, content, content_type)
     metadata = DocumentMetadata(
         content_type=content_type,
         total_pages=page_count,
@@ -355,7 +355,7 @@ async def prepare_document_upload(
 
     content_type = file.content_type or "application/octet-stream"
 
-    total_pages, title = _extract_document_info(content, content_type)
+    total_pages, title = await asyncio.to_thread(_extract_document_info, content, content_type)
     metadata = DocumentMetadata(
         content_type=content_type,
         total_pages=total_pages,
