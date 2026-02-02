@@ -87,6 +87,7 @@ const PlaybackPage = () => {
   const [isPublicView, setIsPublicView] = useState(false);
   const [showImportBanner, setShowImportBanner] = useState(true);
   const [showFailedPagesBanner, setShowFailedPagesBanner] = useState(true);
+  const [showKeybindings, setShowKeybindings] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
 
   // Outliner state
@@ -354,18 +355,71 @@ const PlaybackPage = () => {
 
   const isPlayingRef = useRef(isPlaying);
   isPlayingRef.current = isPlaying;
+  const speedRef = useRef(playbackSpeed);
+  speedRef.current = playbackSpeed;
+  const volumeRef = useRef(volume);
+  volumeRef.current = volume;
+  const prevVolumeRef = useRef(volume || 50);
+  if (volume > 0) prevVolumeRef.current = volume;
+  const scrollToBlockRef = useRef(scrollToBlock);
+  scrollToBlockRef.current = scrollToBlock;
+  const showKeybindingsRef = useRef(false);
+  showKeybindingsRef.current = showKeybindings;
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.code === "Space" && !["INPUT", "TEXTAREA", "SELECT"].includes((e.target as HTMLElement).tagName)) {
-        e.preventDefault();
-        if (isPlayingRef.current) engine.pause();
-        else engine.play();
+      if (["INPUT", "TEXTAREA", "SELECT"].includes((e.target as HTMLElement).tagName)) return;
+
+      switch (e.key) {
+        case " ":
+          e.preventDefault();
+          if (isPlayingRef.current) engine.pause(); else engine.play();
+          break;
+        case "j": case "ArrowDown":
+          e.preventDefault();
+          engine.skipForward();
+          scrollToBlockRef.current(engine.getSnapshot().currentBlock);
+          break;
+        case "k": case "ArrowUp":
+          e.preventDefault();
+          engine.skipBack();
+          scrollToBlockRef.current(engine.getSnapshot().currentBlock);
+          break;
+        case "l": case "ArrowRight":
+          e.preventDefault();
+          setPlaybackSpeed(Math.min(3, Math.round((speedRef.current + 0.1) * 10) / 10));
+          break;
+        case "h": case "ArrowLeft":
+          e.preventDefault();
+          setPlaybackSpeed(Math.max(0.5, Math.round((speedRef.current - 0.1) * 10) / 10));
+          break;
+        case "m":
+          e.preventDefault();
+          setVolume(volumeRef.current > 0 ? 0 : prevVolumeRef.current);
+          break;
+        case "=": case "+":
+          e.preventDefault();
+          setVolume(Math.min(100, volumeRef.current + 5));
+          break;
+        case "-":
+          e.preventDefault();
+          setVolume(Math.max(0, volumeRef.current - 5));
+          break;
+        case "?":
+          e.preventDefault();
+          setShowKeybindings(prev => !prev);
+          break;
+        case "Escape":
+          if (showKeybindingsRef.current) {
+            e.preventDefault();
+            setShowKeybindings(false);
+          }
+          break;
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [engine]);
+  }, [engine, setPlaybackSpeed, setVolume]);
 
   useEffect(() => {
     if (!("mediaSession" in navigator)) return;
@@ -691,6 +745,35 @@ const PlaybackPage = () => {
           </OutlinerSidebar>
         )}
       </div>
+
+      {showKeybindings && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={() => setShowKeybindings(false)}>
+          <div className="bg-background border rounded-xl shadow-2xl p-6 max-w-sm w-full mx-4" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold">Keyboard shortcuts</h2>
+              <button onClick={() => setShowKeybindings(false)} className="p-1 text-muted-foreground hover:text-foreground"><X className="h-4 w-4" /></button>
+            </div>
+            <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
+              {([
+                ["Space", "Play / pause"],
+                ["j ↓", "Next block"],
+                ["k ↑", "Previous block"],
+                ["l →", "Speed up"],
+                ["h ←", "Speed down"],
+                ["m", "Mute / unmute"],
+                ["+ / =", "Volume up"],
+                ["-", "Volume down"],
+                ["?", "This dialog"],
+              ] as const).map(([keys, action]) => (
+                <div key={keys} className="contents">
+                  <kbd className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded text-center">{keys}</kbd>
+                  <span className="text-muted-foreground">{action}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
