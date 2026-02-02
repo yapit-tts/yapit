@@ -9,4 +9,12 @@ User-facing capabilities. Links to task files (for simpler features) or dedicate
 - [[2026-01-14-doclayout-yolo-figure-detection]] — Semantic figure detection in PDFs; handles vector graphics, groups multi-part figures, filters decorative elements
 - [[markdown-parser-spec]] — TTS annotations (`yap-show`, `yap-speak`, `yap-cap`), footnotes, callouts
 - [[2026-01-12-document-outliner]] — Right sidebar for navigating large documents; collapsible sections, filtered playback
+- [[2026-01-28-smart-scroll-detach]] — "Back to Reading" button; scroll during playback to detach, click to re-attach
 - [[rate-limiting]] — TTS rate limiting (300/min), concurrent extraction limits, storage-based document limits per tier
+- Keyboard shortcuts — hjkl/arrows for navigation, space play/pause, volume/mute, `?` for reference popup. See [[frontend]] Keyboard & Media Controls section
+- MediaSession / headphone controls — OS media controls (lock screen, notification, dynamic island) with document metadata, play/pause/skip
+- Configurable content width (narrow/medium/wide/full) and scroll position (top/center/bottom) settings
+- Playback speed and volume persisted in localStorage across sessions
+- Voice picker bottom sheet on mobile (replaces overflowing popover)
+- Tips page — local TTS troubleshooting, feature guides, keyboard/headphone docs
+- AudioContext auto-resume — diagnostic logging + automatic resume on mobile suspension (app switch, phone call)

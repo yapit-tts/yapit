@@ -9,20 +9,19 @@ started: 2026-01-17
 
 Make Yapit demonstrate value immediately for all users, regardless of device or signup status:
 
-- **Desktop with WebGPU:** Works immediately with local Kokoro, no friction, no signup required
-- **Desktop without WebGPU:** Works (slower via WASM), hint at cloud option if synthesis is slow
-- **Mobile (not signed in):** Showcase dashboard with pre-cached content, signup CTA
-- **Mobile (signed in):** Normal experience, full functionality
+- **Has WebGPU:** Works immediately with local Kokoro, no friction, no signup required
+- **No WebGPU + no paid plan:** Same UI, but proactive banner explains limitations and points to showcase docs
+- **Has paid plan:** Full cloud synthesis, all features work
 
-Key principle: Users who can use free local TTS should never be pressured to sign up. Mobile users need signup because local TTS doesn't work there — technical requirement, not business gate.
+Key principle: Users who can use free local TTS should never be pressured to sign up. Users without WebGPU need a paid plan for cloud synthesis — technical requirement, not business gate. But they can still try cached showcase content for free.
 
 ## Goals
 
-1. **Bug fix:** Usage check must only count uncached blocks
-2. **Showcase docs:** Seed new users with 5 curated document clones
-3. **Voice previews:** Play button in voice picker (standard sentence per voice)
+1. ~~**Bug fix:** Usage check must only count uncached blocks~~ — **DONE** in [[2026-01-14-pricing-restructure]]
+2. **Showcase docs:** Seed new users with clones + "Getting Started" section on dashboard
+3. **Voice previews:** Play button in voice picker (cycling through variety sentences)
 4. **Cache warming:** Systemd timer to keep showcase + previews hot
-5. **Mobile guest experience:** Special dashboard showing only showcase docs
+5. **WebGPU warning banner:** Proactive messaging for users who can't synthesize locally
 6. **UI unlock:** Remove subscription gating on premium voice tabs
 
 ## Non-Goals
@@ -31,10 +30,6 @@ Key principle: Users who can use free local TTS should never be pressured to sig
 - Cloud Kokoro signup bonus (depends on [[rate-limiting]], not yet implemented)
 - Public document library
 - AI document transformation showcase (not stable enough yet)
-
-## Bug Fix: Usage Check Before Cache
-
-**Moved to [[2026-01-14-pricing-restructure]]** — being fixed there as part of the 3-tier usage waterfall implementation (subscription → rollover → purchased). The fix requires knowing which blocks are uncached before checking/decrementing usage pools.
 
 ## Showcase Documents
 
@@ -69,23 +64,28 @@ Used by both signup cloning and cache warming script.
 - Include share links to showcase docs
 - If user deleted one and wants it back → click link → re-imports
 
-**Mobile guest experience:**
-- Detect: mobile screen + no WebGPU + not signed in
-- Show: special dashboard with only showcase docs, no text input field
-- CTA: "Sign up to use your own URLs, documents, and text"
+**Dashboard "Getting Started" section:**
+- Shows showcase doc links for new/guest users
+- Dismissible (localStorage) for users who don't want it
+- Same links available on /tips page permanently
 
 ## Voice Previews
 
-**Standard sentence:** "Hello, this is a sample of my voice. I can read documents, articles, and more."
+**Variety sentences** (cycled on each click, shows voice in different contexts):
+1. "Hello, this is a sample of my voice."
+2. "The quick brown fox jumps over the lazy dog."
+3. "I can read documents, articles, and research papers."
+4. "Sometimes I wonder what it would be like to have a body."
+5. "Breaking news: scientists discover that coffee is, in fact, essential."
 
-**UI:** Small play button in voice picker rows (next to star icon)
+**UI:** Small play button in voice picker rows (next to star icon). Each click plays next sentence in cycle.
 
-**Cache:** Pre-synthesized for ALL voices as part of cache warming job
+**Cache:** All 5 sentences × all voices pre-synthesized via cache warming job
 
 ## Cache Warming
 
 **Systemd timer (daily):**
-1. Request voice preview sentence for each voice (~50 voices)
+1. Request all 5 voice preview sentences for each voice (~50 voices × 5 = 250 requests)
 2. Request each showcase doc block for each voice in `cache_voices` from config
 
 **Reads from:** `showcase.json` for doc UUIDs and which voices to warm
@@ -101,27 +101,48 @@ Used by both signup cloning and cache warming script.
 **Change:**
 - All voice tabs accessible to all users
 - On synthesis request for uncached content: if insufficient credits → show modal
-- Cached content plays free regardless of tier (with bug fix above)
+- Cached content plays free regardless of tier
 
 This enables anonymous users to try premium voices on showcase content.
 
-## Mobile Detection
+## Self-Hosting: Unlimited Credits When Billing Disabled
 
-```typescript
-const isMobile = useIsMobile(); // screen width < 768
-const hasWebGPU = !!navigator.gpu;
-const isSignedIn = !!user;
+**Context:** Backend has `BILLING_ENABLED` env var. When `false`, billing checks are bypassed in code, but frontend still shows locked features because user has no subscription.
 
-// Show showcase-only dashboard
-const showShowcaseDashboard = isMobile && !hasWebGPU && !isSignedIn;
-```
+**Cleaner approach:** Instead of conditional logic everywhere, seed a "self-hosted" subscription with effectively infinite limits.
 
-**Desktop without WebGPU — slowness hint:**
-- Threshold: 15 seconds for first block (can tune down later)
+**Implementation:**
+- On startup (or user creation), if `BILLING_ENABLED=false`:
+  - Create/upsert a "Self-Hosted" plan with huge limits (e.g., 999,999,999 chars/tokens)
+  - Auto-assign this plan to users (no Stripe customer/subscription IDs needed)
+- Same code paths run — billing checks pass because limits are huge
+- Frontend sees a subscribed user with massive quotas — no special handling needed
+- No subscription prompts, no locked features, no conditional UI logic
+
+**Why better:**
+- Single code path (no `if billing_enabled` branches scattered around frontend)
+- Frontend already handles displaying usage/limits — just shows huge numbers
+- Cleaner than frontend checking a config flag and conditionally unlocking things
+
+## WebGPU Warning Banner
+
+**Condition:** `!hasWebGPU && !hasPaidPlan`
+
+Show proactive banner at top of document view (using existing error banner primitive):
+
+> "Your device may not support free local processing. [Try showcase examples] for free, or [get a plan] for cloud access."
+
 - Permanently dismissible via "Don't show again" (localStorage)
-- Message: "Your system might not support local inference. [Learn more]"
-- Learn more → links to help section explaining WebGPU requirements and how to check support
-- If dismissed, never shows again for that browser
+- Sign-in status doesn't matter — it's about "can you synthesize?"
+- Users can still try — maybe WASM works, maybe content is cached
+- Banner sets expectations without blocking
+
+**Detection:**
+```typescript
+const hasWebGPU = !!navigator.gpu;
+const hasPaidPlan = subscription?.tier !== 'free';
+const showWebGPUWarning = !hasWebGPU && !hasPaidPlan;
+```
 
 ## Dependencies
 
@@ -134,14 +155,12 @@ const showShowcaseDashboard = isMobile && !hasWebGPU && !isSignedIn;
 | `yapit/gateway/api/v1/webhooks.py` | New: Stack Auth webhook endpoint for user.created |
 | `showcase.json` | New: Config for showcase doc UUIDs and cache voices |
 | `scripts/warm_cache.py` | New: Cache warming script (run by systemd timer) |
-| `frontend/src/components/voicePicker.tsx` | Unlock tabs, add preview button |
-| `frontend/src/hooks/use-mobile.ts` | Add WebGPU detection |
-| `frontend/src/pages/TextInputPage.tsx` | Conditional showcase dashboard for mobile guests |
+| `frontend/src/components/voicePicker.tsx` | Unlock tabs, add preview button with cycling sentences |
+| `frontend/src/components/WebGPUWarningBanner.tsx` | New: Proactive warning for no-WebGPU + no-plan users |
+| `frontend/src/hooks/useWebGPU.ts` | New: WebGPU detection hook |
+| `frontend/src/pages/TextInputPage.tsx` | Add "Getting Started" showcase section |
 | `frontend/src/pages/TipsPage.tsx` | Add showcase doc share links |
-
-## Open Questions
-
-1. **Slowness hint threshold:** Starting with 15 seconds, may tune down based on feedback.
+| `frontend/src/pages/DocumentViewPage.tsx` | Show WebGPU warning banner |
 
 ## Sources
 

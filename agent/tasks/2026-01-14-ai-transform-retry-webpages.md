@@ -3,6 +3,8 @@ status: active
 started: 2026-01-14
 ---
 
+- NOTE: When we implement this, we should cleanup the documents.py code... processors shoud have extract_webpage and extract_pdf or sth similar, rather than calling markitdown directly in documents.py as we do rn.
+
 # Task: AI Transform Retry for Webpages
 
 ## Intent

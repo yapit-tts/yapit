@@ -1,6 +1,7 @@
 ---
-status: active
+status: done
 started: 2026-01-12
+completed: 2026-01-26
 pr: https://github.com/yapit-tts/yapit/pull/56
 ---
 
@@ -133,40 +134,38 @@ Standard markdown image syntax. LLM outputs naturally, regex matches easily. Pos
 - [x] Rate limiting (429 handling with backoff)
 - [x] Failed pages banner in frontend (dismissible, shows which pages failed)
 
-### Metrics
-- [ ] Cache stats to TimescaleDB (periodic logging of get_stats)
-- [ ] Extraction cache metrics: hit/miss rate, eviction count
-- [ ] Image storage metrics: total size, count
-- [ ] Per-extraction metrics: latency per page, Gemini API errors
+### Metrics ✅
+- [x] Cache stats to TimescaleDB (periodic logging of get_stats)
+- [x] Extraction cache metrics: hit/miss rate, eviction count
+- [x] Image storage metrics: total size, count
+- [x] Per-extraction metrics: latency per page, Gemini API errors
 
-### Batch Mode
-- [ ] User setting to opt into batch processing
-- [ ] Batch API integration for ~50% more usage limits
-- [ ] Queue management for batch jobs
+### Batch Mode → [[2026-01-26-gemini-batch-mode]]
+Separate task for Gemini Batch API integration (50% cost savings, opt-in).
 
-### Performance
-- [ ] Investigate parallelizing MarkItDown page processing (currently sequential)
+### Performance ✅
+- [x] ~~Investigate parallelizing MarkItDown page processing~~ — Won't do, see [[2026-01-21-markitdown-parallel-extraction-analysis]]
 
-### Prompt Refinement
-- [ ] Inline math handling
-- [ ] Displaymath captions
-- [ ] TOC links support
+### Prompt Refinement ✅
+- [x] Inline math handling
+- [x] Displaymath captions
+- [x] TOC links support
 
 ### YOLO Figure Detection → [[2026-01-14-doclayout-yolo-figure-detection]]
 Separate task for replacing PyMuPDF with DocLayout-YOLO. Includes layout preservation, transformer changes, and frontend updates.
 
-### Supporting Webpages / Text input
+### Supporting Webpages / Text input → [[2026-01-14-ai-transform-retry-webpages]]
 
 > For websites, I have to think about how I handle them. Right now, if you paste a website, it instantly fetches it and presents you with the Yapit page. I need to consider the UX: for 95 % of web pages that’s fine, but for the one you sent that contains math, it’s problematic. The question is how to feed that to Gemini. I can feed Gemini just the text without the image. And how do I build that as pages? I could split it into pages of about 2 000 tokens each. But what’s the UI for that? We still keep it as an instant load, but perhaps add a button to retry with AI transformation. That will only work for web pages, because for documents we need the original content. which we don't have or save actually except that we do we do have a file cache wait I can just increase the TTL of that file cache to like one hour and then that button would be available with like okay in the case that you use the free processor and it's still in the file cache you can retry it with text transformation and this way you can you know always try mark it down and then you see you know the difference to Gemini also I think that's a smart choice maybe potentially
 
 ## Priority
 
 1. ~~**Frontend 402 UX** — Nicer error handling when usage limits exceeded~~ ✅
-2. ~~**Progress indicator** — Live feedback during PDF processing~~ ✅ (UX nit: green color too neon)
-3. **Error handling** — Partial failures with backoff, 429 handling
-4. **Metrics** — Cache stats to TimescaleDB
-5. **Prompt refinement** — Math, captions, etc.
-6. **Batch mode** — Gemini batch API discount
+2. ~~**Progress indicator** — Live feedback during PDF processing~~ ✅
+3. ~~**Error handling** — Partial failures with backoff, 429 handling~~ ✅
+4. ~~**Metrics** — Cache stats to TimescaleDB~~ ✅
+5. ~~**Prompt refinement** — Math, captions, etc.~~ ✅
+6. **Batch mode** — [[2026-01-26-gemini-batch-mode]]
 
 ## Open Questions
 
@@ -180,7 +179,7 @@ Separate task for replacing PyMuPDF with DocLayout-YOLO. Includes layout preserv
 ## Gotchas
 
 - PyMuPDF only extracts raster images, not vector graphics — prompt instructs to only place placeholders if image count is given
-- **Billing recorded upfront** — `record_usage()` called BEFORE extraction starts to prevent exploit (cancel mid-extraction = free API calls). User charged for intent, not outcome. For actual server-side failures, grant usage credits manually.
+- **Billing based on actual tokens** — Users charged for completed pages based on actual token usage. Failed pages not billed.
 - Images keyed by content_hash (PDF content), NOT full extraction key
 - Extraction cache can evict freely — markdown also in PostgreSQL Document
 - **Cache schema changed** — no `expires_at` column anymore, must delete SQLite DBs on deploy if upgrading

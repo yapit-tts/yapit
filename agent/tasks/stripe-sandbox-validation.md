@@ -1,5 +1,5 @@
 ---
-status: pending
+status: done
 type: validation
 depends-on: stripe-iac-portal, stripe-promo-codes
 ---

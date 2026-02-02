@@ -1,6 +1,7 @@
 ---
-status: pending
+status: done
 type: implementation
+see: [[rate-limiting]]
 ---
 
 # Task: Document Storage Limits

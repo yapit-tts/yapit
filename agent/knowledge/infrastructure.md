@@ -67,6 +67,8 @@ Skip tests: `[skip tests]` in commit message.
 
 ~10 min total (tests ~5 min, build+deploy ~5 min).
 
+**Gotcha — Swarm image pruning:** `docker image prune -af` doesn't work in Swarm — all pulled `:latest` digests are considered "in use" by service specs. Deploy script compares each image ID against running container image IDs and removes non-matching ones.
+
 ## Image Storage
 
 Extracted images (from Gemini+YOLO) stored via `ImageStorage` abstraction (`yapit/gateway/storage.py`):
@@ -121,6 +123,9 @@ When **adding or removing** config files or Settings fields, check ALL of these:
 - `stripe_setup.py` — Stripe IaC (products, prices, coupons, portal). Flags: `--test`, `--prod`
 - `margin_calculator.py` — Profitability analysis. Flags: `--plain`
 - `test_clock_setup.py` — Stripe test clock for billing tests. Flags: `--tier`, `--usage-tokens`, `--advance-days`, `--cleanup`
+
+**Cache warming:**
+- `warm_cache.py` — Pre-synthesizes voice preview sentences for all active models/voices. Systemd timer (`scripts/warm_cache.timer`, daily 04:00). See [[tts-flow]].
 
 **Development:**
 - `load_test.py` — TTS load testing (stale; should be rewritten for prod). Flags: `--users`, `--blocks`, `--burst`, `--base-url`

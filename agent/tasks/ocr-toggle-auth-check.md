@@ -1,5 +1,5 @@
 ---
-status: active
+status: done
 started: 2026-01-03
 ---
 
@@ -11,3 +11,5 @@ Check that:
 - Frontend disables/hides OCR toggle for free users
 - Backend rejects OCR requests from free users (defense in depth)
 - Proper error message if somehow triggered without plan
+- Update: This might have been confusion with the now removed "admin" dev bypass?
+

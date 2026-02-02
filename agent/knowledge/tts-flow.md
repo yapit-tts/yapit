@@ -107,7 +107,7 @@ Background task that consumes from `tts:results` and finalizes:
 
 ### 7. Cache & Storage
 
-- **Audio cache:** SQLite (`cache.py`) keyed by variant_hash, now async via aiosqlite
+- **Audio cache:** SQLite (`cache.py`) keyed by variant_hash. Dual persistent connections (reader for reads, writer for mutations) with WAL mode. LRU updates batched in-memory, flushed every ~10s to avoid write contention on reads
 - **Metadata:** BlockVariant in Postgres tracks duration_ms, cache_ref
 - **Usage:** Characters recorded for billing on synthesis complete
 
@@ -120,7 +120,15 @@ Frontend fetches via HTTP:
 
 ## Browser-Side Synthesis
 
-Frontend can also synthesize locally via Kokoro WASM and submit audio via `POST /v1/audio`. See [[frontend]] for details.
+Kokoro.js runs in a Web Worker (WASM/WebGPU) for free local TTS. Audio is resolved in-memory as `AudioBuffer` — no server submission. Browser TTS audio is NOT cached server-side; it only lives in the playback engine's in-memory variant cache for the session duration.
+
+**Key files:**
+- `frontend/src/lib/browserSynthesizer.ts` — Web Worker management, PCM→AudioBuffer conversion, generation-based cancellation
+- `frontend/src/lib/serverSynthesizer.ts` — server (WebSocket) synthesis implementation
+- `frontend/src/lib/synthesizer.ts` — shared `Synthesizer` interface
+- `frontend/src/lib/browserTTS/worker.ts` — Web Worker running Kokoro.js
+
+The `Synthesizer` interface unifies both paths — the playback engine doesn't care whether audio comes from browser or server. See [[frontend]] for the playback engine architecture.
 
 ## Models & Voices
 
@@ -153,5 +161,6 @@ Current models: kokoro, inworld-1.5, inworld-1.5-max. HIGGS removed (API models 
 - **Usage multiplier:** Different models have different character costs. `TTSModel.usage_multiplier` in database. Passed in job to avoid DB query on finalization.
 - **Voice change race condition:** WebSocket status messages include `model_slug` and `voice_slug` to prevent stale cache hits when user changes voice mid-playback. Without this, status messages from old voice arriving after reset would incorrectly mark blocks as cached.
 - **Double billing prevention:** Inflight key deletion happens at START of result processing. First result atomically deletes key and proceeds; duplicates (from visibility timeout requeue + original completion) see delete() return 0 and skip.
+- **Cache warming:** `yapit/gateway/warm_cache.py` pre-synthesizes voice preview sentences for all active models/voices. Run via systemd timer (`scripts/warm_cache.timer`) daily at 04:00. Uses `synthesize_and_wait()` to go through the normal queue→worker→cache pipeline.
 - **Inworld duration is estimated:** Calculated from MP3 file size (~16KB/sec). Frontend uses decoded AudioBuffer for accurate playback timing.
 - **Cross-tab voice contamination:** Multiple tabs playing the same document with different voices share the same Redis pubsub channel. A notification from one voice would incorrectly update the other tab. Fix: Compare incoming `model_slug` and `voice_slug` against what was requested; ignore mismatched notifications.

@@ -1,5 +1,5 @@
 ---
-status: active
+status: done
 started: 2025-01-09
 ---
 

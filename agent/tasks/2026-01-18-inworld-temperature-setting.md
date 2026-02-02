@@ -18,3 +18,4 @@ Add temperature as advanced toggle in voice picker for Inworld models.
 - `yapit/workers/adapters/inworld.py` — pass temperature in request
 - Frontend voice picker — advanced settings toggle with slider
 - Store in voice parameters or user preferences
+- Do not include this setting for the voice-previews, hard code it to the default
