@@ -133,11 +133,28 @@ export function usePlaybackEngine(
   const originalPlay = engine.play;
   const playWithResume = useCallback(async () => {
     if (audioContext.state === "suspended") {
+      console.warn("[AudioContext] Resuming from suspended state on play()");
       await audioContext.resume();
     }
     originalPlay();
   }, [audioContext, originalPlay]);
   (engine as { play: () => void }).play = playWithResume as () => void;
+
+  // Detect AudioContext suspension (mobile app switch, phone call, etc.)
+  // If the context gets suspended while engine thinks it's playing, audio silently stops
+  // and the ended event never fires — leaving playback stuck.
+  useEffect(() => {
+    const handler = () => {
+      const engineStatus = engine.getSnapshot().status;
+      console.log(`[AudioContext] State changed to "${audioContext.state}" (engine: ${engineStatus})`);
+      if (audioContext.state === "suspended" && (engineStatus === "playing" || engineStatus === "buffering")) {
+        console.warn("[AudioContext] Suspended while engine active — audio may be stuck. Attempting resume...");
+        audioContext.resume().catch(() => {});
+      }
+    };
+    audioContext.addEventListener("statechange", handler);
+    return () => audioContext.removeEventListener("statechange", handler);
+  }, [audioContext, engine]);
 
   // Cleanup on unmount
   useEffect(() => {
