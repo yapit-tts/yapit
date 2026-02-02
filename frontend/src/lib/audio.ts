@@ -128,6 +128,10 @@ export class AudioPlayer {
     this.onEndedCallback = callback;
   }
 
+  setOnProgress(callback: (percentPlayed: number, durationMs: number) => void): void {
+    this.onProgressCallback = callback;
+  }
+
   private startProgressTracking(): void {
     this.stopProgressTracking();
 

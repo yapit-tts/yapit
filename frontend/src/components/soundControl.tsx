@@ -1,11 +1,11 @@
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
-import { Play, Pause, Volume2, SkipBack, SkipForward, Loader2, Square, WifiOff, ChevronUp, X, PanelLeft, List } from "lucide-react";
+import { Play, Pause, Volume2, Volume1, VolumeX, SkipBack, SkipForward, Loader2, Square, WifiOff, ChevronUp, X, PanelLeft, List, AlertTriangle, Info } from "lucide-react";
 import { useEffect, useState, useRef, useCallback, useMemo, memo } from "react";
-import { useNavigate } from "react-router";
+import { useNavigate, Link } from "react-router";
 import { VoicePicker } from "@/components/voicePicker";
 import { SettingsDialog } from "@/components/settingsDialog";
-import { type VoiceSelection, setVoiceSelection, isInworldModel } from "@/lib/voiceSelection";
+import { type VoiceSelection, setVoiceSelection, isInworldModel, KOKORO_SLUG, KOKORO_BROWSER_SLUG } from "@/lib/voiceSelection";
 import { useSidebar } from "@/components/ui/sidebar";
 import { useOutlinerOptional } from "@/hooks/useOutliner";
 import { useHasWebGPU } from "@/hooks/useWebGPU";
@@ -460,7 +460,6 @@ interface Props {
   isSynthesizing: boolean;
   isReconnecting?: boolean;
   connectionError?: string | null;
-  blockError?: string | null;
   onPlay: () => void;
   onPause: () => void;
   onCancelSynthesis: () => void;
@@ -473,6 +472,8 @@ interface Props {
   onSpeedChange: (value: number) => void;
   voiceSelection: VoiceSelection;
   onVoiceChange: (selection: VoiceSelection) => void;
+  browserTTSError?: string | null;
+  browserTTSDevice?: "webgpu" | "wasm" | null;
 }
 
 function msToTime(duration: number | undefined): string {
@@ -495,7 +496,6 @@ const SoundControl = memo(function SoundControl({
   isSynthesizing,
   isReconnecting,
   connectionError,
-  blockError,
   onPlay,
   onPause,
   onCancelSynthesis,
@@ -508,6 +508,8 @@ const SoundControl = memo(function SoundControl({
   onSpeedChange,
   voiceSelection,
   onVoiceChange,
+  browserTTSError,
+  browserTTSDevice,
 }: Props) {
   const { estimated_ms, numberOfBlocks, currentBlock, setCurrentBlock, onBlockHover, audioProgress, blockStates, visualToAbsolute } = progressBarValues;
   const [progressDisplay, setProgressDisplay] = useState("0:00");
@@ -519,11 +521,9 @@ const SoundControl = memo(function SoundControl({
   const [isDraggingProgressBar, setIsDraggingProgressBar] = useState(false);
   const navigate = useNavigate();
 
-  // Detect quota exceeded error from either connection or block errors
-  const usageLimitError = blockError?.includes("Usage limit exceeded") ? blockError :
-                          connectionError?.includes("Usage limit exceeded") ? connectionError : null;
+  const usageLimitError = connectionError?.includes("Usage limit exceeded") ? connectionError : null;
   const isUsingInworld = isInworldModel(voiceSelection.model);
-  const isUsingKokoroServer = voiceSelection.model === "kokoro-server";
+  const isUsingKokoroServer = voiceSelection.model === KOKORO_SLUG;
 
   // Banner dismissed state
   const [quotaDismissed, setQuotaDismissed] = useState(false);
@@ -548,7 +548,7 @@ const SoundControl = memo(function SoundControl({
   const handleSwitchToKokoro = useCallback(() => {
     const newSelection: VoiceSelection = {
       ...voiceSelection,
-      model: "kokoro-server",
+      model: KOKORO_SLUG,
       voiceSlug: "af_heart",
     };
     onVoiceChange(newSelection);
@@ -566,7 +566,7 @@ const SoundControl = memo(function SoundControl({
   const handleSwitchToLocal = useCallback(() => {
     const newSelection: VoiceSelection = {
       ...voiceSelection,
-      model: "kokoro",
+      model: KOKORO_BROWSER_SLUG,
       voiceSlug: voiceSelection.voiceSlug.startsWith("af_") || voiceSelection.voiceSlug.startsWith("am_")
         ? voiceSelection.voiceSlug
         : "af_heart",
@@ -574,6 +574,39 @@ const SoundControl = memo(function SoundControl({
     onVoiceChange(newSelection);
     setVoiceSelection(newSelection);
     setQuotaDismissed(true);
+  }, [voiceSelection, onVoiceChange]);
+
+  // Browser TTS error banner — resets on model change (same as quota banner)
+  const isUsingBrowser = voiceSelection.model === KOKORO_BROWSER_SLUG;
+  const [browserErrorDismissed, setBrowserErrorDismissed] = useState(false);
+  useEffect(() => {
+    if (voiceSelection.model !== prevModel.current) {
+      setBrowserErrorDismissed(false);
+    }
+  }, [voiceSelection.model]);
+  const showBrowserErrorBanner = isUsingBrowser && browserTTSError && !browserErrorDismissed;
+
+  // WASM fallback info banner — localStorage, persists across sessions
+  const WASM_DISMISSED_KEY = "yapit_wasm_info_dismissed";
+  const [wasmDismissed, setWasmDismissed] = useState(true); // start hidden to prevent flash
+  useEffect(() => {
+    setWasmDismissed(localStorage.getItem(WASM_DISMISSED_KEY) === "true");
+  }, []);
+  const handleDismissWasm = useCallback(() => {
+    localStorage.setItem(WASM_DISMISSED_KEY, "true");
+    setWasmDismissed(true);
+  }, []);
+  const showWasmBanner = isUsingBrowser && browserTTSDevice === "wasm" && !showBrowserErrorBanner && !wasmDismissed;
+
+  const handleSwitchToCloud = useCallback(() => {
+    const newSelection: VoiceSelection = {
+      ...voiceSelection,
+      model: KOKORO_SLUG,
+      voiceSlug: "af_heart",
+    };
+    onVoiceChange(newSelection);
+    setVoiceSelection(newSelection);
+    setBrowserErrorDismissed(true);
   }, [voiceSelection, onVoiceChange]);
 
   // Wrap onBlockHover to track hover state locally for display swap
@@ -627,12 +660,12 @@ const SoundControl = memo(function SoundControl({
           </span>
           <span className="text-muted-foreground mx-1">·</span>
           {isUsingInworld && (
-            <Button variant="ghost" size="sm" className="h-9 px-3" onClick={handleSwitchToKokoro}>
+            <Button variant="outline" size="sm" className="h-9 px-3" onClick={handleSwitchToKokoro}>
               Use Kokoro
             </Button>
           )}
           {hasWebGPU && isUsingKokoroServer && (
-            <Button variant="ghost" size="sm" className="h-9 px-3" onClick={handleSwitchToLocal}>
+            <Button variant="outline" size="sm" className="h-9 px-3" onClick={handleSwitchToLocal}>
               Use free local
             </Button>
           )}
@@ -646,6 +679,58 @@ const SoundControl = memo(function SoundControl({
           >
             <X className="h-4 w-4" />
           </button>
+        </div>
+      )}
+
+      {/* Browser TTS error banner */}
+      {showBrowserErrorBanner && (
+        <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 mb-3 py-2 px-4 bg-destructive/10 rounded-lg text-sm border border-destructive/20">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4 text-destructive shrink-0" />
+            <span className="text-foreground font-medium">Local processing failed</span>
+          </div>
+          <span className="text-muted-foreground">·</span>
+          <div className="flex items-center gap-1">
+            <Button variant="outline" size="sm" className="h-9 px-3" onClick={handleSwitchToCloud}>
+              Use cloud voice
+            </Button>
+            <Link to="/tips#local-tts" className="text-sm text-primary font-medium hover:underline px-2">
+              Troubleshoot
+            </Link>
+            <button
+              onClick={() => setBrowserErrorDismissed(true)}
+              className="p-2 min-w-[44px] min-h-[44px] flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent rounded-md transition-colors"
+              aria-label="Dismiss"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* WASM fallback info banner */}
+      {showWasmBanner && (
+        <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 mb-3 py-2 px-4 bg-muted rounded-lg text-sm border border-border">
+          <div className="flex items-center gap-2">
+            <Info className="h-4 w-4 text-muted-foreground shrink-0" />
+            <span className="text-foreground font-medium">Using CPU mode, this might be slow</span>
+          </div>
+          <span className="text-muted-foreground">·</span>
+          <div className="flex items-center gap-1">
+            <Button variant="outline" size="sm" className="h-9 px-3" onClick={handleSwitchToCloud}>
+              Use cloud voice
+            </Button>
+            <Link to="/tips#local-tts" className="text-sm text-primary font-medium hover:underline px-2">
+              Troubleshoot
+            </Link>
+            <button
+              onClick={handleDismissWasm}
+              className="p-2 min-w-[44px] min-h-[44px] flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent rounded-md transition-colors"
+              aria-label="Dismiss"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
         </div>
       )}
 
@@ -791,7 +876,7 @@ const SoundControl = memo(function SoundControl({
           </div>
           <div className="flex items-center gap-4">
             <div className="w-16 flex-shrink-0 flex justify-end">
-              <Volume2 className="h-5 w-5 text-muted-foreground" />
+              {volume === 0 ? <VolumeX className="h-5 w-5 text-muted-foreground" /> : volume <= 50 ? <Volume1 className="h-5 w-5 text-muted-foreground" /> : <Volume2 className="h-5 w-5 text-muted-foreground" />}
             </div>
             <Slider
               value={[volume]}
@@ -834,7 +919,7 @@ const SoundControl = memo(function SoundControl({
               />
             </div>
             <div className="flex items-center gap-2">
-              <Volume2 className="h-5 w-5 text-muted-foreground" />
+              {volume === 0 ? <VolumeX className="h-5 w-5 text-muted-foreground" /> : volume <= 50 ? <Volume1 className="h-5 w-5 text-muted-foreground" /> : <Volume2 className="h-5 w-5 text-muted-foreground" />}
               <Slider
                 value={[volume]}
                 max={100}

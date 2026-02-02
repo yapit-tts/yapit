@@ -45,7 +45,7 @@ export function WebGPUWarningBanner() {
             upgrade
           </Link>
           , or{" "}
-          <Link to="/tips#webgpu" className="underline hover:no-underline">
+          <Link to="/tips#local-tts" className="underline hover:no-underline">
             learn more
           </Link>.
         </p>

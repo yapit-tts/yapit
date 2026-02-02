@@ -94,7 +94,7 @@ async def check_storage_limit(user_id: str, is_anonymous: bool, db: DbSession) -
             status_code=status.HTTP_403_FORBIDDEN,
             detail={
                 "code": "STORAGE_LIMIT_EXCEEDED",
-                "message": f"Storage limit reached ({_format_size(usage)} / {_format_size(limit)}). Delete some documents to free up space.",
+                "message": f"Storage limit reached ({_format_size(usage)} / {_format_size(limit)}).",
             },
         )
 

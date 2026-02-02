@@ -1,13 +1,13 @@
 import { useState, useEffect, useCallback, useContext, createContext, ReactNode } from "react";
 
 export type ContentWidth = "narrow" | "medium" | "wide" | "full";
+export type ScrollPosition = "top" | "center" | "bottom";
 
 export interface AppSettings {
   scrollOnRestore: boolean;
   liveScrollTracking: boolean;
-  defaultSpeed: number;
-  defaultVoice: string;
   contentWidth: ContentWidth;
+  scrollPosition: ScrollPosition;
 }
 
 const SETTINGS_KEY = "yapit-settings";
@@ -15,9 +15,8 @@ const SETTINGS_KEY = "yapit-settings";
 const defaultSettings: AppSettings = {
   scrollOnRestore: true,
   liveScrollTracking: true,
-  defaultSpeed: 1.0,
-  defaultVoice: "heart", // Kokoro default
   contentWidth: "medium",
+  scrollPosition: "top",
 };
 
 function loadSettings(): AppSettings {

@@ -1,89 +1,42 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useUser } from "@stackframe/react";
 import { getOrCreateAnonymousId } from "@/lib/anonymousId";
 
 const WS_BASE_URL = import.meta.env.VITE_WS_BASE_URL;
 
-export type BlockStatus = "pending" | "queued" | "processing" | "cached" | "skipped" | "error";
-
-export interface BlockStateEntry {
-  status: BlockStatus;
-  model_slug?: string;
-  voice_slug?: string;
-  audio_url?: string;
-  error?: string;
-}
-
-interface WSBlockStatusMessage {
-  type: "status";
-  document_id: string;
-  block_idx: number;
-  status: "queued" | "processing" | "cached" | "skipped" | "error";
-  audio_url?: string;
-  error?: string;
-  model_slug?: string;
-  voice_slug?: string;
-}
-
-interface WSEvictedMessage {
-  type: "evicted";
-  document_id: string;
-  block_indices: number[];
-}
-
-interface WSErrorMessage {
-  type: "error";
-  error: string;
-}
-
-type WSMessage = WSBlockStatusMessage | WSEvictedMessage | WSErrorMessage;
-
-interface SynthesizeParams {
-  documentId: string;
-  blockIndices: number[];
-  model: string;
-  voice: string;
-  cursor: number;
+export interface WSMessage {
+  type: "status" | "evicted" | "error";
+  [key: string]: unknown;
 }
 
 export interface UseTTSWebSocketReturn {
   isConnected: boolean;
   isReconnecting: boolean;
   connectionError: string | null;
-  blockStates: Map<number, BlockStateEntry>;
-  audioUrls: Map<number, string>;
-  synthesize: (params: SynthesizeParams) => void;
-  moveCursor: (documentId: string, cursor: number) => void;
-  reset: () => void;
+  send: (msg: object) => void;
   checkConnected: () => boolean;
-  getAudioUrl: (blockIdx: number) => string | undefined;
-  getBlockStatus: (blockIdx: number) => BlockStatus | undefined;
-  getBlockState: (blockIdx: number) => BlockStateEntry | undefined;
 }
 
-export function useTTSWebSocket(): UseTTSWebSocketReturn {
+export function useTTSWebSocket(
+  onMessage: (data: WSMessage) => void,
+): UseTTSWebSocketReturn {
   const user = useUser();
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
   const reconnectAttemptsRef = useRef(0);
+  const onMessageRef = useRef(onMessage);
+  onMessageRef.current = onMessage;
+
   const MAX_RECONNECT_ATTEMPTS = 5;
   const BASE_RECONNECT_DELAY = 1000;
 
   const [isConnected, setIsConnected] = useState(false);
   const [isReconnecting, setIsReconnecting] = useState(false);
   const [connectionError, setConnectionError] = useState<string | null>(null);
-  const [blockStates, setBlockStates] = useState<Map<number, BlockStateEntry>>(new Map());
-  const [audioUrls, setAudioUrls] = useState<Map<number, string>>(new Map());
-
-  // Refs for accessing current values in async code (avoids stale closure issues)
   const isConnectedRef = useRef(false);
-  const blockStatesRef = useRef<Map<number, BlockStateEntry>>(new Map());
-  const audioUrlsRef = useRef<Map<number, string>>(new Map());
 
-  // Build WS URL with auth query params
   const getWebSocketUrl = useCallback(async (): Promise<string> => {
     const baseUrl = `${WS_BASE_URL}/v1/ws/tts`;
-
     if (user?.currentSession) {
       try {
         const { accessToken } = await user.currentSession.getTokens();
@@ -94,130 +47,36 @@ export function useTTSWebSocket(): UseTTSWebSocketReturn {
         console.error("[TTS WS] Failed to get access token:", err);
       }
     }
-
-    // Fall back to anonymous ID
     const anonymousId = getOrCreateAnonymousId();
     return `${baseUrl}?anonymous_id=${encodeURIComponent(anonymousId)}`;
   }, [user]);
 
-  // Handle incoming WS messages
-  const handleMessage = useCallback((event: MessageEvent) => {
-    try {
-      const data: WSMessage = JSON.parse(event.data);
-
-      if (data.type === "status") {
-        const msg = data as WSBlockStatusMessage;
-        console.log(`[TTS WS] Block ${msg.block_idx} status: ${msg.status}${msg.audio_url ? ` (url: ${msg.audio_url})` : ''}${msg.voice_slug ? ` [${msg.model_slug}/${msg.voice_slug}]` : ''}`);
-
-        // Check if this notification matches what we requested for this block
-        // (prevents cross-tab contamination when multiple tabs use different voices)
-        const existingEntry = blockStatesRef.current.get(msg.block_idx);
-        if (existingEntry?.model_slug && existingEntry?.voice_slug) {
-          if (existingEntry.model_slug !== msg.model_slug || existingEntry.voice_slug !== msg.voice_slug) {
-            console.log(`[TTS WS] Ignoring stale notification for block ${msg.block_idx}: expected ${existingEntry.model_slug}/${existingEntry.voice_slug}, got ${msg.model_slug}/${msg.voice_slug}`);
-            return;
-          }
-        }
-
-        const entry: BlockStateEntry = {
-          status: msg.status,
-          model_slug: msg.model_slug,
-          voice_slug: msg.voice_slug,
-          audio_url: msg.audio_url,
-          error: msg.error,
-        };
-        blockStatesRef.current.set(msg.block_idx, entry);
-        setBlockStates((prev) => {
-          const next = new Map(prev);
-          next.set(msg.block_idx, entry);
-          return next;
-        });
-
-        if (msg.audio_url && msg.status === "cached") {
-          audioUrlsRef.current.set(msg.block_idx, msg.audio_url);
-          setAudioUrls((prev) => {
-            const next = new Map(prev);
-            next.set(msg.block_idx, msg.audio_url!);
-            return next;
-          });
-        }
-      } else if (data.type === "evicted") {
-        const msg = data as WSEvictedMessage;
-        for (const idx of msg.block_indices) {
-          blockStatesRef.current.delete(idx);
-          audioUrlsRef.current.delete(idx);
-        }
-        setBlockStates((prev) => {
-          const next = new Map(prev);
-          for (const idx of msg.block_indices) {
-            next.delete(idx);
-          }
-          return next;
-        });
-        setAudioUrls((prev) => {
-          const next = new Map(prev);
-          for (const idx of msg.block_indices) {
-            next.delete(idx);
-          }
-          return next;
-        });
-      } else if (data.type === "error") {
-        console.error("[TTS WS] Server error:", data.error);
-        setConnectionError(data.error);
-      }
-    } catch (err) {
-      console.error("[TTS WS] Failed to parse message:", err);
-    }
-  }, []);
-
-  // Connect to WebSocket
   const connect = useCallback(async () => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      return;
-    }
+    if (wsRef.current?.readyState === WebSocket.OPEN) return;
 
     try {
       const url = await getWebSocketUrl();
       console.log("[TTS WS] Connecting to:", url.replace(/token=[^&]+/, "token=***"));
-
       const ws = new WebSocket(url);
 
       ws.onopen = () => {
-        // Only set wsRef on successful open, so cleanup only closes open connections
-        // This handles race conditions with auth changes causing multiple connect() calls
         wsRef.current = ws;
         console.log("[TTS WS] Connected");
         isConnectedRef.current = true;
         setIsConnected(true);
         setIsReconnecting(false);
         setConnectionError(null);
-
-        // Clear stale queued/processing states from before disconnect
-        // Keep 'cached' since we already fetched that audio locally
-        const staleIndices: number[] = [];
-        blockStatesRef.current.forEach((entry, idx) => {
-          if (entry.status === 'queued' || entry.status === 'processing') {
-            staleIndices.push(idx);
-          }
-        });
-        if (staleIndices.length > 0) {
-          console.log(`[TTS WS] Clearing ${staleIndices.length} stale block states after reconnect`);
-          for (const idx of staleIndices) {
-            blockStatesRef.current.delete(idx);
-          }
-          setBlockStates((prev) => {
-            const next = new Map(prev);
-            for (const idx of staleIndices) {
-              next.delete(idx);
-            }
-            return next;
-          });
-        }
-
         reconnectAttemptsRef.current = 0;
       };
 
-      ws.onmessage = handleMessage;
+      ws.onmessage = (event: MessageEvent) => {
+        try {
+          const data: WSMessage = JSON.parse(event.data);
+          onMessageRef.current(data);
+        } catch (err) {
+          console.error("[TTS WS] Failed to parse message:", err);
+        }
+      };
 
       ws.onerror = (event) => {
         console.error("[TTS WS] Error:", event);
@@ -229,7 +88,6 @@ export function useTTSWebSocket(): UseTTSWebSocketReturn {
         setIsConnected(false);
         wsRef.current = null;
 
-        // Auto-reconnect unless closed intentionally (1000) or auth failed (1008)
         if (event.code !== 1000 && event.code !== 1008) {
           if (reconnectAttemptsRef.current < MAX_RECONNECT_ATTEMPTS) {
             setIsReconnecting(true);
@@ -252,125 +110,36 @@ export function useTTSWebSocket(): UseTTSWebSocketReturn {
       console.error("[TTS WS] Failed to connect:", err);
       setConnectionError("Failed to connect to server");
     }
-  }, [getWebSocketUrl, handleMessage]);
+  }, [getWebSocketUrl]);
 
-  // Connect on mount, reconnect when auth changes, disconnect on unmount
-  // Note: When user?.id changes, `getWebSocketUrl` changes → `connect` changes →
-  // this effect re-runs. The cleanup closes the old WS, then connect() creates a new one.
-  // This avoids the race condition of having a separate auth effect.
   useEffect(() => {
     connect();
-
     return () => {
-      if (reconnectTimeoutRef.current) {
-        clearTimeout(reconnectTimeoutRef.current);
-      }
+      if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
       if (wsRef.current) {
         wsRef.current.close(1000);
         wsRef.current = null;
       }
-      // Keep refs and state in sync (important for StrictMode double-invoke)
       isConnectedRef.current = false;
       setIsConnected(false);
     };
   }, [connect]);
 
-  // Send synthesize request
-  const synthesize = useCallback((params: SynthesizeParams) => {
+  const send = useCallback((msg: object) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-      console.warn("[TTS WS] Cannot synthesize: not connected");
+      console.warn("[TTS WS] Cannot send: not connected");
       return;
     }
-
-    // Mark blocks as queued immediately (clears any previous error state)
-    // Include model/voice so we know what we requested
-    for (const idx of params.blockIndices) {
-      blockStatesRef.current.set(idx, {
-        status: 'queued',
-        model_slug: params.model,
-        voice_slug: params.voice,
-      });
-    }
-
-    const message = {
-      type: "synthesize",
-      document_id: params.documentId,
-      block_indices: params.blockIndices,
-      cursor: params.cursor,
-      model: params.model,
-      voice: params.voice,
-      synthesis_mode: "server",
-    };
-
-    console.log(`[TTS WS] Requesting synthesis for blocks: ${params.blockIndices.join(", ")}`);
-    wsRef.current.send(JSON.stringify(message));
+    wsRef.current.send(JSON.stringify(msg));
   }, []);
 
-  // Send cursor moved message
-  const moveCursor = useCallback((documentId: string, cursor: number) => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-      return;
-    }
+  const checkConnected = useCallback(() => isConnectedRef.current, []);
 
-    const message = {
-      type: "cursor_moved",
-      document_id: documentId,
-      cursor,
-    };
-
-    wsRef.current.send(JSON.stringify(message));
-  }, []);
-
-  const reset = useCallback(() => {
-    blockStatesRef.current = new Map();
-    audioUrlsRef.current = new Map();
-    setBlockStates(new Map());
-    setAudioUrls(new Map());
-  }, []);
-
-  const checkConnected = useCallback(() => {
-    // Use ref instead of checking wsRef.current.readyState directly
-    // This avoids issues with async connection and StrictMode
-    return isConnectedRef.current;
-  }, []);
-
-  const getAudioUrl = useCallback((blockIdx: number) => {
-    return audioUrlsRef.current.get(blockIdx);
-  }, []);
-
-  const getBlockStatus = useCallback((blockIdx: number) => {
-    return blockStatesRef.current.get(blockIdx)?.status;
-  }, []);
-
-  const getBlockState = useCallback((blockIdx: number) => {
-    return blockStatesRef.current.get(blockIdx);
-  }, []);
-
-  return useMemo(() => ({
+  return {
     isConnected,
     isReconnecting,
     connectionError,
-    blockStates,
-    audioUrls,
-    synthesize,
-    moveCursor,
-    reset,
+    send,
     checkConnected,
-    getAudioUrl,
-    getBlockStatus,
-    getBlockState,
-  }), [
-    isConnected,
-    isReconnecting,
-    connectionError,
-    blockStates,
-    audioUrls,
-    synthesize,
-    moveCursor,
-    reset,
-    checkConnected,
-    getAudioUrl,
-    getBlockStatus,
-    getBlockState,
-  ]);
+  };
 }

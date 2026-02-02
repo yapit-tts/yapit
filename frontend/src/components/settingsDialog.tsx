@@ -7,13 +7,13 @@ import {
 } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
-import { Slider } from "@/components/ui/slider";
 import { Button } from "@/components/ui/button";
 import { Settings } from "lucide-react";
-import { useSettings, type ContentWidth } from "@/hooks/useSettings";
+import { useSettings, type ContentWidth, type ScrollPosition } from "@/hooks/useSettings";
 import { cn } from "@/lib/utils";
 import { useUserPreferences } from "@/hooks/useUserPreferences";
 import { useApi } from "@/api";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 function SettingRow({
   label,
@@ -44,6 +44,7 @@ interface SettingsDialogProps {
 export function SettingsDialog({ size = "default" }: SettingsDialogProps) {
   const { settings, setSettings } = useSettings();
   const { isAnonymous } = useApi();
+  const isMobile = useIsMobile();
   const {
     autoImportSharedDocuments,
     setAutoImportSharedDocuments,
@@ -91,40 +92,50 @@ export function SettingsDialog({ size = "default" }: SettingsDialogProps) {
             />
           </SettingRow>
 
+          {!isMobile && (
+            <SettingRow
+              label="Content width"
+              description="Maximum width of document text"
+            >
+              <div className="flex gap-1">
+                {(["narrow", "medium", "wide", "full"] as ContentWidth[]).map((width) => (
+                  <button
+                    key={width}
+                    onClick={() => setSettings({ contentWidth: width })}
+                    className={cn(
+                      "px-2 py-1 text-xs rounded transition-colors capitalize",
+                      settings.contentWidth === width
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-muted hover:bg-muted/80 text-muted-foreground"
+                    )}
+                  >
+                    {width}
+                  </button>
+                ))}
+              </div>
+            </SettingRow>
+          )}
+
           <SettingRow
-            label="Content width"
-            description="Maximum width of document text"
+            label="Scroll position"
+            description="Where the current block appears on screen"
           >
             <div className="flex gap-1">
-              {(["narrow", "medium", "wide", "full"] as ContentWidth[]).map((width) => (
+              {(["top", "center", "bottom"] as ScrollPosition[]).map((pos) => (
                 <button
-                  key={width}
-                  onClick={() => setSettings({ contentWidth: width })}
+                  key={pos}
+                  onClick={() => setSettings({ scrollPosition: pos })}
                   className={cn(
                     "px-2 py-1 text-xs rounded transition-colors capitalize",
-                    settings.contentWidth === width
+                    settings.scrollPosition === pos
                       ? "bg-primary text-primary-foreground"
                       : "bg-muted hover:bg-muted/80 text-muted-foreground"
                   )}
                 >
-                  {width}
+                  {pos}
                 </button>
               ))}
             </div>
-          </SettingRow>
-
-          <SettingRow
-            label="Default playback speed"
-            description={`${settings.defaultSpeed.toFixed(1)}x`}
-          >
-            <Slider
-              className="w-24"
-              value={[settings.defaultSpeed]}
-              onValueChange={([value]) => setSettings({ defaultSpeed: value })}
-              min={0.5}
-              max={3}
-              step={0.1}
-            />
           </SettingRow>
 
           {/* Sharing settings - only for signed-in users */}

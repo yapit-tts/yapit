@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, memo, startTransition, useRef, useCallback } from "react";
+import { useState, useMemo, memo, startTransition, useRef, useCallback } from "react";
 import { ChevronDown, Star, ChevronRight, Monitor, Cloud, Loader2, Info, Play, Square } from "lucide-react";
 import { useApi } from "@/api";
 import { Button } from "@/components/ui/button";
@@ -13,8 +13,11 @@ import {
   type ModelType,
   type KokoroLanguageCode,
   type InworldLanguageCode,
+  KOKORO_BROWSER_SLUG,
+  KOKORO_SLUG,
   INWORLD_SLUG,
   INWORLD_MAX_SLUG,
+  isKokoroModel,
   KOKORO_VOICES,
   LANGUAGE_INFO,
   INWORLD_LANGUAGE_INFO,
@@ -24,7 +27,7 @@ import {
   setVoiceSelection,
 } from "@/lib/voiceSelection";
 import { useInworldVoices } from "@/hooks/useInworldVoices";
-import { useSubscription } from "@/hooks/useSubscription";
+
 import { useUserPreferences } from "@/hooks/useUserPreferences";
 
 interface VoicePickerProps {
@@ -41,9 +44,6 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
 
   // Fetch Inworld voices from API
   const { voices: inworldVoices, isLoading: inworldLoading } = useInworldVoices();
-
-  // Subscription state for auto-switching subscribers to Cloud
-  const { canUseCloudKokoro, isLoading: subLoading } = useSubscription();
 
   // Use synced preferences (cross-device sync for authenticated users)
   const { pinnedVoices, togglePinnedVoice } = useUserPreferences();
@@ -112,16 +112,6 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
     }
   }, [api, previewingVoice]);
 
-  // Default subscribers to Cloud on first load
-  useEffect(() => {
-    if (subLoading) return;
-    if (canUseCloudKokoro && value.model === "kokoro") {
-      const newSelection: VoiceSelection = { ...value, model: "kokoro-server" };
-      onChange(newSelection);
-      setVoiceSelection(newSelection);
-    }
-  }, [canUseCloudKokoro, subLoading]); // Only run when subscription state resolves
-
   const toggleKokoroLangExpanded = (lang: KokoroLanguageCode) => {
     setExpandedKokoroLangs(prev => {
       const next = new Set(prev);
@@ -146,17 +136,15 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
     });
   };
 
-  // Track model type for tab logic
-  const isKokoroServer = value.model === "kokoro-server";
-  const isKokoroModel = value.model === "kokoro" || value.model === "kokoro-server";
+  const isKokoroServer = value.model === KOKORO_SLUG;
+  const isKokoroModelSelected = isKokoroModel(value.model);
   const isInworldMax = value.model === INWORLD_MAX_SLUG;
-  const activeTab = isKokoroModel ? "kokoro" : "inworld";
+  const activeTab = isKokoroModelSelected ? "kokoro" : "inworld";
 
   const handleVoiceSelect = (voiceSlug: string) => {
-    // Preserve current model variant when selecting voice
     let model: ModelType;
     if (activeTab === "kokoro") {
-      model = isKokoroServer ? "kokoro-server" : "kokoro";
+      model = isKokoroServer ? KOKORO_SLUG : KOKORO_BROWSER_SLUG;
     } else {
       model = isInworldMax ? INWORLD_MAX_SLUG : INWORLD_SLUG;
     }
@@ -171,13 +159,12 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
   };
 
   const handleModelChange = (tab: string) => {
-    // When switching tabs, select default voice for that model
     let defaultVoice: string;
     let model: ModelType;
 
     if (tab === "kokoro") {
       defaultVoice = "af_heart";
-      model = isKokoroServer ? "kokoro-server" : "kokoro";
+      model = isKokoroServer ? KOKORO_SLUG : KOKORO_BROWSER_SLUG;
     } else {
       defaultVoice = inworldVoices.length > 0 ? inworldVoices[0].slug : "Ashley";
       model = isInworldMax ? INWORLD_MAX_SLUG : INWORLD_SLUG;
@@ -189,11 +176,11 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
   };
 
   const handleKokoroSourceToggle = () => {
-    const newModel: ModelType = isKokoroServer ? "kokoro" : "kokoro-server";
+    const newModel: ModelType = isKokoroServer ? KOKORO_BROWSER_SLUG : KOKORO_SLUG;
 
     // When switching to Local, auto-switch to English voice if current voice isn't English
     let voiceSlug = value.voiceSlug;
-    if (newModel === "kokoro") {
+    if (newModel === KOKORO_BROWSER_SLUG) {
       const currentVoice = KOKORO_VOICES.find(v => v.index === value.voiceSlug);
       const isEnglish = currentVoice && (currentVoice.language === "a" || currentVoice.language === "b");
       if (!isEnglish) {
@@ -222,14 +209,14 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
 
   // Get display name for current selection
   let currentVoiceName: string;
-  if (isKokoroModel) {
+  if (isKokoroModelSelected) {
     currentVoiceName = KOKORO_VOICES.find(v => v.index === value.voiceSlug)?.name ?? value.voiceSlug;
   } else {
     currentVoiceName = inworldVoices.find(v => v.slug === value.voiceSlug)?.name ?? value.voiceSlug;
   }
 
   let modelLabel: string;
-  if (isKokoroModel) {
+  if (isKokoroModelSelected) {
     modelLabel = `Kokoro${isKokoroServer ? "" : " (Local)"}`;
   } else {
     modelLabel = isInworldMax ? "Inworld Max" : "Inworld";
