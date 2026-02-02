@@ -775,8 +775,8 @@ const PlaybackPage = () => {
           onPlay={() => engine.play()}
           onPause={() => engine.pause()}
           onCancelSynthesis={() => engine.stop()}
-          onSkipBack={() => engine.skipBack()}
-          onSkipForward={() => engine.skipForward()}
+          onSkipBack={() => { engine.skipBack(); scrollToBlockRef.current(engine.getSnapshot().currentBlock); }}
+          onSkipForward={() => { engine.skipForward(); scrollToBlockRef.current(engine.getSnapshot().currentBlock); }}
           progressBarValues={progressBarValues}
           volume={volume}
           onVolumeChange={setVolume}
