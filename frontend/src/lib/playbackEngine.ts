@@ -28,7 +28,7 @@ export interface PlaybackSnapshot {
   blockStates: BlockVisualState[];
   audioProgress: number;
   totalDuration: number;
-  blockError: string | null;
+
 }
 
 // --- Configuration ---
@@ -99,7 +99,6 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
   const audioCache = new Map<VariantKey, AudioBufferData>();
   const synthesisPromises = new Map<VariantKey, Promise<AudioBufferData | null>>();
 
-  let blockError: string | null = null;
   let prefetchedUpTo = -1;
 
   let listeners: Array<() => void> = [];
@@ -576,7 +575,6 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
       blockStates: deriveBlockStates(),
       audioProgress,
       totalDuration,
-      blockError,
     };
     return snapshot;
   }

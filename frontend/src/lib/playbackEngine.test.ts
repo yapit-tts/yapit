@@ -107,7 +107,7 @@ describe("createPlaybackEngine", () => {
       expect(snap.blockStates).toEqual([]);
       expect(snap.audioProgress).toBe(0);
       expect(snap.totalDuration).toBe(0);
-      expect(snap.blockError).toBeNull();
+
     });
   });
 

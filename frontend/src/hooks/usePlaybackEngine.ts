@@ -24,6 +24,12 @@ export interface UsePlaybackEngineReturn {
     isReconnecting: boolean;
     connectionError: string | null;
   };
+  browserTTS: {
+    error: string | null;
+    device: "webgpu" | "wasm" | null;
+    loading: boolean;
+    loadingProgress: number;
+  };
 }
 
 export function usePlaybackEngine(
@@ -144,6 +150,7 @@ export function usePlaybackEngine(
 
   const snapshot = useSyncExternalStore(engine.subscribe, engine.getSnapshot);
 
+  const browserSynth = browserSynthRef.current!;
   return {
     snapshot,
     engine,
@@ -152,6 +159,12 @@ export function usePlaybackEngine(
       isConnected: ttsWS.isConnected,
       isReconnecting: ttsWS.isReconnecting,
       connectionError: ttsWS.connectionError,
+    },
+    browserTTS: {
+      error: browserSynth.getError(),
+      device: browserSynth.getDevice(),
+      loading: browserSynth.isLoading(),
+      loadingProgress: browserSynth.getLoadingProgress(),
     },
   };
 }

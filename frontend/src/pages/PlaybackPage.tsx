@@ -116,7 +116,7 @@ const PlaybackPage = () => {
   const estimated_ms = documentBlocks.reduce((sum, b) => sum + (b.est_duration_ms || 0), 0);
 
   // --- Playback engine ---
-  const { snapshot, engine, gainNode, ws } = usePlaybackEngine(
+  const { snapshot, engine, gainNode, ws, browserTTS } = usePlaybackEngine(
     documentId,
     documentBlocks,
     voiceSelection,
@@ -576,8 +576,6 @@ const PlaybackPage = () => {
     return <div className="flex grow items-center justify-center text-destructive">{error}</div>;
   }
 
-  const blockError = snapshot.blockError;
-
   return (
     <div className="flex grow flex-col">
       <WebGPUWarningBanner />
@@ -651,7 +649,6 @@ const PlaybackPage = () => {
           isSynthesizing={snapshot.isSynthesizingCurrent}
           isReconnecting={ws.isReconnecting}
           connectionError={ws.connectionError}
-          blockError={blockError}
           onPlay={() => engine.play()}
           onPause={() => engine.pause()}
           onCancelSynthesis={() => engine.stop()}
@@ -664,6 +661,8 @@ const PlaybackPage = () => {
           onSpeedChange={setPlaybackSpeed}
           voiceSelection={voiceSelection}
           onVoiceChange={setVoiceSelection}
+          browserTTSError={browserTTS.error}
+          browserTTSDevice={browserTTS.device}
         />
         {shouldShowOutliner && (
           <OutlinerSidebar>
