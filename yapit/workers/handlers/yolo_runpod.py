@@ -8,34 +8,27 @@ Deployment:
     CMD override: python -m yapit.workers.handlers.yolo_runpod
     Environment variables: None required (model paths baked into image)
 
-The handler receives YoloJob fields and returns YoloResult-compatible JSON:
-    Input: {image_base64: str, page_width: int, page_height: int}
-    Output: {figures: [{bbox, confidence, width_pct, row_group}, ...]}
+The handler receives YoloJob fields and returns YoloResult-compatible JSON.
+The overflow scanner adds job_id, worker_id, processing_time_ms before pushing to Redis.
+    Input: {job_id: str, page_pdf_base64: str}
+    Output: {figures: [{bbox, confidence, width_pct, row_group, cropped_image_base64}, ...], page_width: int, page_height: int}
 """
-
-import base64
 
 import runpod
 
-from yapit.workers.yolo.__main__ import detect_figures, load_model
+from yapit.contracts import YoloJob
+from yapit.workers.yolo.__main__ import load_model, process_job
 
 
 def handler(job: dict) -> dict:
     """RunPod handler for YOLO figure detection."""
-    job_input = job["input"]
     try:
-        image_bytes = base64.b64decode(job_input["image_base64"])
-        figures = detect_figures(image_bytes, job_input["page_width"], job_input["page_height"])
+        yolo_job = YoloJob(**job["input"])
+        figures, width, height = process_job(yolo_job)
         return {
-            "figures": [
-                {
-                    "bbox": f.bbox,
-                    "confidence": f.confidence,
-                    "width_pct": f.width_pct,
-                    "row_group": f.row_group,
-                }
-                for f in figures
-            ]
+            "figures": [f.model_dump() for f in figures],
+            "page_width": width,
+            "page_height": height,
         }
     except Exception as e:
         return {"error": str(e)}
