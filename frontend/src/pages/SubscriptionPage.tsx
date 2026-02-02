@@ -65,11 +65,15 @@ interface UsageSummary {
 
 const TIER_ORDER: PlanTier[] = ["free", "basic", "plus", "max"];
 
-const PLAN_FEATURES: Record<PlanTier, string[]> = {
-  free: ["Kokoro TTS (local, English)", "100 documents"],
-  basic: ["Unlimited Kokoro TTS", "1,000 documents", "~500 AI-transformed pages*", "Unused quota accumulates**", "Cancel anytime during trial"],
-  plus: ["Everything in Basic", "~20 hrs premium voices*", "~1,000 AI-transformed pages*", "Cancel anytime during trial"],
-  max: ["Everything in Plus", "~60 hrs premium voices*", "~1,500 AI-transformed pages*"],
+const tipLink = (text: string, hash: string) => (
+  <a href={`/tips#${hash}`} className="underline decoration-dotted underline-offset-2 decoration-muted-foreground/50 hover:decoration-foreground">{text}</a>
+);
+
+const PLAN_FEATURES: Record<PlanTier, React.ReactNode[]> = {
+  free: [tipLink("Kokoro TTS (local, English)", "local-tts"), "100 documents"],
+  basic: ["Unlimited Kokoro TTS", "1,000 documents", tipLink("~500 AI-transformed pages*", "ai-transform"), tipLink("Unused quota accumulates**", "billing"), "Cancel anytime during trial"],
+  plus: ["Everything in Basic", tipLink("~20 hrs premium voices*", "premium-voices"), tipLink("~1,000 AI-transformed pages*", "ai-transform"), "Cancel anytime during trial"],
+  max: ["Everything in Plus", tipLink("~60 hrs premium voices*", "premium-voices"), tipLink("~1,500 AI-transformed pages*", "ai-transform")],
 };
 
 const SubscriptionPage = () => {
@@ -496,24 +500,9 @@ const SubscriptionPage = () => {
                 <td className="px-2 py-2 text-center text-muted-foreground">—</td>
                 <td className="px-2 py-2 text-center text-muted-foreground">—</td>
                 <td className="px-2 py-2 text-center">50k</td>
-                <td className="px-2 py-2 text-center">
-                  <span className="relative">
-                    67k
-                    <span className="absolute left-full ml-1 text-xs text-accent-success whitespace-nowrap">+33%</span>
-                  </span>
-                </td>
-                <td className="px-2 py-2 text-center">
-                  <span className="relative">
-                    75k
-                    <span className="absolute left-full ml-1 text-xs text-accent-success whitespace-nowrap">+50%</span>
-                  </span>
-                </td>
-                <td className="px-2 py-2 text-center">
-                  <span className="relative">
-                    100k
-                    <span className="absolute left-full ml-1 text-xs text-accent-success whitespace-nowrap">+100%</span>
-                  </span>
-                </td>
+                <td className="px-2 py-2 text-center">67k <span className="text-xs text-accent-success">+33%</span></td>
+                <td className="px-2 py-2 text-center">75k <span className="text-xs text-accent-success">+50%</span></td>
+                <td className="px-2 py-2 text-center">100k <span className="text-xs text-accent-success">+100%</span></td>
               </tr>
               <tr>
                 <td className="pl-2 pr-0 py-2 font-medium text-muted-foreground">AI Tokens</td>
@@ -527,19 +516,9 @@ const SubscriptionPage = () => {
               <tr>
                 <td className="pl-2 pr-0 py-2 font-medium text-muted-foreground">tokens/€</td>
                 <td className="px-2 py-2 text-center">500k</td>
-                <td className="px-2 py-2 text-center">
-                  <span className="relative">
-                    667k
-                    <span className="absolute left-full ml-1 text-xs text-accent-success whitespace-nowrap">+33%</span>
-                  </span>
-                </td>
+                <td className="px-2 py-2 text-center">667k <span className="text-xs text-accent-success">+33%</span></td>
                 <td className="px-2 py-2 text-center">500k</td>
-                <td className="px-2 py-2 text-center">
-                  <span className="relative">
-                    667k
-                    <span className="absolute left-full ml-1 text-xs text-accent-success whitespace-nowrap">+33%</span>
-                  </span>
-                </td>
+                <td className="px-2 py-2 text-center">667k <span className="text-xs text-accent-success">+33%</span></td>
                 <td className="px-2 py-2 text-center">375k</td>
                 <td className="px-2 py-2 text-center">500k</td>
               </tr>
