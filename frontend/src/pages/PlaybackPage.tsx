@@ -9,7 +9,7 @@ import { usePlaybackEngine, type Block } from '@/hooks/usePlaybackEngine';
 import { useParams, useLocation, Link, useNavigate } from "react-router";
 import { useRef, useState, useEffect, useLayoutEffect, useCallback, useMemo } from "react";
 import { useApi } from '@/api';
-import { Loader2, FileQuestion, Download, X, AudioLines } from "lucide-react";
+import { Loader2, FileQuestion, Download, X, AudioLines, AlertTriangle } from "lucide-react";
 import { AxiosError } from "axios";
 import { buildSectionIndex, findSectionForBlock, type Section } from '@/lib/sectionIndex';
 import { type VoiceSelection, getVoiceSelection, getPlaybackSpeed, setPlaybackSpeed as savePlaybackSpeed, getVolume, setVolume as saveVolume } from '@/lib/voiceSelection';
@@ -603,13 +603,24 @@ const PlaybackPage = () => {
 
       {failedPages && failedPages.length > 0 && showFailedPagesBanner && (
         <div className="flex items-center justify-between gap-4 bg-destructive/10 px-4 py-3 border-b border-destructive/20">
-          <p className="text-destructive">
-            {failedPages.length === 1
-              ? `Page ${failedPages[0] + 1} failed to extract.`
-              : `Pages ${failedPages.map(p => p + 1).join(", ")} failed to extract.`}
-            {" "}Try again later — successfully extracted pages are cached and won't count toward your usage again.
-          </p>
-          <button onClick={() => setShowFailedPagesBanner(false)} className="shrink-0 p-1 text-destructive/70 hover:text-destructive" title="Dismiss">
+          <div className="flex items-start gap-2.5 text-sm">
+            <AlertTriangle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
+            <p className="text-foreground">
+              {failedPages.length === 1
+                ? `Page ${failedPages[0] + 1} failed to extract.`
+                : `Pages ${failedPages.map(p => p + 1).join(", ")} failed to extract.`}
+              {" "}Please try again later. Successfully extracted pages are cached and won't count toward your usage again.
+              {" "}If this keeps happening, {" "}
+              <a href="https://github.com/yapit-tts/yapit/issues" target="_blank" rel="noopener noreferrer" className="text-primary font-medium hover:underline">
+                let us know
+              </a>.
+            </p>
+          </div>
+          <button
+            onClick={() => setShowFailedPagesBanner(false)}
+            className="shrink-0 p-2 min-w-[44px] min-h-[44px] flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent rounded-md transition-colors"
+            title="Dismiss"
+          >
             <X className="h-4 w-4" />
           </button>
         </div>
