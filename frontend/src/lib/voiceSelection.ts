@@ -67,7 +67,7 @@ export function getVoiceSelection(): VoiceSelection {
       if (parsed.model === ("kokoro-server" as string)) parsed.model = KOKORO_SLUG;
       return parsed;
     }
-  } catch {}
+  } catch { /* localStorage unavailable */ }
   return DEFAULT_SELECTION;
 }
 
@@ -79,7 +79,7 @@ export function getPlaybackSpeed(): number {
   try {
     const stored = localStorage.getItem(PLAYBACK_SPEED_KEY);
     if (stored) return Math.max(0.5, Math.min(3.0, parseFloat(stored)));
-  } catch {}
+  } catch { /* localStorage unavailable */ }
   return 1.0;
 }
 
@@ -91,7 +91,7 @@ export function getVolume(): number {
   try {
     const stored = localStorage.getItem(VOLUME_KEY);
     if (stored) return Math.max(0, Math.min(100, parseInt(stored)));
-  } catch {}
+  } catch { /* localStorage unavailable */ }
   return 50;
 }
 
