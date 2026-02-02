@@ -184,6 +184,9 @@ async def lifespan(app: FastAPI):
         task.cancel()
     await asyncio.gather(*background_tasks, return_exceptions=True)
 
+    for cache in all_caches:
+        await cache.close()
+
     await stop_metrics_writer()
     await close_db()
     await app.state.redis_client.aclose()

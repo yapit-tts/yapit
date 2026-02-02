@@ -1,5 +1,6 @@
 """Tests for SqliteCache LRU behavior and maintenance."""
 
+import asyncio
 import tempfile
 from pathlib import Path
 
@@ -9,25 +10,28 @@ from yapit.gateway.cache import CacheConfig, SqliteCache
 
 
 @pytest.fixture
-def cache_dir():
+async def cache_dir():
     with tempfile.TemporaryDirectory() as tmpdir:
         yield Path(tmpdir)
 
 
 @pytest.fixture
-def small_cache(cache_dir):
+async def small_cache(cache_dir):
     """Cache with 100 byte limit for easy LRU testing."""
     config = CacheConfig(path=cache_dir, max_size_mb=None)
     cache = SqliteCache(config)
-    cache._max_size_bytes = 100  # Override for testing
-    return cache
+    cache._max_size_bytes = 100
+    yield cache
+    await cache.close()
 
 
 @pytest.fixture
-def unlimited_cache(cache_dir):
+async def unlimited_cache(cache_dir):
     """Cache with no size limit."""
     config = CacheConfig(path=cache_dir, max_size_mb=None)
-    return SqliteCache(config)
+    cache = SqliteCache(config)
+    yield cache
+    await cache.close()
 
 
 class TestBasicOperations:
@@ -73,12 +77,10 @@ class TestBasicOperations:
 class TestLRUEviction:
     @pytest.mark.asyncio
     async def test_evicts_oldest_when_over_limit(self, small_cache):
-        # Store 3 items of 40 bytes each (120 total, over 100 limit)
         await small_cache.store("first", b"x" * 40)
         await small_cache.store("second", b"y" * 40)
         await small_cache.store("third", b"z" * 40)
 
-        # First should be evicted (oldest)
         assert not await small_cache.exists("first")
         assert await small_cache.exists("second")
         assert await small_cache.exists("third")
@@ -88,10 +90,10 @@ class TestLRUEviction:
         await small_cache.store("first", b"x" * 40)
         await small_cache.store("second", b"y" * 40)
 
-        # Access "first" to make it more recent
+        # Access "first" to make it more recent, then flush so eviction sees it
         await small_cache.retrieve_data("first")
+        await small_cache._flush_lru()
 
-        # Add third item, triggering eviction
         await small_cache.store("third", b"z" * 40)
 
         # "second" should be evicted (now oldest), "first" kept (recently accessed)
@@ -108,6 +110,77 @@ class TestLRUEviction:
         assert await small_cache.exists("a")
         assert await small_cache.exists("b")
         assert await small_cache.exists("c")
+
+
+class TestBatchedLRU:
+    @pytest.mark.asyncio
+    async def test_retrieve_does_not_write_immediately(self, unlimited_cache):
+        """retrieve_data should not update last_accessed synchronously."""
+        await unlimited_cache.store("key1", b"data")
+
+        import aiosqlite
+
+        async with aiosqlite.connect(unlimited_cache.db_path) as db:
+            async with db.execute("SELECT last_accessed FROM cache WHERE key='key1'") as cur:
+                row = await cur.fetchone()
+                ts_before = row[0]
+
+        await unlimited_cache.retrieve_data("key1")
+
+        async with aiosqlite.connect(unlimited_cache.db_path) as db:
+            async with db.execute("SELECT last_accessed FROM cache WHERE key='key1'") as cur:
+                row = await cur.fetchone()
+                ts_after = row[0]
+
+        assert ts_before == ts_after, "retrieve_data should not write last_accessed immediately"
+
+    @pytest.mark.asyncio
+    async def test_flush_updates_last_accessed(self, unlimited_cache):
+        await unlimited_cache.store("key1", b"data")
+
+        import aiosqlite
+
+        async with aiosqlite.connect(unlimited_cache.db_path) as db:
+            async with db.execute("SELECT last_accessed FROM cache WHERE key='key1'") as cur:
+                row = await cur.fetchone()
+                ts_before = row[0]
+
+        await unlimited_cache.retrieve_data("key1")
+        await unlimited_cache._flush_lru()
+
+        async with aiosqlite.connect(unlimited_cache.db_path) as db:
+            async with db.execute("SELECT last_accessed FROM cache WHERE key='key1'") as cur:
+                row = await cur.fetchone()
+                ts_after = row[0]
+
+        assert ts_after > ts_before
+
+
+class TestConcurrency:
+    @pytest.mark.asyncio
+    async def test_concurrent_reads_dont_block(self, unlimited_cache):
+        await unlimited_cache.store("key1", b"x" * 1000)
+
+        results = await asyncio.gather(*[unlimited_cache.retrieve_data("key1") for _ in range(50)])
+        assert all(r == b"x" * 1000 for r in results)
+
+    @pytest.mark.asyncio
+    async def test_concurrent_read_and_write(self, unlimited_cache):
+        await unlimited_cache.store("key1", b"original")
+
+        async def read_loop():
+            for _ in range(20):
+                await unlimited_cache.retrieve_data("key1")
+                await asyncio.sleep(0)
+
+        async def write_loop():
+            for i in range(20):
+                await unlimited_cache.store(f"new_{i}", b"data")
+                await asyncio.sleep(0)
+
+        await asyncio.gather(read_loop(), write_loop())
+
+        assert await unlimited_cache.exists("key1")
 
 
 class TestCacheStats:
@@ -143,11 +216,9 @@ class TestCacheStats:
 class TestVacuum:
     @pytest.mark.asyncio
     async def test_vacuum_skips_when_not_bloated(self, unlimited_cache):
-        # Need enough data that SQLite overhead doesn't dominate
         await unlimited_cache.store("key1", b"x" * 100_000)
 
         stats = await unlimited_cache.get_stats()
-        # With 100KB data, bloat should be reasonable (< 2x)
         assert stats.bloat_ratio < 2.0
 
         vacuumed = await unlimited_cache.vacuum_if_needed(bloat_threshold=2.0)

@@ -1,4 +1,5 @@
 import abc
+import asyncio
 import sqlite3
 import time
 from enum import StrEnum, auto
@@ -7,6 +8,8 @@ from pathlib import Path
 import aiosqlite
 from loguru import logger
 from pydantic import BaseModel
+
+LRU_FLUSH_INTERVAL_S = 10
 
 
 class Caches(StrEnum):
@@ -60,17 +63,40 @@ class Cache(abc.ABC):
     async def vacuum_if_needed(self, bloat_threshold: float = 2.0) -> bool:
         """Vacuum the cache if bloat ratio exceeds threshold. Returns True if vacuumed."""
 
+    @abc.abstractmethod
+    async def close(self) -> None:
+        """Release resources. Called during shutdown."""
+
 
 class SqliteCache(Cache):
+    """SQLite-backed cache with dual connections (reader + writer) and batched LRU.
+
+    Reader connection: pure reads (retrieve_data, exists, get_stats).
+    WAL mode allows unlimited concurrent readers with zero writer contention.
+
+    Writer connection: all mutations (store, delete, eviction, LRU flush, vacuum).
+    Uses busy_timeout as safety net for any residual lock contention.
+
+    LRU updates are batched: retrieve_data records accessed keys in memory,
+    a background task flushes them to the DB every ~10s.
+    """
+
     def __init__(self, config: CacheConfig):
         super().__init__(config)
         assert config.path is not None, "SqliteCache requires a path"
         self.db_path = Path(config.path) / "cache.db"
         self._max_size_bytes = config.max_size_mb * 1024 * 1024 if config.max_size_mb else None
-        self._init_db()
 
-    def _init_db(self) -> None:
-        """Initialize DB schema synchronously (only called once at startup)."""
+        self._reader: aiosqlite.Connection | None = None
+        self._writer: aiosqlite.Connection | None = None
+        self._lru_pending: set[str] = set()
+        self._lru_task: asyncio.Task | None = None
+        self._closed = False
+
+        self._init_schema()
+
+    def _init_schema(self) -> None:
+        """Create tables synchronously at startup (idempotent)."""
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         with sqlite3.connect(self.db_path) as db:
             db.execute(
@@ -87,81 +113,117 @@ class SqliteCache(Cache):
             db.execute("CREATE INDEX IF NOT EXISTS idx_cache_last_accessed ON cache(last_accessed)")
             db.execute("PRAGMA journal_mode=WAL")
 
-    async def store(self, key: str, data: bytes) -> str | None:
-        ts = time.time()
-        size = len(data)
-        async with aiosqlite.connect(self.db_path) as db:
+    async def _get_reader(self) -> aiosqlite.Connection:
+        if self._reader is None:
+            self._reader = await aiosqlite.connect(self.db_path)
+            await self._reader.execute("PRAGMA journal_mode=WAL")
+        return self._reader
+
+    async def _get_writer(self) -> aiosqlite.Connection:
+        if self._writer is None:
+            self._writer = await aiosqlite.connect(self.db_path)
+            await self._writer.execute("PRAGMA journal_mode=WAL")
+            await self._writer.execute("PRAGMA busy_timeout=5000")
+        return self._writer
+
+    def _ensure_lru_task(self) -> None:
+        if self._lru_task is None or self._lru_task.done():
+            self._lru_task = asyncio.create_task(self._lru_flush_loop())
+
+    async def _lru_flush_loop(self) -> None:
+        while not self._closed:
+            await asyncio.sleep(LRU_FLUSH_INTERVAL_S)
+            await self._flush_lru()
+
+    async def _flush_lru(self) -> None:
+        if not self._lru_pending:
+            return
+        keys = self._lru_pending.copy()
+        self._lru_pending.clear()
+        try:
+            db = await self._get_writer()
+            placeholders = ",".join("?" for _ in keys)
             await db.execute(
-                "REPLACE INTO cache(key, data, size, created_at, last_accessed) VALUES(?, ?, ?, ?, ?)",
-                (key, data, size, ts, ts),
+                f"UPDATE cache SET last_accessed=? WHERE key IN ({placeholders})",
+                (time.time(), *keys),
             )
             await db.commit()
+        except Exception:
+            logger.exception(f"LRU flush failed for {self.db_path}")
+
+    async def store(self, key: str, data: bytes) -> str | None:
+        ts = time.time()
+        db = await self._get_writer()
+        await db.execute(
+            "REPLACE INTO cache(key, data, size, created_at, last_accessed) VALUES(?, ?, ?, ?, ?)",
+            (key, data, len(data), ts, ts),
+        )
+        await db.commit()
         if self._max_size_bytes:
             await self._enforce_max_size()
         return key
 
     async def exists(self, key: str) -> bool:
-        async with aiosqlite.connect(self.db_path) as db:
-            async with db.execute("SELECT 1 FROM cache WHERE key=?", (key,)) as cursor:
-                row = await cursor.fetchone()
+        db = await self._get_reader()
+        async with db.execute("SELECT 1 FROM cache WHERE key=?", (key,)) as cursor:
+            row = await cursor.fetchone()
         return bool(row)
 
     async def retrieve_ref(self, key: str) -> str | None:
         return key if await self.exists(key) else None
 
     async def retrieve_data(self, key: str) -> bytes | None:
-        async with aiosqlite.connect(self.db_path) as db:
-            async with db.execute("SELECT data FROM cache WHERE key=?", (key,)) as cursor:
-                row = await cursor.fetchone()
-            if row:
-                await db.execute("UPDATE cache SET last_accessed=? WHERE key=?", (time.time(), key))
-                await db.commit()
+        db = await self._get_reader()
+        async with db.execute("SELECT data FROM cache WHERE key=?", (key,)) as cursor:
+            row = await cursor.fetchone()
+        if row:
+            self._lru_pending.add(key)
+            self._ensure_lru_task()
         return row[0] if row else None
 
     async def delete(self, key: str) -> bool:
-        async with aiosqlite.connect(self.db_path) as db:
-            cursor = await db.execute("DELETE FROM cache WHERE key=?", (key,))
-            await db.commit()
-            return cursor.rowcount > 0
+        db = await self._get_writer()
+        cursor = await db.execute("DELETE FROM cache WHERE key=?", (key,))
+        await db.commit()
+        return cursor.rowcount > 0
 
     async def _enforce_max_size(self) -> int:
         """Evict oldest entries (by last_accessed) until total size is under max_size_bytes."""
         if not self._max_size_bytes:
             return 0
 
-        async with aiosqlite.connect(self.db_path) as db:
-            async with db.execute("SELECT COALESCE(SUM(size), 0) FROM cache") as cursor:
-                row = await cursor.fetchone()
-                assert row is not None  # aggregate always returns a row
-                total_size = row[0]
+        db = await self._get_writer()
+        async with db.execute("SELECT COALESCE(SUM(size), 0) FROM cache") as cursor:
+            row = await cursor.fetchone()
+            assert row is not None
+            total_size = row[0]
 
-            if total_size <= self._max_size_bytes:
-                return 0
+        if total_size <= self._max_size_bytes:
+            return 0
 
-            async with db.execute("SELECT key, size FROM cache ORDER BY last_accessed ASC") as cursor:
-                rows = await cursor.fetchall()
+        excess = total_size - self._max_size_bytes
+        async with db.execute("SELECT AVG(size) FROM cache") as cursor:
+            row = await cursor.fetchone()
+            assert row is not None
+            avg_size = row[0] or 1
 
-            evicted = 0
-            for key, size in rows:
-                if total_size <= self._max_size_bytes:
-                    break
-                await db.execute("DELETE FROM cache WHERE key=?", (key,))
-                total_size -= size
-                evicted += 1
+        # Overshoot so the next few store() calls don't each re-trigger eviction
+        estimate = int(excess / avg_size * 1.2) + 1
 
-            if evicted > 0:
-                await db.commit()
-                logger.debug(f"Cache LRU eviction: removed {evicted} entries from {self.db_path}")
-
-            return evicted
+        cursor = await db.execute(
+            "DELETE FROM cache WHERE key IN (SELECT key FROM cache ORDER BY last_accessed ASC LIMIT ?)",
+            (estimate,),
+        )
+        evicted = cursor.rowcount
+        await db.commit()
+        return evicted
 
     async def get_stats(self) -> CacheStats:
-        """Return cache statistics for monitoring."""
-        async with aiosqlite.connect(self.db_path) as db:
-            async with db.execute("SELECT COALESCE(SUM(size), 0), COUNT(*) FROM cache") as cursor:
-                row = await cursor.fetchone()
-                assert row is not None  # aggregate always returns a row
-                data_size, entry_count = row[0], row[1]
+        db = await self._get_reader()
+        async with db.execute("SELECT COALESCE(SUM(size), 0), COUNT(*) FROM cache") as cursor:
+            row = await cursor.fetchone()
+            assert row is not None
+            data_size, entry_count = row[0], row[1]
 
         file_size = self.db_path.stat().st_size if self.db_path.exists() else 0
         bloat_ratio = file_size / data_size if data_size > 0 else 1.0
@@ -174,7 +236,6 @@ class SqliteCache(Cache):
         )
 
     async def vacuum_if_needed(self, bloat_threshold: float = 2.0) -> bool:
-        """Vacuum if file size exceeds bloat_threshold * data size."""
         stats = await self.get_stats()
 
         if stats.bloat_ratio <= bloat_threshold or stats.data_size_bytes == 0:
@@ -187,10 +248,10 @@ class SqliteCache(Cache):
         )
 
         start = time.time()
-        async with aiosqlite.connect(self.db_path) as db:
-            await db.execute("VACUUM")
-            await db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-            await db.commit()
+        db = await self._get_writer()
+        await db.execute("VACUUM")
+        await db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        await db.commit()
 
         duration_ms = int((time.time() - start) * 1000)
         new_stats = await self.get_stats()
@@ -202,3 +263,17 @@ class SqliteCache(Cache):
         )
 
         return True
+
+    async def close(self) -> None:
+        self._closed = True
+        if self._lru_task and not self._lru_task.done():
+            self._lru_task.cancel()
+            try:
+                await self._lru_task
+            except asyncio.CancelledError:
+                pass
+        await self._flush_lru()
+        if self._reader:
+            await self._reader.close()
+        if self._writer:
+            await self._writer.close()
