@@ -29,6 +29,7 @@ from yapit.gateway.cache import Cache
 from yapit.gateway.config import Settings, get_settings
 from yapit.gateway.db import close_db, create_session, prepare_database
 from yapit.gateway.deps import create_cache, create_image_storage
+from yapit.gateway.document.batch_poller import BatchPoller
 from yapit.gateway.document.gemini import GeminiExtractor, create_gemini_config
 from yapit.gateway.domain_models import UsageLog
 from yapit.gateway.exceptions import APIError
@@ -178,7 +179,26 @@ async def lifespan(app: FastAPI):
 
     background_tasks.append(asyncio.create_task(_usage_log_cleanup_task(settings)))
 
+    # Batch extraction poller
+    batch_poller = None
+    if app.state.ai_extractor:
+        config = app.state.ai_extractor_config
+        assert config is not None and config.extraction_cache_prefix is not None
+        batch_poller = BatchPoller(
+            gemini_client=app.state.ai_extractor.client,
+            redis=app.state.redis_client,
+            get_db_session=lambda: create_session(settings),
+            extraction_cache=app.state.extraction_cache,
+            settings=settings,
+            extraction_cache_prefix=config.extraction_cache_prefix,
+            output_token_multiplier=config.output_token_multiplier,
+        )
+        await batch_poller.start()
+
     yield
+
+    if batch_poller:
+        await batch_poller.stop()
 
     for task in background_tasks:
         task.cancel()

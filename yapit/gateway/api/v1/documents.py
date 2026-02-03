@@ -1,7 +1,6 @@
 import asyncio
 import datetime as dt
 import hashlib
-import math
 import re
 from datetime import datetime
 from email.message import EmailMessage
@@ -11,7 +10,7 @@ from typing import Annotated, Literal
 from uuid import UUID
 
 import pymupdf
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, UploadFile, status
 from fastapi.responses import HTMLResponse
 from loguru import logger
 from pydantic import BaseModel, Field, HttpUrl, StringConstraints
@@ -40,7 +39,8 @@ from yapit.gateway.deps import (
     SettingsDep,
 )
 from yapit.gateway.document import markitdown
-from yapit.gateway.document.extraction import deduplicate_footnotes
+from yapit.gateway.document.batch import get_batch_job, submit_batch_job
+from yapit.gateway.document.extraction import PER_PAGE_TOLERANCE, deduplicate_footnotes, estimate_document_tokens
 from yapit.gateway.document.http import download_document
 from yapit.gateway.document.markxiv import detect_arxiv_url, fetch_from_markxiv
 from yapit.gateway.document.processing import (
@@ -48,13 +48,16 @@ from yapit.gateway.document.processing import (
     DocumentExtractionResult,
     ExtractedPage,
     ProcessorConfig,
+    estimate_block_duration_ms,
     process_with_billing,
 )
 from yapit.gateway.document.website import extract_website_content
-from yapit.gateway.domain_models import Block, Document, DocumentMetadata, UserPreferences, UserSubscription
+from yapit.gateway.domain_models import Block, Document, DocumentMetadata, UsageType, UserPreferences, UserSubscription
 from yapit.gateway.exceptions import ResourceNotFoundError
 from yapit.gateway.markdown import parse_markdown, transform_to_document
 from yapit.gateway.metrics import log_event
+from yapit.gateway.reservations import create_reservation, release_reservation
+from yapit.gateway.usage import check_usage_limit
 
 router = APIRouter(prefix="/v1/documents", tags=["Documents"], dependencies=[Depends(authenticate)])
 public_router = APIRouter(prefix="/v1/documents", tags=["Documents"])
@@ -158,10 +161,12 @@ class DocumentCreateRequest(BasePreparedDocumentCreateRequest):
     Args:
         pages: List of page indices to process (0-indexed). None = all pages.
         ai_transform: Use AI-powered extraction (requires subscription). False = free markitdown.
+        batch_mode: Submit as batch job (50% cheaper, async). Only valid with ai_transform=True.
     """
 
     pages: list[int] | None = None
     ai_transform: bool = False
+    batch_mode: bool = False
 
 
 class WebsiteDocumentCreateRequest(BasePreparedDocumentCreateRequest):
@@ -176,12 +181,30 @@ class DocumentCreateResponse(BaseModel):
     failed_pages: list[int] = []  # Pages that failed extraction (0-indexed)
 
 
+class BatchSubmittedResponse(BaseModel):
+    """Response after batch job submission."""
+
+    content_hash: str
+    total_pages: int
+    submitted_at: str
+
+
 class ExtractionStatusResponse(BaseModel):
     """Progress of an ongoing extraction."""
 
     total_pages: int
     completed_pages: list[int]
     status: Literal["processing", "complete", "not_found"]
+
+
+class BatchStatusResponse(BaseModel):
+    """Status of a batch extraction job."""
+
+    status: str  # PENDING, RUNNING, SUCCEEDED, FAILED, EXPIRED
+    submitted_at: str
+    total_pages: int
+    document_id: UUID | None = None
+    error: str | None = None
 
 
 class ExtractionStatusRequest(BaseModel):
@@ -239,6 +262,28 @@ async def cancel_extraction(
     await redis.set(cancel_key, "1", ex=300)  # 5 minute TTL
     logger.info(f"Extraction cancel requested for {req.content_hash}")
     return CancelExtractionResponse(status="cancelled")
+
+
+@router.get("/batch/{content_hash}/status", response_model=BatchStatusResponse)
+async def get_batch_status(
+    content_hash: str,
+    redis: RedisClient,
+    user: AuthenticatedUser,
+) -> BatchStatusResponse:
+    """Get status of a batch extraction job."""
+    job = await get_batch_job(redis, content_hash)
+    if not job:
+        raise ResourceNotFoundError("BatchJob", content_hash)
+    if job.user_id != user.id:
+        raise ResourceNotFoundError("BatchJob", content_hash)
+
+    return BatchStatusResponse(
+        status=job.status.value,
+        submitted_at=job.submitted_at,
+        total_pages=job.total_pages,
+        document_id=UUID(job.document_id) if job.document_id else None,
+        error=job.error,
+    )
 
 
 @router.post("/prepare", response_model=DocumentPrepareResponse)
@@ -479,6 +524,74 @@ async def create_website_document(
     return DocumentCreateResponse(id=doc.id, title=doc.title)
 
 
+async def _submit_batch_extraction(
+    content: bytes,
+    content_type: str,
+    content_hash: str,
+    total_pages: int,
+    file_size: int,
+    title: str | None,
+    pages: list[int] | None,
+    user_id: str,
+    db: DbSession,
+    settings: SettingsDep,
+    ai_extractor_config: AiExtractorConfigDep,
+    ai_extractor: AiExtractorDep,
+    redis: RedisClient,
+) -> BatchSubmittedResponse:
+    """Submit document for batch extraction via Gemini Batch API."""
+    if not ai_extractor or not ai_extractor_config:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AI transform not configured on this server",
+        )
+
+    config = ai_extractor_config
+    estimate = estimate_document_tokens(content, content_type, config.output_token_multiplier, pages)
+    tolerance = PER_PAGE_TOLERANCE * estimate.num_pages
+    amount_to_check = max(0, estimate.total_tokens - tolerance)
+
+    await check_usage_limit(
+        user_id,
+        UsageType.ocr_tokens,
+        amount_to_check,
+        db,
+        billing_enabled=settings.billing_enabled,
+        redis=redis,
+    )
+    await create_reservation(redis, user_id, content_hash, estimate.total_tokens)
+
+    try:
+        batch_requests, figure_urls_by_page = await ai_extractor.prepare_for_batch(
+            content,
+            content_hash,
+            pages,
+        )
+
+        job = await submit_batch_job(
+            client=ai_extractor.client,
+            redis=redis,
+            user_id=user_id,
+            content_hash=content_hash,
+            model=ai_extractor.model,
+            page_requests=batch_requests,
+            title=title,
+            content_type=content_type,
+            file_size=file_size,
+            pages_requested=list(range(total_pages)) if pages is None else pages,
+            figure_urls_by_page=figure_urls_by_page,
+        )
+    except Exception:
+        await release_reservation(redis, user_id, content_hash)
+        raise
+
+    return BatchSubmittedResponse(
+        content_hash=content_hash,
+        total_pages=job.total_pages,
+        submitted_at=job.submitted_at,
+    )
+
+
 async def _extract_document_content(
     content: bytes,
     content_type: str,
@@ -537,6 +650,7 @@ async def _extract_document_content(
             db=db,
             extraction_cache=extraction_cache,
             image_storage=image_storage,
+            redis=redis,
             billing_enabled=settings.billing_enabled,
             file_size=file_size,
             pages=pages,
@@ -547,11 +661,12 @@ async def _extract_document_content(
 
 @router.post(
     "/document",
-    response_model=DocumentCreateResponse,
+    response_model=DocumentCreateResponse | BatchSubmittedResponse,
     status_code=status.HTTP_201_CREATED,
 )
 async def create_document(
     req: DocumentCreateRequest,
+    response: Response,
     db: DbSession,
     file_cache: DocumentCache,
     extraction_cache: ExtractionCache,
@@ -561,7 +676,7 @@ async def create_document(
     ai_extractor_config: AiExtractorConfigDep,
     ai_extractor: AiExtractorDep,
     redis: RedisClient,
-) -> DocumentCreateResponse:
+) -> DocumentCreateResponse | BatchSubmittedResponse:
     """Create a document from a file (PDF, image, etc)."""
     await check_storage_limit(user.id, user.is_anonymous, db)
     prefs = await db.get(UserPreferences, user.id)
@@ -587,6 +702,30 @@ async def create_document(
         )
 
     content_hash = hashlib.sha256(cached_doc.content).hexdigest()
+
+    if req.batch_mode and not req.ai_transform:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="batch_mode requires ai_transform=true",
+        )
+
+    if req.batch_mode:
+        response.status_code = status.HTTP_202_ACCEPTED
+        return await _submit_batch_extraction(
+            content=cached_doc.content,
+            content_type=cached_doc.metadata.content_type,
+            content_hash=content_hash,
+            total_pages=cached_doc.metadata.total_pages,
+            file_size=cached_doc.metadata.file_size or len(cached_doc.content),
+            title=cached_doc.metadata.title or req.title or cached_doc.metadata.file_name,
+            pages=req.pages,
+            user_id=user.id,
+            db=db,
+            settings=settings,
+            ai_extractor_config=ai_extractor_config,
+            ai_extractor=ai_extractor,
+            redis=redis,
+        )
 
     # arXiv + markxiv short-circuits standard extraction (free tier only)
     arxiv_match = detect_arxiv_url(cached_doc.metadata.url) if cached_doc.metadata.url else None
@@ -1053,27 +1192,13 @@ async def _create_document_with_blocks(
                 document=doc,
                 idx=idx,
                 text=block_text,
-                est_duration_ms=_estimate_duration_ms(block_text),
+                est_duration_ms=estimate_block_duration_ms(block_text),
             )
             for idx, block_text in enumerate(text_blocks)
         ]
     )
     await db.commit()
     return doc
-
-
-def _estimate_duration_ms(text: str, speed: float = 1.0, chars_per_second: float = 13) -> int:
-    """Estimate audio duration in milliseconds.
-
-    Args:
-        text (str): Text to be synthesized.
-        speed (float): TTS speed multiplier (1.0 = normal).
-        chars_per_second (float): Baseline CPS estimate at speed=1.0.
-            Benchmarked at ~13 CPS for Kokoro on realistic document content.
-            Variance is high (~40%) due to content type, so treat as rough estimate.
-    """
-    cps = chars_per_second * speed
-    return math.ceil(len(text) / cps * 1000)
 
 
 def _validate_page_numbers(pages: list[int] | None, total_pages: int) -> None:
