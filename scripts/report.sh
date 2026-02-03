@@ -305,26 +305,41 @@ echo "Report saved to: $REPORT_FILE"
 echo ""
 echo "$message"
 
-# Send to Discord if webhook configured
-if [[ -n "${DISCORD_WEBHOOK_URL:-}" ]]; then
+# Send to ntfy if topic configured
+if [[ -n "${NTFY_TOPIC:-}" ]]; then
     echo ""
-    echo "Sending to Discord..."
+    echo "Sending to ntfy..."
 
-    # Discord has 2000 char limit
-    if [[ ${#message} -gt 1900 ]]; then
-        discord_message="${message:0:1800}
+    # Determine status from message content
+    if echo "$result" | head -1 | grep -q "✅"; then
+        PRIORITY="default"
+        TITLE="✅ Yapit health: nominal"
+    elif echo "$result" | head -1 | grep -q "⚠️"; then
+        PRIORITY="high"
+        TITLE="⚠️ Yapit health: issues detected"
+    else
+        PRIORITY="default"
+        TITLE="🔍 Yapit health report"
+    fi
+
+    # ntfy has ~4KB limit for message body
+    if [[ ${#message} -gt 3800 ]]; then
+        ntfy_message="${message:0:3700}
 
 ... (truncated, full: $REPORT_FILE)"
     else
-        discord_message="$message"
+        ntfy_message="$message"
     fi
 
-    curl -s -X POST "${DISCORD_WEBHOOK_URL}" \
-        -H "Content-Type: application/json" \
-        -d "{\"content\": $(echo "$discord_message" | jq -Rs .)}" || {
-        echo "Discord webhook failed (continuing anyway)"
+    printf '%s' "$ntfy_message" | curl -s \
+        -H "Title: $TITLE" \
+        -H "Priority: $PRIORITY" \
+        -H "Tags: health" \
+        -d @- \
+        "https://ntfy.sh/${NTFY_TOPIC}" || {
+        echo "ntfy notification failed (continuing anyway)"
     }
-    echo "Sent to Discord."
+    echo "Sent to ntfy."
 else
-    echo "(DISCORD_WEBHOOK_URL not set, skipping Discord)"
+    echo "(NTFY_TOPIC not set, skipping ntfy)"
 fi
