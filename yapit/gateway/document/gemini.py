@@ -6,6 +6,7 @@ import random
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from pathlib import Path
 
 from google import genai
 from google.genai import errors as genai_errors
@@ -15,13 +16,11 @@ from pypdf import PdfReader
 from redis.asyncio import Redis
 
 from yapit.contracts import DetectedFigure
-from yapit.gateway.config import Settings
 from yapit.gateway.document.batch import BatchPageRequest
 from yapit.gateway.document.extraction import (
     IMAGE_PLACEHOLDER_PATTERN,
     build_figure_prompt,
     extract_single_page_pdf,
-    load_prompt,
     store_figure,
     substitute_image_placeholders,
 )
@@ -76,21 +75,21 @@ class GeminiExtractor:
 
     def __init__(
         self,
-        settings: Settings,
+        api_key: str,
         redis: Redis,
         image_storage: ImageStorage,
+        prompt_path: Path,
         model: str = "gemini-3-flash-preview",
         resolution: str = "high",
+        media_first: bool = True,
     ):
-        if not settings.google_api_key:
-            raise ValueError("GOOGLE_API_KEY is required for Gemini extractor")
-
         self._redis = redis
-        self._client = genai.Client(api_key=settings.google_api_key)
+        self._client = genai.Client(api_key=api_key)
         self._model = model
         self._resolution = RESOLUTION_MAP[resolution]
-        self._prompt = load_prompt()
+        self._prompt = prompt_path.read_text().strip()
         self._image_storage = image_storage
+        self._media_first = media_first
 
     async def extract(
         self,
@@ -116,13 +115,8 @@ class GeminiExtractor:
             media_resolution=self._resolution,
             thinking_config=types.ThinkingConfig(thinking_level=types.ThinkingLevel.MINIMAL),
         )
-        # TODO: Google docs say media-first yields better extraction quality, but this blocks
-        # prompt caching. With our ~3k token prompt, text-first would enable caching across
-        # requests. Investigate whether media-first actually improves quality for our use case.
-        contents = [
-            types.Part.from_bytes(data=content, mime_type=content_type),
-            self._prompt,
-        ]
+        media_part = types.Part.from_bytes(data=content, mime_type=content_type)
+        contents = [media_part, self._prompt] if self._media_first else [self._prompt, media_part]
         start_time = time.monotonic()
 
         try:
@@ -257,13 +251,8 @@ class GeminiExtractor:
             media_resolution=self._resolution,
             thinking_config=types.ThinkingConfig(thinking_level=types.ThinkingLevel.MINIMAL),
         )
-        # TODO: Google docs say media-first yields better extraction quality, but this blocks
-        # prompt caching. With our ~3k token prompt, text-first would enable caching across
-        # requests. Investigate whether media-first actually improves quality for our use case.
-        contents = [
-            types.Part.from_bytes(data=page.page_bytes, mime_type="application/pdf"),
-            prompt,
-        ]
+        media_part = types.Part.from_bytes(data=page.page_bytes, mime_type="application/pdf")
+        contents = [media_part, prompt] if self._media_first else [prompt, media_part]
 
         start_time = time.monotonic()
         try:

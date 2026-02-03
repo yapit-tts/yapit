@@ -31,7 +31,7 @@ def extract_markdown(html: str, **kwargs: Any) -> str | None:
     kwargs.setdefault("include_links", True)
     kwargs.setdefault("include_tables", True)
     kwargs.setdefault("include_images", True)
-    return trafilatura.extract(html, output_format="markdown", **kwargs)  # type: ignore[arg-type]
+    return trafilatura.extract(html, output_format="markdown", **kwargs)
 
 
 def _needs_js_rendering(html: str, markdown: str | None, content_size: int) -> bool:

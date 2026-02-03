@@ -113,9 +113,14 @@ def mock_image_storage():
     return storage
 
 
+@pytest.fixture
+def mock_redis():
+    return AsyncMock()
+
+
 class TestValidation:
     @pytest.mark.asyncio
-    async def test_rejects_unsupported_content_type(self, mock_db, mock_cache, mock_image_storage):
+    async def test_rejects_unsupported_content_type(self, mock_db, mock_cache, mock_image_storage, mock_redis):
         config = make_config()
 
         with pytest.raises(ValidationError, match="Unsupported content type"):
@@ -130,11 +135,12 @@ class TestValidation:
                 db=mock_db,
                 extraction_cache=mock_cache,
                 image_storage=mock_image_storage,
+                redis=mock_redis,
                 billing_enabled=True,
             )
 
     @pytest.mark.asyncio
-    async def test_rejects_too_many_pages(self, mock_db, mock_cache, mock_image_storage):
+    async def test_rejects_too_many_pages(self, mock_db, mock_cache, mock_image_storage, mock_redis):
         config = make_config()
 
         with pytest.raises(ValidationError, match="maximum of 100 pages"):
@@ -149,13 +155,14 @@ class TestValidation:
                 db=mock_db,
                 extraction_cache=mock_cache,
                 image_storage=mock_image_storage,
+                redis=mock_redis,
                 billing_enabled=True,
             )
 
 
 class TestCaching:
     @pytest.mark.asyncio
-    async def test_returns_cached_pages_without_extraction(self, mock_db, mock_cache, mock_image_storage):
+    async def test_returns_cached_pages_without_extraction(self, mock_db, mock_cache, mock_image_storage, mock_redis):
         config = make_config()
 
         # Simulate cache hit for page 0
@@ -168,7 +175,7 @@ class TestCaching:
         async def should_not_be_called():
             nonlocal extractor_called
             extractor_called = True
-            yield  # type: ignore
+            yield
 
         result = await process_with_billing(
             config=config,
@@ -181,6 +188,7 @@ class TestCaching:
             db=mock_db,
             extraction_cache=mock_cache,
             image_storage=mock_image_storage,
+            redis=mock_redis,
             billing_enabled=True,
         )
 
@@ -188,7 +196,7 @@ class TestCaching:
         assert result.pages[0].markdown == "Cached content"
 
     @pytest.mark.asyncio
-    async def test_stores_extracted_pages_to_cache(self, mock_db, mock_cache, mock_image_storage):
+    async def test_stores_extracted_pages_to_cache(self, mock_db, mock_cache, mock_image_storage, mock_redis):
         config = make_config()
 
         result = await process_with_billing(
@@ -202,6 +210,7 @@ class TestCaching:
             db=mock_db,
             extraction_cache=mock_cache,
             image_storage=mock_image_storage,
+            redis=mock_redis,
             billing_enabled=True,
         )
 
@@ -211,7 +220,7 @@ class TestCaching:
 
 class TestBilling:
     @pytest.mark.asyncio
-    async def test_paid_processor_checks_usage_limit(self, mock_db, mock_cache, mock_image_storage):
+    async def test_paid_processor_checks_usage_limit(self, mock_db, mock_cache, mock_image_storage, mock_redis):
         config = make_config(is_paid=True)
 
         mock_estimate = Mock()
@@ -232,13 +241,14 @@ class TestBilling:
                         db=mock_db,
                         extraction_cache=mock_cache,
                         image_storage=mock_image_storage,
+                        redis=mock_redis,
                         billing_enabled=True,
                     )
 
                 mock_check.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_paid_processor_records_usage_per_page(self, mock_db, mock_cache, mock_image_storage):
+    async def test_paid_processor_records_usage_per_page(self, mock_db, mock_cache, mock_image_storage, mock_redis):
         config = make_config(is_paid=True)
 
         mock_estimate = Mock()
@@ -259,13 +269,14 @@ class TestBilling:
                         db=mock_db,
                         extraction_cache=mock_cache,
                         image_storage=mock_image_storage,
+                        redis=mock_redis,
                         billing_enabled=True,
                     )
 
                 assert mock_record.call_count == 3  # One per page
 
     @pytest.mark.asyncio
-    async def test_free_processor_skips_billing(self, mock_db, mock_cache, mock_image_storage):
+    async def test_free_processor_skips_billing(self, mock_db, mock_cache, mock_image_storage, mock_redis):
         config = make_config(is_paid=False)
 
         with patch("yapit.gateway.document.processing.check_usage_limit", new_callable=AsyncMock) as mock_check:
@@ -281,6 +292,7 @@ class TestBilling:
                     db=mock_db,
                     extraction_cache=mock_cache,
                     image_storage=mock_image_storage,
+                    redis=mock_redis,
                     billing_enabled=True,
                 )
 
@@ -290,7 +302,7 @@ class TestBilling:
 
 class TestFailedPages:
     @pytest.mark.asyncio
-    async def test_tracks_failed_pages(self, mock_db, mock_cache, mock_image_storage):
+    async def test_tracks_failed_pages(self, mock_db, mock_cache, mock_image_storage, mock_redis):
         config = make_config()
 
         result = await process_with_billing(
@@ -304,6 +316,7 @@ class TestFailedPages:
             db=mock_db,
             extraction_cache=mock_cache,
             image_storage=mock_image_storage,
+            redis=mock_redis,
             billing_enabled=True,
         )
 
@@ -313,7 +326,7 @@ class TestFailedPages:
 
 class TestCancellation:
     @pytest.mark.asyncio
-    async def test_cancelled_pages_not_billed(self, mock_db, mock_cache, mock_image_storage):
+    async def test_cancelled_pages_not_billed(self, mock_db, mock_cache, mock_image_storage, mock_redis):
         """Cancelled pages should not incur billing charges."""
         config = make_config(is_paid=True)
 
@@ -335,6 +348,7 @@ class TestCancellation:
                         db=mock_db,
                         extraction_cache=mock_cache,
                         image_storage=mock_image_storage,
+                        redis=mock_redis,
                         billing_enabled=True,
                     )
 

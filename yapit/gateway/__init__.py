@@ -75,8 +75,12 @@ async def lifespan(app: FastAPI):
     # Document extractors
     if settings.ai_processor == "gemini":
         app.state.ai_extractor_config = create_gemini_config()
+        prompt_path = Path(__file__).parent / "document" / "prompts" / "extraction.txt"
         app.state.ai_extractor = GeminiExtractor(
-            settings=settings, redis=app.state.redis_client, image_storage=app.state.image_storage
+            api_key=settings.google_api_key,
+            redis=app.state.redis_client,
+            image_storage=app.state.image_storage,
+            prompt_path=prompt_path,
         )
         logger.info("AI extractor: gemini")
     else:

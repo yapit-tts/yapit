@@ -2,15 +2,12 @@ import base64
 import io
 import re
 from dataclasses import dataclass
-from pathlib import Path
 
 import pymupdf
 from pypdf import PdfReader, PdfWriter
 
 from yapit.contracts import DetectedFigure
 from yapit.gateway.storage import ImageStorage
-
-PROMPTS_DIR = Path(__file__).parent / "prompts"
 
 # For prompt instructions - tells model what to output
 IMAGE_PLACEHOLDER = "![alt](detected-image)<yap-cap>caption</yap-cap>"
@@ -79,12 +76,6 @@ class ExtractedImage:
     format: str  # png, jpeg, etc.
     width: int
     height: int
-
-
-def load_prompt() -> str:
-    """Load extraction prompt from file."""
-    prompt_file = PROMPTS_DIR / "extraction.txt"
-    return prompt_file.read_text().strip()
 
 
 def extract_single_page_pdf(reader: PdfReader, page_idx: int) -> bytes:

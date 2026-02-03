@@ -16,6 +16,7 @@ from yapit.contracts import YoloResult
 from yapit.gateway.document.gemini import (
     MAX_RETRIES,
     GeminiExtractor,
+    PreparedPage,
 )
 from yapit.gateway.storage import LocalImageStorage
 
@@ -25,16 +26,23 @@ FIXTURES_DIR = Path("tests/fixtures/documents")
 @pytest.fixture
 def extractor(tmp_path):
     """Create a GeminiExtractor instance for testing."""
-    if not os.getenv("GOOGLE_API_KEY"):
+    api_key = os.getenv("GOOGLE_API_KEY")
+    if not api_key:
         pytest.skip("Requires GOOGLE_API_KEY")
+    assert api_key is not None  # narrowing for type checker (pytest.skip raises)
 
-    mock_settings = Mock()
-    mock_settings.google_api_key = os.getenv("GOOGLE_API_KEY")
     mock_redis = AsyncMock()
     mock_redis.exists = AsyncMock(return_value=False)  # Not cancelled
     image_storage = LocalImageStorage(tmp_path / "images")
+    prompt_path = Path(__file__).parents[4] / "yapit" / "gateway" / "document" / "prompts" / "extraction.txt"
 
-    return GeminiExtractor(settings=mock_settings, redis=mock_redis, image_storage=image_storage, resolution="low")
+    return GeminiExtractor(
+        api_key=api_key,
+        redis=mock_redis,
+        image_storage=image_storage,
+        prompt_path=prompt_path,
+        resolution="low",
+    )
 
 
 def _mock_yolo_result() -> YoloResult:
@@ -129,17 +137,30 @@ async def test_extract_image(extractor):
 # --- Unit tests for retry logic (no API key required) ---
 
 
+def make_prepared_page(page_idx: int = 0) -> PreparedPage:
+    """Create a PreparedPage for testing."""
+    return PreparedPage(
+        page_idx=page_idx,
+        page_bytes=b"fake-pdf-bytes",
+        figures=[],
+        figure_urls=[],
+    )
+
+
 @pytest.fixture
 def mock_extractor(tmp_path):
     """Create a GeminiExtractor with mocked client for unit testing."""
-    mock_settings = Mock()
-    mock_settings.google_api_key = "fake-key-for-testing"
     mock_redis = AsyncMock()
     image_storage = LocalImageStorage(tmp_path / "images")
+    prompt_path = Path(__file__).parents[4] / "yapit" / "gateway" / "document" / "prompts" / "extraction.txt"
 
     with patch("yapit.gateway.document.gemini.genai.Client"):
         extractor = GeminiExtractor(
-            settings=mock_settings, redis=mock_redis, image_storage=image_storage, resolution="low"
+            api_key="fake-key-for-testing",
+            redis=mock_redis,
+            image_storage=image_storage,
+            prompt_path=prompt_path,
+            resolution="low",
         )
     return extractor
 
@@ -168,21 +189,9 @@ class TestRetryBehavior:
             ]
         )
 
-        with (
-            patch(
-                "yapit.gateway.document.gemini.extract_single_page_pdf",
-                return_value=b"fake-pdf-bytes",
-            ),
-            patch(
-                "yapit.gateway.document.gemini.asyncio.sleep",
-                new_callable=AsyncMock,
-            ) as mock_sleep,
-        ):
+        with patch("yapit.gateway.document.gemini.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
             result = await mock_extractor._call_gemini_for_page(
-                pdf_reader=Mock(),
-                page_idx=0,
-                figures=[],
-                figure_urls=[],
+                page=make_prepared_page(),
                 content_hash="test-hash",
                 user_id=None,
             )
@@ -213,21 +222,9 @@ class TestRetryBehavior:
                 ]
             )
 
-            with (
-                patch(
-                    "yapit.gateway.document.gemini.extract_single_page_pdf",
-                    return_value=b"fake-pdf-bytes",
-                ),
-                patch(
-                    "yapit.gateway.document.gemini.asyncio.sleep",
-                    new_callable=AsyncMock,
-                ),
-            ):
+            with patch("yapit.gateway.document.gemini.asyncio.sleep", new_callable=AsyncMock):
                 result = await mock_extractor._call_gemini_for_page(
-                    pdf_reader=Mock(),
-                    page_idx=0,
-                    figures=[],
-                    figure_urls=[],
+                    page=make_prepared_page(),
                     content_hash="test-hash",
                     user_id=None,
                 )
@@ -241,18 +238,11 @@ class TestRetryBehavior:
             side_effect=genai_errors.APIError(code=400, response_json={"error": {"message": "Bad request"}})
         )
 
-        with patch(
-            "yapit.gateway.document.gemini.extract_single_page_pdf",
-            return_value=b"fake-pdf-bytes",
-        ):
-            result = await mock_extractor._call_gemini_for_page(
-                pdf_reader=Mock(),
-                page_idx=0,
-                figures=[],
-                figure_urls=[],
-                content_hash="test-hash",
-                user_id=None,
-            )
+        result = await mock_extractor._call_gemini_for_page(
+            page=make_prepared_page(),
+            content_hash="test-hash",
+            user_id=None,
+        )
 
         assert result.page is None
         assert mock_extractor._client.models.generate_content.call_count == 1
@@ -264,18 +254,11 @@ class TestRetryBehavior:
             side_effect=genai_errors.APIError(code=403, response_json={"error": {"message": "Forbidden"}})
         )
 
-        with patch(
-            "yapit.gateway.document.gemini.extract_single_page_pdf",
-            return_value=b"fake-pdf-bytes",
-        ):
-            result = await mock_extractor._call_gemini_for_page(
-                pdf_reader=Mock(),
-                page_idx=0,
-                figures=[],
-                figure_urls=[],
-                content_hash="test-hash",
-                user_id=None,
-            )
+        result = await mock_extractor._call_gemini_for_page(
+            page=make_prepared_page(),
+            content_hash="test-hash",
+            user_id=None,
+        )
 
         assert result.page is None
         assert mock_extractor._client.models.generate_content.call_count == 1
@@ -287,18 +270,11 @@ class TestRetryBehavior:
             side_effect=genai_errors.APIError(code=404, response_json={"error": {"message": "Not found"}})
         )
 
-        with patch(
-            "yapit.gateway.document.gemini.extract_single_page_pdf",
-            return_value=b"fake-pdf-bytes",
-        ):
-            result = await mock_extractor._call_gemini_for_page(
-                pdf_reader=Mock(),
-                page_idx=0,
-                figures=[],
-                figure_urls=[],
-                content_hash="test-hash",
-                user_id=None,
-            )
+        result = await mock_extractor._call_gemini_for_page(
+            page=make_prepared_page(),
+            content_hash="test-hash",
+            user_id=None,
+        )
 
         assert result.page is None
         assert mock_extractor._client.models.generate_content.call_count == 1
@@ -310,21 +286,9 @@ class TestRetryBehavior:
             side_effect=genai_errors.APIError(code=503, response_json={"error": {"message": "Unavailable"}})
         )
 
-        with (
-            patch(
-                "yapit.gateway.document.gemini.extract_single_page_pdf",
-                return_value=b"fake-pdf-bytes",
-            ),
-            patch(
-                "yapit.gateway.document.gemini.asyncio.sleep",
-                new_callable=AsyncMock,
-            ),
-        ):
+        with patch("yapit.gateway.document.gemini.asyncio.sleep", new_callable=AsyncMock):
             result = await mock_extractor._call_gemini_for_page(
-                pdf_reader=Mock(),
-                page_idx=0,
-                figures=[],
-                figure_urls=[],
+                page=make_prepared_page(),
                 content_hash="test-hash",
                 user_id=None,
             )
@@ -352,21 +316,9 @@ class TestRetryBehavior:
             ]
         )
 
-        with (
-            patch(
-                "yapit.gateway.document.gemini.extract_single_page_pdf",
-                return_value=b"fake-pdf-bytes",
-            ),
-            patch(
-                "yapit.gateway.document.gemini.asyncio.sleep",
-                new_callable=AsyncMock,
-            ),
-        ):
+        with patch("yapit.gateway.document.gemini.asyncio.sleep", new_callable=AsyncMock):
             result = await mock_extractor._call_gemini_for_page(
-                pdf_reader=Mock(),
-                page_idx=0,
-                figures=[],
-                figure_urls=[],
+                page=make_prepared_page(),
                 content_hash="test-hash",
                 user_id=None,
             )
