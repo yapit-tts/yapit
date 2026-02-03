@@ -2,8 +2,8 @@
 
 import asyncio
 import time
-from collections.abc import Callable
-from typing import AsyncContextManager
+from collections.abc import AsyncIterator, Callable
+from datetime import datetime, timezone
 
 from google import genai
 from google.genai import types
@@ -116,12 +116,14 @@ async def process_batch_completion(
 
     await release_reservation(redis, job.user_id, job.content_hash)
 
-    duration_ms = int((time.monotonic() - start_time) * 1000)
+    result_processing_ms = int((time.monotonic() - start_time) * 1000)
+    submitted_at = datetime.fromisoformat(job.submitted_at)
+    total_duration_ms = int((datetime.now(timezone.utc) - submitted_at).total_seconds() * 1000)
 
     await log_event(
         "batch_job_complete",
         user_id=job.user_id,
-        duration_ms=duration_ms,
+        duration_ms=total_duration_ms,
         data={
             "job_name": job.job_name,
             "content_hash": job.content_hash,
@@ -131,12 +133,13 @@ async def process_batch_completion(
             "total_input_tokens": total_input_tokens,
             "total_output_tokens": total_output_tokens,
             "total_thoughts_tokens": total_thoughts_tokens,
+            "result_processing_ms": result_processing_ms,
         },
     )
 
     logger.info(
-        f"Batch job {job.job_name} processed: {len(pages)} succeeded, {len(failed_pages)} failed, "
-        f"{duration_ms}ms, tokens: {total_input_tokens}in/{total_output_tokens}out/{total_thoughts_tokens}think"
+        f"Batch job {job.job_name} completed: {len(pages)} succeeded, {len(failed_pages)} failed, "
+        f"total {total_duration_ms // 1000}s, tokens: {total_input_tokens}in/{total_output_tokens}out/{total_thoughts_tokens}think"
     )
 
     return pages, failed_pages
@@ -220,7 +223,7 @@ class BatchPoller:
         self,
         gemini_client: genai.Client,
         redis: Redis,
-        get_db_session: Callable[[], AsyncContextManager[AsyncSession]],
+        get_db_session: Callable[[], AsyncIterator[AsyncSession]],
         extraction_cache: Cache,
         settings: Settings,
         extraction_cache_prefix: str,
@@ -278,7 +281,7 @@ class BatchPoller:
         job, batch_job = await poll_batch_job(self._client, self._redis, job)
 
         if job.status == BatchJobStatus.SUCCEEDED:
-            async with self._get_db_session() as db:
+            async for db in self._get_db_session():
                 pages, failed_pages = await process_batch_completion(
                     client=self._client,
                     job=job,
