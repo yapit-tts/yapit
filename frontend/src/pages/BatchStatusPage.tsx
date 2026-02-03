@@ -3,6 +3,7 @@ import { useParams, useNavigate, useLocation } from "react-router";
 import { AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useApi } from "@/api";
+import { CoffeeLoading } from "@/components/batchLoadingAnimations";
 
 interface BatchStatus {
   status: "PENDING" | "RUNNING" | "SUCCEEDED" | "FAILED" | "EXPIRED";
@@ -20,14 +21,6 @@ interface LocationState {
 
 const POLL_INTERVAL_MS = 5000;
 
-const COZY_MESSAGES = [
-  "Brewing your document...",
-  "Good things take time ☕",
-  "Still percolating...",
-  "Pages are being processed...",
-  "Almost there... maybe...",
-];
-
 function formatSubmittedTime(isoString: string): string {
   const date = new Date(isoString);
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -43,7 +36,6 @@ export default function BatchStatusPage() {
 
   const [status, setStatus] = useState<BatchStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [cozyMessageIdx, setCozyMessageIdx] = useState(0);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const isTerminal = status?.status === "SUCCEEDED" || status?.status === "FAILED" || status?.status === "EXPIRED";
@@ -82,15 +74,6 @@ export default function BatchStatusPage() {
     }
   }, [isTerminal]);
 
-  // Rotate cozy messages
-  useEffect(() => {
-    if (isTerminal) return;
-    const interval = setInterval(() => {
-      setCozyMessageIdx((i) => (i + 1) % COZY_MESSAGES.length);
-    }, 8000);
-    return () => clearInterval(interval);
-  }, [isTerminal]);
-
   const title = locationState?.documentTitle || "Your document";
   const totalPages = status?.total_pages || locationState?.totalPages;
   const submittedAt = status?.submitted_at || locationState?.submittedAt;
@@ -99,28 +82,21 @@ export default function BatchStatusPage() {
 
   return (
     <div className="flex flex-col items-center justify-center w-full px-4 py-16 max-w-lg mx-auto">
-      <div className="w-full space-y-6 text-center">
+      <div className="w-full text-center">
         {/* Title */}
         <div>
           <h1 className="text-xl font-medium truncate" title={title}>{title}</h1>
-          {totalPages && (
-            <p className="text-sm text-muted-foreground mt-1">
-              {totalPages} {totalPages === 1 ? "page" : "pages"}
-            </p>
-          )}
+          <p className="text-sm text-muted-foreground mt-1">
+            {totalPages && <>{totalPages} {totalPages === 1 ? "page" : "pages"}</>}
+            {totalPages && submittedAt && <span className="mx-2">·</span>}
+            {submittedAt && <>Submitted at {formatSubmittedTime(submittedAt)}</>}
+          </p>
         </div>
 
-        {/* Status area — placeholder for creative loading animation */}
+        {/* Cozy loading animation */}
         {!isFailed && (
-          <div className="py-12">
-            <p className="text-lg text-muted-foreground">
-              {COZY_MESSAGES[cozyMessageIdx]}
-            </p>
-            {submittedAt && (
-              <p className="text-sm text-muted-foreground/60 mt-2">
-                Submitted at {formatSubmittedTime(submittedAt)}
-              </p>
-            )}
+          <div className="mt-24 flex flex-col items-center">
+            <CoffeeLoading />
           </div>
         )}
 

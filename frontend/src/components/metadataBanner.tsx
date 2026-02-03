@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { FileText, Loader2, X, Zap } from "lucide-react";
+import { FileText, Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
@@ -264,7 +264,7 @@ export function MetadataBanner({
         </div>
       )}
 
-      {/* Footer: learn more, toggles, GO */}
+      {/* Footer: learn more, toggle, GO */}
       <div className="flex items-center justify-between mt-4">
         <a
           href="/tips#ai-transform"
@@ -274,6 +274,19 @@ export function MetadataBanner({
         </a>
 
         <div className="flex items-center gap-4">
+          {(requiresAiTransform || aiTransformEnabled) && !isLoading && (
+            <div className="flex items-center gap-2" title="Save 50% on tokens. May take minutes to hours.">
+              <Switch
+                id="batch-mode-toggle"
+                checked={batchMode}
+                onCheckedChange={onBatchModeToggle}
+              />
+              <Label htmlFor="batch-mode-toggle" className="text-sm cursor-pointer">
+                Batch
+              </Label>
+            </div>
+          )}
+
           {showAiToggle && (
             <div className="flex items-center gap-2">
               <Switch
@@ -284,20 +297,6 @@ export function MetadataBanner({
               />
               <Label htmlFor="ai-transform-toggle" className="text-sm cursor-pointer">
                 AI Transform
-              </Label>
-            </div>
-          )}
-
-          {(requiresAiTransform || aiTransformEnabled) && (
-            <div className="flex items-center gap-2" title="Save 50% on your quota. Results usually ready in minutes, but can take up to 24 hours.">
-              <Switch
-                id="batch-mode-toggle"
-                checked={batchMode}
-                onCheckedChange={onBatchModeToggle}
-              />
-              <Label htmlFor="batch-mode-toggle" className="text-sm cursor-pointer flex items-center gap-1">
-                <Zap className="h-3.5 w-3.5" />
-                Batch
               </Label>
             </div>
           )}
