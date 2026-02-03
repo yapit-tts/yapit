@@ -15,6 +15,7 @@ const coffeeStyles = `
     width: 216px;
     height: 210px;
     image-rendering: pixelated;
+    transform: translateX(12px);
   }
   .coffee-mug {
     position: absolute;
