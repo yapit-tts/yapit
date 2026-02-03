@@ -5,6 +5,7 @@ import io
 import random
 import time
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 
 from google import genai
 from google.genai import errors as genai_errors
@@ -15,6 +16,7 @@ from redis.asyncio import Redis
 
 from yapit.contracts import DetectedFigure
 from yapit.gateway.config import Settings
+from yapit.gateway.document.batch import BatchPageRequest
 from yapit.gateway.document.extraction import (
     IMAGE_PLACEHOLDER_PATTERN,
     build_figure_prompt,
@@ -42,6 +44,16 @@ MAX_DELAY_SECONDS = 30.0  # Total retry time ~61s (1+2+4+8+16+30) to handle rate
 # Fallback estimates when usage_metadata is None
 FALLBACK_INPUT_TOKENS_PER_PAGE = 2500
 FALLBACK_OUTPUT_TOKENS_PER_PAGE = 1000
+
+
+@dataclass
+class PreparedPage:
+    """A page with YOLO detection complete, ready for Gemini extraction."""
+
+    page_idx: int
+    page_bytes: bytes
+    figures: list[DetectedFigure]
+    figure_urls: list[str]
 
 
 def create_gemini_config(
@@ -216,24 +228,9 @@ class GeminiExtractor:
             )
 
         try:
-            page_pdf = extract_single_page_pdf(pdf_reader, page_idx)
+            page = await self._prepare_page(pdf_reader, page_idx, content_hash)
 
-            job_id = await enqueue_detection(self._redis, page_pdf)
-            yolo_result = await wait_for_result(self._redis, job_id)
-
-            if yolo_result.error:
-                logger.warning(f"YOLO detection failed for page {page_idx + 1}: {yolo_result.error}")
-
-            logger.info(f"YOLO: page {page_idx + 1} - detected {len(yolo_result.figures)} figures")
-
-            figure_urls: list[str] = []
-            for fig_idx, figure in enumerate(yolo_result.figures):
-                url = await store_figure(self._image_storage, figure, content_hash, page_idx, fig_idx)
-                figure_urls.append(url)
-
-            return await self._call_gemini_for_page(
-                pdf_reader, page_idx, yolo_result.figures, figure_urls, content_hash, user_id
-            )
+            return await self._call_gemini_for_page(page, content_hash, user_id)
 
         except Exception as e:
             logger.error(f"Page {page_idx + 1} processing failed: {e}")
@@ -249,16 +246,13 @@ class GeminiExtractor:
 
     async def _call_gemini_for_page(
         self,
-        pdf_reader: PdfReader,
-        page_idx: int,
-        figures: list[DetectedFigure],
-        figure_urls: list[str],
+        page: PreparedPage,
         content_hash: str,
         user_id: str | None,
     ) -> PageResult:
-        """Call Gemini API to extract text from a single PDF page."""
-        page_bytes = extract_single_page_pdf(pdf_reader, page_idx)
-        prompt = build_figure_prompt(self._prompt, figures)
+        """Call Gemini API to extract text from a prepared page."""
+        page_idx = page.page_idx
+        prompt = build_figure_prompt(self._prompt, page.figures)
         config = types.GenerateContentConfig(
             media_resolution=self._resolution,
             thinking_config=types.ThinkingConfig(thinking_level=types.ThinkingLevel.MINIMAL),
@@ -267,7 +261,7 @@ class GeminiExtractor:
         # prompt caching. With our ~3k token prompt, text-first would enable caching across
         # requests. Investigate whether media-first actually improves quality for our use case.
         contents = [
-            types.Part.from_bytes(data=page_bytes, mime_type="application/pdf"),
+            types.Part.from_bytes(data=page.page_bytes, mime_type="application/pdf"),
             prompt,
         ]
 
@@ -299,9 +293,8 @@ class GeminiExtractor:
         duration_ms = int((time.monotonic() - start_time) * 1000)
         text = (response.text or "").strip()
 
-        # Check for figure count mismatch before substitution
         placeholder_count = len(IMAGE_PLACEHOLDER_PATTERN.findall(text))
-        yolo_count = len(figure_urls)
+        yolo_count = len(page.figure_urls)
         if placeholder_count != yolo_count:
             logger.warning(
                 f"Figure count mismatch on page {page_idx + 1}: "
@@ -320,8 +313,8 @@ class GeminiExtractor:
                 },
             )
 
-        if figure_urls:
-            text = substitute_image_placeholders(text, figure_urls)
+        if page.figure_urls:
+            text = substitute_image_placeholders(text, page.figure_urls)
 
         input_tokens, output_tokens, thoughts_tokens, is_fallback = self._extract_token_usage(
             response.usage_metadata, context=f"page {page_idx + 1}"
@@ -346,7 +339,7 @@ class GeminiExtractor:
 
         return PageResult(
             page_idx=page_idx,
-            page=ExtractedPage(markdown=text, images=figure_urls),
+            page=ExtractedPage(markdown=text, images=page.figure_urls),
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             thoughts_tokens=thoughts_tokens,
@@ -424,3 +417,73 @@ class GeminiExtractor:
             )
 
         return input_tokens, output_tokens, thoughts_tokens, False
+
+    async def _prepare_page(
+        self,
+        pdf_reader: PdfReader,
+        page_idx: int,
+        content_hash: str,
+    ) -> PreparedPage:
+        """Run YOLO detection and store figures for a single page."""
+        page_bytes = extract_single_page_pdf(pdf_reader, page_idx)
+
+        job_id = await enqueue_detection(self._redis, page_bytes)
+        yolo_result = await wait_for_result(self._redis, job_id)
+
+        if yolo_result.error:
+            logger.warning(f"YOLO page {page_idx + 1}: {yolo_result.error}")
+
+        figure_urls = [
+            await store_figure(self._image_storage, fig, content_hash, page_idx, idx)
+            for idx, fig in enumerate(yolo_result.figures)
+        ]
+
+        logger.info(f"YOLO page {page_idx + 1}: {len(yolo_result.figures)} figures")
+
+        return PreparedPage(
+            page_idx=page_idx,
+            page_bytes=page_bytes,
+            figures=yolo_result.figures,
+            figure_urls=figure_urls,
+        )
+
+    async def prepare_for_batch(
+        self,
+        content: bytes,
+        content_hash: str,
+        pages: list[int] | None = None,
+    ) -> tuple[list[BatchPageRequest], dict[int, list[str]]]:
+        """Prepare all pages for batch submission.
+
+        Returns:
+            (batch_requests, figure_urls_by_page)
+        """
+        pdf_reader = PdfReader(io.BytesIO(content))
+        total_pages = len(pdf_reader.pages)
+        pages_to_process = sorted(set(pages) if pages else set(range(total_pages)))
+
+        logger.info(f"Preparing {len(pages_to_process)} pages for batch (PDF has {total_pages} total)")
+
+        tasks = [self._prepare_page(pdf_reader, page_idx, content_hash) for page_idx in pages_to_process]
+        prepared = await asyncio.gather(*tasks)
+
+        batch_requests = [
+            BatchPageRequest(
+                page_idx=p.page_idx,
+                page_pdf_bytes=p.page_bytes,
+                prompt=build_figure_prompt(self._prompt, p.figures),
+            )
+            for p in prepared
+        ]
+
+        figure_urls_by_page = {p.page_idx: p.figure_urls for p in prepared}
+
+        return batch_requests, figure_urls_by_page
+
+    @property
+    def model(self) -> str:
+        return self._model
+
+    @property
+    def client(self) -> genai.Client:
+        return self._client
