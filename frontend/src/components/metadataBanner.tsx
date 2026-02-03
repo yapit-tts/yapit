@@ -19,6 +19,8 @@ interface MetadataBannerProps {
   metadata: DocumentMetadata;
   aiTransformEnabled: boolean;
   onAiTransformToggle: (enabled: boolean) => void;
+  batchMode: boolean;
+  onBatchModeToggle: (enabled: boolean) => void;
   onConfirm: (pages: number[] | null) => void;
   onCancel?: () => void;
   isLoading: boolean;
@@ -175,6 +177,8 @@ export function MetadataBanner({
   metadata,
   aiTransformEnabled,
   onAiTransformToggle,
+  batchMode,
+  onBatchModeToggle,
   onConfirm,
   onCancel,
   isLoading,
@@ -270,6 +274,19 @@ export function MetadataBanner({
         </a>
 
         <div className="flex items-center gap-4">
+          {(requiresAiTransform || aiTransformEnabled) && !isLoading && (
+            <div className="flex items-center gap-2" title="Save 50% on tokens. May take minutes to hours.">
+              <Switch
+                id="batch-mode-toggle"
+                checked={batchMode}
+                onCheckedChange={onBatchModeToggle}
+              />
+              <Label htmlFor="batch-mode-toggle" className="text-sm cursor-pointer">
+                Batch
+              </Label>
+            </div>
+          )}
+
           {showAiToggle && (
             <div className="flex items-center gap-2">
               <Switch

@@ -4,6 +4,7 @@ import datetime as dt
 from datetime import datetime
 
 from loguru import logger
+from redis.asyncio import Redis
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -18,6 +19,7 @@ from yapit.gateway.domain_models import (
     UserSubscription,
 )
 from yapit.gateway.exceptions import UsageLimitExceededError
+from yapit.gateway.reservations import get_pending_reservations_total
 
 # Default free plan for users without subscription
 FREE_PLAN = Plan(
@@ -162,12 +164,16 @@ async def check_usage_limit(
     db: AsyncSession,
     *,
     billing_enabled: bool = True,
+    redis: Redis | None = None,
 ) -> None:
     """Check if user has enough remaining usage. Raises UsageLimitExceededError if not.
 
     For token/voice billing, checks waterfall: subscription + rollover + purchased.
     Free users (no subscription) get limit=0 for paid features.
     When billing_enabled=False (self-hosting), all limits are bypassed.
+
+    If redis is provided, also considers pending reservations (in-flight extractions)
+    to prevent race conditions where multiple concurrent requests exceed the limit.
     """
     if not billing_enabled:
         return
@@ -189,6 +195,11 @@ async def check_usage_limit(
 
     subscription_remaining = max(0, limit - current)
     total_available = _get_total_available(subscription, usage_type, subscription_remaining)
+
+    # Subtract pending reservations (in-flight extractions) to prevent race condition
+    if redis is not None:
+        pending = await get_pending_reservations_total(redis, user_id)
+        total_available = max(0, total_available - pending)
 
     if amount > total_available:
         raise UsageLimitExceededError(

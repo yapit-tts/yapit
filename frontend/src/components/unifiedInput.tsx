@@ -44,6 +44,12 @@ interface DocumentCreateResponse {
   failed_pages: number[];  // 0-indexed pages that failed extraction
 }
 
+interface BatchSubmittedResponse {
+  content_hash: string;
+  total_pages: number;
+  submitted_at: string;
+}
+
 type InputMode = "idle" | "text" | "url" | "file";
 type UrlState = "detecting" | "loading" | "ready" | "error";
 
@@ -76,6 +82,7 @@ export function UnifiedInput() {
   const [usageLimitExceeded, setUsageLimitExceeded] = useState(false);
   const [storageLimitError, setStorageLimitError] = useState<string | null>(null);
   const [completedPages, setCompletedPages] = useState<number[]>([]);
+  const [batchMode, setBatchMode] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragCounterRef = useRef(0);
@@ -184,6 +191,13 @@ export function UnifiedInput() {
     localStorage.setItem(AI_TRANSFORM_STORAGE_KEY, String(aiTransformEnabled));
   }, [aiTransformEnabled]);
 
+  // Auto-enable batch mode for large documents
+  useEffect(() => {
+    if (prepareData && prepareData.metadata.total_pages > 100) {
+      setBatchMode(true);
+    }
+  }, [prepareData]);
+
   const createDocument = async (data: PrepareResponse, pages: number[] | null = null) => {
     setIsCreating(true);
     setCompletedPages([]);
@@ -198,17 +212,19 @@ export function UnifiedInput() {
 
     const isImage = data.metadata.content_type?.startsWith("image/") ?? false;
     const useAiTransform = isImage || aiTransformEnabled;
+    const useBatchMode = batchMode && useAiTransform;
     const body = data.endpoint === "website"
       ? { hash: data.hash }
       : {
           hash: data.hash,
           pages: pages,
           ai_transform: useAiTransform,
+          batch_mode: useBatchMode,
         };
 
-    // Start polling for progress (only for documents with AI transform)
+    // Start polling for progress (only for non-batch documents with AI transform)
     let pollInterval: ReturnType<typeof setInterval> | null = null;
-    if (data.endpoint === "document" && useAiTransform) {
+    if (data.endpoint === "document" && useAiTransform && !useBatchMode) {
       const requestedPages = pages ?? Array.from({ length: data.metadata.total_pages }, (_, i) => i);
       const processorSlug = useAiTransform ? "gemini" : "markitdown";
 
@@ -228,18 +244,30 @@ export function UnifiedInput() {
     }
 
     try {
-      const response = await api.post<DocumentCreateResponse>(endpoint, body, {
+      const response = await api.post<DocumentCreateResponse | BatchSubmittedResponse>(endpoint, body, {
         signal: abortController.signal,
       });
 
       if (pollInterval) clearInterval(pollInterval);
       abortControllerRef.current = null;
 
-      // Pass failed pages info to the listen page if any
-      const failedPages = response.data.failed_pages ?? [];
-      navigate(`/listen/${response.data.id}`, {
+      if (response.status === 202) {
+        const batchData = response.data as BatchSubmittedResponse;
+        navigate(`/batch/${batchData.content_hash}`, {
+          state: {
+            totalPages: batchData.total_pages,
+            submittedAt: batchData.submitted_at,
+            documentTitle: data.metadata.title || data.metadata.file_name,
+          },
+        });
+        return;
+      }
+
+      const docData = response.data as DocumentCreateResponse;
+      const failedPages = docData.failed_pages ?? [];
+      navigate(`/listen/${docData.id}`, {
         state: {
-          documentTitle: response.data.title,
+          documentTitle: docData.title,
           failedPages: failedPages.length > 0 ? failedPages : undefined,
         }
       });
@@ -527,6 +555,8 @@ export function UnifiedInput() {
           metadata={prepareData.metadata}
           aiTransformEnabled={aiTransformEnabled}
           onAiTransformToggle={handleAiTransformToggle}
+          batchMode={batchMode}
+          onBatchModeToggle={setBatchMode}
           onConfirm={(pages) => createDocument(prepareData, pages)}
           onCancel={cancelExtraction}
           isLoading={isCreating}
