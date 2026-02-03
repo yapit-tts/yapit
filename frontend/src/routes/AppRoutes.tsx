@@ -12,6 +12,7 @@ import CheckoutSuccessPage from "@/pages/CheckoutSuccessPage";
 import CheckoutCancelPage from "@/pages/CheckoutCancelPage";
 import TermsPage from "@/pages/TermsPage";
 import PrivacyPage from "@/pages/PrivacyPage";
+import BatchStatusPage from "@/pages/BatchStatusPage";
 import NotFoundPage from "@/pages/NotFoundPage";
 import SignInPage from "@/pages/auth/SignInPage";
 import SignUpPage from "@/pages/auth/SignUpPage";
@@ -45,6 +46,14 @@ const AppRoutes = () => (
 			element={
 				<MainLayout>
 					<PlaybackPage />
+				</MainLayout>
+			}
+		/>
+		<Route
+			path="/batch/:contentHash"
+			element={
+				<MainLayout>
+					<BatchStatusPage />
 				</MainLayout>
 			}
 		/>
