@@ -53,7 +53,7 @@ export default function BatchStatusPage() {
         if (response.data.status === "SUCCEEDED" && response.data.document_id) {
           navigate(`/listen/${response.data.document_id}`, { replace: true });
         }
-      } catch (err) {
+      } catch {
         setError("Failed to check batch status");
       }
     };
