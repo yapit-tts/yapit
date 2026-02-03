@@ -1,7 +1,6 @@
 import asyncio
 import datetime as dt
 import hashlib
-import io
 import math
 import re
 from datetime import datetime
@@ -15,7 +14,6 @@ import pymupdf
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
 from fastapi.responses import HTMLResponse
 from loguru import logger
-from markitdown import MarkItDown
 from pydantic import BaseModel, Field, HttpUrl, StringConstraints
 from sqlmodel import col, func, select
 
@@ -43,9 +41,8 @@ from yapit.gateway.deps import (
 )
 from yapit.gateway.document import markitdown
 from yapit.gateway.document.extraction import deduplicate_footnotes
-from yapit.gateway.document.http import download_document, resolve_relative_urls
+from yapit.gateway.document.http import download_document
 from yapit.gateway.document.markxiv import detect_arxiv_url, fetch_from_markxiv
-from yapit.gateway.document.playwright_renderer import render_with_js
 from yapit.gateway.document.processing import (
     CachedDocument,
     DocumentExtractionResult,
@@ -53,6 +50,7 @@ from yapit.gateway.document.processing import (
     ProcessorConfig,
     process_with_billing,
 )
+from yapit.gateway.document.website import extract_website_content
 from yapit.gateway.domain_models import Block, Document, DocumentMetadata, UserPreferences, UserSubscription
 from yapit.gateway.exceptions import ResourceNotFoundError
 from yapit.gateway.markdown import parse_markdown, transform_to_document
@@ -425,33 +423,6 @@ async def create_text_document(
     return DocumentCreateResponse(id=doc.id, title=doc.title)
 
 
-async def _extract_website_content(
-    content: bytes,
-    url: str | None,
-    markxiv_url: str | None,
-) -> tuple[str, str]:
-    """Extract markdown from website content. Returns (markdown, extraction_method)."""
-    arxiv_match = detect_arxiv_url(url) if url else None
-    if arxiv_match and markxiv_url:
-        arxiv_id, _ = arxiv_match
-        return await fetch_from_markxiv(markxiv_url, arxiv_id), "markxiv"
-
-    md = MarkItDown(enable_plugins=False)
-    result = await asyncio.to_thread(md.convert_stream, io.BytesIO(content))
-    markdown = result.markdown
-
-    if url and _needs_js_rendering(content, markdown):
-        logger.info(f"JS rendering detected, using Playwright for {url}")
-        rendered_html = await render_with_js(url)
-        result = await asyncio.to_thread(md.convert_stream, io.BytesIO(rendered_html.encode("utf-8")))
-        markdown = result.markdown
-
-    if url:
-        markdown = resolve_relative_urls(markdown, url)
-
-    return markdown, "markitdown"
-
-
 @router.post("/website", response_model=DocumentCreateResponse, status_code=status.HTTP_201_CREATED)
 async def create_website_document(
     req: WebsiteDocumentCreateRequest,
@@ -482,7 +453,7 @@ async def create_website_document(
             detail="Cached document has no content. This should not happen.",
         )
 
-    markdown, extraction_method = await _extract_website_content(
+    markdown, extraction_method = await extract_website_content(
         cached_doc.content, cached_doc.metadata.url, settings.markxiv_url
     )
 
@@ -1114,40 +1085,3 @@ def _validate_page_numbers(pages: list[int] | None, total_pages: int) -> None:
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Invalid page numbers: {invalid_pages!r}. Document has {total_pages} pages (0-indexed).",
         )
-
-
-_JS_RENDERING_PATTERNS = [
-    r"marked\.parse",  # marked.js
-    r"markdown-it",  # markdown-it
-    r"renderMarkdown",  # custom pattern like k-a.in
-    r"ReactDOM\.render",  # React (legacy)
-    r"createRoot",  # React 18+
-    r"createApp\s*\(",  # Vue 3
-    r"ng-app",  # Angular
-    r"\.mount\s*\(",  # Vue mount
-]
-_JS_PATTERN_REGEX = re.compile("|".join(_JS_RENDERING_PATTERNS), re.IGNORECASE)
-
-
-def _needs_js_rendering(html: bytes, markdown: str) -> bool:
-    """Detect if a page likely needs JavaScript rendering.
-
-    Uses two heuristics:
-    1. Content sniffing: look for known JS rendering patterns in HTML
-    2. Size heuristic: large HTML but tiny markdown output suggests JS-loaded content
-
-    Returns True if either heuristic triggers.
-    """
-    html_str = html.decode("utf-8", errors="ignore")
-
-    # Content sniffing: detect known JS rendering frameworks
-    if _JS_PATTERN_REGEX.search(html_str):
-        logger.debug("JS rendering pattern detected in HTML")
-        return True
-
-    # Size heuristic: big HTML (>5KB) but tiny markdown (<500 chars)
-    if len(html) > 5000 and len(markdown) < 500:
-        logger.debug(f"Size heuristic triggered: {len(html)} bytes HTML -> {len(markdown)} chars markdown")
-        return True
-
-    return False
