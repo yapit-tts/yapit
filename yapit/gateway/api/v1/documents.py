@@ -39,7 +39,7 @@ from yapit.gateway.deps import (
     SettingsDep,
 )
 from yapit.gateway.document import markitdown
-from yapit.gateway.document.batch import get_batch_job, submit_batch_job
+from yapit.gateway.document.batch import BatchJobInfo, BatchJobStatus, get_batch_job, save_batch_job, submit_batch_job
 from yapit.gateway.document.extraction import PER_PAGE_TOLERANCE, deduplicate_footnotes, estimate_document_tokens
 from yapit.gateway.document.http import download_document
 from yapit.gateway.document.markxiv import detect_arxiv_url, fetch_from_markxiv
@@ -538,7 +538,12 @@ async def _submit_batch_extraction(
     ai_extractor: AiExtractorDep,
     redis: RedisClient,
 ) -> BatchSubmittedResponse:
-    """Submit document for batch extraction via Gemini Batch API."""
+    """Submit document for batch extraction via Gemini Batch API.
+
+    Returns immediately after billing checks. YOLO detection and batch
+    submission happen in a background task — the job starts as PREPARING
+    and transitions to PENDING once submitted to Gemini.
+    """
     if not ai_extractor or not ai_extractor_config:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -560,6 +565,59 @@ async def _submit_batch_extraction(
     )
     await create_reservation(redis, user_id, content_hash, estimate.total_tokens)
 
+    pages_requested = list(range(total_pages)) if pages is None else pages
+    submitted_at = datetime.now(tz=dt.UTC).isoformat()
+
+    job_info = BatchJobInfo(
+        user_id=user_id,
+        content_hash=content_hash,
+        total_pages=len(pages_requested),
+        submitted_at=submitted_at,
+        status=BatchJobStatus.PREPARING,
+        title=title,
+        content_type=content_type,
+        file_size=file_size,
+        pages_requested=pages_requested,
+        figure_urls_by_page={},
+    )
+    await save_batch_job(redis, job_info)
+
+    asyncio.create_task(
+        _prepare_and_submit_batch(
+            content=content,
+            content_hash=content_hash,
+            pages=pages,
+            user_id=user_id,
+            ai_extractor=ai_extractor,
+            redis=redis,
+            title=title,
+            content_type=content_type,
+            file_size=file_size,
+            pages_requested=pages_requested,
+        )
+    )
+
+    return BatchSubmittedResponse(
+        content_hash=content_hash,
+        total_pages=len(pages_requested),
+        submitted_at=submitted_at,
+    )
+
+
+async def _prepare_and_submit_batch(
+    content: bytes,
+    content_hash: str,
+    pages: list[int] | None,
+    user_id: str,
+    ai_extractor: AiExtractorDep,
+    redis: RedisClient,
+    title: str | None,
+    content_type: str,
+    file_size: int,
+    pages_requested: list[int],
+) -> None:
+    """Background task: run YOLO detection + submit batch to Gemini."""
+    assert ai_extractor is not None
     try:
         batch_requests, figure_urls_by_page = await ai_extractor.prepare_for_batch(
             content,
@@ -567,7 +625,7 @@ async def _submit_batch_extraction(
             pages,
         )
 
-        job = await submit_batch_job(
+        await submit_batch_job(
             client=ai_extractor.client,
             redis=redis,
             user_id=user_id,
@@ -577,18 +635,17 @@ async def _submit_batch_extraction(
             title=title,
             content_type=content_type,
             file_size=file_size,
-            pages_requested=list(range(total_pages)) if pages is None else pages,
+            pages_requested=pages_requested,
             figure_urls_by_page=figure_urls_by_page,
         )
     except Exception:
+        logger.exception(f"Batch preparation failed for {content_hash}")
         await release_reservation(redis, user_id, content_hash)
-        raise
-
-    return BatchSubmittedResponse(
-        content_hash=content_hash,
-        total_pages=job.total_pages,
-        submitted_at=job.submitted_at,
-    )
+        job = await get_batch_job(redis, content_hash)
+        if job:
+            job.status = BatchJobStatus.FAILED
+            job.error = "Batch preparation failed. Please try again."
+            await save_batch_job(redis, job)
 
 
 async def _extract_document_content(

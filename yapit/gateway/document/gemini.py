@@ -1,18 +1,17 @@
 """Gemini-based document extraction with YOLO figure detection."""
 
 import asyncio
-import io
 import random
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
 
+import pymupdf
 from google import genai
 from google.genai import errors as genai_errors
 from google.genai import types
 from loguru import logger
-from pypdf import PdfReader
 from redis.asyncio import Redis
 
 from yapit.contracts import DetectedFigure
@@ -182,8 +181,8 @@ class GeminiExtractor:
         user_id: str | None,
     ) -> AsyncIterator[PageResult]:
         """Extract text from PDF, yielding pages as they complete."""
-        pdf_reader = PdfReader(io.BytesIO(content))
-        total_pages = len(pdf_reader.pages)
+        with pymupdf.open(stream=content, filetype="pdf") as doc:
+            total_pages = len(doc)
         pages_to_process = sorted(set(pages) if pages else set(range(total_pages)))
 
         logger.info(f"Extraction: starting {len(pages_to_process)} pages (PDF has {total_pages} total)")
@@ -192,7 +191,7 @@ class GeminiExtractor:
 
         # Launch all pages in parallel
         tasks = {
-            asyncio.create_task(self._process_page(pdf_reader, page_idx, content_hash, cancel_key, user_id)): page_idx
+            asyncio.create_task(self._process_page(content, page_idx, content_hash, cancel_key, user_id)): page_idx
             for page_idx in pages_to_process
         }
 
@@ -202,7 +201,7 @@ class GeminiExtractor:
 
     async def _process_page(
         self,
-        pdf_reader: PdfReader,
+        content: bytes,
         page_idx: int,
         content_hash: str,
         cancel_key: str,
@@ -222,7 +221,7 @@ class GeminiExtractor:
             )
 
         try:
-            page = await self._prepare_page(pdf_reader, page_idx, content_hash)
+            page = await self._prepare_page(content, page_idx, content_hash)
 
             return await self._call_gemini_for_page(page, content_hash, user_id)
 
@@ -409,12 +408,12 @@ class GeminiExtractor:
 
     async def _prepare_page(
         self,
-        pdf_reader: PdfReader,
+        content: bytes,
         page_idx: int,
         content_hash: str,
     ) -> PreparedPage:
         """Run YOLO detection and store figures for a single page."""
-        page_bytes = extract_single_page_pdf(pdf_reader, page_idx)
+        page_bytes = extract_single_page_pdf(content, page_idx)
 
         job_id = await enqueue_detection(self._redis, page_bytes)
         yolo_result = await wait_for_result(self._redis, job_id)
@@ -447,13 +446,13 @@ class GeminiExtractor:
         Returns:
             (batch_requests, figure_urls_by_page)
         """
-        pdf_reader = PdfReader(io.BytesIO(content))
-        total_pages = len(pdf_reader.pages)
+        with pymupdf.open(stream=content, filetype="pdf") as doc:
+            total_pages = len(doc)
         pages_to_process = sorted(set(pages) if pages else set(range(total_pages)))
 
         logger.info(f"Preparing {len(pages_to_process)} pages for batch (PDF has {total_pages} total)")
 
-        tasks = [self._prepare_page(pdf_reader, page_idx, content_hash) for page_idx in pages_to_process]
+        tasks = [self._prepare_page(content, page_idx, content_hash) for page_idx in pages_to_process]
         prepared = await asyncio.gather(*tasks)
 
         batch_requests = [

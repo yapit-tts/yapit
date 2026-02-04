@@ -30,6 +30,7 @@ ACTIVE_BATCH_JOBS_KEY = "active_batch_jobs"
 
 
 class BatchJobStatus(StrEnum):
+    PREPARING = "PREPARING"  # YOLO + batch file upload in progress (pre-submission)
     PENDING = "PENDING"
     RUNNING = "RUNNING"
     SUCCEEDED = "SUCCEEDED"
@@ -39,7 +40,7 @@ class BatchJobStatus(StrEnum):
 
 
 class BatchJobInfo(BaseModel):
-    job_name: str
+    job_name: str | None = None  # None during PREPARING (no Gemini batch yet)
     user_id: str
     content_hash: str
     total_pages: int
@@ -219,6 +220,7 @@ async def poll_batch_job(
     dest.file_name without re-fetching.
     """
     old_status = job.status
+    assert job.job_name is not None, "Cannot poll a job without a Gemini batch name"
     batch_job = await asyncio.to_thread(client.batches.get, name=job.job_name)
 
     assert batch_job.state is not None

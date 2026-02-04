@@ -6,7 +6,7 @@ import { useApi } from "@/api";
 import { CoffeeLoading } from "@/components/batchLoadingAnimations";
 
 interface BatchStatus {
-  status: "PENDING" | "RUNNING" | "SUCCEEDED" | "FAILED" | "EXPIRED";
+  status: "PREPARING" | "PENDING" | "RUNNING" | "SUCCEEDED" | "FAILED" | "EXPIRED";
   submitted_at: string;
   total_pages: number;
   document_id: string | null;

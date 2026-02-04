@@ -4,7 +4,6 @@ import re
 from dataclasses import dataclass
 
 import pymupdf
-from pypdf import PdfReader, PdfWriter
 
 from yapit.contracts import DetectedFigure
 from yapit.gateway.storage import ImageStorage
@@ -78,13 +77,18 @@ class ExtractedImage:
     height: int
 
 
-def extract_single_page_pdf(reader: PdfReader, page_idx: int) -> bytes:
-    """Extract a single page from a PDF as bytes."""
-    writer = PdfWriter()
-    writer.add_page(reader.pages[page_idx])
-    buffer = io.BytesIO()
-    writer.write(buffer)
-    return buffer.getvalue()
+def extract_single_page_pdf(content: bytes, page_idx: int) -> bytes:
+    """Extract a single page from a PDF as a compact standalone PDF."""
+    src = pymupdf.open(stream=content, filetype="pdf")
+    doc = pymupdf.open()
+    doc.insert_pdf(src, from_page=page_idx, to_page=page_idx)
+    doc.subset_fonts()
+    buf = io.BytesIO()
+    doc.ez_save(buf)
+    result = buf.getvalue()
+    doc.close()
+    src.close()
+    return result
 
 
 def extract_images_from_page(doc: pymupdf.Document, page_idx: int) -> list[ExtractedImage]:
