@@ -4,7 +4,12 @@ define create-dev-user
 	uv run --env-file=.env.dev python scripts/create_user.py
 endef
 
-dev-cpu: down
+check-dev-env:
+	@if grep -q "^ENV_MARKER=prod" .env 2>/dev/null; then \
+		echo "Error: .env has prod secrets! Run 'make dev-env' first."; exit 1; \
+	fi
+
+dev-cpu: check-dev-env down
 	docker compose --env-file .env --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml \
 		--profile stripe up -d --build
 	$(call create-dev-user)
@@ -85,6 +90,7 @@ dev-env:
 		| grep -v "^PROD_" \
 		| sed 's/^DEV_//' \
 		> .env
+	@echo "ENV_MARKER=dev" >> .env
 	@echo "Created .env for dev"
 
 # Decrypt .env.sops for prod operations (e.g., stripe_setup.py --prod)
@@ -99,6 +105,7 @@ prod-env:
 		| grep -v "^DEV_" \
 		| sed 's/^PROD_//' \
 		> .env
+	@echo "ENV_MARKER=prod" >> .env
 	@echo "⚠️  Created .env with PROD keys - run 'make dev-env' when done!"
 	@echo "You can now run: uv run --env-file=.env python scripts/stripe_setup.py --prod"
 
