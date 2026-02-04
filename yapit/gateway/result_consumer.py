@@ -76,9 +76,6 @@ async def _handle_success(
     if cache_ref is None:
         raise RuntimeError(f"Cache write failed for {result.variant_hash}")
 
-    if result.audio_tokens:
-        await cache.store(f"{result.variant_hash}:tokens", result.audio_tokens.encode("utf-8"))
-
     async for db in create_session(settings):
         await db.exec(
             update(BlockVariant)

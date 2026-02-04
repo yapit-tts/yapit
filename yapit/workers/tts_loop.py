@@ -73,7 +73,6 @@ async def run_tts_worker(redis_url: str, model: str, adapter: SynthAdapter, work
                     queue_wait_ms=queue_wait_ms,
                     audio_base64=base64.b64encode(synth_result.audio).decode("ascii"),
                     duration_ms=synth_result.duration_ms,
-                    audio_tokens=synth_result.audio_tokens,
                 )
                 logger.info(
                     f"Job {job.job_id} completed: {processing_time_ms}ms processing, "
@@ -158,7 +157,6 @@ async def run_api_tts_dispatcher(redis_url: str, model: str, adapter: SynthAdapt
                 queue_wait_ms=queue_wait_ms,
                 audio_base64=base64.b64encode(synth_result.audio).decode("ascii"),
                 duration_ms=synth_result.duration_ms,
-                audio_tokens=synth_result.audio_tokens,
             )
             logger.info(
                 f"Job {job.job_id} completed: {processing_time_ms}ms processing, "
@@ -209,12 +207,7 @@ async def _synthesize(adapter: SynthAdapter, job: SynthesisJob) -> SynthesisResu
     if isinstance(audio, str):
         audio = audio.encode()
 
-    audio_tokens = None
-    if hasattr(adapter, "get_audio_tokens"):
-        audio_tokens = adapter.get_audio_tokens()
-
     return SynthesisResult(
         audio=audio,
         duration_ms=adapter.calculate_duration_ms(audio),
-        audio_tokens=audio_tokens,
     )

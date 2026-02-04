@@ -9,8 +9,8 @@ Deployment (Kokoro example):
     Environment variables:
         ADAPTER_CLASS: yapit.workers.adapters.kokoro.KokoroAdapter
 
-The handler receives SynthesisParameters (text, kwargs) and returns:
-    {audio_base64: str, duration_ms: int, audio_tokens?: str}
+The overflow scanner sends the full SynthesisJob dict. The handler returns a
+WorkerResult-compatible dict so the scanner can pass it straight through.
 """
 
 import asyncio
@@ -37,22 +37,26 @@ def _get_adapter() -> SynthAdapter:
 
 
 async def handler(job, adapter: SynthAdapter):
-    """RunPod handler for any TTS model."""
+    """RunPod handler — receives SynthesisJob, returns WorkerResult-compatible dict."""
     job_input = job["input"]
+    params = job_input["synthesis_parameters"]
     try:
-        audio = await adapter.synthesize(job_input["text"], **job_input.get("kwargs", {}))
-        result = {
-            "audio_base64": base64.b64encode(audio).decode("utf-8") if isinstance(audio, bytes) else audio,
+        audio = await adapter.synthesize(params["text"], **params.get("kwargs", {}))
+        audio_base64 = base64.b64encode(audio).decode("utf-8") if isinstance(audio, bytes) else audio
+        return {
+            "variant_hash": job_input["variant_hash"],
+            "user_id": job_input["user_id"],
+            "document_id": job_input["document_id"],
+            "block_idx": job_input["block_idx"],
+            "model_slug": job_input["model_slug"],
+            "voice_slug": job_input["voice_slug"],
+            "text_length": len(params["text"]),
+            "usage_multiplier": job_input["usage_multiplier"],
+            "audio_base64": audio_base64,
             "duration_ms": adapter.calculate_duration_ms(
                 audio if isinstance(audio, bytes) else base64.b64decode(audio)
             ),
         }
-        # Include audio tokens if adapter supports context accumulation (e.g., HIGGS native)
-        if hasattr(adapter, "get_audio_tokens"):
-            audio_tokens = adapter.get_audio_tokens()
-            if audio_tokens:
-                result["audio_tokens"] = audio_tokens
-        return result
     except Exception as e:
         return {"error": str(e)}
 

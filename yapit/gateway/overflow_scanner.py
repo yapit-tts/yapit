@@ -126,7 +126,16 @@ async def _check_queue_for_overflow(
 
     result_key = result_key_pattern.format(job_id=job_id)
     await _process_via_runpod(
-        redis, job_id, raw_job, endpoint_id, result_key, runpod_timeout, name, queue_type, model_slug
+        redis,
+        job_id,
+        raw_job,
+        endpoint_id,
+        result_key,
+        runpod_timeout,
+        name,
+        queue_type,
+        model_slug,
+        queue_wait_ms,
     )
 
 
@@ -140,24 +149,26 @@ async def _process_via_runpod(
     name: str,
     queue_type: str,
     model_slug: str | None,
+    queue_wait_ms: int,
 ) -> None:
     import runpod
 
     start_time = time.time()
     endpoint = runpod.Endpoint(endpoint_id)
+    job_data = json.loads(raw_job)
+    worker_id = f"{name}-runpod"
 
     try:
-        job_data = json.loads(raw_job)
-        result = await asyncio.to_thread(
+        runpod_result = await asyncio.to_thread(
             endpoint.run_sync,
             job_data,
             timeout=runpod_timeout,
         )
 
-        if result is None:
-            raise RuntimeError("RunPod returned None (empty response)")
-        if isinstance(result, dict) and "error" in result:
-            raise RuntimeError(f"RunPod error: {result['error']}")
+        if runpod_result is None:
+            raise RuntimeError("RunPod returned None (job FAILED — check RunPod dashboard for logs)")
+        if isinstance(runpod_result, dict) and "error" in runpod_result:
+            raise RuntimeError(f"RunPod error: {runpod_result['error']}")
 
         processing_time_ms = int((time.time() - start_time) * 1000)
         logger.info(f"{name} job {job_id} completed in {processing_time_ms}ms")
@@ -167,17 +178,16 @@ async def _process_via_runpod(
             queue_type=queue_type,
             model_slug=model_slug,
             worker_latency_ms=processing_time_ms,
-            worker_id=f"{name}-runpod",
+            worker_id=worker_id,
             data={"job_id": job_id},
         )
 
-        # RunPod handler returns result JSON, we just pass it through
-        if isinstance(result, dict):
-            result["job_id"] = job_id
-            result["worker_id"] = f"{name}-runpod"
-            result["processing_time_ms"] = processing_time_ms
-
-        await redis.lpush(result_key, json.dumps(result))
+        # Handler returns a result-consumer-compatible dict; add runtime fields
+        runpod_result["job_id"] = job_id
+        runpod_result["worker_id"] = worker_id
+        runpod_result["processing_time_ms"] = processing_time_ms
+        runpod_result["queue_wait_ms"] = queue_wait_ms
+        await redis.lpush(result_key, json.dumps(runpod_result))
 
     except Exception as e:
         processing_time_ms = int((time.time() - start_time) * 1000)
@@ -188,19 +198,44 @@ async def _process_via_runpod(
             queue_type=queue_type,
             model_slug=model_slug,
             worker_latency_ms=processing_time_ms,
-            worker_id=f"{name}-runpod",
+            worker_id=worker_id,
             data={"job_id": job_id, "error": str(e)},
         )
 
-        error_result: dict = {
-            "job_id": job_id,
-            "worker_id": f"{name}-runpod",
-            "processing_time_ms": processing_time_ms,
-            "error": str(e),
-        }
-        # Add queue-type specific fields for validation
-        if queue_type == "yolo":
-            error_result["figures"] = []
-            error_result["page_width"] = None
-            error_result["page_height"] = None
+        error_result = _build_error_result(
+            queue_type, job_id, job_data, worker_id, processing_time_ms, queue_wait_ms, str(e)
+        )
         await redis.lpush(result_key, json.dumps(error_result))
+
+
+def _build_error_result(
+    queue_type: str,
+    job_id: str,
+    job_data: dict,
+    worker_id: str,
+    processing_time_ms: int,
+    queue_wait_ms: int,
+    error: str,
+) -> dict:
+    """Build an error result compatible with the queue's result consumer."""
+    base: dict = {
+        "job_id": job_id,
+        "worker_id": worker_id,
+        "processing_time_ms": processing_time_ms,
+        "error": error,
+    }
+    if queue_type == "tts":
+        base["variant_hash"] = job_data["variant_hash"]
+        base["user_id"] = job_data["user_id"]
+        base["document_id"] = job_data["document_id"]
+        base["block_idx"] = job_data["block_idx"]
+        base["model_slug"] = job_data["model_slug"]
+        base["voice_slug"] = job_data["voice_slug"]
+        base["text_length"] = len(job_data["synthesis_parameters"]["text"])
+        base["usage_multiplier"] = job_data["usage_multiplier"]
+        base["queue_wait_ms"] = queue_wait_ms
+    elif queue_type == "yolo":
+        base["figures"] = []
+        base["page_width"] = None
+        base["page_height"] = None
+    return base

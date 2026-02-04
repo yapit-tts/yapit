@@ -183,7 +183,6 @@ async def _queue_job(
             text=text,
             kwargs=voice.parameters,
             codec=served_codec,
-            context_tokens=None,
         ),
     )
 
