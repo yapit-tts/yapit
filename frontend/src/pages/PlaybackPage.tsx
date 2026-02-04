@@ -119,7 +119,7 @@ const PlaybackPage = () => {
   const estimated_ms = documentBlocks.reduce((sum, b) => sum + (b.est_duration_ms || 0), 0);
 
   // --- Playback engine ---
-  const { snapshot, engine, gainNode, ws, browserTTS } = usePlaybackEngine(
+  const { snapshot, engine, gainNode, ws, serverTTS, browserTTS } = usePlaybackEngine(
     documentId,
     documentBlocks,
     voiceSelection,
@@ -784,6 +784,7 @@ const PlaybackPage = () => {
           onSpeedChange={setPlaybackSpeed}
           voiceSelection={voiceSelection}
           onVoiceChange={setVoiceSelection}
+          serverTTSError={serverTTS.error}
           browserTTSError={browserTTS.error}
           browserTTSDevice={browserTTS.device}
         />

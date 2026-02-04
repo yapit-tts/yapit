@@ -24,6 +24,9 @@ export interface UsePlaybackEngineReturn {
     isReconnecting: boolean;
     connectionError: string | null;
   };
+  serverTTS: {
+    error: string | null;
+  };
   browserTTS: {
     error: string | null;
     device: "webgpu" | "wasm" | null;
@@ -176,6 +179,9 @@ export function usePlaybackEngine(
       isConnected: ttsWS.isConnected,
       isReconnecting: ttsWS.isReconnecting,
       connectionError: ttsWS.connectionError,
+    },
+    serverTTS: {
+      error: serverSynthRef.current!.getError(),
     },
     browserTTS: {
       error: browserSynth.getError(),

@@ -420,4 +420,98 @@ describe("createPlaybackEngine", () => {
       expect(listener).not.toHaveBeenCalled();
     });
   });
+
+  describe("synthesis error handling", () => {
+    it("stops immediately when synthesizer has a persistent error (buffering)", async () => {
+      const synth = mockSynthesizer();
+      let errorMsg: string | null = null;
+      synth.getError = () => errorMsg;
+      synth.onSynthesize = () => {
+        errorMsg = "Usage limit exceeded for premium_voice: limit 0, used 0, requested 16, remaining 0";
+        return Promise.resolve(null);
+      };
+
+      const d = makeDeps({ synthesizer: synth });
+      const e = createPlaybackEngine(d);
+
+      e.setVoice("inworld-1.5", "alex");
+      e.setDocument("doc-1", makeBlocks(5));
+      e.play();
+      expect(e.getSnapshot().status).toBe("buffering");
+
+      await vi.waitFor(() => {
+        expect(e.getSnapshot().status).toBe("stopped");
+      });
+    });
+
+    it("stops when reaching an error block during playback", async () => {
+      const synth = mockSynthesizer();
+      let errorMsg: string | null = null;
+      let callCount = 0;
+      synth.getError = () => errorMsg;
+      // First 2 blocks succeed (fills MIN_BUFFER_TO_START=2), rest fail
+      synth.onSynthesize = () => {
+        callCount++;
+        if (callCount > 2) {
+          errorMsg = "Usage limit exceeded";
+          return Promise.resolve(null);
+        }
+        return Promise.resolve(FAKE_AUDIO);
+      };
+
+      const d = makeDeps({ synthesizer: synth });
+      const e = createPlaybackEngine(d);
+
+      e.setVoice("inworld-1.5", "alex");
+      e.setDocument("doc-1", makeBlocks(10));
+      e.play();
+
+      await vi.waitFor(() => {
+        expect(e.getSnapshot().status).toBe("playing");
+      });
+
+      // Advance through cached blocks: block 0 → block 1 → block 2 (error)
+      const setOnEnded = d.audioPlayer.setOnEnded as Mock;
+      let onEnded = setOnEnded.mock.calls.at(-1)?.[0];
+      onEnded(); // Block 0 finishes → plays block 1
+      await vi.waitFor(() => {
+        expect(e.getSnapshot().currentBlock).toBe(1);
+      });
+
+      onEnded = setOnEnded.mock.calls.at(-1)?.[0];
+      onEnded(); // Block 1 finishes → tries block 2 (fails with error)
+
+      await vi.waitFor(() => {
+        expect(e.getSnapshot().status).toBe("stopped");
+      });
+    });
+
+    it("advances past transient null (no getError) instead of stopping", async () => {
+      const synth = mockSynthesizer();
+      // All blocks succeed — getError always null. The getError() check
+      // must not interfere with normal null results (e.g. from cancellation).
+      synth.getError = () => null;
+
+      const d = makeDeps({ synthesizer: synth });
+      const e = createPlaybackEngine(d);
+
+      e.setVoice("kokoro", "af_heart");
+      e.setDocument("doc-1", makeBlocks(5));
+      e.play();
+
+      await vi.waitFor(() => {
+        expect(e.getSnapshot().status).toBe("playing");
+      });
+
+      // Advance block 0 → block 1 via onEnded (normal flow, no error)
+      const setOnEnded = d.audioPlayer.setOnEnded as Mock;
+      const onEnded = setOnEnded.mock.calls.at(-1)?.[0];
+      onEnded();
+
+      await vi.waitFor(() => {
+        expect(e.getSnapshot().currentBlock).toBe(1);
+        expect(e.getSnapshot().status).toBe("playing");
+      });
+    });
+  });
 });

@@ -134,6 +134,7 @@ export function createServerSynthesizer(deps: ServerSynthesizerDeps): Synthesize
     }
     batchQueue = null;
     batchIndices = [];
+    lastError = null;
   }
 
   function onWSMessage(msg: WSBlockStatusMessage | WSEvictedMessage) {

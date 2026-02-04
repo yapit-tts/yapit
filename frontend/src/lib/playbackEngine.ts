@@ -200,6 +200,11 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
       isSynthesizingCurrent = false;
 
       if (!audioData) {
+        // Persistent error (e.g. usage limit) → stop instead of futilely trying every block
+        if (synthesizer.getError()) {
+          engineStop();
+          return;
+        }
         advanceToNext();
         return;
       }
@@ -267,6 +272,9 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
           const blk = blocks[blockIdx];
           if (blk) recordDurationCorrection(blk, result.duration_ms);
           checkBufferReady();
+        } else if (status === "buffering" && synthesizer.getError()) {
+          // Persistent error while buffering (e.g. usage limit) — buffer will never fill
+          engineStop();
         }
         notify();
         return result;
