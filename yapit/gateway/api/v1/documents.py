@@ -48,7 +48,6 @@ from yapit.gateway.document.processing import (
     DocumentExtractionResult,
     ExtractedPage,
     ProcessorConfig,
-    estimate_block_duration_ms,
     process_with_billing,
 )
 from yapit.gateway.document.website import extract_website_content
@@ -1072,7 +1071,6 @@ async def import_document(
                 document=new_doc,
                 idx=block.idx,
                 text=block.text,
-                est_duration_ms=block.est_duration_ms,
             )
             for block in source_blocks.all()
         ]
@@ -1192,7 +1190,6 @@ async def _create_document_with_blocks(
                 document=doc,
                 idx=idx,
                 text=block_text,
-                est_duration_ms=estimate_block_duration_ms(block_text),
             )
             for idx, block_text in enumerate(text_blocks)
         ]

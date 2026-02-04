@@ -10,6 +10,7 @@ from sqlalchemy import func, update
 from sqlmodel import col, delete, select
 
 from yapit.gateway.auth import ANONYMOUS_ID_PREFIX
+from yapit.gateway.constants import estimate_duration_ms
 from yapit.gateway.deps import AuthenticatedUser, DbSession, SettingsDep
 from yapit.gateway.domain_models import (
     Block,
@@ -114,22 +115,18 @@ async def get_user_stats(
     db: DbSession,
 ) -> UserStatsResponse:
     """Get user's lifetime usage stats."""
-    # Total audio duration and character count from blocks in user's documents
     stats_result = await db.exec(
-        select(
-            func.coalesce(func.sum(Block.est_duration_ms), 0),
-            func.coalesce(func.sum(func.length(Block.text)), 0),
-        )
+        select(func.coalesce(func.sum(func.length(Block.text)), 0))
         .join(Document)
         .where(Document.user_id == auth_user.id)
     )
-    total_audio_ms, total_characters = stats_result.one()
+    total_characters = stats_result.one()
 
     doc_count_result = await db.exec(select(func.count(Document.id)).where(Document.user_id == auth_user.id))
     document_count = doc_count_result.one()
 
     return UserStatsResponse(
-        total_audio_ms=total_audio_ms,
+        total_audio_ms=estimate_duration_ms(total_characters),
         total_characters=total_characters,
         document_count=document_count,
     )

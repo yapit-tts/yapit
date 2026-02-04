@@ -24,7 +24,6 @@ from yapit.gateway.document.batch import (
 from yapit.gateway.document.extraction import substitute_image_placeholders
 from yapit.gateway.document.processing import (
     ExtractedPage,
-    estimate_block_duration_ms,
     process_pages_to_document,
 )
 from yapit.gateway.domain_models import Block, Document, DocumentMetadata, UsageType
@@ -180,7 +179,6 @@ async def create_document_from_batch(
                 document=doc,
                 idx=idx,
                 text=block_text,
-                est_duration_ms=estimate_block_duration_ms(block_text),
             )
             for idx, block_text in enumerate(processed.text_blocks)
         ]

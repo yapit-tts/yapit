@@ -1,6 +1,5 @@
 """Document extraction models, billing orchestration, and token estimation."""
 
-import math
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
@@ -260,16 +259,6 @@ async def process_with_billing(
         extraction_method=config.slug,
         failed_pages=failed_pages,
     )
-
-
-def estimate_block_duration_ms(text: str, speed: float = 1.0, chars_per_second: float = 13) -> int:
-    """Estimate audio duration for a text block.
-
-    Benchmarked at ~13 CPS for Kokoro on realistic document content.
-    Variance is high (~40%) due to content type.
-    """
-    cps = chars_per_second * speed
-    return math.ceil(len(text) / cps * 1000)
 
 
 @dataclass

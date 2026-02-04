@@ -6,10 +6,13 @@ from enum import StrEnum, auto
 from typing import Any
 
 from pydantic import BaseModel as PydanticModel
+from pydantic import computed_field
 from sqlalchemy import Index, UniqueConstraint
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.types import JSON
 from sqlmodel import TEXT, Column, DateTime, Field, Relationship, SQLModel
+
+from yapit.gateway.constants import estimate_duration_ms
 
 # NOTE: Forward annotations do not work with SQLModel
 
@@ -133,9 +136,13 @@ class Block(SQLModel, table=True):
 
     idx: int  # zero-based position in document
     text: str = Field(sa_column=Column(TEXT))
-    est_duration_ms: int | None = Field(default=None)  # 1x speed estimate based on text length
 
     document: Document = Relationship(back_populates="blocks")
+
+    @computed_field
+    @property
+    def est_duration_ms(self) -> int:
+        return estimate_duration_ms(len(self.text))
 
 
 class BlockVariant(SQLModel, table=True):
