@@ -528,7 +528,7 @@ const SubscriptionPage = () => {
       </div>
 
       <p className="mt-8 text-center text-sm text-muted-foreground">
-        *Estimates vary. Typical content often yields more. TTS-1.5-Max uses 2× voice quota.
+        *Estimates vary by content and voice. TTS-1.5-Max uses 2× voice quota.
         <br />
         **Capped at 1M voice chars / 10M AI transformation tokens.
         <br />
