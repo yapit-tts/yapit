@@ -25,6 +25,8 @@ import {
   groupInworldVoicesByLanguage,
   isHighQualityVoice,
   setVoiceSelection,
+  getKokoroSelection,
+  getInworldSelection,
 } from "@/lib/voiceSelection";
 import { useInworldVoices } from "@/hooks/useInworldVoices";
 
@@ -159,18 +161,16 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
   };
 
   const handleModelChange = (tab: string) => {
-    let defaultVoice: string;
-    let model: ModelType;
-
+    let newSelection: VoiceSelection;
     if (tab === "kokoro") {
-      defaultVoice = "af_heart";
-      model = isKokoroServer ? KOKORO_SLUG : KOKORO_BROWSER_SLUG;
+      newSelection = getKokoroSelection() ?? { model: KOKORO_SLUG, voiceSlug: "af_heart" };
     } else {
-      defaultVoice = inworldVoices.length > 0 ? inworldVoices[0].slug : "Ashley";
-      model = isInworldMax ? INWORLD_MAX_SLUG : INWORLD_SLUG;
+      const saved = getInworldSelection();
+      const voiceExists = saved && inworldVoices.some(v => v.slug === saved.voiceSlug);
+      newSelection = voiceExists
+        ? saved
+        : { model: saved?.model ?? INWORLD_SLUG, voiceSlug: inworldVoices[0]?.slug ?? "" };
     }
-
-    const newSelection: VoiceSelection = { model, voiceSlug: defaultVoice };
     onChange(newSelection);
     setVoiceSelection(newSelection);
   };

@@ -50,6 +50,8 @@ export interface KokoroVoice {
 }
 
 const VOICE_SELECTION_KEY = "yapit_voice_selection";
+const KOKORO_SELECTION_KEY = "yapit_kokoro_selection";
+const INWORLD_SELECTION_KEY = "yapit_inworld_selection";
 const PINNED_VOICES_KEY = "yapit_pinned_voices";
 const PLAYBACK_SPEED_KEY = "yapit_playback_speed";
 const VOLUME_KEY = "yapit_volume";
@@ -73,6 +75,32 @@ export function getVoiceSelection(): VoiceSelection {
 
 export function setVoiceSelection(selection: VoiceSelection): void {
   localStorage.setItem(VOICE_SELECTION_KEY, JSON.stringify(selection));
+  // Also save to per-tab storage for tab switching
+  if (isKokoroModel(selection.model)) {
+    localStorage.setItem(KOKORO_SELECTION_KEY, JSON.stringify(selection));
+  } else {
+    localStorage.setItem(INWORLD_SELECTION_KEY, JSON.stringify(selection));
+  }
+}
+
+export function getKokoroSelection(): VoiceSelection | null {
+  try {
+    const stored = localStorage.getItem(KOKORO_SELECTION_KEY);
+    if (stored) {
+      const parsed = JSON.parse(stored) as VoiceSelection;
+      if (parsed.model === ("kokoro-server" as string)) parsed.model = KOKORO_SLUG;
+      return parsed;
+    }
+  } catch { /* localStorage unavailable */ }
+  return null;
+}
+
+export function getInworldSelection(): VoiceSelection | null {
+  try {
+    const stored = localStorage.getItem(INWORLD_SELECTION_KEY);
+    if (stored) return JSON.parse(stored) as VoiceSelection;
+  } catch { /* localStorage unavailable */ }
+  return null;
 }
 
 export function getPlaybackSpeed(): number {
