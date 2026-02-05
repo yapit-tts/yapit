@@ -1,6 +1,5 @@
 """Database seeding for models, voices, plans, etc."""
 
-import base64
 import json
 from pathlib import Path
 
@@ -10,17 +9,6 @@ from yapit.gateway.config import Settings
 from yapit.gateway.domain_models import DocumentProcessor, Plan, PlanTier, TTSModel, Voice
 
 
-def load_voice_prompt(name: str) -> tuple[str, str]:
-    """Load a voice prompt (audio + transcript) and return as (base64_audio, transcript)."""
-    voice_dir = Path(__file__).parent.parent / "data/voice_prompts"
-    audio_path = voice_dir / f"{name}.wav"
-    transcript_path = voice_dir / f"{name}.txt"
-    return (
-        base64.b64encode(audio_path.read_bytes()).decode("utf-8"),
-        transcript_path.read_text(encoding="utf-8").strip(),
-    )
-
-
 def create_models() -> list[TTSModel]:
     """Create TTS models with voices."""
     models = []
@@ -28,15 +16,6 @@ def create_models() -> list[TTSModel]:
     kokoro = TTSModel(
         slug="kokoro",
         name="Kokoro",
-        native_codec="pcm",
-        sample_rate=24_000,
-        channels=1,
-        sample_width=2,
-    )
-
-    higgs = TTSModel(
-        slug="higgs",
-        name="HIGGS Audio V2",
         native_codec="pcm",
         sample_rate=24_000,
         channels=1,
@@ -59,39 +38,6 @@ def create_models() -> list[TTSModel]:
                 },
             )
         )
-
-    # Load reference voices for HIGGS
-    en_man_audio, en_man_transcript = load_voice_prompt("en_man")
-    en_woman_audio, en_woman_transcript = load_voice_prompt("en_woman")
-
-    higgs.voices.append(
-        Voice(
-            slug="en-man",
-            name="English Male",
-            lang="en",
-            description="Male American accent, clear and professional.",
-            parameters={
-                "ref_audio": en_man_audio,
-                "ref_audio_transcript": en_man_transcript,
-                "seed": 42,
-                "temperature": 0.3,
-            },
-        )
-    )
-    higgs.voices.append(
-        Voice(
-            slug="en-woman",
-            name="English Female",
-            lang="en",
-            description="Female American accent, clear and informative.",
-            parameters={
-                "ref_audio": en_woman_audio,
-                "ref_audio_transcript": en_woman_transcript,
-                "seed": 42,
-                "temperature": 0.3,
-            },
-        )
-    )
 
     # Inworld TTS-1.5-Mini (faster, cheaper)
     inworld = TTSModel(
@@ -136,7 +82,7 @@ def create_models() -> list[TTSModel]:
             )
         )
 
-    models.extend([kokoro, higgs, inworld, inworld_max])
+    models.extend([kokoro, inworld, inworld_max])
     return models
 
 
