@@ -18,7 +18,6 @@ export type { PlaybackSnapshot, Block };
 export interface UsePlaybackEngineReturn {
   snapshot: PlaybackSnapshot;
   engine: PlaybackEngine;
-  gainNode: GainNode | null;
   ws: {
     isConnected: boolean;
     isReconnecting: boolean;
@@ -47,9 +46,9 @@ export function usePlaybackEngine(
   const apiRef = useRef(api);
   apiRef.current = api;
 
-  // Create AudioContext and AudioPlayer once
+  // AudioContext needed for decoding (decodeAudioData, createBuffer).
+  // AudioPlayer plays directly through HTMLAudioElement (no Web Audio routing).
   const audioContextRef = useRef<AudioContext | null>(null);
-  const gainNodeRef = useRef<GainNode | null>(null);
   const audioPlayerRef = useRef<AudioPlayer | null>(null);
   const engineRef = useRef<PlaybackEngine | null>(null);
   const serverSynthRef = useRef<ServerSynthesizerInstance | null>(null);
@@ -61,9 +60,7 @@ export function usePlaybackEngine(
   const audioContext = audioContextRef.current;
 
   if (!audioPlayerRef.current) {
-    gainNodeRef.current = audioContext.createGain();
-    gainNodeRef.current.connect(audioContext.destination);
-    audioPlayerRef.current = new AudioPlayer({ audioContext, gainNode: gainNodeRef.current });
+    audioPlayerRef.current = new AudioPlayer();
   }
 
   // WS message handler — forwards to server synthesizer
@@ -132,7 +129,8 @@ export function usePlaybackEngine(
     engine.setSections(sections, skippedSections);
   }, [sections, skippedSections, engine]);
 
-  // Resume AudioContext on user interaction (browser autoplay policy)
+  // Resume AudioContext on user interaction (browser autoplay policy).
+  // Still needed: AudioContext must be active for decodeAudioData in synthesizers.
   const originalPlay = engine.play;
   const playWithResume = useCallback(async () => {
     if (audioContext.state === "suspended") {
@@ -143,15 +141,14 @@ export function usePlaybackEngine(
   }, [audioContext, originalPlay]);
   (engine as { play: () => void }).play = playWithResume as () => void;
 
-  // Detect AudioContext suspension (mobile app switch, phone call, etc.)
-  // If the context gets suspended while engine thinks it's playing, audio silently stops
-  // and the ended event never fires — leaving playback stuck.
+  // Keep AudioContext alive during playback for ongoing synthesis/decoding.
+  // If suspended (mobile app switch, phone call), decodeAudioData may fail.
   useEffect(() => {
     const handler = () => {
       const engineStatus = engine.getSnapshot().status;
       console.log(`[AudioContext] State changed to "${audioContext.state}" (engine: ${engineStatus})`);
       if (audioContext.state === "suspended" && (engineStatus === "playing" || engineStatus === "buffering")) {
-        console.warn("[AudioContext] Suspended while engine active — audio may be stuck. Attempting resume...");
+        console.warn("[AudioContext] Suspended while engine active — resuming for synthesis...");
         audioContext.resume().catch(() => {});
       }
     };
@@ -174,7 +171,6 @@ export function usePlaybackEngine(
   return {
     snapshot,
     engine,
-    gainNode: gainNodeRef.current,
     ws: {
       isConnected: ttsWS.isConnected,
       isReconnecting: ttsWS.isReconnecting,

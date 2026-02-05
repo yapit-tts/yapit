@@ -42,6 +42,7 @@ function mockAudioPlayer(): AudioPlayer {
     setOnEnded: vi.fn(),
     setOnProgress: vi.fn(),
     setTempo: vi.fn(),
+    setVolume: vi.fn(),
   } as unknown as AudioPlayer;
 }
 

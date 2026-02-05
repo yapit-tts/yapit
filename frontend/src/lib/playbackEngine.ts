@@ -65,6 +65,7 @@ export interface PlaybackEngine {
   setVoice(model: string, voiceSlug: string): void;
   setDocument(documentId: string, blocks: Block[]): void;
   setPlaybackSpeed(speed: number): void;
+  setVolume(volume: number): void;
   setSections(sections: Section[], skippedSections: Set<string>): void;
   setSynthesizer(synthesizer: Synthesizer): void;
   subscribe(listener: () => void): () => void;
@@ -548,6 +549,10 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
     deps.audioPlayer.setTempo(speed);
   }
 
+  function setVolume(volume: number) {
+    deps.audioPlayer.setVolume(volume);
+  }
+
   function setSections_(newSections: Section[], newSkipped: Set<string>) {
     sections = newSections;
     skippedSections = newSkipped;
@@ -602,6 +607,7 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
     setVoice,
     setDocument,
     setPlaybackSpeed,
+    setVolume,
     setSections: setSections_,
     setSynthesizer: setSynthesizer_,
     subscribe,

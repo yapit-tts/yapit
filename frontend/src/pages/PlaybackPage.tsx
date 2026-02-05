@@ -119,7 +119,7 @@ const PlaybackPage = () => {
   const estimated_ms = documentBlocks.reduce((sum, b) => sum + (b.est_duration_ms || 0), 0);
 
   // --- Playback engine ---
-  const { snapshot, engine, gainNode, ws, serverTTS, browserTTS } = usePlaybackEngine(
+  const { snapshot, engine, ws, serverTTS, browserTTS } = usePlaybackEngine(
     documentId,
     documentBlocks,
     voiceSelection,
@@ -137,8 +137,8 @@ const PlaybackPage = () => {
   }, [playbackSpeed, engine]);
 
   useEffect(() => {
-    if (gainNode) gainNode.gain.value = volume / 100;
-  }, [volume, gainNode]);
+    engine.setVolume(volume / 100);
+  }, [volume, engine]);
 
   // --- DOM highlighting (imperative, no React state) ---
 
