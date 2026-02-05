@@ -178,7 +178,7 @@ async def _notify_subscribers(
         await redis.srem(pending_key, block_idx)
 
         await redis.publish(
-            get_pubsub_channel(user_id),
+            get_pubsub_channel(user_id, doc_id),
             WSBlockStatus(
                 document_id=doc_id,
                 block_idx=block_idx,

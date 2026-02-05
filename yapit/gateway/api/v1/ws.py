@@ -84,7 +84,16 @@ async def tts_websocket(
     connect_time = time.time()
     await log_event("ws_connect", user_id=user.id)
 
-    pubsub_task = asyncio.create_task(_pubsub_listener(ws, redis, user.id))
+    pubsub = redis.pubsub()
+    subscribed_docs: set[str] = set()
+
+    async def ensure_doc_subscribed(document_id: uuid.UUID) -> None:
+        doc_str = str(document_id)
+        if doc_str not in subscribed_docs:
+            await pubsub.subscribe(get_pubsub_channel(user.id, doc_str))
+            subscribed_docs.add(doc_str)
+
+    pubsub_task = asyncio.create_task(_pubsub_listener(ws, pubsub))
 
     try:
         while True:
@@ -95,6 +104,7 @@ async def tts_websocket(
 
                 if msg_type == "synthesize":
                     msg = WSSynthesizeRequest.model_validate(data)
+                    await ensure_doc_subscribed(msg.document_id)
                     await _handle_synthesize(ws, msg, user, redis, cache, settings)
                 elif msg_type == "cursor_moved":
                     msg = WSCursorMoved.model_validate(data)
@@ -119,6 +129,7 @@ async def tts_websocket(
             await pubsub_task
         except asyncio.CancelledError:
             pass
+        await pubsub.close()
 
 
 async def _get_model_and_voice(db, model_slug: str, voice_slug: str) -> tuple[TTSModel, Voice]:
@@ -301,18 +312,11 @@ async def _handle_cursor_moved(
     logger.debug(f"Evicted {len(to_evict)} blocks outside window [{min_idx}, {max_idx}]")
 
 
-async def _pubsub_listener(ws: WebSocket, redis: Redis, user_id: str):
+async def _pubsub_listener(ws: WebSocket, pubsub):
     """Listen for pubsub messages and forward to WebSocket."""
-    pubsub = redis.pubsub()
-    channel = get_pubsub_channel(user_id)
-    await pubsub.subscribe(channel)
-
     try:
         async for message in pubsub.listen():
             if message["type"] == "message":
                 await ws.send_text(message["data"].decode())
     except WebSocketDisconnect:
         pass
-    finally:
-        await pubsub.unsubscribe(channel)
-        await pubsub.close()

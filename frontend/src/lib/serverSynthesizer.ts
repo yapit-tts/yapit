@@ -68,8 +68,8 @@ export function createServerSynthesizer(deps: ServerSynthesizerDeps): Synthesize
   let batchIndices: number[] = [];
   let batchScheduled = false;
 
-  function pendingKey(blockIdx: number, model: string, voice: string): string {
-    return `${blockIdx}:${model}:${voice}`;
+  function pendingKey(documentId: string, blockIdx: number, model: string, voice: string): string {
+    return `${documentId}:${blockIdx}:${model}:${voice}`;
   }
 
   function flushBatch() {
@@ -99,7 +99,7 @@ export function createServerSynthesizer(deps: ServerSynthesizerDeps): Synthesize
   ): Promise<AudioBufferData | null> {
     if (!deps.checkWSConnected()) return Promise.resolve(null);
 
-    const key = pendingKey(blockIdx, model, voice);
+    const key = pendingKey(documentId, blockIdx, model, voice);
     const existing = pending.get(key);
     if (existing) return new Promise((resolve) => {
       // Chain onto existing — when original resolves, this one does too
@@ -142,7 +142,7 @@ export function createServerSynthesizer(deps: ServerSynthesizerDeps): Synthesize
       for (const idx of msg.block_indices) {
         // Resolve any pending for this block as null (will be re-requested if needed)
         for (const [key, req] of pending) {
-          if (key.startsWith(`${idx}:`)) {
+          if (key.startsWith(`${msg.document_id}:${idx}:`)) {
             clearTimeout(req.timer);
             req.resolve(null);
             pending.delete(key);
@@ -156,7 +156,7 @@ export function createServerSynthesizer(deps: ServerSynthesizerDeps): Synthesize
     const { block_idx, model_slug, voice_slug } = msg;
     if (!model_slug || !voice_slug) return;
 
-    const key = pendingKey(block_idx, model_slug, voice_slug);
+    const key = pendingKey(msg.document_id, block_idx, model_slug, voice_slug);
     const req = pending.get(key);
 
     if (msg.status === "cached" && msg.audio_url) {

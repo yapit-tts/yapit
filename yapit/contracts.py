@@ -50,8 +50,8 @@ def parse_queue_name(queue_name: str) -> tuple[str, str | None]:
     return queue_type, model_slug
 
 
-def get_pubsub_channel(user_id: str) -> str:
-    return f"tts:done:{user_id}"
+def get_pubsub_channel(user_id: str, document_id: str | uuid.UUID) -> str:
+    return f"tts:done:{user_id}:{document_id}"
 
 
 class SynthesisParameters(BaseModel):
