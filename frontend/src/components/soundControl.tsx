@@ -12,6 +12,11 @@ import { useHasWebGPU } from "@/hooks/useWebGPU";
 
 type BlockState = 'pending' | 'synthesizing' | 'cached';
 
+// iOS makes audioElement.volume read-only — hide the slider when it's a no-op
+const _probe = document.createElement("audio");
+_probe.volume = 0.5;
+const VOLUME_SETTABLE = _probe.volume === 0.5;
+
 // Hook for repeat-on-hold with acceleration (like volume buttons)
 function useRepeatOnHold(callback: () => void, disabled?: boolean) {
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -880,21 +885,27 @@ const SoundControl = memo(function SoundControl({
             />
             <div className="w-16 flex-shrink-0" />
           </div>
-          <div className="flex items-center gap-4">
-            <div className="w-16 flex-shrink-0 flex justify-end">
-              {volume === 0 ? <VolumeX className="h-5 w-5 text-muted-foreground" /> : volume <= 50 ? <Volume1 className="h-5 w-5 text-muted-foreground" /> : <Volume2 className="h-5 w-5 text-muted-foreground" />}
+          {VOLUME_SETTABLE ? (
+            <div className="flex items-center gap-4">
+              <div className="w-16 flex-shrink-0 flex justify-end">
+                {volume === 0 ? <VolumeX className="h-5 w-5 text-muted-foreground" /> : volume <= 50 ? <Volume1 className="h-5 w-5 text-muted-foreground" /> : <Volume2 className="h-5 w-5 text-muted-foreground" />}
+              </div>
+              <Slider
+                value={[volume]}
+                max={100}
+                step={1}
+                onValueChange={(values) => onVolumeChange(values[0])}
+                className="flex-1"
+              />
+              <div className="w-16 flex-shrink-0 flex justify-end">
+                <SettingsDialog size="lg" />
+              </div>
             </div>
-            <Slider
-              value={[volume]}
-              max={100}
-              step={1}
-              onValueChange={(values) => onVolumeChange(values[0])}
-              className="flex-1"
-            />
-            <div className="w-16 flex-shrink-0 flex justify-end">
+          ) : (
+            <div className="flex justify-end">
               <SettingsDialog size="lg" />
             </div>
-          </div>
+          )}
         </div>
       )}
 
@@ -924,16 +935,18 @@ const SoundControl = memo(function SoundControl({
                 className="w-32"
               />
             </div>
-            <div className="flex items-center gap-2">
-              {volume === 0 ? <VolumeX className="h-5 w-5 text-muted-foreground" /> : volume <= 50 ? <Volume1 className="h-5 w-5 text-muted-foreground" /> : <Volume2 className="h-5 w-5 text-muted-foreground" />}
-              <Slider
-                value={[volume]}
-                max={100}
-                step={1}
-                onValueChange={(values) => onVolumeChange(values[0])}
-                className="w-32"
-              />
-            </div>
+            {VOLUME_SETTABLE && (
+              <div className="flex items-center gap-2">
+                {volume === 0 ? <VolumeX className="h-5 w-5 text-muted-foreground" /> : volume <= 50 ? <Volume1 className="h-5 w-5 text-muted-foreground" /> : <Volume2 className="h-5 w-5 text-muted-foreground" />}
+                <Slider
+                  value={[volume]}
+                  max={100}
+                  step={1}
+                  onValueChange={(values) => onVolumeChange(values[0])}
+                  className="w-32"
+                />
+              </div>
+            )}
             <SettingsDialog />
           </div>
         </div>
