@@ -12,7 +12,7 @@ import uuid
 from loguru import logger
 from redis.asyncio import Redis
 
-from yapit.contracts import YOLO_RESULT, YoloResult, parse_queue_name
+from yapit.contracts import TTS_RESULTS, YOLO_RESULT, YoloResult, build_tts_dlq_error, parse_queue_name
 from yapit.gateway.metrics import log_event
 from yapit.workers.queue import move_to_dlq, requeue_job
 
@@ -99,19 +99,22 @@ async def _check_processing_set(
         if retry_count >= max_retries:
             await move_to_dlq(redis, dlq_key, job_id, raw_job, retry_count)
 
-            # For YOLO jobs, write error result so gateway doesn't wait for timeout
-            if queue_type == "yolo":
-                error_result = YoloResult(
+            error_msg = f"Job moved to DLQ after {retry_count} retries"
+            if queue_type == "tts":
+                error_result = build_tts_dlq_error(raw_job.decode(), error_msg)
+                await redis.lpush(TTS_RESULTS, error_result.model_dump_json())
+            elif queue_type == "yolo":
+                yolo_error = YoloResult(
                     job_id=uuid.UUID(job_id),
                     figures=[],
                     page_width=None,
                     page_height=None,
                     worker_id="dlq",
                     processing_time_ms=0,
-                    error=f"Job moved to DLQ after {retry_count} retries",
+                    error=error_msg,
                 )
                 result_key = YOLO_RESULT.format(job_id=job_id)
-                await redis.lpush(result_key, error_result.model_dump_json())
+                await redis.lpush(result_key, yolo_error.model_dump_json())
                 await redis.expire(result_key, 300)
 
             await log_event(

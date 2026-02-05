@@ -16,9 +16,11 @@ from slowapi.util import get_remote_address
 from sqlmodel import col, delete
 
 from yapit.contracts import (
+    TTS_DLQ,
     TTS_JOB_INDEX,
     TTS_JOBS,
     TTS_RESULTS,
+    YOLO_DLQ,
     YOLO_JOBS,
     YOLO_QUEUE,
     YOLO_RESULT,
@@ -123,6 +125,8 @@ async def lifespan(app: FastAPI):
                 overflow_threshold_s=TTS_OVERFLOW_THRESHOLD_S,
                 scan_interval_s=OVERFLOW_SCAN_INTERVAL_S,
                 name="tts-overflow",
+                max_retries=MAX_RETRIES,
+                dlq_key=TTS_DLQ.format(model="kokoro"),
             )
         )
         background_tasks.append(tts_overflow_task)
@@ -155,6 +159,8 @@ async def lifespan(app: FastAPI):
                 overflow_threshold_s=YOLO_OVERFLOW_THRESHOLD_S,
                 scan_interval_s=OVERFLOW_SCAN_INTERVAL_S,
                 name="yolo-overflow",
+                max_retries=MAX_RETRIES,
+                dlq_key=YOLO_DLQ,
             )
         )
         background_tasks.append(yolo_overflow_task)

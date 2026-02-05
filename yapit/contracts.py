@@ -110,6 +110,26 @@ class WorkerResult(BaseModel):
     error: str | None = None
 
 
+def build_tts_dlq_error(job_json: str, error: str, worker_id: str = "dlq") -> "WorkerResult":
+    """Build a WorkerResult error for a TTS job heading to DLQ."""
+    job = SynthesisJob.model_validate_json(job_json)
+    return WorkerResult(
+        job_id=job.job_id,
+        variant_hash=job.variant_hash,
+        user_id=job.user_id,
+        document_id=job.document_id,
+        block_idx=job.block_idx,
+        model_slug=job.model_slug,
+        voice_slug=job.voice_slug,
+        text_length=len(job.synthesis_parameters.text),
+        usage_multiplier=job.usage_multiplier,
+        worker_id=worker_id,
+        processing_time_ms=0,
+        queue_wait_ms=0,
+        error=error,
+    )
+
+
 class YoloJob(BaseModel):
     """YOLO detection job pushed to queue.
 

@@ -1,15 +1,40 @@
-"""Scans for stale jobs and sends them to RunPod overflow."""
+"""Scans for stale jobs and sends them to RunPod overflow.
+
+Uses AsyncioEndpoint for native async — submits all stale jobs at once,
+polls outstanding handles across scan cycles. No threads blocked.
+"""
 
 import asyncio
 import json
 import time
+import uuid
+from dataclasses import dataclass
 
+import aiohttp
 from loguru import logger
 from redis.asyncio import Redis
+from runpod import AsyncioEndpoint, AsyncioJob
 
-from yapit.contracts import parse_queue_name
+from yapit.contracts import (
+    TTS_RESULTS,
+    YOLO_RESULT,
+    YoloResult,
+    build_tts_dlq_error,
+    parse_queue_name,
+)
 from yapit.gateway.config import Settings
 from yapit.gateway.metrics import log_event
+from yapit.workers.queue import move_to_dlq, requeue_job
+
+
+@dataclass
+class _OutstandingJob:
+    handle: AsyncioJob
+    job_id: str
+    raw_job: str
+    retry_count: int
+    queue_wait_ms: int
+    submitted_at: float
 
 
 async def run_overflow_scanner(
@@ -23,21 +48,9 @@ async def run_overflow_scanner(
     overflow_threshold_s: int,
     scan_interval_s: int,
     name: str,
+    max_retries: int,
+    dlq_key: str,
 ) -> None:
-    """Run overflow scanner for a queue.
-
-    Args:
-        redis: Redis client
-        settings: App settings (for RunPod timeout)
-        queue_name: Sorted set queue to scan
-        jobs_key: Hash where jobs are stored
-        job_index_key: Optional hash for job index cleanup
-        endpoint_id: RunPod endpoint ID
-        result_key_pattern: Where to push results. Can contain {job_id} for substitution.
-        overflow_threshold_s: Seconds before a job is sent to overflow
-        scan_interval_s: Seconds between scans
-        name: Name for logging
-    """
     if not settings.runpod_api_key or not settings.runpod_request_timeout_seconds:
         logger.warning(f"{name} scanner disabled: missing RunPod API key or timeout config")
         return
@@ -47,195 +60,390 @@ async def run_overflow_scanner(
     runpod.api_key = settings.runpod_api_key
     runpod_timeout = settings.runpod_request_timeout_seconds
 
+    session = aiohttp.ClientSession()
+    endpoint = AsyncioEndpoint(endpoint_id, session)
+    outstanding: list[_OutstandingJob] = []
+
+    queue_type, model_slug = parse_queue_name(queue_name)
+    worker_id = f"{name}-runpod"
+
     logger.info(f"{name} scanner starting (queue={queue_name}, threshold={overflow_threshold_s}s)")
 
-    while True:
-        try:
-            await _check_queue_for_overflow(
-                redis,
-                runpod_timeout,
-                queue_name,
-                jobs_key,
-                job_index_key,
-                endpoint_id,
-                result_key_pattern,
-                overflow_threshold_s,
-                name,
-            )
-            await asyncio.sleep(scan_interval_s)
-        except asyncio.CancelledError:
-            logger.info(f"{name} scanner shutting down")
-            raise
-        except Exception as e:
-            logger.exception(f"Error in {name} scanner: {e}")
-            await asyncio.sleep(scan_interval_s)
+    try:
+        while True:
+            try:
+                await _claim_and_submit(
+                    redis,
+                    endpoint,
+                    outstanding,
+                    queue_name,
+                    jobs_key,
+                    job_index_key,
+                    overflow_threshold_s,
+                    dlq_key,
+                    max_retries,
+                    result_key_pattern,
+                    queue_type,
+                    model_slug,
+                    worker_id,
+                    name,
+                )
+
+                await _poll_outstanding(
+                    redis,
+                    outstanding,
+                    result_key_pattern,
+                    runpod_timeout,
+                    queue_name,
+                    jobs_key,
+                    dlq_key,
+                    max_retries,
+                    queue_type,
+                    model_slug,
+                    worker_id,
+                    name,
+                )
+
+                await asyncio.sleep(scan_interval_s)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.exception(f"Error in {name} scanner: {e}")
+                await asyncio.sleep(scan_interval_s)
+    finally:
+        await session.close()
 
 
-async def _check_queue_for_overflow(
+async def _claim_and_submit(
     redis: Redis,
-    runpod_timeout: int,
+    endpoint: AsyncioEndpoint,
+    outstanding: list[_OutstandingJob],
     queue_name: str,
     jobs_key: str,
     job_index_key: str | None,
-    endpoint_id: str,
-    result_key_pattern: str,
     overflow_threshold_s: int,
-    name: str,
-) -> None:
-    oldest = await redis.zrange(queue_name, 0, 0, withscores=True)
-    if not oldest:
-        return
-
-    job_id_bytes, queued_score = oldest[0]
-    job_id = job_id_bytes.decode() if isinstance(job_id_bytes, bytes) else job_id_bytes
-
-    age = time.time() - queued_score
-    if age < overflow_threshold_s:
-        return
-
-    # Claim the job
-    removed = await redis.zrem(queue_name, job_id)
-    if not removed:
-        return  # Worker grabbed it first
-
-    wrapper_json = await redis.hget(jobs_key, job_id)
-    if wrapper_json is None:
-        return  # Already processed or evicted
-
-    await redis.hdel(jobs_key, job_id)
-
-    wrapper = json.loads(wrapper_json)
-    raw_job = wrapper["job"]
-
-    # Clean up job index if present (index_key stored in wrapper by push_job)
-    if job_index_key and "index_key" in wrapper:
-        await redis.hdel(job_index_key, wrapper["index_key"])
-
-    queue_type, model_slug = parse_queue_name(queue_name)
-    queue_wait_ms = int(age * 1000)
-
-    logger.info(f"{name}: job {job_id} stale for {age:.1f}s, sending to RunPod")
-
-    await log_event(
-        "job_overflow",
-        queue_type=queue_type,
-        model_slug=model_slug,
-        queue_wait_ms=queue_wait_ms,
-        data={"job_id": job_id},
-    )
-
-    result_key = result_key_pattern.format(job_id=job_id)
-    await _process_via_runpod(
-        redis,
-        job_id,
-        raw_job,
-        endpoint_id,
-        result_key,
-        runpod_timeout,
-        name,
-        queue_type,
-        model_slug,
-        queue_wait_ms,
-    )
-
-
-async def _process_via_runpod(
-    redis: Redis,
-    job_id: str,
-    raw_job: str,
-    endpoint_id: str,
-    result_key: str,
-    runpod_timeout: int,
-    name: str,
+    dlq_key: str,
+    max_retries: int,
+    result_key_pattern: str,
     queue_type: str,
     model_slug: str | None,
-    queue_wait_ms: int,
+    worker_id: str,
+    name: str,
 ) -> None:
-    import runpod
+    cutoff = time.time() - overflow_threshold_s
+    stale_entries = await redis.zrangebyscore(queue_name, "-inf", cutoff, withscores=True)
+    if not stale_entries:
+        return
 
-    start_time = time.time()
-    endpoint = runpod.Endpoint(endpoint_id)
-    job_data = json.loads(raw_job)
-    worker_id = f"{name}-runpod"
+    for job_id_bytes, queued_score in stale_entries:
+        job_id = job_id_bytes.decode() if isinstance(job_id_bytes, bytes) else job_id_bytes
 
-    try:
-        runpod_result = await asyncio.to_thread(
-            endpoint.run_sync,
-            job_data,
-            timeout=runpod_timeout,
-        )
+        removed = await redis.zrem(queue_name, job_id)
+        if not removed:
+            continue
 
-        if runpod_result is None:
-            raise RuntimeError("RunPod returned None (job FAILED — check RunPod dashboard for logs)")
-        if isinstance(runpod_result, dict) and "error" in runpod_result:
-            raise RuntimeError(f"RunPod error: {runpod_result['error']}")
+        wrapper_json = await redis.hget(jobs_key, job_id)
+        if wrapper_json is None:
+            continue
 
-        processing_time_ms = int((time.time() - start_time) * 1000)
-        logger.info(f"{name} job {job_id} completed in {processing_time_ms}ms")
+        await redis.hdel(jobs_key, job_id)
+        wrapper = json.loads(wrapper_json)
+        raw_job = wrapper["job"]
+        retry_count = wrapper.get("retry_count", 0)
 
+        if job_index_key and "index_key" in wrapper:
+            await redis.hdel(job_index_key, wrapper["index_key"])
+
+        age = time.time() - queued_score
+        queue_wait_ms = int(age * 1000)
+
+        logger.info(f"{name}: job {job_id} stale for {age:.1f}s, sending to RunPod")
         await log_event(
-            "overflow_complete",
+            "job_overflow",
             queue_type=queue_type,
             model_slug=model_slug,
-            worker_latency_ms=processing_time_ms,
-            worker_id=worker_id,
+            queue_wait_ms=queue_wait_ms,
             data={"job_id": job_id},
         )
 
-        # Handler returns a result-consumer-compatible dict; add runtime fields
-        runpod_result["job_id"] = job_id
-        runpod_result["worker_id"] = worker_id
-        runpod_result["processing_time_ms"] = processing_time_ms
-        runpod_result["queue_wait_ms"] = queue_wait_ms
-        await redis.lpush(result_key, json.dumps(runpod_result))
+        try:
+            job_data = json.loads(raw_job)
+            handle = await endpoint.run(job_data)
+            outstanding.append(
+                _OutstandingJob(
+                    handle=handle,
+                    job_id=job_id,
+                    raw_job=raw_job,
+                    retry_count=retry_count,
+                    queue_wait_ms=queue_wait_ms,
+                    submitted_at=time.time(),
+                )
+            )
+        except Exception as e:
+            logger.exception(f"{name}: failed to submit job {job_id} to RunPod: {e}")
+            await _handle_failure(
+                redis,
+                job_id,
+                raw_job,
+                retry_count,
+                queue_wait_ms,
+                0,
+                f"RunPod submission failed: {e}",
+                queue_name,
+                jobs_key,
+                dlq_key,
+                max_retries,
+                result_key_pattern,
+                queue_type,
+                model_slug,
+                worker_id,
+                name,
+            )
 
-    except Exception as e:
-        processing_time_ms = int((time.time() - start_time) * 1000)
-        logger.exception(f"{name} job {job_id} failed: {e}")
 
+async def _poll_outstanding(
+    redis: Redis,
+    outstanding: list[_OutstandingJob],
+    result_key_pattern: str,
+    runpod_timeout: int,
+    queue_name: str,
+    jobs_key: str,
+    dlq_key: str,
+    max_retries: int,
+    queue_type: str,
+    model_slug: str | None,
+    worker_id: str,
+    name: str,
+) -> None:
+    still_outstanding: list[_OutstandingJob] = []
+
+    for oj in outstanding:
+        try:
+            status = await oj.handle.status()
+        except Exception as e:
+            logger.exception(f"{name}: status check failed for job {oj.job_id}: {e}")
+            processing_time_ms = int((time.time() - oj.submitted_at) * 1000)
+            await _handle_failure(
+                redis,
+                oj.job_id,
+                oj.raw_job,
+                oj.retry_count,
+                oj.queue_wait_ms,
+                processing_time_ms,
+                f"Status check failed: {e}",
+                queue_name,
+                jobs_key,
+                dlq_key,
+                max_retries,
+                result_key_pattern,
+                queue_type,
+                model_slug,
+                worker_id,
+                name,
+            )
+            continue
+
+        if status == "COMPLETED":
+            try:
+                output = await oj.handle.output()
+            except Exception as e:
+                logger.exception(f"{name}: output fetch failed for job {oj.job_id}: {e}")
+                processing_time_ms = int((time.time() - oj.submitted_at) * 1000)
+                await _handle_failure(
+                    redis,
+                    oj.job_id,
+                    oj.raw_job,
+                    oj.retry_count,
+                    oj.queue_wait_ms,
+                    processing_time_ms,
+                    f"Output fetch failed: {e}",
+                    queue_name,
+                    jobs_key,
+                    dlq_key,
+                    max_retries,
+                    result_key_pattern,
+                    queue_type,
+                    model_slug,
+                    worker_id,
+                    name,
+                )
+                continue
+
+            if isinstance(output, dict) and "error" in output:
+                processing_time_ms = int((time.time() - oj.submitted_at) * 1000)
+                await _handle_failure(
+                    redis,
+                    oj.job_id,
+                    oj.raw_job,
+                    oj.retry_count,
+                    oj.queue_wait_ms,
+                    processing_time_ms,
+                    f"RunPod handler error: {output['error']}",
+                    queue_name,
+                    jobs_key,
+                    dlq_key,
+                    max_retries,
+                    result_key_pattern,
+                    queue_type,
+                    model_slug,
+                    worker_id,
+                    name,
+                )
+                continue
+
+            await _handle_completed(
+                redis,
+                oj,
+                output,
+                result_key_pattern,
+                queue_type,
+                model_slug,
+                worker_id,
+                name,
+            )
+
+        elif status in ("FAILED", "ERROR", "CANCELLED"):
+            processing_time_ms = int((time.time() - oj.submitted_at) * 1000)
+            await _handle_failure(
+                redis,
+                oj.job_id,
+                oj.raw_job,
+                oj.retry_count,
+                oj.queue_wait_ms,
+                processing_time_ms,
+                f"RunPod job {status}",
+                queue_name,
+                jobs_key,
+                dlq_key,
+                max_retries,
+                result_key_pattern,
+                queue_type,
+                model_slug,
+                worker_id,
+                name,
+            )
+
+        elif time.time() - oj.submitted_at > runpod_timeout:
+            processing_time_ms = int((time.time() - oj.submitted_at) * 1000)
+            await _handle_failure(
+                redis,
+                oj.job_id,
+                oj.raw_job,
+                oj.retry_count,
+                oj.queue_wait_ms,
+                processing_time_ms,
+                f"Timed out after {runpod_timeout}s",
+                queue_name,
+                jobs_key,
+                dlq_key,
+                max_retries,
+                result_key_pattern,
+                queue_type,
+                model_slug,
+                worker_id,
+                name,
+            )
+
+        else:
+            still_outstanding.append(oj)
+
+    outstanding.clear()
+    outstanding.extend(still_outstanding)
+
+
+async def _handle_completed(
+    redis: Redis,
+    oj: _OutstandingJob,
+    output: dict,
+    result_key_pattern: str,
+    queue_type: str,
+    model_slug: str | None,
+    worker_id: str,
+    name: str,
+) -> None:
+    processing_time_ms = int((time.time() - oj.submitted_at) * 1000)
+    logger.info(f"{name}: job {oj.job_id} completed in {processing_time_ms}ms")
+
+    await log_event(
+        "overflow_complete",
+        queue_type=queue_type,
+        model_slug=model_slug,
+        worker_latency_ms=processing_time_ms,
+        worker_id=worker_id,
+        data={"job_id": oj.job_id},
+    )
+
+    output["job_id"] = oj.job_id
+    output["worker_id"] = worker_id
+    output["processing_time_ms"] = processing_time_ms
+    output["queue_wait_ms"] = oj.queue_wait_ms
+
+    result_key = result_key_pattern.format(job_id=oj.job_id)
+    await redis.lpush(result_key, json.dumps(output))
+
+
+async def _handle_failure(
+    redis: Redis,
+    job_id: str,
+    raw_job: str,
+    retry_count: int,
+    queue_wait_ms: int,
+    processing_time_ms: int,
+    error: str,
+    queue_name: str,
+    jobs_key: str,
+    dlq_key: str,
+    max_retries: int,
+    result_key_pattern: str,
+    queue_type: str,
+    model_slug: str | None,
+    worker_id: str,
+    name: str,
+) -> None:
+    logger.warning(f"{name}: job {job_id} failed (retry {retry_count}/{max_retries}): {error}")
+
+    await log_event(
+        "overflow_error",
+        queue_type=queue_type,
+        model_slug=model_slug,
+        worker_latency_ms=processing_time_ms,
+        worker_id=worker_id,
+        data={"job_id": job_id, "error": error},
+    )
+
+    if retry_count < max_retries:
+        await requeue_job(redis, queue_name, jobs_key, job_id, raw_job.encode(), retry_count)
         await log_event(
-            "overflow_error",
+            "job_requeued",
             queue_type=queue_type,
             model_slug=model_slug,
-            worker_latency_ms=processing_time_ms,
-            worker_id=worker_id,
-            data={"job_id": job_id, "error": str(e)},
+            retry_count=retry_count + 1,
+            data={"job_id": job_id, "source": "overflow"},
         )
+        return
 
-        error_result = _build_error_result(
-            queue_type, job_id, job_data, worker_id, processing_time_ms, queue_wait_ms, str(e)
-        )
-        await redis.lpush(result_key, json.dumps(error_result))
+    await move_to_dlq(redis, dlq_key, job_id, raw_job.encode(), retry_count)
+    await log_event(
+        "job_dlq",
+        queue_type=queue_type,
+        model_slug=model_slug,
+        retry_count=retry_count,
+        data={"job_id": job_id, "source": "overflow"},
+    )
 
-
-def _build_error_result(
-    queue_type: str,
-    job_id: str,
-    job_data: dict,
-    worker_id: str,
-    processing_time_ms: int,
-    queue_wait_ms: int,
-    error: str,
-) -> dict:
-    """Build an error result compatible with the queue's result consumer."""
-    base: dict = {
-        "job_id": job_id,
-        "worker_id": worker_id,
-        "processing_time_ms": processing_time_ms,
-        "error": error,
-    }
     if queue_type == "tts":
-        base["variant_hash"] = job_data["variant_hash"]
-        base["user_id"] = job_data["user_id"]
-        base["document_id"] = job_data["document_id"]
-        base["block_idx"] = job_data["block_idx"]
-        base["model_slug"] = job_data["model_slug"]
-        base["voice_slug"] = job_data["voice_slug"]
-        base["text_length"] = len(job_data["synthesis_parameters"]["text"])
-        base["usage_multiplier"] = job_data["usage_multiplier"]
-        base["queue_wait_ms"] = queue_wait_ms
+        error_result = build_tts_dlq_error(raw_job, error, worker_id=worker_id)
+        await redis.lpush(TTS_RESULTS, error_result.model_dump_json())
     elif queue_type == "yolo":
-        base["figures"] = []
-        base["page_width"] = None
-        base["page_height"] = None
-    return base
+        yolo_error = YoloResult(
+            job_id=uuid.UUID(job_id),
+            figures=[],
+            page_width=None,
+            page_height=None,
+            worker_id=worker_id,
+            processing_time_ms=processing_time_ms,
+            error=error,
+        )
+        result_key = YOLO_RESULT.format(job_id=job_id)
+        await redis.lpush(result_key, yolo_error.model_dump_json())
+        await redis.expire(result_key, 300)
