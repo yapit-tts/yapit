@@ -37,11 +37,7 @@ async def run_result_consumer(redis: Redis, cache: Cache, settings: Settings) ->
 
             _, result_json = result
             worker_result = WorkerResult.model_validate_json(result_json)
-
-            if worker_result.error:
-                await _handle_error(redis, worker_result, settings)
-            else:
-                await _handle_success(redis, cache, worker_result, settings)
+            asyncio.create_task(_process_result(redis, cache, worker_result, settings))
 
         except asyncio.CancelledError:
             logger.info("Result consumer shutting down")
@@ -49,6 +45,16 @@ async def run_result_consumer(redis: Redis, cache: Cache, settings: Settings) ->
         except Exception as e:
             logger.exception(f"Error in result consumer: {e}")
             await asyncio.sleep(1)
+
+
+async def _process_result(redis: Redis, cache: Cache, result: WorkerResult, settings: Settings) -> None:
+    try:
+        if result.error:
+            await _handle_error(redis, result, settings)
+        else:
+            await _handle_success(redis, cache, result, settings)
+    except Exception as e:
+        logger.exception(f"Error processing result for variant {result.variant_hash}: {e}")
 
 
 async def _handle_success(
@@ -75,6 +81,13 @@ async def _handle_success(
     cache_ref = await cache.store(result.variant_hash, audio)
     if cache_ref is None:
         raise RuntimeError(f"Cache write failed for {result.variant_hash}")
+
+    await _notify_subscribers(
+        redis,
+        result,
+        status="cached",
+        audio_url=f"/v1/audio/{result.variant_hash}",
+    )
 
     async for db in create_session(settings):
         await db.exec(
@@ -119,13 +132,6 @@ async def _handle_success(
         user_id=result.user_id,
         document_id=str(result.document_id),
         block_idx=result.block_idx,
-    )
-
-    await _notify_subscribers(
-        redis,
-        result,
-        status="cached",
-        audio_url=f"/v1/audio/{result.variant_hash}",
     )
 
 
