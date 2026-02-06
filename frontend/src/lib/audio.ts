@@ -6,6 +6,11 @@
  * which caused glitchy/choppy audio on iOS Safari (WebKit bug 211394).
  */
 
+// Minimal valid WAV: 1 silent sample, mono 16-bit 44100Hz (46 bytes)
+const SILENT_WAV = "data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQIAAAAAAA==";
+
+const LOAD_TIMEOUT_MS = 5_000;
+
 export class AudioPlayer {
   private audioElement: HTMLAudioElement;
   private _tempo = 1.0;
@@ -14,6 +19,7 @@ export class AudioPlayer {
   private progressInterval: ReturnType<typeof setInterval> | null = null;
   private currentBlobUrl: string | null = null;
   private currentDurationMs = 0;
+  private unlocked = false;
 
   constructor() {
     this.audioElement = document.createElement("audio");
@@ -25,6 +31,25 @@ export class AudioPlayer {
     });
   }
 
+  /**
+   * Unlock the audio element for programmatic playback on mobile.
+   * Must be called in a user gesture context (tap/click handler).
+   * After a successful unlock, future play() calls work without gestures.
+   */
+  unlock(): Promise<void> {
+    if (this.unlocked) return Promise.resolve();
+    this.audioElement.src = SILENT_WAV;
+    return this.audioElement.play()
+      .then(() => {
+        this.audioElement.pause();
+        this.audioElement.currentTime = 0;
+        this.unlocked = true;
+      })
+      .catch(() => {
+        // Browser still blocked — will retry on next user gesture
+      });
+  }
+
   load(buffer: AudioBuffer): Promise<void> {
     this.stop();
     this.currentDurationMs = Math.round(buffer.duration * 1000);
@@ -32,24 +57,34 @@ export class AudioPlayer {
     const wavBlob = this.audioBufferToWav(buffer);
     this.currentBlobUrl = URL.createObjectURL(wavBlob);
 
-    return new Promise((resolve) => {
-      const onCanPlay = () => {
+    return new Promise((resolve, reject) => {
+      const cleanup = () => {
         this.audioElement.removeEventListener("canplaythrough", onCanPlay);
-        resolve();
+        this.audioElement.removeEventListener("error", onError);
+        clearTimeout(timer);
       };
+
+      const onCanPlay = () => { cleanup(); resolve(); };
+      const onError = () => {
+        cleanup();
+        reject(new Error("[AudioPlayer] Audio element error during load"));
+      };
+      const timer = setTimeout(() => {
+        cleanup();
+        reject(new Error("[AudioPlayer] Load timeout — canplaythrough not fired"));
+      }, LOAD_TIMEOUT_MS);
+
       this.audioElement.addEventListener("canplaythrough", onCanPlay);
+      this.audioElement.addEventListener("error", onError);
       this.audioElement.src = this.currentBlobUrl!;
       this.audioElement.playbackRate = this._tempo;
     });
   }
 
+  // Errors propagate to caller (playback engine handles them)
   async play(): Promise<void> {
-    try {
-      await this.audioElement.play();
-      this.startProgressTracking();
-    } catch (err) {
-      console.error("[AudioPlayer] play() failed:", err);
-    }
+    await this.audioElement.play();
+    this.startProgressTracking();
   }
 
   pause(): void {

@@ -75,7 +75,12 @@ export function usePlaybackEngine(
     }
   }, []);
 
-  const ttsWS = useTTSWebSocket(handleWSMessage);
+  // On WS connect/reconnect: retry all pending synthesis requests
+  const handleWSConnect = useCallback(() => {
+    serverSynthRef.current?.retryAllPending();
+  }, []);
+
+  const ttsWS = useTTSWebSocket(handleWSMessage, handleWSConnect);
 
   // Stable refs for WS deps
   const sendWSRef = useRef(ttsWS.send);
@@ -100,6 +105,8 @@ export function usePlaybackEngine(
     browserSynthRef.current = createBrowserSynthesizer({ audioContext });
   }
 
+  const originalPlayRef = useRef<(() => void) | null>(null);
+
   if (!engineRef.current) {
     engineRef.current = createPlaybackEngine({
       audioPlayer: audioPlayerRef.current,
@@ -107,6 +114,22 @@ export function usePlaybackEngine(
     });
   }
   const engine = engineRef.current;
+
+  // Capture original play BEFORE any wrapping, then wrap exactly once
+  if (!originalPlayRef.current) {
+    originalPlayRef.current = engine.play;
+    const audioPlayer = audioPlayerRef.current!;
+    (engine as { play: () => void }).play = () => {
+      // Both fire synchronously in the user gesture context (tap/click handler).
+      // unlock() registers the HTMLAudioElement with the browser for programmatic play.
+      // resume() unlocks AudioContext for decodeAudioData in synthesizers.
+      audioPlayer.unlock();
+      if (audioContext.state === "suspended") {
+        audioContext.resume().catch(() => {});
+      }
+      originalPlayRef.current!();
+    };
+  }
 
   // Sync document into engine
   useEffect(() => {
@@ -128,18 +151,6 @@ export function usePlaybackEngine(
   useEffect(() => {
     engine.setSections(sections, skippedSections);
   }, [sections, skippedSections, engine]);
-
-  // Resume AudioContext on user interaction (browser autoplay policy).
-  // Still needed: AudioContext must be active for decodeAudioData in synthesizers.
-  const originalPlay = engine.play;
-  const playWithResume = useCallback(async () => {
-    if (audioContext.state === "suspended") {
-      console.warn("[AudioContext] Resuming from suspended state on play()");
-      await audioContext.resume();
-    }
-    originalPlay();
-  }, [audioContext, originalPlay]);
-  (engine as { play: () => void }).play = playWithResume as () => void;
 
   // Keep AudioContext alive during playback for ongoing synthesis/decoding.
   // If suspended (mobile app switch, phone call), decodeAudioData may fail.

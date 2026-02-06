@@ -218,13 +218,17 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
   }
 
   async function startAudioPlayback(audioData: AudioBufferData) {
-
     deps.audioPlayer.setOnEnded(() => {
       blockStartTime += audioData.duration_ms;
       advanceToNext();
     });
-    await deps.audioPlayer.load(audioData.buffer);
-    await deps.audioPlayer.play();
+    try {
+      await deps.audioPlayer.load(audioData.buffer);
+      await deps.audioPlayer.play();
+    } catch (err) {
+      console.error("[PlaybackEngine] Audio playback failed, skipping block:", err);
+      advanceToNext();
+    }
   }
 
   function advanceToNext() {

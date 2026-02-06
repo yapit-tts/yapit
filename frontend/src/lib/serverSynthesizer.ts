@@ -39,9 +39,13 @@ interface PendingRequest {
   model: string;
   voice: string;
   timer: ReturnType<typeof setTimeout>;
+  retryCount: number;
+  blockIdx: number;
+  documentId: string;
 }
 
-const SYNTHESIS_TIMEOUT_MS = 60_000;
+const MAX_RETRIES = 2;
+const RETRY_TIMEOUT_MS = 30_000;
 
 interface ServerSynthesizerDeps {
   sendWS: (msg: WSSynthesizeRequest | WSCursorMoved) => void;
@@ -55,10 +59,11 @@ interface ServerSynthesizerDeps {
  * listens for status messages, fetches audio from URLs.
  *
  * Batches per-block synthesize() calls within a microtask into a single
- * WS message.
+ * WS message. Retries on timeout and recovers pending requests on reconnect.
  */
 export function createServerSynthesizer(deps: ServerSynthesizerDeps): Synthesizer & {
   onWSMessage(msg: WSBlockStatusMessage | WSEvictedMessage): void;
+  retryAllPending(): void;
 } {
   const pending = new Map<string, PendingRequest>();
   let lastError: string | null = null;
@@ -72,19 +77,48 @@ export function createServerSynthesizer(deps: ServerSynthesizerDeps): Synthesize
     return `${documentId}:${blockIdx}:${model}:${voice}`;
   }
 
+  function sendSynthesizeMsg(documentId: string, blockIndices: number[], cursor: number, model: string, voice: string) {
+    deps.sendWS({
+      type: "synthesize",
+      document_id: documentId,
+      block_indices: blockIndices,
+      cursor,
+      model,
+      voice,
+      synthesis_mode: "server",
+    });
+  }
+
+  function createRetryTimer(key: string, req: PendingRequest): ReturnType<typeof setTimeout> {
+    return setTimeout(() => {
+      if (req.retryCount < MAX_RETRIES) {
+        req.retryCount++;
+        if (deps.checkWSConnected()) {
+          console.warn(`[ServerSynth] Retrying block ${req.blockIdx} (attempt ${req.retryCount})`);
+          sendSynthesizeMsg(req.documentId, [req.blockIdx], req.blockIdx, req.model, req.voice);
+        }
+        // Reset timer regardless — if WS is down, retryAllPending() handles bulk recovery on reconnect
+        req.timer = createRetryTimer(key, req);
+      } else {
+        console.warn(`[ServerSynth] Giving up on block ${req.blockIdx} after ${MAX_RETRIES} retries`);
+        pending.delete(key);
+        req.resolve(null);
+      }
+    }, RETRY_TIMEOUT_MS);
+  }
+
   function flushBatch() {
     batchScheduled = false;
     if (!batchQueue || batchIndices.length === 0) return;
 
-    deps.sendWS({
-      type: "synthesize",
-      document_id: batchQueue.documentId,
-      block_indices: batchIndices,
-      cursor: batchQueue.cursor,
-      model: batchQueue.model,
-      voice: batchQueue.voice,
-      synthesis_mode: "server",
-    });
+    // sendWS queues the message if WS is not connected — it'll be sent on connect
+    sendSynthesizeMsg(
+      batchQueue.documentId,
+      batchIndices,
+      batchQueue.cursor,
+      batchQueue.model,
+      batchQueue.voice,
+    );
 
     batchQueue = null;
     batchIndices = [];
@@ -97,26 +131,27 @@ export function createServerSynthesizer(deps: ServerSynthesizerDeps): Synthesize
     model: string,
     voice: string,
   ): Promise<AudioBufferData | null> {
-    if (!deps.checkWSConnected()) return Promise.resolve(null);
-
     const key = pendingKey(documentId, blockIdx, model, voice);
     const existing = pending.get(key);
     if (existing) return new Promise((resolve) => {
-      // Chain onto existing — when original resolves, this one does too
       const origResolve = existing.resolve;
       existing.resolve = (data) => { origResolve(data); resolve(data); };
     });
 
     return new Promise((resolve) => {
-      const timer = setTimeout(() => {
-        console.warn(`[ServerSynth] Timeout for block ${blockIdx}`);
-        pending.delete(key);
-        resolve(null);
-      }, SYNTHESIS_TIMEOUT_MS);
+      const req: PendingRequest = {
+        resolve,
+        model,
+        voice,
+        timer: 0 as unknown as ReturnType<typeof setTimeout>,
+        retryCount: 0,
+        blockIdx,
+        documentId,
+      };
+      req.timer = createRetryTimer(key, req);
+      pending.set(key, req);
 
-      pending.set(key, { resolve, model, voice, timer });
-
-      // Add to batch
+      // Batch the send — if WS is not connected, sendWS will queue it
       if (!batchScheduled) {
         batchScheduled = true;
         queueMicrotask(flushBatch);
@@ -137,10 +172,42 @@ export function createServerSynthesizer(deps: ServerSynthesizerDeps): Synthesize
     lastError = null;
   }
 
+  /**
+   * Re-send synthesis requests for all pending blocks.
+   * Called on WS connect/reconnect. Idempotent — server handles duplicates.
+   */
+  function retryAllPending() {
+    if (pending.size === 0) return;
+
+    // Group by document+model+voice for batch efficiency
+    const groups = new Map<string, { documentId: string; model: string; voice: string; indices: number[] }>();
+    for (const req of pending.values()) {
+      const groupKey = `${req.documentId}:${req.model}:${req.voice}`;
+      let group = groups.get(groupKey);
+      if (!group) {
+        group = { documentId: req.documentId, model: req.model, voice: req.voice, indices: [] };
+        groups.set(groupKey, group);
+      }
+      group.indices.push(req.blockIdx);
+    }
+
+    for (const group of groups.values()) {
+      sendSynthesizeMsg(group.documentId, group.indices, Math.min(...group.indices), group.model, group.voice);
+    }
+
+    // Reset all timers (reconnect resets the clock)
+    for (const [key, req] of pending) {
+      clearTimeout(req.timer);
+      req.retryCount = 0;
+      req.timer = createRetryTimer(key, req);
+    }
+
+    console.log(`[ServerSynth] Retried ${pending.size} pending blocks on reconnect`);
+  }
+
   function onWSMessage(msg: WSBlockStatusMessage | WSEvictedMessage) {
     if (msg.type === "evicted") {
       for (const idx of msg.block_indices) {
-        // Resolve any pending for this block as null (will be re-requested if needed)
         for (const [key, req] of pending) {
           if (key.startsWith(`${msg.document_id}:${idx}:`)) {
             clearTimeout(req.timer);
@@ -202,6 +269,7 @@ export function createServerSynthesizer(deps: ServerSynthesizerDeps): Synthesize
     cancelAll,
     onWSMessage,
     onCursorMove,
+    retryAllPending,
     getError: () => lastError,
     destroy: cancelAll,
   };

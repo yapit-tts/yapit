@@ -19,6 +19,7 @@ export interface UseTTSWebSocketReturn {
 
 export function useTTSWebSocket(
   onMessage: (data: WSMessage) => void,
+  onConnect?: () => void,
 ): UseTTSWebSocketReturn {
   const user = useUser();
   const wsRef = useRef<WebSocket | null>(null);
@@ -26,6 +27,8 @@ export function useTTSWebSocket(
   const reconnectAttemptsRef = useRef(0);
   const onMessageRef = useRef(onMessage);
   onMessageRef.current = onMessage;
+  const onConnectRef = useRef(onConnect);
+  onConnectRef.current = onConnect;
 
   const MAX_RECONNECT_ATTEMPTS = 5;
   const BASE_RECONNECT_DELAY = 1000;
@@ -34,6 +37,9 @@ export function useTTSWebSocket(
   const [isReconnecting, setIsReconnecting] = useState(false);
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const isConnectedRef = useRef(false);
+
+  // Message queue: messages sent while WS is not connected are queued and drained on connect
+  const messageQueueRef = useRef<object[]>([]);
 
   const getWebSocketUrl = useCallback(async (): Promise<string> => {
     const baseUrl = `${WS_BASE_URL}/v1/ws/tts`;
@@ -66,6 +72,20 @@ export function useTTSWebSocket(
         setIsConnected(true);
         setIsReconnecting(false);
         setConnectionError(null);
+
+        // Drain queued messages
+        const queue = messageQueueRef.current;
+        if (queue.length > 0) {
+          console.log(`[TTS WS] Draining ${queue.length} queued messages`);
+          for (const msg of queue) {
+            ws.send(JSON.stringify(msg));
+          }
+          messageQueueRef.current = [];
+        }
+
+        // Notify listeners (synthesizer uses this to retry pending blocks)
+        onConnectRef.current?.();
+
         reconnectAttemptsRef.current = 0;
       };
 
@@ -127,7 +147,7 @@ export function useTTSWebSocket(
 
   const send = useCallback((msg: object) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-      console.warn("[TTS WS] Cannot send: not connected");
+      messageQueueRef.current.push(msg);
       return;
     }
     wsRef.current.send(JSON.stringify(msg));
