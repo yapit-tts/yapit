@@ -124,7 +124,7 @@ jobs:
       always() &&
       github.ref == 'refs/heads/main' &&
       (needs.changes.outputs.frontend == 'true' || inputs.force_build_all) &&
-      (inputs.skip_tests == true || contains(github.event.head_commit.message, '[skip tests]') || (needs.lint.result == 'success' && needs.test-unit.result == 'success' && needs.test-integration.result == 'success'))
+      (inputs.skip_tests == true || contains(github.event.head_commit.message, '[skip tests]') || needs.test-unit.result == 'cancelled' || needs.test-integration.result == 'cancelled' || (needs.lint.result == 'success' && needs.test-unit.result == 'success' && needs.test-integration.result == 'success'))
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -161,7 +161,7 @@ jobs:
       always() &&
       github.ref == 'refs/heads/main' &&
       (needs.changes.outputs.gateway == 'true' || inputs.force_build_all) &&
-      (inputs.skip_tests == true || contains(github.event.head_commit.message, '[skip tests]') || (needs.lint.result == 'success' && needs.test-unit.result == 'success' && needs.test-integration.result == 'success'))
+      (inputs.skip_tests == true || contains(github.event.head_commit.message, '[skip tests]') || needs.test-unit.result == 'cancelled' || needs.test-integration.result == 'cancelled' || (needs.lint.result == 'success' && needs.test-unit.result == 'success' && needs.test-integration.result == 'success'))
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -198,7 +198,7 @@ jobs:
       always() &&
       github.ref == 'refs/heads/main' &&
       (needs.changes.outputs.workers == 'true' || inputs.force_build_all) &&
-      (inputs.skip_tests == true || contains(github.event.head_commit.message, '[skip tests]') || (needs.lint.result == 'success' && needs.test-unit.result == 'success' && needs.test-integration.result == 'success'))
+      (inputs.skip_tests == true || contains(github.event.head_commit.message, '[skip tests]') || needs.test-unit.result == 'cancelled' || needs.test-integration.result == 'cancelled' || (needs.lint.result == 'success' && needs.test-unit.result == 'success' && needs.test-integration.result == 'success'))
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -246,7 +246,7 @@ jobs:
       always() &&
       github.ref == 'refs/heads/main' &&
       (needs.changes.outputs.stack-auth == 'true' || inputs.force_build_all) &&
-      (inputs.skip_tests == true || contains(github.event.head_commit.message, '[skip tests]') || (needs.lint.result == 'success' && needs.test-unit.result == 'success' && needs.test-integration.result == 'success'))
+      (inputs.skip_tests == true || contains(github.event.head_commit.message, '[skip tests]') || needs.test-unit.result == 'cancelled' || needs.test-integration.result == 'cancelled' || (needs.lint.result == 'success' && needs.test-unit.result == 'success' && needs.test-integration.result == 'success'))
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -283,7 +283,7 @@ jobs:
       always() &&
       github.ref == 'refs/heads/main' &&
       (needs.changes.outputs.smokescreen == 'true' || inputs.force_build_all) &&
-      (inputs.skip_tests == true || contains(github.event.head_commit.message, '[skip tests]') || (needs.lint.result == 'success' && needs.test-unit.result == 'success' && needs.test-integration.result == 'success'))
+      (inputs.skip_tests == true || contains(github.event.head_commit.message, '[skip tests]') || needs.test-unit.result == 'cancelled' || needs.test-integration.result == 'cancelled' || (needs.lint.result == 'success' && needs.test-unit.result == 'success' && needs.test-integration.result == 'success'))
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -320,7 +320,7 @@ jobs:
       always() &&
       github.ref == 'refs/heads/main' &&
       (needs.changes.outputs.markxiv == 'true' || inputs.force_build_all) &&
-      (inputs.skip_tests == true || contains(github.event.head_commit.message, '[skip tests]') || (needs.lint.result == 'success' && needs.test-unit.result == 'success' && needs.test-integration.result == 'success'))
+      (inputs.skip_tests == true || contains(github.event.head_commit.message, '[skip tests]') || needs.test-unit.result == 'cancelled' || needs.test-integration.result == 'cancelled' || (needs.lint.result == 'success' && needs.test-unit.result == 'success' && needs.test-integration.result == 'success'))
     runs-on: ubuntu-latest
     permissions:
       contents: read
