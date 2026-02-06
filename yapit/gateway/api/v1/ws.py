@@ -86,14 +86,17 @@ async def tts_websocket(
 
     pubsub = redis.pubsub()
     subscribed_docs: set[str] = set()
+    pubsub_task: asyncio.Task | None = None
 
     async def ensure_doc_subscribed(document_id: uuid.UUID) -> None:
+        nonlocal pubsub_task
         doc_str = str(document_id)
         if doc_str not in subscribed_docs:
             await pubsub.subscribe(get_pubsub_channel(user.id, doc_str))
             subscribed_docs.add(doc_str)
-
-    pubsub_task = asyncio.create_task(_pubsub_listener(ws, pubsub))
+            # Start listener after first subscription so listen() blocks properly
+            if pubsub_task is None:
+                pubsub_task = asyncio.create_task(_pubsub_listener(ws, pubsub))
 
     try:
         while True:
@@ -118,17 +121,24 @@ async def tts_websocket(
             except json.JSONDecodeError:
                 logger.error(f"WS invalid JSON from user {user.id}")
                 await ws.send_json({"type": "error", "error": "Invalid JSON"})
+            except Exception as e:
+                logger.exception(f"Unexpected error handling WS message from user {user.id}: {e}")
+                try:
+                    await ws.send_json({"type": "error", "error": "Internal server error"})
+                except Exception:
+                    pass
 
     except WebSocketDisconnect:
         session_duration_ms = int((time.time() - connect_time) * 1000)
         await log_event("ws_disconnect", user_id=user.id, data={"session_duration_ms": session_duration_ms})
         logger.info(f"WebSocket disconnected for user {user.id} after {session_duration_ms}ms")
     finally:
-        pubsub_task.cancel()
-        try:
-            await pubsub_task
-        except asyncio.CancelledError:
-            pass
+        if pubsub_task is not None:
+            pubsub_task.cancel()
+            try:
+                await pubsub_task
+            except asyncio.CancelledError:
+                pass
         await pubsub.close()
 
 
@@ -313,10 +323,18 @@ async def _handle_cursor_moved(
 
 
 async def _pubsub_listener(ws: WebSocket, pubsub):
-    """Listen for pubsub messages and forward to WebSocket."""
-    try:
-        async for message in pubsub.listen():
-            if message["type"] == "message":
-                await ws.send_text(message["data"].decode())
-    except WebSocketDisconnect:
-        pass
+    """Listen for pubsub messages and forward to WebSocket.
+
+    Restarts on transient errors (Redis disconnect, encoding issues).
+    Only stops on WebSocket disconnect — the main loop handles that lifecycle.
+    """
+    while True:
+        try:
+            async for message in pubsub.listen():
+                if message["type"] == "message":
+                    await ws.send_text(message["data"].decode())
+        except WebSocketDisconnect:
+            return
+        except Exception:
+            logger.exception("Pubsub listener error, restarting in 1s")
+            await asyncio.sleep(1)
