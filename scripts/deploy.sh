@@ -120,7 +120,7 @@ echo "  ✓ Frontend OK"
 
 RUNNING_COMMIT=$(curl -sf "https://api.yapit.md/version" 2>/dev/null | grep -oP '"commit":\s*"\K[^"]+' || echo "")
 if [ -n "$RUNNING_COMMIT" ] && [ "$RUNNING_COMMIT" != "$GIT_COMMIT" ] && [ "$RUNNING_COMMIT" != "unknown" ]; then
-  echo "  ⚠ Unexpected: Gateway reports ${RUNNING_COMMIT:0:12}, expected ${GIT_COMMIT:0:12}"
+  die "Gateway reports ${RUNNING_COMMIT:0:12}, expected ${GIT_COMMIT:0:12}"
 fi
 
 log "Deploy complete"
