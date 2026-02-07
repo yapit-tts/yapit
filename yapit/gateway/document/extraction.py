@@ -174,6 +174,7 @@ def extract_page_text(doc: pymupdf.Document, page_idx: int) -> str:
 
 # Token estimation constants
 CHARS_PER_TOKEN = 4  # Rough approximation: ~4 characters per token
+PROMPT_OVERHEAD_PER_PAGE = 5_000  # Fixed cost of the extraction prompt template per Gemini call
 RASTER_PAGE_TOKEN_EQUIV = 10_000  # Conservative estimate for raster pages (accounts for 6x output cost)
 PER_PAGE_TOLERANCE = 2_000  # Buffer per page for estimation variance
 
@@ -214,7 +215,7 @@ def estimate_page_tokens(doc: pymupdf.Document, page_idx: int, output_multiplier
         return PageEstimate(token_equiv=RASTER_PAGE_TOKEN_EQUIV, text_chars=0, is_raster=True)
 
     text_chars = len(text)
-    input_tokens = text_chars // CHARS_PER_TOKEN
+    input_tokens = PROMPT_OVERHEAD_PER_PAGE + text_chars // CHARS_PER_TOKEN
 
     # Output is typically ~45% of input (measured: 890 output / 2005 input)
     # Use 50% as conservative estimate
