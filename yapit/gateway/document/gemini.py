@@ -345,8 +345,7 @@ class GeminiExtractor:
         last_error: Exception | None = None
         for attempt in range(MAX_RETRIES):
             try:
-                return await asyncio.to_thread(
-                    self._client.models.generate_content,
+                return await self._client.aio.models.generate_content(
                     model=self._model,
                     contents=contents,
                     config=config,

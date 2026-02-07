@@ -181,7 +181,7 @@ class TestRetryBehavior:
         mock_response.text = "Extracted text"
         mock_response.usage_metadata = mock_usage
 
-        mock_extractor._client.models.generate_content = Mock(
+        mock_extractor._client.aio.models.generate_content = AsyncMock(
             side_effect=[
                 genai_errors.APIError(code=429, response_json={"error": {"message": "Rate limit"}}),
                 genai_errors.APIError(code=429, response_json={"error": {"message": "Rate limit"}}),
@@ -198,7 +198,7 @@ class TestRetryBehavior:
 
         assert result.page is not None
         assert result.page.markdown == "Extracted text"
-        assert mock_extractor._client.models.generate_content.call_count == 3
+        assert mock_extractor._client.aio.models.generate_content.call_count == 3
         assert mock_sleep.call_count == 2
 
     @pytest.mark.asyncio
@@ -215,7 +215,7 @@ class TestRetryBehavior:
         mock_response.usage_metadata = mock_usage
 
         for error_code in [500, 503, 504]:
-            mock_extractor._client.models.generate_content = Mock(
+            mock_extractor._client.aio.models.generate_content = AsyncMock(
                 side_effect=[
                     genai_errors.APIError(code=error_code, response_json={"error": {"message": "Server error"}}),
                     mock_response,
@@ -234,7 +234,7 @@ class TestRetryBehavior:
     @pytest.mark.asyncio
     async def test_no_retry_on_400_bad_request(self, mock_extractor):
         """Should NOT retry on 400 bad request - fails immediately."""
-        mock_extractor._client.models.generate_content = Mock(
+        mock_extractor._client.aio.models.generate_content = AsyncMock(
             side_effect=genai_errors.APIError(code=400, response_json={"error": {"message": "Bad request"}})
         )
 
@@ -245,12 +245,12 @@ class TestRetryBehavior:
         )
 
         assert result.page is None
-        assert mock_extractor._client.models.generate_content.call_count == 1
+        assert mock_extractor._client.aio.models.generate_content.call_count == 1
 
     @pytest.mark.asyncio
     async def test_no_retry_on_403_forbidden(self, mock_extractor):
         """Should NOT retry on 403 forbidden - fails immediately."""
-        mock_extractor._client.models.generate_content = Mock(
+        mock_extractor._client.aio.models.generate_content = AsyncMock(
             side_effect=genai_errors.APIError(code=403, response_json={"error": {"message": "Forbidden"}})
         )
 
@@ -261,12 +261,12 @@ class TestRetryBehavior:
         )
 
         assert result.page is None
-        assert mock_extractor._client.models.generate_content.call_count == 1
+        assert mock_extractor._client.aio.models.generate_content.call_count == 1
 
     @pytest.mark.asyncio
     async def test_no_retry_on_404_not_found(self, mock_extractor):
         """Should NOT retry on 404 not found - fails immediately."""
-        mock_extractor._client.models.generate_content = Mock(
+        mock_extractor._client.aio.models.generate_content = AsyncMock(
             side_effect=genai_errors.APIError(code=404, response_json={"error": {"message": "Not found"}})
         )
 
@@ -277,12 +277,12 @@ class TestRetryBehavior:
         )
 
         assert result.page is None
-        assert mock_extractor._client.models.generate_content.call_count == 1
+        assert mock_extractor._client.aio.models.generate_content.call_count == 1
 
     @pytest.mark.asyncio
     async def test_fails_after_max_retries_exhausted(self, mock_extractor):
         """Should return None after all retries exhausted."""
-        mock_extractor._client.models.generate_content = Mock(
+        mock_extractor._client.aio.models.generate_content = AsyncMock(
             side_effect=genai_errors.APIError(code=503, response_json={"error": {"message": "Unavailable"}})
         )
 
@@ -294,7 +294,7 @@ class TestRetryBehavior:
             )
 
         assert result.page is None
-        assert mock_extractor._client.models.generate_content.call_count == MAX_RETRIES
+        assert mock_extractor._client.aio.models.generate_content.call_count == MAX_RETRIES
 
     @pytest.mark.asyncio
     async def test_retries_on_unexpected_exceptions(self, mock_extractor):
@@ -309,7 +309,7 @@ class TestRetryBehavior:
         mock_response.text = "Success"
         mock_response.usage_metadata = mock_usage
 
-        mock_extractor._client.models.generate_content = Mock(
+        mock_extractor._client.aio.models.generate_content = AsyncMock(
             side_effect=[
                 ConnectionError("Network failed"),
                 mock_response,
@@ -324,4 +324,4 @@ class TestRetryBehavior:
             )
 
         assert result.page is not None
-        assert mock_extractor._client.models.generate_content.call_count == 2
+        assert mock_extractor._client.aio.models.generate_content.call_count == 2

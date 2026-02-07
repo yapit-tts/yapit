@@ -1,6 +1,5 @@
 """Gemini Batch API integration for document extraction."""
 
-import asyncio
 import base64
 import json
 import tempfile
@@ -156,8 +155,7 @@ async def submit_batch_job(
     logger.info(f"Batch JSONL: {jsonl_size} bytes, {len(page_requests)} requests")
 
     try:
-        uploaded_file = await asyncio.to_thread(
-            client.files.upload,
+        uploaded_file = await client.aio.files.upload(
             file=str(jsonl_path),
             config=types.UploadFileConfig(
                 display_name=f"yapit-batch-{content_hash[:16]}",
@@ -167,8 +165,7 @@ async def submit_batch_job(
         assert uploaded_file.name is not None
         logger.info(f"Batch file uploaded: {uploaded_file.name}")
 
-        batch_job = await asyncio.to_thread(
-            client.batches.create,
+        batch_job = await client.aio.batches.create(
             model=model,
             src=uploaded_file.name,
             config=types.CreateBatchJobConfigDict(display_name=f"yapit:{content_hash[:16]}"),
@@ -221,7 +218,7 @@ async def poll_batch_job(
     """
     old_status = job.status
     assert job.job_name is not None, "Cannot poll a job without a Gemini batch name"
-    batch_job = await asyncio.to_thread(client.batches.get, name=job.job_name)
+    batch_job = await client.aio.batches.get(name=job.job_name)
 
     assert batch_job.state is not None
     job.status = _map_gemini_state_to_status(batch_job.state.name)
@@ -258,8 +255,7 @@ async def get_batch_results(
     assert batch_job.dest is not None
     assert batch_job.dest.file_name is not None, "File-based batch job should have dest.file_name on completion"
 
-    result_bytes = await asyncio.to_thread(
-        client.files.download,
+    result_bytes = await client.aio.files.download(
         file=batch_job.dest.file_name,
     )
     result_text = result_bytes.decode("utf-8")

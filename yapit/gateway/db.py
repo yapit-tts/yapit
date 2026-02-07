@@ -25,6 +25,8 @@ def _get_engine(settings: Settings) -> AsyncEngine:
         settings.database_url,
         echo=settings.sqlalchemy_echo,
         pool_pre_ping=True,
+        pool_size=10,
+        max_overflow=20,
     )
     return _engine
 
