@@ -445,6 +445,114 @@ def _error_breakdown(df: pd.DataFrame) -> go.Figure | None:
     return fig
 
 
+def _prompt_cache_utilization_chart(df: pd.DataFrame) -> go.Figure | None:
+    """Cache utilization rate over time: cached / prompt tokens as percentage."""
+    complete = get_events(df, "page_extraction_complete")
+    if complete.empty or "cached_content_token_count" not in complete.columns:
+        return None
+
+    complete = bin_by_time(complete, "1h")
+    hourly = (
+        complete.groupby("time_bin")
+        .agg(
+            prompt=("prompt_token_count", "sum"),
+            cached=("cached_content_token_count", "sum"),
+        )
+        .reset_index()
+    )
+
+    if hourly.empty or hourly["prompt"].sum() == 0:
+        return None
+
+    hourly["cache_pct"] = (hourly["cached"] / hourly["prompt"].replace(0, pd.NA) * 100).fillna(0)
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=hourly["time_bin"],
+            y=hourly["cache_pct"],
+            mode="lines+markers",
+            name="Cache %",
+            line=dict(color=COLORS["accent_cyan"], width=2),
+            marker=dict(size=4),
+            fill="tozeroy",
+            fillcolor="rgba(86, 212, 221, 0.15)",
+            hovertemplate="%{y:.1f}% cached<extra></extra>",
+        )
+    )
+
+    fig.update_layout(
+        title="Gemini Prompt Cache Utilization (hourly)",
+        height=350,
+        xaxis_title="Time",
+        yaxis_title="% of Input Tokens Cached",
+        yaxis=dict(range=[0, max(hourly["cache_pct"].max() * 1.1, 10)]),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+    )
+    apply_plotly_theme(fig)
+    return fig
+
+
+def _cached_vs_uncached_chart(df: pd.DataFrame) -> go.Figure | None:
+    """Stacked area: cached vs uncached input tokens over time."""
+    complete = get_events(df, "page_extraction_complete")
+    if complete.empty or "cached_content_token_count" not in complete.columns:
+        return None
+
+    complete = bin_by_time(complete, "1h")
+    hourly = (
+        complete.groupby("time_bin")
+        .agg(
+            prompt=("prompt_token_count", "sum"),
+            cached=("cached_content_token_count", "sum"),
+        )
+        .reset_index()
+    )
+
+    if hourly.empty or hourly["prompt"].sum() == 0:
+        return None
+
+    hourly["uncached"] = (hourly["prompt"] - hourly["cached"]).clip(lower=0)
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=hourly["time_bin"],
+            y=hourly["cached"],
+            mode="lines",
+            name="Cached",
+            line=dict(width=0),
+            fill="tonexty",
+            fillcolor="rgba(86, 212, 221, 0.6)",
+            stackgroup="one",
+            hovertemplate="Cached: %{y:,.0f}<extra></extra>",
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=hourly["time_bin"],
+            y=hourly["uncached"],
+            mode="lines",
+            name="Uncached",
+            line=dict(width=0),
+            fill="tonexty",
+            fillcolor="rgba(88, 166, 255, 0.6)",
+            stackgroup="one",
+            hovertemplate="Uncached: %{y:,.0f}<extra></extra>",
+        )
+    )
+
+    fig.update_layout(
+        title="Cached vs Uncached Input Tokens (hourly)",
+        height=350,
+        xaxis_title="Time",
+        yaxis_title="Input Tokens",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+    )
+    apply_plotly_theme(fig)
+    return fig
+
+
 def _estimate_stats(df: pd.DataFrame):
     """Display extraction estimate statistics."""
     estimates = get_events(df, "extraction_estimate")
@@ -465,16 +573,13 @@ def _estimate_stats(df: pd.DataFrame):
     estimates["estimated_tokens"] = estimates["data"].apply(
         lambda d: d.get("estimated_tokens", 0) if isinstance(d, dict) else 0
     )
-    estimates["tolerance"] = estimates["data"].apply(lambda d: d.get("tolerance", 0) if isinstance(d, dict) else 0)
-
     total_estimates = len(estimates)
     avg_pages = estimates["num_pages"].mean()
     avg_text_pages = estimates["text_pages"].mean()
     avg_raster_pages = estimates["raster_pages"].mean()
     avg_estimated = estimates["estimated_tokens"].mean()
-    avg_tolerance = estimates["tolerance"].mean()
 
-    col1, col2, col3, col4, col5, col6 = st.columns(6)
+    col1, col2, col3, col4, col5 = st.columns(5)
     with col1:
         st.metric("Documents", format_number(total_estimates))
     with col2:
@@ -485,8 +590,6 @@ def _estimate_stats(df: pd.DataFrame):
         st.metric("Avg Raster Pgs", f"{avg_raster_pages:.1f}")
     with col5:
         st.metric("Avg Est. Tokens", format_number(avg_estimated))
-    with col6:
-        st.metric("Avg Tolerance", f"{avg_tolerance:.0%}")
 
 
 def _estimate_vs_actual(df: pd.DataFrame) -> tuple[pd.DataFrame | None, dict]:
@@ -510,9 +613,15 @@ def _estimate_vs_actual(df: pd.DataFrame) -> tuple[pd.DataFrame | None, dict]:
         lambda d: d.get("estimated_tokens", 0) if isinstance(d, dict) else 0
     )
     estimates = estimates[["content_hash", "estimated"]].dropna(subset=["content_hash"])
+    # Dedupe: same content = same estimate
+    estimates = estimates.drop_duplicates(subset=["content_hash"], keep="first")
 
     complete = complete.copy()
     complete["content_hash"] = complete["data"].apply(lambda d: d.get("content_hash") if isinstance(d, dict) else None)
+
+    # Dedupe: same content + page = same tokens (avoid double-counting re-extractions)
+    complete = complete.dropna(subset=["content_hash"])
+    complete = complete.drop_duplicates(subset=["content_hash", "page_idx"], keep="first")
 
     # Aggregate actual tokens per document
     actuals = complete.groupby("content_hash")["total_token_count"].sum().reset_index()
@@ -673,6 +782,39 @@ def render(df: pd.DataFrame):
 
     # Token breakdown
     _token_breakdown(df)
+
+    st.divider()
+
+    # Gemini prompt cache utilization
+    section_header("Gemini Prompt Cache", "Implicit prompt caching — cached tokens are cheaper and faster")
+
+    # Summary metric
+    complete = get_events(df, "page_extraction_complete")
+    if not complete.empty and "cached_content_token_count" in complete.columns:
+        total_prompt = complete["prompt_token_count"].fillna(0).sum()
+        total_cached = complete["cached_content_token_count"].fillna(0).sum()
+        cache_pct = (total_cached / total_prompt * 100) if total_prompt > 0 else 0
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Overall Cache Rate", format_percent(cache_pct))
+        with col2:
+            st.metric("Cached Input Tokens", format_number(int(total_cached)))
+        with col3:
+            st.metric("Uncached Input Tokens", format_number(int(total_prompt - total_cached)))
+
+    col1, col2 = st.columns(2)
+    with col1:
+        fig = _prompt_cache_utilization_chart(df)
+        if fig:
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.caption("No cache data yet (column populated from new extractions only)")
+    with col2:
+        fig = _cached_vs_uncached_chart(df)
+        if fig:
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.caption("No cache data yet")
 
     st.divider()
 
