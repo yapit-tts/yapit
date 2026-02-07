@@ -143,7 +143,7 @@ class GeminiExtractor:
             )
 
         duration_ms = int((time.monotonic() - start_time) * 1000)
-        input_tokens, output_tokens, thoughts_tokens, is_fallback = self._extract_token_usage(
+        input_tokens, output_tokens, thoughts_tokens, cached_tokens, is_fallback = self._extract_token_usage(
             response.usage_metadata, context="image"
         )
 
@@ -157,6 +157,7 @@ class GeminiExtractor:
             prompt_token_count=input_tokens,
             candidates_token_count=output_tokens,
             thoughts_token_count=thoughts_tokens,
+            cached_content_token_count=cached_tokens,
             total_token_count=input_tokens + output_tokens + thoughts_tokens,
             user_id=user_id,
             data={"content_hash": content_hash},
@@ -304,7 +305,7 @@ class GeminiExtractor:
         if page.figure_urls:
             text = substitute_image_placeholders(text, page.figure_urls)
 
-        input_tokens, output_tokens, thoughts_tokens, is_fallback = self._extract_token_usage(
+        input_tokens, output_tokens, thoughts_tokens, cached_tokens, is_fallback = self._extract_token_usage(
             response.usage_metadata, context=f"page {page_idx + 1}"
         )
 
@@ -320,6 +321,7 @@ class GeminiExtractor:
             prompt_token_count=input_tokens,
             candidates_token_count=output_tokens,
             thoughts_token_count=thoughts_tokens,
+            cached_content_token_count=cached_tokens,
             total_token_count=input_tokens + output_tokens + thoughts_tokens,
             user_id=user_id,
             data={"content_hash": content_hash},
@@ -384,15 +386,16 @@ class GeminiExtractor:
         self,
         usage_metadata: types.GenerateContentResponseUsageMetadata | None,
         context: str,
-    ) -> tuple[int, int, int, bool]:
-        """Extract token counts from Gemini response. Returns (input, output, thoughts, is_fallback)."""
+    ) -> tuple[int, int, int, int, bool]:
+        """Extract token counts from Gemini response. Returns (input, output, thoughts, cached, is_fallback)."""
         if usage_metadata is None:
             logger.error(f"Gemini {context}: usage_metadata is None, using fallback estimates")
-            return (FALLBACK_INPUT_TOKENS_PER_PAGE, FALLBACK_OUTPUT_TOKENS_PER_PAGE, 0, True)
+            return (FALLBACK_INPUT_TOKENS_PER_PAGE, FALLBACK_OUTPUT_TOKENS_PER_PAGE, 0, 0, True)
 
         input_tokens = usage_metadata.prompt_token_count or 0
         output_tokens = usage_metadata.candidates_token_count or 0
         thoughts_tokens = usage_metadata.thoughts_token_count or 0
+        cached_tokens = usage_metadata.cached_content_token_count or 0
 
         expected_total = input_tokens + output_tokens + thoughts_tokens
         actual_total = usage_metadata.total_token_count or 0
@@ -403,7 +406,7 @@ class GeminiExtractor:
                 f"(prompt={input_tokens}, candidates={output_tokens}, thoughts={thoughts_tokens})"
             )
 
-        return input_tokens, output_tokens, thoughts_tokens, False
+        return input_tokens, output_tokens, thoughts_tokens, cached_tokens, False
 
     async def _prepare_page(
         self,

@@ -156,6 +156,7 @@ async def _write_batch(events: list[dict[str, Any]]) -> None:
         "prompt_token_count",
         "candidates_token_count",
         "thoughts_token_count",
+        "cached_content_token_count",
         "total_token_count",
         # Request
         "endpoint",
@@ -194,6 +195,7 @@ async def _write_batch(events: list[dict[str, Any]]) -> None:
             event.get("prompt_token_count"),
             event.get("candidates_token_count"),
             event.get("thoughts_token_count"),
+            event.get("cached_content_token_count"),
             event.get("total_token_count"),
             event.get("endpoint"),
             event.get("method"),

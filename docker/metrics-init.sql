@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS metrics_event (
     prompt_token_count INTEGER,
     candidates_token_count INTEGER,
     thoughts_token_count INTEGER,
+    cached_content_token_count INTEGER,
     total_token_count INTEGER,
 
     -- Request fields
