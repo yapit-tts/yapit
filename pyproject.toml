@@ -61,6 +61,7 @@ test = [
 
 dev = [
   "pre-commit~=4.2.0",
+  "tyro>=1.0.5",
 ]
 
 [build-system]
