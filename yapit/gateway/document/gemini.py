@@ -80,7 +80,7 @@ class GeminiExtractor:
         prompt_path: Path,
         model: str = "gemini-3-flash-preview",
         resolution: str = "high",
-        media_first: bool = True,
+        media_first: bool = False,
     ):
         self._redis = redis
         self._client = genai.Client(api_key=api_key)
