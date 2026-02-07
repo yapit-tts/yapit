@@ -347,6 +347,99 @@ def _text_length_vs_latency(df: pd.DataFrame) -> go.Figure | None:
     return fig
 
 
+def _cps_chart(df: pd.DataFrame) -> go.Figure | None:
+    """Characters per second scatter + histogram by model."""
+    complete = get_events(df, "synthesis_complete")
+    complete = complete.dropna(subset=["text_length", "audio_duration_ms"])
+    complete = complete[complete["audio_duration_ms"] > 0]
+    if complete.empty:
+        return None
+
+    complete = complete.copy()
+    complete["cps"] = complete["text_length"] * 1000 / complete["audio_duration_ms"]
+
+    fig = make_subplots(
+        rows=1,
+        cols=2,
+        column_widths=[0.6, 0.4],
+        subplot_titles=["CPS Over Time", "Distribution"],
+    )
+
+    # Scatter by model
+    for model in sorted(complete["model_slug"].dropna().unique()):
+        model_data = complete[complete["model_slug"] == model]
+        color = get_model_color(model)
+
+        fig.add_trace(
+            go.Scatter(
+                x=model_data["local_time"],
+                y=model_data["cps"],
+                mode="markers",
+                name=model,
+                marker=dict(size=7, color=color, opacity=0.7),
+                hovertemplate=f"<b>{model}</b><br>%{{y:.1f}} chars/s<br>%{{x}}<extra></extra>",
+            ),
+            row=1,
+            col=1,
+        )
+
+    # Histogram (all models combined)
+    fig.add_trace(
+        go.Histogram(
+            x=complete["cps"],
+            nbinsx=25,
+            marker=dict(color=COLORS["accent_teal"], line=dict(width=1, color=COLORS["border"])),
+            showlegend=False,
+            hovertemplate="CPS: %{x:.1f}<br>Count: %{y}<extra></extra>",
+        ),
+        row=1,
+        col=2,
+    )
+
+    # Hardcoded constant reference line (14 CPS used in estimates)
+    fig.add_hline(
+        y=14,
+        line_dash="dash",
+        line_color=COLORS["accent_yellow"],
+        annotation_text="Est: 14",
+        annotation_position="right",
+        row=1,
+        col=1,
+    )
+    fig.add_vline(
+        x=14,
+        line_dash="dash",
+        line_color=COLORS["accent_yellow"],
+        annotation_text="Est: 14",
+        annotation_position="top right",
+        row=1,
+        col=2,
+    )
+
+    median = complete["cps"].median()
+    fig.add_vline(
+        x=median,
+        line_dash="solid",
+        line_color=COLORS["accent_purple"],
+        annotation_text=f"Median: {median:.1f}",
+        annotation_position="top left",
+        row=1,
+        col=2,
+    )
+
+    fig.update_layout(
+        title="Characters Per Second (text_length × 1000 / audio_duration_ms)",
+        height=350,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+    )
+    fig.update_xaxes(title_text="Time", row=1, col=1)
+    fig.update_xaxes(title_text="CPS", row=1, col=2)
+    fig.update_yaxes(title_text="Chars/Second", row=1, col=1)
+    fig.update_yaxes(title_text="Count", row=1, col=2)
+    apply_plotly_theme(fig)
+    return fig
+
+
 def _latency_breakdown_chart(df: pd.DataFrame) -> go.Figure | None:
     """Stacked bar: queue wait vs worker time."""
     complete = get_events(df, "synthesis_complete")
@@ -440,7 +533,12 @@ def render(df: pd.DataFrame):
     if fig:
         st.plotly_chart(fig, use_container_width=True)
 
-    # Row 3: Queue depth + wait distribution
+    # Row 3: Characters per second
+    fig = _cps_chart(df)
+    if fig:
+        st.plotly_chart(fig, use_container_width=True)
+
+    # Row 4: Queue depth + wait distribution
     col1, col2 = st.columns(2)
     with col1:
         fig = _queue_depth_chart(df)
@@ -456,7 +554,7 @@ def render(df: pd.DataFrame):
         else:
             st.caption("No queue wait data")
 
-    # Row 4: Latency breakdown + text length correlation
+    # Row 5: Latency breakdown + text length correlation
     col1, col2 = st.columns(2)
     with col1:
         fig = _latency_breakdown_chart(df)
