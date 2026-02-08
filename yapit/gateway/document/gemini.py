@@ -97,13 +97,14 @@ class GeminiExtractor:
         content_hash: str,
         pages: list[int] | None = None,
         user_id: str | None = None,
+        cancel_key: str | None = None,
     ) -> AsyncIterator[PageResult]:
         """Extract pages, yielding results as each completes (parallel execution)."""
         if content_type.startswith("image/"):
             yield await self._extract_image(content, content_type, content_hash, user_id)
             return
 
-        async for result in self._extract_pdf(content, content_hash, pages, user_id):
+        async for result in self._extract_pdf(content, content_hash, pages, user_id, cancel_key):
             yield result
 
     async def _extract_image(
@@ -180,6 +181,7 @@ class GeminiExtractor:
         content_hash: str,
         pages: list[int] | None,
         user_id: str | None,
+        cancel_key: str | None,
     ) -> AsyncIterator[PageResult]:
         """Extract text from PDF, yielding pages as they complete."""
         with pymupdf.open(stream=content, filetype="pdf") as doc:
@@ -188,9 +190,6 @@ class GeminiExtractor:
 
         logger.info(f"Extraction: starting {len(pages_to_process)} pages (PDF has {total_pages} total)")
 
-        cancel_key = f"extraction:cancel:{content_hash}"
-
-        # Launch all pages in parallel
         tasks = {
             asyncio.create_task(self._process_page(content, page_idx, content_hash, cancel_key, user_id)): page_idx
             for page_idx in pages_to_process
@@ -205,11 +204,11 @@ class GeminiExtractor:
         content: bytes,
         page_idx: int,
         content_hash: str,
-        cancel_key: str,
+        cancel_key: str | None,
         user_id: str | None,
     ) -> PageResult:
         """Process a single page: YOLO detection → figure storage → Gemini extraction."""
-        if await self._redis.exists(cancel_key):
+        if cancel_key and await self._redis.exists(cancel_key):
             logger.info(f"Page {page_idx + 1} cancelled before processing")
             return PageResult(
                 page_idx=page_idx,
@@ -223,6 +222,18 @@ class GeminiExtractor:
 
         try:
             page = await self._prepare_page(content, page_idx, content_hash)
+
+            if cancel_key and await self._redis.exists(cancel_key):
+                logger.info(f"Page {page_idx + 1} cancelled after YOLO, before Gemini")
+                return PageResult(
+                    page_idx=page_idx,
+                    page=None,
+                    input_tokens=0,
+                    output_tokens=0,
+                    thoughts_tokens=0,
+                    is_fallback=False,
+                    cancelled=True,
+                )
 
             return await self._call_gemini_for_page(page, content_hash, user_id)
 

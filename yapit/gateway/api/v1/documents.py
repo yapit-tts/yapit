@@ -1,16 +1,17 @@
 import asyncio
 import datetime as dt
 import hashlib
+import json
 import re
 from datetime import datetime
 from email.message import EmailMessage
 from html import escape as html_escape
 from pathlib import Path
 from typing import Annotated, Literal
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pymupdf
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
 from fastapi.responses import HTMLResponse
 from loguru import logger
 from pydantic import BaseModel, Field, HttpUrl, StringConstraints
@@ -26,6 +27,7 @@ from yapit.contracts import (
 from yapit.gateway.auth import authenticate
 from yapit.gateway.cache import Cache
 from yapit.gateway.constants import SUPPORTED_WEB_MIME_TYPES
+from yapit.gateway.db import create_session
 from yapit.gateway.deps import (
     AiExtractorConfigDep,
     AiExtractorDep,
@@ -40,7 +42,7 @@ from yapit.gateway.deps import (
 )
 from yapit.gateway.document import markitdown
 from yapit.gateway.document.batch import BatchJobInfo, BatchJobStatus, get_batch_job, save_batch_job, submit_batch_job
-from yapit.gateway.document.extraction import PER_PAGE_TOLERANCE, deduplicate_footnotes, estimate_document_tokens
+from yapit.gateway.document.extraction import PER_PAGE_TOLERANCE, estimate_document_tokens
 from yapit.gateway.document.http import download_document
 from yapit.gateway.document.markxiv import detect_arxiv_url, fetch_from_markxiv
 from yapit.gateway.document.processing import (
@@ -48,6 +50,8 @@ from yapit.gateway.document.processing import (
     DocumentExtractionResult,
     ExtractedPage,
     ProcessorConfig,
+    create_document_with_blocks,
+    process_pages_to_document,
     process_with_billing,
 )
 from yapit.gateway.document.website import extract_website_content
@@ -141,7 +145,7 @@ class BaseDocumentCreateRequest(BaseModel):
 class TextDocumentCreateRequest(BaseDocumentCreateRequest):
     """Create document from direct text input."""
 
-    content: Annotated[str, StringConstraints(min_length=1, strip_whitespace=True)]
+    content: Annotated[str, StringConstraints(min_length=1, max_length=500_000, strip_whitespace=True)]
 
 
 class BasePreparedDocumentCreateRequest(BaseDocumentCreateRequest):
@@ -180,6 +184,14 @@ class DocumentCreateResponse(BaseModel):
     failed_pages: list[int] = []  # Pages that failed extraction (0-indexed)
 
 
+class ExtractionAcceptedResponse(BaseModel):
+    """Response when extraction is accepted for background processing."""
+
+    extraction_id: str
+    content_hash: str
+    total_pages: int
+
+
 class BatchSubmittedResponse(BaseModel):
     """Response after batch job submission."""
 
@@ -194,6 +206,9 @@ class ExtractionStatusResponse(BaseModel):
     total_pages: int
     completed_pages: list[int]
     status: Literal["processing", "complete", "not_found"]
+    document_id: UUID | None = None
+    error: str | None = None
+    failed_pages: list[int] = []
 
 
 class BatchStatusResponse(BaseModel):
@@ -209,6 +224,7 @@ class BatchStatusResponse(BaseModel):
 class ExtractionStatusRequest(BaseModel):
     """Request for extraction status check."""
 
+    extraction_id: str | None = None
     content_hash: str
     processor_slug: str
     pages: list[int]
@@ -219,11 +235,38 @@ async def get_extraction_status(
     req: ExtractionStatusRequest,
     extraction_cache: ExtractionCache,
     ai_extractor_config: AiExtractorConfigDep,
+    redis: RedisClient,
 ) -> ExtractionStatusResponse:
-    """Get progress of an ongoing document extraction by checking cache directly."""
+    """Get progress of an ongoing document extraction.
+
+    Checks two sources:
+    1. Per-page extraction cache (progress tracking)
+    2. Redis async extraction result (document_id or error when done)
+    """
+    raw_result = None
+    if req.extraction_id:
+        raw_result = await redis.get(_async_extraction_key(req.extraction_id))
+    if raw_result:
+        result = json.loads(raw_result)
+        if "error" in result:
+            return ExtractionStatusResponse(
+                total_pages=len(req.pages),
+                completed_pages=[],
+                status="complete",
+                error=result["error"],
+            )
+        return ExtractionStatusResponse(
+            total_pages=len(req.pages),
+            completed_pages=list(range(len(req.pages))),
+            status="complete",
+            document_id=result["document_id"],
+            failed_pages=result.get("failed_pages", []),
+        )
+
+    # Check per-page extraction cache for progress
     config = ai_extractor_config if req.processor_slug == "gemini" else markitdown.MARKITDOWN_CONFIG
     if not config or not config.extraction_cache_prefix:
-        return ExtractionStatusResponse(total_pages=len(req.pages), completed_pages=[], status="not_found")
+        return ExtractionStatusResponse(total_pages=len(req.pages), completed_pages=[], status="processing")
 
     completed = []
     for page_idx in req.pages:
@@ -231,16 +274,15 @@ async def get_extraction_status(
         if await extraction_cache.exists(cache_key):
             completed.append(page_idx)
 
-    is_complete = len(completed) >= len(req.pages)
     return ExtractionStatusResponse(
         total_pages=len(req.pages),
         completed_pages=completed,
-        status="complete" if is_complete else "processing",
+        status="processing",
     )
 
 
 class CancelExtractionRequest(BaseModel):
-    content_hash: str
+    extraction_id: str
 
 
 class CancelExtractionResponse(BaseModel):
@@ -257,9 +299,9 @@ async def cancel_extraction(
     Sets a Redis flag that gemini.py checks before processing each page.
     Pages already in-flight will complete, but pending pages will be skipped.
     """
-    cancel_key = f"extraction:cancel:{req.content_hash}"
-    await redis.set(cancel_key, "1", ex=300)  # 5 minute TTL
-    logger.info(f"Extraction cancel requested for {req.content_hash}")
+    cancel_key = f"extraction:cancel:{req.extraction_id}"
+    await redis.set(cancel_key, "1", ex=300)
+    logger.info(f"Extraction cancel requested for {req.extraction_id}")
     return CancelExtractionResponse(status="cancelled")
 
 
@@ -446,7 +488,7 @@ async def create_text_document(
     structured_content = structured_doc.model_dump_json()
     text_blocks = structured_doc.get_audio_blocks()
 
-    doc = await _create_document_with_blocks(
+    doc = await create_document_with_blocks(
         db=db,
         user_id=user.id,
         title=req.title,
@@ -509,7 +551,7 @@ async def create_website_document(
         min_chunk_size=settings.min_chunk_size,
     )
 
-    doc = await _create_document_with_blocks(
+    doc = await create_document_with_blocks(
         db=db,
         user_id=user.id,
         title=cached_doc.metadata.title or req.title or cached_doc.metadata.file_name,
@@ -521,6 +563,33 @@ async def create_website_document(
         is_public=prefs.default_documents_public if prefs else False,
     )
     return DocumentCreateResponse(id=doc.id, title=doc.title)
+
+
+async def _billing_precheck(
+    config: ProcessorConfig,
+    content: bytes,
+    content_type: str,
+    content_hash: str,
+    user_id: str,
+    pages: list[int] | None,
+    db: DbSession,
+    billing_enabled: bool,
+    redis: RedisClient,
+) -> None:
+    """Estimate tokens, check usage limit, create reservation."""
+    estimate = estimate_document_tokens(content, content_type, config.output_token_multiplier, pages)
+    tolerance = PER_PAGE_TOLERANCE * estimate.num_pages
+    amount_to_check = max(0, estimate.total_tokens - tolerance)
+
+    await check_usage_limit(
+        user_id,
+        UsageType.ocr_tokens,
+        amount_to_check,
+        db,
+        billing_enabled=billing_enabled,
+        redis=redis,
+    )
+    await create_reservation(redis, user_id, content_hash, estimate.total_tokens)
 
 
 async def _submit_batch_extraction(
@@ -550,20 +619,17 @@ async def _submit_batch_extraction(
             detail="AI transform not configured on this server",
         )
 
-    config = ai_extractor_config
-    estimate = estimate_document_tokens(content, content_type, config.output_token_multiplier, pages)
-    tolerance = PER_PAGE_TOLERANCE * estimate.num_pages
-    amount_to_check = max(0, estimate.total_tokens - tolerance)
-
-    await check_usage_limit(
-        user_id,
-        UsageType.ocr_tokens,
-        amount_to_check,
-        db,
+    await _billing_precheck(
+        config=ai_extractor_config,
+        content=content,
+        content_type=content_type,
+        content_hash=content_hash,
+        user_id=user_id,
+        pages=pages,
+        db=db,
         billing_enabled=settings.billing_enabled,
         redis=redis,
     )
-    await create_reservation(redis, user_id, content_hash, estimate.total_tokens)
 
     pages_requested = list(range(total_pages)) if pages is None else pages
     submitted_at = datetime.now(tz=dt.UTC).isoformat()
@@ -648,81 +714,140 @@ async def _prepare_and_submit_batch(
             await save_batch_job(redis, job)
 
 
-async def _extract_document_content(
+ASYNC_EXTRACTION_RESULT_TTL = 3600
+
+
+def _async_extraction_key(extraction_id: str) -> str:
+    return f"async_extraction:{extraction_id}"
+
+
+async def _run_extraction(
+    extraction_id: str,
     content: bytes,
     content_type: str,
     content_hash: str,
     total_pages: int,
     file_size: int,
     ai_transform: bool,
+    arxiv_id: str | None,
+    title: str | None,
     pages: list[int] | None,
     user_id: str,
-    db: DbSession,
+    is_public: bool,
+    metadata: DocumentMetadata,
+    settings: SettingsDep,
     extraction_cache: ExtractionCache,
     image_storage: ImageStorageDep,
-    settings: SettingsDep,
     ai_extractor_config: AiExtractorConfigDep,
     ai_extractor: AiExtractorDep,
     redis: RedisClient,
-) -> DocumentExtractionResult:
-    """Extract content from document using AI or markitdown. Handles rate limiting."""
-    if ai_transform:
-        if not ai_extractor or not ai_extractor_config:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="AI transform not configured on this server",
-            )
-        config = ai_extractor_config
-        extractor = ai_extractor.extract(
-            content,
-            content_type,
-            content_hash,
-            pages,
-            user_id=user_id,
-        )
-    else:
-        config = markitdown.MARKITDOWN_CONFIG
-        extractor = markitdown.extract(content, content_type)
+    ratelimit_key: str,
+) -> None:
+    """Background task: extract document, create in DB, store result in Redis."""
+    result_key = _async_extraction_key(extraction_id)
 
-    ratelimit_key = RATELIMIT_EXTRACTION.format(user_id=user_id)
-    current = await redis.incr(ratelimit_key)
-    await redis.expire(ratelimit_key, 600)
-    if current > MAX_CONCURRENT_EXTRACTIONS:
-        await redis.decr(ratelimit_key)
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Too many concurrent document extractions. Please wait for current extractions to complete.",
-        )
+    cancel_key = f"extraction:cancel:{extraction_id}"
 
     try:
-        return await process_with_billing(
-            config=config,
-            extractor=extractor,
-            user_id=user_id,
-            content=content,
-            content_type=content_type,
-            content_hash=content_hash,
-            total_pages=total_pages,
-            db=db,
-            extraction_cache=extraction_cache,
-            image_storage=image_storage,
-            redis=redis,
-            billing_enabled=settings.billing_enabled,
-            file_size=file_size,
-            pages=pages,
-        )
+        async for db in create_session(settings):
+            if arxiv_id and settings.markxiv_url:
+                markdown = await fetch_from_markxiv(settings.markxiv_url, arxiv_id)
+                extraction_result = DocumentExtractionResult(
+                    pages={0: ExtractedPage(markdown=markdown, images=[])},
+                    extraction_method="markxiv",
+                )
+            else:
+                if ai_transform:
+                    assert ai_extractor is not None and ai_extractor_config is not None
+                    config = ai_extractor_config
+                    extractor = ai_extractor.extract(
+                        content,
+                        content_type,
+                        content_hash,
+                        pages,
+                        user_id=user_id,
+                        cancel_key=cancel_key,
+                    )
+                else:
+                    config = markitdown.MARKITDOWN_CONFIG
+                    extractor = markitdown.extract(content, content_type)
+
+                extraction_result = await process_with_billing(
+                    config=config,
+                    extractor=extractor,
+                    user_id=user_id,
+                    content=content,
+                    content_type=content_type,
+                    content_hash=content_hash,
+                    total_pages=total_pages,
+                    db=db,
+                    extraction_cache=extraction_cache,
+                    image_storage=image_storage,
+                    redis=redis,
+                    billing_enabled=settings.billing_enabled,
+                    file_size=file_size,
+                    pages=pages,
+                )
+
+            if await redis.exists(cancel_key):
+                logger.info(f"Extraction {extraction_id} cancelled, skipping document creation")
+                return
+
+            if not extraction_result.pages:
+                await redis.set(
+                    result_key,
+                    json.dumps({"error": "Document extraction failed. Please try again later."}),
+                    ex=ASYNC_EXTRACTION_RESULT_TTL,
+                )
+                return
+
+            processed = process_pages_to_document(extraction_result.pages, settings)
+            doc = await create_document_with_blocks(
+                db=db,
+                user_id=user_id,
+                title=title,
+                original_text=processed.extracted_text,
+                structured_content=processed.structured_content,
+                metadata=metadata,
+                extraction_method=extraction_result.extraction_method,
+                text_blocks=processed.text_blocks,
+                is_public=is_public,
+                content_hash=content_hash,
+            )
+
+            await redis.set(
+                result_key,
+                json.dumps(
+                    {
+                        "document_id": str(doc.id),
+                        "title": doc.title,
+                        "failed_pages": extraction_result.failed_pages,
+                    }
+                ),
+                ex=ASYNC_EXTRACTION_RESULT_TTL,
+            )
+            break  # create_session is an async generator; only need one session
+    except Exception:
+        logger.exception(f"Async extraction failed for {content_hash}")
+        try:
+            await redis.set(
+                result_key,
+                json.dumps({"error": "Extraction failed. Please try again."}),
+                ex=ASYNC_EXTRACTION_RESULT_TTL,
+            )
+        except Exception:
+            logger.exception(f"Failed to store extraction error for {content_hash}")
     finally:
         await redis.decr(ratelimit_key)
 
 
 @router.post(
     "/document",
-    response_model=DocumentCreateResponse | BatchSubmittedResponse,
-    status_code=status.HTTP_201_CREATED,
+    response_model=ExtractionAcceptedResponse | BatchSubmittedResponse,
+    status_code=status.HTTP_202_ACCEPTED,
 )
 async def create_document(
     req: DocumentCreateRequest,
-    response: Response,
     db: DbSession,
     file_cache: DocumentCache,
     extraction_cache: ExtractionCache,
@@ -732,8 +857,12 @@ async def create_document(
     ai_extractor_config: AiExtractorConfigDep,
     ai_extractor: AiExtractorDep,
     redis: RedisClient,
-) -> DocumentCreateResponse | BatchSubmittedResponse:
-    """Create a document from a file (PDF, image, etc)."""
+) -> ExtractionAcceptedResponse | BatchSubmittedResponse:
+    """Create a document from a file (PDF, image, etc).
+
+    Returns 202 immediately. Extraction runs in background.
+    Poll /extraction/status for document_id when complete.
+    """
     await check_storage_limit(user.id, user.is_anonymous, db)
     prefs = await db.get(UserPreferences, user.id)
     cached_data = await file_cache.retrieve_data(req.hash)
@@ -766,7 +895,6 @@ async def create_document(
         )
 
     if req.batch_mode:
-        response.status_code = status.HTTP_202_ACCEPTED
         return await _submit_batch_extraction(
             content=cached_doc.content,
             content_type=cached_doc.metadata.content_type,
@@ -783,67 +911,75 @@ async def create_document(
             redis=redis,
         )
 
-    # arXiv + markxiv short-circuits standard extraction (free tier only)
-    arxiv_match = detect_arxiv_url(cached_doc.metadata.url) if cached_doc.metadata.url else None
-    if arxiv_match and settings.markxiv_url and not req.ai_transform:
-        arxiv_id, _ = arxiv_match
-        markdown = await fetch_from_markxiv(settings.markxiv_url, arxiv_id)
-        extraction_result = DocumentExtractionResult(
-            pages={0: ExtractedPage(markdown=markdown, images=[])},
-            extraction_method="markxiv",
+    # AI extraction requires extractor to be configured
+    if req.ai_transform:
+        if not ai_extractor or not ai_extractor_config:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="AI transform not configured on this server",
+            )
+
+    # Rate limit (sync — returns 429 immediately)
+    ratelimit_key = RATELIMIT_EXTRACTION.format(user_id=user.id)
+    current = await redis.incr(ratelimit_key)
+    await redis.expire(ratelimit_key, 600)
+    if current > MAX_CONCURRENT_EXTRACTIONS:
+        await redis.decr(ratelimit_key)
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many concurrent document extractions. Please wait for current extractions to complete.",
         )
-    else:
-        extraction_result = await _extract_document_content(
+
+    # Billing pre-check (sync — returns 402 immediately)
+    if req.ai_transform:
+        assert ai_extractor_config is not None  # checked above
+        await _billing_precheck(
+            config=ai_extractor_config,
+            content=cached_doc.content,
+            content_type=cached_doc.metadata.content_type,
+            content_hash=content_hash,
+            user_id=user.id,
+            pages=req.pages,
+            db=db,
+            billing_enabled=settings.billing_enabled,
+            redis=redis,
+        )
+
+    arxiv_match = detect_arxiv_url(cached_doc.metadata.url) if cached_doc.metadata.url else None
+    arxiv_id = arxiv_match[0] if arxiv_match and settings.markxiv_url and not req.ai_transform else None
+
+    extraction_id = str(uuid4())
+
+    asyncio.create_task(
+        _run_extraction(
+            extraction_id=extraction_id,
             content=cached_doc.content,
             content_type=cached_doc.metadata.content_type,
             content_hash=content_hash,
             total_pages=cached_doc.metadata.total_pages,
             file_size=cached_doc.metadata.file_size or len(cached_doc.content),
             ai_transform=req.ai_transform,
+            arxiv_id=arxiv_id,
+            title=cached_doc.metadata.title or req.title or cached_doc.metadata.file_name,
             pages=req.pages,
             user_id=user.id,
-            db=db,
+            is_public=prefs.default_documents_public if prefs else False,
+            metadata=cached_doc.metadata,
+            settings=settings,
             extraction_cache=extraction_cache,
             image_storage=image_storage,
-            settings=settings,
             ai_extractor_config=ai_extractor_config,
             ai_extractor=ai_extractor,
             redis=redis,
+            ratelimit_key=ratelimit_key,
         )
-
-    if not extraction_result.pages:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Document extraction failed. Please try again later.",
-        )
-
-    page_markdowns = {idx: page.markdown for idx, page in extraction_result.pages.items()}
-    deduped_markdowns = deduplicate_footnotes(page_markdowns)
-    extracted_text: str = "\n\n".join(deduped_markdowns[idx] for idx in sorted(deduped_markdowns.keys()))
-
-    ast = parse_markdown(extracted_text)
-    structured_doc = transform_to_document(
-        ast,
-        max_block_chars=settings.max_block_chars,
-        soft_limit_mult=settings.soft_limit_mult,
-        min_chunk_size=settings.min_chunk_size,
     )
-    structured_content = structured_doc.model_dump_json()
-    text_blocks = structured_doc.get_audio_blocks()
 
-    doc = await _create_document_with_blocks(
-        db=db,
-        user_id=user.id,
-        title=cached_doc.metadata.title or req.title or cached_doc.metadata.file_name,
-        original_text=extracted_text,
-        structured_content=structured_content,
-        metadata=cached_doc.metadata,
-        extraction_method=extraction_result.extraction_method,
-        text_blocks=text_blocks,
-        is_public=prefs.default_documents_public if prefs else False,
+    return ExtractionAcceptedResponse(
+        extraction_id=extraction_id,
         content_hash=content_hash,
+        total_pages=cached_doc.metadata.total_pages,
     )
-    return DocumentCreateResponse(id=doc.id, title=doc.title, failed_pages=extraction_result.failed_pages)
 
 
 class DocumentListItem(BaseModel):
@@ -1216,43 +1352,6 @@ async def _get_uncached_pages(
         if not await extraction_cache.exists(key):
             uncached.add(page_idx)
     return uncached
-
-
-async def _create_document_with_blocks(
-    db: DbSession,
-    user_id: str,
-    title: str | None,
-    original_text: str,
-    structured_content: str,
-    metadata: DocumentMetadata,
-    extraction_method: str | None,
-    text_blocks: list[str],
-    is_public: bool,
-    content_hash: str | None = None,
-) -> Document:
-    doc = Document(
-        user_id=user_id,
-        is_public=is_public,
-        title=title,
-        original_text=original_text,
-        extraction_method=extraction_method,
-        content_hash=content_hash,
-        structured_content=structured_content,
-        metadata_dict=metadata.model_dump(),
-    )
-    db.add(doc)
-    db.add_all(
-        [
-            Block(
-                document=doc,
-                idx=idx,
-                text=block_text,
-            )
-            for idx, block_text in enumerate(text_blocks)
-        ]
-    )
-    await db.commit()
-    return doc
 
 
 def _validate_page_numbers(pages: list[int] | None, total_pages: int) -> None:

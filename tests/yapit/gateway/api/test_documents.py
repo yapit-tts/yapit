@@ -1,3 +1,4 @@
+import asyncio
 from unittest.mock import patch
 
 import pytest
@@ -5,8 +6,36 @@ import pytest
 from yapit.gateway.api.v1.documents import (
     DocumentCreateResponse,
     DocumentPrepareResponse,
+    ExtractionAcceptedResponse,
+    ExtractionStatusResponse,
     _get_endpoint_type_from_content_type,
 )
+
+
+async def poll_for_document(
+    client,
+    extraction_id: str,
+    content_hash: str,
+    pages: list[int],
+    timeout: float = 5.0,
+) -> ExtractionStatusResponse:
+    """Poll /extraction/status until document_id or error appears."""
+    deadline = asyncio.get_event_loop().time() + timeout
+    while asyncio.get_event_loop().time() < deadline:
+        r = await client.post(
+            "/v1/documents/extraction/status",
+            json={
+                "extraction_id": extraction_id,
+                "content_hash": content_hash,
+                "processor_slug": "markitdown",
+                "pages": pages,
+            },
+        )
+        status_data = ExtractionStatusResponse.model_validate(r.json())
+        if status_data.document_id or status_data.error:
+            return status_data
+        await asyncio.sleep(0.05)
+    raise TimeoutError(f"Extraction did not complete within {timeout}s")
 
 
 @pytest.mark.asyncio
@@ -28,8 +57,7 @@ async def test_create_document(client):
 
 @pytest.mark.asyncio
 async def test_prepare_and_create_document_from_url(client, as_test_user, session):
-    """Test complete flow: URL → prepare → create document."""
-    # Mock the download to avoid real network calls
+    """Test complete flow: URL → prepare → create document (async extraction)."""
     mock_content = b"Test document content"
     mock_content_type = "text/plain"
 
@@ -44,10 +72,10 @@ async def test_prepare_and_create_document_from_url(client, as_test_user, sessio
 
         assert prepare_data.metadata.content_type == "text/plain"
         assert prepare_data.metadata.total_pages == 1
-        assert prepare_data.endpoint == "document"  # Not HTML, so not "website"
+        assert prepare_data.endpoint == "document"
         assert prepare_data.uncached_pages == set()
 
-        # Step 2: Create document with free processor (ai_transform=False)
+        # Step 2: Submit document for extraction (returns 202)
         create_response = await client.post(
             "/v1/documents/document",
             json={
@@ -57,9 +85,13 @@ async def test_prepare_and_create_document_from_url(client, as_test_user, sessio
             },
         )
 
-        assert create_response.status_code == 201
-        doc = DocumentCreateResponse.model_validate(create_response.json())
-        assert doc.title == "Test Document"
+        assert create_response.status_code == 202
+        accepted = ExtractionAcceptedResponse.model_validate(create_response.json())
+
+        # Step 3: Poll for completion
+        status_data = await poll_for_document(client, accepted.extraction_id, accepted.content_hash, pages=[0])
+        assert status_data.document_id is not None
+        assert status_data.error is None
 
 
 @pytest.mark.asyncio

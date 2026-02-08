@@ -36,12 +36,21 @@ interface ExtractionStatusResponse {
   total_pages: number;
   completed_pages: number[];
   status: "processing" | "complete" | "not_found";
+  document_id: string | null;
+  error: string | null;
+  failed_pages: number[];
+}
+
+interface ExtractionAcceptedResponse {
+  extraction_id: string;
+  content_hash: string;
+  total_pages: number;
 }
 
 interface DocumentCreateResponse {
   id: string;
   title: string | null;
-  failed_pages: number[];  // 0-indexed pages that failed extraction
+  failed_pages: number[];
 }
 
 interface BatchSubmittedResponse {
@@ -87,6 +96,8 @@ export function UnifiedInput() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragCounterRef = useRef(0);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const extractionIdRef = useRef<string | null>(null);
   const navigate = useNavigate();
   const { api, isAnonymous } = useApi();
   const { tier } = useSubscription();
@@ -102,6 +113,11 @@ export function UnifiedInput() {
         abortControllerRef.current.abort();
         abortControllerRef.current = null;
       }
+      if (pollTimerRef.current) {
+        clearTimeout(pollTimerRef.current);
+        pollTimerRef.current = null;
+      }
+      extractionIdRef.current = null;
       setValue("");
       setMode("idle");
       setUrlState("detecting");
@@ -202,17 +218,17 @@ export function UnifiedInput() {
     setIsCreating(true);
     setCompletedPages([]);
 
-    // Create abort controller for this request
     const abortController = new AbortController();
     abortControllerRef.current = abortController;
+
+    const isImage = data.metadata.content_type?.startsWith("image/") ?? false;
+    const isPlainText = ["text/plain", "text/markdown", "text/x-markdown"].includes(data.metadata.content_type ?? "");
+    const useAiTransform = isImage || (aiTransformEnabled && !isPlainText);
+    const useBatchMode = batchMode && useAiTransform;
 
     const endpoint = data.endpoint === "website"
       ? "/v1/documents/website"
       : "/v1/documents/document";
-
-    const isImage = data.metadata.content_type?.startsWith("image/") ?? false;
-    const useAiTransform = isImage || aiTransformEnabled;
-    const useBatchMode = batchMode && useAiTransform;
     const body = data.endpoint === "website"
       ? { hash: data.hash }
       : {
@@ -222,36 +238,23 @@ export function UnifiedInput() {
           batch_mode: useBatchMode,
         };
 
-    // Start polling for progress (only for non-batch documents with AI transform)
-    let pollInterval: ReturnType<typeof setInterval> | null = null;
-    if (data.endpoint === "document" && useAiTransform && !useBatchMode) {
-      const requestedPages = pages ?? Array.from({ length: data.metadata.total_pages }, (_, i) => i);
-      const processorSlug = useAiTransform ? "gemini" : "markitdown";
-
-      pollInterval = setInterval(async () => {
-        try {
-          const statusResponse = await api.post<ExtractionStatusResponse>("/v1/documents/extraction/status", {
-            content_hash: data.content_hash,
-            processor_slug: processorSlug,
-            pages: requestedPages,
-          });
-          setCompletedPages(statusResponse.data.completed_pages);
-        } catch (err) {
-          // Log but don't fail — polling is just for UI feedback, main POST handles real errors
-          console.warn("Extraction status poll failed (non-critical):", err);
-        }
-      }, 1500);
-    }
-
     try {
-      const response = await api.post<DocumentCreateResponse | BatchSubmittedResponse>(endpoint, body, {
+      const response = await api.post(endpoint, body, {
         signal: abortController.signal,
       });
-
-      if (pollInterval) clearInterval(pollInterval);
       abortControllerRef.current = null;
 
-      if (response.status === 202) {
+      // Website endpoint returns 201 with document (still sync)
+      if (response.status === 201) {
+        const docData = response.data as DocumentCreateResponse;
+        navigate(`/listen/${docData.id}`, {
+          state: { documentTitle: docData.title },
+        });
+        return;
+      }
+
+      // Batch mode — navigate to batch status page
+      if (useBatchMode) {
         const batchData = response.data as BatchSubmittedResponse;
         navigate(`/batch/${batchData.content_hash}`, {
           state: {
@@ -263,21 +266,64 @@ export function UnifiedInput() {
         return;
       }
 
-      const docData = response.data as DocumentCreateResponse;
-      const failedPages = docData.failed_pages ?? [];
-      navigate(`/listen/${docData.id}`, {
-        state: {
-          documentTitle: docData.title,
-          failedPages: failedPages.length > 0 ? failedPages : undefined,
+      // Async extraction — poll for document_id
+      const accepted = response.data as ExtractionAcceptedResponse;
+      const requestedPages = pages ?? Array.from({ length: data.metadata.total_pages }, (_, i) => i);
+      const processorSlug = useAiTransform ? "gemini" : "markitdown";
+      extractionIdRef.current = accepted.extraction_id;
+
+      const FAST_POLL_MS = 300;
+      const SLOW_POLL_MS = 1500;
+      const FAST_POLL_COUNT = 5;
+      let pollCount = 0;
+
+      const poll = async () => {
+        try {
+          const statusResponse = await api.post<ExtractionStatusResponse>("/v1/documents/extraction/status", {
+            extraction_id: accepted.extraction_id,
+            content_hash: accepted.content_hash,
+            processor_slug: processorSlug,
+            pages: requestedPages,
+          });
+          const statusData = statusResponse.data;
+          setCompletedPages(statusData.completed_pages);
+
+          if (statusData.document_id) {
+            extractionIdRef.current = null;
+            const failedPages = statusData.failed_pages ?? [];
+            navigate(`/listen/${statusData.document_id}`, {
+              state: {
+                documentTitle: data.metadata.title || data.metadata.file_name,
+                failedPages: failedPages.length > 0 ? failedPages : undefined,
+              },
+            });
+            return;
+          }
+
+          if (statusData.error) {
+            extractionIdRef.current = null;
+            setIsCreating(false);
+            setCompletedPages([]);
+            setError(statusData.error);
+            return;
+          }
+        } catch (err) {
+          console.warn("Extraction status poll failed:", err);
         }
-      });
+
+        pollCount++;
+        const delay = pollCount < FAST_POLL_COUNT ? FAST_POLL_MS : SLOW_POLL_MS;
+        pollTimerRef.current = setTimeout(poll, delay);
+      };
+
+      // Start first poll immediately
+      pollTimerRef.current = setTimeout(poll, FAST_POLL_MS);
+
     } catch (err) {
-      if (pollInterval) clearInterval(pollInterval);
       abortControllerRef.current = null;
       setIsCreating(false);
       setCompletedPages([]);
 
-      // Don't show error if user cancelled
       if (err instanceof AxiosError && err.code === "ERR_CANCELED") {
         return;
       }
@@ -297,12 +343,28 @@ export function UnifiedInput() {
     }
   };
 
-  const cancelExtraction = useCallback(() => {
+  const cancelExtraction = useCallback(async () => {
+    // Cancel in-flight POST (e.g., during billing check)
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
     }
-  }, []);
+    // Stop polling + cancel background extraction
+    if (pollTimerRef.current) {
+      clearTimeout(pollTimerRef.current);
+      pollTimerRef.current = null;
+    }
+    if (extractionIdRef.current) {
+      try {
+        await api.post("/v1/documents/extraction/cancel", {
+          extraction_id: extractionIdRef.current,
+        });
+      } catch { /* best-effort */ }
+      extractionIdRef.current = null;
+    }
+    setIsCreating(false);
+    setCompletedPages([]);
+  }, [api]);
 
   const handleTextSubmit = async () => {
     if (!value.trim()) return;
@@ -351,18 +413,10 @@ export function UnifiedInput() {
 
       const contentType = response.data.metadata.content_type;
 
-      // Auto-create for text-based files (no OCR option needed)
+      // Auto-create for text-based files (no OCR option needed, skip MetadataBanner)
       const isTextBased = ["text/plain", "text/markdown", "text/x-markdown", "text/html"].includes(contentType);
       if (isTextBased) {
-        setIsCreating(true);
-        const docResponse = await api.post<DocumentCreateResponse>("/v1/documents/document", {
-          hash: response.data.hash,
-          pages: null,
-          processor_slug: "markitdown",
-        });
-        navigate(`/listen/${docResponse.data.id}`, {
-          state: { documentTitle: docResponse.data.title }
-        });
+        await createDocument(response.data);
       } else {
         setPrepareData(response.data);
         setUrlState("ready");

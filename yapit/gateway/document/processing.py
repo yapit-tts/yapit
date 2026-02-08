@@ -12,7 +12,7 @@ from yapit.gateway.cache import Cache
 from yapit.gateway.config import Settings
 from yapit.gateway.constants import SUPPORTED_DOCUMENT_MIME_TYPES
 from yapit.gateway.document.extraction import PER_PAGE_TOLERANCE, deduplicate_footnotes, estimate_document_tokens
-from yapit.gateway.domain_models import DocumentMetadata, UsageType
+from yapit.gateway.domain_models import Block, Document, DocumentMetadata, UsageType
 from yapit.gateway.exceptions import ValidationError
 from yapit.gateway.markdown import parse_markdown, transform_to_document
 from yapit.gateway.metrics import log_event
@@ -292,3 +292,40 @@ def process_pages_to_document(
         structured_content=structured_doc.model_dump_json(),
         text_blocks=structured_doc.get_audio_blocks(),
     )
+
+
+async def create_document_with_blocks(
+    db: AsyncSession,
+    user_id: str,
+    title: str | None,
+    original_text: str,
+    structured_content: str,
+    metadata: DocumentMetadata,
+    extraction_method: str | None,
+    text_blocks: list[str],
+    is_public: bool,
+    content_hash: str | None = None,
+) -> Document:
+    doc = Document(
+        user_id=user_id,
+        is_public=is_public,
+        title=title,
+        original_text=original_text,
+        extraction_method=extraction_method,
+        content_hash=content_hash,
+        structured_content=structured_content,
+        metadata_dict=metadata.model_dump(),
+    )
+    db.add(doc)
+    db.add_all(
+        [
+            Block(
+                document=doc,
+                idx=idx,
+                text=block_text,
+            )
+            for idx, block_text in enumerate(text_blocks)
+        ]
+    )
+    await db.commit()
+    return doc

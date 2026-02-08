@@ -24,9 +24,10 @@ from yapit.gateway.document.batch import (
 from yapit.gateway.document.extraction import substitute_image_placeholders
 from yapit.gateway.document.processing import (
     ExtractedPage,
+    create_document_with_blocks,
     process_pages_to_document,
 )
-from yapit.gateway.domain_models import Block, Document, DocumentMetadata, UsageType
+from yapit.gateway.domain_models import Document, DocumentMetadata, UsageType
 from yapit.gateway.metrics import log_event
 from yapit.gateway.reservations import release_reservation
 from yapit.gateway.usage import record_usage
@@ -162,28 +163,18 @@ async def create_document_from_batch(
         file_size=job.file_size,
     )
 
-    doc = Document(
+    doc = await create_document_with_blocks(
+        db=db,
         user_id=job.user_id,
-        is_public=False,
         title=job.title,
         original_text=processed.extracted_text,
-        extraction_method="gemini",
-        content_hash=job.content_hash,
         structured_content=processed.structured_content,
-        metadata_dict=metadata.model_dump(),
+        metadata=metadata,
+        extraction_method="gemini",
+        text_blocks=processed.text_blocks,
+        is_public=False,
+        content_hash=job.content_hash,
     )
-    db.add(doc)
-    db.add_all(
-        [
-            Block(
-                document=doc,
-                idx=idx,
-                text=block_text,
-            )
-            for idx, block_text in enumerate(processed.text_blocks)
-        ]
-    )
-    await db.commit()
 
     logger.info(f"Created document {doc.id} from batch job {job.job_name}")
     return doc
