@@ -57,6 +57,23 @@ export class AudioPlayer {
     const wavBlob = this.audioBufferToWav(buffer);
     this.currentBlobUrl = URL.createObjectURL(wavBlob);
 
+    return this.waitForCanPlayThrough();
+  }
+
+  /** Load raw audio bytes (e.g. OGG Opus) directly — no decode/re-encode. Returns actual duration in ms. */
+  loadRawAudio(data: ArrayBuffer, mimeType: string): Promise<number> {
+    this.stop();
+
+    const blob = new Blob([data], { type: mimeType });
+    this.currentBlobUrl = URL.createObjectURL(blob);
+
+    return this.waitForCanPlayThrough().then(() => {
+      this.currentDurationMs = Math.round(this.audioElement.duration * 1000);
+      return this.currentDurationMs;
+    });
+  }
+
+  private waitForCanPlayThrough(): Promise<void> {
     return new Promise((resolve, reject) => {
       const cleanup = () => {
         this.audioElement.removeEventListener("canplaythrough", onCanPlay);

@@ -26,10 +26,6 @@ class TTSModel(SQLModel, table=True):
     name: str
     description: str | None = Field(default=None)
 
-    sample_rate: int
-    channels: int
-    sample_width: int
-    native_codec: str
     usage_multiplier: float = Field(default=1.0)
     is_active: bool = Field(default=True, index=True)
 
@@ -165,12 +161,11 @@ class BlockVariant(SQLModel, table=True):
     voice: Voice = Relationship(back_populates="block_variants")
 
     @staticmethod
-    def get_hash(text: str, model_slug: str, voice_slug: str, codec: str, parameters: dict) -> str:
+    def get_hash(text: str, model_slug: str, voice_slug: str, parameters: dict) -> str:
         hasher = hashlib.sha256()
         hasher.update(text.encode("utf-8"))
         hasher.update(f"|{model_slug}".encode("utf-8"))
         hasher.update(f"|{voice_slug}".encode("utf-8"))
-        hasher.update(f"|{codec}".encode("utf-8"))
         for key, value in sorted(parameters.items()):
             hasher.update(f"|{key}={value}".encode("utf-8"))
         return hasher.hexdigest()

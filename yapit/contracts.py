@@ -60,7 +60,6 @@ class SynthesisParameters(BaseModel):
     model: str
     voice: str
     text: str
-    codec: str  # codec the worker must produce / translate to
     kwargs: dict = Field(default_factory=dict)  # additional parameters for the worker
 
     model_config = ConfigDict(frozen=True)

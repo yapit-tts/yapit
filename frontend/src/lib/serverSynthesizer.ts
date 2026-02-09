@@ -51,7 +51,7 @@ interface ServerSynthesizerDeps {
   sendWS: (msg: WSSynthesizeRequest | WSCursorMoved) => void;
   checkWSConnected: () => boolean;
   fetchAudio: (url: string) => Promise<ArrayBuffer>;
-  decodeAudio: (data: ArrayBuffer) => Promise<AudioBuffer>;
+  decodeAudio?: (data: ArrayBuffer) => Promise<AudioBuffer>;
 }
 
 /**
@@ -232,10 +232,13 @@ export function createServerSynthesizer(deps: ServerSynthesizerDeps): Synthesize
       pending.delete(key);
 
       deps.fetchAudio(msg.audio_url)
-        .then((arrayBuffer) => deps.decodeAudio(arrayBuffer))
-        .then((audioBuffer) => {
-          const durationMs = Math.round(audioBuffer.duration * 1000);
-          req.resolve({ buffer: audioBuffer, duration_ms: durationMs });
+        .then(async (arrayBuffer) => {
+          if (deps.decodeAudio) {
+            const audioBuffer = await deps.decodeAudio(arrayBuffer);
+            req.resolve({ buffer: audioBuffer, duration_ms: Math.round(audioBuffer.duration * 1000) });
+          } else {
+            req.resolve({ rawAudio: arrayBuffer, duration_ms: 0 });
+          }
         })
         .catch((err) => {
           console.error(`[ServerSynth] Failed to fetch audio for block ${block_idx}:`, err);

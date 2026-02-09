@@ -11,6 +11,8 @@ from loguru import logger
 from yapit.workers.adapters.base import SynthAdapter
 
 INWORLD_API_BASE = "https://api.inworld.ai/tts/v1"
+INWORLD_AUDIO_ENCODING = "OGG_OPUS"
+INWORLD_SAMPLE_RATE_HZ = 48_000
 
 RETRYABLE_STATUS_CODES = {429, 500, 503, 504}
 MAX_RETRIES = 6
@@ -35,11 +37,11 @@ class InworldAdapter(SynthAdapter):
 
         payload = {
             "text": text,
-            "voiceId": voice_id,
-            "modelId": self._model_id,
+            "voice_id": voice_id,
+            "model_id": self._model_id,
             "audio_config": {
-                "audio_encoding": "MP3",
-                "sample_rate_hertz": 48000,
+                "audio_encoding": INWORLD_AUDIO_ENCODING,
+                "sample_rate_hertz": INWORLD_SAMPLE_RATE_HZ,
             },
         }
 
@@ -80,7 +82,6 @@ class InworldAdapter(SynthAdapter):
     async def _do_synthesis(self, payload: dict) -> bytes:
         assert self._client is not None
         audio_chunks: list[bytes] = []
-
         async with self._client.stream(
             "POST",
             f"{INWORLD_API_BASE}/voice:stream",
@@ -89,18 +90,26 @@ class InworldAdapter(SynthAdapter):
         ) as response:
             response.raise_for_status()
             async for line in response.aiter_lines():
-                if not line.strip():
+                if not line:
+                    continue
+                raw = line.strip()
+                if not raw:
+                    continue
+                if raw.startswith("data:"):
+                    raw = raw[5:].strip()
+                if not raw:
                     continue
                 try:
-                    data = json.loads(line)
-                    audio_b64 = data.get("result", {}).get("audioContent", "")
-                    if audio_b64:
-                        audio_chunks.append(base64.b64decode(audio_b64))
+                    data = json.loads(raw)
                 except json.JSONDecodeError:
-                    logger.warning(f"Failed to parse Inworld response: {line[:100]}")
-
+                    continue
+                audio_b64 = data.get("result", {}).get("audioContent", "")
+                if audio_b64:
+                    audio_chunks.append(base64.b64decode(audio_b64))
         return b"".join(audio_chunks)
 
     def calculate_duration_ms(self, audio_bytes: bytes) -> int:
-        # MP3 at ~128kbps = ~16kB per second
-        return int((len(audio_bytes) / 16000) * 1000) if audio_bytes else 0
+        if not audio_bytes:
+            return 0
+        # OGG Opus from Inworld observed around 110-120kbps.
+        return int((len(audio_bytes) / 14_500) * 1000)

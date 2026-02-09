@@ -10,15 +10,10 @@ from yapit.gateway.domain_models import TTSModel, Voice
 @pytest.mark.asyncio
 async def test_list_models(client, as_test_user, session):
     """Test listing all available TTS models."""
-    # Create a dummy model with a voice
     model = TTSModel(
         slug="test-model",
         name="Test Model",
         description="A test model",
-        sample_rate=24000,
-        channels=1,
-        sample_width=2,
-        native_codec="pcm",
     )
     voice = Voice(
         slug="test-voice",
@@ -49,10 +44,6 @@ async def test_read_model(client, as_test_user, session):
     model = TTSModel(
         slug="test-model-read",
         name="Test Model Read",
-        sample_rate=24000,
-        channels=1,
-        sample_width=2,
-        native_codec="pcm",
     )
     session.add(model)
     await session.commit()
@@ -78,10 +69,6 @@ async def test_list_voices(client, as_test_user, session):
     model = TTSModel(
         slug="voice-model",
         name="Voice Model",
-        sample_rate=24000,
-        channels=1,
-        sample_width=2,
-        native_codec="pcm",
     )
     voice1 = Voice(slug="voice1", name="Voice 1", lang="en", model=model)
     voice2 = Voice(slug="voice2", name="Voice 2", lang="fr", model=model)
@@ -112,19 +99,11 @@ async def test_inactive_models_not_listed(client, as_test_user, session):
     active_model = TTSModel(
         slug="active-model",
         name="Active Model",
-        sample_rate=24000,
-        channels=1,
-        sample_width=2,
-        native_codec="pcm",
         is_active=True,
     )
     inactive_model = TTSModel(
         slug="inactive-model",
         name="Inactive Model",
-        sample_rate=24000,
-        channels=1,
-        sample_width=2,
-        native_codec="pcm",
         is_active=False,
     )
     session.add(active_model)
@@ -145,10 +124,6 @@ async def test_inactive_voices_not_listed(client, as_test_user, session):
     model = TTSModel(
         slug="model-with-voices",
         name="Model With Voices",
-        sample_rate=24000,
-        channels=1,
-        sample_width=2,
-        native_codec="pcm",
     )
     active_voice = Voice(slug="active-voice", name="Active", lang="en", model=model, is_active=True)
     inactive_voice = Voice(slug="inactive-voice", name="Inactive", lang="en", model=model, is_active=False)

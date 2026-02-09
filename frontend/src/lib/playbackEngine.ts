@@ -13,7 +13,8 @@ export interface Block {
 }
 
 export interface AudioBufferData {
-  buffer: AudioBuffer;
+  buffer?: AudioBuffer;
+  rawAudio?: ArrayBuffer;
   duration_ms: number;
 }
 
@@ -162,7 +163,7 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
     for (let i = 0; i < blockIdx && i < blocks.length; i++) {
       if (isBlockSkipped(i)) continue;
       const audio = getBlockAudio(i);
-      ms += audio?.duration_ms ?? blocks[i].est_duration_ms ?? 0;
+      ms += audio?.duration_ms || blocks[i].est_duration_ms || 0;
     }
     return ms;
   }
@@ -223,7 +224,14 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
       advanceToNext();
     });
     try {
-      await deps.audioPlayer.load(audioData.buffer);
+      if (audioData.rawAudio) {
+        const actualMs = await deps.audioPlayer.loadRawAudio(audioData.rawAudio, "audio/ogg");
+        audioData.duration_ms = actualMs;
+        const blk = blocks[currentBlock];
+        if (blk) recordDurationCorrection(blk, actualMs);
+      } else if (audioData.buffer) {
+        await deps.audioPlayer.load(audioData.buffer);
+      }
       await deps.audioPlayer.play();
     } catch (err) {
       console.error("[PlaybackEngine] Audio playback failed, skipping block:", err);
@@ -275,7 +283,7 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
         if (result) {
           audioCache.set(key, result);
           const blk = blocks[blockIdx];
-          if (blk) recordDurationCorrection(blk, result.duration_ms);
+          if (blk && result.duration_ms > 0) recordDurationCorrection(blk, result.duration_ms);
           checkBufferReady();
         } else if (status === "buffering" && synthesizer.getError()) {
           // Persistent error while buffering (e.g. usage limit) — buffer will never fill
@@ -382,6 +390,7 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
   // --- Public API ---
 
   function play() {
+    console.log("[Engine] play() called", { status, blocksLen: blocks.length, currentBlock, model, voiceSlug, documentId });
     if (status === "playing" || status === "buffering") return;
     if (!blocks.length) return;
 

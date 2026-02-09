@@ -79,12 +79,10 @@ async def request_synthesis(
     Args:
         track_for_websocket: If True, adds subscriber/pending tracking for WebSocket notifications and cursor-based eviction. Set False for REST polling.
     """
-    served_codec = model.native_codec
     variant_hash = BlockVariant.get_hash(
         text=text,
         model_slug=model.slug,
         voice_slug=voice.slug,
-        codec=served_codec,
         parameters=voice.parameters,
     )
 
@@ -143,8 +141,6 @@ async def _queue_job(
     track_for_websocket: bool,
 ) -> str:
     """Queue a synthesis job. Returns variant_hash."""
-    served_codec = model.native_codec
-
     if variant is None:
         variant = BlockVariant(hash=variant_hash, model_id=model.id, voice_id=voice.id)
         db.add(variant)
@@ -182,7 +178,6 @@ async def _queue_job(
             voice=voice.slug,
             text=text,
             kwargs=voice.parameters,
-            codec=served_codec,
         ),
     )
 

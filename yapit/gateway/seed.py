@@ -16,10 +16,6 @@ def create_models() -> list[TTSModel]:
     kokoro = TTSModel(
         slug="kokoro",
         name="Kokoro",
-        native_codec="pcm",
-        sample_rate=24_000,
-        channels=1,
-        sample_width=2,
     )
 
     # Load kokoro voices
@@ -43,20 +39,12 @@ def create_models() -> list[TTSModel]:
     inworld = TTSModel(
         slug="inworld-1.5",
         name="Inworld TTS-1.5",
-        native_codec="mp3",
-        sample_rate=48_000,
-        channels=1,
-        sample_width=2,
     )
 
     # Inworld TTS-1.5-Max (slower, higher quality, 2x price)
     inworld_max = TTSModel(
         slug="inworld-1.5-max",
         name="Inworld TTS-1.5-Max",
-        native_codec="mp3",
-        sample_rate=48_000,
-        channels=1,
-        sample_width=2,
         usage_multiplier=2.0,
     )
 

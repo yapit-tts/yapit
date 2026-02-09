@@ -1,9 +1,11 @@
 import asyncio
+import io
 import json
 import os
 from pathlib import Path
 from typing import Unpack
 
+import av
 import numpy as np
 import torch
 from kokoro import KPipeline
@@ -12,6 +14,9 @@ from typing_extensions import TypedDict
 from yapit.workers.adapters.base import SynthAdapter
 
 DEVICE: str = os.getenv("DEVICE", "")
+
+KOKORO_SAMPLE_RATE = 24_000
+OPUS_BITRATE = 48_000
 
 
 class VoiceConfig(TypedDict):
@@ -28,6 +33,7 @@ class KokoroAdapter(SynthAdapter[VoiceConfig]):
         self._pipe: KPipeline | None = None
         self._voices: list[str] = []
         self._lock = asyncio.Lock()
+        self._last_duration_ms: int = 0
 
     @property
     def pipe(self) -> KPipeline:
@@ -46,7 +52,7 @@ class KokoroAdapter(SynthAdapter[VoiceConfig]):
 
     async def synthesize(self, text: str, **kwargs: Unpack[VoiceConfig]) -> bytes:
         async with self._lock:  # model not thread-safe (usage as local worker with fastapi)
-            return b"".join(
+            pcm = b"".join(
                 [
                     (audio.numpy() * 32767).astype(np.int16).tobytes()  # scale [-1, 1] f32 tensor to int16 range
                     for _, _, audio in self._pipe(text, voice=kwargs["voice"], speed=kwargs["speed"])
@@ -54,7 +60,30 @@ class KokoroAdapter(SynthAdapter[VoiceConfig]):
                 ]
             )
 
+        # Calculate exact duration from PCM before lossy encoding
+        self._last_duration_ms = int(len(pcm) / (KOKORO_SAMPLE_RATE * 2) * 1000)
+
+        return _pcm_to_ogg_opus(pcm)
+
     def calculate_duration_ms(self, audio_bytes: bytes) -> int:
-        """Calculate audio duration for Kokoro's 24kHz mono 16-bit PCM format."""
-        # Kokoro outputs: 24000 Hz, 1 channel, 2 bytes per sample (16-bit)
-        return int(len(audio_bytes) / (24_000 * 1 * 2) * 1000)
+        return self._last_duration_ms
+
+
+def _pcm_to_ogg_opus(pcm_bytes: bytes) -> bytes:
+    """Encode raw 24kHz mono int16 PCM to OGG_OPUS."""
+    buf = io.BytesIO()
+    output = av.open(buf, "w", format="ogg")
+    stream = output.add_stream("libopus", rate=KOKORO_SAMPLE_RATE)
+    stream.bit_rate = OPUS_BITRATE
+
+    samples = np.frombuffer(pcm_bytes, dtype=np.int16)
+    frame = av.AudioFrame.from_ndarray(samples.reshape(1, -1), format="s16", layout="mono")
+    frame.sample_rate = KOKORO_SAMPLE_RATE
+
+    for packet in stream.encode(frame):
+        output.mux(packet)
+    for packet in stream.encode(None):
+        output.mux(packet)
+    output.close()
+
+    return buf.getvalue()

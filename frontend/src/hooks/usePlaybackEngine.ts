@@ -46,8 +46,7 @@ export function usePlaybackEngine(
   const apiRef = useRef(api);
   apiRef.current = api;
 
-  // AudioContext needed for decoding (decodeAudioData, createBuffer).
-  // AudioPlayer plays directly through HTMLAudioElement (no Web Audio routing).
+  // AudioContext needed for browser synthesis (createBuffer).
   const audioContextRef = useRef<AudioContext | null>(null);
   const audioPlayerRef = useRef<AudioPlayer | null>(null);
   const engineRef = useRef<PlaybackEngine | null>(null);
@@ -122,7 +121,7 @@ export function usePlaybackEngine(
     (engine as { play: () => void }).play = () => {
       // Both fire synchronously in the user gesture context (tap/click handler).
       // unlock() registers the HTMLAudioElement with the browser for programmatic play.
-      // resume() unlocks AudioContext for decodeAudioData in synthesizers.
+      // resume() unlocks AudioContext for browser synthesis (createBuffer).
       audioPlayer.unlock();
       if (audioContext.state === "suspended") {
         audioContext.resume().catch(() => {});
@@ -153,7 +152,7 @@ export function usePlaybackEngine(
   }, [sections, skippedSections, engine]);
 
   // Keep AudioContext alive during playback for ongoing synthesis/decoding.
-  // If suspended (mobile app switch, phone call), decodeAudioData may fail.
+  // If suspended (mobile app switch, phone call), browser synthesis may fail.
   useEffect(() => {
     const handler = () => {
       const engineStatus = engine.getSnapshot().status;

@@ -148,12 +148,7 @@ async def get_block_variant(
     variant_hash: str,
     db: DbSession,
 ) -> BlockVariant:
-    return await get_or_404(
-        db,
-        BlockVariant,
-        variant_hash,
-        options=[selectinload(BlockVariant.model)],  # type: ignore[arg-type]
-    )
+    return await get_or_404(db, BlockVariant, variant_hash)
 
 
 async def get_redis_client(request: Request) -> Redis:
