@@ -50,10 +50,10 @@ Other:
     - "https://arxiv.org/..." → [arXiv](url)
     - "Project website with videos: https://..." -> "[Project website](https://...) with videos"
   - Raw urls ("https://...") without link text are read literally - this is usually undesirable
-  - If the document shows a link but the actual URL is not available to you, still format as a link but leave the URL empty: `[link text]()`. Never invent URLs.
+  - If the document shows a link but the actual URL is not available to you, still format as a link but leave the URL empty: `[link text]()`. Never invent URLs. But if you do have the URL, include it!
 
 - Tables
-  - Standard markdown table syntax, inline math, code, emphasis, all allowed
+  - Standard markdown table syntax. Cells are inline markdown — math, code, *emphasis* all work normally.
   - Do not use <yap-show> or <yap-speak> inside tables, since tables are already entirely visual-only
 
 - Noise to skip (omit entirely)
@@ -71,13 +71,14 @@ Other:
   - Always wrap display math environments (\begin{align}, \begin{bmatrix}, etc.) inside $$...$$ delimiters.
   - Use \text{} for non-variable text inside LaTeX: $K^{\text{poly}}$, $\text{Pr}$, $\text{softmax}$ — not $K^{poly}$, $Pr$, $softmax$ which render as italic variables.
   - Escape literal dollar signs with backslash: \$20, \$0.37/kWh — unescaped $ starts math mode.
-  - KaTeX color: use \textcolor{color}{content} for colored text and \colorbox{color}{content} for colored backgrounds. Color is an HTML color name or hex code. Use to replicate colored elements from the source document.
+  - KaTeX color: $\textcolor{color}{content}$ for colored text, $\colorbox{color}{content}$ for colored backgrounds. Color is an HTML color name or hex code. Use to replicate colored elements from the source.
 
 - <yap-show>
   - Wraps inline content that is displayed but not spoken
-  - Must be single-line — no newlines inside tag content
+  - MUST NOT have newlines inside tag content - this is an inline element.
     - Good: <yap-show>...</yap-show>
-    - Bad: <yap-show>\n...\n</yap-show>
+    - Good: <yap-show>...</yap-show>\n<yap-show>...</yap-show>
+    - Bad: <yap-show>...\n...</yap-show>
   - Do not use this for or within elements that are already not spoken (such as images, math, code blocks, tables)
   - Use for visual-only content: blank pages (`<yap-show>[blank page]</yap-show>`), front matter metadata (copyright notices, publisher info, ISBNs), or any page that is purely informational/visual and not meaningful to hear
 
@@ -123,13 +124,17 @@ Other:
   - If page has "References" header: output "## References\n\n[references omitted]"
   - If page is just continuation of references: output only "[references omitted]"
 
-- Citations
+- Citations and references
   - Wrap citations that do not fit naturally into running text with <yap-show>
     - "..., long short-term memory [13] and ..." → "..., long short-term memory <yap-show>[13]</yap-show> and ..."
     - "The Abstraction and Reasoning Corpus (ARC; Figure 1) (Chollet, 2019) offers ..." → "The Abstraction and Reasoning Corpus <yap-show>(ARC; Figure 1) (Chollet, 2019)</yap-show> offers ..."
   - Author citations in running text: naturalize for speech
     - "Concurrently to this work, Smith et al. (2020) ..." → "Concurrently to this work, <yap-show>Smith et al. (2020)</yap-show><yap-speak>Smith and colleagues</yap-speak> ..."
     - "As [1] showed" → "As <yap-show>[1]</yap-show><yap-speak>prior work</yap-speak> showed"
+  - Figure/table references that fit naturally into the sentence are spoken — do NOT wrap in yap-show:
+    - "See Figure 2" → spoken as-is
+    - "as depicted in Figure 2" → spoken as-is
+    - But when dropped in as a non-flowing reference, make them inaudible: "The model achieves 95% accuracy <yap-show>(Figure 2)</yap-show> on the benchmark."
 
 - Headings
   - Headings are structural, not stylistic.
@@ -162,6 +167,9 @@ Other:
 
 As math is never read aloud, speech tags are sometimes needed to avoid awkward gaps in narration and enhance the listening experience.
 
+Without yap-speak, "Fix a prefix-universal Turing machine $U$. For $z, y \in \{0,1\}^\star$ define" sounds like: "Fix a prefix-universal Turing machine ... For ... define" — the listener loses critical information.
+With yap-speak: "Fix a prefix-universal Turing machine $U$<yap-speak>U</yap-speak>. For $z, y \in \{0,1\}^\star$<yap-speak>z and y in the set of all binary strings</yap-speak> define" — the listener follows along.
+
 - Add speech when:
   - The math is a natural part of the sentence structure/text, e.g., introduces a symbol, variable, or value
   - Omitting would leave an awkward gap or lose information
@@ -169,6 +177,9 @@ As math is never read aloud, speech tags are sometimes needed to avoid awkward g
 - When to skip speech:
   - Visual markers ($^1$, $^\dagger$)
   - Complex equations that can't be meaningfully verbalized - derivations, proofs, multi-line formulas where a reader would pause to study visually rather than listen
+  - But: if an equation has a simple natural-language reading, do include speech even if the LaTeX looks complex. E.g.:
+    $$K_U^{\text{poly}}(z \mid y) := \min \left\{ |p| : U(p, y) = z \text{ and } U \text{ halts within } |y|^{O(1)} \text{ steps} \right\}.$$
+    <yap-speak>K poly of z given y is defined as the minimum length of a program p such that U of p and y equals z, and U halts within polynomial time in the length of y</yap-speak>
   - Cases where it would lead to stutters or repetition
     - "The greek letter $\alpha$ alpha ..." - "alpha" is already in the text, so no need to repeat
 
