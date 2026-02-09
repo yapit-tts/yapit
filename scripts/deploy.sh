@@ -118,9 +118,14 @@ if ! curl -sf "$PROD_URL" > /dev/null; then
 fi
 echo "  ✓ Frontend OK"
 
-RUNNING_COMMIT=$(curl -sf "https://api.yapit.md/version" 2>/dev/null | grep -oP '"commit":\s*"\K[^"]+' || echo "")
-if [ -n "$RUNNING_COMMIT" ] && [ "$RUNNING_COMMIT" != "$GIT_COMMIT" ] && [ "$RUNNING_COMMIT" != "unknown" ]; then
-  die "Gateway reports ${RUNNING_COMMIT:0:12}, expected ${GIT_COMMIT:0:12}"
+# Only check commit match when gateway was actually rebuilt (BUILT_IMAGES set by CI)
+if [ -z "${BUILT_IMAGES:-}" ] || echo "$BUILT_IMAGES" | grep -q "gateway"; then
+  RUNNING_COMMIT=$(curl -sf "https://api.yapit.md/version" 2>/dev/null | grep -oP '"commit":\s*"\K[^"]+' || echo "")
+  if [ -n "$RUNNING_COMMIT" ] && [ "$RUNNING_COMMIT" != "$GIT_COMMIT" ] && [ "$RUNNING_COMMIT" != "unknown" ]; then
+    die "Gateway reports ${RUNNING_COMMIT:0:12}, expected ${GIT_COMMIT:0:12}"
+  fi
+else
+  echo "  ⊘ Skipping commit check (gateway not rebuilt)"
 fi
 
 log "Deploy complete"
