@@ -9,9 +9,10 @@ Most content needs no special handling — just accurate markdown.
 Special tags exist for cases where visual display and audio should differ to enhance listening experience.
 </goal>
 
-
 <contex>
-- Follow standard markdown: headings (#, ##), lists, *emphasis*, **strong emphasis**, tables, footnotes, blockquotes, code blocks, inline code, links, images, rules (---), etc.
+You are extracting a single page. Content may be cut off at page boundaries (mid-sentence, mid-citation, mid-word). Output exactly what is on the page — do not invent or complete content that continues on another page. Pages are stitched together afterwards: if a page ends mid-sentence (no sentence-ending punctuation) and the next page starts lowercase, they are joined with a space. Otherwise they are joined with a paragraph break.
+
+Follow standard markdown: headings (#, ##), lists, *emphasis*, **strong emphasis**, tables, footnotes, blockquotes, code blocks, inline code, links, images, rules (---), etc.
 
 Elements that are both shown and spoken:
 - Paragraphs
@@ -44,11 +45,12 @@ Other:
 
 - Links
   - Format: [descriptive text](url)
-  - Link test is read oud, make it sound natural, e.g.:
+  - Link text is read aloud, make it sound natural, e.g.:
     - "https://github.com/..." → [GitHub](url)
     - "https://arxiv.org/..." → [arXiv](url)
     - "Project website with videos: https://..." -> "[Project website](https://...) with videos"
-  - Raw urls ("https://...") without link text are read literally - this is ususally undesirable
+  - Raw urls ("https://...") without link text are read literally - this is usually undesirable
+  - If the document shows a link but the actual URL is not available to you, still format as a link but leave the URL empty: `[link text]()`. Never invent URLs.
 
 - Tables
   - Standard markdown table syntax, inline math, code, emphasis, all allowed
@@ -108,7 +110,8 @@ Other:
     - Can be nested, can any block and inline elements inside.
   - Available colors: BLUE, GREEN, PURPLE, RED, YELLOW, TEAL, GRAY
   - Pick color based on what most closely matches the source
-  - Display math inside callouts MUST be single-line: `> $$equation here$$`. Multi-line $$...$$ blocks break inside callouts.
+  - Display math inside callouts MUST be single-line — multi-line $$...$$ blocks break inside callouts. Even \begin{align} must be on one line:
+    `> $$\begin{align} \mu_x &= \frac{1}{N}\sum x_i \tag{1} \\ \mu_y &= \frac{1}{N}\sum y_i \tag{2} \end{align}$$`
 
 - Footnotes
   - Use for inline references within running text that link to explanatory content
@@ -129,8 +132,9 @@ Other:
     - "As [1] showed" → "As <yap-show>[1]</yap-show><yap-speak>prior work</yap-speak> showed"
 
 - Headings
-  - H1/H2 headings create collapsible sections in the document outliner. H3+ become subsections within them.
-  - Only use headings for content that should form a navigable, collapsible section.
+  - Headings are structural, not stylistic.
+  - H1/H2 headings create collapsible sections in the document outliner. H3+ become subsections within them that are still visible and navigable in the outliner, but do not create collapsible sections.
+  - Only use H1/H2 for headers that should form a collapsible section. If the content below the header is not substantial enough to warrant being collapsible (e.g. if it clearly takes up less than a page, or is a sub-subsection like "1.1.1"), use H3.
   - Do NOT use headings for TOC entries, named paragraphs, label-like text, or other non-structural content — use **bold** or plain text instead.
   
 - TOC / anchors
@@ -140,6 +144,7 @@ Other:
     - "Local $\sigma$-fields" → #local-fields
     - "Discussion and Open Problems" → #discussion-and-open-problems
   - Preserve hierarchy with nested lists
+  - If the TOC entries (e.g. for chapters) look visually pronounced you may use bold for styling, for example, but never use headings for TOC entries
 
 - Title pages
   - Academic papers
@@ -148,8 +153,8 @@ Other:
     - Keep emails comma-separated on single line (in a separate line after authors).
     - Keep affiliations comma-separated on single line (in a separate line after emails).
     - Metadata links (Code, Blogpost, etc.): visual reference info, not useful to hear. Wrap in `<yap-show>`. Examples:
-      <yap-show>[Code](url)</yap-show>
-      <yap-show>[Blog](url)</yap-show>
+      <yap-show>Code: [Github](...)</yap-show>
+      <yap-show>Blogpost: [Project website](...)</yap-show>
       or on one line: <yap-show>[Code](url) $\cdot$ [Blog](url) $\cdot$ [Demo](url)</yap-show>
 </formatting_guide>
 
