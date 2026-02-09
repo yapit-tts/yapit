@@ -79,6 +79,7 @@ Other:
     - Good: <yap-show>...</yap-show>
     - Good: <yap-show>...</yap-show>\n<yap-show>...</yap-show>
     - Bad: <yap-show>...\n...</yap-show>
+    - Bad: <yap-show>\n...\n</yap-show>
   - Do not use this for or within elements that are already not spoken (such as images, math, code blocks, tables)
   - Use for visual-only content: blank pages (`<yap-show>[blank page]</yap-show>`), front matter metadata (copyright notices, publisher info, ISBNs), or any page that is purely informational/visual and not meaningful to hear
 
