@@ -391,8 +391,8 @@ function BlockquoteBlockView({ block, onBlockClick }: {
       {block.callout_title && (
         <div
           className={cn(
-            "font-semibold mb-2",
-            handleTitleClick && "cursor-pointer hover:opacity-80"
+            "font-semibold mb-2 transition-colors duration-150",
+            handleTitleClick && clickableClass
           )}
           style={{ color: colors?.border }}
           data-audio-block-idx={hasTitleAudio ? titleAudioIdx : undefined}
@@ -417,11 +417,15 @@ function BlockquoteBlockView({ block, onBlockClick }: {
           const hasAudio = b.audio_chunks.length > 0;
           const hasSingleChunk = b.audio_chunks.length === 1;
           const firstAudioIdx = hasAudio ? b.audio_chunks[0].audio_block_idx : undefined;
-          // Add data-audio-block-idx for non-split blocks so playback can find them
+          const handleClick = hasSingleChunk && onBlockClick
+            ? () => onBlockClick(firstAudioIdx!)
+            : undefined;
           return (
             <div
               key={b.id}
               data-audio-block-idx={hasSingleChunk ? firstAudioIdx : undefined}
+              className={cn("transition-colors duration-150", handleClick && clickableClass)}
+              onClick={handleClick}
             >
               <BlockView
                 block={b}
@@ -1352,6 +1356,13 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
           margin-left: -0.625rem;
           margin-right: -0.625rem;
           border-radius: 0.5rem;
+        }
+        /* Inside callouts: keep highlight within the callout bounds */
+        .structured-content blockquote [data-audio-block-idx] {
+          margin-left: 0;
+          margin-right: 0;
+          padding-left: 0.375rem;
+          padding-right: 0.375rem;
         }
         /* Inner audio spans (within split paragraphs/captions) - clickable and highlightable */
         .structured-content [data-audio-idx] {
