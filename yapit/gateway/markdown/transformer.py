@@ -1296,7 +1296,9 @@ class DocumentTransformer:
             return None
 
         callout_type = match.group(1).upper()
-        valid_colors = {"BLUE", "GREEN", "PURPLE", "RED", "YELLOW", "TEAL"}
+        if callout_type == "GREY":
+            callout_type = "GRAY"
+        valid_colors = {"BLUE", "GREEN", "PURPLE", "RED", "YELLOW", "TEAL", "GRAY"}
         if callout_type not in valid_colors:
             return None
 

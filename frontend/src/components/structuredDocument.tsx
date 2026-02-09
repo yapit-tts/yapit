@@ -353,6 +353,7 @@ const calloutColors: Record<string, { border: string; bg: string }> = {
   RED: { border: "#C98B8B", bg: "rgba(201, 139, 139, 0.1)" },
   YELLOW: { border: "#C9B87A", bg: "rgba(201, 184, 122, 0.1)" },
   TEAL: { border: "#6B9E9E", bg: "rgba(107, 158, 158, 0.1)" },
+  GRAY: { border: "#8C8C8C", bg: "rgba(140, 140, 140, 0.1)" },
 };
 
 function BlockquoteBlockView({ block, onBlockClick }: {

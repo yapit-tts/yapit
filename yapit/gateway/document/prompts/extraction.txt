@@ -54,10 +54,11 @@ Other:
   - Standard markdown table syntax, inline math, code, emphasis, all allowed
   - Do not use <yap-show> or <yap-speak> inside tables, since tables are already entirely visual-only
 
-- Noise to skip
+- Noise to skip (omit entirely)
   - Page numbers
   - Headers/footers
   - Watermarks
+  - Running chapter headers repeated at top of pages (e.g., "Chapter 1. Introduction")
 
 - Math / KaTeX compatibility
   - If an equation has a number in the original (e.g., "(1)" next to it), include inside LaTeX: $$E=mc^2 \tag{1}$$
@@ -65,14 +66,18 @@ Other:
   - A blank line is required BEFORE each $$block$$.
   - $$block$$ must be standalone, i.e. no other content (be it text, yap tags) on the same line
   - Prefer to group equations that appear together in the source into a single $$...$$ block with \begin{align} ... \end{align} rather than multiple separate $$...$$ blocks.
+  - Always wrap display math environments (\begin{align}, \begin{bmatrix}, etc.) inside $$...$$ delimiters.
+  - Use \text{} for non-variable text inside LaTeX: $K^{\text{poly}}$, $\text{Pr}$, $\text{softmax}$ — not $K^{poly}$, $Pr$, $softmax$ which render as italic variables.
+  - Escape literal dollar signs with backslash: \$20, \$0.37/kWh — unescaped $ starts math mode.
+  - KaTeX color: use \textcolor{color}{content} for colored text and \colorbox{color}{content} for colored backgrounds. Color is an HTML color name or hex code. Use to replicate colored elements from the source document.
 
-- <yap-show> 
-  - Wraps inline content
-  - Must be single-line - no newlines inside tag content
-    - Good: <yap-show>...</yap-show> 
+- <yap-show>
+  - Wraps inline content that is displayed but not spoken
+  - Must be single-line — no newlines inside tag content
+    - Good: <yap-show>...</yap-show>
     - Bad: <yap-show>\n...\n</yap-show>
-  - Use for inline visual content that should not be spoken
   - Do not use this for or within elements that are already not spoken (such as images, math, code blocks, tables)
+  - Use for visual-only content: blank pages (`<yap-show>[blank page]</yap-show>`), front matter metadata (copyright notices, publisher info, ISBNs), or any page that is purely informational/visual and not meaningful to hear
 
 - <yap-speak>
   - Wraps raw text that is passed to TTS
@@ -96,13 +101,14 @@ Other:
   - For each detected image, output exactly one image placeholder at the position where it appears in source.
   - All images share the same "detected-image" placeholder.
 
-- Callouts 
+- Callouts
   - Use for framed/boxed content, or content visually distinguished from the rest of the page with colored background/shading/highlighting
   - Syntax: > [!COLOR] Optional Title
     - EVERY line of the callout block must start with "> "
     - Can be nested, can any block and inline elements inside.
-  - Available colors: BLUE, GREEN, PURPLE, RED, YELLOW, TEAL
+  - Available colors: BLUE, GREEN, PURPLE, RED, YELLOW, TEAL, GRAY
   - Pick color based on what most closely matches the source
+  - Display math inside callouts MUST be single-line: `> $$equation here$$`. Multi-line $$...$$ blocks break inside callouts.
 
 - Footnotes
   - Use for inline references within running text that link to explanatory content
@@ -119,14 +125,13 @@ Other:
     - "..., long short-term memory [13] and ..." → "..., long short-term memory <yap-show>[13]</yap-show> and ..."
     - "The Abstraction and Reasoning Corpus (ARC; Figure 1) (Chollet, 2019) offers ..." → "The Abstraction and Reasoning Corpus <yap-show>(ARC; Figure 1) (Chollet, 2019)</yap-show> offers ..."
   - Author citations in running text: naturalize for speech
-    - "Concurrently to this work, Smith et al. (2020) ..." → "Concurrently to this work, Smith and colleagues ..."
-    - "As [1] showed" → "As prior work showed"
+    - "Concurrently to this work, Smith et al. (2020) ..." → "Concurrently to this work, <yap-show>Smith et al. (2020)</yap-show><yap-speak>Smith and colleagues</yap-speak> ..."
+    - "As [1] showed" → "As <yap-show>[1]</yap-show><yap-speak>prior work</yap-speak> showed"
 
-- Heading levels
-  - H1 (#): Document title only
-  - H2 (##): Major divisions — chapters, parts, top-level sections
-  - H3 (###): Use this for most things — regular sections, subsections
-  - H4 (####) and deeper: only when necessary for sub-subsections
+- Headings
+  - H1/H2 headings create collapsible sections in the document outliner. H3+ become subsections within them.
+  - Only use headings for content that should form a navigable, collapsible section.
+  - Do NOT use headings for TOC entries, named paragraphs, label-like text, or other non-structural content — use **bold** or plain text instead.
   
 - TOC / anchors
   - Convert to navigation links — strip page numbers and dot leaders entirely
@@ -142,7 +147,10 @@ Other:
     - Keep authors comma-separated on single line.
     - Keep emails comma-separated on single line (in a separate line after authors).
     - Keep affiliations comma-separated on single line (in a separate line after emails).
-    - Metadata links (Code, Blogpost, etc.): wrap in `<yap-show>` (one on each line) — visual reference info, not useful to hear, but important to be nicely formatted visually.
+    - Metadata links (Code, Blogpost, etc.): visual reference info, not useful to hear. Wrap in `<yap-show>`. Examples:
+      <yap-show>[Code](url)</yap-show>
+      <yap-show>[Blog](url)</yap-show>
+      or on one line: <yap-show>[Code](url) $\cdot$ [Blog](url) $\cdot$ [Demo](url)</yap-show>
 </formatting_guide>
 
 <speech_for_math>
@@ -161,8 +169,10 @@ As math is never read aloud, speech tags are sometimes needed to avoid awkward g
 
 - How to write speech:
   - Write as a human would read
-  - Ignore visual formatting: $\mathbf{z}$ → "z", NOT "bold z", $\mathcal{L}$ → "L" not "script L"
-  - Literal for simple math: $Q$ → "Q", $\alpha$ → "alpha", $n=5$ → "n equals 5"
+  - Ignore visual formatting: $\mathbf{z}$ → $\mathbf{z}$<yap-speak>z</yap-speak>, $\mathcal{L}$ → $\mathcal{L}$<yap-speak>L</yap-speak>
+  - Literal for simple math: $Q$ → $Q$<yap-speak>Q</yap-speak>, $\alpha$ → $\alpha$<yap-speak>alpha</yap-speak>, $n=5$ → $n=5$<yap-speak>n equals 5</yap-speak>
+    - If a sentence contains many inline math symbols, it may be more efficient and simple to write the speech for the entire sentence rather than each symbol separately, e.g.:
+      - "We set $\alpha = 0.01$, $\beta = 0.9$, $\gamma = 0.999$, and $\epsilon = 10^{-8}$ for all experiments." → "<yap-show>We set $\alpha = 0.01$, $\beta = 0.9$, $\gamma = 0.999$, and $\epsilon = 10^{-8}$ for all experiments.</yap-show><yap-speak>We set alpha to 0.01, beta to 0.9, gamma to 0.999, and epsilon to ten to the minus eight for all experiments.</yap-speak>"
   - Naturalize / reword to improve flow IFF contextually appropriate
     - "$$h = \frac{v}{n} \times 360 \quad \text{(Hue calculation)}$$<yap-speak>The hue h is calculated as v over n times 360</yap-speak>"
     - "The state of the system can be represented as the set $S = \{s_1, s_2, \ldots, s_n\}$<yap-speak>S, defined as s one, s two, up to s n</yap-speak>"

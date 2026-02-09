@@ -63,6 +63,9 @@ All six callout colors with example use cases:
 > [!TEAL] Exercise 1.1
 > Prove that the set of $2 \times 2$ invertible matrices forms a group under matrix multiplication.
 
+> [!GRAY] Historical Note
+> The concept of groups was first formalized by Évariste Galois in the 1830s, though the axiomatic definition came later with Weber and von Dyck.
+
 ---
 
 ## 3. Images and Figures
@@ -239,7 +242,7 @@ This concludes our comprehensive test document. The parser should correctly iden
 - Tables
 - Ordered and unordered lists
 - Regular blockquotes
-- All 6 callout colors (BLUE, GREEN, PURPLE, RED, YELLOW, TEAL)
+- All 7 callout colors (BLUE, GREEN, PURPLE, RED, YELLOW, TEAL, GRAY)
 - Display math
 - Footnotes with various labels
 - Horizontal rules

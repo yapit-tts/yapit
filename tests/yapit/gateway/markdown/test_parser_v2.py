@@ -683,7 +683,7 @@ class TestCallouts:
 
     def test_callout_all_colors(self):
         """All valid callout colors are recognized."""
-        colors = ["BLUE", "GREEN", "PURPLE", "RED", "YELLOW", "TEAL"]
+        colors = ["BLUE", "GREEN", "PURPLE", "RED", "YELLOW", "TEAL", "GRAY"]
         for color in colors:
             md = f"> [!{color}] Test\n> Content"
             ast = parse_markdown(md)
