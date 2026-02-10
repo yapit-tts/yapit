@@ -839,6 +839,10 @@ async def _run_extraction(
             logger.exception(f"Failed to store extraction error for {content_hash}")
     finally:
         await redis.decr(ratelimit_key)
+        # Safety net: release precheck reservation regardless of outcome.
+        # Harmless no-op if process_with_billing() already released it.
+        if ai_transform:
+            await release_reservation(redis, user_id, content_hash)
 
 
 @router.post(

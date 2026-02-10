@@ -59,62 +59,63 @@ async def process_batch_completion(
     total_output_tokens = 0
     total_thoughts_tokens = 0
 
-    for result in results:
-        if result.key is None:
-            logger.warning("Batch result missing key, skipping")
-            continue
+    try:
+        for result in results:
+            if result.key is None:
+                logger.warning("Batch result missing key, skipping")
+                continue
 
-        page_idx = int(result.key.replace("page_", ""))
+            page_idx = int(result.key.replace("page_", ""))
 
-        if result.error:
-            logger.warning(f"Batch page {page_idx} failed: {result.error}")
-            failed_pages.append(page_idx)
-            continue
+            if result.error:
+                logger.warning(f"Batch page {page_idx} failed: {result.error}")
+                failed_pages.append(page_idx)
+                continue
 
-        if result.response is None:
-            failed_pages.append(page_idx)
-            continue
+            if result.response is None:
+                failed_pages.append(page_idx)
+                continue
 
-        text = (result.response.text or "").strip()
+            text = (result.response.text or "").strip()
 
-        figure_urls = job.figure_urls_by_page.get(page_idx, [])
-        if figure_urls:
-            text = substitute_image_placeholders(text, figure_urls)
+            figure_urls = job.figure_urls_by_page.get(page_idx, [])
+            if figure_urls:
+                text = substitute_image_placeholders(text, figure_urls)
 
-        pages[page_idx] = ExtractedPage(markdown=text, images=figure_urls)
+            pages[page_idx] = ExtractedPage(markdown=text, images=figure_urls)
 
-        usage = result.response.usage_metadata
-        if usage:
-            input_tokens = usage.prompt_token_count or 0
-            output_tokens = usage.candidates_token_count or 0
-            thoughts_tokens = usage.thoughts_token_count or 0
+            usage = result.response.usage_metadata
+            if usage:
+                input_tokens = usage.prompt_token_count or 0
+                output_tokens = usage.candidates_token_count or 0
+                thoughts_tokens = usage.thoughts_token_count or 0
 
-            total_input_tokens += input_tokens
-            total_output_tokens += output_tokens
-            total_thoughts_tokens += thoughts_tokens
+                total_input_tokens += input_tokens
+                total_output_tokens += output_tokens
+                total_thoughts_tokens += thoughts_tokens
 
-            token_equiv = input_tokens + (output_tokens + thoughts_tokens) * output_token_multiplier
-            await record_usage(
-                user_id=job.user_id,
-                usage_type=UsageType.ocr_tokens,
-                amount=token_equiv,
-                db=db,
-                reference_id=job.content_hash,
-                description=f"Batch page {page_idx + 1} extraction",
-                details={
-                    "page_idx": page_idx,
-                    "input_tokens": input_tokens,
-                    "output_tokens": output_tokens,
-                    "thoughts_tokens": thoughts_tokens,
-                    "token_equiv": token_equiv,
-                    "batch_job": job.job_name,
-                },
-            )
+                token_equiv = input_tokens + (output_tokens + thoughts_tokens) * output_token_multiplier
+                await record_usage(
+                    user_id=job.user_id,
+                    usage_type=UsageType.ocr_tokens,
+                    amount=token_equiv,
+                    db=db,
+                    reference_id=job.content_hash,
+                    description=f"Batch page {page_idx + 1} extraction",
+                    details={
+                        "page_idx": page_idx,
+                        "input_tokens": input_tokens,
+                        "output_tokens": output_tokens,
+                        "thoughts_tokens": thoughts_tokens,
+                        "token_equiv": token_equiv,
+                        "batch_job": job.job_name,
+                    },
+                )
 
-        cache_key = f"{job.content_hash}:{extraction_cache_prefix}:{page_idx}"
-        await extraction_cache.store(cache_key, pages[page_idx].model_dump_json().encode())
-
-    await release_reservation(redis, job.user_id, job.content_hash)
+            cache_key = f"{job.content_hash}:{extraction_cache_prefix}:{page_idx}"
+            await extraction_cache.store(cache_key, pages[page_idx].model_dump_json().encode())
+    finally:
+        await release_reservation(redis, job.user_id, job.content_hash)
 
     result_processing_ms = int((time.monotonic() - start_time) * 1000)
     submitted_at = datetime.fromisoformat(job.submitted_at)
