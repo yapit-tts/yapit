@@ -236,13 +236,13 @@ async def _handle_synthesize(
                     ).model_dump(mode="json")
                 )
             except Exception as e:
-                logger.error(f"Failed to process block {idx}: {e}")
+                logger.exception(f"Failed to process block {idx}: {e}")
                 await ws.send_json(
                     WSBlockStatus(
                         document_id=msg.document_id,
                         block_idx=idx,
                         status="error",
-                        error=str(e),
+                        error="Internal server error",
                         model_slug=model.slug,
                         voice_slug=voice.slug,
                     ).model_dump(mode="json")
