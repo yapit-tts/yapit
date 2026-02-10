@@ -10,6 +10,7 @@ import argparse
 import subprocess
 import sys
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).parent
@@ -39,6 +40,8 @@ The corpus definition below shows which documents/pages were extracted. The `not
 </corpus>
 
 ## Your Task
+
+IMPORTANT: Do NOT use sub-agents (Task tool). You are running in a non-interactive shell session where sub-agents cannot return output. Read all files yourself directly.
 
 Compare runs `{run_a_name}` (older) vs `{run_b_name}` (newer).
 
@@ -178,7 +181,6 @@ def run_agent_comparison(run_a: Path, run_b: Path, track: str) -> str:
         prompt,
     ]
 
-    # Run and capture output
     result = subprocess.run(
         cmd,
         capture_output=True,
@@ -186,9 +188,12 @@ def run_agent_comparison(run_a: Path, run_b: Path, track: str) -> str:
         cwd=SCRIPT_DIR.parent.parent,  # project root
     )
 
-    # Print the response
     if result.stdout:
         print(result.stdout)
+        ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        out_path = run_b / f"comparison_{run_a.name}_vs_{run_b.name}_{ts}.md"
+        out_path.write_text(result.stdout)
+        print(f"\nSaved to: {out_path}")
     if result.stderr:
         print(result.stderr, file=sys.stderr)
 

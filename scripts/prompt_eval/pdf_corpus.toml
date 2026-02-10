@@ -1,0 +1,54 @@
+# PDF corpus for extraction prompt evaluation
+# pages are 0-indexed
+
+[attention]
+url = "https://arxiv.org/pdf/1706.03762"
+pages = [0, 1, 2, 3, 4, 5, 9, 10, 14]
+notes = "All you need; References References section, references only page"
+
+[imglayout]
+url = "https://arxiv.org/pdf/2503.14858"
+pages = [1, 3, 4, 5]
+notes = "Image layouts, multiple images per page, figures with captions, fancy math (in color even)"
+
+[bigmath]
+url = "https://arxiv.org/pdf/2510.08814"
+pages = [0,1,2,4,5]
+notes = "Big brain math, TOC with '.....', difficult codeblock (+over two pages), callout"
+
+[jepa]
+url = "https://arxiv.org/pdf/2506.09985"
+pages = [0]
+notes = "fancy callout intro; title page/metadata formatting"
+
+[omni]
+url = "https://arxiv.org/pdf/2405.15568"
+pages = [0]
+notes = "Metadatga, title page stuff, attribution stuff"
+
+[cimc]
+url = "https://cimc.ai/cimcWhitepaper.pdf"
+pages = [3, 4]
+notes = "Within page footnotes; sentence continuation across pages"
+
+[arcnca]
+url = "https://arxiv.org/pdf/2505.08778"
+pages = [0, 1, 4, 5, 6]
+notes = "Split sentence between p0-1, with image inbetween; another type of attribution layout, page with differnt kind of math, small math, challenging tables, images; 2col layout"
+
+[arcnca2]
+url = "https://arxiv.org/pdf/2506.15746"
+pages = [0, 2]
+notes = "different kind of citation / usage of citations in text flow, same with math"
+
+[neuroevo]
+path = "/home/max/Documents/books/neuroevolution_book.html.pdf"
+pages = [0, 1, 2, 3, 4, 11, 12, 15, 17, 18, 33, 44]
+notes = "book content; p11 is blank; interested in TOC and header consistency, p33 code listing, p44 math detail callout, "
+
+[activeinference]
+path = "/home/max/Documents/books/active_inference.pdf"
+pages = [0, 1, 2, 3, 4, 5, 6, 16, 18, 20, 169, 170, 237, 260]
+notes = "book stuff / metadata, toc, callouts with math, tables across two pages, different type of math for more katex exposure, somewhat challenging codeblock ath the end"
+
+

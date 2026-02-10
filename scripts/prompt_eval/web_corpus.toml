@@ -1,0 +1,17 @@
+# Website corpus for content extraction evaluation
+
+[sourcegraph]
+url = "https://sourcegraph.com/blog/revenge-of-the-junior-developer"
+notes = ""
+
+[muzero]
+url = "https://www.julian.ac/blog/2020/12/22/muzero-intuition/"
+notes = ""
+
+[vienna]
+url = "https://ludwigabap.com/posts/on-my-trip-to-vienna/"
+notes = ""
+
+[antikythera]
+url = "https://whatisintelligence.antikythera.org/chapter-01/"
+notes = ""
