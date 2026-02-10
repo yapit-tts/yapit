@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useUser } from "@stackframe/react";
 import { getOrCreateAnonymousId } from "@/lib/anonymousId";
 
-const WS_BASE_URL = import.meta.env.VITE_WS_BASE_URL;
+const WS_BASE_URL = import.meta.env.VITE_WS_BASE_URL ||
+	`${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/api`;
 
 export interface WSMessage {
   type: "status" | "evicted" | "error";

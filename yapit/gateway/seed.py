@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 
+from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from yapit.gateway.config import Settings
@@ -135,7 +136,14 @@ def create_plans(settings: Settings) -> list[Plan]:
 
 
 async def seed_database(db: AsyncSession, settings: Settings) -> None:
-    """Seed database with models, voices, processors, and plans."""
+    """Seed database with models, voices, processors, and plans.
+
+    Idempotent: skips if data already exists (safe to leave DB_SEED=1 permanently).
+    """
+    existing = (await db.exec(select(TTSModel))).first()
+    if existing:
+        return
+
     for model in create_models():
         db.add(model)
 
