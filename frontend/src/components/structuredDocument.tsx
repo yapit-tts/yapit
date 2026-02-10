@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import DOMPurify from "dompurify";
 import katex from "katex";
-import { Copy, Download, Music, Check, ChevronRight } from "lucide-react";
+import { Copy, Download, Music, Check, ChevronRight, FileDown, FileCode2 } from "lucide-react";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import type { Section } from "@/lib/sectionIndex";
@@ -1015,10 +1015,12 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
           <DropdownMenuItem onClick={() => handleDownloadMarkdown(false)}>
-            Download
+            <FileDown className="h-4 w-4" />
+            Markdown
           </DropdownMenuItem>
           <DropdownMenuItem onClick={() => handleDownloadMarkdown(true)}>
-            Download with annotations
+            <FileCode2 className="h-4 w-4" />
+            With TTS annotations
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
