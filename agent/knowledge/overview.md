@@ -4,6 +4,7 @@ Yapit is an open-source TTS platform for reading documents and web pages.
 
 ## Core
 
+- docs/architecture.md has mermaid diagrams of the overall architecture and sequence flows for key features. Read for a high-level overview of how components interact.
 - [[tts-flow]] — Audio synthesis pipeline: WebSocket protocol, Redis queues, pull-based workers, caching. Read for TTS bugs, latency issues, worker scaling.
 - [[document-processing]] — How content becomes blocks: input paths (text/URL/file), Gemini extraction, YOLO figure detection, markdown parsing, block splitting. Read for document upload bugs, extraction failures, rendering issues.
 - [[frontend]] — React architecture, component hierarchy, chrome devtools MCP workflows. Read for UI work, frontend debugging.
@@ -12,7 +13,7 @@ Yapit is an open-source TTS platform for reading documents and web pages.
 ## Operations
 
 - [[migrations]] — Alembic workflow, MANAGED_TABLES filter, seed data. Read before any DB schema changes.
-- [[vps-setup]] — Production server config, Traefik, debugging. Read for prod issues.
+- [[vps-setup]] — Production server config, Traefik, nginx reverse proxy routing, debugging. Read for prod issues or nginx config changes (`frontend/nginx.conf`).
 - [[infrastructure]] — Docker compose structure (base/dev/prod layers), CI/CD pipeline, worker services, config change checklist. Read for deployment issues or adding services.
 - [[env-config]] — Secrets management, .env files, sops encryption.
 - [[dev-setup]] — **READ BEFORE TESTING.** Test commands, fixture gotchas, uv/pyproject structure. Tests WILL fail without proper env setup.

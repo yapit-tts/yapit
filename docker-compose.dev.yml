@@ -9,8 +9,6 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - "./tts_processors.dev.json:/app/tts_processors.dev.json"
-      - "./tts_processors.ci.json:/app/tts_processors.ci.json"
       - "./gateway-data:/app/gateway"
       - "./images:/data/images"
 

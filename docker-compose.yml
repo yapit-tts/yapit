@@ -59,8 +59,6 @@ services:
       - ./.env.prod
     environment:
       ENV_FILE: .env.prod
-    volumes:
-      - ./tts_processors.prod.json:/app/tts_processors.prod.json:ro
     depends_on:
       redis:
         condition: service_started

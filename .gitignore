@@ -211,3 +211,4 @@ gateway-data/
 experiments/**/output/**
 experiments/gemini-flash-doc-transform/
 experiments/tts_speed_benchmark/
+gateway/
