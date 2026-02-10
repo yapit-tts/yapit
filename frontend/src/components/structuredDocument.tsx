@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import DOMPurify from "dompurify";
 import katex from "katex";
 import { Copy, Download, Music, Check, ChevronRight } from "lucide-react";
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import type { Section } from "@/lib/sectionIndex";
 import { useSettings, type ContentWidth } from "@/hooks/useSettings";
@@ -15,6 +16,15 @@ const contentWidthClasses: Record<ContentWidth, string> = {
 
 // Sanitize HTML to prevent XSS attacks
 const sanitize = (html: string): string => DOMPurify.sanitize(html);
+
+export function stripYapTags(markdown: string): string {
+  return markdown
+    .replace(/<yap-speak>[\s\S]*?<\/yap-speak>/g, "")
+    .replace(/<yap-show>([\s\S]*?)<\/yap-show>/g, "$1")
+    .replace(/<yap-cap>([\s\S]*?)<\/yap-cap>/g, "$1")
+    .replace(/  +/g, " ")
+    .replace(/\n{3,}/g, "\n\n");
+}
 
 // === Slug generation for heading anchors ===
 
@@ -785,11 +795,10 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editedTitle, setEditedTitle] = useState("");
 
-  // Copy markdown to clipboard
   const handleCopyMarkdown = useCallback(async () => {
     if (!markdownContent) return;
     try {
-      await navigator.clipboard.writeText(markdownContent);
+      await navigator.clipboard.writeText(stripYapTags(markdownContent));
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch (err) {
@@ -797,11 +806,14 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
     }
   }, [markdownContent]);
 
-  // Download markdown file
-  const handleDownloadMarkdown = useCallback(() => {
+  const sanitizedTitle = (title || "document").replace(/[^a-z0-9]/gi, "_").toLowerCase();
+
+  const handleDownloadMarkdown = useCallback((preserveAnnotations = false) => {
     if (!markdownContent) return;
-    const filename = (title || "document").replace(/[^a-z0-9]/gi, "_").toLowerCase() + ".md";
-    const blob = new Blob([markdownContent], { type: "text/markdown" });
+    const content = preserveAnnotations ? markdownContent : stripYapTags(markdownContent);
+    const suffix = preserveAnnotations ? " (annotated)" : "";
+    const filename = `${sanitizedTitle}${suffix}.md`;
+    const blob = new Blob([content], { type: "text/markdown" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -810,7 +822,7 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-  }, [markdownContent, title]);
+  }, [markdownContent, sanitizedTitle]);
 
   // Open source URL in new tab
   const handleTitleClick = useCallback(() => {
@@ -961,6 +973,9 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
           return;
         }
       }
+
+      e.preventDefault();
+      return;
     }
 
     // Check for clicks on inner audio spans (data-audio-idx)
@@ -988,14 +1003,25 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
       >
         {copied ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4 text-muted-foreground" />}
       </button>
-      <button
-        onClick={handleDownloadMarkdown}
-        disabled={!markdownContent}
-        className="p-2 rounded hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-        title="Download markdown"
-      >
-        <Download className="h-4 w-4 text-muted-foreground" />
-      </button>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button
+            disabled={!markdownContent}
+            className="p-2 rounded hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            title="Download markdown"
+          >
+            <Download className="h-4 w-4 text-muted-foreground" />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem onClick={() => handleDownloadMarkdown(false)}>
+            Download
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => handleDownloadMarkdown(true)}>
+            Download with annotations
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
       <button
         disabled
         className="p-2 rounded opacity-40 cursor-not-allowed"
@@ -1045,6 +1071,11 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
     let lastSeenSectionId: string | null = null;
 
     for (const block of doc.blocks) {
+      if (block.type === "footnotes") {
+        visible.push(block);
+        continue;
+      }
+
       if (block.type === "heading" && sectionByHeadingId.has(block.id)) {
         const sectionId = block.id;
         if (skipped.has(sectionId)) {

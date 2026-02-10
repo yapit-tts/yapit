@@ -36,8 +36,8 @@ export interface PlaybackSnapshot {
 
 const BATCH_SIZE = 8;
 const REFILL_THRESHOLD = 8;
-const MIN_BUFFER_TO_START = 2;
-const EVICT_BEHIND = 20;
+const MIN_BUFFER_TO_START = 1;
+const EVICT_BEHIND = 32;
 
 // --- Variant key: `${blockIdx}:${model}:${voice}` ---
 
@@ -114,6 +114,12 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
 
   // --- Helpers ---
 
+  function setStatus(newStatus: PlaybackStatus, trigger: string) {
+    if (status === newStatus) return;
+    console.debug(`[PlaybackEngine] ${status}→${newStatus}`, { trigger, currentBlock });
+    status = newStatus;
+  }
+
   function notify() {
     snapshot = null;
     for (const listener of listeners) listener();
@@ -189,6 +195,7 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
     }
 
     const audio = getBlockAudio(blockIdx);
+    console.debug("[PlaybackEngine] playBlock", { blockIdx, cached: !!audio });
     if (audio) {
       isSynthesizingCurrent = false;
       notify();
@@ -198,15 +205,20 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
       notify();
 
       const audioData = await synthesizeBlock(blockIdx);
-      if (currentBlock !== blockIdx || status !== "playing") return;
+      if (currentBlock !== blockIdx || status !== "playing") {
+        console.debug("[PlaybackEngine] playBlock: stale after synthesis", { blockIdx, currentBlock, status });
+        return;
+      }
       isSynthesizingCurrent = false;
 
       if (!audioData) {
-        // Persistent error (e.g. usage limit) → stop instead of futilely trying every block
-        if (synthesizer.getError()) {
+        const err = synthesizer.getError();
+        if (err) {
+          console.debug("[PlaybackEngine] playBlock: persistent synth error, stopping", { blockIdx, error: err });
           engineStop();
           return;
         }
+        console.debug("[PlaybackEngine] playBlock: synthesis returned null, advancing", { blockIdx });
         advanceToNext();
         return;
       }
@@ -233,6 +245,7 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
         await deps.audioPlayer.load(audioData.buffer);
       }
       await deps.audioPlayer.play();
+      console.debug("[PlaybackEngine] startAudioPlayback: playing", { blockIdx: currentBlock });
     } catch (err) {
       console.error("[PlaybackEngine] Audio playback failed, skipping block:", err);
       advanceToNext();
@@ -241,6 +254,7 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
 
   function advanceToNext() {
     const next = findNextPlayable(currentBlock + 1);
+    console.debug("[PlaybackEngine] advanceToNext", { from: currentBlock, to: next });
     if (next >= 0) {
       currentBlock = next;
       blockStartTime = calcProgressToBlock(next);
@@ -254,7 +268,7 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
   }
 
   function engineStop() {
-    status = "stopped";
+    setStatus("stopped", "engineStop");
     isSynthesizingCurrent = false;
 
     currentBlock = -1;
@@ -357,8 +371,9 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
     const cachedAhead = countCachedAhead(startBlock);
     const remaining = blocks.length - startBlock;
     const required = Math.min(MIN_BUFFER_TO_START, remaining);
+    console.debug("[PlaybackEngine] checkBufferReady", { cachedAhead, required, startBlock });
     if (cachedAhead >= required) {
-      status = "playing";
+      setStatus("playing", "checkBufferReady");
       notify();
       playBlock(currentBlock);
     }
@@ -390,7 +405,7 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
   // --- Public API ---
 
   function play() {
-    console.log("[Engine] play() called", { status, blocksLen: blocks.length, currentBlock, model, voiceSlug, documentId });
+    console.debug("[PlaybackEngine] play()", { status, currentBlock, model, voiceSlug });
     if (status === "playing" || status === "buffering") return;
     if (!blocks.length) return;
 
@@ -412,12 +427,12 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
     const required = Math.min(MIN_BUFFER_TO_START, remaining);
 
     if (cachedAhead >= required) {
-      status = "playing";
+      setStatus("playing", "play");
       notify();
       triggerPrefetch(startBlock + 1, BATCH_SIZE);
       playBlock(currentBlock);
     } else {
-      status = "buffering";
+      setStatus("buffering", "play");
       notify();
       triggerPrefetch(startBlock, BATCH_SIZE);
     }
@@ -426,14 +441,14 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
   function pause() {
     if (status !== "playing") return;
     deps.audioPlayer.pause();
-    status = "stopped";
+    setStatus("stopped", "pause");
     isSynthesizingCurrent = false;
     notify();
   }
 
   function stop_() {
     deps.audioPlayer.stop();
-    status = "stopped";
+    setStatus("stopped", "stop");
     isSynthesizingCurrent = false;
 
 
@@ -501,6 +516,7 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
 
   function setVoice(newModel: string, newVoiceSlug: string) {
     if (model === newModel && voiceSlug === newVoiceSlug) return;
+    console.debug("[PlaybackEngine] setVoice", { from: `${model}/${voiceSlug}`, to: `${newModel}/${newVoiceSlug}` });
 
     const wasActive = status === "playing" || status === "buffering";
     const oldModel = model;
@@ -523,8 +539,8 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
 
     if (wasActive && currentBlock >= 0) {
       deps.audioPlayer.stop();
-  
-      status = "buffering";
+
+      setStatus("buffering", "setVoice");
       isSynthesizingCurrent = false;
       notify();
       triggerPrefetch(currentBlock, BATCH_SIZE);

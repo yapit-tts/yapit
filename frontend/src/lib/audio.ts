@@ -38,15 +38,17 @@ export class AudioPlayer {
    */
   unlock(): Promise<void> {
     if (this.unlocked) return Promise.resolve();
+    console.debug("[AudioPlayer] unlock: attempting");
     this.audioElement.src = SILENT_WAV;
     return this.audioElement.play()
       .then(() => {
         this.audioElement.pause();
         this.audioElement.currentTime = 0;
         this.unlocked = true;
+        console.debug("[AudioPlayer] unlock: success");
       })
       .catch(() => {
-        // Browser still blocked — will retry on next user gesture
+        console.debug("[AudioPlayer] unlock: blocked, will retry on next gesture");
       });
   }
 
@@ -87,6 +89,7 @@ export class AudioPlayer {
         reject(new Error("[AudioPlayer] Audio element error during load"));
       };
       const timer = setTimeout(() => {
+        console.debug("[AudioPlayer] waitForCanPlayThrough: timeout", { LOAD_TIMEOUT_MS });
         cleanup();
         reject(new Error("[AudioPlayer] Load timeout — canplaythrough not fired"));
       }, LOAD_TIMEOUT_MS);
@@ -98,10 +101,15 @@ export class AudioPlayer {
     });
   }
 
-  // Errors propagate to caller (playback engine handles them)
   async play(): Promise<void> {
-    await this.audioElement.play();
-    this.startProgressTracking();
+    try {
+      await this.audioElement.play();
+      console.debug("[AudioPlayer] play: started");
+      this.startProgressTracking();
+    } catch (err) {
+      console.debug("[AudioPlayer] play: rejected", { error: (err as Error).name, message: (err as Error).message });
+      throw err;
+    }
   }
 
   pause(): void {
