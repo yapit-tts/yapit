@@ -13,7 +13,7 @@ import CheckoutCancelPage from "@/pages/CheckoutCancelPage";
 import TermsPage from "@/pages/TermsPage";
 import PrivacyPage from "@/pages/PrivacyPage";
 import BatchStatusPage from "@/pages/BatchStatusPage";
-import NotFoundPage from "@/pages/NotFoundPage";
+import UrlCatchAllPage from "@/pages/UrlCatchAllPage";
 import SignInPage from "@/pages/auth/SignInPage";
 import SignUpPage from "@/pages/auth/SignUpPage";
 import { stackClientApp } from "@/auth";
@@ -123,7 +123,7 @@ const AppRoutes = () => (
 		/>
 		<Route path="/terms" element={<TermsPage />} />
 		<Route path="/privacy" element={<PrivacyPage />} />
-		<Route path="*" element={<NotFoundPage />} />
+		<Route path="*" element={<UrlCatchAllPage />} />
 	</Routes>
 );
 

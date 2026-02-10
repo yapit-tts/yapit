@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { useNavigate, Link } from "react-router";
+import { useNavigate, useLocation, Link } from "react-router";
 import { Paperclip, Loader2, AlertCircle, Play, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -99,12 +99,23 @@ export function UnifiedInput() {
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const extractionIdRef = useRef<string | null>(null);
   const navigate = useNavigate();
+  const location = useLocation();
   const { api, isAnonymous } = useApi();
   const { tier } = useSubscription();
 
   const debouncedValue = useDebounce(value, 400);
 
   const isUrl = useCallback((text: string) => URL_REGEX.test(text.trim()), []);
+
+  // Pre-fill URL from catch-all route redirect (yapit.md/example.com/path)
+  useEffect(() => {
+    const state = location.state as { prefillUrl?: string } | null;
+    if (state?.prefillUrl) {
+      setValue(state.prefillUrl);
+      // Clear state so browser refresh doesn't re-trigger
+      window.history.replaceState({}, "", location.pathname);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps -- mount only
 
   // Reset state when home button clicked while on home
   useEffect(() => {
