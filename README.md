@@ -1,49 +1,59 @@
-# yapit
+<div align="center">
 
-## Development (TODO very stale)
+<img src="frontend/public/favicon.svg" width="80" height="80">
 
-Set up the backend dev env:
+**yapit**: Listen to anything. Open-source TTS for documents, web pages, and text.
+
+<h3>
+
+[Website](https://yapit.md) | [Self-Host](#self-hosting) | [Architecture](docs/architecture.md)
+
+</h3>
+
+[![GitHub Repo stars](https://img.shields.io/github/stars/yapit-tts/yapit)](https://github.com/yapit-tts/yapit/stargazers)
+[![CI/CD](https://github.com/yapit-tts/yapit/actions/workflows/deploy.yml/badge.svg)](https://github.com/yapit-tts/yapit/actions/workflows/deploy.yml)
+[![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
+
+</div>
+
+---
+
+Paste a URL or upload a PDF. Yapit renders the document faithfully and reads it aloud with natural voices. Math, figures, tables, and citations display correctly while the audio adapts for a natural listening experience: citations become prose, equations get spoken descriptions, page noise is skipped. Choose between server-side premium voices or free synthesis that runs entirely in your browser.
+
+---
+
+## Features
+
+Core features:
+
+- **[Gemini 3 Flash](https://ai.google.dev/gemini-api) extraction**: Each page is processed as an image with figure context from [DocLayout-YOLO](https://huggingface.co/juliozhao/DocLayout-YOLO-DocStructBench). Page noise (page numbers, headers, watermarks) is filtered. Results are cached per-page, so re-processing a large document only touches changed pages.
+
+- **Display and speech routing**: Custom tags (`<yap-show>`, `<yap-speak>`, `<yap-cap>`) route content between visual display and audio. Math renders but stays silent unless Gemini adds a spoken description. Figures display with cropped images; captions are spoken. In-text citations are naturalized for listening.
+
+- **Free browser-local TTS**: [Kokoro](https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX) runs in a Web Worker via WASM/WebGPU. No server round-trip, no cost, fully private.
+
+Additional:
+
+- Multiple input paths: URLs, PDFs, images, file uploads, raw text
+- [Inworld TTS 1.5](https://inworld.ai) premium voices for server-side synthesis
+- arXiv papers via [Markxiv](https://github.com/tonydavis629/markxiv) (LaTeX source to markdown, better handling of formulas without needing Gemini)
+- Document sharing by link
+- Keyboard and media controls (hjkl, space, volume; OS media session with lock screen and headphone support)
+- Document outliner for navigating large documents
+- ...and much more!
+
+## Self-hosting
+
+<!-- TODO -->
+
+## Development
+
 ```bash
-uv sync --all-extras
-echo "RUNPOD_API_KEY=asdf\nMISTRAL_API_KEY=asdf" > .env # env vars you do not want to commit 
+make dev-cpu    # start backend services (Docker Compose)
+cd frontend && npm run dev  # start frontend
+make test-local # run tests
 ```
 
-If you want to use runpod workers, put `RUNPOD_API_KEY` in `.env`. Similarily with mistral OCR.
-These `.env` entries have to exist (with any value) for the gateway to start up with the default `endpoints.dev.json` configuration.
+See [agent/knowledge/dev-setup.md](agent/knowledge/dev-setup.md) for full setup instructions.
 
-Start the backend services:
-```bash
-make dev-cpu  # make dev-mac if you are on mac
-```
-
-Start the frontend and login at `http://localhost/auth/signin` with the test user credentials printed by `dev-cpu`:
-```bash
-cd frontend && npm run dev
-```
-
-Check if everything works:
-```bash
-make test-local  # or make test (needs runpod and mistral key for all tests to run / pass)
-```
-
-Tests for some external processors are not part of ci, but can be run manually, e.g. `make test-runpod`, `make test-mistral`.
-
-### API Access
-
-To get a bearer token for API access:
-```bash
-make token
-```
-
-This will authenticate the dev user (dev@example.com) and return a bearer token.
-
-### Stack-Auth
-
-The following admin user is created on startup:
-
-```
-username: dev@yap.it
-password: yapit123
-```
-
-> **The admin user can only be used to access the stack-auth dashboard. It's not an application user**
+The `agent/knowledge/` directory is the project's in-depth knowledge base, maintained jointly with Claude during development.
