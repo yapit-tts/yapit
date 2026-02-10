@@ -47,12 +47,16 @@ async def prepare_database(settings: Settings) -> None:
     """Bring the schema to the requested state.
 
     - DEV (DB_DROP_AND_RECREATE=1):   drop all tables and recreate from scratch
+    - SELFHOST (DB_CREATE_TABLES=1):  create tables if missing, no Alembic
     - PROD (default):                 run Alembic `upgrade head`
     """
     engine = _get_engine(settings)
     if settings.db_drop_and_recreate:
         async with engine.begin() as conn:
             await conn.run_sync(SQLModel.metadata.drop_all)
+            await conn.run_sync(SQLModel.metadata.create_all)
+    elif settings.db_create_tables:
+        async with engine.begin() as conn:
             await conn.run_sync(SQLModel.metadata.create_all)
     else:
         alembic_cfg = config.Config(str(ALEMBIC_INI))

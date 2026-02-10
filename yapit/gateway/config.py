@@ -8,6 +8,7 @@ from yapit.gateway.cache import CacheConfig, Caches
 class Settings(BaseSettings):
     sqlalchemy_echo: bool
     db_drop_and_recreate: bool  # If True: drops all tables and recreates (dev mode)
+    db_create_tables: bool  # If True: create tables if missing, no Alembic (selfhost mode)
     db_seed: bool
 
     database_url: str
@@ -21,7 +22,6 @@ class Settings(BaseSettings):
     stack_auth_project_id: str
     stack_auth_server_key: str
 
-    tts_overflow_queue_threshold: int  # jobs per worker before routing to overflow
     kokoro_runpod_serverless_endpoint: str | None = None
     yolo_runpod_serverless_endpoint: str | None = None
     runpod_api_key: str | None = None

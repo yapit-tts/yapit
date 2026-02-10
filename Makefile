@@ -1,4 +1,7 @@
 
+DEV_COMPOSE = docker compose -p yapit-dev --env-file .env --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml
+SELFHOST_COMPOSE = docker compose --env-file .env.selfhost -f docker-compose.yml -f docker-compose.selfhost.yml
+
 define create-dev-user
 	@echo "Creating dev user..."
 	uv run --env-file=.env.dev python scripts/create_user.py
@@ -10,16 +13,20 @@ check-dev-env:
 	fi
 
 dev-cpu: check-dev-env down
-	docker compose --env-file .env --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml \
-		--profile stripe up -d --build
+	$(DEV_COMPOSE) --profile stripe up -d --build
 	$(call create-dev-user)
 
 dev-ci: down
-	docker compose --env-file .env --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml \
-		up -d --build --wait --wait-timeout 300
+	$(DEV_COMPOSE) up -d --build --wait --wait-timeout 300
 
 down:
-	docker compose --env-file .env --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml --profile stripe down -v --remove-orphans
+	$(DEV_COMPOSE) --profile stripe down -v --remove-orphans
+
+self-host:
+	$(SELFHOST_COMPOSE) up -d --build
+
+self-host-down:
+	$(SELFHOST_COMPOSE) down
 
 dev-user:
 	$(call create-dev-user)

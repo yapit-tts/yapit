@@ -1,0 +1,64 @@
+volumes:
+  pgdata:
+  audio-cache:
+  document-cache:
+  extraction-cache:
+  gateway-data:
+  images:
+
+services:
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_ENV_FILE: .env.selfhost
+    ports:
+      - "80:80"
+    depends_on:
+      gateway:
+        condition: service_healthy
+    restart: unless-stopped
+
+  postgres:
+    env_file: ./.env.selfhost
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./dev/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    ports:
+      - "5432:5432"
+
+  gateway:
+    env_file:
+      - ./.env.selfhost
+    environment:
+      ENV_FILE: ""
+    volumes:
+      - audio-cache:/app/audio_cache
+      - document-cache:/app/document_cache
+      - extraction-cache:/app/extraction_cache
+      - gateway-data:/app/gateway
+      - images:/data/images
+    ports:
+      - "8000:8000"
+
+  stack-auth:
+    env_file: ./.env.selfhost
+    ports:
+      - "8101:8101"
+      - "8102:8102"
+
+  redis:
+    ports:
+      - "127.0.0.1:6379:6379"
+
+  metrics-db:
+    ports:
+      - "5433:5432"
+
+  kokoro-cpu:
+    environment:
+      WORKER_ID: selfhost-kokoro-cpu
+
+  yolo-cpu:
+    environment:
+      WORKER_ID: selfhost-yolo-cpu
