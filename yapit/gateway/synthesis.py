@@ -7,6 +7,7 @@ from typing import Literal
 
 from loguru import logger
 from redis.asyncio import Redis
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlmodel import select
 
 from yapit.contracts import (
@@ -142,8 +143,16 @@ async def _queue_job(
 ) -> str:
     """Queue a synthesis job. Returns variant_hash."""
     if variant is None:
-        variant = BlockVariant(hash=variant_hash, model_id=model.id, voice_id=voice.id)
-        db.add(variant)
+        stmt = (
+            pg_insert(BlockVariant)
+            .values(
+                hash=variant_hash,
+                model_id=model.id,
+                voice_id=voice.id,
+            )
+            .on_conflict_do_nothing(index_elements=["hash"])
+        )
+        await db.exec(stmt)
         await db.commit()
 
     if track_for_websocket:
