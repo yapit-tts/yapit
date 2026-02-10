@@ -44,7 +44,32 @@ Additional:
 
 ## Self-hosting
 
-<!-- TODO -->
+```bash
+git clone https://github.com/yapit-tts/yapit.git && cd yapit
+cp .env.selfhost.example .env.selfhost
+make self-host
+```
+
+Open [http://localhost](http://localhost) and create an account. Data persists across restarts.
+
+`.env.selfhost` is self-documenting — see the comments for optional features (Gemini extraction, Inworld voices, RunPod overflow).
+
+**Scaling workers:** Workers are pull-based — any machine with Redis access can run them, no gateway config needed. Connect from the local network or via Tailscale, for example.
+
+```bash
+# Kokoro TTS (GPU)
+docker run --gpus all -e REDIS_URL=redis://<host>:6379 ghcr.io/yapit-tts/kokoro-gpu:latest
+# Kokoro TTS (CPU)
+docker run -e REDIS_URL=redis://<host>:6379 ghcr.io/yapit-tts/kokoro-cpu:latest
+# YOLO figure detection (GPU)
+docker run --gpus all -e REDIS_URL=redis://<host>:6379 ghcr.io/yapit-tts/yolo-gpu:latest
+# YOLO figure detection (CPU)
+docker run -e REDIS_URL=redis://<host>:6379 ghcr.io/yapit-tts/yolo-cpu:latest
+```
+
+GPU and CPU workers run side-by-side; faster workers naturally pull more jobs. Scale by running more containers on any machine that can reach Redis.
+
+To stop: `make self-host-down`.
 
 ## Development
 

@@ -1,4 +1,0 @@
-# TODO: This file is stale and not currently maintained
-services:
-  kokoro-cpu:
-    platform: "linux/amd64"

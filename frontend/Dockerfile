@@ -7,7 +7,10 @@ RUN npm ci
 
 COPY . .
 
-# Vite automatically reads .env.production for production builds
+# Override .env.production for custom builds (e.g. selfhost)
+ARG VITE_ENV_FILE
+RUN if [ -n "$VITE_ENV_FILE" ]; then cp "$VITE_ENV_FILE" .env.production; fi
+
 RUN npm run build
 
 FROM nginx:alpine
