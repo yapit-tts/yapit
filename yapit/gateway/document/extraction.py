@@ -215,11 +215,11 @@ def estimate_page_tokens(doc: pymupdf.Document, page_idx: int, output_multiplier
         return PageEstimate(token_equiv=RASTER_PAGE_TOKEN_EQUIV, text_chars=0, is_raster=True)
 
     text_chars = len(text)
-    input_tokens = PROMPT_OVERHEAD_PER_PAGE + text_chars // CHARS_PER_TOKEN
+    text_tokens = text_chars // CHARS_PER_TOKEN
+    input_tokens = PROMPT_OVERHEAD_PER_PAGE + text_tokens
 
-    # Output is typically ~45% of input (measured: 890 output / 2005 input)
-    # Use 50% as conservative estimate
-    estimated_output = input_tokens // 2
+    # Output ≈ extracted markdown, roughly same length as source text
+    estimated_output = text_tokens
     token_equiv = input_tokens + (estimated_output * output_multiplier)
 
     return PageEstimate(token_equiv=token_equiv, text_chars=text_chars, is_raster=False)
