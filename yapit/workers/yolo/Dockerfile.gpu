@@ -1,7 +1,7 @@
 FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl ca-certificates libgl1 libglib2.0-0 \
+    curl ca-certificates libgl1 libglib2.0-0 libjemalloc2 \
     && rm -rf /var/lib/apt/lists/*
 
 ADD https://astral.sh/uv/install.sh /uv-install.sh
@@ -21,5 +21,7 @@ COPY yapit/ /app/yapit
 ENV HF_HUB_OFFLINE=1
 ENV PYTHONUNBUFFERED=1
 ENV DEVICE=cuda
+ENV LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so.2
+ENV MALLOC_CONF=background_thread:true,dirty_decay_ms:1000,muzzy_decay_ms:1000
 
 CMD ["uv", "run", "python", "-m", "yapit.workers.yolo"]

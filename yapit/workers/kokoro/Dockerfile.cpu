@@ -2,7 +2,7 @@ FROM python:3.12-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends espeak-ng && \
+    apt-get install -y --no-install-recommends espeak-ng libjemalloc2 && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -26,4 +26,6 @@ ENV HF_HUB_OFFLINE=1
 
 ENV PYTHONUNBUFFERED=1
 ENV DEVICE=cpu
+ENV LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so.2
+ENV MALLOC_CONF=background_thread:true,dirty_decay_ms:1000,muzzy_decay_ms:1000
 CMD ["python", "-m", "yapit.workers.kokoro"]

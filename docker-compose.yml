@@ -131,6 +131,7 @@ services:
     environment:
       REDIS_URL: redis://redis:6379
       OMP_NUM_THREADS: ${OMP_NUM_THREADS}
+      ONEDNN_PRIMITIVE_CACHE_CAPACITY: "16"
     restart: unless-stopped
     deploy:
       replicas: ${KOKORO_CPU_REPLICAS}
@@ -144,6 +145,7 @@ services:
     environment:
       REDIS_URL: redis://redis:6379
       OMP_NUM_THREADS: ${OMP_NUM_THREADS}
+      ONEDNN_PRIMITIVE_CACHE_CAPACITY: "16"
     restart: unless-stopped
     deploy:
       replicas: ${YOLO_CPU_REPLICAS}

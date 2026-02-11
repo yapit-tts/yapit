@@ -198,6 +198,7 @@ services:
       REDIS_URL: redis://redis:6379
       WORKER_ID: swarm-kokoro-cpu-{{.Task.Slot}}
       OMP_NUM_THREADS: ${OMP_NUM_THREADS}
+      ONEDNN_PRIMITIVE_CACHE_CAPACITY: "16"
     networks:
       - yapit-network
     deploy:
@@ -213,6 +214,7 @@ services:
       REDIS_URL: redis://redis:6379
       WORKER_ID: swarm-yolo-cpu-{{.Task.Slot}}
       OMP_NUM_THREADS: ${OMP_NUM_THREADS}
+      ONEDNN_PRIMITIVE_CACHE_CAPACITY: "16"
     networks:
       - yapit-network
     deploy:
