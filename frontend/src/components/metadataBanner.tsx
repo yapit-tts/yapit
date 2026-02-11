@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { FileText, Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -200,6 +200,25 @@ export function MetadataBanner({
     [pageRangeInput, metadata.total_pages]
   );
 
+  const effectivePageCount = selectedPages?.length ?? metadata.total_pages;
+  const userOverrideBatch = useRef(false);
+
+  // Reset manual override when document changes
+  useEffect(() => {
+    userOverrideBatch.current = false;
+  }, [metadata]);
+
+  // Auto-toggle batch based on effective selected page count
+  useEffect(() => {
+    if (userOverrideBatch.current) return;
+    onBatchModeToggle(effectivePageCount > 100);
+  }, [effectivePageCount, onBatchModeToggle]);
+
+  const handleBatchToggle = (enabled: boolean) => {
+    userOverrideBatch.current = true;
+    onBatchModeToggle(enabled);
+  };
+
   const handleConfirm = () => {
     onConfirm(selectedPages);
   };
@@ -279,7 +298,7 @@ export function MetadataBanner({
               <Switch
                 id="batch-mode-toggle"
                 checked={batchMode}
-                onCheckedChange={onBatchModeToggle}
+                onCheckedChange={handleBatchToggle}
               />
               <Label htmlFor="batch-mode-toggle" className="text-sm cursor-pointer">
                 Batch

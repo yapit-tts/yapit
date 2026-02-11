@@ -218,13 +218,6 @@ export function UnifiedInput() {
     localStorage.setItem(AI_TRANSFORM_STORAGE_KEY, String(aiTransformEnabled));
   }, [aiTransformEnabled]);
 
-  // Auto-enable batch mode for large documents
-  useEffect(() => {
-    if (prepareData && prepareData.metadata.total_pages > 100) {
-      setBatchMode(true);
-    }
-  }, [prepareData]);
-
   const createDocument = async (data: PrepareResponse, pages: number[] | null = null) => {
     setIsCreating(true);
     setCompletedPages([]);
