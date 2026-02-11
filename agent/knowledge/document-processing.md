@@ -126,13 +126,46 @@ The `DocumentTransformer` walks the AST and produces `StructuredDocument`:
 - heading, paragraph, list items, blockquote (callout titles), footnote items, images (captions)
 
 **Blocks without audio** (empty `audio_chunks`):
-- code, math, table, hr
+- code, math, table, hr, yap-show display-only blocks
 
 Each block gets:
 - `id` — Unique block ID (`b0`, `b1`, ...)
 - `html` — Rendered HTML (may contain `<span data-audio-idx="N">` wrappers for split content)
-- `ast` — InlineContent array (for AST slicing during splits)
-- `audio_chunks` — List of `AudioChunk(text, audio_block_idx)` for TTS synthesis
+- `ast` — `InlineContent[]` — the full block's inline AST
+- `audio_chunks` — `AudioChunk(text, audio_block_idx, ast)` — each chunk carries its own sliced AST
+
+### Inline Content Types
+
+`yapit/gateway/markdown/models.py`
+
+The `InlineContent` union represents all inline AST node types:
+
+| Type | TTS Length | Notes |
+|------|-----------|-------|
+| `TextContent` | `len(content)` | Plain text |
+| `CodeSpanContent` | `len(content)` | Inline code |
+| `StrongContent` | sum of children | Bold wrapper |
+| `EmphasisContent` | sum of children | Italic wrapper |
+| `LinkContent` | sum of children | Link with href |
+| `InlineImageContent` | `len(alt)` | Inline image |
+| `MathInlineContent` | 0 | Display-only (silent) |
+| `SpeakContent` | `len(content)` | TTS-only (hidden in display) |
+| `ShowContent` | 0 | Display-only (silent) |
+| `HardbreakContent` | 1 | `<br />` — maps to space in TTS |
+| `FootnoteRefContent` | 0 | Superscript link (display-only) |
+| `ListContent` | sum of items + join spaces | Nested list within a list item |
+
+**AST slicing** (`slice_ast`, `slice_inline_node`): When blocks are split into multiple chunks, the AST is sliced at character boundaries to preserve formatting. Atomic nodes (math, images, footnotes, hardbreaks, nested lists) are included whole at slice start, never split mid-node.
+
+### Nested Lists
+
+List items with nested sublists store both paragraph text and a `ListContent` node in their `item_ast`. Paragraph and nested list content are split as **independent segments** — each segment gets its own `split_with_spans` call — so chunk boundaries align with the visual boundary between inline text and the nested `<ul>`/`<ol>`.
+
+**Limitation:** Nested lists highlight as a unit during playback. The text splitter works on flat text and doesn't know nested list item boundaries, so per-item highlighting within a nested list isn't supported. This would require a structure-aware splitter — not worth the complexity for a rare content pattern.
+
+### Yap-Show Index Handling
+
+`<yap-show>` content (display-only, no audio) is processed through the transformer but then stripped of audio chunks. The transformer saves/restores `_audio_idx_counter` around yap-show processing to prevent gaps in the audio index sequence. Without this, blocks after yap-show content would have shifted indices, causing highlight misalignment.
 
 ## TTS Annotations
 
@@ -176,22 +209,24 @@ Split content gets multiple `AudioChunk` entries with consecutive `audio_block_i
       "id": "b0",
       "level": 1,
       "html": "<strong>Title</strong>",
-      "ast": [{"type": "strong", "content": [...]}],
-      "audio_chunks": [{"text": "Title", "audio_block_idx": 0}]
+      "ast": [{"type": "strong", "content": [{"type": "text", "content": "Title"}]}],
+      "audio_chunks": [{"text": "Title", "audio_block_idx": 0, "ast": [{"type": "strong", "content": [{"type": "text", "content": "Title"}]}]}]
     },
     {
       "type": "paragraph",
       "id": "b1",
       "html": "<span data-audio-idx=\"1\">First sentence.</span> <span data-audio-idx=\"2\">Second sentence.</span>",
-      "ast": [...],
+      "ast": [{"type": "text", "content": "First sentence. Second sentence."}],
       "audio_chunks": [
-        {"text": "First sentence.", "audio_block_idx": 1},
-        {"text": "Second sentence.", "audio_block_idx": 2}
+        {"text": "First sentence.", "audio_block_idx": 1, "ast": [{"type": "text", "content": "First sentence."}]},
+        {"text": "Second sentence.", "audio_block_idx": 2, "ast": [{"type": "text", "content": "Second sentence."}]}
       ]
     }
   ]
 }
 ```
+
+Each `AudioChunk.ast` contains the sliced AST for that chunk — the frontend renders directly from chunk ASTs, not from `block.ast`.
 
 Stored as JSON in `Document.structured_content`.
 
@@ -214,12 +249,19 @@ Stored as JSON in `Document.structured_content`.
 ## Frontend Consumption
 
 `frontend/src/components/structuredDocument.tsx`
+`frontend/src/components/inlineContent.tsx`
 
 The `StructuredDocumentView` component:
 1. Parses `structured_content` JSON
-2. Renders each block type with appropriate styling
-3. Uses `data-audio-idx` spans (baked into HTML) for playback highlighting
-4. Memoized automatically by React Compiler
+2. Renders each block type via React component tree built from AST (no `dangerouslySetInnerHTML`)
+3. `InlineContentRenderer` maps `InlineContent[]` → React elements (recursive for nested types)
+4. KaTeX renders as a React component (`InlineMath`) — survives re-renders without useEffect hacks
+5. `BlockErrorBoundary` wraps content rendering — a failing block shows fallback, not a white screen
+6. Memoized automatically by React Compiler
+
+**Per-chunk rendering:** Blocks with multiple audio chunks wrap each chunk's AST in `<span data-audio-idx={N}>` for playback highlighting. Single-chunk blocks render AST directly.
+
+**Nested lists:** `ListBlockView` separates inline text chunks (rendered in `<span>`) from nested list chunks (rendered in a wrapper `<div>` via `NestedList` component). CSS `:has(.audio-block-active)` propagates highlight state from marker spans to the nested list container.
 
 **Image rows:** Consecutive ImageBlocks with same `row_group` render in a flex row, scaling widths to fill 95% of available space.
 
@@ -237,4 +279,5 @@ The `StructuredDocumentView` component:
 | `gateway/document/yolo_client.py` | YOLO queue client |
 | `gateway/document/extraction.py` | PDF/image utilities |
 | `workers/yolo/` | YOLO detection worker |
-| `frontend/src/components/structuredDocument.tsx` | Render structured content |
+| `frontend/src/components/structuredDocument.tsx` | Block views, types, layout |
+| `frontend/src/components/inlineContent.tsx` | AST → React component renderer |

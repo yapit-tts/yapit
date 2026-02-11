@@ -99,6 +99,18 @@ describe("InlineContentRenderer", () => {
     expect(container.textContent).not.toContain("spoken only");
   });
 
+  it("renders hardbreak as <br>", () => {
+    const nodes: InlineContent[] = [
+      { type: "text", content: "Line one" },
+      { type: "hardbreak" },
+      { type: "text", content: "Line two" },
+    ];
+    const { container } = render(<InlineContentRenderer nodes={nodes} />);
+    expect(container.querySelector("br")).toBeInTheDocument();
+    expect(container.textContent).toContain("Line one");
+    expect(container.textContent).toContain("Line two");
+  });
+
   it("renders footnote ref as superscript link", () => {
     const nodes: InlineContent[] = [
       { type: "footnote_ref", label: "1", has_content: true },

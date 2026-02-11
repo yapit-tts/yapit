@@ -55,6 +55,8 @@ function renderNode(node: InlineContent, key: number): React.ReactNode {
       return <img key={key} src={node.src} alt={node.alt} />;
     case "math_inline":
       return <InlineMath key={key} content={node.content} />;
+    case "hardbreak":
+      return <br key={key} />;
     case "speak":
       // TTS-only, not rendered
       return null;

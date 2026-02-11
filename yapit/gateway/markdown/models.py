@@ -83,6 +83,12 @@ class ShowContent(BaseModel):
     content: list["InlineContent"]
 
 
+class HardbreakContent(BaseModel):
+    """Line break (<br />). TTS length = 1 (maps to space in speech)."""
+
+    type: Literal["hardbreak"] = "hardbreak"
+
+
 class FootnoteRefContent(BaseModel):
     """Inline footnote reference [^label].
 
@@ -118,6 +124,7 @@ InlineContent = (
     | MathInlineContent
     | SpeakContent
     | ShowContent
+    | HardbreakContent
     | FootnoteRefContent
     | ListContent
 )

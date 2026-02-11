@@ -97,6 +97,7 @@ type InlineContent =
   | { type: "math_inline"; content: string }
   | { type: "speak"; content: string }  // TTS-only, doesn't render
   | { type: "show"; content: InlineContent[] }  // Display-only, no TTS
+  | { type: "hardbreak" }
   | { type: "footnote_ref"; label: string; has_content: boolean }  // Display-only superscript
   | { type: "list"; ordered: boolean; start?: number; items: InlineContent[][] };  // Nested list
 

@@ -411,11 +411,63 @@ class TestHtmlInlineSanitization:
                 "math_inline",
                 "speak",
                 "show",
+                "hardbreak",
                 "footnote_ref",
             ), f"Unexpected AST node type: {node.type}"
 
 
-# === 5. IMAGE CAPTION AST ROUNDTRIP ===
+# === 5. HARDBREAK AST ===
+
+
+class TestHardbreakAst:
+    """Hardbreaks produce HardbreakContent (not TextContent like softbreaks)."""
+
+    def test_hardbreak_produces_hardbreak_content(self):
+        """Two trailing spaces + newline → HardbreakContent in AST."""
+        doc = transform("Line one  \nLine two")
+        block = doc.blocks[0]
+        types = [n.type for n in block.ast]
+        assert "hardbreak" in types
+
+    def test_hardbreak_html_roundtrip(self):
+        """HardbreakContent renders as <br /> in HTML."""
+        doc = transform("Line one  \nLine two")
+        block = doc.blocks[0]
+        assert "<br />" in block.html
+
+    def test_softbreak_still_produces_space(self):
+        """Regular newline (softbreak) still produces TextContent(' ')."""
+        doc = transform("Line one\nLine two")
+        block = doc.blocks[0]
+        types = [n.type for n in block.ast]
+        assert "hardbreak" not in types
+
+    def test_hardbreak_chunk_ast_roundtrip(self):
+        """Chunk AST with hardbreak roundtrips to match block HTML."""
+        doc = transform("Before break  \nAfter break")
+        block = doc.blocks[0]
+        assert len(block.audio_chunks) == 1
+        chunk = block.audio_chunks[0]
+        assert render_ast_to_html(chunk.ast) == block.html
+
+    def test_hardbreak_in_split_paragraph(self):
+        """Hardbreak in a long paragraph that gets split across chunks."""
+        doc = transform(
+            "First sentence is long enough to split.  \nSecond line after break is also long enough.",
+            max_block_chars=30,
+        )
+        block = doc.blocks[0]
+        assert len(block.audio_chunks) > 1
+        # Verify roundtrip still works
+        parts = []
+        for chunk in block.audio_chunks:
+            chunk_html = render_ast_to_html(chunk.ast)
+            parts.append(f'<span data-audio-idx="{chunk.audio_block_idx}">{chunk_html}</span>')
+        reconstructed = " ".join(parts)
+        assert reconstructed == block.html
+
+
+# === 6. IMAGE CAPTION AST ROUNDTRIP ===
 
 
 class TestImageCaptionAstRoundtrip:

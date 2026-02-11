@@ -27,6 +27,7 @@ from yapit.gateway.markdown.models import (
     FootnoteItem,
     FootnoteRefContent,
     FootnotesBlock,
+    HardbreakContent,
     HeadingBlock,
     ImageBlock,
     InlineContent,
@@ -388,8 +389,10 @@ def _transform_inline_node(node: SyntaxTreeNode) -> InlineContent | None:
         )
     elif node.type == "math_inline":
         return MathInlineContent(content=node.content or "")
-    elif node.type in ("softbreak", "hardbreak"):
+    elif node.type == "softbreak":
         return TextContent(content=" ")
+    elif node.type == "hardbreak":
+        return HardbreakContent()
     elif node.type == "footnote_ref":
         label = node.meta.get("label", "") if node.meta else ""
         return FootnoteRefContent(label=label)
@@ -676,6 +679,9 @@ def slice_inline_node(node: InlineContent, start: int, end: int) -> list[InlineC
             # Speak content is sliced like text (contributes to TTS length)
             content = node.content[start:end]
             return [SpeakContent(content=content)] if content else []
+        case HardbreakContent():
+            # TTS length 1 — include if slice covers it
+            return [node] if start == 0 and end >= 1 else []
         case FootnoteRefContent():
             # Footnote refs have 0 TTS length, include at slice start
             return [node] if start == 0 else []
@@ -705,6 +711,8 @@ def get_inline_length(node: InlineContent) -> int:
         case SpeakContent():
             # Speak content contributes its full length to TTS
             return len(node.content)
+        case HardbreakContent():
+            return 1  # Maps to " " in TTS
         case FootnoteRefContent():
             # Footnote refs are silent (display-only)
             return 0
@@ -745,6 +753,8 @@ def render_inline_content_html(node: InlineContent) -> str:
         case SpeakContent():
             # Speak content is TTS-only, doesn't render to display HTML
             return ""
+        case HardbreakContent():
+            return "<br />"
         case FootnoteRefContent():
             # Render as superscript link to footnote, with id for back-navigation
             if node.has_content:
