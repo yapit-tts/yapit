@@ -121,12 +121,12 @@ async def upload_and_process(
     ai_transform: bool,
 ) -> tuple[float, float, list[int], str | None]:
     auth = {"Authorization": f"Bearer {token}"}
+    json_auth = {**auth, "Content-Type": "application/json"}
     error = None
     failed_pages: list[int] = []
 
     try:
         async with httpx.AsyncClient(timeout=600) as client:
-            # Step 1: prepare/upload — caches the file, returns hash
             upload_start = time.time()
             files = {"file": (f"stress_test_{doc_idx}.pdf", pdf_bytes, "application/pdf")}
             resp = await client.post(
@@ -135,26 +135,55 @@ async def upload_and_process(
                 files=files,
             )
             resp.raise_for_status()
-            file_hash = resp.json()["hash"]
+            prepare_data = resp.json()
+            file_hash = prepare_data["hash"]
+            total_pages = prepare_data["metadata"]["total_pages"]
             upload_ms = (time.time() - upload_start) * 1000
 
-            # Step 2: create document — blocks until extraction completes (YOLO + Gemini)
+            # Step 2: create document — returns 202 with extraction_id
             process_start = time.time()
             resp = await client.post(
                 f"{base_url}/api/v1/documents/document",
-                headers={**auth, "Content-Type": "application/json"},
+                headers=json_auth,
                 json={"hash": file_hash, "ai_transform": ai_transform},
             )
             resp.raise_for_status()
-            data = resp.json()
-            doc_id = data["id"]
-            failed_pages = data.get("failed_pages", [])
-            processing_ms = (time.time() - process_start) * 1000
+            accepted = resp.json()
+            extraction_id = accepted["extraction_id"]
+            content_hash = accepted["content_hash"]
+            processor_slug = "gemini" if ai_transform else "markitdown"
+            all_pages = list(range(total_pages))
 
-            await client.delete(
-                f"{base_url}/api/v1/documents/{doc_id}",
-                headers=auth,
-            )
+            # Step 3: poll until extraction completes
+            poll_interval = 1.0
+            while True:
+                await asyncio.sleep(poll_interval)
+                resp = await client.post(
+                    f"{base_url}/api/v1/documents/extraction/status",
+                    headers=json_auth,
+                    json={
+                        "extraction_id": extraction_id,
+                        "content_hash": content_hash,
+                        "processor_slug": processor_slug,
+                        "pages": all_pages,
+                    },
+                )
+                resp.raise_for_status()
+                status_data = resp.json()
+
+                if status_data.get("error"):
+                    error = status_data["error"]
+                    processing_ms = (time.time() - process_start) * 1000
+                    break
+
+                if status_data.get("document_id"):
+                    doc_id = status_data["document_id"]
+                    failed_pages = status_data.get("failed_pages", [])
+                    processing_ms = (time.time() - process_start) * 1000
+                    await client.delete(f"{base_url}/api/v1/documents/{doc_id}", headers=auth)
+                    break
+
+                poll_interval = min(poll_interval * 1.5, 5.0)
 
     except Exception as e:
         upload_ms = (time.time() - upload_start) * 1000

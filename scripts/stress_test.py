@@ -1,15 +1,17 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["tyro", "rich", "websockets", "httpx"]
+# dependencies = ["tyro", "rich", "websockets", "httpx", "mutagen"]
 # ///
 
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import random
 import string
 import time
+import traceback
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -17,9 +19,14 @@ from pathlib import Path
 import httpx
 import tyro
 import websockets
+from mutagen.oggopus import OggOpus
 from rich.console import Console
 from rich.progress import Progress, TaskID
 from rich.table import Table
+
+
+def get_audio_duration_ms(audio_bytes: bytes) -> float:
+    return OggOpus(io.BytesIO(audio_bytes)).info.length * 1000
 
 
 def _load_stack_auth_creds() -> tuple[str, str]:
@@ -54,9 +61,15 @@ def get_auth_token(base_url: str, email: str, password: str) -> str:
 @dataclass
 class BlockArrival:
     idx: int
+    requested_ms: float
     arrived_ms: float
     status: str
+    duration_ms: float = 0.0
     error: str | None = None
+
+    @property
+    def round_trip_ms(self) -> float:
+        return self.arrived_ms - self.requested_ms
 
 
 @dataclass
@@ -86,7 +99,15 @@ class UserSession:
             "document_id": self.document_id,
             "blocks_requested": self.blocks_requested,
             "block_arrivals": [
-                {"idx": b.idx, "arrived_ms": b.arrived_ms, "status": b.status} for b in self.block_arrivals
+                {
+                    "idx": b.idx,
+                    "requested_ms": b.requested_ms,
+                    "arrived_ms": b.arrived_ms,
+                    "round_trip_ms": b.round_trip_ms,
+                    "status": b.status,
+                    "duration_ms": b.duration_ms,
+                }
+                for b in self.block_arrivals
             ],
             "underruns": [{"at_block": u.at_block, "waited_ms": u.waited_ms} for u in self.underruns],
             "errors": self.errors,
@@ -97,7 +118,7 @@ class UserSession:
 # Matches frontend playbackEngine.ts
 BATCH_SIZE = 8
 REFILL_THRESHOLD = 8
-MIN_BUFFER_TO_START = 2
+DEFAULT_MIN_BUFFER_TO_START = 2
 
 MODEL_DEFAULT_VOICES = {
     "kokoro": "af_heart",
@@ -108,13 +129,15 @@ MODEL_DEFAULT_VOICES = {
 
 async def run_user_session(
     user_id: int,
+    base_url: str,
     ws_url: str,
     token: str,
     document_id: str,
     num_blocks: int,
     model: str,
     voice: str,
-    block_duration_ms: float,
+    speed: float,
+    min_buffer: int = DEFAULT_MIN_BUFFER_TO_START,
     on_progress: callable | None = None,
 ) -> UserSession:
     session = UserSession(
@@ -123,13 +146,20 @@ async def run_user_session(
         blocks_requested=num_blocks,
     )
 
-    pending: dict[int, float] = {}
+    pending: set[int] = set()
+    request_times: dict[int, float] = {}
     cached: set[int] = set()
     failed: set[int] = set()
+    block_durations: dict[int, float] = {}
     next_to_request = 0
     playback_position = 0
 
     session.start_time = time.time()
+    http_client = httpx.AsyncClient(
+        base_url=f"{base_url}/api",
+        timeout=30,
+        headers={"Authorization": f"Bearer {token}"},
+    )
 
     try:
         async with websockets.connect(f"{ws_url}?token={token}") as ws:
@@ -141,38 +171,61 @@ async def run_user_session(
                     async for msg in ws:
                         data = json.loads(msg)
                         if data.get("type") == "status":
-                            # Defense-in-depth: ignore status messages for other documents
                             if data.get("document_id") != document_id:
                                 continue
                             block_idx = data.get("block_idx")
-                            status = data.get("status")
-                            if block_idx in pending and status in ("cached", "error", "skipped"):
-                                del pending[block_idx]
+                            block_status = data.get("status")
+                            if block_idx in pending and block_status in ("cached", "error", "skipped"):
+                                pending.discard(block_idx)
                                 arrived_ms = (time.time() - session.start_time) * 1000
+                                requested_ms = request_times.get(block_idx, 0.0)
+                                duration_ms = 0.0
+
+                                if block_status == "cached":
+                                    audio_url = data.get("audio_url")
+                                    assert audio_url, f"Block {block_idx} cached but no audio_url"
+                                    resp = await http_client.get(audio_url)
+                                    resp.raise_for_status()
+                                    duration_ms = get_audio_duration_ms(resp.content)
+                                    block_durations[block_idx] = duration_ms
+
                                 session.block_arrivals.append(
-                                    BlockArrival(idx=block_idx, arrived_ms=arrived_ms, status=status)
+                                    BlockArrival(
+                                        idx=block_idx,
+                                        requested_ms=requested_ms,
+                                        arrived_ms=arrived_ms,
+                                        status=block_status,
+                                        duration_ms=duration_ms,
+                                    )
                                 )
-                                if status == "cached":
+                                if block_status == "cached":
                                     cached.add(block_idx)
                                 else:
                                     failed.add(block_idx)
                         elif data.get("type") == "error":
-                            # Server-level error (wrong model/voice, rate limit, etc.)
-                            # Fail all pending blocks — they were never queued server-side
                             error_msg = data.get("error", "unknown error")
                             session.errors.append(error_msg)
                             for idx in list(pending):
-                                del pending[idx]
+                                pending.discard(idx)
                                 arrived_ms = (time.time() - session.start_time) * 1000
                                 session.block_arrivals.append(
-                                    BlockArrival(idx=idx, arrived_ms=arrived_ms, status="error", error=error_msg)
+                                    BlockArrival(
+                                        idx=idx,
+                                        requested_ms=request_times.get(idx, 0.0),
+                                        arrived_ms=arrived_ms,
+                                        status="error",
+                                        error=error_msg,
+                                    )
                                 )
                                 failed.add(idx)
-                            ws_dead = True
                             return
                 except websockets.exceptions.ConnectionClosed:
                     pass
-                ws_dead = True
+                except Exception as e:
+                    session.errors.append(f"Message handler crashed: {e}")
+                    raise
+                finally:
+                    ws_dead = True
 
             msg_task = asyncio.create_task(handle_messages())
 
@@ -183,7 +236,9 @@ async def run_user_session(
                         break
                     block_idx = next_to_request
                     next_to_request += 1
-                    pending[block_idx] = time.time()
+                    now = (time.time() - session.start_time) * 1000
+                    pending.add(block_idx)
+                    request_times[block_idx] = now
                     await ws.send(
                         json.dumps(
                             {
@@ -200,14 +255,13 @@ async def run_user_session(
 
             await request_blocks(BATCH_SIZE)
 
-            while len(cached) < MIN_BUFFER_TO_START and len(cached) + len(failed) < num_blocks:
+            while len(cached) < min_buffer and len(cached) + len(failed) < num_blocks:
                 if ws_dead:
                     session.errors.append("WebSocket disconnected during initial buffer")
                     break
                 await asyncio.sleep(0.05)
 
             while playback_position < num_blocks and not ws_dead:
-                # Yield so handle_messages can process any buffered responses
                 await asyncio.sleep(0)
 
                 if playback_position in failed:
@@ -244,7 +298,8 @@ async def run_user_session(
                         on_progress(playback_position)
                     continue
 
-                await asyncio.sleep(block_duration_ms / 1000)
+                assert playback_position in block_durations, f"Block {playback_position} cached but duration unknown"
+                await asyncio.sleep(block_durations[playback_position] / speed / 1000)
                 playback_position += 1
                 if on_progress:
                     on_progress(playback_position)
@@ -259,8 +314,10 @@ async def run_user_session(
             except asyncio.CancelledError:
                 pass
 
-    except Exception as e:
-        session.errors.append(str(e))
+    except Exception:
+        session.errors.append(traceback.format_exc())
+    finally:
+        await http_client.aclose()
 
     session.end_time = time.time()
     return session
@@ -306,7 +363,6 @@ async def create_test_document(
     base_url: str, token: str, num_blocks: int, user_idx: int, use_cached: bool = False
 ) -> str:
     if use_cached:
-        # Use "test" which is likely already cached
         paragraphs = ["test"] * num_blocks
     else:
         nonce = "".join(random.choices(string.ascii_lowercase, k=8))
@@ -373,25 +429,13 @@ def print_summary(result: StressTestResult, console: Console) -> None:
         f"{total_underruns} ({total_underrun_ms:.0f}ms total, {total_underrun_ms / max(result.users, 1):.0f}ms/user avg)",
     )
 
-    # Per-block synthesis time: inter-arrival time between consecutive cached blocks
-    # (excluding first block per batch, which includes request overhead)
-    synth_times = []
-    for s in result.sessions:
-        cached_arrivals = sorted(
-            [b for b in s.block_arrivals if b.status == "cached"],
-            key=lambda b: b.arrived_ms,
-        )
-        for j in range(1, len(cached_arrivals)):
-            prev, curr = cached_arrivals[j - 1], cached_arrivals[j]
-            # Skip batch boundaries (consecutive indices within a batch are synthesis times)
-            if curr.idx == prev.idx + 1:
-                synth_times.append(curr.arrived_ms - prev.arrived_ms)
-
-    if synth_times:
-        synth_sorted = sorted(synth_times)
+    round_trips = sorted(b.round_trip_ms for s in result.sessions for b in s.block_arrivals if b.status == "cached")
+    if round_trips:
         table.add_row("", "")
-        table.add_row("Synth time p50 (ms)", f"{_percentile(synth_sorted, 50):.0f}")
-        table.add_row("Synth time p95 (ms)", f"{_percentile(synth_sorted, 95):.0f}")
+        table.add_row("Round trip avg (ms)", f"{sum(round_trips) / len(round_trips):.0f}")
+        table.add_row("Round trip p50 (ms)", f"{_percentile(round_trips, 50):.0f}")
+        table.add_row("Round trip p95 (ms)", f"{_percentile(round_trips, 95):.0f}")
+        table.add_row("Round trip max (ms)", f"{max(round_trips):.0f}")
 
     ttfa_values = []
     for s in result.sessions:
@@ -419,6 +463,16 @@ def print_summary(result: StressTestResult, console: Console) -> None:
         table.add_row("First block p50 (ms)", f"{_percentile(fbt_sorted, 50):.0f}")
         table.add_row("First block max (ms)", f"{max(first_block_times):.0f}")
 
+    audio_durations = [b.duration_ms for s in result.sessions for b in s.block_arrivals if b.duration_ms > 0]
+    if audio_durations:
+        dur_sorted = sorted(audio_durations)
+        total_audio_s = sum(audio_durations) / 1000
+        table.add_row("", "")
+        table.add_row("Audio duration avg (ms)", f"{sum(audio_durations) / len(audio_durations):.0f}")
+        table.add_row("Audio duration p50 (ms)", f"{_percentile(dur_sorted, 50):.0f}")
+        table.add_row("Audio duration p95 (ms)", f"{_percentile(dur_sorted, 95):.0f}")
+        table.add_row("Total audio", f"{total_audio_s:.1f}s ({total_audio_s / 60:.1f}min)")
+
     console.print(table)
 
 
@@ -432,6 +486,7 @@ async def run_stress_test(
     speed: float,
     use_cached: bool,
     stagger: float,
+    min_buffer: int,
     console: Console,
     progress: Progress,
 ) -> StressTestResult:
@@ -445,7 +500,6 @@ async def run_stress_test(
     result.started_at = datetime.now().isoformat()
 
     ws_url = base_url.replace("http://", "ws://").replace("https://", "wss://") + "/api/v1/ws/tts"
-    block_duration_ms = 4000.0 / speed
 
     console.print(f"[dim]Creating {users} test documents...[/dim]")
     doc_ids = []
@@ -471,13 +525,15 @@ async def run_stress_test(
             await asyncio.sleep(i * stagger / (users - 1) if users > 1 else 0)
         return await run_user_session(
             user_id=i,
+            base_url=base_url,
             ws_url=ws_url,
             token=token,
             document_id=doc_ids[i],
             num_blocks=blocks,
             model=model,
             voice=voice,
-            block_duration_ms=block_duration_ms,
+            speed=speed,
+            min_buffer=min_buffer,
             on_progress=make_progress_callback(i),
         )
 
@@ -489,8 +545,8 @@ async def run_stress_test(
     for doc_id in doc_ids:
         try:
             await delete_document(base_url, token, doc_id)
-        except Exception:
-            pass
+        except Exception as e:
+            console.print(f"[yellow]Warning: failed to delete {doc_id}: {e}[/yellow]")
 
     return result
 
@@ -515,6 +571,7 @@ def main(
     speed: float = 1.0,
     use_cached: bool = False,
     stagger: float = 0.0,
+    min_buffer: int = DEFAULT_MIN_BUFFER_TO_START,
     output_dir: Path = Path("scripts/stress_test_results"),
     env_file: Path = Path(".env"),
 ) -> None:
@@ -528,8 +585,7 @@ def main(
     Examples::
 
         uv run scripts/stress_test.py --users 5
-        uv run scripts/stress_test.py --token TOKEN --users 10 --blocks 30 --speed 2
-        uv run scripts/stress_test.py --token TOKEN --use-cached --users 1 --blocks 3
+        uv run scripts/stress_test.py --users 3 --speed 2 --min-buffer 1
         uv run scripts/stress_test.py --users 10 --stagger 2.0
 
     Args:
@@ -538,9 +594,10 @@ def main(
         users: Number of concurrent simulated playback sessions
         blocks: Number of blocks per session
         model: TTS model slug (voice auto-selected per model)
-        speed: Playback speed multiplier (1x=4s/block, 2x=2s/block, 3x=1.3s/block)
+        speed: Playback speed multiplier applied to actual audio duration from OGG headers
         use_cached: Use 'test' content (likely cached) instead of unique content
         stagger: Spread user starts over this many seconds (0=all start together)
+        min_buffer: Blocks to buffer before starting playback (1=play immediately, 2=default)
         output_dir: Directory for JSON results
         env_file: Env file with TEST_EMAIL/TEST_PASSWORD (run make prod-env first)
     """
@@ -568,13 +625,17 @@ def main(
     console.print(f"  Blocks/user: {blocks}")
     console.print(f"  Speed: {speed}x")
     console.print(f"  Model: {model} (voice: {voice})")
+    if min_buffer != DEFAULT_MIN_BUFFER_TO_START:
+        console.print(f"  Min buffer: {min_buffer} blocks")
     if stagger > 0:
         console.print(f"  Stagger: {stagger}s between users")
     console.print()
 
     with Progress() as progress:
         result = asyncio.run(
-            run_stress_test(base_url, token, users, blocks, model, voice, speed, use_cached, stagger, console, progress)
+            run_stress_test(
+                base_url, token, users, blocks, model, voice, speed, use_cached, stagger, min_buffer, console, progress
+            )
         )
 
     console.print()
