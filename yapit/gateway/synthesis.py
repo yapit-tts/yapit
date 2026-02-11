@@ -170,11 +170,15 @@ async def _queue_job(
     if await redis.exists(TTS_INFLIGHT.format(hash=variant_hash)):
         return variant_hash
 
+    job_id = uuid.uuid4()
+    job_id_str = str(job_id)
+
     # TTL covers max time in system (queue wait + processing + retries) with buffer. Increase if visibility/overflow/retry timeouts are raised significantly.
-    await redis.set(TTS_INFLIGHT.format(hash=variant_hash), 1, ex=200, nx=True)
+    # Value is job_id so eviction can conditionally clean up only its own inflight key.
+    await redis.set(TTS_INFLIGHT.format(hash=variant_hash), job_id_str, ex=200, nx=True)
 
     job = SynthesisJob(
-        job_id=uuid.uuid4(),
+        job_id=job_id,
         variant_hash=variant_hash,
         user_id=user_id,
         document_id=document_id,
@@ -190,12 +194,11 @@ async def _queue_job(
         ),
     )
 
-    job_id = str(job.job_id)
     queue_name = get_queue_name(model.slug)
     index_key = f"{user_id}:{document_id}:{block_idx}" if track_for_websocket else None
 
     tts_config = QueueConfig(queue_name=queue_name, jobs_key=TTS_JOBS, job_index_key=TTS_JOB_INDEX)
-    await push_job(redis, tts_config, job_id, job.model_dump_json().encode(), index_key=index_key)
+    await push_job(redis, tts_config, job_id_str, job.model_dump_json().encode(), index_key=index_key)
 
     queue_depth = await redis.zcard(queue_name)
     await log_event(

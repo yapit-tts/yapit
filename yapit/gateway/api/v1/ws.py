@@ -14,6 +14,7 @@ from starlette.applications import Starlette
 from yapit.contracts import (
     MAX_TTS_REQUESTS_PER_MINUTE,
     RATELIMIT_TTS,
+    TTS_INFLIGHT,
     TTS_JOB_INDEX,
     TTS_JOBS,
     TTS_PENDING,
@@ -295,8 +296,17 @@ async def _handle_cursor_moved(
             wrapper = json.loads(job_wrapper)
             job = SynthesisJob.model_validate_json(wrapper["job"])
             queue_name = get_queue_name(job.model_slug)
-            await redis.zrem(queue_name, job_id_str)
+            removed_from_queue = await redis.zrem(queue_name, job_id_str)
             await redis.hdel(TTS_JOBS, job_id_str)
+
+            # If the job was still in the queue (not yet pulled by a worker),
+            # clean up the inflight semaphore — otherwise future requests for
+            # the same variant see "already processing" but nobody is.
+            if removed_from_queue:
+                inflight_key = TTS_INFLIGHT.format(hash=job.variant_hash)
+                inflight_owner = await redis.get(inflight_key)
+                if inflight_owner and inflight_owner.decode() == job_id_str:
+                    await redis.delete(inflight_key)
 
         await redis.hdel(TTS_JOB_INDEX, index_key)
 

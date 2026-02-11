@@ -42,10 +42,11 @@ interface PendingRequest {
   retryCount: number;
   blockIdx: number;
   documentId: string;
+  acknowledged: boolean; // server responded "queued"/"processing" since last timer
 }
 
 const MAX_RETRIES = 2;
-const RETRY_TIMEOUT_MS = 30_000;
+const RETRY_TIMEOUT_MS = 10_000;
 
 interface ServerSynthesizerDeps {
   sendWS: (msg: WSSynthesizeRequest | WSCursorMoved) => void;
@@ -91,7 +92,11 @@ export function createServerSynthesizer(deps: ServerSynthesizerDeps): Synthesize
 
   function createRetryTimer(key: string, req: PendingRequest): ReturnType<typeof setTimeout> {
     return setTimeout(() => {
-      if (req.retryCount < MAX_RETRIES) {
+      if (req.acknowledged) {
+        // Server is alive (responded "queued"/"processing"), just slow. Keep waiting.
+        req.acknowledged = false;
+        req.timer = createRetryTimer(key, req);
+      } else if (req.retryCount < MAX_RETRIES) {
         req.retryCount++;
         if (deps.checkWSConnected()) {
           console.warn(`[ServerSynth] Retrying block ${req.blockIdx} (attempt ${req.retryCount})`);
@@ -147,6 +152,7 @@ export function createServerSynthesizer(deps: ServerSynthesizerDeps): Synthesize
         retryCount: 0,
         blockIdx,
         documentId,
+        acknowledged: false,
       };
       req.timer = createRetryTimer(key, req);
       pending.set(key, req);
@@ -257,8 +263,9 @@ export function createServerSynthesizer(deps: ServerSynthesizerDeps): Synthesize
         req.resolve(null);
         pending.delete(key);
       }
+    } else if (msg.status === "queued" || msg.status === "processing") {
+      if (req) req.acknowledged = true;
     }
-    // queued/processing — no action, just wait
   }
 
   function onCursorMove(documentId: string, cursor: number) {
