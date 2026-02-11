@@ -30,7 +30,6 @@ services:
       WORKER_ID: ${HOSTNAME:-worker}-kokoro-cpu
       DEVICE: cpu
       OMP_NUM_THREADS: "2"
-      ONEDNN_PRIMITIVE_CACHE_CAPACITY: "16"
     restart: unless-stopped
 
   yolo-gpu:
@@ -54,5 +53,4 @@ services:
       WORKER_ID: ${HOSTNAME:-worker}-yolo-cpu
       DEVICE: cpu
       OMP_NUM_THREADS: "2"
-      ONEDNN_PRIMITIVE_CACHE_CAPACITY: "16"
     restart: unless-stopped
