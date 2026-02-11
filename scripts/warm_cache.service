@@ -10,4 +10,4 @@ Requires=docker.service
 Type=oneshot
 ExecStart=/bin/bash -c 'docker exec $(docker ps -qf "name=yapit_gateway") python -m yapit.gateway.warm_cache'
 ExecStopPost=/bin/bash -c 'if [ "$EXIT_STATUS" -ne 0 ]; then curl -s -H "Title: Cache warming failed" -H "Priority: high" -H "Tags: warning" -d "Exit code: $EXIT_STATUS" https://ntfy.sh/<NTFY_TOPIC>; fi'
-TimeoutStartSec=1800
+TimeoutStartSec=86400

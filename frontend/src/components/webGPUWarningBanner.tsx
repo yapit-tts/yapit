@@ -4,7 +4,6 @@ import { Link } from "react-router";
 import { useHasWebGPU } from "@/hooks/useWebGPU";
 import { useSubscription } from "@/hooks/useSubscription";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { SHOWCASE_DOCS } from "@/config/showcase";
 
 const DISMISSED_KEY = "yapit_webgpu_warning_dismissed";
 
@@ -37,16 +36,12 @@ export function WebGPUWarningBanner() {
       <div className="flex items-center gap-3 text-sm">
         <AlertTriangle className="h-4 w-4 text-accent-warning shrink-0" />
         <p className="text-foreground">
-          Your device may not support free local processing. Try{" "}
-          {SHOWCASE_DOCS.map((doc, i) => (
-            <span key={doc.id}>
-              <Link to={`/listen/${doc.id}`} className="text-primary font-medium hover:underline">
-                {doc.title.toLowerCase()}
-              </Link>
-              {i < SHOWCASE_DOCS.length - 1 && ", "}
-            </span>
-          ))}{" "}
-          for free,{" "}
+          Your device may not support free local processing.
+          Listen to our{" "}
+          <Link to="/tips#showcase" className="text-primary font-medium hover:underline">
+            free examples
+          </Link>
+          ,{" "}
           <Link to="/subscription" className="text-primary font-medium hover:underline">
             upgrade
           </Link>
