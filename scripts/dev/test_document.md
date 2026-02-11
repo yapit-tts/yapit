@@ -14,7 +14,7 @@ You should see me too.
 
 ### Abstract
 
-Recent advances in neural text-to-speech (TTS) systems have enabled high-quality voice synthesis from written text. This paper presents **Yapit**, an open-source platform that combines browser-side inference using Kokoro.js with optional server-side processing for premium voices. Our approach achieves a mean opinion score (MOS) of 4.2[^mos] while maintaining sub-100ms latency for streaming applications.
+Recent advances in neural text-to-speech (TTS) systems have enabled high-quality voice synthesis from written text. This paper presents **Yapit**, an open-source platform that combines browser-side inference using Kokoro.js with optional server-side processing for premium voices. ~~Our approach achieves a mean opinion score (MOS) of 4.2[^mos] while maintaining sub-100ms latency for streaming applications.~~
 
 ### Introduction
 
@@ -33,7 +33,7 @@ Our system processes documents through a structured pipeline. The input text is 
 The acoustic model generates mel-spectrograms at 22.05 kHz with 80 mel channels. We employ a HiFi-GAN vocoder for waveform synthesis, achieving real-time factors exceeding 100x on consumer hardware.
 
 > [!PURPLE] Note
-> All experiments were conducted on a single NVIDIA RTX 3090 GPU with 24GB VRAM. Results may vary on different hardware configurations.
+> All experiments were conducted on a single NVIDIA RTX 3090 GPU with 24GB VRAM. ~~Results may vary on different hardware configurations.~~
 
 ### Results
 
