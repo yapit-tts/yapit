@@ -1,10 +1,11 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import DOMPurify from "dompurify";
+import { Component, memo, useCallback, useEffect, useMemo, useRef, useState, type ErrorInfo, type ReactNode } from "react";
 import katex from "katex";
 import { Copy, Download, Music, Check, ChevronRight, FileDown, FileCode2 } from "lucide-react";
+import { InlineContentRenderer } from "./inlineContent";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import type { Section } from "@/lib/sectionIndex";
+import { filterVisibleBlocks } from "@/lib/filterVisibleBlocks";
 import { useSettings, type ContentWidth } from "@/hooks/useSettings";
 
 const contentWidthClasses: Record<ContentWidth, string> = {
@@ -13,9 +14,6 @@ const contentWidthClasses: Record<ContentWidth, string> = {
   wide: "max-w-6xl",    // 1152px
   full: "",             // no limit
 };
-
-// Sanitize HTML to prevent XSS attacks
-const sanitize = (html: string): string => DOMPurify.sanitize(html);
 
 export function stripYapTags(markdown: string): string {
   return markdown
@@ -86,6 +84,7 @@ function buildSlugMap(blocks: ContentBlock[]): Map<string, string> {
 interface AudioChunk {
   text: string;
   audio_block_idx: number;
+  ast?: InlineContent[];
 }
 
 type InlineContent =
@@ -97,7 +96,9 @@ type InlineContent =
   | { type: "inline_image"; src: string; alt: string }
   | { type: "math_inline"; content: string }
   | { type: "speak"; content: string }  // TTS-only, doesn't render
-  | { type: "footnote_ref"; label: string; has_content: boolean };  // Display-only superscript
+  | { type: "show"; content: InlineContent[] }  // Display-only, no TTS
+  | { type: "footnote_ref"; label: string; has_content: boolean }  // Display-only superscript
+  | { type: "list"; ordered: boolean; start?: number; items: InlineContent[][] };  // Nested list
 
 interface ListItem {
   html: string;
@@ -156,11 +157,15 @@ interface MathBlock {
   audio_chunks: AudioChunk[];
 }
 
+interface TableCell {
+  ast: InlineContent[];
+}
+
 interface TableBlock {
   type: "table";
   id: string;
-  headers: string[];
-  rows: string[][];
+  headers: TableCell[];
+  rows: TableCell[][];
   audio_chunks: AudioChunk[];  // Always empty
 }
 
@@ -216,6 +221,47 @@ interface StructuredDocument {
 
 // === Block renderers ===
 
+function AudioContent({ ast, audioChunks }: { ast?: InlineContent[]; audioChunks: AudioChunk[] }) {
+  if (audioChunks.length <= 1) {
+    return <InlineContentRenderer nodes={audioChunks[0]?.ast ?? ast} />;
+  }
+  return (
+    <>
+      {audioChunks.map((chunk) => (
+        <span key={chunk.audio_block_idx} data-audio-idx={chunk.audio_block_idx}>
+          <InlineContentRenderer nodes={chunk.ast} />
+        </span>
+      ))}
+    </>
+  );
+}
+
+class BlockErrorBoundary extends Component<
+  { children: ReactNode },
+  { hasError: boolean }
+> {
+  state = { hasError: false };
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error("Block render error:", error, info.componentStack);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <p className="text-sm text-muted-foreground italic py-1">
+          Content failed to render
+        </p>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 interface BlockProps {
   block: ContentBlock;
   onClick?: () => void;
@@ -270,8 +316,9 @@ function HeadingBlockView({ block, slugId, isCollapsed, canCollapse = true, onTo
         id={slugId}
         className={headingClassName}
         onClick={isCollapsed ? handleHeaderClick : undefined}
-        dangerouslySetInnerHTML={{ __html: sanitize(block.html) }}
-      />
+      >
+        <InlineContentRenderer nodes={block.ast} />
+      </HeadingTag>
     );
   }
 
@@ -305,18 +352,39 @@ function HeadingBlockView({ block, slugId, isCollapsed, canCollapse = true, onTo
         id={slugId}
         className={headingClassName}
         onClick={handleHeaderClick}
-        dangerouslySetInnerHTML={{ __html: sanitize(block.html) }}
-      />
+      >
+        <InlineContentRenderer nodes={block.ast} />
+      </HeadingTag>
     </div>
   );
 }
 
 function ParagraphBlockView({ block }: { block: ParagraphBlock }) {
   return (
-    <p
-      className="my-3 py-1 leading-relaxed"
-      dangerouslySetInnerHTML={{ __html: sanitize(block.html) }}
-    />
+    <p className="my-3 py-1 leading-relaxed">
+      <AudioContent ast={block.ast} audioChunks={block.audio_chunks} />
+    </p>
+  );
+}
+
+// Renders a ListContent node as a proper <ul>/<ol> — used outside AudioContent
+// to avoid block-in-inline nesting (<ul> inside <span> is invalid HTML).
+function NestedList({ node }: { node: Extract<InlineContent, { type: "list" }> }) {
+  const Tag = node.ordered ? "ol" : "ul";
+  const listClass = node.ordered ? "list-decimal" : "list-disc";
+  return (
+    <Tag className={cn("ml-6", listClass)} start={node.start ?? undefined}>
+      {node.items.map((item, i) => {
+        const nestedLists = item.filter((n): n is Extract<InlineContent, { type: "list" }> => n.type === "list");
+        const inlineNodes = item.filter(n => n.type !== "list");
+        return (
+          <li key={i} className="my-1">
+            <InlineContentRenderer nodes={inlineNodes} />
+            {nestedLists.map((list, j) => <NestedList key={j} node={list} />)}
+          </li>
+        );
+      })}
+    </Tag>
   );
 }
 
@@ -337,9 +405,56 @@ function ListBlockView({
     >
       {block.items.map((item, idx) => {
         const hasAudio = item.audio_chunks.length > 0;
+        const nestedLists = item.ast.filter((n): n is Extract<InlineContent, { type: "list" }> => n.type === "list");
+        const hasNestedLists = nestedLists.length > 0;
+
+        if (hasNestedLists) {
+          // Items with nested lists: render inline text and nested lists separately.
+          // Can't use AudioContent because <ul> inside <span> is invalid HTML.
+          const visibleChunks = item.audio_chunks.filter(c => c.ast?.some(n => n.type !== "list"));
+          const lostChunkIdxs = item.audio_chunks
+            .filter(c => !c.ast?.some(n => n.type !== "list"))
+            .map(c => c.audio_block_idx);
+
+          return (
+            <li key={idx} className="my-1">
+              {/* Inline text: each chunk gets its own span for per-chunk highlighting */}
+              {visibleChunks.map(chunk => (
+                <span key={chunk.audio_block_idx} data-audio-idx={chunk.audio_block_idx}>
+                  <InlineContentRenderer nodes={chunk.ast} />
+                </span>
+              ))}
+              {/* Fallback for no visible chunks (old docs) */}
+              {visibleChunks.length === 0 && !lostChunkIdxs.length && (
+                <InlineContentRenderer nodes={item.ast.filter(n => n.type !== "list")} />
+              )}
+              {/* Nested list: highlight target for nested-list audio chunks.
+                 Uses :has(.audio-block-active) CSS to stay highlighted through ALL
+                 nested chunks, not just the first one (markers trigger the rule). */}
+              <div
+                data-audio-idx={lostChunkIdxs[0]}
+                className={cn(
+                  "nested-list-audio transition-colors duration-150 rounded",
+                  onBlockClick && lostChunkIdxs.length > 0 && "cursor-pointer"
+                )}
+                onClick={onBlockClick && lostChunkIdxs[0] !== undefined
+                  ? () => onBlockClick(lostChunkIdxs[0])
+                  : undefined}
+              >
+                {/* Marker spans for additional lost chunk indices — display:contents
+                    so :has(.audio-block-active) on the parent div detects them */}
+                {lostChunkIdxs.slice(1).map(chunkIdx => (
+                  <span key={chunkIdx} data-audio-idx={chunkIdx} style={{ display: "contents" }} />
+                ))}
+                {nestedLists.map((list, i) => <NestedList key={i} node={list} />)}
+              </div>
+            </li>
+          );
+        }
+
+        // Regular items (no nested lists): use AudioContent for chunk-level rendering
         const hasSingleChunk = item.audio_chunks.length === 1;
         const firstAudioIdx = hasAudio ? item.audio_chunks[0].audio_block_idx : undefined;
-        // Only make list item clickable/hoverable if single chunk (not split)
         const isClickable = hasSingleChunk && onBlockClick;
         return (
           <li
@@ -347,8 +462,9 @@ function ListBlockView({
             className={cn("my-1", isClickable && "cursor-pointer hover:bg-accent/50 rounded px-1 -mx-1")}
             data-audio-block-idx={hasSingleChunk ? firstAudioIdx : undefined}
             onClick={isClickable ? () => onBlockClick?.(firstAudioIdx!) : undefined}
-            dangerouslySetInnerHTML={{ __html: sanitize(item.html) }}
-          />
+          >
+            <AudioContent ast={item.ast} audioChunks={item.audio_chunks} />
+          </li>
         );
       })}
     </ListTag>
@@ -504,8 +620,9 @@ function TableBlockView({ block }: BlockProps & { block: TableBlock }) {
               <th
                 key={idx}
                 className="border border-border px-3 py-2 text-left font-medium"
-                dangerouslySetInnerHTML={{ __html: sanitize(header) }}
-              />
+              >
+                <InlineContentRenderer nodes={header.ast} />
+              </th>
             ))}
           </tr>
         </thead>
@@ -516,8 +633,9 @@ function TableBlockView({ block }: BlockProps & { block: TableBlock }) {
                 <td
                   key={cellIdx}
                   className="border border-border px-3 py-2"
-                  dangerouslySetInnerHTML={{ __html: sanitize(cell) }}
-                />
+                >
+                  <InlineContentRenderer nodes={cell.ast} />
+                </td>
               ))}
             </tr>
           ))}
@@ -527,15 +645,7 @@ function TableBlockView({ block }: BlockProps & { block: TableBlock }) {
   );
 }
 
-// Convert $...$ in text to math-inline spans for KaTeX rendering
-function processInlineMath(text: string): string {
-  return text.replace(/\$([^$]+)\$/g, '<span class="math-inline">$1</span>');
-}
-
 function ImageBlockView({ block, inRow }: BlockProps & { block: ImageBlock; inRow?: boolean }) {
-  // Use caption_html if available (has audio span wrappers), otherwise process caption
-  const captionContent = block.caption_html || (block.caption ? processInlineMath(block.caption) : null);
-
   return (
     <figure className={cn("flex flex-col items-center", !inRow && "my-4")}>
       <img
@@ -544,11 +654,10 @@ function ImageBlockView({ block, inRow }: BlockProps & { block: ImageBlock; inRo
         title={block.title}
         className="max-w-full max-h-96 h-auto object-contain rounded"
       />
-      {captionContent && (
-        <figcaption
-          className="text-sm text-muted-foreground mt-2 text-center"
-          dangerouslySetInnerHTML={{ __html: sanitize(captionContent) }}
-        />
+      {block.audio_chunks.length > 0 && (
+        <figcaption className="text-sm text-muted-foreground mt-2 text-center">
+          <AudioContent audioChunks={block.audio_chunks} />
+        </figcaption>
       )}
     </figure>
   );
@@ -600,7 +709,7 @@ function FootnotesBlockView({ block, onBlockClick }: {
                       onClick={handleClick}
                     >
                       {contentBlock.type === "paragraph" && (
-                        <span dangerouslySetInnerHTML={{ __html: sanitize(contentBlock.html) }} />
+                        <AudioContent ast={contentBlock.ast} audioChunks={contentBlock.audio_chunks} />
                       )}
                     </span>
                   );
@@ -869,26 +978,6 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
     return buildSlugMap(doc.blocks);
   }, [doc]);
 
-  // Render inline math after content updates
-  useEffect(() => {
-    if (!contentRef.current) return;
-    const mathSpans = contentRef.current.querySelectorAll(".math-inline");
-    mathSpans.forEach((span) => {
-      const latex = span.textContent || "";
-      if (latex && !span.classList.contains("katex-rendered")) {
-        try {
-          katex.render(latex, span as HTMLElement, {
-            displayMode: false,
-            throwOnError: false,
-          });
-          span.classList.add("katex-rendered");
-        } catch (e) {
-          console.warn("KaTeX inline render error:", e);
-        }
-      }
-    });
-  }, [structuredContent]);
-
   // Mark dead anchor links (no matching heading)
   useEffect(() => {
     if (!contentRef.current) return;
@@ -911,33 +1000,6 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
 
     return () => clearTimeout(timeoutId);
   }, [doc]);
-
-  // Replace video links with embedded video players
-  useEffect(() => {
-    if (!contentRef.current) return;
-
-    // Defer to next tick to ensure DOM is painted (Firefox timing differs from Chromium)
-    const timeoutId = setTimeout(() => {
-      if (!contentRef.current) return;
-      const videoExtensions = /\.(mp4|webm|mov|ogg)$/i;
-      const videoLinks = contentRef.current.querySelectorAll('a[href]');
-
-      videoLinks.forEach((link) => {
-        const href = link.getAttribute("href");
-        if (!href || !videoExtensions.test(href)) return;
-
-        const video = document.createElement("video");
-        video.src = href;
-        video.controls = true;
-        video.className = "max-w-full max-h-96 rounded my-2";
-        video.preload = "metadata";
-
-        link.replaceWith(video);
-      });
-    }, 0);
-
-    return () => clearTimeout(timeoutId);
-  }, [structuredContent]);
 
   // Handle clicks on links and audio spans within document content
   const handleContentClick = useCallback((e: React.MouseEvent) => {
@@ -1062,54 +1124,13 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
     if (!doc?.blocks || !sections || sections.length === 0 || !expandedSections) {
       return doc?.blocks ?? [];
     }
-
-    const skipped = skippedSections ?? new Set<string>();
-
-    const findSectionForAudioIdx = (audioIdx: number): Section | undefined => {
-      return sections.find(s => audioIdx >= s.startBlockIdx && audioIdx <= s.endBlockIdx);
-    };
-
-    const visible: ContentBlock[] = [];
-    let lastSeenSectionId: string | null = null;
-
-    for (const block of doc.blocks) {
-      if (block.type === "footnotes") {
-        visible.push(block);
-        continue;
-      }
-
-      if (block.type === "heading" && sectionByHeadingId.has(block.id)) {
-        const sectionId = block.id;
-        if (skipped.has(sectionId)) {
-          lastSeenSectionId = sectionId;
-          continue;
-        }
-        visible.push(block);
-        lastSeenSectionId = sectionId;
-        continue;
-      }
-
-      const audioIdx = block.audio_chunks?.[0]?.audio_block_idx;
-      if (audioIdx === undefined) {
-        if (lastSeenSectionId && expandedSections.has(lastSeenSectionId) && !skipped.has(lastSeenSectionId)) {
-          visible.push(block);
-        }
-        continue;
-      }
-
-      const section = findSectionForAudioIdx(audioIdx);
-      if (!section) continue;
-
-      if (section.id !== lastSeenSectionId) {
-        lastSeenSectionId = section.id;
-      }
-
-      if (expandedSections.has(section.id) && !skipped.has(section.id)) {
-        visible.push(block);
-      }
-    }
-
-    return visible;
+    return filterVisibleBlocks(
+      doc.blocks,
+      sections,
+      expandedSections,
+      skippedSections ?? new Set<string>(),
+      sectionByHeadingId,
+    );
   }, [doc?.blocks, sections, expandedSections, skippedSections, sectionByHeadingId]);
 
   // Fallback to plain text rendering
@@ -1238,11 +1259,12 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
         {groupedBlocks.map((grouped) => {
           if (grouped.kind === "image-row") {
             return (
-              <ImageRowView
-                key={grouped.blocks[0].id}
-                blocks={grouped.blocks}
-                onBlockClick={onBlockClick}
-              />
+              <BlockErrorBoundary key={grouped.blocks[0].id}>
+                <ImageRowView
+                  blocks={grouped.blocks}
+                  onBlockClick={onBlockClick}
+                />
+              </BlockErrorBoundary>
             );
           } else {
             const block = grouped.block;
@@ -1273,14 +1295,16 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
                 className={cn(blockBaseClass, handleWrapperClick && clickableClass)}
                 onClick={handleWrapperClick}
               >
-                <BlockView
-                  block={block}
-                  onBlockClick={onBlockClick}
-                  slugMap={slugMap}
-                  isCollapsed={isCollapsed}
-                  canCollapse={canCollapse}
-                  onToggleCollapse={handleToggleCollapse}
-                />
+                <BlockErrorBoundary>
+                  <BlockView
+                    block={block}
+                    onBlockClick={onBlockClick}
+                    slugMap={slugMap}
+                    isCollapsed={isCollapsed}
+                    canCollapse={canCollapse}
+                    onToggleCollapse={handleToggleCollapse}
+                  />
+                </BlockErrorBoundary>
               </div>
             );
           }
@@ -1350,21 +1374,7 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
           font-family: ui-monospace, monospace;
         }
 
-        /* Nested lists (rendered via dangerouslySetInnerHTML) */
-        .structured-content li ul,
-        .structured-content li ol {
-          margin-left: 1.5rem;
-          margin-top: 0.25rem;
-          margin-bottom: 0.25rem;
-        }
-        .structured-content li ul {
-          list-style-type: disc;
-        }
-        .structured-content li ol {
-          list-style-type: decimal;
-        }
-
-        /* Inline images (from dangerouslySetInnerHTML) */
+        /* Inline images */
         .structured-content img {
           display: block;
           max-width: 100%;
@@ -1413,11 +1423,19 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
           background: oklch(0.55 0.1 133.7 / 0.15);
           border-left-color: oklch(0.55 0.1 133.7);
         }
+        /* Nested list wrapper: stay highlighted when ANY child marker is active.
+           Markers use display:contents (no box), so :has() propagates their state. */
+        .structured-content .nested-list-audio:has(.audio-block-active) {
+          background: oklch(0.55 0.1 133.7 / 0.15);
+        }
 
         /* Hover highlighting from progress bar */
         .structured-content .audio-block-hovered {
           background: oklch(0.55 0.1 133.7 / 0.1);
           border-left-color: oklch(0.55 0.1 133.7 / 0.6);
+        }
+        .structured-content .nested-list-audio:has(.audio-block-hovered) {
+          background: oklch(0.55 0.1 133.7 / 0.1);
         }
 
         /* Native hover on clickable blocks */
@@ -1437,4 +1455,6 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
 });
 
 // Export types for use elsewhere
-export type { StructuredDocument, ContentBlock, InlineContent };
+export type { StructuredDocument, ContentBlock, InlineContent, AudioChunk };
+// Test-only exports
+export { AudioContent, BlockErrorBoundary };

@@ -95,6 +95,19 @@ class FootnoteRefContent(BaseModel):
     has_content: bool = True  # False if no matching footnote definition exists
 
 
+class ListContent(BaseModel):
+    """Nested list within a list item.
+
+    TTS text is flattened into the parent item's audio chunks (items joined
+    with " "), so TTS length = sum(item lengths) + (N-1) join spaces.
+    """
+
+    type: Literal["list"] = "list"
+    ordered: bool
+    start: int | None = None
+    items: list[list["InlineContent"]]
+
+
 InlineContent = (
     TextContent
     | CodeSpanContent
@@ -106,6 +119,7 @@ InlineContent = (
     | SpeakContent
     | ShowContent
     | FootnoteRefContent
+    | ListContent
 )
 
 

@@ -39,12 +39,15 @@ token: dev-user
 	  -H "Content-Type: application/json" \
 	  -d '{"email": "dev@example.com", "password": "dev-password-123"}' | jq -r '.access_token'
 
-test: test-unit test-integration
+test: test-unit test-frontend test-integration
 
-test-local: test-unit test-integration-local
+test-local: test-unit test-frontend test-integration-local
 
 test-unit:
 	uv run --env-file=.env.dev pytest tests --ignore=tests/integration -v -m "not runpod and not inworld and not gemini"
+
+test-frontend:
+	npm test --prefix frontend
 
 test-integration:
 	uv run --env-file=.env.dev --env-file=.env pytest tests/integration -v

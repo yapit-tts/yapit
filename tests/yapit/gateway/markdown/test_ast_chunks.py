@@ -7,11 +7,17 @@ from yapit.gateway.markdown.models import (
     HeadingBlock,
     ImageBlock,
     ListBlock,
+    ListContent,
     MathBlock,
     ParagraphBlock,
     TableBlock,
+    TextContent,
 )
-from yapit.gateway.markdown.transformer import render_ast_to_html
+from yapit.gateway.markdown.transformer import (
+    get_inline_length,
+    render_ast_to_html,
+    slice_ast,
+)
 
 DEFAULT_MAX_BLOCK_CHARS = 250
 DEFAULT_SOFT_LIMIT_MULT = 1.3
@@ -519,6 +525,23 @@ class TestYapShowEdgeCases:
                     for nested in item.blocks:
                         assert len(nested.audio_chunks) == 0
 
+    def test_yap_show_does_not_consume_audio_indices(self):
+        """yap-show content must not leave gaps in audio_block_idx sequence.
+
+        If yap-show consumes indices during transform then strips them, blocks
+        after the yap-show have shifted indices — causing the playback engine's
+        block indices to mismatch the DOM's data-audio-idx attributes.
+        """
+        md = "Before.\n\n<yap-show>\nDisplay only text.\n</yap-show>\n\nAfter."
+        doc = transform(md)
+        # Collect all audio_block_idx values
+        indices = []
+        for block in doc.blocks:
+            for chunk in block.audio_chunks:
+                indices.append(chunk.audio_block_idx)
+        # Should be contiguous: [0, 1] — no gap from the yap-show block
+        assert indices == list(range(len(indices))), f"Audio indices should be contiguous, got {indices}"
+
     def test_non_yap_html_block_silently_dropped(self):
         """Raw HTML blocks (not yap tags) are silently dropped."""
         md = "# Title\n\n<div class='custom'>Some HTML</div>\n\nParagraph."
@@ -542,3 +565,225 @@ class TestYapShowEdgeCases:
         assert "Spoken paragraph" not in all_text
         assert "Title" in all_text
         assert "Visible" in all_text
+
+
+# === 7. NESTED LIST AST ===
+
+
+class TestNestedListAst:
+    """Nested lists within list items must be represented in item.ast as ListContent nodes.
+
+    The TTS text for nested items is flattened into the parent item's audio chunks
+    (joined with " "), so ListContent's TTS length must match that joined text exactly.
+    """
+
+    def test_nested_list_appears_in_item_ast(self):
+        """item.ast should contain a ListContent node for nested bullets."""
+        doc = transform("- Top item\n  - Sub A\n  - Sub B")
+        block = doc.blocks[0]
+        assert isinstance(block, ListBlock)
+        item = block.items[0]
+        list_nodes = [n for n in item.ast if isinstance(n, ListContent)]
+        assert len(list_nodes) == 1, f"Expected 1 ListContent in ast, got {len(list_nodes)}"
+
+    def test_nested_list_content_structure(self):
+        """ListContent should have correct ordered flag and item content."""
+        doc = transform("- Parent\n  - Child A\n  - Child B")
+        block = doc.blocks[0]
+        item = block.items[0]
+        list_node = next(n for n in item.ast if isinstance(n, ListContent))
+        assert list_node.ordered is False
+        assert len(list_node.items) == 2
+        # Each item should contain inline content with the text
+        assert any(getattr(n, "content", None) == "Child A" for n in list_node.items[0])
+        assert any(getattr(n, "content", None) == "Child B" for n in list_node.items[1])
+
+    def test_nested_ordered_list(self):
+        """Nested ordered list has ordered=True and correct start."""
+        doc = transform("- Parent\n  1. First\n  2. Second")
+        block = doc.blocks[0]
+        item = block.items[0]
+        list_node = next(n for n in item.ast if isinstance(n, ListContent))
+        assert list_node.ordered is True
+        assert len(list_node.items) == 2
+
+    def test_nested_list_with_formatting(self):
+        """Nested list items with formatting preserve AST structure."""
+        doc = transform("- Parent\n  - **Bold child**\n  - *Italic child*")
+        block = doc.blocks[0]
+        item = block.items[0]
+        list_node = next(n for n in item.ast if isinstance(n, ListContent))
+        # First nested item should have StrongContent
+        html_0 = render_ast_to_html(list_node.items[0])
+        assert "<strong>Bold child</strong>" in html_0
+        html_1 = render_ast_to_html(list_node.items[1])
+        assert "<em>Italic child</em>" in html_1
+
+    def test_nested_list_tts_length_matches(self):
+        """get_inline_length of item.ast must equal len(full_tts) for correct slicing.
+
+        _transform_list joins item_tts_parts with " ". The AST must account for
+        these join spaces so slice positions align with TTS text positions.
+        """
+        doc = transform("- Parent text\n  - Sub A\n  - Sub B")
+        block = doc.blocks[0]
+        item = block.items[0]
+        # The TTS text is "Parent text Sub A Sub B" (parts joined by " ")
+        # Reconstruct from audio chunks
+        tts = " ".join(c.text for c in item.audio_chunks)
+        ast_len = sum(get_inline_length(n) for n in item.ast)
+        assert ast_len == len(tts), f"AST length {ast_len} != TTS length {len(tts)} for tts={tts!r}"
+
+    def test_nested_list_html_roundtrip(self):
+        """render_ast_to_html on item.ast should produce HTML matching item.html."""
+        doc = transform("- Top\n  - Sub A\n  - Sub B")
+        block = doc.blocks[0]
+        item = block.items[0]
+        rendered = render_ast_to_html(item.ast)
+        assert rendered == item.html
+
+    def test_nested_list_render_html_structure(self):
+        """render_inline_content_html for ListContent produces proper <ul>/<ol>."""
+        node = ListContent(
+            ordered=False,
+            items=[
+                [TextContent(content="Item 1")],
+                [TextContent(content="Item 2")],
+            ],
+        )
+        html = render_ast_to_html([node])
+        assert "<ul>" in html
+        assert "<li>" in html
+        assert "Item 1" in html
+        assert "Item 2" in html
+        assert "</ul>" in html
+
+    def test_nested_ordered_list_render_html(self):
+        """Ordered ListContent renders as <ol>."""
+        node = ListContent(
+            ordered=True,
+            start=3,
+            items=[
+                [TextContent(content="Third")],
+                [TextContent(content="Fourth")],
+            ],
+        )
+        html = render_ast_to_html([node])
+        assert '<ol start="3">' in html
+        assert "Third" in html
+
+    def test_nested_list_slice_atomic_at_start(self):
+        """ListContent is atomic — included whole when slice starts at position 0."""
+        node = ListContent(
+            ordered=False,
+            items=[
+                [TextContent(content="A")],
+                [TextContent(content="B")],
+            ],
+        )
+        # TTS length: 1 (A) + 1 (space) + 1 (B) = 3
+        length = get_inline_length(node)
+        assert length == 3
+        # Slice covering whole or partial — gets the full list
+        result = slice_ast([node], 0, 1)
+        assert len(result) == 1
+        assert isinstance(result[0], ListContent)
+        assert len(result[0].items) == 2  # full list, not sliced
+
+    def test_nested_list_slice_atomic_excludes_later(self):
+        """ListContent is excluded from chunks that don't start at its position."""
+        node = ListContent(
+            ordered=False,
+            items=[
+                [TextContent(content="Alpha")],
+                [TextContent(content="Beta")],
+            ],
+        )
+        # Slice starting past position 0 of the list — excluded
+        result = slice_ast([node], 3, 10)
+        assert result == []
+
+    def test_nested_list_with_preceding_text_sliced(self):
+        """When text precedes ListContent, slicing past text excludes the list."""
+        ast = [
+            TextContent(content="Hello"),  # pos 0..5
+            TextContent(content=" "),  # pos 5..6
+            ListContent(
+                ordered=False,
+                items=[  # pos 6..9 (A + space + B)
+                    [TextContent(content="A")],
+                    [TextContent(content="B")],
+                ],
+            ),
+        ]
+        # Slice just "Hello " — no list
+        result = slice_ast(ast, 0, 6)
+        assert not any(isinstance(n, ListContent) for n in result)
+        # Slice starting at list — gets full list
+        result = slice_ast(ast, 6, 9)
+        list_nodes = [n for n in result if isinstance(n, ListContent)]
+        assert len(list_nodes) == 1
+        assert len(list_nodes[0].items) == 2
+
+    def test_nested_list_in_split_item(self):
+        """List item with nested list that gets split: paragraph and nested list
+        produce separate chunks so highlight boundaries align with visual boundaries.
+        """
+        long_text = "A very long parent text that should definitely cause splitting. "
+        md = f"- {long_text}\n  - Sub item one\n  - Sub item two"
+        doc = transform(md, max_block_chars=40)
+        block = doc.blocks[0]
+        assert isinstance(block, ListBlock)
+        item = block.items[0]
+        assert len(item.audio_chunks) > 1, "Item should be split into multiple chunks"
+        # Reconstruct full text from chunks
+        full_text = " ".join(c.text for c in item.audio_chunks)
+        assert "parent text" in full_text
+        assert "Sub item" in full_text
+        # At least one chunk should contain the ListContent
+        has_list = any(any(isinstance(n, ListContent) for n in chunk.ast) for chunk in item.audio_chunks)
+        assert has_list, "At least one chunk should contain the nested list"
+
+    def test_nested_list_chunks_separated_from_paragraph(self):
+        """Paragraph and nested list are split independently — no chunk straddles both.
+
+        This prevents the "highlight 1 behind" bug: a straddling chunk's audio
+        covers nested list text while the highlight shows paragraph text.
+        """
+        md = "- Parent paragraph text here\n  - Sub A\n  - Sub B"
+        doc = transform(md, max_block_chars=150)
+        block = doc.blocks[0]
+        assert isinstance(block, ListBlock)
+        item = block.items[0]
+        # Should have exactly 2 chunks: one paragraph, one nested list
+        assert len(item.audio_chunks) == 2
+        para_chunk, list_chunk = item.audio_chunks
+        # Paragraph chunk has only inline AST (no ListContent)
+        assert not any(isinstance(n, ListContent) for n in para_chunk.ast)
+        assert "Parent" in para_chunk.text
+        # Nested list chunk has ListContent
+        assert any(isinstance(n, ListContent) for n in list_chunk.ast)
+        assert "Sub A" in list_chunk.text
+        # No chunk contains BOTH paragraph text and nested list text
+        for chunk in item.audio_chunks:
+            has_text = any(isinstance(n, TextContent) and n.content.strip() for n in chunk.ast)
+            has_list = any(isinstance(n, ListContent) for n in chunk.ast)
+            assert not (has_text and has_list), f"Chunk should not straddle paragraph and nested list: {chunk.text!r}"
+
+    def test_deeply_nested_list(self):
+        """Three levels of nesting: list > nested list > deeper nested list."""
+        md = "- Top\n  - Mid\n    - Deep"
+        doc = transform(md)
+        block = doc.blocks[0]
+        assert isinstance(block, ListBlock)
+        item = block.items[0]
+        # Should have ListContent in ast
+        list_nodes = [n for n in item.ast if isinstance(n, ListContent)]
+        assert len(list_nodes) == 1
+        outer = list_nodes[0]
+        # The mid-level item should itself contain a nested ListContent
+        mid_item = outer.items[0]
+        inner_lists = [n for n in mid_item if isinstance(n, ListContent)]
+        assert len(inner_lists) == 1, "Mid-level item should have a nested ListContent"
+        deep_item_html = render_ast_to_html(inner_lists[0].items[0])
+        assert "Deep" in deep_item_html

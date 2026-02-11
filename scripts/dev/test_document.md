@@ -2,6 +2,14 @@
 
 This document tests the markdown parser across various content types and edge cases.
 
+<yap-show>You can see me but not hear me!</yap-show>
+
+<yap-show>
+You should see me too.
+</yap-show>
+
+<yap-speak>You can hear me but not see me!</yap-speak>
+
 ## 1. Realistic Academic Content
 
 ### Abstract
@@ -59,36 +67,38 @@ All six callout colors with example use cases:
 
 > [!YELLOW] Key Takeaway
 > Groups are the fundamental building blocks of abstract algebra and appear throughout mathematics and physics.
+>
+> > [!GREEN] Nested Example
 
 > [!TEAL] Exercise 1.1
 > Prove that the set of $2 \times 2$ invertible matrices forms a group under matrix multiplication.
+>
+>> - Hint: Verify the group axioms one by one.
+>>   - Bonus: Determine if this group is abelian or non-abelian.
 
 > [!GRAY] Historical Note
 > The concept of groups was first formalized by Évariste Galois in the 1830s, though the axiomatic definition came later with Weber and von Dyck.
+>
+> $$ G = \{ g_1, g_2, \ldots, g_n \} \quad \text{with operation } \cdot $$
+> 
+> The group axioms can be expressed as:
+> - Closure: $\forall a, b \in G, a \cdot b \in G$
+>   - etc
+> - pp
 
 ---
 
-## 3. Images and Figures
+## 3. Images and Captions
 
 ![Fourier Transform visualization](https://upload.wikimedia.org/wikipedia/commons/thumb/7/72/Fourier_transform_time_and_frequency_domains_%28small%29.gif/220px-Fourier_transform_time_and_frequency_domains_%28small%29.gif)
 
-**Figure 1:** The Fourier transform decomposes a signal into its frequency components.
+![Fourier Transform visualization](https://upload.wikimedia.org/wikipedia/commons/thumb/7/72/Fourier_transform_time_and_frequency_domains_%28small%29.gif/220px-Fourier_transform_time_and_frequency_domains_%28small%29.gif)<yap-cap>**Figure 1:** The Fourier transform decomposes a signal into its frequency components: $x(t) \leftrightarrow X(f)$ <yap-show>This is a yap show</yap-show><yap-speak>You're hearing a yap speak</yap-speak></yap-cap>
+
+![Fourier Transform visualization](https://upload.wikimedia.org/wikipedia/commons/thumb/7/72/Fourier_transform_time_and_frequency_domains_%28small%29.gif/220px-Fourier_transform_time_and_frequency_domains_%28small%29.gif)<yap-cap>**Figure 1:** The Fourier transform decomposes a signal into its frequency components: $x(t) \leftrightarrow X(f)$ <yap-show>This is a yap show</yap-show><yap-speak>You're hearing a yap speak</yap-speak>Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.</yap-cap>
 
 ---
 
 ## 4. Code Documentation Style
-
-### Installation
-
-To install Yapit, ensure you have Python 3.11+ and run:
-
-```bash
-pip install yapit
-# or with uv
-uv add yapit
-```
-
-### Quick Start
 
 Here's a minimal example to synthesize speech:
 
@@ -98,14 +108,6 @@ from yapit import TextToSpeech
 tts = TextToSpeech(model="kokoro-v1")
 audio = tts.synthesize("Hello, world!")
 audio.save("output.wav")
-```
-
-For streaming applications, use the async API:
-
-```python
-async def stream_synthesis(text: str):
-    async for chunk in tts.stream(text):
-        yield chunk.audio_bytes
 ```
 
 ### Configuration
@@ -159,6 +161,10 @@ Use `const x = 42` for constants. The function `calculateDuration()` returns mil
 3. Third with sub-items:
    - Unordered under ordered
    - Another one
+
+- Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
+  - Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
+- Lo
 
 ### Multiple Blockquotes
 

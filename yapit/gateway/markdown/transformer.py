@@ -33,6 +33,7 @@ from yapit.gateway.markdown.models import (
     InlineImageContent,
     LinkContent,
     ListBlock,
+    ListContent,
     ListItem,
     MathBlock,
     MathInlineContent,
@@ -681,6 +682,11 @@ def slice_inline_node(node: InlineContent, start: int, end: int) -> list[InlineC
         case ShowContent():
             # ShowContent has 0 TTS length (display-only), include at slice start
             return [node] if start == 0 else []
+        case ListContent():
+            # Atomic — include whole list at slice start, don't split across chunks.
+            # Splitting a list produces multiple <ul>s with separate bullets,
+            # which visually breaks the structure.
+            return [node] if start == 0 and end > 0 else []
     return []
 
 
@@ -705,6 +711,10 @@ def get_inline_length(node: InlineContent) -> int:
         case ShowContent():
             # ShowContent is display-only, no TTS contribution
             return 0
+        case ListContent():
+            # Items are joined with " " in TTS text, so add (N-1) join spaces
+            item_lengths = [sum(get_inline_length(child) for child in item) for item in node.items]
+            return sum(item_lengths) + max(0, len(node.items) - 1)
     return 0
 
 
@@ -745,6 +755,11 @@ def render_inline_content_html(node: InlineContent) -> str:
         case ShowContent():
             # ShowContent renders its inner content (display-only)
             return render_ast_to_html(node.content)
+        case ListContent():
+            tag = "ol" if node.ordered else "ul"
+            start_attr = f' start="{node.start}"' if node.ordered and node.start else ""
+            items_html = "".join(f"<li>{render_ast_to_html(item)}</li>" for item in node.items)
+            return f"<{tag}{start_attr}>{items_html}</{tag}>"
     return ""
 
 
@@ -931,6 +946,7 @@ class DocumentTransformer:
         """Transform all children of a node."""
         blocks: list[ContentBlock] = []
         yap_show_acc: list[ContentBlock] | None = None
+        saved_audio_idx = 0
 
         for i, child in enumerate(node.children):
             if i in self._skip_indices:
@@ -943,6 +959,7 @@ class DocumentTransformer:
                     # Check for yap-show opening without close in same block
                     if content.startswith(YAP_SHOW_OPEN) and YAP_SHOW_CLOSE not in content:
                         yap_show_acc = []
+                        saved_audio_idx = self._audio_idx_counter
                         # Re-parse any content after the opening tag
                         inner = content[len(YAP_SHOW_OPEN) :].strip()
                         if inner:
@@ -962,6 +979,7 @@ class DocumentTransformer:
                         for c in inner_tree.children:
                             yap_show_acc.extend(self._transform_node(c, inner_tree))
                     _strip_audio_recursive(yap_show_acc)
+                    self._audio_idx_counter = saved_audio_idx
                     blocks.extend(yap_show_acc)
                     yap_show_acc = None
                     continue
@@ -981,6 +999,7 @@ class DocumentTransformer:
         # Unclosed yap-show at end of document — include content anyway
         if yap_show_acc:
             _strip_audio_recursive(yap_show_acc)
+            self._audio_idx_counter = saved_audio_idx
             blocks.extend(yap_show_acc)
 
         return blocks
@@ -1164,9 +1183,10 @@ class DocumentTransformer:
         items: list[ListItem] = []
 
         for list_item in node.children:
-            item_html_parts: list[str] = []
-            item_tts_parts: list[str] = []
+            # Collect segments in document order: (is_list, html, tts, ast)
+            segments: list[tuple[bool, str, str, list[InlineContent]]] = []
             item_ast: list[InlineContent] = []
+            has_nested = False
 
             for child in list_item.children:
                 if child.type == "paragraph":
@@ -1175,24 +1195,41 @@ class DocumentTransformer:
 
                     processor = InlineProcessor()
                     html, tts = processor.process(children)
-                    item_html_parts.append(html)
-                    item_tts_parts.append(tts)
+                    segments.append((False, html, tts, transform_inline_to_ast(children)))
                     item_ast.extend(transform_inline_to_ast(children))
 
                 elif child.type in ("bullet_list", "ordered_list"):
+                    has_nested = True
                     nested_html, nested_tts = self._render_nested_list(child)
-                    item_html_parts.append(nested_html)
-                    item_tts_parts.append(nested_tts)
+                    nested_ast_node = self._build_nested_list_ast(child)
+                    segments.append((True, nested_html, nested_tts, [nested_ast_node]))
+                    if item_ast:
+                        item_ast.append(TextContent(content=" "))
+                    item_ast.append(nested_ast_node)
 
-            full_html = " ".join(item_html_parts)
-            full_tts = " ".join(item_tts_parts)
+            full_html = " ".join(seg_html for _, seg_html, _, _ in segments)
 
-            audio_chunks: list[AudioChunk] = []
-            if full_tts.strip():
-                full_html, audio_chunks = split_with_spans(
-                    full_tts, full_html, item_ast, self.splitter, self._audio_idx_counter
-                )
-                self._audio_idx_counter += len(audio_chunks)
+            if not has_nested:
+                # No nested lists: combine and split as one (existing behavior)
+                full_tts = " ".join(seg_tts for _, _, seg_tts, _ in segments)
+                audio_chunks: list[AudioChunk] = []
+                if full_tts.strip():
+                    full_html, audio_chunks = split_with_spans(
+                        full_tts, full_html, item_ast, self.splitter, self._audio_idx_counter
+                    )
+                    self._audio_idx_counter += len(audio_chunks)
+            else:
+                # Has nested lists: split each segment independently so chunk
+                # boundaries align with the paragraph→nested-list visual boundary.
+                # Prevents the "highlight 1 behind" bug where a chunk straddles both.
+                audio_chunks = []
+                for _, seg_html, seg_tts, seg_ast in segments:
+                    if seg_tts.strip():
+                        _, seg_chunks = split_with_spans(
+                            seg_tts, seg_html, seg_ast, self.splitter, self._audio_idx_counter
+                        )
+                        self._audio_idx_counter += len(seg_chunks)
+                        audio_chunks.extend(seg_chunks)
 
             items.append(
                 ListItem(
@@ -1243,6 +1280,34 @@ class DocumentTransformer:
         html = f"<{tag}{start_attr}>{''.join(html_parts)}</{tag}>"
         tts = " ".join(tts_parts)
         return html, tts
+
+    def _build_nested_list_ast(self, node: SyntaxTreeNode) -> ListContent:
+        """Build a ListContent AST node from a nested list syntax tree node.
+
+        Mirrors _render_nested_list but produces AST instead of HTML.
+        Join spaces between parts within an item are explicit TextContent(" ")
+        nodes so that get_inline_length stays in sync with the TTS text.
+        """
+        ordered = node.type == "ordered_list"
+        start = cast(int | None, node.attrs.get("start")) if ordered else None
+
+        items: list[list[InlineContent]] = []
+        for list_item in node.children:
+            item_ast: list[InlineContent] = []
+            for child in list_item.children:
+                if child.type == "paragraph":
+                    inline = child.children[0] if child.children else None
+                    children = inline.children if inline else []
+                    if item_ast:
+                        item_ast.append(TextContent(content=" "))
+                    item_ast.extend(transform_inline_to_ast(children))
+                elif child.type in ("bullet_list", "ordered_list"):
+                    if item_ast:
+                        item_ast.append(TextContent(content=" "))
+                    item_ast.append(self._build_nested_list_ast(child))
+            items.append(item_ast)
+
+        return ListContent(ordered=ordered, start=start, items=items)
 
     def _transform_blockquote(self, node: SyntaxTreeNode) -> list[BlockquoteBlock]:
         r"""Transform blockquote node.
@@ -1530,11 +1595,13 @@ class DocumentTransformer:
             inner_md = show_match.group(1).strip()
             if not inner_md:
                 return []
+            saved_audio_idx = self._audio_idx_counter
             inner_tree = parse_markdown(inner_md)
             blocks: list[ContentBlock] = []
             for child in inner_tree.children:
                 blocks.extend(self._transform_node(child, inner_tree))
             _strip_audio_recursive(blocks)
+            self._audio_idx_counter = saved_audio_idx
             return blocks
 
         if re.match(r"<yap-speak>(.*?)</yap-speak>", content, re.DOTALL):

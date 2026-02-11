@@ -7,6 +7,7 @@
 interface AudioChunk {
   text: string;
   audio_block_idx: number;
+  ast?: InlineContent[];
 }
 
 type InlineContent =
@@ -18,6 +19,7 @@ type InlineContent =
   | { type: "inline_image"; src: string; alt: string }
   | { type: "math_inline"; content: string }
   | { type: "speak"; content: string }
+  | { type: "show"; content: InlineContent[] }
   | { type: "footnote_ref"; label: string; has_content: boolean };
 
 interface HeadingBlock {
