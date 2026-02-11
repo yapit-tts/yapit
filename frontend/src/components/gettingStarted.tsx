@@ -1,15 +1,9 @@
 import { useState, useEffect } from "react";
 import { Link } from "react-router";
 import { X } from "lucide-react";
+import { SHOWCASE_DOCS } from "@/config/showcase";
 
 const DISMISSED_KEY = "yapit_getting_started_dismissed";
-
-// TODO: Replace with showcase.json config once documents are created
-const SHOWCASE_DOCS = [
-  { id: "placeholder-blog", title: "Blog post" },
-  { id: "placeholder-pdf", title: "PDF with figures" },
-  { id: "placeholder-image", title: "Image" },
-];
 
 export function GettingStarted() {
   const [dismissed, setDismissed] = useState(true); // Start hidden to prevent flash
@@ -32,7 +26,7 @@ export function GettingStarted() {
       <span>Try:</span>
       {SHOWCASE_DOCS.map((doc, i) => (
         <span key={doc.id}>
-          <Link to={`/d/${doc.id}`} className="text-foreground hover:underline">
+          <Link to={`/listen/${doc.id}`} className="text-foreground hover:underline">
             {doc.title}
           </Link>
           {i < SHOWCASE_DOCS.length - 1 && <span className="ml-2">·</span>}
