@@ -1,10 +1,12 @@
 import { useEffect } from "react";
-import { useLocation } from "react-router";
+import { Link, useLocation } from "react-router";
+import { SHOWCASE_DOCS } from "@/config/showcase";
 
 const codeClass = "text-sm font-mono px-1.5 py-0.5 rounded" as const;
 const codeStyle = { background: "var(--muted-brown)" } as const;
 
 const sections = [
+  { id: "showcase", label: "Try it out" },
   { id: "controls", label: "Controls" },
   { id: "local-tts", label: "Local TTS" },
   { id: "premium-voices", label: "Premium voices" },
@@ -45,6 +47,21 @@ const TipsPage = () => {
           </a>
         ))}
       </nav>
+
+      <section id="showcase" className="mb-12 scroll-mt-24">
+        <h2 className="text-2xl font-semibold mb-4">Try it out</h2>
+        <p className="text-muted-foreground">
+          Try these documents for free:{" "}
+          {SHOWCASE_DOCS.map((doc, i) => (
+            <span key={doc.id}>
+              <Link to={`/listen/${doc.id}`} className="text-primary font-medium hover:underline">
+                {doc.title}
+              </Link>
+              {i < SHOWCASE_DOCS.length - 1 && " and "}
+            </span>
+          ))}.
+        </p>
+      </section>
 
       <section id="controls" className="mb-12 scroll-mt-24">
         <h2 className="text-2xl font-semibold mb-4">Controls</h2>

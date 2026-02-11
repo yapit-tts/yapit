@@ -1,15 +1,14 @@
-"""Cache warming script for voice previews.
+"""Cache warming script for voice previews and showcase documents.
 
 Run inside the gateway container:
     python -m yapit.gateway.warm_cache
-
-Or via systemd timer on VPS.
 """
 
 import asyncio
 import sys
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Literal
 
 import redis.asyncio as redis
 from loguru import logger
@@ -19,7 +18,7 @@ from sqlmodel import col, select
 from yapit.gateway.config import Settings
 from yapit.gateway.db import close_db, create_session
 from yapit.gateway.deps import create_cache
-from yapit.gateway.domain_models import TTSModel
+from yapit.gateway.domain_models import Document, TTSModel, Voice
 from yapit.gateway.synthesis import CachedResult, QueuedResult, synthesize_and_wait
 
 PREVIEW_DOCUMENT_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
@@ -34,35 +33,63 @@ PREVIEW_SENTENCES = [
 
 
 @dataclass
+class ShowcaseDoc:
+    id: uuid.UUID
+    # Per-model voice filter: "all" warms every active voice, "english" only lang.startswith("en")
+    voice_filter: dict[str, Literal["all", "english"]] = field(default_factory=dict)
+
+
+SHOWCASE_DOCS = [
+    ShowcaseDoc(
+        id=uuid.UUID("1c185db2-cdd7-4de4-9016-c1ff6abe4cd9"),  # File Over App
+        voice_filter={},  # empty = "all" for every model
+    ),
+    ShowcaseDoc(
+        id=uuid.UUID("3bde213b-3a5a-465f-9198-be65430b699e"),  # Attention Is All You Need
+        voice_filter={"inworld-1.5": "english", "inworld-1.5-max": "english"},
+    ),
+]
+
+
+@dataclass
 class WarmingStats:
     cached: int = 0
     synthesized: int = 0
     failed: int = 0
 
 
-async def warm_model_voices(
+def filter_voices(model: TTSModel, voice_filter: dict[str, Literal["all", "english"]]) -> list[Voice]:
+    active = [v for v in model.voices if v.is_active]
+    strategy = voice_filter.get(model.slug, "all")
+    if strategy == "english":
+        active = [v for v in active if v.lang and v.lang.startswith("en")]
+    return active
+
+
+async def warm_texts(
     settings: Settings,
     redis_client: redis.Redis,
     model: TTSModel,
+    voices: list[Voice],
+    texts: list[str],
+    document_id: uuid.UUID,
     stats: WarmingStats,
 ) -> None:
-    """Warm all voice previews for a single model."""
     cache = create_cache(settings.audio_cache_type, settings.audio_cache_config)
-    active_voices = [v for v in model.voices if v.is_active]
 
-    for voice in active_voices:
-        for idx, sentence in enumerate(PREVIEW_SENTENCES):
+    for voice in voices:
+        for idx, text in enumerate(texts):
             async for db in create_session(settings):
                 result = await synthesize_and_wait(
                     db=db,
                     redis=redis_client,
                     cache=cache,
                     user_id="cache-warmer",
-                    text=sentence,
+                    text=text,
                     model=model,
                     voice=voice,
                     billing_enabled=False,
-                    document_id=PREVIEW_DOCUMENT_ID,
+                    document_id=document_id,
                     block_idx=idx,
                     timeout_seconds=30.0,
                     poll_interval=0.2,
@@ -94,16 +121,40 @@ async def main() -> int:
             ).all()
             break
 
-        total_voices = sum(len([v for v in m.voices if v.is_active]) for m in models)
-        total_requests = total_voices * len(PREVIEW_SENTENCES)
-        logger.info(f"Warming {len(models)} models, {total_voices} voices, {total_requests} total requests")
-
         stats = WarmingStats()
 
+        # --- Voice previews ---
+        total_voices = sum(len([v for v in m.voices if v.is_active]) for m in models)
+        logger.info(
+            f"Voice previews: {len(models)} models, {total_voices} voices, {total_voices * len(PREVIEW_SENTENCES)} requests"
+        )
+
         for model in models:
-            active_count = len([v for v in model.voices if v.is_active])
-            logger.info(f"{model.slug}: {active_count} voices")
-            await warm_model_voices(settings, redis_client, model, stats)
+            active = [v for v in model.voices if v.is_active]
+            logger.info(f"{model.slug}: {len(active)} voices")
+            await warm_texts(settings, redis_client, model, active, PREVIEW_SENTENCES, PREVIEW_DOCUMENT_ID, stats)
+
+        # --- Showcase documents ---
+        for showcase in SHOWCASE_DOCS:
+            async for db in create_session(settings):
+                doc = (
+                    await db.exec(
+                        select(Document).where(Document.id == showcase.id).options(selectinload(Document.blocks))  # type: ignore[arg-type]
+                    )
+                ).first()
+                break
+
+            if doc is None:
+                logger.warning(f"Showcase doc {showcase.id} not found, skipping")
+                continue
+
+            block_texts = [b.text for b in sorted(doc.blocks, key=lambda b: b.idx)]
+            logger.info(f"Showcase '{doc.title}': {len(block_texts)} blocks")
+
+            for model in models:
+                voices = filter_voices(model, showcase.voice_filter)
+                logger.info(f"  {model.slug}: {len(voices)} voices")
+                await warm_texts(settings, redis_client, model, voices, block_texts, showcase.id, stats)
 
         logger.info(f"Done: {stats.cached} cached, {stats.synthesized} synthesized, {stats.failed} failed")
         return 0 if stats.failed == 0 else 1
