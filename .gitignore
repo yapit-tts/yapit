@@ -214,3 +214,4 @@ experiments/tts_speed_benchmark/
 scripts/prompt_eval/runs
 .env.selfhost
 scripts/stress_test_results
+/gateway/
