@@ -27,24 +27,29 @@ from yapit.gateway.markdown.models import (
     FootnoteItem,
     FootnoteRefContent,
     FootnotesBlock,
+    HardbreakContent,
     HeadingBlock,
     ImageBlock,
     InlineContent,
     InlineImageContent,
     LinkContent,
     ListBlock,
+    ListContent,
     ListItem,
     MathBlock,
     MathInlineContent,
     ParagraphBlock,
     ShowContent,
     SpeakContent,
+    StrikethroughContent,
     StrongContent,
     StructuredDocument,
     TableBlock,
+    TableCell,
     TextContent,
     ThematicBreak,
 )
+from yapit.gateway.markdown.parser import parse_markdown
 
 # === TAG CONSTANTS ===
 
@@ -170,8 +175,9 @@ class InlineProcessor:
         elif node.type == "math_inline":
             return f'<span class="math-inline">{node.content or ""}</span>'
         elif node.type == "html_inline":
-            # Pass through HTML that isn't our tags
-            return node.content or ""
+            # Yap tags are handled by the caller (_process_nodes); any html_inline
+            # reaching here is raw user HTML — drop it to prevent XSS.
+            return ""
         elif node.type == "footnote_ref":
             # Footnote reference - render as superscript link
             label = node.meta.get("label", "") if node.meta else ""
@@ -364,6 +370,13 @@ def _transform_inline_node(node: SyntaxTreeNode) -> InlineContent | None:
             if ast:
                 inner.append(ast)
         return EmphasisContent(content=inner)
+    elif node.type == "s":
+        inner = []
+        for child in node.children:
+            ast = _transform_inline_node(child)
+            if ast:
+                inner.append(ast)
+        return StrikethroughContent(content=inner)
     elif node.type == "code_inline":
         return CodeSpanContent(content=node.content or "")
     elif node.type == "link":
@@ -384,8 +397,10 @@ def _transform_inline_node(node: SyntaxTreeNode) -> InlineContent | None:
         )
     elif node.type == "math_inline":
         return MathInlineContent(content=node.content or "")
-    elif node.type in ("softbreak", "hardbreak"):
+    elif node.type == "softbreak":
         return TextContent(content=" ")
+    elif node.type == "hardbreak":
+        return HardbreakContent()
     elif node.type == "footnote_ref":
         label = node.meta.get("label", "") if node.meta else ""
         return FootnoteRefContent(label=label)
@@ -571,7 +586,7 @@ def split_with_spans(
 
     if len(chunk_ranges) <= 1:
         # No splitting needed
-        return html, [AudioChunk(text=text, audio_block_idx=start_idx)]
+        return html, [AudioChunk(text=text, audio_block_idx=start_idx, ast=ast)]
 
     # AST may have trailing 0-length nodes (math, footnote refs) past the stripped text length.
     # Extend last chunk's end to include them.
@@ -594,7 +609,7 @@ def split_with_spans(
         chunk_html = render_ast_to_html(sliced_ast)
 
         html_parts.append(f'<span data-audio-idx="{idx}">{chunk_html}</span>')
-        audio_chunks.append(AudioChunk(text=chunk_text, audio_block_idx=idx))
+        audio_chunks.append(AudioChunk(text=chunk_text, audio_block_idx=idx, ast=sliced_ast))
 
     return " ".join(html_parts), audio_chunks
 
@@ -657,6 +672,9 @@ def slice_inline_node(node: InlineContent, start: int, end: int) -> list[InlineC
         case EmphasisContent():
             inner = slice_ast(node.content, start, end)
             return [EmphasisContent(content=inner)] if inner else []
+        case StrikethroughContent():
+            inner = slice_ast(node.content, start, end)
+            return [StrikethroughContent(content=inner)] if inner else []
         case LinkContent():
             inner = slice_ast(node.content, start, end)
             return [LinkContent(href=node.href, title=node.title, content=inner)] if inner else []
@@ -672,12 +690,20 @@ def slice_inline_node(node: InlineContent, start: int, end: int) -> list[InlineC
             # Speak content is sliced like text (contributes to TTS length)
             content = node.content[start:end]
             return [SpeakContent(content=content)] if content else []
+        case HardbreakContent():
+            # TTS length 1 — include if slice covers it
+            return [node] if start == 0 and end >= 1 else []
         case FootnoteRefContent():
             # Footnote refs have 0 TTS length, include at slice start
             return [node] if start == 0 else []
         case ShowContent():
             # ShowContent has 0 TTS length (display-only), include at slice start
             return [node] if start == 0 else []
+        case ListContent():
+            # Atomic — include whole list at slice start, don't split across chunks.
+            # Splitting a list produces multiple <ul>s with separate bullets,
+            # which visually breaks the structure.
+            return [node] if start == 0 and end > 0 else []
     return []
 
 
@@ -686,7 +712,7 @@ def get_inline_length(node: InlineContent) -> int:
     match node:
         case TextContent() | CodeSpanContent():
             return len(node.content)
-        case StrongContent() | EmphasisContent() | LinkContent():
+        case StrongContent() | EmphasisContent() | StrikethroughContent() | LinkContent():
             return sum(get_inline_length(child) for child in node.content)
         case InlineImageContent():
             return len(node.alt)
@@ -696,12 +722,18 @@ def get_inline_length(node: InlineContent) -> int:
         case SpeakContent():
             # Speak content contributes its full length to TTS
             return len(node.content)
+        case HardbreakContent():
+            return 1  # Maps to " " in TTS
         case FootnoteRefContent():
             # Footnote refs are silent (display-only)
             return 0
         case ShowContent():
             # ShowContent is display-only, no TTS contribution
             return 0
+        case ListContent():
+            # Items are joined with " " in TTS text, so add (N-1) join spaces
+            item_lengths = [sum(get_inline_length(child) for child in item) for item in node.items]
+            return sum(item_lengths) + max(0, len(node.items) - 1)
     return 0
 
 
@@ -721,6 +753,8 @@ def render_inline_content_html(node: InlineContent) -> str:
             return f"<strong>{render_ast_to_html(node.content)}</strong>"
         case EmphasisContent():
             return f"<em>{render_ast_to_html(node.content)}</em>"
+        case StrikethroughContent():
+            return f"<s>{render_ast_to_html(node.content)}</s>"
         case LinkContent():
             inner = render_ast_to_html(node.content)
             title_attr = f' title="{node.title}"' if node.title else ""
@@ -732,6 +766,8 @@ def render_inline_content_html(node: InlineContent) -> str:
         case SpeakContent():
             # Speak content is TTS-only, doesn't render to display HTML
             return ""
+        case HardbreakContent():
+            return "<br />"
         case FootnoteRefContent():
             # Render as superscript link to footnote, with id for back-navigation
             if node.has_content:
@@ -742,6 +778,11 @@ def render_inline_content_html(node: InlineContent) -> str:
         case ShowContent():
             # ShowContent renders its inner content (display-only)
             return render_ast_to_html(node.content)
+        case ListContent():
+            tag = "ol" if node.ordered else "ul"
+            start_attr = f' start="{node.start}"' if node.ordered and node.start else ""
+            items_html = "".join(f"<li>{render_ast_to_html(item)}</li>" for item in node.items)
+            return f"<{tag}{start_attr}>{items_html}</{tag}>"
     return ""
 
 
@@ -927,10 +968,63 @@ class DocumentTransformer:
     def _transform_children(self, node: SyntaxTreeNode) -> list[ContentBlock]:
         """Transform all children of a node."""
         blocks: list[ContentBlock] = []
+        yap_show_acc: list[ContentBlock] | None = None
+        saved_audio_idx = 0
+
         for i, child in enumerate(node.children):
             if i in self._skip_indices:
                 continue
+
+            if child.type == "html_block":
+                content = (child.content or "").strip()
+
+                if yap_show_acc is None:
+                    # Check for yap-show opening without close in same block
+                    if content.startswith(YAP_SHOW_OPEN) and YAP_SHOW_CLOSE not in content:
+                        yap_show_acc = []
+                        saved_audio_idx = self._audio_idx_counter
+                        # Re-parse any content after the opening tag
+                        inner = content[len(YAP_SHOW_OPEN) :].strip()
+                        if inner:
+                            inner_tree = parse_markdown(inner)
+                            for c in inner_tree.children:
+                                yap_show_acc.extend(self._transform_node(c, inner_tree))
+                        continue
+                    # Self-contained or other html_block — normal dispatch
+                    blocks.extend(self._transform_node(child, parent=node, index=i))
+                    continue
+
+                # In accumulation mode — check for close tag
+                if YAP_SHOW_CLOSE in content:
+                    before_close = content.split(YAP_SHOW_CLOSE)[0].strip()
+                    if before_close:
+                        inner_tree = parse_markdown(before_close)
+                        for c in inner_tree.children:
+                            yap_show_acc.extend(self._transform_node(c, inner_tree))
+                    _strip_audio_recursive(yap_show_acc)
+                    self._audio_idx_counter = saved_audio_idx
+                    blocks.extend(yap_show_acc)
+                    yap_show_acc = None
+                    continue
+                # html_block inside yap-show without close tag — re-parse its content
+                inner_tree = parse_markdown(content)
+                for c in inner_tree.children:
+                    yap_show_acc.extend(self._transform_node(c, inner_tree))
+                continue
+
+            if yap_show_acc is not None:
+                # Non-html_block inside yap-show — transform normally, accumulate
+                yap_show_acc.extend(self._transform_node(child, parent=node, index=i))
+                continue
+
             blocks.extend(self._transform_node(child, parent=node, index=i))
+
+        # Unclosed yap-show at end of document — include content anyway
+        if yap_show_acc:
+            _strip_audio_recursive(yap_show_acc)
+            self._audio_idx_counter = saved_audio_idx
+            blocks.extend(yap_show_acc)
+
         return blocks
 
     def _transform_node(
@@ -952,6 +1046,7 @@ class DocumentTransformer:
             "hr": self._transform_hr,
             "math_block": lambda n: self._transform_math(n, parent, index),
             "footnote_block": self._transform_footnote_block,
+            "html_block": self._transform_html_block,
         }
 
         handler = handlers.get(node.type)
@@ -1111,9 +1206,10 @@ class DocumentTransformer:
         items: list[ListItem] = []
 
         for list_item in node.children:
-            item_html_parts: list[str] = []
-            item_tts_parts: list[str] = []
+            # Collect segments in document order: (is_list, html, tts, ast)
+            segments: list[tuple[bool, str, str, list[InlineContent]]] = []
             item_ast: list[InlineContent] = []
+            has_nested = False
 
             for child in list_item.children:
                 if child.type == "paragraph":
@@ -1122,24 +1218,41 @@ class DocumentTransformer:
 
                     processor = InlineProcessor()
                     html, tts = processor.process(children)
-                    item_html_parts.append(html)
-                    item_tts_parts.append(tts)
+                    segments.append((False, html, tts, transform_inline_to_ast(children)))
                     item_ast.extend(transform_inline_to_ast(children))
 
                 elif child.type in ("bullet_list", "ordered_list"):
+                    has_nested = True
                     nested_html, nested_tts = self._render_nested_list(child)
-                    item_html_parts.append(nested_html)
-                    item_tts_parts.append(nested_tts)
+                    nested_ast_node = self._build_nested_list_ast(child)
+                    segments.append((True, nested_html, nested_tts, [nested_ast_node]))
+                    if item_ast:
+                        item_ast.append(TextContent(content=" "))
+                    item_ast.append(nested_ast_node)
 
-            full_html = " ".join(item_html_parts)
-            full_tts = " ".join(item_tts_parts)
+            full_html = " ".join(seg_html for _, seg_html, _, _ in segments)
 
-            audio_chunks: list[AudioChunk] = []
-            if full_tts.strip():
-                full_html, audio_chunks = split_with_spans(
-                    full_tts, full_html, item_ast, self.splitter, self._audio_idx_counter
-                )
-                self._audio_idx_counter += len(audio_chunks)
+            if not has_nested:
+                # No nested lists: combine and split as one (existing behavior)
+                full_tts = " ".join(seg_tts for _, _, seg_tts, _ in segments)
+                audio_chunks: list[AudioChunk] = []
+                if full_tts.strip():
+                    full_html, audio_chunks = split_with_spans(
+                        full_tts, full_html, item_ast, self.splitter, self._audio_idx_counter
+                    )
+                    self._audio_idx_counter += len(audio_chunks)
+            else:
+                # Has nested lists: split each segment independently so chunk
+                # boundaries align with the paragraph→nested-list visual boundary.
+                # Prevents the "highlight 1 behind" bug where a chunk straddles both.
+                audio_chunks = []
+                for _, seg_html, seg_tts, seg_ast in segments:
+                    if seg_tts.strip():
+                        _, seg_chunks = split_with_spans(
+                            seg_tts, seg_html, seg_ast, self.splitter, self._audio_idx_counter
+                        )
+                        self._audio_idx_counter += len(seg_chunks)
+                        audio_chunks.extend(seg_chunks)
 
             items.append(
                 ListItem(
@@ -1191,6 +1304,34 @@ class DocumentTransformer:
         tts = " ".join(tts_parts)
         return html, tts
 
+    def _build_nested_list_ast(self, node: SyntaxTreeNode) -> ListContent:
+        """Build a ListContent AST node from a nested list syntax tree node.
+
+        Mirrors _render_nested_list but produces AST instead of HTML.
+        Join spaces between parts within an item are explicit TextContent(" ")
+        nodes so that get_inline_length stays in sync with the TTS text.
+        """
+        ordered = node.type == "ordered_list"
+        start = cast(int | None, node.attrs.get("start")) if ordered else None
+
+        items: list[list[InlineContent]] = []
+        for list_item in node.children:
+            item_ast: list[InlineContent] = []
+            for child in list_item.children:
+                if child.type == "paragraph":
+                    inline = child.children[0] if child.children else None
+                    children = inline.children if inline else []
+                    if item_ast:
+                        item_ast.append(TextContent(content=" "))
+                    item_ast.extend(transform_inline_to_ast(children))
+                elif child.type in ("bullet_list", "ordered_list"):
+                    if item_ast:
+                        item_ast.append(TextContent(content=" "))
+                    item_ast.append(self._build_nested_list_ast(child))
+            items.append(item_ast)
+
+        return ListContent(ordered=ordered, start=start, items=items)
+
     def _transform_blockquote(self, node: SyntaxTreeNode) -> list[BlockquoteBlock]:
         r"""Transform blockquote node.
 
@@ -1222,7 +1363,13 @@ class DocumentTransformer:
         # so audio indices are in visual order: title, then content
         title_audio: list[AudioChunk] = []
         if callout_title:
-            title_audio = [AudioChunk(text=callout_title, audio_block_idx=self._next_audio_idx())]
+            title_audio = [
+                AudioChunk(
+                    text=callout_title,
+                    audio_block_idx=self._next_audio_idx(),
+                    ast=[TextContent(content=callout_title)],
+                )
+            ]
 
         # Build content blocks
         blocks: list[ContentBlock] = []
@@ -1404,7 +1551,13 @@ class DocumentTransformer:
 
         audio_chunks: list[AudioChunk] = []
         if tts_text.strip():
-            audio_chunks = [AudioChunk(text=tts_text.strip(), audio_block_idx=self._next_audio_idx())]
+            audio_chunks = [
+                AudioChunk(
+                    text=tts_text.strip(),
+                    audio_block_idx=self._next_audio_idx(),
+                    ast=[TextContent(content=tts_text.strip())],
+                )
+            ]
 
         return [
             MathBlock(
@@ -1417,8 +1570,8 @@ class DocumentTransformer:
 
     def _transform_table(self, node: SyntaxTreeNode) -> list[TableBlock]:
         """Transform table node."""
-        headers: list[str] = []
-        rows: list[list[str]] = []
+        headers: list[TableCell] = []
+        rows: list[list[TableCell]] = []
 
         for child in node.children:
             if child.type == "thead":
@@ -1428,16 +1581,18 @@ class DocumentTransformer:
                         children = inline.children if inline else []
                         processor = InlineProcessor()
                         html, _ = processor.process(children)
-                        headers.append(html)
+                        ast = transform_inline_to_ast(children)
+                        headers.append(TableCell(html=html, ast=ast))
             elif child.type == "tbody":
                 for tr in child.children:
-                    row: list[str] = []
+                    row: list[TableCell] = []
                     for td in tr.children:
                         inline = td.children[0] if td.children else None
                         children = inline.children if inline else []
                         processor = InlineProcessor()
                         html, _ = processor.process(children)
-                        row.append(html)
+                        ast = transform_inline_to_ast(children)
+                        row.append(TableCell(html=html, ast=ast))
                     rows.append(row)
 
         return [
@@ -1451,6 +1606,47 @@ class DocumentTransformer:
     def _transform_hr(self, node: SyntaxTreeNode) -> list[ThematicBreak]:
         """Transform horizontal rule."""
         return [ThematicBreak(id=self._next_block_id())]
+
+    def _transform_html_block(self, node: SyntaxTreeNode) -> Sequence[ContentBlock]:
+        """Handle html_block nodes — multi-line yap tags that markdown-it
+        classifies as block-level HTML instead of inline.
+        """
+        content = (node.content or "").strip()
+
+        show_match = re.match(r"<yap-show>(.*?)</yap-show>", content, re.DOTALL)
+        if show_match:
+            inner_md = show_match.group(1).strip()
+            if not inner_md:
+                return []
+            saved_audio_idx = self._audio_idx_counter
+            inner_tree = parse_markdown(inner_md)
+            blocks: list[ContentBlock] = []
+            for child in inner_tree.children:
+                blocks.extend(self._transform_node(child, inner_tree))
+            _strip_audio_recursive(blocks)
+            self._audio_idx_counter = saved_audio_idx
+            return blocks
+
+        if re.match(r"<yap-speak>(.*?)</yap-speak>", content, re.DOTALL):
+            return []
+
+        return []
+
+
+def _strip_audio_recursive(blocks: Sequence[ContentBlock]) -> None:
+    """Remove all audio_chunks from blocks and their nested structures."""
+    for block in blocks:
+        block.audio_chunks.clear()
+        match block:
+            case ListBlock():
+                for item in block.items:
+                    item.audio_chunks.clear()
+            case BlockquoteBlock():
+                _strip_audio_recursive(block.blocks)
+            case FootnotesBlock():
+                for item in block.items:
+                    item.audio_chunks.clear()
+                    _strip_audio_recursive(item.blocks)
 
 
 # === PUBLIC API ===

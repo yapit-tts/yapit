@@ -61,10 +61,11 @@ Colors are purely visual styling — pick based on aesthetics, not semantic mean
 
 # Placement Rules / Quirks
 
-Same-line requirement:  
-- All yap tags must be on the same line as their content  
-- No newlines inside `<yap-show>...</yap-show>` or `<yap-speak>...</yap-speak>` or `<yap-cap>...</yap-cap>`  
-- Reason: `markdown-it` treats multi-line HTML as `html_block` and doesn't parse inner markdown
+Same-line preference:
+- Inline yap tags should be on the same line as their content for best results
+- Multi-line `<yap-show>` blocks work (transformer re-parses inner content as full markdown) but inner content becomes separate blocks rather than inline content within a paragraph
+- Multi-line `<yap-speak>` blocks are dropped (TTS-only, not displayed)
+- `<yap-cap>` must be same-line (inline with image)
 
 Display math exception:  
 - `$$latex$$` can have `yap-speak` on the next line (parser handles this)  
@@ -93,9 +94,18 @@ Image + caption:
 - Empty tags → valid, contribute nothing  
 - Unknown tags → passed through as HTML
 
+# Multi-line Yap Tags
+
+Tags split across lines become `html_block` in markdown-it (per CommonMark spec). The transformer's `_transform_html_block` handler detects yap tags, extracts inner markdown, re-parses it through markdown-it, and transforms the results as normal blocks:
+
+- Multi-line `<yap-show>` → display-only blocks (full markdown treatment, but empty `audio_chunks`)
+- Multi-line `<yap-speak>` → dropped entirely (TTS-only content, not displayed)
+- Non-yap `html_block` → silently dropped
+
+The `_audio_idx_counter` is saved/restored around yap-show processing to prevent index gaps.
+
 # What Parser Cannot Handle
 
-- Tags split across lines → becomes `html_block`, inner content not parsed
 - Deeply nested same tags → undefined behavior (treat as text)
 - **yap-tags inside container elements** (links, strong, em) → semantics ignored, content appears in both display AND TTS. The recursive HTML/TTS extractors don't track yap-tag state. See `TestKnownLimitations` in test_parser_v2.py.
 

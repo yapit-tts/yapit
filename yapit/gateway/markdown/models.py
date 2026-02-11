@@ -17,6 +17,7 @@ class AudioChunk(BaseModel):
 
     text: str
     audio_block_idx: int
+    ast: list["InlineContent"] = Field(default_factory=list)
 
 
 # === INLINE CONTENT (AST) ===
@@ -82,6 +83,17 @@ class ShowContent(BaseModel):
     content: list["InlineContent"]
 
 
+class HardbreakContent(BaseModel):
+    """Line break (<br />). TTS length = 1 (maps to space in speech)."""
+
+    type: Literal["hardbreak"] = "hardbreak"
+
+
+class StrikethroughContent(BaseModel):
+    type: Literal["strikethrough"] = "strikethrough"
+    content: list["InlineContent"]
+
+
 class FootnoteRefContent(BaseModel):
     """Inline footnote reference [^label].
 
@@ -94,17 +106,33 @@ class FootnoteRefContent(BaseModel):
     has_content: bool = True  # False if no matching footnote definition exists
 
 
+class ListContent(BaseModel):
+    """Nested list within a list item.
+
+    TTS text is flattened into the parent item's audio chunks (items joined
+    with " "), so TTS length = sum(item lengths) + (N-1) join spaces.
+    """
+
+    type: Literal["list"] = "list"
+    ordered: bool
+    start: int | None = None
+    items: list[list["InlineContent"]]
+
+
 InlineContent = (
     TextContent
     | CodeSpanContent
     | StrongContent
     | EmphasisContent
+    | StrikethroughContent
     | LinkContent
     | InlineImageContent
     | MathInlineContent
     | SpeakContent
     | ShowContent
+    | HardbreakContent
     | FootnoteRefContent
+    | ListContent
 )
 
 
@@ -144,11 +172,16 @@ class MathBlock(BaseModel):
     audio_chunks: list[AudioChunk] = Field(default_factory=list)
 
 
+class TableCell(BaseModel):
+    html: str
+    ast: list["InlineContent"] = Field(default_factory=list)
+
+
 class TableBlock(BaseModel):
     type: Literal["table"] = "table"
     id: str
-    headers: list[str]
-    rows: list[list[str]]
+    headers: list[TableCell]
+    rows: list[list[TableCell]]
     audio_chunks: list[AudioChunk] = Field(default_factory=list)  # Always empty
 
 
@@ -231,10 +264,13 @@ ContentBlock = (
 )
 
 # Update forward references
+AudioChunk.model_rebuild()
+StrikethroughContent.model_rebuild()
 HeadingBlock.model_rebuild()
 ParagraphBlock.model_rebuild()
 CodeBlock.model_rebuild()
 MathBlock.model_rebuild()
+TableCell.model_rebuild()
 TableBlock.model_rebuild()
 ThematicBreak.model_rebuild()
 ListBlock.model_rebuild()

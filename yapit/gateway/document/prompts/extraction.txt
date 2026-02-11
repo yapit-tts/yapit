@@ -12,7 +12,7 @@ Special tags exist for cases where visual display and audio should differ to enh
 <contex>
 You are extracting a single page. Content may be cut off at page boundaries (mid-sentence, mid-citation, mid-word). Output exactly what is on the page — do not invent or complete content that continues on another page. Pages are stitched together afterwards: if a page ends mid-sentence (no sentence-ending punctuation) and the next page starts lowercase, they are joined with a space. Otherwise they are joined with a paragraph break.
 
-Follow standard markdown: headings (#, ##), lists, *emphasis*, **strong emphasis**, tables, footnotes, blockquotes, code blocks, inline code, links, images, rules (---), etc.
+Follow CommonMark with GFM tables, strikethrough, $math$, and [^footnotes]. Headings (#, ##), lists, *emphasis*, **strong emphasis**, tables, footnotes, blockquotes, code blocks, inline code, links, images, rules (---), etc.
 
 Elements that are both shown and spoken:
 - Paragraphs
@@ -40,9 +40,7 @@ Other:
 - Emphasis is visual, the emphasized text is spoken normally.
 </contex>
 
-
 <formatting_guide>
-
 - Links
   - Format: [descriptive text](url)
   - Link text is read aloud, make it sound natural, e.g.:
@@ -53,7 +51,7 @@ Other:
   - If the document shows a link but the actual URL is not available to you, still format as a link but leave the URL empty: `[link text]()`. Never invent URLs. But if you do have the URL, include it!
 
 - Tables
-  - Standard markdown table syntax. Cells are inline markdown — math, code, *emphasis* all work normally.
+  - Cells can contain inline markdown — math, code, *emphasis* all work normally.
   - Do not use <yap-show> or <yap-speak> inside tables, since tables are already entirely visual-only
 
 - Noise to skip (omit entirely)
@@ -62,30 +60,31 @@ Other:
   - Watermarks
   - Running chapter headers repeated at top of pages (e.g., "Chapter 1. Introduction")
 
+- Line breaks
+  - Softbreak (plain newline): renders as a space.
+  - Hardbreak (two trailing spaces before newline): visual line break within the same paragraph. Do not forget the two trailing spaces when you want create a hardbreak!
+  - Paragraph break (blank line): starts a new block/paragraph
+
 - Math / KaTeX compatibility
   - If an equation has a number in the original (e.g., "(1)" next to it), include inside LaTeX: $$E=mc^2 \tag{1}$$
   - Use \begin{align} not \begin{aligned} when equations have \tag{}
-  - A blank line is required BEFORE each $$block$$.
+  - A blank line is required BEFORE each $$block$$
   - $$block$$ must be standalone, i.e. no other content (be it text, yap tags) on the same line
-  - Prefer to group equations that appear together in the source into a single $$...$$ block with \begin{align} ... \end{align} rather than multiple separate $$...$$ blocks.
-  - Always wrap display math environments (\begin{align}, \begin{bmatrix}, etc.) inside $$...$$ delimiters.
+  - Prefer to group equations that appear together in the source into a single $$...$$ block with \begin{align} ... \end{align} rather than multiple separate $$...$$ blocks
+  - Always wrap display math environments (\begin{align}, \begin{bmatrix}, etc.) inside $$...$$ delimiters
   - Use \text{} for non-variable text inside LaTeX: $K^{\text{poly}}$, $\text{Pr}$, $\text{softmax}$ — not $K^{poly}$, $Pr$, $softmax$ which render as italic variables.
-  - Escape literal dollar signs with backslash: \$20, \$0.37/kWh — unescaped $ starts math mode.
-  - KaTeX color: $\textcolor{color}{content}$ for colored text, $\colorbox{color}{content}$ for colored backgrounds. Color is an HTML color name or hex code. Use to replicate colored elements from the source.
+  - Escape literal dollar signs with backslash: \$20, \$0.37/kWh — unescaped $ starts math mode
+  - KaTeX color: $\textcolor{color}{content}$ for colored text, $\colorbox{color}{content}$ for colored backgrounds. Color is an HTML color name or hex code. Use to replicate colored elements from the source
 
 - <yap-show>
   - Wraps inline content that is displayed but not spoken
-  - MUST NOT have newlines inside tag content - this is an inline element.
-    - Good: <yap-show>...</yap-show>
-    - Good: <yap-show>...</yap-show>\n<yap-show>...</yap-show>
-    - Bad: <yap-show>...\n...</yap-show>
-    - Bad: <yap-show>\n...\n</yap-show>
+  - Must not contain paragraph breaks. Softbreaks and hardbreaks are allowed for visual formatting!
   - Do not use this for or within elements that are already not spoken (such as images, math, code blocks, tables)
-  - Use for visual-only content: blank pages (`<yap-show>[blank page]</yap-show>`), front matter metadata (copyright notices, publisher info, ISBNs), or any page that is purely informational/visual and not meaningful to hear
+  - Use for visual-only content: blank pages (`<yap-show>[blank page]</yap-show>`), front matter metadata (copyright notices, publisher info, ISBNs), permission/license notices, contribution credits
 
 - <yap-speak>
   - Wraps raw text that is passed to TTS
-  - Must be single-line - no newlines inside tag content
+  - Must be single line - no softbreaks, hardbreaks or paragraph breaks.
   - Content must not contain any markdown formatting
   - Content can include punctuation (mainly periods, commas) to guide TTS prosody
   - Combine with math or yap-show to enhance the listening experience
@@ -100,10 +99,10 @@ Other:
     - alt = short visual description of what the image shows
     - <yap-cap>...</yap-cap> = figure caption from the document (omit if no caption)
     - IMPORTANT: <yap-cap> must be on the SAME LINE as the image, no newline between
-  - You will be provided with the number of detected images on the page.
-  - If no image count is provided, do not output any image placeholders.
-  - For each detected image, output exactly one image placeholder at the position where it appears in source.
-  - All images share the same "detected-image" placeholder.
+  - You will be provided with the number of detected images on the page
+  - If no image count is provided, do not output any image placeholders
+  - For each detected image, output exactly one image placeholder at the position where it appears in source
+  - All images share the same "detected-image" placeholder
 
 - Callouts
   - Use for framed/boxed content, or content visually distinguished from the rest of the page with colored background/shading/highlighting
@@ -155,17 +154,13 @@ Other:
 - Title pages
   - Academic papers
     - Author lists: use LaTeX superscripts (no need for yap tags) for affiliation markers (`Author Name$^1$`, `Author Name$^{1,2,*,\dagger}$`). Do NOT use footnotes for this.
-    - Keep authors comma-separated on single line.
-    - Keep emails comma-separated on single line (in a separate line after authors).
-    - Keep affiliations comma-separated on single line (in a separate line after emails).
-    - Metadata links (Code, Blogpost, etc.): visual reference info, not useful to hear. Wrap in `<yap-show>`. Examples:
-      <yap-show>Code: [Github](...)</yap-show>
-      <yap-show>Blogpost: [Project website](...)</yap-show>
-      or on one line: <yap-show>[Code](url) $\cdot$ [Blog](url) $\cdot$ [Demo](url)</yap-show>
+    - Metadata links (Code, Blogpost, etc.): visual reference info, not useful to hear. Wrap in `<yap-show>`.
+
+- When the source uses visual formatting with no direct equivalent, restructure the content to convey the same information using available formatting.
+- Never output any meta-commentary or explanations for formatting choices, like "[continues on next page]"
 </formatting_guide>
 
 <speech_for_math>
-
 As math is never read aloud, speech tags are sometimes needed to avoid awkward gaps in narration and enhance the listening experience.
 
 Without yap-speak, "Fix a prefix-universal Turing machine $U$. For $z, y \in \{0,1\}^\star$ define" sounds like: "Fix a prefix-universal Turing machine ... For ... define" — the listener loses critical information.
