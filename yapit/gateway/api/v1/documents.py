@@ -1265,6 +1265,7 @@ async def import_document(
     db.add_all(
         [
             Block(
+                document_id=new_doc.id,
                 document=new_doc,
                 idx=block.idx,
                 text=block.text,

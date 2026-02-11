@@ -3,19 +3,19 @@
 
 Yapit TTS - Open-source text-to-speech platform for reading documents, web pages, and text.
 
-**GitHub**: https://github.com/yapit-tts/yapit
-**Project board**: https://github.com/orgs/yapit-tts/projects/2
-
-Note: We don't work heavily with GitHub issues (solo dev + claude for now -- the local plans workflow is more efficient for us), but the project board is useful for occasionally closing/updating existing / old issues, as needed.
+**GitHub**: https://github.com/yapit-tts/yapit (public)
 
 ## Development
 
 - **ALWAYS ask user before stopping/restarting Docker services** — they may be actively testing
 - **Backend changes require restart** — If you modify backend Python code, tell user: "Backend code changed - please restart with `make dev-cpu`"
+- Running integration tests / "validating everything still works" makes no sense if you applied backend changes, without running make dev-cpu to rebuild it first.
+- IF you want to check for unit tests, which works without restarting the gateway, use make test-unit
+- If you can debug something without ssh access, e.g. by running make sync-logs and inspecting the logs and metrics locally, do that instead, since ssh requires user approval / unnecessary friction.
+- NEVER push in the same Bash tool call as git committing. Generally, NEVER push on your own except being explicitly told to push.
+- The pre-commit hook runs ruff (lint + format), ty type checks, and frontend build — no need to run these separately right before committing.
 
 ## VPS SSH Permissions
-
-Read-only commands are auto-approved: `docker ps`, `docker logs`, `docker inspect`, `docker stats`, `curl localhost:*`, `sqlite3 ... SELECT ...`.
 
 **⚠️ CRITICAL: Destructive operations on prod require explicit user confirmation.**
 
@@ -111,13 +111,13 @@ Semantic search is disabled. Wikilinks provide the necessary structure for this 
 - **Backwards compatibility is NEVER an issue** - This is a rapidly evolving codebase. Don't preserve old approaches alongside new ones. Replace, don't accumulate. If old code needs updating to match new patterns, update it. If old endpoints/configs are superseded, delete them.
 - **Critical logic requires edge case analysis first** — For billing, security, data integrity, and other high-stakes code: list edge cases before implementing. Write out "what if user does X then Y" scenarios. The implementation is usually straightforward once scenarios are clear; the bugs come from not thinking through all paths.
 - Test API assumptions before implementing features that depend on them.
+- **Before updating dependencies**, read [[dependency-updates]] — there are version constraints and gotchas that will break prod if ignored.
 - Never use git add -u or git add . — we work with many parallel agents in the same repo.
+- Don't push without being asked to
+
+- include "[skip tests]" anywhere (at the end) of your commit message to avoid running tests in ci (takes 10mins) if your changes don't interfere with code that's covered by tests. You don't need to add this for doc changes.
 
 ## Legacy Workflow Notes
 
-You might occasionaly stumble upon referencse to
-- `~/.claude/plans/` - Old plan files - the very first iteration of the workflow (all marked done, now obsolete and can be ignored)
-- `architecture.md` - An old "god document" for architecture and todos, that has been replaced by our current workflow.
 - Task files that do not follow naming conventions or the structure / content guidelines of the new workflow - Some of these still contain useful context or historical reasoning trails, but are not up to date with our current practices. We keep them for reference; those that are valuable will be wikilinked (more often), naturally. The others can be ignored for almost all purposes.
 
-- important: While the project is private, we only have 2k free minutes on gh ci, include "[skip tests]" anywhere (at the end) of your commit message to avoid running tests in ci (takes 5+mins) if you have tested locally and only made minor changes.

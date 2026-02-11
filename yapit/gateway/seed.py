@@ -24,7 +24,7 @@ def create_models() -> list[TTSModel]:
     voices_data = json.loads(voices_json.read_text())
     for v in voices_data:
         kokoro.voices.append(
-            Voice(
+            Voice(  # type: ignore[missing-argument]  # model_id set by SQLAlchemy relationship
                 slug=v["index"],
                 name=v["name"],
                 lang=v["language"],
@@ -53,7 +53,7 @@ def create_models() -> list[TTSModel]:
     inworld_voices_json = Path(__file__).parent.parent / "data/inworld/voices.json"
     inworld_voices_data = json.loads(inworld_voices_json.read_text())
     for v in inworld_voices_data.get("voices", []):
-        voice = Voice(
+        voice = Voice(  # type: ignore[missing-argument]  # model_id set by SQLAlchemy relationship
             slug=v["voiceId"].lower(),
             name=v["displayName"],
             lang=v["languages"][0] if v.get("languages") else "en",
@@ -62,7 +62,7 @@ def create_models() -> list[TTSModel]:
         )
         inworld.voices.append(voice)
         inworld_max.voices.append(
-            Voice(
+            Voice(  # type: ignore[missing-argument]  # model_id set by SQLAlchemy relationship
                 slug=v["voiceId"].lower(),
                 name=v["displayName"],
                 lang=v["languages"][0] if v.get("languages") else "en",

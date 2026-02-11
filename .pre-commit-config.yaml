@@ -12,6 +12,13 @@ repos:
 
   - repo: local
     hooks:
+      - id: ty-check
+        name: ty type check
+        entry: uvx ty@latest check yapit/gateway/
+        language: system
+        files: ^yapit/gateway/
+        types_or: [python]
+        pass_filenames: false
       - id: frontend-build
         name: frontend build
         entry: bash -c 'cd frontend && npm run build'

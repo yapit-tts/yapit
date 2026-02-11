@@ -320,6 +320,7 @@ async def create_document_with_blocks(
     db.add_all(
         [
             Block(
+                document_id=doc.id,
                 document=doc,
                 idx=idx,
                 text=block_text,
