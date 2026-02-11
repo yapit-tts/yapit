@@ -42,9 +42,11 @@ from yapit.gateway.markdown.models import (
     StrongContent,
     StructuredDocument,
     TableBlock,
+    TableCell,
     TextContent,
     ThematicBreak,
 )
+from yapit.gateway.markdown.parser import parse_markdown
 
 # === TAG CONSTANTS ===
 
@@ -170,8 +172,9 @@ class InlineProcessor:
         elif node.type == "math_inline":
             return f'<span class="math-inline">{node.content or ""}</span>'
         elif node.type == "html_inline":
-            # Pass through HTML that isn't our tags
-            return node.content or ""
+            # Yap tags are handled by the caller (_process_nodes); any html_inline
+            # reaching here is raw user HTML — drop it to prevent XSS.
+            return ""
         elif node.type == "footnote_ref":
             # Footnote reference - render as superscript link
             label = node.meta.get("label", "") if node.meta else ""
@@ -571,7 +574,7 @@ def split_with_spans(
 
     if len(chunk_ranges) <= 1:
         # No splitting needed
-        return html, [AudioChunk(text=text, audio_block_idx=start_idx)]
+        return html, [AudioChunk(text=text, audio_block_idx=start_idx, ast=ast)]
 
     # AST may have trailing 0-length nodes (math, footnote refs) past the stripped text length.
     # Extend last chunk's end to include them.
@@ -594,7 +597,7 @@ def split_with_spans(
         chunk_html = render_ast_to_html(sliced_ast)
 
         html_parts.append(f'<span data-audio-idx="{idx}">{chunk_html}</span>')
-        audio_chunks.append(AudioChunk(text=chunk_text, audio_block_idx=idx))
+        audio_chunks.append(AudioChunk(text=chunk_text, audio_block_idx=idx, ast=sliced_ast))
 
     return " ".join(html_parts), audio_chunks
 
@@ -927,10 +930,59 @@ class DocumentTransformer:
     def _transform_children(self, node: SyntaxTreeNode) -> list[ContentBlock]:
         """Transform all children of a node."""
         blocks: list[ContentBlock] = []
+        yap_show_acc: list[ContentBlock] | None = None
+
         for i, child in enumerate(node.children):
             if i in self._skip_indices:
                 continue
+
+            if child.type == "html_block":
+                content = (child.content or "").strip()
+
+                if yap_show_acc is None:
+                    # Check for yap-show opening without close in same block
+                    if content.startswith(YAP_SHOW_OPEN) and YAP_SHOW_CLOSE not in content:
+                        yap_show_acc = []
+                        # Re-parse any content after the opening tag
+                        inner = content[len(YAP_SHOW_OPEN) :].strip()
+                        if inner:
+                            inner_tree = parse_markdown(inner)
+                            for c in inner_tree.children:
+                                yap_show_acc.extend(self._transform_node(c, inner_tree))
+                        continue
+                    # Self-contained or other html_block — normal dispatch
+                    blocks.extend(self._transform_node(child, parent=node, index=i))
+                    continue
+
+                # In accumulation mode — check for close tag
+                if YAP_SHOW_CLOSE in content:
+                    before_close = content.split(YAP_SHOW_CLOSE)[0].strip()
+                    if before_close:
+                        inner_tree = parse_markdown(before_close)
+                        for c in inner_tree.children:
+                            yap_show_acc.extend(self._transform_node(c, inner_tree))
+                    _strip_audio_recursive(yap_show_acc)
+                    blocks.extend(yap_show_acc)
+                    yap_show_acc = None
+                    continue
+                # html_block inside yap-show without close tag — re-parse its content
+                inner_tree = parse_markdown(content)
+                for c in inner_tree.children:
+                    yap_show_acc.extend(self._transform_node(c, inner_tree))
+                continue
+
+            if yap_show_acc is not None:
+                # Non-html_block inside yap-show — transform normally, accumulate
+                yap_show_acc.extend(self._transform_node(child, parent=node, index=i))
+                continue
+
             blocks.extend(self._transform_node(child, parent=node, index=i))
+
+        # Unclosed yap-show at end of document — include content anyway
+        if yap_show_acc:
+            _strip_audio_recursive(yap_show_acc)
+            blocks.extend(yap_show_acc)
+
         return blocks
 
     def _transform_node(
@@ -952,6 +1004,7 @@ class DocumentTransformer:
             "hr": self._transform_hr,
             "math_block": lambda n: self._transform_math(n, parent, index),
             "footnote_block": self._transform_footnote_block,
+            "html_block": self._transform_html_block,
         }
 
         handler = handlers.get(node.type)
@@ -1222,7 +1275,13 @@ class DocumentTransformer:
         # so audio indices are in visual order: title, then content
         title_audio: list[AudioChunk] = []
         if callout_title:
-            title_audio = [AudioChunk(text=callout_title, audio_block_idx=self._next_audio_idx())]
+            title_audio = [
+                AudioChunk(
+                    text=callout_title,
+                    audio_block_idx=self._next_audio_idx(),
+                    ast=[TextContent(content=callout_title)],
+                )
+            ]
 
         # Build content blocks
         blocks: list[ContentBlock] = []
@@ -1404,7 +1463,13 @@ class DocumentTransformer:
 
         audio_chunks: list[AudioChunk] = []
         if tts_text.strip():
-            audio_chunks = [AudioChunk(text=tts_text.strip(), audio_block_idx=self._next_audio_idx())]
+            audio_chunks = [
+                AudioChunk(
+                    text=tts_text.strip(),
+                    audio_block_idx=self._next_audio_idx(),
+                    ast=[TextContent(content=tts_text.strip())],
+                )
+            ]
 
         return [
             MathBlock(
@@ -1417,8 +1482,8 @@ class DocumentTransformer:
 
     def _transform_table(self, node: SyntaxTreeNode) -> list[TableBlock]:
         """Transform table node."""
-        headers: list[str] = []
-        rows: list[list[str]] = []
+        headers: list[TableCell] = []
+        rows: list[list[TableCell]] = []
 
         for child in node.children:
             if child.type == "thead":
@@ -1428,16 +1493,18 @@ class DocumentTransformer:
                         children = inline.children if inline else []
                         processor = InlineProcessor()
                         html, _ = processor.process(children)
-                        headers.append(html)
+                        ast = transform_inline_to_ast(children)
+                        headers.append(TableCell(html=html, ast=ast))
             elif child.type == "tbody":
                 for tr in child.children:
-                    row: list[str] = []
+                    row: list[TableCell] = []
                     for td in tr.children:
                         inline = td.children[0] if td.children else None
                         children = inline.children if inline else []
                         processor = InlineProcessor()
                         html, _ = processor.process(children)
-                        row.append(html)
+                        ast = transform_inline_to_ast(children)
+                        row.append(TableCell(html=html, ast=ast))
                     rows.append(row)
 
         return [
@@ -1451,6 +1518,45 @@ class DocumentTransformer:
     def _transform_hr(self, node: SyntaxTreeNode) -> list[ThematicBreak]:
         """Transform horizontal rule."""
         return [ThematicBreak(id=self._next_block_id())]
+
+    def _transform_html_block(self, node: SyntaxTreeNode) -> Sequence[ContentBlock]:
+        """Handle html_block nodes — multi-line yap tags that markdown-it
+        classifies as block-level HTML instead of inline.
+        """
+        content = (node.content or "").strip()
+
+        show_match = re.match(r"<yap-show>(.*?)</yap-show>", content, re.DOTALL)
+        if show_match:
+            inner_md = show_match.group(1).strip()
+            if not inner_md:
+                return []
+            inner_tree = parse_markdown(inner_md)
+            blocks: list[ContentBlock] = []
+            for child in inner_tree.children:
+                blocks.extend(self._transform_node(child, inner_tree))
+            _strip_audio_recursive(blocks)
+            return blocks
+
+        if re.match(r"<yap-speak>(.*?)</yap-speak>", content, re.DOTALL):
+            return []
+
+        return []
+
+
+def _strip_audio_recursive(blocks: Sequence[ContentBlock]) -> None:
+    """Remove all audio_chunks from blocks and their nested structures."""
+    for block in blocks:
+        block.audio_chunks.clear()
+        match block:
+            case ListBlock():
+                for item in block.items:
+                    item.audio_chunks.clear()
+            case BlockquoteBlock():
+                _strip_audio_recursive(block.blocks)
+            case FootnotesBlock():
+                for item in block.items:
+                    item.audio_chunks.clear()
+                    _strip_audio_recursive(item.blocks)
 
 
 # === PUBLIC API ===

@@ -17,6 +17,7 @@ class AudioChunk(BaseModel):
 
     text: str
     audio_block_idx: int
+    ast: list["InlineContent"] = Field(default_factory=list)
 
 
 # === INLINE CONTENT (AST) ===
@@ -144,11 +145,16 @@ class MathBlock(BaseModel):
     audio_chunks: list[AudioChunk] = Field(default_factory=list)
 
 
+class TableCell(BaseModel):
+    html: str
+    ast: list["InlineContent"] = Field(default_factory=list)
+
+
 class TableBlock(BaseModel):
     type: Literal["table"] = "table"
     id: str
-    headers: list[str]
-    rows: list[list[str]]
+    headers: list[TableCell]
+    rows: list[list[TableCell]]
     audio_chunks: list[AudioChunk] = Field(default_factory=list)  # Always empty
 
 
@@ -231,10 +237,12 @@ ContentBlock = (
 )
 
 # Update forward references
+AudioChunk.model_rebuild()
 HeadingBlock.model_rebuild()
 ParagraphBlock.model_rebuild()
 CodeBlock.model_rebuild()
 MathBlock.model_rebuild()
+TableCell.model_rebuild()
 TableBlock.model_rebuild()
 ThematicBreak.model_rebuild()
 ListBlock.model_rebuild()
