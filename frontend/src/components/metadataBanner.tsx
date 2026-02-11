@@ -123,7 +123,8 @@ function parsePageRanges(input: string, totalPages: number): number[] | null {
 
 /**
  * Visual bar showing selected pages and extraction progress.
- * During extraction, completed pages turn green.
+ * Groups consecutive pages by visual state into proportional segments
+ * (per-page divs break at high page counts due to sub-pixel rounding + border overflow).
  */
 function PageSelectionBar({
   selectedPages,
@@ -136,39 +137,54 @@ function PageSelectionBar({
   completedPages?: number[];
   isProcessing?: boolean;
 }) {
-  const selectedSet = useMemo(
-    () => new Set(selectedPages ?? Array.from({ length: totalPages }, (_, i) => i)),
-    [selectedPages, totalPages]
-  );
-  const completedSet = useMemo(() => new Set(completedPages), [completedPages]);
+  type PageState = "unselected" | "completed" | "pending" | "selected";
+
+  const segments = useMemo(() => {
+    const selectedSet = new Set(selectedPages ?? Array.from({ length: totalPages }, (_, i) => i));
+    const completedSet = new Set(completedPages);
+
+    const getState = (i: number): PageState => {
+      if (!selectedSet.has(i)) return "unselected";
+      if (isProcessing && completedSet.has(i)) return "completed";
+      if (isProcessing) return "pending";
+      return "selected";
+    };
+
+    const result: { state: PageState; length: number }[] = [];
+    let currentState = getState(0);
+    let currentLength = 1;
+
+    for (let i = 1; i < totalPages; i++) {
+      const state = getState(i);
+      if (state === currentState) {
+        currentLength++;
+      } else {
+        result.push({ state: currentState, length: currentLength });
+        currentState = state;
+        currentLength = 1;
+      }
+    }
+    result.push({ state: currentState, length: currentLength });
+
+    return result;
+  }, [selectedPages, totalPages, completedPages, isProcessing]);
+
+  const stateClasses: Record<PageState, string> = {
+    unselected: "bg-muted/20",
+    completed: "bg-primary",
+    pending: "bg-primary/30",
+    selected: "bg-primary/60",
+  };
 
   return (
     <div className="flex h-2 rounded-sm overflow-hidden bg-muted/30">
-      {Array.from({ length: totalPages }, (_, i) => {
-        const isSelected = selectedSet.has(i);
-        const isCompleted = completedSet.has(i);
-
-        let bgClass: string;
-        if (!isSelected) {
-          bgClass = "bg-muted/20";
-        } else if (isProcessing && isCompleted) {
-          bgClass = "bg-primary";
-        } else if (isProcessing) {
-          bgClass = "bg-primary/30"; // Selected but not yet completed
-        } else {
-          bgClass = "bg-primary/60"; // Pre-processing state
-        }
-
-        return (
-          <div
-            key={i}
-            className={cn("flex-1 min-w-0 transition-colors duration-300", bgClass)}
-            style={{
-              borderRight: i < totalPages - 1 ? "1px solid rgba(0,0,0,0.05)" : "none",
-            }}
-          />
-        );
-      })}
+      {segments.map((segment, i) => (
+        <div
+          key={i}
+          className={cn("min-w-0 transition-colors duration-300", stateClasses[segment.state])}
+          style={{ flex: segment.length }}
+        />
+      ))}
     </div>
   );
 }
