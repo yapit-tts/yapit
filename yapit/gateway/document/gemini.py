@@ -56,7 +56,7 @@ class PreparedPage:
 
 def create_gemini_config(
     resolution: str = "high",
-    prompt_version: str = "v10",  # bump for prompt/processing changes to invalidate cached extractions
+    prompt_version: str = "v11",  # bump for prompt/processing changes to invalidate cached extractions
 ) -> ProcessorConfig:
     return ProcessorConfig(
         slug="gemini",

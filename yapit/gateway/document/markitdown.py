@@ -34,7 +34,7 @@ MARKITDOWN_CONFIG = ProcessorConfig(
     max_file_size=100 * 1024 * 1024,  # 100MB
     is_paid=False,
     output_token_multiplier=1,
-    extraction_cache_prefix="markitdown:v2",
+    extraction_cache_prefix="markitdown:v3",
 )
 
 
