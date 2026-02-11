@@ -1,26 +1,8 @@
 // Section index utilities for document outliner
 // Builds a hierarchical index of H1/H2 sections with H3+ subsections
 
-// Re-declare types here to avoid circular dependencies with structuredDocument.tsx
-// These match the backend Pydantic models
-
-interface AudioChunk {
-  text: string;
-  audio_block_idx: number;
-  ast?: InlineContent[];
-}
-
-type InlineContent =
-  | { type: "text"; content: string }
-  | { type: "code_span"; content: string }
-  | { type: "strong"; content: InlineContent[] }
-  | { type: "emphasis"; content: InlineContent[] }
-  | { type: "link"; href: string; title?: string; content: InlineContent[] }
-  | { type: "inline_image"; src: string; alt: string }
-  | { type: "math_inline"; content: string }
-  | { type: "speak"; content: string }
-  | { type: "show"; content: InlineContent[] }
-  | { type: "footnote_ref"; label: string; has_content: boolean };
+// Type-only imports don't create runtime circular dependencies (erased at compile time)
+import type { InlineContent, AudioChunk, StructuredDocument } from "@/components/structuredDocument";
 
 interface HeadingBlock {
   type: "heading";
@@ -29,17 +11,6 @@ interface HeadingBlock {
   html: string;
   ast: InlineContent[];
   audio_chunks: AudioChunk[];
-}
-
-interface ContentBlock {
-  type: string;
-  id: string;
-  audio_chunks?: AudioChunk[];
-}
-
-interface StructuredDocument {
-  version: string;
-  blocks: ContentBlock[];
 }
 
 // Exported types for outliner
@@ -71,6 +42,7 @@ function extractTextFromAst(nodes: InlineContent[]): string {
           return node.content;
         case "strong":
         case "emphasis":
+        case "strikethrough":
         case "link":
           return extractTextFromAst(node.content);
         case "inline_image":

@@ -130,7 +130,7 @@ The `DocumentTransformer` walks the AST and produces `StructuredDocument`:
 
 Each block gets:
 - `id` — Unique block ID (`b0`, `b1`, ...)
-- `html` — Rendered HTML (may contain `<span data-audio-idx="N">` wrappers for split content)
+- `html` — Rendered HTML (may contain `<span data-audio-idx="N">` wrappers for split content). **Not used by frontend** — the frontend renders from AST. Kept because `split_with_spans` generates it as part of the splitting logic, and removing it would require refactoring that function. Harmless dead weight in the JSON/DB.
 - `ast` — `InlineContent[]` — the full block's inline AST
 - `audio_chunks` — `AudioChunk(text, audio_block_idx, ast)` — each chunk carries its own sliced AST
 
@@ -146,6 +146,7 @@ The `InlineContent` union represents all inline AST node types:
 | `CodeSpanContent` | `len(content)` | Inline code |
 | `StrongContent` | sum of children | Bold wrapper |
 | `EmphasisContent` | sum of children | Italic wrapper |
+| `StrikethroughContent` | sum of children | `~~text~~` wrapper |
 | `LinkContent` | sum of children | Link with href |
 | `InlineImageContent` | `len(alt)` | Inline image |
 | `MathInlineContent` | 0 | Display-only (silent) |
@@ -255,7 +256,7 @@ The `StructuredDocumentView` component:
 1. Parses `structured_content` JSON
 2. Renders each block type via React component tree built from AST (no `dangerouslySetInnerHTML`)
 3. `InlineContentRenderer` maps `InlineContent[]` → React elements (recursive for nested types)
-4. KaTeX renders as a React component (`InlineMath`) — survives re-renders without useEffect hacks
+4. KaTeX renders via dedicated `InlineMath` component (`useRef` + `useEffect([content])`) — each math node owns its own lifecycle, so React re-renders (section expand, highlighting) don't destroy KaTeX output like the old global DOM-scanning useEffect did
 5. `BlockErrorBoundary` wraps content rendering — a failing block shows fallback, not a white screen
 6. Memoized automatically by React Compiler
 

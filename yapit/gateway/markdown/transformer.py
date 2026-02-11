@@ -41,6 +41,7 @@ from yapit.gateway.markdown.models import (
     ParagraphBlock,
     ShowContent,
     SpeakContent,
+    StrikethroughContent,
     StrongContent,
     StructuredDocument,
     TableBlock,
@@ -369,6 +370,13 @@ def _transform_inline_node(node: SyntaxTreeNode) -> InlineContent | None:
             if ast:
                 inner.append(ast)
         return EmphasisContent(content=inner)
+    elif node.type == "s":
+        inner = []
+        for child in node.children:
+            ast = _transform_inline_node(child)
+            if ast:
+                inner.append(ast)
+        return StrikethroughContent(content=inner)
     elif node.type == "code_inline":
         return CodeSpanContent(content=node.content or "")
     elif node.type == "link":
@@ -664,6 +672,9 @@ def slice_inline_node(node: InlineContent, start: int, end: int) -> list[InlineC
         case EmphasisContent():
             inner = slice_ast(node.content, start, end)
             return [EmphasisContent(content=inner)] if inner else []
+        case StrikethroughContent():
+            inner = slice_ast(node.content, start, end)
+            return [StrikethroughContent(content=inner)] if inner else []
         case LinkContent():
             inner = slice_ast(node.content, start, end)
             return [LinkContent(href=node.href, title=node.title, content=inner)] if inner else []
@@ -701,7 +712,7 @@ def get_inline_length(node: InlineContent) -> int:
     match node:
         case TextContent() | CodeSpanContent():
             return len(node.content)
-        case StrongContent() | EmphasisContent() | LinkContent():
+        case StrongContent() | EmphasisContent() | StrikethroughContent() | LinkContent():
             return sum(get_inline_length(child) for child in node.content)
         case InlineImageContent():
             return len(node.alt)
@@ -742,6 +753,8 @@ def render_inline_content_html(node: InlineContent) -> str:
             return f"<strong>{render_ast_to_html(node.content)}</strong>"
         case EmphasisContent():
             return f"<em>{render_ast_to_html(node.content)}</em>"
+        case StrikethroughContent():
+            return f"<s>{render_ast_to_html(node.content)}</s>"
         case LinkContent():
             inner = render_ast_to_html(node.content)
             title_attr = f' title="{node.title}"' if node.title else ""

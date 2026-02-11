@@ -47,6 +47,7 @@ function extractTextFromAst(nodes: InlineContent[]): string {
         return node.content;
       case "strong":
       case "emphasis":
+      case "strikethrough":
       case "link":
         return extractTextFromAst(node.content);
       case "inline_image":
@@ -97,6 +98,7 @@ type InlineContent =
   | { type: "math_inline"; content: string }
   | { type: "speak"; content: string }  // TTS-only, doesn't render
   | { type: "show"; content: InlineContent[] }  // Display-only, no TTS
+  | { type: "strikethrough"; content: InlineContent[] }
   | { type: "hardbreak" }
   | { type: "footnote_ref"; label: string; has_content: boolean }  // Display-only superscript
   | { type: "list"; ordered: boolean; start?: number; items: InlineContent[][] };  // Nested list
@@ -867,6 +869,61 @@ function BlockView({ block, onBlockClick, slugMap, isCollapsed, canCollapse, onT
   }
 }
 
+// === Action buttons ===
+
+function ActionButtons({
+  copied,
+  hasContent,
+  onCopy,
+  onDownload,
+}: {
+  copied: boolean;
+  hasContent: boolean;
+  onCopy: () => void;
+  onDownload: (preserveAnnotations: boolean) => void;
+}) {
+  return (
+    <div className="flex items-center gap-1 shrink-0">
+      <button
+        onClick={onCopy}
+        disabled={!hasContent}
+        className="p-2 rounded hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+        title={copied ? "Copied!" : "Copy markdown"}
+      >
+        {copied ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4 text-muted-foreground" />}
+      </button>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button
+            disabled={!hasContent}
+            className="p-2 rounded hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            title="Download markdown"
+          >
+            <Download className="h-4 w-4 text-muted-foreground" />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem onClick={() => onDownload(false)}>
+            <FileDown className="h-4 w-4" />
+            Markdown
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => onDownload(true)}>
+            <FileCode2 className="h-4 w-4" />
+            With TTS annotations
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <button
+        disabled
+        className="p-2 rounded opacity-40 cursor-not-allowed"
+        title="Export as audio (coming soon)"
+      >
+        <Music className="h-4 w-4 text-muted-foreground" />
+      </button>
+    </div>
+  );
+}
+
 // === Main component ===
 
 interface StructuredDocumentViewProps {
@@ -1055,48 +1112,6 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
     }
   }, [onBlockClick]);
 
-  // Action buttons toolbar - always rendered
-  const ActionButtons = () => (
-    <div className="flex items-center gap-1 shrink-0">
-      <button
-        onClick={handleCopyMarkdown}
-        disabled={!markdownContent}
-        className="p-2 rounded hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-        title={copied ? "Copied!" : "Copy markdown"}
-      >
-        {copied ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4 text-muted-foreground" />}
-      </button>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <button
-            disabled={!markdownContent}
-            className="p-2 rounded hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-            title="Download markdown"
-          >
-            <Download className="h-4 w-4 text-muted-foreground" />
-          </button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          <DropdownMenuItem onClick={() => handleDownloadMarkdown(false)}>
-            <FileDown className="h-4 w-4" />
-            Markdown
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => handleDownloadMarkdown(true)}>
-            <FileCode2 className="h-4 w-4" />
-            With TTS annotations
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-      <button
-        disabled
-        className="p-2 rounded opacity-40 cursor-not-allowed"
-        title="Export as audio (coming soon)"
-      >
-        <Music className="h-4 w-4 text-muted-foreground" />
-      </button>
-    </div>
-  );
-
   const { settings } = useSettings();
 
   // pb-52 (208px) provides clearance above the fixed SoundControl bar (~177px)
@@ -1150,7 +1165,7 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
               {title}
             </p>
             <div className="flex justify-end mt-2 sm:mt-0">
-              <ActionButtons />
+              <ActionButtons copied={copied} hasContent={!!markdownContent} onCopy={handleCopyMarkdown} onDownload={handleDownloadMarkdown} />
             </div>
           </div>
         ) : (
@@ -1159,7 +1174,7 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
             !hasMaxWidth && "-mx-4 px-4 sm:-mx-[8%] sm:px-[8%] md:-mx-[10%] md:px-[10%]"
           )}>
             <div className="w-full flex justify-end">
-              <ActionButtons />
+              <ActionButtons copied={copied} hasContent={!!markdownContent} onCopy={handleCopyMarkdown} onDownload={handleDownloadMarkdown} />
             </div>
           </div>
         )}
@@ -1199,7 +1214,7 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
             )}
           </h1>
           <div className="flex justify-end mt-2 sm:mt-0 shrink-0" onClick={(e) => e.stopPropagation()}>
-            <ActionButtons />
+            <ActionButtons copied={copied} hasContent={!!markdownContent} onCopy={handleCopyMarkdown} onDownload={handleDownloadMarkdown} />
           </div>
         </div>
       ) : title && isEditingTitle ? (
@@ -1218,7 +1233,7 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
             className="flex-1 text-4xl font-bold bg-transparent border-none outline-none sm:mr-4"
           />
           <div className="flex justify-end mt-2 sm:mt-0">
-            <ActionButtons />
+            <ActionButtons copied={copied} hasContent={!!markdownContent} onCopy={handleCopyMarkdown} onDownload={handleDownloadMarkdown} />
           </div>
         </div>
       ) : (
@@ -1252,7 +1267,7 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
             ) : (
               <div className="flex-1" />
             )}
-            <ActionButtons />
+            <ActionButtons copied={copied} hasContent={!!markdownContent} onCopy={handleCopyMarkdown} onDownload={handleDownloadMarkdown} />
           </div>
         </div>
       )}

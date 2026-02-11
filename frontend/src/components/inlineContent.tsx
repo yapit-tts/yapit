@@ -38,6 +38,12 @@ function renderNode(node: InlineContent, key: number): React.ReactNode {
           <InlineContentRenderer nodes={node.content} />
         </em>
       );
+    case "strikethrough":
+      return (
+        <s key={key}>
+          <InlineContentRenderer nodes={node.content} />
+        </s>
+      );
     case "link": {
       if (/\.(mp4|webm|mov|ogg)$/i.test(node.href)) {
         return (

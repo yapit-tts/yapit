@@ -89,6 +89,11 @@ class HardbreakContent(BaseModel):
     type: Literal["hardbreak"] = "hardbreak"
 
 
+class StrikethroughContent(BaseModel):
+    type: Literal["strikethrough"] = "strikethrough"
+    content: list["InlineContent"]
+
+
 class FootnoteRefContent(BaseModel):
     """Inline footnote reference [^label].
 
@@ -119,6 +124,7 @@ InlineContent = (
     | CodeSpanContent
     | StrongContent
     | EmphasisContent
+    | StrikethroughContent
     | LinkContent
     | InlineImageContent
     | MathInlineContent
@@ -259,6 +265,7 @@ ContentBlock = (
 
 # Update forward references
 AudioChunk.model_rebuild()
+StrikethroughContent.model_rebuild()
 HeadingBlock.model_rebuild()
 ParagraphBlock.model_rebuild()
 CodeBlock.model_rebuild()
