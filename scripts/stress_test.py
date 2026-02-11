@@ -359,11 +359,51 @@ class StressTestResult:
         return path
 
 
+_WORD_POOL = (
+    "the quick brown fox jumps over the lazy dog while a gentle breeze rustles through "
+    "the tall oak trees lining the cobblestone street where merchants display their wares "
+    "beneath colorful awnings as children chase pigeons across the sun dappled plaza and "
+    "elderly couples sit on wrought iron benches watching the world go by with knowing smiles "
+    "the cathedral bells chime marking another hour as clouds drift lazily across an azure sky "
+    "casting shadows that dance along ancient stone walls covered in flowering ivy and moss "
+    "somewhere a violin plays a haunting melody that floats on the warm afternoon air mixing "
+    "with the aroma of freshly baked bread and roasting coffee from the corner cafe where "
+    "students hunch over textbooks and artists sketch in worn leather journals"
+).split()
+
+
+def _make_block_text(block_idx: int, nonce: str, target_chars: int) -> str:
+    """Build a block of approximately target_chars length from real English words."""
+    words = [f"Block {block_idx} {nonce}."]
+    char_count = len(words[0])
+    pool_len = len(_WORD_POOL)
+    # Deterministic but varied starting position per block
+    pos = (block_idx * 17 + hash(nonce)) % pool_len
+    while char_count < target_chars:
+        word = _WORD_POOL[pos % pool_len]
+        words.append(word)
+        char_count += len(word) + 1
+        pos += 1
+    return " ".join(words)
+
+
 async def create_test_document(
-    base_url: str, token: str, num_blocks: int, user_idx: int, use_cached: bool = False
+    base_url: str,
+    token: str,
+    num_blocks: int,
+    user_idx: int,
+    use_cached: bool = False,
+    varied_lengths: bool = False,
 ) -> str:
     if use_cached:
         paragraphs = ["test"] * num_blocks
+    elif varied_lengths:
+        nonce = "".join(random.choices(string.ascii_lowercase, k=8))
+        paragraphs = []
+        for i in range(num_blocks):
+            target = int(random.gauss(150, 60))
+            target = max(10, min(300, target))
+            paragraphs.append(_make_block_text(i, nonce, target))
     else:
         nonce = "".join(random.choices(string.ascii_lowercase, k=8))
         paragraphs = [
@@ -485,6 +525,7 @@ async def run_stress_test(
     voice: str,
     speed: float,
     use_cached: bool,
+    varied_lengths: bool,
     stagger: float,
     min_buffer: int,
     console: Console,
@@ -504,7 +545,9 @@ async def run_stress_test(
     console.print(f"[dim]Creating {users} test documents...[/dim]")
     doc_ids = []
     for i in range(users):
-        doc_id = await create_test_document(base_url, token, blocks, i, use_cached=use_cached)
+        doc_id = await create_test_document(
+            base_url, token, blocks, i, use_cached=use_cached, varied_lengths=varied_lengths
+        )
         doc_ids.append(doc_id)
     result.document_ids = doc_ids
 
@@ -570,6 +613,7 @@ def main(
     model: str = "kokoro",
     speed: float = 1.0,
     use_cached: bool = False,
+    varied_lengths: bool = False,
     stagger: float = 0.0,
     min_buffer: int = DEFAULT_MIN_BUFFER_TO_START,
     output_dir: Path = Path("scripts/stress_test_results"),
@@ -586,7 +630,7 @@ def main(
 
         uv run scripts/stress_test.py --users 5
         uv run scripts/stress_test.py --users 3 --speed 2 --min-buffer 1
-        uv run scripts/stress_test.py --users 10 --stagger 2.0
+        uv run scripts/stress_test.py --users 1 --varied-lengths
 
     Args:
         base_url: API base URL
@@ -596,6 +640,7 @@ def main(
         model: TTS model slug (voice auto-selected per model)
         speed: Playback speed multiplier applied to actual audio duration from OGG headers
         use_cached: Use 'test' content (likely cached) instead of unique content
+        varied_lengths: Generate blocks with random lengths ~10-300 chars (normal distribution) instead of uniform ~80 chars
         stagger: Spread user starts over this many seconds (0=all start together)
         min_buffer: Blocks to buffer before starting playback (1=play immediately, 2=default)
         output_dir: Directory for JSON results
@@ -625,6 +670,8 @@ def main(
     console.print(f"  Blocks/user: {blocks}")
     console.print(f"  Speed: {speed}x")
     console.print(f"  Model: {model} (voice: {voice})")
+    if varied_lengths:
+        console.print("  Block lengths: varied (10-300 chars)")
     if min_buffer != DEFAULT_MIN_BUFFER_TO_START:
         console.print(f"  Min buffer: {min_buffer} blocks")
     if stagger > 0:
@@ -634,7 +681,19 @@ def main(
     with Progress() as progress:
         result = asyncio.run(
             run_stress_test(
-                base_url, token, users, blocks, model, voice, speed, use_cached, stagger, min_buffer, console, progress
+                base_url,
+                token,
+                users,
+                blocks,
+                model,
+                voice,
+                speed,
+                use_cached,
+                varied_lengths,
+                stagger,
+                min_buffer,
+                console,
+                progress,
             )
         )
 
