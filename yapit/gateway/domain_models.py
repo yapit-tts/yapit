@@ -171,14 +171,6 @@ class BlockVariant(SQLModel, table=True):
         return hasher.hexdigest()
 
 
-class DocumentProcessor(SQLModel, table=True):
-    """Available document processors for content extraction."""
-
-    slug: str = Field(primary_key=True)
-    name: str
-    is_active: bool = Field(default=True, index=True)
-
-
 # Subscription Models
 
 

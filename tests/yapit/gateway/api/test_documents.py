@@ -247,7 +247,7 @@ async def test_prepare_website_returns_empty_uncached_pages(client, as_test_user
 
         # Test even with processor_slug specified (should be ignored for websites)
         response = await client.post(
-            "/v1/documents/prepare", json={"url": "https://example.com/page2.html", "processor_slug": "mistral-ocr"}
+            "/v1/documents/prepare", json={"url": "https://example.com/page2.html", "processor_slug": "banana"}
         )
         assert response.status_code == 200
         data = DocumentPrepareResponse.model_validate(response.json())
