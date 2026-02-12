@@ -48,7 +48,8 @@ class BatchJobInfo(BaseModel):
     title: str | None
     content_type: str
     file_size: int
-    pages_requested: list[int]
+    pages_requested: list[int]  # all pages the user wants in the final document
+    pages_submitted: list[int] | None = None  # pages sent to Gemini (None = all, for in-flight jobs pre-deploy)
     figure_urls_by_page: dict[int, list[str]]
     poll_count: int = 0
     document_id: str | None = None
@@ -145,6 +146,7 @@ async def submit_batch_job(
     content_type: str,
     file_size: int,
     pages_requested: list[int],
+    pages_submitted: list[int],
     figure_urls_by_page: dict[int, list[str]],
 ) -> BatchJobInfo:
     with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
@@ -187,6 +189,7 @@ async def submit_batch_job(
         content_type=content_type,
         file_size=file_size,
         pages_requested=pages_requested,
+        pages_submitted=pages_submitted,
         figure_urls_by_page=figure_urls_by_page,
     )
 

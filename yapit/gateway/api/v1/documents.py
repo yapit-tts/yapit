@@ -42,6 +42,7 @@ from yapit.gateway.deps import (
     SettingsDep,
 )
 from yapit.gateway.document.batch import BatchJobInfo, BatchJobStatus, get_batch_job, save_batch_job, submit_batch_job
+from yapit.gateway.document.batch_poller import create_document_from_batch
 from yapit.gateway.document.extraction import PER_PAGE_TOLERANCE, estimate_document_tokens
 from yapit.gateway.document.http import download_document
 from yapit.gateway.document.markxiv import detect_arxiv_url, fetch_from_markxiv
@@ -61,6 +62,7 @@ from yapit.gateway.domain_models import Block, Document, DocumentMetadata, Usage
 from yapit.gateway.exceptions import ResourceNotFoundError
 from yapit.gateway.metrics import log_event
 from yapit.gateway.reservations import create_reservation, release_reservation
+from yapit.gateway.storage import ImageStorage
 from yapit.gateway.usage import check_usage_limit
 
 router = APIRouter(prefix="/v1/documents", tags=["Documents"], dependencies=[Depends(authenticate)])
@@ -602,6 +604,41 @@ async def _billing_precheck(
     await create_reservation(redis, user_id, content_hash, estimate.total_tokens)
 
 
+async def _check_extraction_cache(
+    config: ProcessorConfig,
+    content_hash: str,
+    requested_pages: set[int],
+    extraction_cache: Cache,
+    image_storage: ImageStorage,
+    user_id: str,
+) -> tuple[dict[int, ExtractedPage], set[int]]:
+    """Check which pages are already in extraction cache.
+
+    Returns (cached_pages, uncached_pages). Invalidates cache if stored images
+    were deleted (e.g. after document deletion).
+    """
+    if not config.extraction_cache_prefix:
+        return {}, requested_pages
+
+    cache_key_map = {config.extraction_cache_key(content_hash, idx): idx for idx in requested_pages}
+    cached_data = await extraction_cache.batch_retrieve(list(cache_key_map.keys()))
+
+    cached_pages: dict[int, ExtractedPage] = {}
+    for key, data in cached_data.items():
+        page_idx = cache_key_map[key]
+        cached_pages[page_idx] = ExtractedPage.model_validate_json(data)
+        await log_event("extraction_cache_hit", processor_slug=config.slug, page_idx=page_idx, user_id=user_id)
+
+    uncached_pages = requested_pages - set(cached_pages.keys())
+
+    has_cached_images = any(page.images for page in cached_pages.values())
+    if has_cached_images and not await image_storage.exists(content_hash):
+        logger.info(f"Images missing for {content_hash}, invalidating extraction cache")
+        return {}, requested_pages
+
+    return cached_pages, uncached_pages
+
+
 async def _submit_batch_extraction(
     content: bytes,
     content_type: str,
@@ -616,17 +653,57 @@ async def _submit_batch_extraction(
     ai_extractor_config: AiExtractorConfigDep,
     ai_extractor: AiExtractorDep,
     redis: RedisClient,
+    extraction_cache: ExtractionCache,
+    image_storage: ImageStorageDep,
 ) -> BatchSubmittedResponse:
     """Submit document for batch extraction via Gemini Batch API.
 
-    Returns immediately after billing checks. YOLO detection and batch
-    submission happen in a background task — the job starts as PREPARING
-    and transitions to PENDING once submitted to Gemini.
+    Checks the extraction cache first — only uncached pages are sent to Gemini.
+    If all pages are cached, creates the document immediately.
     """
     if not ai_extractor or not ai_extractor_config:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="AI transform not configured on this server",
+        )
+
+    pages_requested = list(range(total_pages)) if pages is None else pages
+    submitted_at = datetime.now(tz=dt.UTC).isoformat()
+
+    # Check extraction cache — same pattern as process_with_billing (processing.py)
+    cached_pages, uncached_pages = await _check_extraction_cache(
+        ai_extractor_config, content_hash, set(pages_requested), extraction_cache, image_storage, user_id
+    )
+
+    if not uncached_pages:
+        # All pages cached — create document immediately, no batch job needed
+        job_info = BatchJobInfo(
+            user_id=user_id,
+            content_hash=content_hash,
+            total_pages=len(pages_requested),
+            submitted_at=submitted_at,
+            status=BatchJobStatus.SUCCEEDED,
+            title=title,
+            content_type=content_type,
+            file_size=file_size,
+            pages_requested=pages_requested,
+            pages_submitted=[],
+            figure_urls_by_page={},
+        )
+        doc = await create_document_from_batch(job_info, cached_pages, db, settings)
+        job_info.document_id = str(doc.id)
+        await save_batch_job(redis, job_info)
+        return BatchSubmittedResponse(
+            content_hash=content_hash,
+            total_pages=len(pages_requested),
+            submitted_at=submitted_at,
+        )
+
+    uncached_list = sorted(uncached_pages)
+    if cached_pages:
+        logger.info(
+            f"Batch cache: {len(cached_pages)} cached, {len(uncached_list)} uncached "
+            f"(of {len(pages_requested)} requested)"
         )
 
     await _billing_precheck(
@@ -635,14 +712,11 @@ async def _submit_batch_extraction(
         content_type=content_type,
         content_hash=content_hash,
         user_id=user_id,
-        pages=pages,
+        pages=uncached_list,
         db=db,
         billing_enabled=settings.billing_enabled,
         redis=redis,
     )
-
-    pages_requested = list(range(total_pages)) if pages is None else pages
-    submitted_at = datetime.now(tz=dt.UTC).isoformat()
 
     job_info = BatchJobInfo(
         user_id=user_id,
@@ -654,6 +728,7 @@ async def _submit_batch_extraction(
         content_type=content_type,
         file_size=file_size,
         pages_requested=pages_requested,
+        pages_submitted=uncached_list,
         figure_urls_by_page={},
     )
     await save_batch_job(redis, job_info)
@@ -662,7 +737,7 @@ async def _submit_batch_extraction(
         _prepare_and_submit_batch(
             content=content,
             content_hash=content_hash,
-            pages=pages,
+            pages=uncached_list,
             user_id=user_id,
             ai_extractor=ai_extractor,
             redis=redis,
@@ -670,6 +745,7 @@ async def _submit_batch_extraction(
             content_type=content_type,
             file_size=file_size,
             pages_requested=pages_requested,
+            pages_submitted=uncached_list,
         )
     )
 
@@ -691,6 +767,7 @@ async def _prepare_and_submit_batch(
     content_type: str,
     file_size: int,
     pages_requested: list[int],
+    pages_submitted: list[int],
 ) -> None:
     """Background task: run YOLO detection + submit batch to Gemini."""
     assert ai_extractor is not None
@@ -712,6 +789,7 @@ async def _prepare_and_submit_batch(
             content_type=content_type,
             file_size=file_size,
             pages_requested=pages_requested,
+            pages_submitted=pages_submitted,
             figure_urls_by_page=figure_urls_by_page,
         )
     except Exception:
@@ -943,6 +1021,8 @@ async def create_document(
             ai_extractor_config=ai_extractor_config,
             ai_extractor=ai_extractor,
             redis=redis,
+            extraction_cache=extraction_cache,
+            image_storage=image_storage,
         )
 
     # AI extraction requires extractor to be configured
