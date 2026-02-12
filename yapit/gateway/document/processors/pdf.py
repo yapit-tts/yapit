@@ -26,7 +26,7 @@ async def extract(content: bytes, pages: list[int] | None = None) -> AsyncIterat
     def _extract() -> list[tuple[int, str]]:
         doc = pymupdf.open(stream=content, filetype="pdf")
         page_indices = pages if pages else list(range(len(doc)))
-        results = [(idx, doc[idx].get_text()) for idx in page_indices]
+        results = [(idx, doc[idx].get_text().replace("\x00", "")) for idx in page_indices]
         doc.close()
         return results
 
