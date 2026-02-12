@@ -25,20 +25,6 @@ _JS_RENDERING_PATTERNS = [
 _JS_PATTERN_REGEX = re.compile("|".join(_JS_RENDERING_PATTERNS), re.IGNORECASE)
 
 
-def html_to_markdown(html: str) -> tuple[str, str]:
-    """Extract markdown from HTML. Trafilatura first, html2text fallback.
-
-    Returns (markdown, extraction_method). Reusable for HTML file uploads
-    where there's no JS rendering concern.
-    """
-    markdown = _extract_with_trafilatura(html)
-    if markdown:
-        return markdown, "trafilatura"
-    converter = html2text.HTML2Text()
-    converter.body_width = 0  # no line wrapping
-    return converter.handle(html), "html2text"
-
-
 def _extract_with_trafilatura(html: str) -> str | None:
     return trafilatura.extract(
         html, output_format="markdown", include_links=True, include_tables=True, include_images=True

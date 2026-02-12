@@ -69,22 +69,51 @@ router = APIRouter(prefix="/v1/documents", tags=["Documents"], dependencies=[Dep
 public_router = APIRouter(prefix="/v1/documents", tags=["Documents"])
 
 
+class FormatInfo(BaseModel):
+    free: bool
+    ai: bool
+    has_pages: bool
+    batch: bool
+
+
+class SupportedFormatsResponse(BaseModel):
+    formats: dict[str, FormatInfo]
+    accept: str
+
+
+# For the <input accept=""> attribute — browsers need both MIME types and extensions
+MIME_EXTENSIONS: dict[str, list[str]] = {
+    "application/pdf": [".pdf"],
+    "text/html": [".html", ".htm"],
+    "text/plain": [".txt"],
+    "text/markdown": [".md", ".markdown"],
+    "text/x-markdown": [".md", ".markdown"],
+    "image/png": [".png"],
+    "image/jpeg": [".jpg", ".jpeg"],
+    "image/webp": [".webp"],
+    "image/gif": [".gif"],
+    "image/bmp": [".bmp"],
+    "image/tiff": [".tiff", ".tif"],
+}
+
+
 @public_router.get("/supported-formats")
-async def get_supported_formats(ai_config: AiExtractorConfigDep) -> dict:
-    formats = {
-        "application/pdf": {"free": True, "ai": True, "has_pages": True, "batch": True},
-        "text/html": {"free": True, "ai": False, "has_pages": False, "batch": False},
-        "text/plain": {"free": True, "ai": False, "has_pages": False, "batch": False},
-        "text/markdown": {"free": True, "ai": False, "has_pages": False, "batch": False},
-        "text/x-markdown": {"free": True, "ai": False, "has_pages": False, "batch": False},
+async def get_supported_formats(ai_config: AiExtractorConfigDep) -> SupportedFormatsResponse:
+    formats: dict[str, FormatInfo] = {
+        "application/pdf": FormatInfo(free=True, ai=True, has_pages=True, batch=True),
+        "text/html": FormatInfo(free=True, ai=False, has_pages=False, batch=False),
+        "text/plain": FormatInfo(free=True, ai=False, has_pages=False, batch=False),
+        "text/markdown": FormatInfo(free=True, ai=False, has_pages=False, batch=False),
+        "text/x-markdown": FormatInfo(free=True, ai=False, has_pages=False, batch=False),
     }
-    # Types only reachable via AI — no free processor exists for these
     if ai_config:
         for mime_type in ai_config.supported_mime_types:
             if mime_type not in formats:
-                formats[mime_type] = {"free": False, "ai": True, "has_pages": False, "batch": True}
+                formats[mime_type] = FormatInfo(free=False, ai=True, has_pages=False, batch=True)
 
-    return {"formats": formats, "accept": ",".join(sorted(formats))}
+    all_mimes = sorted(formats)
+    all_exts = sorted({ext for m in formats for ext in MIME_EXTENSIONS.get(m, [])})
+    return SupportedFormatsResponse(formats=formats, accept=",".join(all_mimes + all_exts))
 
 
 def _format_size(bytes_: int) -> str:
@@ -358,9 +387,7 @@ async def prepare_document(
         endpoint = _get_endpoint_type_from_content_type(cached_doc.metadata.content_type)
         # Compute content_hash for extraction cache lookup
         content_hash = hashlib.sha256(cached_doc.content).hexdigest() if cached_doc.content else url_hash
-        has_ai = ai_extractor_config and ai_extractor_config.is_supported(cached_doc.metadata.content_type)
-        if has_ai:
-            assert ai_extractor_config is not None
+        if ai_extractor_config and ai_extractor_config.is_supported(cached_doc.metadata.content_type):
             uncached_pages = await _get_uncached_pages(
                 content_hash, cached_doc.metadata.total_pages, extraction_cache, ai_extractor_config
             )
@@ -391,9 +418,7 @@ async def prepare_document(
     await file_cache.store(url_hash, cached_doc.model_dump_json().encode())
 
     content_hash = hashlib.sha256(content).hexdigest()
-    has_ai = ai_extractor_config and ai_extractor_config.is_supported(content_type)
-    if has_ai:
-        assert ai_extractor_config is not None
+    if ai_extractor_config and ai_extractor_config.is_supported(content_type):
         uncached_pages = await _get_uncached_pages(
             content_hash, metadata.total_pages, extraction_cache, ai_extractor_config
         )
@@ -418,27 +443,20 @@ async def prepare_document_upload(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Empty file")
 
     cache_key = hashlib.sha256(content).hexdigest()
-    t_hash = time.monotonic()
     cached_data = await file_cache.retrieve_data(cache_key)
-    t_cache_check = time.monotonic()
     if cached_data:
         cached_doc = CachedDocument.model_validate_json(cached_data)
         await log_event(
             "document_cache_hit",
             data={"cache_type": "upload", "content_type": cached_doc.metadata.content_type},
         )
-        has_ai = ai_extractor_config and ai_extractor_config.is_supported(cached_doc.metadata.content_type)
-        if has_ai:
-            assert ai_extractor_config is not None
+        if ai_extractor_config and ai_extractor_config.is_supported(cached_doc.metadata.content_type):
             uncached_pages = await _get_uncached_pages(
                 cache_key, cached_doc.metadata.total_pages, extraction_cache, ai_extractor_config
             )
         else:
             uncached_pages: set[int] = set()
-        logger.info(
-            f"prepare/upload cache hit: read={t_hash - t0:.2f}s, "
-            f"cache_check={t_cache_check - t_hash:.2f}s, total={time.monotonic() - t0:.2f}s"
-        )
+        logger.info(f"prepare/upload cache hit in {time.monotonic() - t0:.2f}s")
         return DocumentPrepareResponse(
             hash=cache_key,
             content_hash=cache_key,
@@ -450,7 +468,6 @@ async def prepare_document_upload(
     content_type = file.content_type or "application/octet-stream"
 
     total_pages, title = await asyncio.to_thread(_extract_document_info, content, content_type)
-    t_info = time.monotonic()
     metadata = DocumentMetadata(
         content_type=content_type,
         total_pages=total_pages,
@@ -462,21 +479,14 @@ async def prepare_document_upload(
 
     cached_doc = CachedDocument(metadata=metadata, content=content)
     await file_cache.store(cache_key, cached_doc.model_dump_json().encode())
-    t_store = time.monotonic()
 
-    has_ai = ai_extractor_config and ai_extractor_config.is_supported(content_type)
-    if has_ai:
-        assert ai_extractor_config is not None
+    if ai_extractor_config and ai_extractor_config.is_supported(content_type):
         uncached_pages = await _get_uncached_pages(
             cache_key, metadata.total_pages, extraction_cache, ai_extractor_config
         )
     else:
         uncached_pages: set[int] = set()
-    logger.info(
-        f"prepare/upload: read={t_hash - t0:.2f}s, cache_check={t_cache_check - t_hash:.2f}s, "
-        f"extract_info={t_info - t_cache_check:.2f}s, store={t_store - t_info:.2f}s, "
-        f"uncached_pages={time.monotonic() - t_store:.2f}s, total={time.monotonic() - t0:.2f}s"
-    )
+    logger.info(f"prepare/upload in {time.monotonic() - t0:.2f}s")
     endpoint = _get_endpoint_type_from_content_type(content_type)
     return DocumentPrepareResponse(
         hash=cache_key, content_hash=cache_key, metadata=metadata, endpoint=endpoint, uncached_pages=uncached_pages

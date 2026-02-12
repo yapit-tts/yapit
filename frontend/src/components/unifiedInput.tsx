@@ -366,8 +366,8 @@ export function UnifiedInput() {
     }
   };
 
-  // No useCallback — only used within this component, and wrapping it
-  // would cause stale closures over createDocument's captured state.
+  // No useCallback — React Compiler handles memoization. Manual useCallback
+  // would risk stale closures over frequently-changing state (formats, aiTransformEnabled, isCreating).
   const uploadFile = async (file: File) => {
     setMode("file");
     setError(null);
@@ -388,6 +388,9 @@ export function UnifiedInput() {
       await handleTextSubmit(content, title);
       return;
     }
+
+    // Drag-and-drop bypasses the disabled textarea — wait for format info
+    if (!formats) return;
 
     // Cancel any in-flight prepare or extraction
     prepareAbortRef.current?.abort();
