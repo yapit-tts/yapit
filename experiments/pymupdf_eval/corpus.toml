@@ -1,0 +1,73 @@
+# PyMuPDF extraction quality corpus
+# Each entry defines a PDF and which pages to evaluate.
+# `pages` = list of 0-indexed page numbers for quality eval.
+# `speed_bench` = true means run ALL pages for timing only.
+
+# --- Local books ---
+
+[docs.convexopt]
+path = "/home/max/Documents/books/convex_optimization_bv_cvxbook.pdf"
+category = "math-textbook"
+pages = [0, 1, 5, 50, 200]  # title, toc, intro, body with math, deep body
+speed_bench = true  # 714 pages — primary speed benchmark
+
+[docs.activeinference]
+path = "/home/max/Documents/books/active_inference.pdf"
+category = "academic-book"
+pages = [0, 3, 10, 40, 80]
+
+[docs.ddia]
+path = "/home/max/Documents/books/Designing Data-Intensive Applications The Big Ideas Behind Reliable, Scalable, and Maintainable Systems ( PDFDrive ).pdf"
+category = "tech-book"
+pages = [0, 2, 20, 100, 200]
+
+[docs.nnfs]
+path = "/home/max/Documents/books/Neural Networks from Scratch - NNFS.pdf"
+category = "code-heavy"
+pages = [0, 5, 30, 60, 100]
+
+[docs.complexity]
+path = "/home/max/Documents/books/Complexity _ A Guided Tour -- Melanie Mitchell -- First Edition, 2009 -- Oxford University Press, USA -- 9780195124415 -- 325dde4ebceda37c0b5ea2daa7d595d1 -- Anna\u2019s Archive.pdf"
+category = "popular-science"
+pages = [0, 3, 20, 50, 100]
+
+[docs.history-philosophy]
+path = "/home/max/Documents/books/History Of Philosophy - Alan Woods.pdf"
+category = "non-technical"
+pages = [0, 2, 15, 60, 120]
+
+[docs.class-struggle]
+path = "/home/max/Documents/books/class struggle in the roman empire - woods.pdf"
+category = "political-history"
+pages = [0, 1, 10, 30, 50]
+
+# --- arXiv papers (fetched to corpus/) ---
+
+[docs.attention]
+url = "https://arxiv.org/pdf/1706.03762v7"
+category = "known-failure"
+pages = [0, 2, 3, 5, 12, 13, 14]  # title, body, table, appendix attention figs
+
+[docs.arcnca]
+url = "https://arxiv.org/pdf/2505.08778"
+category = "2col-tables-math"
+pages = [0, 1, 3, 5, 7]
+
+[docs.imglayout]
+url = "https://arxiv.org/pdf/2503.14858"
+category = "figures-captions"
+pages = [0, 1, 4, 6, 8]
+
+# --- Diverse internet PDFs ---
+
+# alice: removed — no reliable direct-download URL. 
+
+[docs.rfc2616]
+url = "https://www.rfc-editor.org/rfc/rfc2616.pdf"
+category = "technical-spec"
+pages = [0, 1, 10, 30, 50]
+
+[docs.beamer-slides]
+url = "https://web.mit.edu/rsi/www/pdfs/beamer-tutorial.pdf"
+category = "slides-presentation"
+pages = [0, 1, 3, 5, 8]

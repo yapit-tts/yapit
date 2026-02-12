@@ -3,6 +3,7 @@ import datetime as dt
 import hashlib
 import json
 import re
+import time
 from datetime import datetime
 from email.message import EmailMessage
 from html import escape as html_escape
@@ -40,8 +41,8 @@ from yapit.gateway.deps import (
     RedisClient,
     SettingsDep,
 )
-from yapit.gateway.document import markitdown
 from yapit.gateway.document.batch import BatchJobInfo, BatchJobStatus, get_batch_job, save_batch_job, submit_batch_job
+from yapit.gateway.document.batch_poller import create_document_from_batch
 from yapit.gateway.document.extraction import PER_PAGE_TOLERANCE, estimate_document_tokens
 from yapit.gateway.document.http import download_document
 from yapit.gateway.document.markxiv import detect_arxiv_url, fetch_from_markxiv
@@ -50,20 +51,69 @@ from yapit.gateway.document.processing import (
     DocumentExtractionResult,
     ExtractedPage,
     ProcessorConfig,
+    cpu_executor,
     create_document_with_blocks,
     process_pages_to_document,
     process_with_billing,
 )
+from yapit.gateway.document.processors import pdf
 from yapit.gateway.document.website import extract_website_content
 from yapit.gateway.domain_models import Block, Document, DocumentMetadata, UsageType, UserPreferences, UserSubscription
 from yapit.gateway.exceptions import ResourceNotFoundError
-from yapit.gateway.markdown import parse_markdown, transform_to_document
 from yapit.gateway.metrics import log_event
 from yapit.gateway.reservations import create_reservation, release_reservation
+from yapit.gateway.storage import ImageStorage
 from yapit.gateway.usage import check_usage_limit
 
 router = APIRouter(prefix="/v1/documents", tags=["Documents"], dependencies=[Depends(authenticate)])
 public_router = APIRouter(prefix="/v1/documents", tags=["Documents"])
+
+
+class FormatInfo(BaseModel):
+    free: bool
+    ai: bool
+    has_pages: bool
+    batch: bool
+
+
+class SupportedFormatsResponse(BaseModel):
+    formats: dict[str, FormatInfo]
+    accept: str
+
+
+# For the <input accept=""> attribute — browsers need both MIME types and extensions
+MIME_EXTENSIONS: dict[str, list[str]] = {
+    "application/pdf": [".pdf"],
+    "text/html": [".html", ".htm"],
+    "text/plain": [".txt"],
+    "text/markdown": [".md", ".markdown"],
+    "text/x-markdown": [".md", ".markdown"],
+    "image/png": [".png"],
+    "image/jpeg": [".jpg", ".jpeg"],
+    "image/webp": [".webp"],
+    "image/gif": [".gif"],
+    "image/bmp": [".bmp"],
+    "image/tiff": [".tiff", ".tif"],
+}
+
+
+@public_router.get("/supported-formats")
+async def get_supported_formats(ai_config: AiExtractorConfigDep) -> SupportedFormatsResponse:
+    formats: dict[str, FormatInfo] = {
+        "application/pdf": FormatInfo(free=True, ai=True, has_pages=True, batch=True),
+        "text/html": FormatInfo(free=True, ai=False, has_pages=False, batch=False),
+        "text/plain": FormatInfo(free=True, ai=False, has_pages=False, batch=False),
+        "text/markdown": FormatInfo(free=True, ai=False, has_pages=False, batch=False),
+        "text/x-markdown": FormatInfo(free=True, ai=False, has_pages=False, batch=False),
+    }
+    if ai_config:
+        for mime_type in ai_config.supported_mime_types:
+            if mime_type not in formats:
+                formats[mime_type] = FormatInfo(free=False, ai=True, has_pages=False, batch=True)
+
+    all_mimes = sorted(formats)
+    all_exts = sorted({ext for m in formats for ext in MIME_EXTENSIONS.get(m, [])})
+    return SupportedFormatsResponse(formats=formats, accept=",".join(all_mimes + all_exts))
 
 
 def _format_size(bytes_: int) -> str:
@@ -104,15 +154,7 @@ async def check_storage_limit(user_id: str, is_anonymous: bool, db: DbSession) -
 
 
 class DocumentPrepareRequest(BaseModel):
-    """Request to prepare a document from URL.
-
-    Args:
-        url (HttpUrl): URL of the document to prepare.
-        processor_slug (str | None): Which document processor to use (if using ocr, for credit cost calculation).
-    """
-
     url: HttpUrl
-    processor_slug: str | None = None
 
 
 class DocumentPrepareResponse(BaseModel):
@@ -122,7 +164,7 @@ class DocumentPrepareResponse(BaseModel):
         hash: SHA256 hash of the document content (for uploads) or url (for urls), used as cache key
         content_hash: SHA256 hash of actual content (for extraction progress tracking)
         endpoint: Which API endpoint the client should use to create the document
-        uncached_pages: Set of page numbers that need OCR processing (empty for websites/text)
+        uncached_pages: Page numbers without AI extraction cache (empty if AI extractor not configured/supported)
     """
 
     hash: str
@@ -163,7 +205,7 @@ class DocumentCreateRequest(BasePreparedDocumentCreateRequest):
 
     Args:
         pages: List of page indices to process (0-indexed). None = all pages.
-        ai_transform: Use AI-powered extraction (requires subscription). False = free markitdown.
+        ai_transform: Use AI-powered extraction (requires subscription). False = free extraction.
         batch_mode: Submit as batch job (50% cheaper, async). Only valid with ai_transform=True.
     """
 
@@ -222,11 +264,9 @@ class BatchStatusResponse(BaseModel):
 
 
 class ExtractionStatusRequest(BaseModel):
-    """Request for extraction status check."""
-
     extraction_id: str | None = None
     content_hash: str
-    processor_slug: str
+    ai_transform: bool
     pages: list[int]
 
 
@@ -263,16 +303,14 @@ async def get_extraction_status(
             failed_pages=result.get("failed_pages", []),
         )
 
-    # Check per-page extraction cache for progress
-    config = ai_extractor_config if req.processor_slug == "gemini" else markitdown.MARKITDOWN_CONFIG
+    # Check per-page extraction cache for progress (only AI extraction is cached)
+    config = ai_extractor_config if (req.ai_transform and ai_extractor_config) else None
     if not config or not config.extraction_cache_prefix:
         return ExtractionStatusResponse(total_pages=len(req.pages), completed_pages=[], status="processing")
 
-    completed = []
-    for page_idx in req.pages:
-        cache_key = config.extraction_cache_key(req.content_hash, page_idx)
-        if await extraction_cache.exists(cache_key):
-            completed.append(page_idx)
+    keys = [config.extraction_cache_key(req.content_hash, idx) for idx in req.pages]
+    cached_keys = await extraction_cache.batch_exists(keys)
+    completed = [idx for idx, key in zip(req.pages, keys) if key in cached_keys]
 
     return ExtractionStatusResponse(
         total_pages=len(req.pages),
@@ -349,16 +387,12 @@ async def prepare_document(
         endpoint = _get_endpoint_type_from_content_type(cached_doc.metadata.content_type)
         # Compute content_hash for extraction cache lookup
         content_hash = hashlib.sha256(cached_doc.content).hexdigest() if cached_doc.content else url_hash
-        uncached_pages = (
-            await _get_uncached_pages(
-                content_hash,
-                cached_doc.metadata.total_pages,
-                extraction_cache,
-                ai_extractor_config,
+        if ai_extractor_config and ai_extractor_config.is_supported(cached_doc.metadata.content_type):
+            uncached_pages = await _get_uncached_pages(
+                content_hash, cached_doc.metadata.total_pages, extraction_cache, ai_extractor_config
             )
-            if _needs_ocr_processing(cached_doc.metadata.content_type)
-            else set()
-        )
+        else:
+            uncached_pages: set[int] = set()
         return DocumentPrepareResponse(
             hash=url_hash,
             content_hash=content_hash,
@@ -384,16 +418,12 @@ async def prepare_document(
     await file_cache.store(url_hash, cached_doc.model_dump_json().encode())
 
     content_hash = hashlib.sha256(content).hexdigest()
-    uncached_pages = (
-        await _get_uncached_pages(
-            content_hash,
-            metadata.total_pages,
-            extraction_cache,
-            ai_extractor_config,
+    if ai_extractor_config and ai_extractor_config.is_supported(content_type):
+        uncached_pages = await _get_uncached_pages(
+            content_hash, metadata.total_pages, extraction_cache, ai_extractor_config
         )
-        if _needs_ocr_processing(content_type)
-        else set()
-    )
+    else:
+        uncached_pages: set[int] = set()
     return DocumentPrepareResponse(
         hash=url_hash, content_hash=content_hash, metadata=metadata, endpoint=endpoint, uncached_pages=uncached_pages
     )
@@ -407,6 +437,7 @@ async def prepare_document_upload(
     ai_extractor_config: AiExtractorConfigDep,
 ) -> DocumentPrepareResponse:
     """Prepare a document from file upload."""
+    t0 = time.monotonic()
     content = await file.read()
     if not content:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Empty file")
@@ -419,21 +450,18 @@ async def prepare_document_upload(
             "document_cache_hit",
             data={"cache_type": "upload", "content_type": cached_doc.metadata.content_type},
         )
-        uncached_pages = (
-            await _get_uncached_pages(
-                cache_key,
-                cached_doc.metadata.total_pages,
-                extraction_cache,
-                ai_extractor_config,
+        if ai_extractor_config and ai_extractor_config.is_supported(cached_doc.metadata.content_type):
+            uncached_pages = await _get_uncached_pages(
+                cache_key, cached_doc.metadata.total_pages, extraction_cache, ai_extractor_config
             )
-            if _needs_ocr_processing(cached_doc.metadata.content_type)
-            else set()
-        )
+        else:
+            uncached_pages: set[int] = set()
+        logger.info(f"prepare/upload cache hit in {time.monotonic() - t0:.2f}s")
         return DocumentPrepareResponse(
             hash=cache_key,
             content_hash=cache_key,
             metadata=cached_doc.metadata,
-            endpoint="document",
+            endpoint=_get_endpoint_type_from_content_type(cached_doc.metadata.content_type),
             uncached_pages=uncached_pages,
         )
 
@@ -452,18 +480,16 @@ async def prepare_document_upload(
     cached_doc = CachedDocument(metadata=metadata, content=content)
     await file_cache.store(cache_key, cached_doc.model_dump_json().encode())
 
-    uncached_pages = (
-        await _get_uncached_pages(
-            cache_key,
-            metadata.total_pages,
-            extraction_cache,
-            ai_extractor_config,
+    if ai_extractor_config and ai_extractor_config.is_supported(content_type):
+        uncached_pages = await _get_uncached_pages(
+            cache_key, metadata.total_pages, extraction_cache, ai_extractor_config
         )
-        if _needs_ocr_processing(content_type)
-        else set()
-    )
+    else:
+        uncached_pages: set[int] = set()
+    logger.info(f"prepare/upload in {time.monotonic() - t0:.2f}s")
+    endpoint = _get_endpoint_type_from_content_type(content_type)
     return DocumentPrepareResponse(
-        hash=cache_key, content_hash=cache_key, metadata=metadata, endpoint="document", uncached_pages=uncached_pages
+        hash=cache_key, content_hash=cache_key, metadata=metadata, endpoint=endpoint, uncached_pages=uncached_pages
     )
 
 
@@ -478,22 +504,19 @@ async def create_text_document(
     await check_storage_limit(user.id, user.is_anonymous, db)
     prefs = await db.get(UserPreferences, user.id)
 
-    ast = parse_markdown(req.content)
-    structured_doc = transform_to_document(
-        ast,
-        max_block_chars=settings.max_block_chars,
-        soft_limit_mult=settings.soft_limit_mult,
-        min_chunk_size=settings.min_chunk_size,
+    processed = await asyncio.get_running_loop().run_in_executor(
+        cpu_executor,
+        process_pages_to_document,
+        {0: ExtractedPage(markdown=req.content, images=[])},
+        settings,
     )
-    structured_content = structured_doc.model_dump_json()
-    text_blocks = structured_doc.get_audio_blocks()
 
     doc = await create_document_with_blocks(
         db=db,
         user_id=user.id,
         title=req.title,
-        original_text=req.content,
-        structured_content=structured_content,
+        original_text=processed.extracted_text,
+        structured_content=processed.structured_content,
         metadata=DocumentMetadata(
             content_type="text/plain",
             total_pages=1,
@@ -503,7 +526,7 @@ async def create_text_document(
             file_size=len(req.content.encode("utf-8")),
         ),
         extraction_method=None,
-        text_blocks=text_blocks,
+        text_blocks=processed.text_blocks,
         is_public=prefs.default_documents_public if prefs else False,
     )
     return DocumentCreateResponse(id=doc.id, title=doc.title)
@@ -543,23 +566,22 @@ async def create_website_document(
         cached_doc.content, cached_doc.metadata.url, settings.markxiv_url
     )
 
-    ast = parse_markdown(markdown)
-    structured_doc = transform_to_document(
-        ast,
-        max_block_chars=settings.max_block_chars,
-        soft_limit_mult=settings.soft_limit_mult,
-        min_chunk_size=settings.min_chunk_size,
+    processed = await asyncio.get_running_loop().run_in_executor(
+        cpu_executor,
+        process_pages_to_document,
+        {0: ExtractedPage(markdown=markdown, images=[])},
+        settings,
     )
 
     doc = await create_document_with_blocks(
         db=db,
         user_id=user.id,
         title=cached_doc.metadata.title or req.title or cached_doc.metadata.file_name,
-        original_text=markdown,
-        structured_content=structured_doc.model_dump_json(),
+        original_text=processed.extracted_text,
+        structured_content=processed.structured_content,
         metadata=cached_doc.metadata,
         extraction_method=extraction_method,
-        text_blocks=structured_doc.get_audio_blocks(),
+        text_blocks=processed.text_blocks,
         is_public=prefs.default_documents_public if prefs else False,
     )
     return DocumentCreateResponse(id=doc.id, title=doc.title)
@@ -592,6 +614,41 @@ async def _billing_precheck(
     await create_reservation(redis, user_id, content_hash, estimate.total_tokens)
 
 
+async def _check_extraction_cache(
+    config: ProcessorConfig,
+    content_hash: str,
+    requested_pages: set[int],
+    extraction_cache: Cache,
+    image_storage: ImageStorage,
+    user_id: str,
+) -> tuple[dict[int, ExtractedPage], set[int]]:
+    """Check which pages are already in extraction cache.
+
+    Returns (cached_pages, uncached_pages). Invalidates cache if stored images
+    were deleted (e.g. after document deletion).
+    """
+    if not config.extraction_cache_prefix:
+        return {}, requested_pages
+
+    cache_key_map = {config.extraction_cache_key(content_hash, idx): idx for idx in requested_pages}
+    cached_data = await extraction_cache.batch_retrieve(list(cache_key_map.keys()))
+
+    cached_pages: dict[int, ExtractedPage] = {}
+    for key, data in cached_data.items():
+        page_idx = cache_key_map[key]
+        cached_pages[page_idx] = ExtractedPage.model_validate_json(data)
+        await log_event("extraction_cache_hit", processor_slug=config.slug, page_idx=page_idx, user_id=user_id)
+
+    uncached_pages = requested_pages - set(cached_pages.keys())
+
+    has_cached_images = any(page.images for page in cached_pages.values())
+    if has_cached_images and not await image_storage.exists(content_hash):
+        logger.info(f"Images missing for {content_hash}, invalidating extraction cache")
+        return {}, requested_pages
+
+    return cached_pages, uncached_pages
+
+
 async def _submit_batch_extraction(
     content: bytes,
     content_type: str,
@@ -606,17 +663,57 @@ async def _submit_batch_extraction(
     ai_extractor_config: AiExtractorConfigDep,
     ai_extractor: AiExtractorDep,
     redis: RedisClient,
+    extraction_cache: ExtractionCache,
+    image_storage: ImageStorageDep,
 ) -> BatchSubmittedResponse:
     """Submit document for batch extraction via Gemini Batch API.
 
-    Returns immediately after billing checks. YOLO detection and batch
-    submission happen in a background task — the job starts as PREPARING
-    and transitions to PENDING once submitted to Gemini.
+    Checks the extraction cache first — only uncached pages are sent to Gemini.
+    If all pages are cached, creates the document immediately.
     """
     if not ai_extractor or not ai_extractor_config:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="AI transform not configured on this server",
+        )
+
+    pages_requested = list(range(total_pages)) if pages is None else pages
+    submitted_at = datetime.now(tz=dt.UTC).isoformat()
+
+    # Check extraction cache — same pattern as process_with_billing (processing.py)
+    cached_pages, uncached_pages = await _check_extraction_cache(
+        ai_extractor_config, content_hash, set(pages_requested), extraction_cache, image_storage, user_id
+    )
+
+    if not uncached_pages:
+        # All pages cached — create document immediately, no batch job needed
+        job_info = BatchJobInfo(
+            user_id=user_id,
+            content_hash=content_hash,
+            total_pages=len(pages_requested),
+            submitted_at=submitted_at,
+            status=BatchJobStatus.SUCCEEDED,
+            title=title,
+            content_type=content_type,
+            file_size=file_size,
+            pages_requested=pages_requested,
+            pages_submitted=[],
+            figure_urls_by_page={},
+        )
+        doc = await create_document_from_batch(job_info, cached_pages, db, settings)
+        job_info.document_id = str(doc.id)
+        await save_batch_job(redis, job_info)
+        return BatchSubmittedResponse(
+            content_hash=content_hash,
+            total_pages=len(pages_requested),
+            submitted_at=submitted_at,
+        )
+
+    uncached_list = sorted(uncached_pages)
+    if cached_pages:
+        logger.info(
+            f"Batch cache: {len(cached_pages)} cached, {len(uncached_list)} uncached "
+            f"(of {len(pages_requested)} requested)"
         )
 
     await _billing_precheck(
@@ -625,14 +722,11 @@ async def _submit_batch_extraction(
         content_type=content_type,
         content_hash=content_hash,
         user_id=user_id,
-        pages=pages,
+        pages=uncached_list,
         db=db,
         billing_enabled=settings.billing_enabled,
         redis=redis,
     )
-
-    pages_requested = list(range(total_pages)) if pages is None else pages
-    submitted_at = datetime.now(tz=dt.UTC).isoformat()
 
     job_info = BatchJobInfo(
         user_id=user_id,
@@ -644,6 +738,7 @@ async def _submit_batch_extraction(
         content_type=content_type,
         file_size=file_size,
         pages_requested=pages_requested,
+        pages_submitted=uncached_list,
         figure_urls_by_page={},
     )
     await save_batch_job(redis, job_info)
@@ -652,7 +747,7 @@ async def _submit_batch_extraction(
         _prepare_and_submit_batch(
             content=content,
             content_hash=content_hash,
-            pages=pages,
+            pages=uncached_list,
             user_id=user_id,
             ai_extractor=ai_extractor,
             redis=redis,
@@ -660,6 +755,7 @@ async def _submit_batch_extraction(
             content_type=content_type,
             file_size=file_size,
             pages_requested=pages_requested,
+            pages_submitted=uncached_list,
         )
     )
 
@@ -681,6 +777,7 @@ async def _prepare_and_submit_batch(
     content_type: str,
     file_size: int,
     pages_requested: list[int],
+    pages_submitted: list[int],
 ) -> None:
     """Background task: run YOLO detection + submit batch to Gemini."""
     assert ai_extractor is not None
@@ -702,6 +799,7 @@ async def _prepare_and_submit_batch(
             content_type=content_type,
             file_size=file_size,
             pages_requested=pages_requested,
+            pages_submitted=pages_submitted,
             figure_urls_by_page=figure_urls_by_page,
         )
     except Exception:
@@ -748,6 +846,11 @@ async def _run_extraction(
 
     cancel_key = f"extraction:cancel:{extraction_id}"
 
+    method = "ai" if ai_transform else "free"
+    if arxiv_id:
+        method = "markxiv"
+    logger.info(f"Extraction {extraction_id} starting: {method}, {total_pages} pages, hash={content_hash[:12]}")
+
     try:
         async for db in create_session(settings):
             if arxiv_id and settings.markxiv_url:
@@ -755,6 +858,12 @@ async def _run_extraction(
                 extraction_result = DocumentExtractionResult(
                     pages={0: ExtractedPage(markdown=markdown, images=[])},
                     extraction_method="markxiv",
+                )
+            elif content_type.startswith("text/") and not ai_transform:
+                # Text content doesn't need extraction — pass through as-is
+                extraction_result = DocumentExtractionResult(
+                    pages={0: ExtractedPage(markdown=content.decode("utf-8", errors="ignore"), images=[])},
+                    extraction_method="passthrough",
                 )
             else:
                 if ai_transform:
@@ -769,9 +878,10 @@ async def _run_extraction(
                         cancel_key=cancel_key,
                     )
                 else:
-                    config = markitdown.MARKITDOWN_CONFIG
-                    extractor = markitdown.extract(content, content_type)
+                    config = pdf.config
+                    extractor = pdf.extract(content, pages)
 
+                logger.info(f"Extraction {extraction_id}: starting process_with_billing")
                 extraction_result = await process_with_billing(
                     config=config,
                     extractor=extractor,
@@ -788,6 +898,10 @@ async def _run_extraction(
                     file_size=file_size,
                     pages=pages,
                 )
+                logger.info(
+                    f"Extraction {extraction_id}: extraction done, "
+                    f"{len(extraction_result.pages)} pages, {len(extraction_result.failed_pages)} failed"
+                )
 
             if await redis.exists(cancel_key):
                 logger.info(f"Extraction {extraction_id} cancelled, skipping document creation")
@@ -801,7 +915,11 @@ async def _run_extraction(
                 )
                 return
 
-            processed = process_pages_to_document(extraction_result.pages, settings)
+            logger.info(f"Extraction {extraction_id}: building structured document")
+            processed = await asyncio.get_running_loop().run_in_executor(
+                cpu_executor, process_pages_to_document, extraction_result.pages, settings
+            )
+            logger.info(f"Extraction {extraction_id}: creating document in DB")
             doc = await create_document_with_blocks(
                 db=db,
                 user_id=user_id,
@@ -913,6 +1031,8 @@ async def create_document(
             ai_extractor_config=ai_extractor_config,
             ai_extractor=ai_extractor,
             redis=redis,
+            extraction_cache=extraction_cache,
+            image_storage=image_storage,
         )
 
     # AI extraction requires extractor to be configured
@@ -1078,10 +1198,14 @@ async def bulk_delete_documents(
     await db.commit()
 
     # Clean up images for content hashes no longer referenced
-    for content_hash in content_hashes:
-        other_docs = await db.exec(select(Document).where(Document.content_hash == content_hash).limit(1))
-        if not other_docs.first():
-            await image_storage.delete_all(content_hash)
+    still_referenced: set[str] = set()
+    if content_hashes:
+        result = await db.exec(
+            select(Document.content_hash).where(col(Document.content_hash).in_(content_hashes)).distinct()
+        )
+        still_referenced = set(result.all())
+    for content_hash in content_hashes - still_referenced:
+        await image_storage.delete_all(content_hash)
 
     return BulkDeleteResponse(deleted_count=len(documents))
 
@@ -1316,11 +1440,7 @@ def _extract_document_info(content: bytes, content_type: str) -> tuple[int, str 
 
 
 def _get_endpoint_type_from_content_type(content_type: str | None) -> Literal["website", "document"]:
-    """Determine if content should be handled as a website or document based on MIME type.
-
-    Returns:
-        "website" if content is HTML-like, "document" otherwise
-    """
+    """Route content to the appropriate create endpoint based on MIME type."""
     if not content_type:
         return "document"
 
@@ -1333,30 +1453,18 @@ def _get_endpoint_type_from_content_type(content_type: str | None) -> Literal["w
         return "document"
 
 
-def _needs_ocr_processing(content_type: str | None) -> bool:
-    """Check if content type requires OCR processing (PDFs, images)."""
-    if not content_type:
-        return False
-    ct = content_type.lower()
-    return ct == "application/pdf" or ct.startswith("image/")
-
-
 async def _get_uncached_pages(
     content_hash: str,
     total_pages: int,
     extraction_cache: Cache,
-    config: ProcessorConfig | None,
+    ai_config: ProcessorConfig,
 ) -> set[int]:
-    """Query extraction cache to find which pages need processing."""
-    if not config or not config.extraction_cache_prefix:
-        return set(range(total_pages))
-
-    uncached = set()
-    for page_idx in range(total_pages):
-        key = config.extraction_cache_key(content_hash, page_idx)
-        if not await extraction_cache.exists(key):
-            uncached.add(page_idx)
-    return uncached
+    """Pages without AI extraction cache."""
+    assert ai_config.extraction_cache_prefix
+    keys = [ai_config.extraction_cache_key(content_hash, idx) for idx in range(total_pages)]
+    cached_keys = await extraction_cache.batch_exists(keys)
+    cached_indices = {idx for idx, key in enumerate(keys) if key in cached_keys}
+    return set(range(total_pages)) - cached_indices
 
 
 def _validate_page_numbers(pages: list[int] | None, total_pages: int) -> None:

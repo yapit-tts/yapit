@@ -5,6 +5,7 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import type { FormatInfo } from "@/hooks/useSupportedFormats";
 
 interface DocumentMetadata {
   content_type: string;
@@ -17,6 +18,7 @@ interface DocumentMetadata {
 
 interface MetadataBannerProps {
   metadata: DocumentMetadata;
+  formatInfo: FormatInfo | undefined;
   aiTransformEnabled: boolean;
   onAiTransformToggle: (enabled: boolean) => void;
   batchMode: boolean;
@@ -47,7 +49,6 @@ function formatCachedPages(totalPages: number, uncachedPages: number[]): string 
 
   if (cachedPages.length === 0) return null;
 
-  // Group into contiguous ranges
   const ranges: [number, number][] = [];
   let rangeStart = cachedPages[0];
   let rangeEnd = cachedPages[0];
@@ -63,12 +64,10 @@ function formatCachedPages(totalPages: number, uncachedPages: number[]): string 
   }
   ranges.push([rangeStart, rangeEnd]);
 
-  // If too scattered, hide
   if (ranges.length > 3) return null;
 
-  // Format as 1-indexed display
   const rangeStrs = ranges.map(([start, end]) => {
-    const s = start + 1; // Convert to 1-indexed
+    const s = start + 1;
     const e = end + 1;
     return s === e ? `${s}` : `${s}-${e}`;
   });
@@ -84,7 +83,7 @@ function formatCachedPages(totalPages: number, uncachedPages: number[]): string 
  */
 function parsePageRanges(input: string, totalPages: number): number[] | null {
   const trimmed = input.trim();
-  if (!trimmed) return null; // empty = all pages
+  if (!trimmed) return null;
 
   const pages = new Set<number>();
   const parts = trimmed.split(",");
@@ -100,20 +99,19 @@ function parsePageRanges(input: string, totalPages: number): number[] | null {
 
       if (isNaN(start) || isNaN(end)) continue;
 
-      // Clamp to valid range (1-indexed input, convert to 0-indexed)
       const clampedStart = Math.max(1, Math.min(start, totalPages));
       const clampedEnd = Math.max(1, Math.min(end, totalPages));
       const actualStart = Math.min(clampedStart, clampedEnd);
       const actualEnd = Math.max(clampedStart, clampedEnd);
 
       for (let i = actualStart; i <= actualEnd; i++) {
-        pages.add(i - 1); // Convert to 0-indexed
+        pages.add(i - 1);
       }
     } else {
       const page = parseInt(rangePart, 10);
       if (isNaN(page)) continue;
       const clamped = Math.max(1, Math.min(page, totalPages));
-      pages.add(clamped - 1); // Convert to 0-indexed
+      pages.add(clamped - 1);
     }
   }
 
@@ -191,6 +189,7 @@ function PageSelectionBar({
 
 export function MetadataBanner({
   metadata,
+  formatInfo,
   aiTransformEnabled,
   onAiTransformToggle,
   batchMode,
@@ -205,11 +204,10 @@ export function MetadataBanner({
   const [pageRangeInput, setPageRangeInput] = useState("");
 
   const title = metadata.title || metadata.file_name || "Untitled Document";
-  const isPdf = metadata.content_type === "application/pdf";
-  const isImage = metadata.content_type?.startsWith("image/") ?? false;
-  const isMultiPage = metadata.total_pages > 1;
-  const requiresAiTransform = isImage;
-  const showAiToggle = isPdf || isImage;
+  const showPageSelector = !!formatInfo?.has_pages && metadata.total_pages > 1;
+  const showAiToggle = !!formatInfo?.ai;
+  const forceAi = !!formatInfo?.ai && !formatInfo?.free;
+  const aiActive = forceAi || aiTransformEnabled;
 
   const selectedPages = useMemo(
     () => parsePageRanges(pageRangeInput, metadata.total_pages),
@@ -219,12 +217,10 @@ export function MetadataBanner({
   const effectivePageCount = selectedPages?.length ?? metadata.total_pages;
   const userOverrideBatch = useRef(false);
 
-  // Reset manual override when document changes
   useEffect(() => {
     userOverrideBatch.current = false;
   }, [metadata]);
 
-  // Auto-toggle batch based on effective selected page count
   useEffect(() => {
     if (userOverrideBatch.current) return;
     onBatchModeToggle(effectivePageCount > 100);
@@ -260,7 +256,7 @@ export function MetadataBanner({
             <span>{metadata.total_pages} {metadata.total_pages === 1 ? "page" : "pages"}</span>
             <span>·</span>
             <span>{formatFileSize(metadata.file_size)}</span>
-            {(requiresAiTransform || aiTransformEnabled) && (() => {
+            {aiActive && (() => {
               const cachedText = formatCachedPages(metadata.total_pages, uncachedPages);
               if (!cachedText) return null;
               return (
@@ -274,8 +270,7 @@ export function MetadataBanner({
         </div>
       </div>
 
-      {/* Page selector (for multi-page PDFs) */}
-      {isPdf && isMultiPage && (
+      {showPageSelector && (
         <div className="mt-4 space-y-2">
           <div className="flex items-center gap-3">
             <Label htmlFor="page-range" className="text-sm text-muted-foreground shrink-0">
@@ -299,7 +294,7 @@ export function MetadataBanner({
         </div>
       )}
 
-      {/* Footer: learn more, toggle, GO */}
+      {/* Footer: learn more, toggles, GO */}
       <div className="flex items-center justify-between mt-4">
         <a
           href="/tips#ai-transform"
@@ -309,7 +304,7 @@ export function MetadataBanner({
         </a>
 
         <div className="flex items-center gap-4">
-          {(requiresAiTransform || aiTransformEnabled) && !isLoading && (
+          {aiActive && !isLoading && (
             <div className="flex items-center gap-2" title="Save 50% on tokens. May take minutes to hours.">
               <Switch
                 id="batch-mode-toggle"
@@ -326,9 +321,9 @@ export function MetadataBanner({
             <div className="flex items-center gap-2">
               <Switch
                 id="ai-transform-toggle"
-                checked={requiresAiTransform || aiTransformEnabled}
+                checked={forceAi || aiTransformEnabled}
                 onCheckedChange={onAiTransformToggle}
-                disabled={requiresAiTransform}
+                disabled={forceAi}
               />
               <Label htmlFor="ai-transform-toggle" className="text-sm cursor-pointer">
                 AI Transform

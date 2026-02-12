@@ -11,8 +11,8 @@ __all__ = ["routers"]
 routers = [
     audio_router,
     ws_router,
-    documents_router,
     documents_public_router,
+    documents_router,
     images_router,
     models_router,
     users_router,

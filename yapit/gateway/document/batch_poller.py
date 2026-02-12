@@ -24,6 +24,7 @@ from yapit.gateway.document.batch import (
 from yapit.gateway.document.extraction import substitute_image_placeholders
 from yapit.gateway.document.processing import (
     ExtractedPage,
+    cpu_executor,
     create_document_with_blocks,
     process_pages_to_document,
 )
@@ -153,7 +154,9 @@ async def create_document_from_batch(
     settings: Settings,
 ) -> Document:
     """Create a Document from batch extraction results."""
-    processed = process_pages_to_document(pages, settings)
+    processed = await asyncio.get_running_loop().run_in_executor(
+        cpu_executor, process_pages_to_document, pages, settings
+    )
 
     metadata = DocumentMetadata(
         content_type=job.content_type,
@@ -283,12 +286,29 @@ class BatchPoller:
                     output_token_multiplier=self._output_token_multiplier,
                 )
 
+                # Merge in cached pages that were skipped during batch submission
+                pages_submitted = set(job.pages_submitted if job.pages_submitted is not None else job.pages_requested)
+                cached_page_indices = set(job.pages_requested) - pages_submitted
+                if cached_page_indices:
+                    cache_key_map = {
+                        f"{job.content_hash}:{self._extraction_cache_prefix}:{idx}": idx for idx in cached_page_indices
+                    }
+                    cached_data = await self._extraction_cache.batch_retrieve(list(cache_key_map.keys()))
+                    for key, data in cached_data.items():
+                        pages[cache_key_map[key]] = ExtractedPage.model_validate_json(data)
+
+                    missing = cached_page_indices - {cache_key_map[k] for k in cached_data}
+                    if missing:
+                        logger.warning(
+                            f"Batch {job.job_name}: {len(missing)} cached pages evicted from extraction cache: "
+                            f"{sorted(missing)}"
+                        )
+                        failed_pages.extend(sorted(missing))
+
                 if pages:
                     doc = await create_document_from_batch(job, pages, db, self._settings)
                     job.document_id = str(doc.id)
                     await save_batch_job(self._redis, job)
-                    # Job stays in Redis with SUCCEEDED + document_id for frontend to poll
-                    # TTL will clean it up eventually
 
         elif job.status in (BatchJobStatus.FAILED, BatchJobStatus.EXPIRED):
             await handle_batch_failure(job, self._redis)

@@ -177,14 +177,14 @@ const TipsPage = () => {
         </p>
         <p className="text-muted-foreground mb-3">
           Website URLs are converted
-          with {extLink("https://github.com/microsoft/markitdown", "MarkItDown")}.
+          with {extLink("https://github.com/adbar/trafilatura", "trafilatura")}.
           If the page requires JavaScript to render, Yapit automatically re-fetches it
-          with a headless browser.
+          with a {extLink("https://playwright.dev/", "headless browser")} for better extraction.
           arXiv links get special treatment
           via {extLink("https://github.com/tonydavis629/markxiv", "markxiv")}, which converts papers
           directly from their LaTeX source for better fidelity.
-          PDFs without AI transform are also processed
-          with MarkItDown.
+          PDFs without AI transform are extracted
+          with {extLink("https://pymupdf.readthedocs.io/", "PyMuPDF")}.
         </p>
 
         <h3 id="ai-transform" className="text-xl font-semibold mb-3 mt-6 scroll-mt-24">AI transform</h3>

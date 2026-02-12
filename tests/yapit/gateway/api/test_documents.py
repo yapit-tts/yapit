@@ -1,4 +1,5 @@
 import asyncio
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -10,6 +11,8 @@ from yapit.gateway.api.v1.documents import (
     ExtractionStatusResponse,
     _get_endpoint_type_from_content_type,
 )
+
+FIXTURES_DIR = Path("tests/fixtures/documents")
 
 
 async def poll_for_document(
@@ -27,7 +30,7 @@ async def poll_for_document(
             json={
                 "extraction_id": extraction_id,
                 "content_hash": content_hash,
-                "processor_slug": "markitdown",
+                "ai_transform": False,
                 "pages": pages,
             },
         )
@@ -57,21 +60,21 @@ async def test_create_document(client):
 
 @pytest.mark.asyncio
 async def test_prepare_and_create_document_from_url(client, as_test_user, session):
-    """Test complete flow: URL → prepare → create document (async extraction)."""
-    mock_content = b"Test document content"
-    mock_content_type = "text/plain"
+    """Test complete flow: URL → prepare → create document (async extraction via PyMuPDF)."""
+    mock_content = (FIXTURES_DIR / "minimal.pdf").read_bytes()
+    mock_content_type = "application/pdf"
 
     with patch("yapit.gateway.api.v1.documents.download_document") as mock_download:
         mock_download.return_value = (mock_content, mock_content_type)
 
         # Step 1: Prepare document from URL
-        prepare_response = await client.post("/v1/documents/prepare", json={"url": "https://example.com/test.txt"})
+        prepare_response = await client.post("/v1/documents/prepare", json={"url": "https://example.com/test.pdf"})
 
         assert prepare_response.status_code == 200
         prepare_data = DocumentPrepareResponse.model_validate(prepare_response.json())
 
-        assert prepare_data.metadata.content_type == "text/plain"
-        assert prepare_data.metadata.total_pages == 1
+        assert prepare_data.metadata.content_type == "application/pdf"
+        assert prepare_data.metadata.total_pages >= 1
         assert prepare_data.endpoint == "document"
         assert prepare_data.uncached_pages == set()
 
@@ -187,12 +190,14 @@ async def test_document_create_invalid_page_numbers(client, as_test_user):
         ("application/xhtml+xml", "website"),
         ("application/xhtml+xml; charset=utf-8", "website"),
         # Documents
+        ("text/plain", "document"),
+        ("text/plain; charset=utf-8", "document"),
+        ("text/markdown", "document"),
+        ("text/x-markdown", "document"),
         ("application/pdf", "document"),
         ("application/pdf; version=1.7", "document"),
         ("image/png", "document"),
         ("image/jpeg", "document"),
-        ("text/plain", "document"),
-        ("text/plain; charset=utf-8", "document"),
         ("application/json", "document"),
         ("application/xml", "document"),  # Generic XML is a document
         # Edge cases
@@ -238,17 +243,7 @@ async def test_prepare_website_returns_empty_uncached_pages(client, as_test_user
     with patch("yapit.gateway.api.v1.documents.download_document") as mock_download:
         mock_download.return_value = (mock_html, "text/html")
 
-        # Test without processor_slug
         response = await client.post("/v1/documents/prepare", json={"url": "https://example.com/page.html"})
-        assert response.status_code == 200
-        data = DocumentPrepareResponse.model_validate(response.json())
-        assert data.endpoint == "website"
-        assert data.uncached_pages == set()
-
-        # Test even with processor_slug specified (should be ignored for websites)
-        response = await client.post(
-            "/v1/documents/prepare", json={"url": "https://example.com/page2.html", "processor_slug": "banana"}
-        )
         assert response.status_code == 200
         data = DocumentPrepareResponse.model_validate(response.json())
         assert data.endpoint == "website"

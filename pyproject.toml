@@ -28,7 +28,6 @@ dependencies = [
   "pydantic-settings~=2.12.0",
   "requests~=2.32.5",
   "psycopg[binary]~=3.2",
-  "markitdown[docx,pdf]~=0.1.4",
   "PyMuPDF~=1.26.7",
   "httpx~=0.28.1",
   "runpod~=1.8.1",
@@ -42,6 +41,7 @@ dependencies = [
   "aiosqlite~=0.22.1",
   "aioboto3>=15.5.0",
   "trafilatura>=2.0.0",
+  "html2text>=2025.4.15",
 ]
 
 [project.optional-dependencies]

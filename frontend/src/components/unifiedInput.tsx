@@ -6,13 +6,16 @@ import { Textarea } from "@/components/ui/textarea";
 import { MetadataBanner } from "@/components/metadataBanner";
 import { useDebounce } from "@/hooks/useDebounce";
 import { useSubscription } from "@/hooks/useSubscription";
+import { useSupportedFormats } from "@/hooks/useSupportedFormats";
 import { useApi } from "@/api";
 import { cn } from "@/lib/utils";
 import { AxiosError } from "axios";
 
-// Match URLs with at least a domain and TLD (e.g., example.com, not just http://a)
 const URL_REGEX = /^https?:\/\/[^\s.]+\.[^\s]{2,}/i;
 const AI_TRANSFORM_STORAGE_KEY = "yapit-ai-transform-enabled";
+
+const MAX_FILE_SIZE_MB = 100;
+const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
 
 interface DocumentMetadata {
   content_type: string;
@@ -62,20 +65,6 @@ interface BatchSubmittedResponse {
 type InputMode = "idle" | "text" | "url" | "file";
 type UrlState = "detecting" | "loading" | "ready" | "error";
 
-const ACCEPTED_FILE_TYPES = [
-  "application/pdf",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  "application/msword",
-  "text/plain",
-  "text/html",
-  "text/markdown",
-  "text/x-markdown",
-  "application/epub+zip",
-];
-
-const MAX_FILE_SIZE_MB = 50;
-const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
-
 export function UnifiedInput() {
   const [value, setValue] = useState("");
   const [mode, setMode] = useState<InputMode>("idle");
@@ -96,34 +85,42 @@ export function UnifiedInput() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragCounterRef = useRef(0);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const prepareAbortRef = useRef<AbortController | null>(null);
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const extractionIdRef = useRef<string | null>(null);
   const navigate = useNavigate();
   const location = useLocation();
   const { api, isAnonymous } = useApi();
   const { tier } = useSubscription();
+  const formats = useSupportedFormats();
 
   const debouncedValue = useDebounce(value, 400);
 
   const isUrl = useCallback((text: string) => URL_REGEX.test(text.trim()), []);
+
+  /** Whether the prepare response needs user confirmation via MetadataBanner. */
+  const needsBanner = (data: PrepareResponse): boolean => {
+    if (data.endpoint === "website") return false;
+    const fmt = formats?.formats[data.metadata.content_type];
+    return !!fmt?.ai || (!!fmt?.has_pages && data.metadata.total_pages > 1);
+  };
 
   // Pre-fill URL from catch-all route redirect (yapit.md/example.com/path)
   useEffect(() => {
     const state = location.state as { prefillUrl?: string } | null;
     if (state?.prefillUrl) {
       setValue(state.prefillUrl);
-      // Clear state so browser refresh doesn't re-trigger
       window.history.replaceState({}, "", location.pathname);
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps -- mount only
 
-  // Reset state when home button clicked while on home
+  // Reset all state when home button clicked while on home
   useEffect(() => {
     const handleReset = () => {
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-        abortControllerRef.current = null;
-      }
+      abortControllerRef.current?.abort();
+      abortControllerRef.current = null;
+      prepareAbortRef.current?.abort();
+      prepareAbortRef.current = null;
       if (pollTimerRef.current) {
         clearTimeout(pollTimerRef.current);
         pollTimerRef.current = null;
@@ -145,7 +142,6 @@ export function UnifiedInput() {
 
   // Detect input type and update mode
   useEffect(() => {
-    // Don't change mode while processing or loading
     if (isCreating) return;
 
     const trimmed = value.trim();
@@ -158,17 +154,13 @@ export function UnifiedInput() {
       return;
     }
 
-    // Don't change mode while URL metadata is loading or ready
     if (urlState === "loading" || urlState === "ready") return;
-
-    // If in file mode, only reset if value is completely cleared (handled above)
     if (mode === "file") return;
 
     if (isUrl(trimmed)) {
       setMode("url");
       setUrlState("detecting");
     } else if (mode !== "text") {
-      // Only reset when transitioning TO text mode, not when already in text mode
       setMode("text");
       setPrepareData(null);
       setError(null);
@@ -181,6 +173,10 @@ export function UnifiedInput() {
     if (mode !== "url" || !debouncedValue.trim()) return;
     if (!isUrl(debouncedValue)) return;
 
+    prepareAbortRef.current?.abort();
+    const controller = new AbortController();
+    prepareAbortRef.current = controller;
+
     const fetchMetadata = async () => {
       setUrlState("loading");
       setError(null);
@@ -189,19 +185,20 @@ export function UnifiedInput() {
       try {
         const response = await api.post<PrepareResponse>("/v1/documents/prepare", {
           url: debouncedValue.trim(),
-        });
+        }, { signal: controller.signal });
+
+        if (controller.signal.aborted) return;
         setPrepareData(response.data);
 
-        // Auto-create for websites
-        if (response.data.endpoint === "website") {
-          await createDocument(response.data);
-        } else {
+        if (needsBanner(response.data)) {
           setUrlState("ready");
+        } else {
+          await createDocument(response.data);
         }
       } catch (err) {
+        if (controller.signal.aborted) return;
         setUrlState("error");
         if (err instanceof AxiosError && err.response) {
-          // Use backend's error message if available (it's now user-friendly)
           const detail = err.response.data?.detail;
           setError(detail || err.message);
         } else {
@@ -211,7 +208,7 @@ export function UnifiedInput() {
     };
 
     fetchMetadata();
-  }, [debouncedValue, mode, isUrl, api]);
+  }, [debouncedValue, mode, isUrl, api]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Save AI Transform preference
   useEffect(() => {
@@ -225,9 +222,8 @@ export function UnifiedInput() {
     const abortController = new AbortController();
     abortControllerRef.current = abortController;
 
-    const isImage = data.metadata.content_type?.startsWith("image/") ?? false;
-    const isPlainText = ["text/plain", "text/markdown", "text/x-markdown"].includes(data.metadata.content_type ?? "");
-    const useAiTransform = isImage || (aiTransformEnabled && !isPlainText);
+    const fmt = formats?.formats[data.metadata.content_type];
+    const useAiTransform = !!fmt?.ai && (!fmt.free || aiTransformEnabled);
     const useBatchMode = batchMode && useAiTransform;
 
     const endpoint = data.endpoint === "website"
@@ -248,7 +244,6 @@ export function UnifiedInput() {
       });
       abortControllerRef.current = null;
 
-      // Website endpoint returns 201 with document (still sync)
       if (response.status === 201) {
         const docData = response.data as DocumentCreateResponse;
         navigate(`/listen/${docData.id}`, {
@@ -257,7 +252,6 @@ export function UnifiedInput() {
         return;
       }
 
-      // Batch mode — navigate to batch status page
       if (useBatchMode) {
         const batchData = response.data as BatchSubmittedResponse;
         navigate(`/batch/${batchData.content_hash}`, {
@@ -270,10 +264,9 @@ export function UnifiedInput() {
         return;
       }
 
-      // Async extraction — poll for document_id
+      // Async extraction — poll for completion
       const accepted = response.data as ExtractionAcceptedResponse;
       const requestedPages = pages ?? Array.from({ length: data.metadata.total_pages }, (_, i) => i);
-      const processorSlug = useAiTransform ? "gemini" : "markitdown";
       extractionIdRef.current = accepted.extraction_id;
 
       const FAST_POLL_MS = 300;
@@ -286,7 +279,7 @@ export function UnifiedInput() {
           const statusResponse = await api.post<ExtractionStatusResponse>("/v1/documents/extraction/status", {
             extraction_id: accepted.extraction_id,
             content_hash: accepted.content_hash,
-            processor_slug: processorSlug,
+            ai_transform: useAiTransform,
             pages: requestedPages,
           });
           const statusData = statusResponse.data;
@@ -320,7 +313,6 @@ export function UnifiedInput() {
         pollTimerRef.current = setTimeout(poll, delay);
       };
 
-      // Start first poll immediately
       pollTimerRef.current = setTimeout(poll, FAST_POLL_MS);
 
     } catch (err) {
@@ -332,28 +324,13 @@ export function UnifiedInput() {
         return;
       }
 
-      const axiosErr = err as AxiosError<{ detail?: { code?: string; message?: string } | string }>;
-      const detail = axiosErr.response?.data?.detail;
-      if (axiosErr.response?.status === 402) {
-        setAiTransformEnabled(false);
-        setUsageLimitExceeded(true);
-        setError(null);
-      } else if (typeof detail === "object" && detail?.code === "STORAGE_LIMIT_EXCEEDED") {
-        setStorageLimitError(detail.message || "Storage limit reached");
-        setError(null);
-      } else {
-        setError(err instanceof Error ? err.message : "Failed to create document");
-      }
+      handleCreateError(err);
     }
   };
 
   const cancelExtraction = useCallback(async () => {
-    // Cancel in-flight POST (e.g., during billing check)
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-      abortControllerRef.current = null;
-    }
-    // Stop polling + cancel background extraction
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
     if (pollTimerRef.current) {
       clearTimeout(pollTimerRef.current);
       pollTimerRef.current = null;
@@ -370,31 +347,28 @@ export function UnifiedInput() {
     setCompletedPages([]);
   }, [api]);
 
-  const handleTextSubmit = async () => {
-    if (!value.trim()) return;
+  const handleTextSubmit = async (content?: string, title?: string) => {
+    const text = content ?? value.trim();
+    if (!text) return;
     setIsCreating(true);
 
     try {
       const response = await api.post<DocumentCreateResponse>("/v1/documents/text", {
-        content: value.trim(),
+        content: text,
+        title: title ?? undefined,
       });
       navigate(`/listen/${response.data.id}`, {
         state: { documentTitle: response.data.title }
       });
     } catch (err) {
       setIsCreating(false);
-      const axiosErr = err as AxiosError<{ detail?: { code?: string; message?: string } | string }>;
-      const detail = axiosErr.response?.data?.detail;
-      if (typeof detail === "object" && detail?.code === "STORAGE_LIMIT_EXCEEDED") {
-        setStorageLimitError(detail.message || "Storage limit reached");
-        setError(null);
-      } else {
-        setError(err instanceof Error ? err.message : "Failed to create document");
-      }
+      handleCreateError(err);
     }
   };
 
-  const uploadFile = useCallback(async (file: File) => {
+  // No useCallback — React Compiler handles memoization. Manual useCallback
+  // would risk stale closures over frequently-changing state (formats, aiTransformEnabled, isCreating).
+  const uploadFile = async (file: File) => {
     setMode("file");
     setError(null);
     setValue(file.name);
@@ -405,6 +379,25 @@ export function UnifiedInput() {
       return;
     }
 
+    // Text files: read client-side, POST to /text directly (no prepare round-trip)
+    const isTextFile = (file.type.startsWith("text/") && !file.type.includes("html"))
+      || /\.(txt|md|markdown)$/i.test(file.name);
+    if (isTextFile) {
+      const content = await file.text();
+      const title = file.name.replace(/\.[^.]+$/, "");
+      await handleTextSubmit(content, title);
+      return;
+    }
+
+    // Drag-and-drop bypasses the disabled textarea — wait for format info
+    if (!formats) return;
+
+    // Cancel any in-flight prepare or extraction
+    prepareAbortRef.current?.abort();
+    if (isCreating) await cancelExtraction();
+    const controller = new AbortController();
+    prepareAbortRef.current = controller;
+
     setUrlState("loading");
 
     try {
@@ -413,37 +406,24 @@ export function UnifiedInput() {
 
       const response = await api.post<PrepareResponse>("/v1/documents/prepare/upload", formData, {
         headers: { "Content-Type": "multipart/form-data" },
+        signal: controller.signal,
       });
 
-      const contentType = response.data.metadata.content_type;
+      if (controller.signal.aborted) return;
 
-      // Auto-create for text-based files (no OCR option needed, skip MetadataBanner)
-      const isTextBased = ["text/plain", "text/markdown", "text/x-markdown", "text/html"].includes(contentType);
-      if (isTextBased) {
-        await createDocument(response.data);
-      } else {
+      if (needsBanner(response.data)) {
         setPrepareData(response.data);
         setUrlState("ready");
+      } else {
+        await createDocument(response.data);
       }
     } catch (err) {
+      if (controller.signal.aborted) return;
       setUrlState("error");
       setIsCreating(false);
-      const axiosErr = err as AxiosError<{ detail?: { code?: string; message?: string } | string }>;
-      const detail = axiosErr.response?.data?.detail;
-      if (typeof detail === "object" && detail?.code === "STORAGE_LIMIT_EXCEEDED") {
-        setStorageLimitError(detail.message || "Storage limit reached");
-        setError(null);
-      } else if (axiosErr.response?.status === 413) {
-        setError(`File too large. Maximum size is ${MAX_FILE_SIZE_MB} MB.`);
-      } else if (typeof detail === "string") {
-        setError(detail);
-      } else if (typeof detail === "object" && detail?.message) {
-        setError(detail.message);
-      } else {
-        setError(err instanceof Error ? err.message : "Failed to upload file");
-      }
+      handleUploadError(err);
     }
-  }, [api, navigate]);
+  };
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -474,7 +454,7 @@ export function UnifiedInput() {
     e.stopPropagation();
   }, []);
 
-  const handleDrop = useCallback(async (e: React.DragEvent) => {
+  const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
     setIsDragging(false);
@@ -484,16 +464,17 @@ export function UnifiedInput() {
     if (files.length === 0) return;
 
     const file = files[0];
-    const isAcceptedType = ACCEPTED_FILE_TYPES.includes(file.type) ||
-      file.name.match(/\.(pdf|docx?|txt|md|html?|epub)$/i);
-
-    if (!isAcceptedType) {
-      setError(`Unsupported file type: ${file.type || file.name.split('.').pop()}`);
-      return;
+    if (formats) {
+      const isSupported = file.type in formats.formats
+        || /\.(txt|md|markdown)$/i.test(file.name); // extension fallback for text files
+      if (!isSupported) {
+        setError(`Unsupported file type: ${file.type || file.name.split('.').pop()}`);
+        return;
+      }
     }
 
     await uploadFile(file);
-  }, [uploadFile]);
+  };
 
   const handleAiTransformToggle = useCallback((enabled: boolean) => {
     setAiTransformEnabled(enabled);
@@ -502,9 +483,43 @@ export function UnifiedInput() {
     }
   }, []);
 
+  /** Extract user-facing error from API responses. */
+  const handleCreateError = (err: unknown) => {
+    const axiosErr = err as AxiosError<{ detail?: { code?: string; message?: string } | string }>;
+    const detail = axiosErr.response?.data?.detail;
+    if (axiosErr.response?.status === 402) {
+      setAiTransformEnabled(false);
+      setUsageLimitExceeded(true);
+      setError(null);
+    } else if (typeof detail === "object" && detail?.code === "STORAGE_LIMIT_EXCEEDED") {
+      setStorageLimitError(detail.message || "Storage limit reached");
+      setError(null);
+    } else {
+      setError(err instanceof Error ? err.message : "Failed to create document");
+    }
+  };
+
+  const handleUploadError = (err: unknown) => {
+    const axiosErr = err as AxiosError<{ detail?: { code?: string; message?: string } | string }>;
+    const detail = axiosErr.response?.data?.detail;
+    if (typeof detail === "object" && detail?.code === "STORAGE_LIMIT_EXCEEDED") {
+      setStorageLimitError(detail.message || "Storage limit reached");
+      setError(null);
+    } else if (axiosErr.response?.status === 413) {
+      setError(`File too large. Maximum size is ${MAX_FILE_SIZE_MB} MB.`);
+    } else if (typeof detail === "string") {
+      setError(detail);
+    } else if (typeof detail === "object" && detail?.message) {
+      setError(detail.message);
+    } else {
+      setError(err instanceof Error ? err.message : "Failed to upload file");
+    }
+  };
+
   const showMetadataBanner = (mode === "url" || mode === "file") && urlState === "ready" && prepareData?.endpoint === "document";
   const showTextMode = mode === "text" || mode === "idle";
   const isLoadingUrl = (mode === "url" || mode === "file") && (urlState === "loading" || urlState === "detecting");
+  const formatsLoaded = formats !== null;
 
   return (
     <div
@@ -525,7 +540,7 @@ export function UnifiedInput() {
             error && "border-destructive",
             isDragging && "border-primary border-2 border-dashed"
           )}
-          disabled={isCreating}
+          disabled={isCreating || !formatsLoaded}
         />
 
         <div className="absolute right-3 top-3 flex flex-col gap-2">
@@ -534,7 +549,7 @@ export function UnifiedInput() {
             variant="ghost"
             size="icon"
             onClick={() => fileInputRef.current?.click()}
-            disabled={isCreating || isLoadingUrl}
+            disabled={isCreating || isLoadingUrl || !formatsLoaded}
             className="h-10 w-10"
           >
             <Paperclip className="h-5 w-5" />
@@ -544,7 +559,7 @@ export function UnifiedInput() {
         <input
           ref={fileInputRef}
           type="file"
-          accept=".pdf,.docx,.doc,.txt,.md,.html,.htm,.epub"
+          accept={formats?.accept ?? ""}
           onChange={handleFileSelect}
           className="hidden"
         />
@@ -608,9 +623,10 @@ export function UnifiedInput() {
         </div>
       )}
 
-      {showMetadataBanner && prepareData && (
+      {showMetadataBanner && prepareData && formats && (
         <MetadataBanner
           metadata={prepareData.metadata}
+          formatInfo={formats.formats[prepareData.metadata.content_type]}
           aiTransformEnabled={aiTransformEnabled}
           onAiTransformToggle={handleAiTransformToggle}
           batchMode={batchMode}
@@ -625,7 +641,7 @@ export function UnifiedInput() {
 
       {showTextMode && value.trim() && (
         <Button
-          onClick={handleTextSubmit}
+          onClick={() => handleTextSubmit()}
           disabled={isCreating}
           variant="secondary"
           size="lg"

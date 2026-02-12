@@ -1,17 +1,16 @@
-"""Website content extraction. Trafilatura primary, MarkItDown fallback."""
+"""Website content extraction. Trafilatura primary, html2text fallback."""
 
 import asyncio
-import io
 import re
-from typing import Any
 
+import html2text
 import trafilatura
 from loguru import logger
-from markitdown import MarkItDown
 
 from yapit.gateway.document.http import resolve_relative_urls
 from yapit.gateway.document.markxiv import detect_arxiv_url, fetch_from_markxiv
 from yapit.gateway.document.playwright_renderer import render_with_js
+from yapit.gateway.metrics import log_event
 
 _JS_RENDERING_PATTERNS = [
     r"marked\.parse",
@@ -26,19 +25,14 @@ _JS_RENDERING_PATTERNS = [
 _JS_PATTERN_REGEX = re.compile("|".join(_JS_RENDERING_PATTERNS), re.IGNORECASE)
 
 
-def extract_markdown(html: str, **kwargs: Any) -> str | None:
-    """Extract article content from HTML as markdown using trafilatura."""
-    kwargs.setdefault("include_links", True)
-    kwargs.setdefault("include_tables", True)
-    kwargs.setdefault("include_images", True)
-    return trafilatura.extract(html, output_format="markdown", **kwargs)
+def _extract_with_trafilatura(html: str) -> str | None:
+    return trafilatura.extract(
+        html, output_format="markdown", include_links=True, include_tables=True, include_images=True
+    )
 
 
-def _needs_js_rendering(html: str, markdown: str | None, content_size: int) -> bool:
-    """Detect if a page likely needs JavaScript rendering."""
-    if _JS_PATTERN_REGEX.search(html):
-        return True
-    return not markdown and content_size > 5000
+def _has_js_framework(html: str) -> bool:
+    return bool(_JS_PATTERN_REGEX.search(html))
 
 
 async def extract_website_content(
@@ -53,22 +47,37 @@ async def extract_website_content(
         return await fetch_from_markxiv(markxiv_url, arxiv_id), "markxiv"
 
     html_str = content.decode("utf-8", errors="ignore")
-    markdown = await asyncio.to_thread(extract_markdown, html_str)
 
-    rendered_html = None
-    if url and _needs_js_rendering(html_str, markdown, len(content)):
-        logger.info(f"JS rendering detected, using Playwright for {url}")
-        rendered_html = await render_with_js(url)
-        markdown = await asyncio.to_thread(extract_markdown, rendered_html)
+    # JS framework detected in raw HTML — render with Playwright before extraction
+    used_playwright = False
+    if url and _has_js_framework(html_str):
+        logger.info(f"JS framework patterns detected, using Playwright for {url}")
+        try:
+            html_str = await render_with_js(url)
+            used_playwright = True
+        except Exception:
+            logger.warning(f"Playwright render failed for {url}, continuing with static HTML")
+
+    markdown = await asyncio.to_thread(_extract_with_trafilatura, html_str)
+
+    # Trafilatura got nothing — might be JS-rendered content we missed
+    if not markdown and url and not used_playwright:
+        logger.info(f"Trafilatura returned None on large page, trying Playwright for {url}")
+        try:
+            html_str = await render_with_js(url)
+        except Exception:
+            logger.warning(f"Playwright render failed for {url}, continuing with static HTML")
+        else:
+            markdown = await asyncio.to_thread(_extract_with_trafilatura, html_str)
 
     extraction_method = "trafilatura"
     if not markdown:
-        logger.info(f"Trafilatura returned None, falling back to MarkItDown for {url}")
-        mid = MarkItDown(enable_plugins=False)
-        fallback_content = rendered_html.encode("utf-8") if rendered_html else content
-        result = await asyncio.to_thread(mid.convert_stream, io.BytesIO(fallback_content))
-        markdown = result.markdown
-        extraction_method = "markitdown"
+        logger.warning(f"Trafilatura returned None, falling back to html2text for {url}")
+        await log_event("html_fallback_triggered", data={"url": url})
+        converter = html2text.HTML2Text()
+        converter.body_width = 0
+        markdown = converter.handle(html_str)
+        extraction_method = "html2text"
 
     if url:
         markdown = resolve_relative_urls(markdown, url)
