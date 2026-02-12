@@ -13,7 +13,7 @@ import pytest
 from google.genai import errors as genai_errors
 
 from yapit.contracts import YoloResult
-from yapit.gateway.document.gemini import (
+from yapit.gateway.document.processors.gemini import (
     MAX_RETRIES,
     GeminiExtractor,
     PreparedPage,
@@ -74,9 +74,15 @@ async def test_extract_pdf(extractor):
         content = f.read()
 
     with (
-        patch("yapit.gateway.document.gemini.enqueue_detection", new_callable=AsyncMock, return_value="mock-job-id"),
         patch(
-            "yapit.gateway.document.gemini.wait_for_result", new_callable=AsyncMock, return_value=_mock_yolo_result()
+            "yapit.gateway.document.processors.gemini.enqueue_detection",
+            new_callable=AsyncMock,
+            return_value="mock-job-id",
+        ),
+        patch(
+            "yapit.gateway.document.processors.gemini.wait_for_result",
+            new_callable=AsyncMock,
+            return_value=_mock_yolo_result(),
         ),
     ):
         pages = await collect_pages(
@@ -99,9 +105,15 @@ async def test_extract_specific_pages(extractor):
         content = f.read()
 
     with (
-        patch("yapit.gateway.document.gemini.enqueue_detection", new_callable=AsyncMock, return_value="mock-job-id"),
         patch(
-            "yapit.gateway.document.gemini.wait_for_result", new_callable=AsyncMock, return_value=_mock_yolo_result()
+            "yapit.gateway.document.processors.gemini.enqueue_detection",
+            new_callable=AsyncMock,
+            return_value="mock-job-id",
+        ),
+        patch(
+            "yapit.gateway.document.processors.gemini.wait_for_result",
+            new_callable=AsyncMock,
+            return_value=_mock_yolo_result(),
         ),
     ):
         pages = await collect_pages(
@@ -154,7 +166,7 @@ def mock_extractor(tmp_path):
     image_storage = LocalImageStorage(tmp_path / "images")
     prompt_path = Path(__file__).parents[4] / "yapit" / "gateway" / "document" / "prompts" / "extraction.txt"
 
-    with patch("yapit.gateway.document.gemini.genai.Client"):
+    with patch("yapit.gateway.document.processors.gemini.genai.Client"):
         extractor = GeminiExtractor(
             api_key="fake-key-for-testing",
             redis=mock_redis,
@@ -189,7 +201,7 @@ class TestRetryBehavior:
             ]
         )
 
-        with patch("yapit.gateway.document.gemini.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+        with patch("yapit.gateway.document.processors.gemini.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
             result = await mock_extractor._call_gemini_for_page(
                 page=make_prepared_page(),
                 content_hash="test-hash",
@@ -222,7 +234,7 @@ class TestRetryBehavior:
                 ]
             )
 
-            with patch("yapit.gateway.document.gemini.asyncio.sleep", new_callable=AsyncMock):
+            with patch("yapit.gateway.document.processors.gemini.asyncio.sleep", new_callable=AsyncMock):
                 result = await mock_extractor._call_gemini_for_page(
                     page=make_prepared_page(),
                     content_hash="test-hash",
@@ -286,7 +298,7 @@ class TestRetryBehavior:
             side_effect=genai_errors.APIError(code=503, response_json={"error": {"message": "Unavailable"}})
         )
 
-        with patch("yapit.gateway.document.gemini.asyncio.sleep", new_callable=AsyncMock):
+        with patch("yapit.gateway.document.processors.gemini.asyncio.sleep", new_callable=AsyncMock):
             result = await mock_extractor._call_gemini_for_page(
                 page=make_prepared_page(),
                 content_hash="test-hash",
@@ -316,7 +328,7 @@ class TestRetryBehavior:
             ]
         )
 
-        with patch("yapit.gateway.document.gemini.asyncio.sleep", new_callable=AsyncMock):
+        with patch("yapit.gateway.document.processors.gemini.asyncio.sleep", new_callable=AsyncMock):
             result = await mock_extractor._call_gemini_for_page(
                 page=make_prepared_page(),
                 content_hash="test-hash",

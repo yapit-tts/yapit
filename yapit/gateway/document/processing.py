@@ -1,6 +1,8 @@
 """Document extraction models, billing orchestration, and token estimation."""
 
+import os
 from collections.abc import AsyncIterator
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 from loguru import logger
@@ -10,7 +12,6 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from yapit.gateway.cache import Cache
 from yapit.gateway.config import Settings
-from yapit.gateway.constants import SUPPORTED_DOCUMENT_MIME_TYPES
 from yapit.gateway.document.extraction import PER_PAGE_TOLERANCE, deduplicate_footnotes, estimate_document_tokens
 from yapit.gateway.domain_models import Block, Document, DocumentMetadata, UsageType
 from yapit.gateway.exceptions import ValidationError
@@ -19,6 +20,10 @@ from yapit.gateway.metrics import log_event
 from yapit.gateway.reservations import create_reservation, release_reservation
 from yapit.gateway.storage import ImageStorage
 from yapit.gateway.usage import check_usage_limit, record_usage
+
+# Dedicated thread pool for CPU-bound work (PDF processing, markdown parsing).
+# Separate from the default pool so heavy work doesn't starve quick to_thread calls.
+cpu_executor = ThreadPoolExecutor(max_workers=os.cpu_count() or 8, thread_name_prefix="cpu-bound")
 
 
 class ExtractedPage(BaseModel):
@@ -77,21 +82,9 @@ class ProcessorConfig:
     output_token_multiplier: int
     extraction_cache_prefix: str | None
 
-    def get_supported_mime_types(self) -> set[str]:
-        """Expand wildcards (e.g. 'image/*') against platform-supported types."""
-        supported = set()
-        for proc_type in self.supported_mime_types:
-            if proc_type.endswith("/*"):
-                prefix = proc_type[:-2]
-                supported.update(t for t in SUPPORTED_DOCUMENT_MIME_TYPES if t.startswith(prefix + "/"))
-            elif proc_type in SUPPORTED_DOCUMENT_MIME_TYPES:
-                supported.add(proc_type)
-        return supported
-
     def is_supported(self, mime_type: str) -> bool:
-        # Strip parameters (e.g., "image/jpeg; qs=0.8" -> "image/jpeg")
         base_type = mime_type.split(";")[0].strip()
-        return base_type in self.get_supported_mime_types()
+        return base_type in self.supported_mime_types
 
     def extraction_cache_key(self, content_hash: str, page_idx: int) -> str:
         return f"{content_hash}:{self.extraction_cache_prefix}:{page_idx}"
@@ -127,7 +120,7 @@ async def process_with_billing(
     # 1. Validate
     if not config.is_supported(content_type):
         raise ValidationError(
-            f"Unsupported content type: {content_type}. Supported types: {config.get_supported_mime_types()}"
+            f"Unsupported content type: {content_type}. Supported: {', '.join(sorted(config.supported_mime_types))}"
         )
     if total_pages > config.max_pages:
         raise ValidationError(
@@ -144,14 +137,13 @@ async def process_with_billing(
     uncached_pages: set[int] = set()
 
     if config.extraction_cache_prefix:
-        for page_idx in requested_pages:
-            cache_key = config.extraction_cache_key(content_hash, page_idx)
-            data = await extraction_cache.retrieve_data(cache_key)
-            if data:
-                cached_pages[page_idx] = ExtractedPage.model_validate_json(data)
-                await log_event("extraction_cache_hit", processor_slug=config.slug, page_idx=page_idx, user_id=user_id)
-            else:
-                uncached_pages.add(page_idx)
+        cache_key_map = {config.extraction_cache_key(content_hash, idx): idx for idx in requested_pages}
+        cached_data = await extraction_cache.batch_retrieve(list(cache_key_map.keys()))
+        for key, data in cached_data.items():
+            page_idx = cache_key_map[key]
+            cached_pages[page_idx] = ExtractedPage.model_validate_json(data)
+            await log_event("extraction_cache_hit", processor_slug=config.slug, page_idx=page_idx, user_id=user_id)
+        uncached_pages = requested_pages - set(cached_pages.keys())
 
         # Invalidate cache if images were deleted (e.g., after document deletion)
         has_cached_images = any(page.images for page in cached_pages.values())

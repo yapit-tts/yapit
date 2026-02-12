@@ -23,7 +23,7 @@ from yapit.gateway.document.extraction import (
     store_figure,
     substitute_image_placeholders,
 )
-from yapit.gateway.document.processing import ExtractedPage, PageResult, ProcessorConfig
+from yapit.gateway.document.processing import ExtractedPage, PageResult, ProcessorConfig, cpu_executor
 from yapit.gateway.document.yolo_client import enqueue_detection, wait_for_result
 from yapit.gateway.metrics import log_event
 from yapit.gateway.storage import ImageStorage
@@ -60,7 +60,7 @@ def create_gemini_config(
 ) -> ProcessorConfig:
     return ProcessorConfig(
         slug="gemini",
-        supported_mime_types=frozenset({"application/pdf", "image/*"}),
+        supported_mime_types=frozenset({"application/pdf"}),
         max_pages=10000,
         max_file_size=100 * 1024 * 1024,  # 100MB
         is_paid=True,
@@ -426,7 +426,9 @@ class GeminiExtractor:
         content_hash: str,
     ) -> PreparedPage:
         """Run YOLO detection and store figures for a single page."""
-        page_bytes = extract_single_page_pdf(content, page_idx)
+        page_bytes = await asyncio.get_running_loop().run_in_executor(
+            cpu_executor, extract_single_page_pdf, content, page_idx
+        )
 
         job_id = await enqueue_detection(self._redis, page_bytes)
         yolo_result = await wait_for_result(self._redis, job_id)

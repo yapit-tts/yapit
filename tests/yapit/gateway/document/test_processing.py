@@ -101,6 +101,8 @@ def mock_db():
 def mock_cache():
     cache = AsyncMock()
     cache.retrieve_data = AsyncMock(return_value=None)  # No cache hits by default
+    cache.batch_retrieve = AsyncMock(return_value={})
+    cache.batch_exists = AsyncMock(return_value=set())
     cache.store = AsyncMock()
     cache.exists = AsyncMock(return_value=False)
     return cache
@@ -165,10 +167,10 @@ class TestCaching:
     async def test_returns_cached_pages_without_extraction(self, mock_db, mock_cache, mock_image_storage, mock_redis):
         config = make_config()
 
-        # Simulate cache hit for page 0
-        mock_cache.retrieve_data = AsyncMock(
-            return_value=ExtractedPage(markdown="Cached content", images=[]).model_dump_json().encode()
-        )
+        # Simulate cache hit for page 0 via batch_retrieve
+        cached_page = ExtractedPage(markdown="Cached content", images=[]).model_dump_json().encode()
+        cache_key = config.extraction_cache_key("abc123", 0)
+        mock_cache.batch_retrieve = AsyncMock(return_value={cache_key: cached_page})
 
         extractor_called = False
 

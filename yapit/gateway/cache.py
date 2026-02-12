@@ -44,6 +44,14 @@ class Cache(abc.ABC):
         """Return True if `key` is in cache, False otherwise."""
 
     @abc.abstractmethod
+    async def batch_exists(self, keys: list[str]) -> set[str]:
+        """Return the subset of keys that exist in cache."""
+
+    @abc.abstractmethod
+    async def batch_retrieve(self, keys: list[str]) -> dict[str, bytes]:
+        """Return {key: data} for all keys that exist in cache."""
+
+    @abc.abstractmethod
     async def retrieve_ref(self, key: str) -> str | None:
         """Return the cache_ref for `key`, or None if missing."""
 
@@ -168,6 +176,37 @@ class SqliteCache(Cache):
         async with db.execute("SELECT 1 FROM cache WHERE key=?", (key,)) as cursor:
             row = await cursor.fetchone()
         return bool(row)
+
+    async def batch_exists(self, keys: list[str]) -> set[str]:
+        if not keys:
+            return set()
+        db = await self._get_reader()
+        found: set[str] = set()
+        # SQLite default SQLITE_LIMIT_VARIABLE_NUMBER is 999
+        for i in range(0, len(keys), 999):
+            chunk = keys[i : i + 999]
+            placeholders = ",".join("?" for _ in chunk)
+            async with db.execute(f"SELECT key FROM cache WHERE key IN ({placeholders})", chunk) as cursor:
+                rows = await cursor.fetchall()
+            found.update(row[0] for row in rows)
+        return found
+
+    async def batch_retrieve(self, keys: list[str]) -> dict[str, bytes]:
+        if not keys:
+            return {}
+        db = await self._get_reader()
+        result: dict[str, bytes] = {}
+        for i in range(0, len(keys), 999):
+            chunk = keys[i : i + 999]
+            placeholders = ",".join("?" for _ in chunk)
+            async with db.execute(f"SELECT key, data FROM cache WHERE key IN ({placeholders})", chunk) as cursor:
+                rows = await cursor.fetchall()
+            for key, data in rows:
+                result[key] = data
+        if result:
+            self._lru_pending.update(result.keys())
+            self._ensure_lru_task()
+        return result
 
     async def retrieve_ref(self, key: str) -> str | None:
         return key if await self.exists(key) else None

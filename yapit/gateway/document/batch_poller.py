@@ -24,6 +24,7 @@ from yapit.gateway.document.batch import (
 from yapit.gateway.document.extraction import substitute_image_placeholders
 from yapit.gateway.document.processing import (
     ExtractedPage,
+    cpu_executor,
     create_document_with_blocks,
     process_pages_to_document,
 )
@@ -153,7 +154,9 @@ async def create_document_from_batch(
     settings: Settings,
 ) -> Document:
     """Create a Document from batch extraction results."""
-    processed = process_pages_to_document(pages, settings)
+    processed = await asyncio.get_running_loop().run_in_executor(
+        cpu_executor, process_pages_to_document, pages, settings
+    )
 
     metadata = DocumentMetadata(
         content_type=job.content_type,
