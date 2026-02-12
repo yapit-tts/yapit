@@ -20,13 +20,40 @@ config = ProcessorConfig(
 )
 
 
+def _extract_page(page: pymupdf.Page) -> str:
+    """Extract text from a single page using dict mode with rotated text filtering.
+
+    Uses get_text("dict") to access per-line direction vectors. Lines rotated more
+    than ~60° from horizontal (|dx| < 0.5) are dropped — these are typically figure
+    axis labels, rotated watermarks, or arXiv sidebar stamps.
+    """
+    d = page.get_text("dict")
+    blocks = []
+    for block in d["blocks"]:
+        if block["type"] != 0:
+            continue
+        lines = []
+        for line in block["lines"]:
+            dx, _dy = line.get("dir", (1, 0))
+            if abs(dx) < 0.5:
+                continue
+            text = "".join(span["text"] for span in line["spans"])
+            lines.append(text)
+        if lines:
+            blocks.append("\n".join(lines))
+    text = "\n\n".join(blocks)
+    # Escape angle brackets so markdown-it doesn't interpret extracted text
+    # (e.g. <EOS>, <pad> from figure labels) as HTML tags
+    return text.replace("\x00", "").replace("<", "&lt;").replace(">", "&gt;")
+
+
 async def extract(content: bytes, pages: list[int] | None = None) -> AsyncIterator[PageResult]:
     """Extract text from PDF pages using PyMuPDF. Yields one PageResult per page."""
 
     def _extract() -> list[tuple[int, str]]:
         doc = pymupdf.open(stream=content, filetype="pdf")
         page_indices = pages if pages else list(range(len(doc)))
-        results = [(idx, doc[idx].get_text().replace("\x00", "")) for idx in page_indices]
+        results = [(idx, _extract_page(doc[idx])) for idx in page_indices]
         doc.close()
         return results
 
