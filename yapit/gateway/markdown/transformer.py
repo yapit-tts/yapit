@@ -1139,9 +1139,10 @@ class DocumentTransformer:
         img_idx = next(i for i, c in enumerate(children) if c.type == "image")
         img_node = children[img_idx]
 
-        src = img_node.attrs.get("src", "")
+        src = str(img_node.attrs.get("src", ""))
         alt = img_node.content or ""
-        title = img_node.attrs.get("title")
+        title_raw = img_node.attrs.get("title")
+        title = str(title_raw) if title_raw is not None else None
 
         # Parse layout from URL
         width_pct, row_group = self._parse_image_metadata(src)

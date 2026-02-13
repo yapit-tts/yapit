@@ -22,7 +22,7 @@ from yapit.gateway.cache import Cache
 from yapit.gateway.config import Settings
 from yapit.gateway.db import create_session
 from yapit.gateway.domain_models import BlockVariant, UsageType
-from yapit.gateway.metrics import log_event
+from yapit.gateway.metrics import log_error, log_event
 from yapit.gateway.usage import record_usage
 
 
@@ -55,6 +55,17 @@ async def _process_result(redis: Redis, cache: Cache, result: WorkerResult, sett
             await _handle_success(redis, cache, result, settings)
     except Exception as e:
         logger.exception(f"Error processing result for variant {result.variant_hash}: {e}")
+        await log_error(
+            f"Result processing failed for variant {result.variant_hash}: {e}",
+            variant_hash=result.variant_hash,
+            model_slug=result.model_slug,
+            voice_slug=result.voice_slug,
+            user_id=result.user_id,
+            document_id=str(result.document_id),
+            block_idx=result.block_idx,
+        )
+        # Notify subscribers so frontend isn't stuck waiting forever
+        await _notify_subscribers(redis, result, status="error", error=f"Internal error: {e}")
 
 
 async def _handle_success(
@@ -79,8 +90,6 @@ async def _handle_success(
 
     audio = base64.b64decode(result.audio_base64)
     cache_ref = await cache.store(result.variant_hash, audio)
-    if cache_ref is None:
-        raise RuntimeError(f"Cache write failed for {result.variant_hash}")
 
     await _notify_subscribers(
         redis,

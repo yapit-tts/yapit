@@ -1,6 +1,10 @@
-"""Cache warming script for voice previews and showcase documents.
+"""Cache warming for voice previews and showcase documents.
 
-Run inside the gateway container:
+Pre-synthesizes audio so preview sentences and showcase docs are cached and
+playable for free by anyone (cached audio skips billing). Runs as a background
+task inside the gateway process to avoid cross-process SQLite contention.
+
+Can also be run standalone for manual one-off warming:
     python -m yapit.gateway.warm_cache
 """
 
@@ -10,11 +14,13 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Literal
 
-import redis.asyncio as redis
+import redis.asyncio as aioredis
 from loguru import logger
+from redis.asyncio import Redis
 from sqlalchemy.orm import selectinload
 from sqlmodel import col, select
 
+from yapit.gateway.cache import Cache
 from yapit.gateway.config import Settings
 from yapit.gateway.db import close_db, create_session
 from yapit.gateway.deps import create_cache
@@ -68,15 +74,14 @@ def filter_voices(model: TTSModel, voice_filter: dict[str, Literal["all", "engli
 
 async def warm_texts(
     settings: Settings,
-    redis_client: redis.Redis,
+    redis_client: Redis,
+    cache: Cache,
     model: TTSModel,
     voices: list[Voice],
     texts: list[str],
     document_id: uuid.UUID,
     stats: WarmingStats,
 ) -> None:
-    cache = create_cache(settings.audio_cache_type, settings.audio_cache_config)
-
     for voice in voices:
         for idx, text in enumerate(texts):
             async for db in create_session(settings):
@@ -105,61 +110,68 @@ async def warm_texts(
                 logger.warning(f"Failed {model.slug}/{voice.slug}[{idx}]: {result.error}")
 
         logger.info(f"  {voice.slug}: done")
-        await asyncio.sleep(0.5)
+
+
+async def run_warming(cache: Cache, redis_client: Redis, settings: Settings) -> WarmingStats:
+    """Run the full warming cycle. Called from the gateway background task or standalone."""
+    async for db in create_session(settings):
+        models = (
+            await db.exec(
+                select(TTSModel).where(col(TTSModel.is_active).is_(True)).options(selectinload(TTSModel.voices))  # type: ignore[arg-type]
+            )
+        ).all()
+        break
+
+    stats = WarmingStats()
+
+    # --- Voice previews ---
+    total_voices = sum(len([v for v in m.voices if v.is_active]) for m in models)
+    logger.info(
+        f"Voice previews: {len(models)} models, {total_voices} voices, {total_voices * len(PREVIEW_SENTENCES)} requests"
+    )
+
+    for model in models:
+        active = [v for v in model.voices if v.is_active]
+        logger.info(f"{model.slug}: {len(active)} voices")
+        await warm_texts(settings, redis_client, cache, model, active, PREVIEW_SENTENCES, PREVIEW_DOCUMENT_ID, stats)
+
+    # --- Showcase documents ---
+    for showcase in SHOWCASE_DOCS:
+        async for db in create_session(settings):
+            doc = (
+                await db.exec(
+                    select(Document).where(Document.id == showcase.id).options(selectinload(Document.blocks))  # type: ignore[arg-type]
+                )
+            ).first()
+            break
+
+        if doc is None:
+            logger.warning(f"Showcase doc {showcase.id} not found, skipping")
+            continue
+
+        block_texts = [b.text for b in sorted(doc.blocks, key=lambda b: b.idx)]
+        logger.info(f"Showcase '{doc.title}': {len(block_texts)} blocks")
+
+        for model in models:
+            voices = filter_voices(model, showcase.voice_filter)
+            logger.info(f"  {model.slug}: {len(voices)} voices")
+            await warm_texts(settings, redis_client, cache, model, voices, block_texts, showcase.id, stats)
+
+    logger.info(f"Cache warming done: {stats.cached} cached, {stats.synthesized} synthesized, {stats.failed} failed")
+    return stats
 
 
 async def main() -> int:
+    """Standalone entry point for manual one-off warming."""
     settings = Settings()  # type: ignore[call-arg]
-    redis_client = await redis.from_url(settings.redis_url, decode_responses=False)
+    redis_client = await aioredis.from_url(settings.redis_url, decode_responses=False)
+    cache = create_cache(settings.audio_cache_type, settings.audio_cache_config)
 
     try:
-        async for db in create_session(settings):
-            models = (
-                await db.exec(
-                    select(TTSModel).where(col(TTSModel.is_active).is_(True)).options(selectinload(TTSModel.voices))  # type: ignore[arg-type]
-                )
-            ).all()
-            break
-
-        stats = WarmingStats()
-
-        # --- Voice previews ---
-        total_voices = sum(len([v for v in m.voices if v.is_active]) for m in models)
-        logger.info(
-            f"Voice previews: {len(models)} models, {total_voices} voices, {total_voices * len(PREVIEW_SENTENCES)} requests"
-        )
-
-        for model in models:
-            active = [v for v in model.voices if v.is_active]
-            logger.info(f"{model.slug}: {len(active)} voices")
-            await warm_texts(settings, redis_client, model, active, PREVIEW_SENTENCES, PREVIEW_DOCUMENT_ID, stats)
-
-        # --- Showcase documents ---
-        for showcase in SHOWCASE_DOCS:
-            async for db in create_session(settings):
-                doc = (
-                    await db.exec(
-                        select(Document).where(Document.id == showcase.id).options(selectinload(Document.blocks))  # type: ignore[arg-type]
-                    )
-                ).first()
-                break
-
-            if doc is None:
-                logger.warning(f"Showcase doc {showcase.id} not found, skipping")
-                continue
-
-            block_texts = [b.text for b in sorted(doc.blocks, key=lambda b: b.idx)]
-            logger.info(f"Showcase '{doc.title}': {len(block_texts)} blocks")
-
-            for model in models:
-                voices = filter_voices(model, showcase.voice_filter)
-                logger.info(f"  {model.slug}: {len(voices)} voices")
-                await warm_texts(settings, redis_client, model, voices, block_texts, showcase.id, stats)
-
-        logger.info(f"Done: {stats.cached} cached, {stats.synthesized} synthesized, {stats.failed} failed")
+        stats = await run_warming(cache, redis_client, settings)
         return 0 if stats.failed == 0 else 1
-
     finally:
+        await cache.close()
         await redis_client.aclose()
         await close_db()
 
