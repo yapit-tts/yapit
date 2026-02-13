@@ -166,16 +166,13 @@ async def _queue_job(
         await redis.sadd(pending_key, block_idx)
         await redis.expire(pending_key, 600)
 
-    # Already processing - we're now subscribed and will be notified
-    if await redis.exists(TTS_INFLIGHT.format(hash=variant_hash)):
-        return variant_hash
-
     job_id = uuid.uuid4()
     job_id_str = str(job_id)
 
-    # TTL covers max time in system (queue wait + processing + retries) with buffer. Increase if visibility/overflow/retry timeouts are raised significantly.
-    # Value is job_id so eviction can conditionally clean up only its own inflight key.
-    await redis.set(TTS_INFLIGHT.format(hash=variant_hash), job_id_str, ex=200, nx=True)
+    # TTL is a safety net for orphaned keys; result_consumer DELETE is the normal cleanup path
+    was_set = await redis.set(TTS_INFLIGHT.format(hash=variant_hash), job_id_str, ex=600, nx=True)
+    if not was_set:
+        return variant_hash
 
     job = SynthesisJob(
         job_id=job_id,

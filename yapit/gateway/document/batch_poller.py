@@ -176,7 +176,7 @@ async def create_document_from_batch(
         metadata=metadata,
         extraction_method="gemini",
         text_blocks=processed.text_blocks,
-        is_public=False,
+        is_public=job.is_public,
         content_hash=job.content_hash,
     )
 

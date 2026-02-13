@@ -60,13 +60,15 @@ from yapit.gateway.document.processors import pdf
 from yapit.gateway.document.website import extract_website_content
 from yapit.gateway.domain_models import Block, Document, DocumentMetadata, UsageType, UserPreferences, UserSubscription
 from yapit.gateway.exceptions import ResourceNotFoundError
-from yapit.gateway.metrics import log_event
+from yapit.gateway.metrics import log_error, log_event
 from yapit.gateway.reservations import create_reservation, release_reservation
 from yapit.gateway.storage import ImageStorage
 from yapit.gateway.usage import check_usage_limit
 
 router = APIRouter(prefix="/v1/documents", tags=["Documents"], dependencies=[Depends(authenticate)])
 public_router = APIRouter(prefix="/v1/documents", tags=["Documents"])
+
+_background_tasks: set[asyncio.Task] = set()
 
 
 class FormatInfo(BaseModel):
@@ -658,6 +660,7 @@ async def _submit_batch_extraction(
     title: str | None,
     pages: list[int] | None,
     user_id: str,
+    is_public: bool,
     db: DbSession,
     settings: SettingsDep,
     ai_extractor_config: AiExtractorConfigDep,
@@ -696,6 +699,7 @@ async def _submit_batch_extraction(
             title=title,
             content_type=content_type,
             file_size=file_size,
+            is_public=is_public,
             pages_requested=pages_requested,
             pages_submitted=[],
             figure_urls_by_page={},
@@ -737,18 +741,20 @@ async def _submit_batch_extraction(
         title=title,
         content_type=content_type,
         file_size=file_size,
+        is_public=is_public,
         pages_requested=pages_requested,
         pages_submitted=uncached_list,
         figure_urls_by_page={},
     )
     await save_batch_job(redis, job_info)
 
-    asyncio.create_task(
+    task = asyncio.create_task(
         _prepare_and_submit_batch(
             content=content,
             content_hash=content_hash,
             pages=uncached_list,
             user_id=user_id,
+            is_public=is_public,
             ai_extractor=ai_extractor,
             redis=redis,
             title=title,
@@ -758,6 +764,8 @@ async def _submit_batch_extraction(
             pages_submitted=uncached_list,
         )
     )
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
 
     return BatchSubmittedResponse(
         content_hash=content_hash,
@@ -771,6 +779,7 @@ async def _prepare_and_submit_batch(
     content_hash: str,
     pages: list[int] | None,
     user_id: str,
+    is_public: bool,
     ai_extractor: AiExtractorDep,
     redis: RedisClient,
     title: str | None,
@@ -798,12 +807,14 @@ async def _prepare_and_submit_batch(
             title=title,
             content_type=content_type,
             file_size=file_size,
+            is_public=is_public,
             pages_requested=pages_requested,
             pages_submitted=pages_submitted,
             figure_urls_by_page=figure_urls_by_page,
         )
-    except Exception:
+    except Exception as e:
         logger.exception(f"Batch preparation failed for {content_hash}")
+        await log_error(f"Batch preparation failed: {e}", content_hash=content_hash, user_id=user_id)
         await release_reservation(redis, user_id, content_hash)
         job = await get_batch_job(redis, content_hash)
         if job:
@@ -945,8 +956,9 @@ async def _run_extraction(
                 ex=ASYNC_EXTRACTION_RESULT_TTL,
             )
             break  # create_session is an async generator; only need one session
-    except Exception:
+    except Exception as e:
         logger.exception(f"Async extraction failed for {content_hash}")
+        await log_error(f"Async extraction failed: {e}", content_hash=content_hash, user_id=user_id)
         try:
             await redis.set(
                 result_key,
@@ -1026,6 +1038,7 @@ async def create_document(
             title=cached_doc.metadata.title or req.title or cached_doc.metadata.file_name,
             pages=req.pages,
             user_id=user.id,
+            is_public=prefs.default_documents_public if prefs else False,
             db=db,
             settings=settings,
             ai_extractor_config=ai_extractor_config,
@@ -1074,7 +1087,7 @@ async def create_document(
 
     extraction_id = str(uuid4())
 
-    asyncio.create_task(
+    task = asyncio.create_task(
         _run_extraction(
             extraction_id=extraction_id,
             content=cached_doc.content,
@@ -1098,6 +1111,8 @@ async def create_document(
             ratelimit_key=ratelimit_key,
         )
     )
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
 
     return ExtractionAcceptedResponse(
         extraction_id=extraction_id,

@@ -157,6 +157,7 @@ class TestPollerCacheMerge:
             title="Test",
             content_type="application/pdf",
             file_size=1000,
+            is_public=False,
             pages_requested=pages_requested,
             pages_submitted=pages_submitted,
             figure_urls_by_page={},

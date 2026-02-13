@@ -25,6 +25,8 @@ from yapit.gateway.domain_models import BlockVariant, UsageType
 from yapit.gateway.metrics import log_error, log_event
 from yapit.gateway.usage import record_usage
 
+_background_tasks: set[asyncio.Task] = set()
+
 
 async def run_result_consumer(redis: Redis, cache: Cache, settings: Settings) -> None:
     logger.info("Result consumer starting")
@@ -37,13 +39,16 @@ async def run_result_consumer(redis: Redis, cache: Cache, settings: Settings) ->
 
             _, result_json = result
             worker_result = WorkerResult.model_validate_json(result_json)
-            asyncio.create_task(_process_result(redis, cache, worker_result, settings))
+            task = asyncio.create_task(_process_result(redis, cache, worker_result, settings))
+            _background_tasks.add(task)
+            task.add_done_callback(_background_tasks.discard)
 
         except asyncio.CancelledError:
             logger.info("Result consumer shutting down")
             raise
         except Exception as e:
             logger.exception(f"Error in result consumer: {e}")
+            await log_error(f"Result consumer loop error: {e}")
             await asyncio.sleep(1)
 
 

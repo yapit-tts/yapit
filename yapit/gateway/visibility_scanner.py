@@ -13,7 +13,7 @@ from loguru import logger
 from redis.asyncio import Redis
 
 from yapit.contracts import TTS_RESULTS, YOLO_RESULT, YoloResult, build_tts_dlq_error, parse_queue_name
-from yapit.gateway.metrics import log_event
+from yapit.gateway.metrics import log_error, log_event
 from yapit.workers.queue import move_to_dlq, requeue_job
 
 
@@ -48,6 +48,7 @@ async def run_visibility_scanner(
             raise
         except Exception as e:
             logger.exception(f"Error in {name} scanner: {e}")
+            await log_error(f"Visibility scanner {name} loop error: {e}")
             await asyncio.sleep(scan_interval_s)
 
 

@@ -184,7 +184,7 @@ async def create_subscription_checkout(
     }
 
     try:
-        session = client.v1.checkout.sessions.create(
+        session = await client.v1.checkout.sessions.create_async(
             checkout_params,
             {"stripe_version": f"{stripe.api_version}; managed_payments_preview=v1"},
         )
@@ -194,7 +194,7 @@ async def create_subscription_checkout(
             logger.warning("Stripe customer not found, creating checkout with email instead")
             checkout_params = {**checkout_params, "customer_email": customer_email}
             del checkout_params["customer"]
-            session = client.v1.checkout.sessions.create(
+            session = await client.v1.checkout.sessions.create_async(
                 checkout_params,
                 {"stripe_version": f"{stripe.api_version}; managed_payments_preview=v1"},
             )
@@ -227,7 +227,7 @@ async def create_billing_portal_session(
     if not origin:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing origin header")
 
-    session = client.v1.billing_portal.sessions.create(
+    session = await client.v1.billing_portal.sessions.create_async(
         {
             "customer": subscription.stripe_customer_id,
             "return_url": f"{origin}/subscription",
@@ -329,7 +329,7 @@ async def _handle_checkout_completed(
         logger.warning("Checkout completed but missing user_id or subscription_id")
         return
 
-    stripe_sub = client.v1.subscriptions.retrieve(subscription_id)
+    stripe_sub = await client.v1.subscriptions.retrieve_async(subscription_id)
     plan_tier = stripe_sub.metadata.get("plan_tier") if stripe_sub.metadata else None
 
     if not plan_tier:

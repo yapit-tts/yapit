@@ -1,6 +1,6 @@
 from typing import Literal
 
-import requests
+import httpx
 from pydantic import BaseModel, Field
 
 from yapit.gateway.config import Settings
@@ -44,7 +44,8 @@ async def get_user(settings: Settings, access_token: str, user_id: str) -> User 
     url = f"{settings.stack_auth_api_host}/api/v1/users/{user_id}"
     headers = build_headers(settings, access_token=access_token)
 
-    response = requests.get(url, headers=headers)
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url, headers=headers)
     if response.status_code == 401:
         return None
     response.raise_for_status()
@@ -62,7 +63,8 @@ async def delete_user(settings: Settings, access_token: str, user_id: str) -> bo
     url = f"{settings.stack_auth_api_host}/api/v1/users/{user_id}"
     headers = build_headers(settings, access_token=access_token)
 
-    response = requests.delete(url, headers=headers)
+    async with httpx.AsyncClient() as client:
+        response = await client.request("DELETE", url, headers=headers)
     if response.status_code == 404:
         return False  # User already deleted
     response.raise_for_status()

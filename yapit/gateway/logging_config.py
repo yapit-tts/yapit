@@ -11,6 +11,8 @@ from fastapi.responses import JSONResponse
 from loguru import logger
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from yapit.gateway.metrics import log_error
+
 
 class InterceptHandler(logging.Handler):
     """Route standard library logging to loguru."""
@@ -82,5 +84,13 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 
     context = " ".join(context_parts)
     logger.exception(f"Unhandled exception on {context}: {exc}")
+
+    await log_error(
+        f"Unhandled 500: {exc}",
+        method=request.method,
+        path=request.url.path,
+        request_id=request_id,
+        user_id=user_id,
+    )
 
     return JSONResponse(status_code=500, content={"detail": "Internal server error"})

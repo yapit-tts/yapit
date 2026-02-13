@@ -126,6 +126,11 @@ Yapit is a text-to-speech platform with these components:
 - `extraction_estimate` — pre-check token estimate (compare with actual for tuning)
 - `page_extraction_complete`, `page_extraction_error` — Gemini API calls
 
+**Gateway-internal errors and warnings:**
+- `error` — gateway-side failures caught by exception handlers (e.g., cache write failures, DB errors during result processing). These are NOT pipeline-specific errors — they indicate something broke inside the gateway itself. Check `data.message` for details.
+- `warning` — non-fatal issues worth tracking (e.g., near-failures, degraded behavior)
+- ANY `error` event is a red flag. These represent failures that may silently drop work — e.g., a synthesis result that completed but couldn't be cached, leaving the user with no audio.
+
 **Billing/Webhooks:**
 - `stripe_webhook` — Stripe webhook processing
   - `duration_ms` — handler latency. Nominal: <1s. Stripe times out at 20s.
@@ -141,10 +146,19 @@ Yapit is a text-to-speech platform with these components:
 
 ## What to Analyze
 
-### Errors (should be near zero for system errors)
-- `*_error` events — what failed and why?
-- `job_dlq` — ANY entry is a red flag, something is systematically broken
-- `job_requeued` — occasional is fine (transient), sustained pattern = worker issues
+### Errors — HIGHEST PRIORITY
+This is the most important section. Don't just count errors — read the actual error messages and investigate.
+
+**Metrics DB errors:**
+- `error` events (gateway-internal) — ANY nonzero count is a red flag. Read `data.message` for each. These represent silent failures that may cause user-visible breakage (e.g., audio not playing, results disappearing).
+- `synthesis_error` events — worker-reported failures. Check `data.error` for each distinct error message.
+- `detection_error`, `page_extraction_error`, `overflow_error` — same: read the actual error messages.
+- `job_dlq` — ANY entry means something is systematically broken. Investigate immediately.
+- `job_requeued` — occasional is fine (transient), sustained pattern = worker issues.
+
+**Log file errors (gateway-data/logs/*.jsonl):**
+- Scan ALL log files for ERROR and WARNING level entries. Don't skip this even if metrics look clean — some errors only appear in logs.
+- For each distinct error, report: the error message, count, and time range.
 - ERROR level in logs — stack traces, exceptions (include request context: method, path, user_id, request_id)
 
 ### Warnings
@@ -179,8 +193,10 @@ Yapit is a text-to-speech platform with these components:
 
 | Metric | Normal | Concerning |
 |--------|--------|------------|
+| `error` events | 0 | Any (investigate — read data.message) |
 | DLQ entries | 0 | Any (investigate immediately) |
-| Error rate (system) | 0% | >0% sustained |
+| Error rate (synthesis) | 0% | >0% sustained |
+| Log ERROR entries | 0 | Any (read the actual messages) |
 | Queue depth | <10 | >20 sustained |
 | Queue wait (TTS) | <15s | >25s (overflow imminent) |
 | Queue wait (YOLO) | <5s | >8s |

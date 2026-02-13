@@ -115,13 +115,7 @@ class Document(SQLModel, table=True):
         ),
     )
 
-    @property
-    def metadata_(self) -> DocumentMetadata | None:  # name `metadata` reserved by SQLModel
-        return DocumentMetadata(**self.metadata_dict) if self.metadata_dict else None
-
-    @metadata_.setter
-    def metadata_(self, value: DocumentMetadata | None) -> None:
-        self.metadata_dict = value.model_dump() if value else None
+    __table_args__ = (Index("idx_document_user_created", "user_id", "created"),)
 
 
 class Block(SQLModel, table=True):

@@ -27,7 +27,7 @@ from yapit.gateway.cache import Cache
 from yapit.gateway.config import Settings, get_settings
 from yapit.gateway.deps import get_db_session
 from yapit.gateway.domain_models import Block, Document, TTSModel, Voice
-from yapit.gateway.metrics import log_event
+from yapit.gateway.metrics import log_error, log_event
 from yapit.gateway.stack_auth.users import User
 from yapit.gateway.synthesis import request_synthesis
 
@@ -124,6 +124,7 @@ async def tts_websocket(
                 await ws.send_json({"type": "error", "error": "Invalid JSON"})
             except Exception as e:
                 logger.exception(f"Unexpected error handling WS message from user {user.id}: {e}")
+                await log_error(f"WS message handling error: {e}", user_id=user.id)
                 try:
                     await ws.send_json({"type": "error", "error": "Internal server error"})
                 except Exception:
@@ -238,6 +239,7 @@ async def _handle_synthesize(
                 )
             except Exception as e:
                 logger.exception(f"Failed to process block {idx}: {e}")
+                await log_error(f"Block processing error: {e}", user_id=user.id, block_idx=idx)
                 await ws.send_json(
                     WSBlockStatus(
                         document_id=msg.document_id,
