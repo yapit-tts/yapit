@@ -14,6 +14,6 @@ COPY yapit/ /app/yapit
 ARG GIT_COMMIT=unknown
 RUN echo "$GIT_COMMIT" > /app/version.txt
 
-ENV PYTHONUNBUFFERED=1 PYTHONPATH=/app/gateway
+ENV PYTHONUNBUFFERED=1 PYTHONPATH=/app/gateway SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 EXPOSE 8000
 CMD ["uvicorn", "yapit.gateway:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]

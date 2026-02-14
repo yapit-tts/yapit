@@ -24,8 +24,8 @@ async def test_create_text_document_full_flow(subscribed_client):
 
 
 @pytest.mark.asyncio
-async def test_prepare_and_process_with_markitdown(subscribed_client):
-    """Test document preparation and processing with markitdown (free processor)."""
+async def test_prepare_and_create_website_from_url(subscribed_client):
+    """Test URL prepare → website document creation flow."""
     # Prepare from URL
     prepare_response = await subscribed_client.post(
         "/v1/documents/prepare",
