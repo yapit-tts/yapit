@@ -641,6 +641,11 @@ async def _handle_invoice_paid(invoice: stripe.Invoice, db: DbSession) -> None:
         await db.commit()
         return
 
+    if subscription.last_rollover_invoice_id == invoice.id:
+        log.info("Rollover already processed (replay)")
+        await db.commit()
+        return
+
     # Calculate rollover from the ending period using INVOICE dates (not subscription.current_period_*,
     # which may have already been updated to the NEW period by subscription.updated webhook)
     invoice_period_start = datetime.fromtimestamp(invoice.period_start, tz=dt.UTC)
@@ -683,6 +688,8 @@ async def _handle_invoice_paid(invoice: stripe.Invoice, db: DbSession) -> None:
         elif new_rollover > subscription.rollover_voice_chars:
             log.bind(old=subscription.rollover_voice_chars, new=new_rollover).info("Voice rollover")
         subscription.rollover_voice_chars = new_rollover
+
+    subscription.last_rollover_invoice_id = invoice.id
 
     # Clear grace period - new billing cycle means downgrade is now fully effective
     if subscription.grace_tier:

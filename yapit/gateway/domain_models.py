@@ -286,6 +286,7 @@ class UserSubscription(SQLModel, table=True):
     # Rollover: unused subscription tokens/chars carried forward (capped)
     rollover_tokens: int = Field(default=0)  # Capped at 10M
     rollover_voice_chars: int = Field(default=0)  # Capped at 1M
+    last_rollover_invoice_id: str | None = Field(default=None)
 
     # Purchased: from token/voice packs (uncapped, persists after cancellation)
     purchased_tokens: int = Field(default=0)
