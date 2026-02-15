@@ -160,8 +160,8 @@ async def create_subscription_checkout(
     # Trial eligibility: only if user hasn't experienced this tier or higher
     trial_eligible = not existing_sub or _rank(existing_sub.highest_tier_subscribed) < _rank(request.tier)
     if not trial_eligible and existing_sub:
-        logger.info(
-            f"User {user.id} not eligible for {request.tier} trial (highest: {existing_sub.highest_tier_subscribed})"
+        logger.bind(user_id=user.id, tier=request.tier, highest=existing_sub.highest_tier_subscribed).info(
+            "Trial not eligible"
         )
 
     customer_id = existing_sub.stripe_customer_id if existing_sub else None
@@ -191,7 +191,9 @@ async def create_subscription_checkout(
     except stripe.InvalidRequestError as e:
         # Handle externally deleted Stripe customer
         if "No such customer" in str(e) and customer_id:
-            logger.warning("Stripe customer not found, creating checkout with email instead")
+            logger.bind(user_id=user.id, stripe_customer_id=customer_id).warning(
+                "Stripe customer not found, retrying with email"
+            )
             checkout_params = {**checkout_params, "customer_email": customer_email}
             del checkout_params["customer"]
             session = await client.v1.checkout.sessions.create_async(
@@ -271,7 +273,8 @@ async def stripe_webhook(
     except stripe.SignatureVerificationError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid signature")
 
-    logger.info(f"Received Stripe webhook: {event.type}")
+    log = logger.bind(event_type=event.type, stripe_event_id=event.id)
+    log.info("Stripe webhook received")
     start = time.monotonic()
 
     if event.type not in SUBSCRIPTION_EVENTS:
@@ -295,7 +298,7 @@ async def stripe_webhook(
             await _handle_invoice_failed(invoice, db)
     except Exception as e:
         duration_ms = int((time.monotonic() - start) * 1000)
-        logger.exception(f"Error handling webhook {event.type}: {e}")
+        log.exception(f"Webhook handler error: {e}")
         await log_event(
             "stripe_webhook", status_code=500, duration_ms=duration_ms, data={"event_type": event.type, "error": str(e)}
         )
@@ -325,21 +328,25 @@ async def _handle_checkout_completed(
         session.customer if isinstance(session.customer, str) else (session.customer.id if session.customer else None)
     )
 
+    log = logger.bind(user_id=user_id, stripe_sub_id=subscription_id, stripe_customer_id=customer_id)
+
     if not user_id or not subscription_id:
-        logger.warning("Checkout completed but missing user_id or subscription_id")
+        log.warning("Checkout completed but missing user_id or subscription_id")
         return
 
     stripe_sub = await client.v1.subscriptions.retrieve_async(subscription_id)
     plan_tier = stripe_sub.metadata.get("plan_tier") if stripe_sub.metadata else None
 
     if not plan_tier:
-        logger.warning(f"Subscription {subscription_id} missing plan_tier in metadata")
+        log.warning("Subscription missing plan_tier in metadata")
         return
+
+    log = log.bind(plan_tier=plan_tier)
 
     result = await db.exec(select(Plan).where(Plan.tier == plan_tier))
     plan = result.first()
     if not plan or not plan.id:
-        logger.error(f"Plan {plan_tier} not found in database")
+        log.error("Plan not found in database")
         return
 
     first_item = stripe_sub["items"].data[0]
@@ -362,6 +369,7 @@ async def _handle_checkout_completed(
         current_period_end=period_end,
         cancel_at_period_end=stripe_sub.cancel_at_period_end,
         cancel_at=cancel_at,
+        canceled_at=None,
         highest_tier_subscribed=plan.tier,
         ever_paid=is_paid,
         created=now,
@@ -378,6 +386,7 @@ async def _handle_checkout_completed(
             "current_period_end": stmt.excluded.current_period_end,
             "cancel_at_period_end": stmt.excluded.cancel_at_period_end,
             "cancel_at": stmt.excluded.cancel_at,
+            "canceled_at": stmt.excluded.canceled_at,
             "updated": stmt.excluded.updated,
             # highest_tier_subscribed, ever_paid, created: preserved from existing row
         },
@@ -394,7 +403,7 @@ async def _handle_checkout_completed(
     await db.exec(usage_stmt)
 
     await db.commit()
-    logger.info(f"Upserted subscription for user {user_id}: plan={plan_tier}")
+    log.bind(status=sub_status).info("Subscription upserted via checkout")
 
 
 async def _handle_subscription_updated(stripe_sub: stripe.Subscription, db: DbSession) -> None:
@@ -409,6 +418,8 @@ async def _handle_subscription_updated(stripe_sub: stripe.Subscription, db: DbSe
         subscription = result.first()
         if subscription:
             user_id = subscription.user_id
+
+    log = logger.bind(stripe_sub_id=stripe_sub.id, user_id=user_id, lookup="user_id" if user_id else "sub_id")
 
     first_item = stripe_sub["items"].data[0]
     now = datetime.now(tz=dt.UTC)
@@ -425,10 +436,10 @@ async def _handle_subscription_updated(stripe_sub: stripe.Subscription, db: DbSe
     if not subscription:
         # Row doesn't exist - use atomic upsert to create (prevents race with checkout.completed)
         if not user_id:
-            logger.error(f"Subscription {stripe_sub.id} not in DB and missing user_id in metadata - cannot create")
+            log.error("Subscription not in DB and missing user_id in metadata")
             return
         if not price_id:
-            logger.error(f"Subscription {stripe_sub.id} not in DB and missing price_id - cannot create")
+            log.error("Subscription not in DB and missing price_id")
             return
 
         plan_result = await db.exec(
@@ -436,10 +447,11 @@ async def _handle_subscription_updated(stripe_sub: stripe.Subscription, db: DbSe
         )
         plan = plan_result.first()
         if not plan or not plan.id:
-            logger.error(f"Subscription {stripe_sub.id} not in DB and price {price_id} not found - cannot create")
+            log.bind(price_id=price_id).error("Subscription not in DB and price not found")
             return
 
         sub_status = _map_stripe_status(stripe_sub.status)
+        canceled_at_val = datetime.fromtimestamp(stripe_sub.canceled_at, tz=dt.UTC) if stripe_sub.canceled_at else None
         stmt = pg_insert(UserSubscription).values(
             user_id=user_id,
             plan_id=plan.id,
@@ -450,6 +462,7 @@ async def _handle_subscription_updated(stripe_sub: stripe.Subscription, db: DbSe
             current_period_end=period_end,
             cancel_at_period_end=stripe_sub.cancel_at_period_end,
             cancel_at=cancel_at,
+            canceled_at=canceled_at_val,
             highest_tier_subscribed=plan.tier,
             created=now,
             updated=now,
@@ -465,24 +478,32 @@ async def _handle_subscription_updated(stripe_sub: stripe.Subscription, db: DbSe
                 "current_period_end": stmt.excluded.current_period_end,
                 "cancel_at_period_end": stmt.excluded.cancel_at_period_end,
                 "cancel_at": stmt.excluded.cancel_at,
+                "canceled_at": stmt.excluded.canceled_at,
                 "updated": stmt.excluded.updated,
             },
         )
         await db.exec(stmt)
         await db.commit()
-        logger.info(f"Upserted subscription for user {user_id} via subscription.updated: plan={plan.tier}")
+        log.bind(plan_tier=plan.tier, status=sub_status).info("Subscription upserted via subscription event")
         return
 
-    # Row exists - apply updates with grace period logic
-    old_status = subscription.status
+    # Guard: skip events for stale/replaced subscriptions
+    if subscription.stripe_subscription_id != stripe_sub.id:
+        log.bind(current_sub=subscription.stripe_subscription_id).info("Skipping event for replaced subscription")
+        return
 
-    subscription.status = _map_stripe_status(stripe_sub.status)
+    # Row exists and matches — apply updates with grace period logic
+    old_status = subscription.status
+    new_status = _map_stripe_status(stripe_sub.status)
+
+    subscription.status = new_status
     subscription.current_period_start = period_start
     subscription.current_period_end = period_end
     subscription.cancel_at_period_end = stripe_sub.cancel_at_period_end
     subscription.cancel_at = cancel_at
-    if stripe_sub.canceled_at:
-        subscription.canceled_at = datetime.fromtimestamp(stripe_sub.canceled_at, tz=dt.UTC)
+    subscription.canceled_at = (
+        datetime.fromtimestamp(stripe_sub.canceled_at, tz=dt.UTC) if stripe_sub.canceled_at else None
+    )
 
     if price_id:
         plan_result = await db.exec(
@@ -501,22 +522,24 @@ async def _handle_subscription_updated(stripe_sub: stripe.Subscription, db: DbSe
                 if _rank(old_tier) > _rank(subscription.grace_tier):
                     subscription.grace_tier = old_tier
                 subscription.grace_until = subscription.current_period_end
-                logger.info(f"Downgrade: {old_tier} -> {new_plan.tier}, grace until {subscription.grace_until}")
+                log.bind(old_tier=old_tier, new_tier=new_plan.tier, grace_until=str(subscription.grace_until)).info(
+                    "Downgrade with grace period"
+                )
             elif is_downgrade:
-                logger.info(f"Downgrade from trial: {old_tier} -> {new_plan.tier}, no grace period")
+                log.bind(old_tier=old_tier, new_tier=new_plan.tier).info("Downgrade from trial, no grace")
             elif is_upgrade and subscription.grace_tier and _rank(new_plan.tier) >= _rank(subscription.grace_tier):
                 subscription.grace_tier = None
                 subscription.grace_until = None
-                logger.info(f"Upgrade cleared grace period for {stripe_sub.id}")
+                log.info("Upgrade cleared grace period")
 
             subscription.plan_id = new_plan.id
             if _rank(new_plan.tier) > _rank(subscription.highest_tier_subscribed):
                 subscription.highest_tier_subscribed = new_plan.tier
-            logger.info(f"Plan changed: {old_tier} -> {new_plan.tier}")
+            log.bind(old_tier=old_tier, new_tier=new_plan.tier).info("Plan changed")
 
     subscription.updated = now
     await db.commit()
-    logger.info(f"Updated subscription {stripe_sub.id}: status={subscription.status}")
+    log.bind(old_status=old_status, new_status=new_status).info("Subscription updated")
 
 
 async def _handle_subscription_deleted(stripe_sub: stripe.Subscription, db: DbSession) -> None:
@@ -530,10 +553,17 @@ async def _handle_subscription_deleted(stripe_sub: stripe.Subscription, db: DbSe
         result = await db.exec(select(UserSubscription).where(UserSubscription.stripe_subscription_id == stripe_sub.id))
         subscription = result.first()
 
+    log = logger.bind(stripe_sub_id=stripe_sub.id, user_id=user_id)
+
     if not subscription:
-        # Raise exception to return 500 — Stripe will retry until checkout.completed creates the row
-        logger.warning(f"Subscription {stripe_sub.id} not found for deletion - Stripe will retry")
+        # Return 500 so Stripe retries until checkout.completed creates the row
+        log.warning("Subscription not found for deletion, Stripe will retry")
         raise ValueError(f"Subscription {stripe_sub.id} not found")
+
+    # Guard: skip deletion events for stale/replaced subscriptions
+    if subscription.stripe_subscription_id != stripe_sub.id:
+        log.bind(current_sub=subscription.stripe_subscription_id).warning("Skipping deletion of replaced subscription")
+        return
 
     now = datetime.now(tz=dt.UTC)
     subscription.status = SubscriptionStatus.canceled
@@ -541,7 +571,7 @@ async def _handle_subscription_deleted(stripe_sub: stripe.Subscription, db: DbSe
     subscription.updated = now
 
     await db.commit()
-    logger.info(f"Marked subscription {stripe_sub.id} as canceled")
+    log.info("Subscription canceled")
 
 
 def _get_invoice_subscription_id(invoice: stripe.Invoice) -> str | None:
@@ -556,30 +586,56 @@ async def _handle_invoice_paid(invoice: stripe.Invoice, db: DbSession) -> None:
     """Handle successful invoice payment - mark ever_paid and calculate rollover on billing cycle."""
     subscription_id = _get_invoice_subscription_id(invoice)
     if not subscription_id:
-        # Non-subscription invoice (one-time purchase, manual invoice) — nothing to do
+        # Non-subscription invoice (one-time purchase, manual invoice)
         return
 
     result = await db.exec(select(UserSubscription).where(UserSubscription.stripe_subscription_id == subscription_id))
     subscription = result.first()
+
+    log = logger.bind(
+        stripe_sub_id=subscription_id,
+        invoice_id=invoice.id,
+        billing_reason=invoice.billing_reason,
+    )
+
     if not subscription:
-        # Webhook arrived before checkout.completed — user paid but we can't track it
-        logger.error(f"Invoice paid but subscription {subscription_id} not in DB — ever_paid may not be set correctly")
+        # Webhook arrived before checkout.completed — can't track payment
+        log.error("Invoice paid but subscription not in DB, ever_paid may not be set")
         return
+
+    log = log.bind(user_id=subscription.user_id)
 
     if not subscription.ever_paid:
         subscription.ever_paid = True
-        await db.commit()
-        logger.info(f"First payment received for user {subscription.user_id}")
+        log.info("First payment received")
+
+    # Period dates from invoices are authoritative — subscription.updated events
+    # may carry stale dates (e.g. trial period dates on trial→active transition)
+    if invoice.period_start and invoice.period_end:
+        subscription.current_period_start = datetime.fromtimestamp(invoice.period_start, tz=dt.UTC)
+        subscription.current_period_end = datetime.fromtimestamp(invoice.period_end, tz=dt.UTC)
+        subscription.updated = datetime.now(tz=dt.UTC)
+
+        stmt = pg_insert(UsagePeriod).values(
+            user_id=subscription.user_id,
+            period_start=subscription.current_period_start,
+            period_end=subscription.current_period_end,
+        )
+        stmt = stmt.on_conflict_do_nothing(index_elements=["user_id", "period_start"])
+        result = await db.exec(stmt)
+        if result.rowcount > 0:
+            log.bind(
+                period_start=str(subscription.current_period_start),
+                period_end=str(subscription.current_period_end),
+            ).info("New usage period created")
 
     if invoice.billing_reason != "subscription_cycle":
-        # First invoice, mid-cycle change, etc. — rollover only applies to cycle renewals
+        await db.commit()
         return
 
     if not invoice.period_start or not invoice.period_end:
-        logger.error(
-            f"Invoice {invoice.id} missing period dates (start={invoice.period_start}, end={invoice.period_end}) "
-            f"- cannot process renewal for subscription {subscription_id}"
-        )
+        log.error("Invoice missing period dates, cannot process rollover")
+        await db.commit()
         return
 
     # Calculate rollover from the ending period using INVOICE dates (not subscription.current_period_*,
@@ -593,7 +649,6 @@ async def _handle_invoice_paid(invoice: stripe.Invoice, db: DbSession) -> None:
     )
     old_period = result.first()
     if not old_period:
-        # No usage recorded in ending period - user didn't use any features, so full quota is unused
         old_period = UsagePeriod(
             user_id=subscription.user_id,
             period_start=invoice_period_start,
@@ -607,9 +662,9 @@ async def _handle_invoice_paid(invoice: stripe.Invoice, db: DbSession) -> None:
             plan.ocr_tokens, old_period.ocr_tokens, subscription.rollover_tokens, MAX_ROLLOVER_TOKENS
         )
         if debt_paid > 0:
-            logger.info(f"Token debt payment for {subscription_id}: {debt_paid} paid off")
+            log.bind(debt_paid=debt_paid).info("Token debt payment")
         elif new_rollover > subscription.rollover_tokens:
-            logger.info(f"Token rollover for {subscription_id}: {subscription.rollover_tokens} -> {new_rollover}")
+            log.bind(old=subscription.rollover_tokens, new=new_rollover).info("Token rollover")
         subscription.rollover_tokens = new_rollover
 
     # Voice char rollover
@@ -621,62 +676,41 @@ async def _handle_invoice_paid(invoice: stripe.Invoice, db: DbSession) -> None:
             MAX_ROLLOVER_VOICE_CHARS,
         )
         if debt_paid > 0:
-            logger.info(f"Voice debt payment for {subscription_id}: {debt_paid} paid off")
+            log.bind(debt_paid=debt_paid).info("Voice debt payment")
         elif new_rollover > subscription.rollover_voice_chars:
-            logger.info(f"Voice rollover for {subscription_id}: {subscription.rollover_voice_chars} -> {new_rollover}")
+            log.bind(old=subscription.rollover_voice_chars, new=new_rollover).info("Voice rollover")
         subscription.rollover_voice_chars = new_rollover
-
-    # Update period dates
-    subscription.current_period_start = datetime.fromtimestamp(invoice.period_start, tz=dt.UTC)
-    subscription.current_period_end = datetime.fromtimestamp(invoice.period_end, tz=dt.UTC)
-    subscription.updated = datetime.now(tz=dt.UTC)
 
     # Clear grace period - new billing cycle means downgrade is now fully effective
     if subscription.grace_tier:
-        logger.info(f"Clearing grace period for {subscription_id} (was {subscription.grace_tier})")
+        log.bind(grace_tier=subscription.grace_tier).info("Clearing grace period on renewal")
         subscription.grace_tier = None
         subscription.grace_until = None
-
-    # Create new usage period using atomic upsert (prevents race on webhook retries)
-    stmt = pg_insert(UsagePeriod).values(
-        user_id=subscription.user_id,
-        period_start=subscription.current_period_start,
-        period_end=subscription.current_period_end,
-    )
-    stmt = stmt.on_conflict_do_nothing(index_elements=["user_id", "period_start"])
-    result = await db.exec(stmt)
-    if result.rowcount > 0:
-        logger.info(f"Created new usage period for subscription {subscription_id}")
 
     await db.commit()
 
 
 async def _handle_invoice_failed(invoice: stripe.Invoice, db: DbSession) -> None:
     subscription_id = _get_invoice_subscription_id(invoice)
+
+    log = logger.bind(invoice_id=invoice.id, billing_reason=invoice.billing_reason)
+
     if not subscription_id:
         if invoice.billing_reason and "subscription" in invoice.billing_reason:
-            # Subscription invoice but can't extract ID - API may have changed
-            logger.error(
-                f"Invoice {invoice.id} failed with billing_reason={invoice.billing_reason} "
-                f"but couldn't extract subscription_id - possible API change"
-            )
+            log.error("Subscription invoice failed but couldn't extract subscription_id, possible API change")
         else:
-            # One-time invoice (manual, credit pack, etc.) - not handled yet
-            logger.info(
-                f"Invoice {invoice.id} failed (billing_reason={invoice.billing_reason}) - not subscription-related"
-            )
+            log.info("Non-subscription invoice failed")
         return
+
+    log = log.bind(stripe_sub_id=subscription_id)
 
     result = await db.exec(select(UserSubscription).where(UserSubscription.stripe_subscription_id == subscription_id))
     subscription = result.first()
     if not subscription:
-        logger.error(
-            f"Invoice {invoice.id} failed for subscription {subscription_id} but subscription not found in DB "
-            f"- user may retain access despite failed payment"
-        )
+        log.error("Invoice failed but subscription not in DB, user may retain access")
         return
 
     subscription.status = SubscriptionStatus.past_due
     subscription.updated = datetime.now(tz=dt.UTC)
     await db.commit()
-    logger.info(f"Marked subscription {subscription_id} as past_due due to failed payment")
+    log.bind(user_id=subscription.user_id).info("Subscription marked past_due")
