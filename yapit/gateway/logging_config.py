@@ -76,14 +76,12 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
     request_id = getattr(request.state, "request_id", None)
     user_id = getattr(request.state, "user_id", None)
 
-    context_parts = [f"{request.method} {request.url.path}"]
-    if request_id:
-        context_parts.append(f"request_id={request_id}")
-    if user_id:
-        context_parts.append(f"user_id={user_id}")
-
-    context = " ".join(context_parts)
-    logger.exception(f"Unhandled exception on {context}: {exc}")
+    logger.bind(
+        request_id=request_id,
+        user_id=user_id,
+        method=request.method,
+        path=request.url.path,
+    ).exception(f"Unhandled exception: {exc}")
 
     await log_error(
         f"Unhandled 500: {exc}",

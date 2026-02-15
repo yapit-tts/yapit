@@ -82,6 +82,7 @@ async def tts_websocket(
     cache: Cache = app.state.audio_cache
 
     await ws.accept()
+    ws_log = logger.bind(user_id=user.id)
     connect_time = time.time()
     await log_event("ws_connect", user_id=user.id)
 
@@ -117,13 +118,13 @@ async def tts_websocket(
                     await ws.send_json({"type": "error", "error": f"Unknown message type: {msg_type}"})
 
             except ValidationError as e:
-                logger.error(f"WS validation error from user {user.id}: {e}")
+                ws_log.error(f"WS validation error: {e}")
                 await ws.send_json({"type": "error", "error": str(e)})
             except json.JSONDecodeError:
-                logger.error(f"WS invalid JSON from user {user.id}")
+                ws_log.error("WS invalid JSON")
                 await ws.send_json({"type": "error", "error": "Invalid JSON"})
             except Exception as e:
-                logger.exception(f"Unexpected error handling WS message from user {user.id}: {e}")
+                ws_log.exception(f"Unexpected error handling WS message: {e}")
                 await log_error(f"WS message handling error: {e}", user_id=user.id)
                 try:
                     await ws.send_json({"type": "error", "error": "Internal server error"})
@@ -133,7 +134,7 @@ async def tts_websocket(
     except WebSocketDisconnect:
         session_duration_ms = int((time.time() - connect_time) * 1000)
         await log_event("ws_disconnect", user_id=user.id, data={"session_duration_ms": session_duration_ms})
-        logger.info(f"WebSocket disconnected for user {user.id} after {session_duration_ms}ms")
+        ws_log.info(f"WebSocket disconnected after {session_duration_ms}ms")
     finally:
         if pubsub_task is not None:
             pubsub_task.cancel()
@@ -198,7 +199,7 @@ async def _handle_synthesize(
         for idx in msg.block_indices:
             block = block_map.get(idx)
             if not block:
-                logger.warning(f"Block {idx} not found in document {msg.document_id}")
+                logger.bind(user_id=user.id, document_id=str(msg.document_id)).warning(f"Block {idx} not found")
                 await ws.send_json(
                     WSBlockStatus(
                         document_id=msg.document_id,
@@ -238,7 +239,9 @@ async def _handle_synthesize(
                     ).model_dump(mode="json")
                 )
             except Exception as e:
-                logger.exception(f"Failed to process block {idx}: {e}")
+                logger.bind(user_id=user.id, document_id=str(msg.document_id)).exception(
+                    f"Failed to process block {idx}: {e}"
+                )
                 await log_error(f"Block processing error: {e}", user_id=user.id, block_idx=idx)
                 await ws.send_json(
                     WSBlockStatus(

@@ -853,6 +853,7 @@ async def _run_extraction(
     ratelimit_key: str,
 ) -> None:
     """Background task: extract document, create in DB, store result in Redis."""
+    ext_log = logger.bind(extraction_id=extraction_id, user_id=user_id, content_hash=content_hash)
     result_key = _async_extraction_key(extraction_id)
 
     cancel_key = f"extraction:cancel:{extraction_id}"
@@ -860,7 +861,7 @@ async def _run_extraction(
     method = "ai" if ai_transform else "free"
     if arxiv_id:
         method = "markxiv"
-    logger.info(f"Extraction {extraction_id} starting: {method}, {total_pages} pages, hash={content_hash[:12]}")
+    ext_log.info(f"Extraction starting: {method}, {total_pages} pages")
 
     try:
         async for db in create_session(settings):
@@ -892,7 +893,7 @@ async def _run_extraction(
                     config = pdf.config
                     extractor = pdf.extract(content, pages)
 
-                logger.info(f"Extraction {extraction_id}: starting process_with_billing")
+                ext_log.info("Starting process_with_billing")
                 extraction_result = await process_with_billing(
                     config=config,
                     extractor=extractor,
@@ -909,13 +910,13 @@ async def _run_extraction(
                     file_size=file_size,
                     pages=pages,
                 )
-                logger.info(
-                    f"Extraction {extraction_id}: extraction done, "
-                    f"{len(extraction_result.pages)} pages, {len(extraction_result.failed_pages)} failed"
+                ext_log.info(
+                    f"Extraction done, {len(extraction_result.pages)} pages, "
+                    f"{len(extraction_result.failed_pages)} failed"
                 )
 
             if await redis.exists(cancel_key):
-                logger.info(f"Extraction {extraction_id} cancelled, skipping document creation")
+                ext_log.info("Extraction cancelled, skipping document creation")
                 return
 
             if not extraction_result.pages:
@@ -926,11 +927,11 @@ async def _run_extraction(
                 )
                 return
 
-            logger.info(f"Extraction {extraction_id}: building structured document")
+            ext_log.info("Building structured document")
             processed = await asyncio.get_running_loop().run_in_executor(
                 cpu_executor, process_pages_to_document, extraction_result.pages, settings
             )
-            logger.info(f"Extraction {extraction_id}: creating document in DB")
+            ext_log.info("Creating document in DB")
             doc = await create_document_with_blocks(
                 db=db,
                 user_id=user_id,
@@ -957,7 +958,7 @@ async def _run_extraction(
             )
             break  # create_session is an async generator; only need one session
     except Exception as e:
-        logger.exception(f"Async extraction failed for {content_hash}")
+        ext_log.exception("Async extraction failed")
         await log_error(f"Async extraction failed: {e}", content_hash=content_hash, user_id=user_id)
         try:
             await redis.set(
@@ -966,7 +967,7 @@ async def _run_extraction(
                 ex=ASYNC_EXTRACTION_RESULT_TTL,
             )
         except Exception:
-            logger.exception(f"Failed to store extraction error for {content_hash}")
+            ext_log.exception("Failed to store extraction error")
     finally:
         await redis.decr(ratelimit_key)
         # Safety net: release precheck reservation regardless of outcome.

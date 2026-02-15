@@ -257,9 +257,8 @@ def _consume_from_tiers(
             if remaining > 0:
                 subscription.rollover_tokens -= remaining
                 breakdown["overflow_to_debt"] = remaining
-                logger.warning(
-                    f"User {subscription.user_id} rollover_tokens went to debt: "
-                    f"{subscription.rollover_tokens} (overflow {remaining})"
+                logger.bind(user_id=subscription.user_id, usage_type="ocr_tokens").warning(
+                    f"rollover_tokens went to debt: {subscription.rollover_tokens} (overflow {remaining})"
                 )
 
         case UsageType.premium_voice:
@@ -278,9 +277,8 @@ def _consume_from_tiers(
             if remaining > 0:
                 subscription.rollover_voice_chars -= remaining
                 breakdown["overflow_to_debt"] = remaining
-                logger.warning(
-                    f"User {subscription.user_id} rollover_voice_chars went to debt: "
-                    f"{subscription.rollover_voice_chars} (overflow {remaining})"
+                logger.bind(user_id=subscription.user_id, usage_type="premium_voice").warning(
+                    f"rollover_voice_chars went to debt: {subscription.rollover_voice_chars} (overflow {remaining})"
                 )
 
     return breakdown

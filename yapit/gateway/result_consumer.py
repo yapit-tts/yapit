@@ -53,13 +53,21 @@ async def run_result_consumer(redis: Redis, cache: Cache, settings: Settings) ->
 
 
 async def _process_result(redis: Redis, cache: Cache, result: WorkerResult, settings: Settings) -> None:
+    result_log = logger.bind(
+        variant_hash=result.variant_hash,
+        user_id=result.user_id,
+        model_slug=result.model_slug,
+        voice_slug=result.voice_slug,
+        job_id=str(result.job_id),
+        worker_id=result.worker_id,
+    )
     try:
         if result.error:
             await _handle_error(redis, result, settings)
         else:
             await _handle_success(redis, cache, result, settings)
     except Exception as e:
-        logger.exception(f"Error processing result for variant {result.variant_hash}: {e}")
+        result_log.exception(f"Error processing result: {e}")
         await log_error(
             f"Result processing failed for variant {result.variant_hash}: {e}",
             variant_hash=result.variant_hash,
@@ -79,17 +87,25 @@ async def _handle_success(
     result: WorkerResult,
     settings: Settings,
 ) -> None:
+    log = logger.bind(
+        variant_hash=result.variant_hash,
+        user_id=result.user_id,
+        model_slug=result.model_slug,
+        voice_slug=result.voice_slug,
+        job_id=str(result.job_id),
+        worker_id=result.worker_id,
+    )
     # Atomically claim this result - prevents double-processing if job was requeued
     # and both workers completed. First to delete wins, others skip.
     inflight_key = TTS_INFLIGHT.format(hash=result.variant_hash)
     if await redis.delete(inflight_key) == 0:
-        logger.info(f"Variant {result.variant_hash} already finalized, skipping duplicate result")
+        log.info("Variant already finalized, skipping duplicate result")
         return
 
     finalize_start = time.time()
 
     if not result.audio_base64:
-        logger.info(f"Empty audio for variant {result.variant_hash}, marking as skipped")
+        log.info("Empty audio, marking as skipped")
         await _notify_subscribers(redis, result, status="skipped")
         return
 
@@ -150,10 +166,18 @@ async def _handle_success(
 
 
 async def _handle_error(redis: Redis, result: WorkerResult, settings: Settings) -> None:
+    log = logger.bind(
+        variant_hash=result.variant_hash,
+        user_id=result.user_id,
+        model_slug=result.model_slug,
+        voice_slug=result.voice_slug,
+        job_id=str(result.job_id),
+        worker_id=result.worker_id,
+    )
     # Atomically claim this result - same dedup logic as _handle_success
     inflight_key = TTS_INFLIGHT.format(hash=result.variant_hash)
     if await redis.delete(inflight_key) == 0:
-        logger.info(f"Variant {result.variant_hash} already finalized, skipping duplicate error result")
+        log.info("Variant already finalized, skipping duplicate error result")
         return
 
     await log_event(
@@ -187,7 +211,12 @@ async def _notify_subscribers(
     for entry in subscribers:
         parts = entry.decode().split(":")
         if len(parts) != 3:
-            logger.error(f"Invalid subscriber entry format: {entry}")
+            logger.bind(
+                variant_hash=result.variant_hash,
+                user_id=result.user_id,
+                model_slug=result.model_slug,
+                voice_slug=result.voice_slug,
+            ).error(f"Invalid subscriber entry format: {entry}")
             continue
 
         user_id, doc_id_str, block_idx_str = parts

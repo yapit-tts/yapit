@@ -82,7 +82,8 @@ async def warm_texts(
     document_id: uuid.UUID,
     stats: WarmingStats,
 ) -> None:
-    for voice in voices:
+    for vi, voice in enumerate(voices, 1):
+        voice_cached = voice_synthesized = voice_failed = 0
         for idx, text in enumerate(texts):
             async for db in create_session(settings):
                 result = await synthesize_and_wait(
@@ -103,13 +104,21 @@ async def warm_texts(
 
             if isinstance(result, CachedResult):
                 stats.cached += 1
+                voice_cached += 1
             elif isinstance(result, QueuedResult):
                 stats.synthesized += 1
+                voice_synthesized += 1
             else:
                 stats.failed += 1
-                logger.warning(f"Failed {model.slug}/{voice.slug}[{idx}]: {result.error}")
+                voice_failed += 1
+                logger.bind(model_slug=model.slug, voice_slug=voice.slug, block_idx=idx).warning(
+                    f"Warming failed: {result.error}"
+                )
 
-        logger.info(f"  {voice.slug}: done")
+        logger.info(
+            f"  {voice.slug} ({vi}/{len(voices)}): "
+            f"{voice_synthesized} synthesized, {voice_cached} cached, {voice_failed} failed"
+        )
 
 
 async def run_warming(cache: Cache, redis_client: Redis, settings: Settings) -> WarmingStats:

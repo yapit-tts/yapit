@@ -58,7 +58,7 @@ class InworldAdapter(SynthAdapter):
                     delay = min(BASE_DELAY_SECONDS * (2**attempt), MAX_DELAY_SECONDS)
                     jitter = random.uniform(0, delay * 0.5)
                     wait_time = delay + jitter
-                    logger.warning(
+                    logger.bind(model_id=self._model_id, voice_id=voice_id).warning(
                         f"Inworld API error {e.response.status_code}, "
                         f"attempt {attempt + 1}/{MAX_RETRIES}, retrying in {wait_time:.1f}s"
                     )
@@ -70,7 +70,7 @@ class InworldAdapter(SynthAdapter):
                     delay = min(BASE_DELAY_SECONDS * (2**attempt), MAX_DELAY_SECONDS)
                     jitter = random.uniform(0, delay * 0.5)
                     wait_time = delay + jitter
-                    logger.warning(
+                    logger.bind(model_id=self._model_id, voice_id=voice_id).warning(
                         f"Inworld connection error: {e}, "
                         f"attempt {attempt + 1}/{MAX_RETRIES}, retrying in {wait_time:.1f}s"
                     )

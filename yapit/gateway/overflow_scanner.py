@@ -91,7 +91,8 @@ async def run_overflow_scanner(
         name=name,
     )
 
-    logger.info(f"{name} scanner starting (queue={queue_name}, threshold={overflow_threshold_s}s)")
+    scanner_log = logger.bind(queue_type=queue_type, model_slug=model_slug, worker_id=ctx.worker_id)
+    scanner_log.info(f"{name} scanner starting (queue={queue_name}, threshold={overflow_threshold_s}s)")
 
     try:
         while True:
@@ -102,7 +103,7 @@ async def run_overflow_scanner(
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                logger.exception(f"Error in {name} scanner: {e}")
+                scanner_log.exception(f"Error in {name} scanner: {e}")
                 await log_error(f"Overflow scanner {name} loop error: {e}")
                 await asyncio.sleep(scan_interval_s)
     finally:
@@ -144,7 +145,9 @@ async def _claim_and_submit(
         age = time.time() - queued_score
         queue_wait_ms = int(age * 1000)
 
-        logger.info(f"{ctx.name}: job {job_id} stale for {age:.1f}s, sending to RunPod")
+        logger.bind(queue_type=ctx.queue_type, model_slug=ctx.model_slug, job_id=job_id).info(
+            f"{ctx.name}: job stale for {age:.1f}s, sending to RunPod"
+        )
         await log_event(
             "job_overflow",
             queue_type=ctx.queue_type,
@@ -167,7 +170,9 @@ async def _claim_and_submit(
                 )
             )
         except Exception as e:
-            logger.exception(f"{ctx.name}: failed to submit job {job_id} to RunPod: {e}")
+            logger.bind(queue_type=ctx.queue_type, model_slug=ctx.model_slug, job_id=job_id).exception(
+                f"{ctx.name}: failed to submit to RunPod: {e}"
+            )
             await _handle_failure(
                 redis, job_id, raw_job, retry_count, queue_wait_ms, 0, f"RunPod submission failed: {e}", ctx
             )
@@ -185,7 +190,9 @@ async def _poll_outstanding(
         try:
             status = await oj.handle.status()
         except Exception as e:
-            logger.exception(f"{ctx.name}: status check failed for job {oj.job_id}: {e}")
+            logger.bind(queue_type=ctx.queue_type, model_slug=ctx.model_slug, job_id=oj.job_id).exception(
+                f"{ctx.name}: status check failed: {e}"
+            )
             processing_time_ms = int((time.time() - oj.submitted_at) * 1000)
             await _handle_failure(
                 redis,
@@ -203,7 +210,9 @@ async def _poll_outstanding(
             try:
                 output = await oj.handle.output()
             except Exception as e:
-                logger.exception(f"{ctx.name}: output fetch failed for job {oj.job_id}: {e}")
+                logger.bind(queue_type=ctx.queue_type, model_slug=ctx.model_slug, job_id=oj.job_id).exception(
+                    f"{ctx.name}: output fetch failed: {e}"
+                )
                 processing_time_ms = int((time.time() - oj.submitted_at) * 1000)
                 await _handle_failure(
                     redis,
@@ -273,7 +282,9 @@ async def _handle_completed(
     ctx: ScannerContext,
 ) -> None:
     processing_time_ms = int((time.time() - oj.submitted_at) * 1000)
-    logger.info(f"{ctx.name}: job {oj.job_id} completed in {processing_time_ms}ms")
+    logger.bind(queue_type=ctx.queue_type, model_slug=ctx.model_slug, job_id=oj.job_id).info(
+        f"{ctx.name}: job completed in {processing_time_ms}ms"
+    )
 
     await log_event(
         "overflow_complete",
@@ -303,7 +314,9 @@ async def _handle_failure(
     error: str,
     ctx: ScannerContext,
 ) -> None:
-    logger.warning(f"{ctx.name}: job {job_id} failed (retry {retry_count}/{ctx.max_retries}): {error}")
+    logger.bind(queue_type=ctx.queue_type, model_slug=ctx.model_slug, job_id=job_id).warning(
+        f"{ctx.name}: job failed (retry {retry_count}/{ctx.max_retries}): {error}"
+    )
 
     await log_event(
         "overflow_error",

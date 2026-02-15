@@ -90,12 +90,13 @@ async def _check_processing_set(
         raw_job = entry["job"].encode()
         queue_name = entry["queue_name"]
         dlq_key = entry["dlq_key"]
+        queue_type, model_slug = parse_queue_name(queue_name)
 
-        logger.warning(f"Job {job_id} stuck for {age:.1f}s, retry_count={retry_count}")
+        logger.bind(job_id=job_id, queue_type=queue_type, model_slug=model_slug).warning(
+            f"Job stuck for {age:.1f}s, retry_count={retry_count}"
+        )
 
         await redis.hdel(processing_key, job_id_bytes)
-
-        queue_type, model_slug = parse_queue_name(queue_name)
 
         if retry_count >= max_retries:
             await move_to_dlq(redis, dlq_key, job_id, raw_job, retry_count)

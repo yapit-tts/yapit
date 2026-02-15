@@ -255,5 +255,11 @@ async def synthesize_and_wait(
         await asyncio.sleep(poll_interval)
         elapsed += poll_interval
 
-    logger.warning(f"Synthesis timed out for {model.slug}/{voice.slug} after {timeout_seconds}s")
+    logger.bind(
+        user_id=user_id,
+        model_slug=model.slug,
+        voice_slug=voice.slug,
+        variant_hash=variant_hash,
+        document_id=str(document_id),
+    ).warning(f"Synthesis timed out after {timeout_seconds}s")
     return ErrorResult(error="Synthesis timed out")

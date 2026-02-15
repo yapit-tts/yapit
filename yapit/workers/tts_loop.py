@@ -47,6 +47,14 @@ async def run_tts_worker(redis_url: str, model: str, adapter: SynthAdapter, work
                 continue
 
             job = SynthesisJob.model_validate_json(pulled.raw_job)
+            job_log = logger.bind(
+                job_id=str(job.job_id),
+                user_id=job.user_id,
+                model_slug=job.model_slug,
+                voice_slug=job.voice_slug,
+                variant_hash=job.variant_hash,
+                worker_id=worker_id,
+            )
             start_time = time.time()
             queue_wait_ms = int((start_time - pulled.queued_at) * 1000)
 
@@ -74,14 +82,14 @@ async def run_tts_worker(redis_url: str, model: str, adapter: SynthAdapter, work
                     audio_base64=base64.b64encode(synth_result.audio).decode("ascii"),
                     duration_ms=synth_result.duration_ms,
                 )
-                logger.info(
-                    f"Job {job.job_id} completed: {processing_time_ms}ms processing, "
+                job_log.info(
+                    f"Job completed: {processing_time_ms}ms processing, "
                     f"{synth_result.duration_ms}ms audio, {len(synth_result.audio)} bytes"
                 )
 
             except Exception as e:
                 processing_time_ms = int((time.time() - start_time) * 1000)
-                logger.exception(f"Job {job.job_id} failed: {e}")
+                job_log.exception(f"Job failed: {e}")
 
                 worker_result = WorkerResult(
                     job_id=job.job_id,
@@ -135,6 +143,14 @@ async def run_api_tts_dispatcher(redis_url: str, model: str, adapter: SynthAdapt
 
     async def process_job(job_id: str, raw_job: bytes, queued_at: float) -> None:
         job = SynthesisJob.model_validate_json(raw_job)
+        job_log = logger.bind(
+            job_id=str(job.job_id),
+            user_id=job.user_id,
+            model_slug=job.model_slug,
+            voice_slug=job.voice_slug,
+            variant_hash=job.variant_hash,
+            worker_id=worker_id,
+        )
         start_time = time.time()
         queue_wait_ms = int((start_time - queued_at) * 1000)
 
@@ -158,14 +174,14 @@ async def run_api_tts_dispatcher(redis_url: str, model: str, adapter: SynthAdapt
                 audio_base64=base64.b64encode(synth_result.audio).decode("ascii"),
                 duration_ms=synth_result.duration_ms,
             )
-            logger.info(
-                f"Job {job.job_id} completed: {processing_time_ms}ms processing, "
+            job_log.info(
+                f"Job completed: {processing_time_ms}ms processing, "
                 f"{synth_result.duration_ms}ms audio, {len(synth_result.audio)} bytes"
             )
 
         except Exception as e:
             processing_time_ms = int((time.time() - start_time) * 1000)
-            logger.exception(f"Job {job.job_id} failed: {e}")
+            job_log.exception(f"Job failed: {e}")
 
             worker_result = WorkerResult(
                 job_id=job.job_id,
