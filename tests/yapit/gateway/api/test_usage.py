@@ -382,3 +382,164 @@ class TestDebtAccumulation:
 
         # Total debt = 3K + 2K = 5K
         assert subscribed_user["subscription"].rollover_tokens == -5_000
+
+
+class TestFreeUserLimits:
+    """US-001: Free users (no subscription) get limit=0 for paid features."""
+
+    @pytest.mark.asyncio
+    async def test_free_user_blocked_on_paid_feature(self, session):
+        """Free user requesting OCR tokens → UsageLimitExceededError."""
+        # "user-free-no-sub" has no UserSubscription row
+        with pytest.raises(UsageLimitExceededError):
+            await check_usage_limit(
+                user_id="user-free-no-sub",
+                usage_type=UsageType.ocr_tokens,
+                amount=1,
+                db=session,
+            )
+
+    @pytest.mark.asyncio
+    async def test_free_user_blocked_on_premium_voice(self, session):
+        """Free user requesting premium voice chars → UsageLimitExceededError."""
+        with pytest.raises(UsageLimitExceededError):
+            await check_usage_limit(
+                user_id="user-free-no-sub",
+                usage_type=UsageType.premium_voice,
+                amount=1,
+                db=session,
+            )
+
+    @pytest.mark.asyncio
+    async def test_billing_disabled_bypasses_limits(self, session):
+        """When billing is disabled (self-hosting), all limits are bypassed."""
+        # Should not raise even for free user
+        await check_usage_limit(
+            user_id="user-free-no-sub",
+            usage_type=UsageType.ocr_tokens,
+            amount=999_999,
+            db=session,
+            billing_enabled=False,
+        )
+
+
+class TestPendingReservations:
+    """US-003: Redis pending reservations reduce available balance."""
+
+    @pytest.mark.asyncio
+    async def test_pending_reservations_reduce_available(self, session, subscribed_user, app):
+        """In-flight reservations are subtracted from available balance."""
+        from redis.asyncio import Redis
+
+        user_id = subscribed_user["user_id"]
+
+        # Exhaust most of subscription + rollover, leave 10K total available
+        subscribed_user["usage_period"].ocr_tokens = 95_000  # 5K sub remaining
+        subscribed_user["subscription"].rollover_tokens = 5_000  # 5K rollover
+        subscribed_user["subscription"].purchased_tokens = 0
+        await session.commit()
+
+        # Get redis from app state
+        redis: Redis = app.state.redis_client
+
+        # Create a pending reservation for 8K tokens
+        await redis.hset(f"reservations:{user_id}", "content_hash_abc", "8000")
+
+        # Total available without reservation: 5K + 5K = 10K
+        # With reservation: 10K - 8K = 2K
+        # Request 5K should fail (5K > 2K available)
+        with pytest.raises(UsageLimitExceededError):
+            await check_usage_limit(
+                user_id=user_id,
+                usage_type=UsageType.ocr_tokens,
+                amount=5_000,
+                db=session,
+                redis=redis,
+            )
+
+        # Request 2K should succeed
+        await check_usage_limit(
+            user_id=user_id,
+            usage_type=UsageType.ocr_tokens,
+            amount=2_000,
+            db=session,
+            redis=redis,
+        )
+
+        # Clean up redis
+        await redis.delete(f"reservations:{user_id}")
+
+    @pytest.mark.asyncio
+    async def test_no_reservations_doesnt_affect_limit(self, session, subscribed_user):
+        """Without redis, reservations are not checked (backwards compat)."""
+        user_id = subscribed_user["user_id"]
+
+        # Full balance available: 100K sub + 50K rollover + 25K purchased = 175K
+        await check_usage_limit(
+            user_id=user_id,
+            usage_type=UsageType.ocr_tokens,
+            amount=170_000,
+            db=session,
+            redis=None,
+        )
+
+
+class TestUnsubscribedUsageLog:
+    """US-201: Unsubscribed users still get UsageLog entries."""
+
+    @pytest.mark.asyncio
+    async def test_record_usage_creates_audit_log_for_unsubscribed(self, session):
+        """Even without a subscription, record_usage creates an audit log."""
+        await record_usage(
+            user_id="user-unsubscribed-audit",
+            usage_type=UsageType.ocr_tokens,
+            amount=500,
+            db=session,
+            description="audit test",
+        )
+
+        log = (await session.exec(select(UsageLog).where(UsageLog.user_id == "user-unsubscribed-audit"))).first()
+        assert log is not None
+        assert log.amount == 500
+        assert log.type == UsageType.ocr_tokens
+
+
+class TestEffectivePlanFallback:
+    """US-202: get_effective_plan falls back to free for non-active statuses."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "status", [SubscriptionStatus.past_due, SubscriptionStatus.incomplete, SubscriptionStatus.canceled]
+    )
+    async def test_non_active_status_gets_free_plan(self, session, status):
+        """past_due, incomplete, canceled all fall back to free plan."""
+        from yapit.gateway.usage import FREE_PLAN, get_effective_plan
+
+        now = datetime.now(tz=dt.UTC)
+
+        seeded = (await session.exec(select(Plan).where(Plan.tier == PlanTier.plus))).first()
+        if not seeded:
+            plan = Plan(
+                tier=PlanTier.plus,
+                name="Test Plus",
+                server_kokoro_characters=None,
+                premium_voice_characters=5_000,
+                ocr_tokens=100_000,
+            )
+            session.add(plan)
+            await session.flush()
+        else:
+            plan = seeded
+
+        sub = UserSubscription(
+            user_id=f"user-fallback-{status.value}",
+            plan_id=plan.id,
+            status=status,
+            current_period_start=now - timedelta(days=30),
+            current_period_end=now,
+        )
+        session.add(sub)
+        await session.commit()
+
+        effective = await get_effective_plan(sub, session)
+        assert effective.tier == FREE_PLAN.tier
