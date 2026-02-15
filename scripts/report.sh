@@ -136,6 +136,10 @@ Yapit is a text-to-speech platform with these components:
   - `duration_ms` — handler latency. Nominal: <1s. Stripe times out at 20s.
   - `data.event_type` — which event (invoice.paid, subscription.updated, etc.)
   - `status_code=500` — handler crashed
+- `billing_sync_drift` — periodic reconciliation found local DB out of sync with Stripe
+  - `data.user_id` — affected user
+  - `data.drift` — what drifted (list of field names, or "sub_gone")
+  - Any occurrence means a webhook was missed. Occasional is expected; sustained = webhook issues.
 
 **URL/Document fetching:**
 - `url_fetch` — document URL downloads
@@ -202,6 +206,7 @@ This is the most important section. Don't just count errors — read the actual 
 | Queue wait (YOLO) | <5s | >8s |
 | Requeues | Rare/isolated | Pattern (same worker, same error) |
 | Overflow usage | Occasional spikes | Constant (capacity issue) |
+| Billing sync drift | 0 | Any (check which webhooks are being missed) |
 
 Events older than 3-7 days can be ignored unless part of a larger pattern / investigation.
 E.g. items on the DLQ from >7 days ago are almost certainly already taken care of.
@@ -212,14 +217,29 @@ Logs are JSON lines (loguru format). Key fields:
 - `.record.level.name` — ERROR, WARNING, INFO
 - `.record.name` — module path (e.g., "yapit.gateway.api.v1.documents", "uvicorn.error")
 - `.record.message` — log message
-- `.record.extra.request_id` — 8-char hex, unique per HTTP request (for correlation)
-- `.record.extra.user_id` — user ID if authenticated
 - `.record.exception` — stack trace (when present)
 
+**Structured context in `.record.extra`:**
+Fields vary by component. Discover available fields with:
+\`\`\`bash
+jq -r '[.record.extra | keys[]] | .[]' gateway.jsonl | sort | uniq -c | sort -rn
+\`\`\`
+
+Common fields:
+- `request_id` — 8-char hex, auto-added to all HTTP request logs (middleware)
+- `user_id` — present on TTS jobs, WebSocket, extraction, billing, and error logs
+- `job_id`, `variant_hash`, `model_slug`, `voice_slug`, `worker_id` — TTS pipeline logs
+- `extraction_id`, `content_hash` — document extraction logs
+- `document_id` — WebSocket and extraction logs
+- `queue_type`, `model_slug` — scanner/overflow logs
+- `method`, `path` — unhandled exception logs
+
 **Correlation strategies:**
-- If you find an error, get its request_id and pull ALL logs for that request to see the full story
-- Group errors by user_id to identify user-specific issues
-- Library logs (uvicorn, sqlalchemy, httpx) now appear — check for their warnings too
+- HTTP requests: correlate by `request_id` to see full request timeline
+- TTS jobs: correlate by `job_id` or `variant_hash` across tts_loop → result_consumer
+- Extractions: correlate by `extraction_id` across the full extraction lifecycle
+- User issues: filter by `user_id` across all components
+- Cache warming: filter by `user_id == "cache-warmer"`
 
 **Useful jq patterns:**
 \`\`\`bash
@@ -229,19 +249,31 @@ jq 'select(.record.level.name == "ERROR")' gateway.jsonl
 # All warnings
 jq 'select(.record.level.name == "WARNING")' gateway.jsonl
 
-# Correlate by request_id (get full request timeline)
+# Correlate by request_id (full HTTP request timeline)
 jq 'select(.record.extra.request_id == "a1b2c3d4")' gateway.jsonl
 
-# Errors for specific user
-jq 'select(.record.level.name == "ERROR" and .record.extra.user_id == "user_123")' gateway.jsonl
+# All logs for a specific user
+jq 'select(.record.extra.user_id == "user_123")' gateway.jsonl
+
+# TTS job lifecycle (queue → worker → result)
+jq 'select(.record.extra.variant_hash == "abc...")' gateway.jsonl
+
+# Extraction lifecycle
+jq 'select(.record.extra.extraction_id == "xyz")' gateway.jsonl
+
+# Cache warming activity (pre-synthesizes voice previews so they're free and instant for users)
+jq 'select(.record.extra.user_id == "cache-warmer")' gateway.jsonl
 
 # Library warnings (uvicorn, sqlalchemy, etc.)
 jq 'select(.record.level.name == "WARNING" and (.record.name | startswith("yapit") | not))' gateway.jsonl
+
+# Discover which structured fields exist and how often (run this first when investigating)
+jq -r '[.record.extra | keys[]] | .[]' gateway.jsonl | sort | uniq -c | sort -rn
 \`\`\`
 
 **Investigation workflow:**
 1. Start with ERROR/WARNING counts and patterns
-2. For suspicious errors, correlate by request_id to see full context
+2. For suspicious errors, correlate by request_id or job_id to see full context
 3. If patterns emerge by user_id, check if user-specific (bad input? specific document?)
 4. Check INFO logs around the error time for additional context
 

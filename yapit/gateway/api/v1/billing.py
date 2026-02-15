@@ -13,6 +13,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlmodel import col, select
 from stripe.params.checkout._session_create_params import SessionCreateParams
 
+from yapit.gateway.billing_sync import sync_subscription
 from yapit.gateway.deps import AuthenticatedUser, DbSession, SettingsDep, StripeClient
 from yapit.gateway.domain_models import (
     BillingInterval,
@@ -21,6 +22,7 @@ from yapit.gateway.domain_models import (
     SubscriptionStatus,
     UsagePeriod,
     UserSubscription,
+    tier_rank,
 )
 from yapit.gateway.metrics import log_event
 from yapit.gateway.usage import (
@@ -30,17 +32,6 @@ from yapit.gateway.usage import (
 )
 
 router = APIRouter(prefix="/v1/billing", tags=["Billing"])
-
-TIER_RANK: dict[PlanTier, int] = {
-    PlanTier.free: 0,
-    PlanTier.basic: 1,
-    PlanTier.plus: 2,
-    PlanTier.max: 3,
-}
-
-
-def _rank(tier: PlanTier | None) -> int:
-    return TIER_RANK.get(tier, 0) if tier else 0
 
 
 def _calculate_rollover(limit: int, used: int, current_rollover: int, cap: int) -> tuple[int, int]:
@@ -65,19 +56,6 @@ def _get_validated_origin(request: Request, allowed_origins: list[str]) -> str:
     if "*" not in allowed and origin not in allowed:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Origin not allowed")
     return origin
-
-
-def _map_stripe_status(stripe_status: str) -> SubscriptionStatus:
-    mapping = {
-        "active": SubscriptionStatus.active,
-        "trialing": SubscriptionStatus.trialing,
-        "past_due": SubscriptionStatus.past_due,
-        "canceled": SubscriptionStatus.canceled,
-        "incomplete": SubscriptionStatus.incomplete,
-        "incomplete_expired": SubscriptionStatus.canceled,
-        "unpaid": SubscriptionStatus.past_due,
-    }
-    return mapping.get(stripe_status, SubscriptionStatus.incomplete)
 
 
 class PlanResponse(BaseModel):
@@ -158,6 +136,18 @@ async def create_subscription_checkout(
         )
 
     existing_sub = await get_user_subscription(user.id, db)
+
+    # Reconcile with Stripe before gating — local state may be stale in either direction
+    if existing_sub and existing_sub.stripe_subscription_id:
+        try:
+            await sync_subscription(existing_sub, client, db)
+        except Exception:
+            logger.bind(user_id=user.id).exception("Billing sync failed during subscribe gate")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Unable to verify subscription status. Please try again.",
+            )
+
     if existing_sub and existing_sub.status != SubscriptionStatus.canceled:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -167,7 +157,7 @@ async def create_subscription_checkout(
     origin = _get_validated_origin(http_request, settings.cors_origins)
 
     # Trial eligibility: only if user hasn't experienced this tier or higher
-    trial_eligible = not existing_sub or _rank(existing_sub.highest_tier_subscribed) < _rank(request.tier)
+    trial_eligible = not existing_sub or tier_rank(existing_sub.highest_tier_subscribed) < tier_rank(request.tier)
     if not trial_eligible and existing_sub:
         logger.bind(user_id=user.id, tier=request.tier, highest=existing_sub.highest_tier_subscribed).info(
             "Trial not eligible"
@@ -363,7 +353,7 @@ async def _handle_checkout_completed(
     cancel_at = datetime.fromtimestamp(stripe_sub.cancel_at, tz=dt.UTC) if stripe_sub.cancel_at else None
     now = datetime.now(tz=dt.UTC)
 
-    sub_status = _map_stripe_status(stripe_sub.status)
+    sub_status = SubscriptionStatus.from_stripe(stripe_sub.status)
     is_paid = sub_status == SubscriptionStatus.active
 
     # Atomic upsert prevents race with subscription.created/updated webhooks
@@ -458,7 +448,7 @@ async def _handle_subscription_updated(stripe_sub: stripe.Subscription, db: DbSe
             log.bind(price_id=price_id).error("Subscription not in DB and price not found")
             return
 
-        sub_status = _map_stripe_status(stripe_sub.status)
+        sub_status = SubscriptionStatus.from_stripe(stripe_sub.status)
         canceled_at_val = datetime.fromtimestamp(stripe_sub.canceled_at, tz=dt.UTC) if stripe_sub.canceled_at else None
         stmt = pg_insert(UserSubscription).values(
             user_id=user_id,
@@ -502,7 +492,7 @@ async def _handle_subscription_updated(stripe_sub: stripe.Subscription, db: DbSe
 
     # Row exists and matches — apply updates with grace period logic
     old_status = subscription.status
-    new_status = _map_stripe_status(stripe_sub.status)
+    new_status = SubscriptionStatus.from_stripe(stripe_sub.status)
 
     subscription.status = new_status
     subscription.current_period_start = period_start
@@ -520,14 +510,14 @@ async def _handle_subscription_updated(stripe_sub: stripe.Subscription, db: DbSe
         new_plan = plan_result.first()
         if new_plan and new_plan.id and new_plan.id != subscription.plan_id:
             old_tier = subscription.plan.tier
-            is_downgrade = _rank(new_plan.tier) < _rank(old_tier)
-            is_upgrade = _rank(new_plan.tier) > _rank(old_tier)
+            is_downgrade = tier_rank(new_plan.tier) < tier_rank(old_tier)
+            is_upgrade = tier_rank(new_plan.tier) > tier_rank(old_tier)
 
             # Downgrade: set grace period (user keeps higher-tier access until period end)
             # Skip grace if downgrading from trial (user never paid for higher tier)
             if is_downgrade and old_status != SubscriptionStatus.trialing:
                 # Preserve existing grace tier if it's higher (Max→Plus→Basic keeps Max grace)
-                if _rank(old_tier) > _rank(subscription.grace_tier):
+                if tier_rank(old_tier) > tier_rank(subscription.grace_tier):
                     subscription.grace_tier = old_tier
                 subscription.grace_until = subscription.current_period_end
                 log.bind(old_tier=old_tier, new_tier=new_plan.tier, grace_until=str(subscription.grace_until)).info(
@@ -535,13 +525,17 @@ async def _handle_subscription_updated(stripe_sub: stripe.Subscription, db: DbSe
                 )
             elif is_downgrade:
                 log.bind(old_tier=old_tier, new_tier=new_plan.tier).info("Downgrade from trial, no grace")
-            elif is_upgrade and subscription.grace_tier and _rank(new_plan.tier) >= _rank(subscription.grace_tier):
+            elif (
+                is_upgrade
+                and subscription.grace_tier
+                and tier_rank(new_plan.tier) >= tier_rank(subscription.grace_tier)
+            ):
                 subscription.grace_tier = None
                 subscription.grace_until = None
                 log.info("Upgrade cleared grace period")
 
             subscription.plan_id = new_plan.id
-            if _rank(new_plan.tier) > _rank(subscription.highest_tier_subscribed):
+            if tier_rank(new_plan.tier) > tier_rank(subscription.highest_tier_subscribed):
                 subscription.highest_tier_subscribed = new_plan.tier
             log.bind(old_tier=old_tier, new_tier=new_plan.tier).info("Plan changed")
 

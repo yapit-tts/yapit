@@ -213,6 +213,36 @@ class SubscriptionStatus(StrEnum):
     canceled = auto()
     incomplete = auto()
 
+    @staticmethod
+    def from_stripe(stripe_status: str) -> "SubscriptionStatus":
+        status = _STRIPE_STATUS_MAP.get(stripe_status)
+        if status is None:
+            raise ValueError(f"Unknown Stripe subscription status: {stripe_status!r}")
+        return status
+
+
+_STRIPE_STATUS_MAP: dict[str, SubscriptionStatus] = {
+    "active": SubscriptionStatus.active,
+    "trialing": SubscriptionStatus.trialing,
+    "past_due": SubscriptionStatus.past_due,
+    "canceled": SubscriptionStatus.canceled,
+    "incomplete": SubscriptionStatus.incomplete,
+    "incomplete_expired": SubscriptionStatus.canceled,
+    "unpaid": SubscriptionStatus.past_due,
+}
+
+
+TIER_RANK: dict[PlanTier, int] = {
+    PlanTier.free: 0,
+    PlanTier.basic: 1,
+    PlanTier.plus: 2,
+    PlanTier.max: 3,
+}
+
+
+def tier_rank(tier: PlanTier | None) -> int:
+    return TIER_RANK.get(tier, 0) if tier else 0
+
 
 class UserSubscription(SQLModel, table=True):
     """User's active subscription."""

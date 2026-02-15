@@ -27,6 +27,7 @@ from yapit.contracts import (
     get_queue_name,
 )
 from yapit.gateway.api.v1 import routers as v1_routers
+from yapit.gateway.billing_sync import run_billing_sync_loop
 from yapit.gateway.cache import Cache
 from yapit.gateway.config import Settings, get_settings
 from yapit.gateway.db import close_db, create_session, prepare_database
@@ -193,6 +194,8 @@ async def lifespan(app: FastAPI):
     background_tasks.append(
         asyncio.create_task(_cache_warming_task(app.state.audio_cache, app.state.redis_client, settings))
     )
+
+    background_tasks.append(asyncio.create_task(run_billing_sync_loop(settings, app.state.redis_client)))
 
     # Batch extraction poller
     batch_poller = None
