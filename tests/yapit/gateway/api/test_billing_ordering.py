@@ -125,10 +125,11 @@ async def test_duplicate_checkout_completed_no_duplicate_records(session):
 
 
 @pytest.mark.asyncio
-async def test_duplicate_invoice_paid_no_duplicate_periods(session):
-    """OR-202: Replaying invoice.payment_succeeded doesn't create duplicate usage periods.
+async def test_duplicate_invoice_paid_idempotent_rollover(session):
+    """OR-202: Replaying invoice.payment_succeeded doesn't double-count rollover.
 
-    UsagePeriod has UniqueConstraint on (user_id, period_start), and we use ON CONFLICT DO NOTHING.
+    The handler is called twice with the same subscription_cycle invoice.
+    The second call should produce the same end state as the first.
     """
     now = datetime.now(tz=dt.UTC).replace(microsecond=0)
     old_start = now - timedelta(days=30)
@@ -157,7 +158,7 @@ async def test_duplicate_invoice_paid_no_duplicate_periods(session):
             user_id="user-dup-invoice",
             period_start=old_start,
             period_end=now,
-            ocr_tokens=5_000,
+            ocr_tokens=40_000,
         )
     )
     await session.commit()
@@ -169,15 +170,23 @@ async def test_duplicate_invoice_paid_no_duplicate_periods(session):
         period_end=now + timedelta(days=30),
     )
 
-    # Fire twice
-    await billing_api._handle_invoice_paid(invoice, session)
+    # First call — sets rollover from 40K used of 100K limit → 60K rollover
     await billing_api._handle_invoice_paid(invoice, session)
 
+    sub = await session.get(UserSubscription, "user-dup-invoice")
+    rollover_after_first = sub.rollover_tokens
+    assert rollover_after_first == 60_000
+
+    # Second call (replay) — rollover should stay the same, not double to 120K
+    await billing_api._handle_invoice_paid(invoice, session)
+
+    await session.refresh(sub)
+    assert sub.rollover_tokens == rollover_after_first
+
+    # No duplicate usage periods
     periods = await session.exec(select(UsagePeriod).where(UsagePeriod.user_id == "user-dup-invoice"))
     all_periods = periods.all()
-    # Original period + one new period (not duplicated)
-    starts = [p.period_start for p in all_periods]
-    assert len(starts) == len(set(starts)), f"Duplicate period_starts found: {starts}"
+    assert len(all_periods) == 1
 
 
 @pytest.mark.asyncio

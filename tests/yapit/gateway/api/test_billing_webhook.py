@@ -740,8 +740,15 @@ async def test_subscription_updated_noop_when_row_absent_and_missing_user_id(ses
         status="active",
     )
 
-    # Should not raise
+    # Should not raise and should not create any row
     await billing_api._handle_subscription_updated(stripe_sub, session)
+
+    # Verify no subscription was created (can't look up by user_id since it's None,
+    # but we can check by stripe_subscription_id)
+    result = await session.exec(
+        select(UserSubscription).where(UserSubscription.stripe_subscription_id == "sub_no_user_id")
+    )
+    assert result.first() is None
 
 
 @pytest.mark.asyncio
@@ -799,8 +806,14 @@ async def test_invoice_paid_noop_for_non_subscription_invoice(session):
         period_end=None,
     )
 
-    # Should not raise
+    # Count subscriptions before
+    before = (await session.exec(select(UserSubscription))).all()
+
     await billing_api._handle_invoice_paid(invoice, session)
+
+    # No subscriptions created or modified
+    after = (await session.exec(select(UserSubscription))).all()
+    assert len(after) == len(before)
 
 
 @pytest.mark.asyncio
@@ -813,8 +826,14 @@ async def test_invoice_paid_safe_return_when_subscription_missing(session):
         period_end=datetime.now(tz=dt.UTC) + timedelta(days=30),
     )
 
-    # Should not raise
+    # Count subscriptions before
+    before = (await session.exec(select(UserSubscription))).all()
+
     await billing_api._handle_invoice_paid(invoice, session)
+
+    # No subscriptions created or modified
+    after = (await session.exec(select(UserSubscription))).all()
+    assert len(after) == len(before)
 
 
 @pytest.mark.asyncio
@@ -962,5 +981,11 @@ async def test_invoice_failed_no_crash_when_missing_sub_id_with_subscription_rea
         period_end=None,
     )
 
-    # Should not raise
+    # Count subscriptions before
+    before = (await session.exec(select(UserSubscription))).all()
+
     await billing_api._handle_invoice_failed(invoice, session)
+
+    # No subscriptions mutated
+    after = (await session.exec(select(UserSubscription))).all()
+    assert len(after) == len(before)

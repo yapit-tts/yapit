@@ -166,12 +166,11 @@ async def test_subscribe_retries_with_email_on_no_such_customer(client, app, as_
         stripe_customer_id="cus_deleted",
     )
 
-    call_count = 0
+    calls: list[dict] = []
 
     async def _create_checkout(params, *args, **kwargs):
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
+        calls.append(params)
+        if len(calls) == 1:
             raise stripe.InvalidRequestError("No such customer: 'cus_deleted'", param="customer")
         return SimpleNamespace(url="https://checkout.test/retry", id="cs_retry")
 
@@ -190,7 +189,13 @@ async def test_subscribe_retries_with_email_on_no_such_customer(client, app, as_
 
     assert response.status_code == 200
     assert response.json()["checkout_url"] == "https://checkout.test/retry"
-    assert call_count == 2
+    assert len(calls) == 2
+    # First call used customer ID
+    assert "customer" in calls[0]
+    assert calls[0]["customer"] == "cus_deleted"
+    # Retry dropped customer and switched to customer_email
+    assert "customer" not in calls[1]
+    assert "customer_email" in calls[1]
 
 
 # --- Plan validation ---

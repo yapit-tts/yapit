@@ -439,35 +439,34 @@ class TestPendingReservations:
         subscribed_user["subscription"].purchased_tokens = 0
         await session.commit()
 
-        # Get redis from app state
         redis: Redis = app.state.redis_client
+        reservation_key = f"reservations:{user_id}"
 
-        # Create a pending reservation for 8K tokens
-        await redis.hset(f"reservations:{user_id}", "content_hash_abc", "8000")
+        try:
+            await redis.hset(reservation_key, "content_hash_abc", "8000")
 
-        # Total available without reservation: 5K + 5K = 10K
-        # With reservation: 10K - 8K = 2K
-        # Request 5K should fail (5K > 2K available)
-        with pytest.raises(UsageLimitExceededError):
+            # Total available without reservation: 5K + 5K = 10K
+            # With reservation: 10K - 8K = 2K
+            # Request 5K should fail (5K > 2K available)
+            with pytest.raises(UsageLimitExceededError):
+                await check_usage_limit(
+                    user_id=user_id,
+                    usage_type=UsageType.ocr_tokens,
+                    amount=5_000,
+                    db=session,
+                    redis=redis,
+                )
+
+            # Request 2K should succeed
             await check_usage_limit(
                 user_id=user_id,
                 usage_type=UsageType.ocr_tokens,
-                amount=5_000,
+                amount=2_000,
                 db=session,
                 redis=redis,
             )
-
-        # Request 2K should succeed
-        await check_usage_limit(
-            user_id=user_id,
-            usage_type=UsageType.ocr_tokens,
-            amount=2_000,
-            db=session,
-            redis=redis,
-        )
-
-        # Clean up redis
-        await redis.delete(f"reservations:{user_id}")
+        finally:
+            await redis.delete(reservation_key)
 
     @pytest.mark.asyncio
     async def test_no_reservations_doesnt_affect_limit(self, session, subscribed_user):
