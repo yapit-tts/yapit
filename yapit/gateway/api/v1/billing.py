@@ -57,6 +57,16 @@ def _require_stripe(client: stripe.StripeClient | None) -> stripe.StripeClient:
     return client
 
 
+def _get_validated_origin(request: Request, allowed_origins: list[str]) -> str:
+    origin = request.headers.get("origin", "").rstrip("/")
+    if not origin:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing origin header")
+    allowed = {o.rstrip("/") for o in allowed_origins}
+    if "*" not in allowed and origin not in allowed:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Origin not allowed")
+    return origin
+
+
 def _map_stripe_status(stripe_status: str) -> SubscriptionStatus:
     mapping = {
         "active": SubscriptionStatus.active,
@@ -121,6 +131,7 @@ class CheckoutResponse(BaseModel):
 async def create_subscription_checkout(
     request: SubscribeRequest,
     http_request: Request,
+    settings: SettingsDep,
     stripe_client: StripeClient,
     user: AuthenticatedUser,
     db: DbSession,
@@ -147,15 +158,13 @@ async def create_subscription_checkout(
         )
 
     existing_sub = await get_user_subscription(user.id, db)
-    if existing_sub and existing_sub.status in (SubscriptionStatus.active, SubscriptionStatus.trialing):
+    if existing_sub and existing_sub.status != SubscriptionStatus.canceled:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Already have an active subscription. Use the billing portal to change plans.",
+            detail="You already have a subscription. Use the billing portal to manage it.",
         )
 
-    origin = http_request.headers.get("origin", "").rstrip("/")
-    if not origin:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing origin header")
+    origin = _get_validated_origin(http_request, settings.cors_origins)
 
     # Trial eligibility: only if user hasn't experienced this tier or higher
     trial_eligible = not existing_sub or _rank(existing_sub.highest_tier_subscribed) < _rank(request.tier)
@@ -214,6 +223,7 @@ class PortalResponse(BaseModel):
 @router.post("/portal")
 async def create_billing_portal_session(
     http_request: Request,
+    settings: SettingsDep,
     stripe_client: StripeClient,
     user: AuthenticatedUser,
     db: DbSession,
@@ -225,9 +235,7 @@ async def create_billing_portal_session(
     if not subscription or not subscription.stripe_customer_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No active subscription")
 
-    origin = http_request.headers.get("origin", "").rstrip("/")
-    if not origin:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing origin header")
+    origin = _get_validated_origin(http_request, settings.cors_origins)
 
     session = await client.v1.billing_portal.sessions.create_async(
         {
