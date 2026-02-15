@@ -198,7 +198,7 @@ async def delete_account(
         if settings.stripe_secret_key:
             try:
                 client = stripe.StripeClient(settings.stripe_secret_key)
-                client.v1.subscriptions.cancel(sub.stripe_subscription_id)
+                await client.v1.subscriptions.cancel_async(sub.stripe_subscription_id)
                 logger.info(f"Canceled Stripe subscription {sub.stripe_subscription_id} for user deletion")
             except stripe.InvalidRequestError as e:
                 logger.warning(f"Failed to cancel Stripe subscription: {e}")
