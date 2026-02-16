@@ -38,6 +38,7 @@ export function DocumentOutliner({
 }: DocumentOutlinerProps) {
   const [popoverOpen, setPopoverOpen] = React.useState<string | null>(null);
   const longPressTimerRef = React.useRef<number | null>(null);
+  const longPressFiredRef = React.useRef(false);
 
   const currentSectionId = React.useMemo(() => {
     for (const section of sections) {
@@ -57,7 +58,9 @@ export function DocumentOutliner({
   };
 
   const handleTouchStart = (sectionId: string) => {
+    longPressFiredRef.current = false;
     longPressTimerRef.current = window.setTimeout(() => {
+      longPressFiredRef.current = true;
       setPopoverOpen(sectionId);
     }, 500);
   };
@@ -169,6 +172,10 @@ export function DocumentOutliner({
 
                   <span
                     onClick={() => {
+                      if (longPressFiredRef.current) {
+                        longPressFiredRef.current = false;
+                        return;
+                      }
                       if (!isSkipped) onNavigate(section.startBlockIdx);
                     }}
                     className={cn(
