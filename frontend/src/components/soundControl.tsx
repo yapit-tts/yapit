@@ -320,6 +320,7 @@ const SoundControl = memo(function SoundControl({
   // Wrap onPlay to reset dismissed state (so modal shows again on retry)
   const handlePlay = useCallback(() => {
     setQuotaDismissed(false);
+    setSynthErrorDismissed(false);
     onPlay();
   }, [onPlay]);
 
@@ -369,6 +370,10 @@ const SoundControl = memo(function SoundControl({
     setWasmDismissed(true);
   }, []);
   const showWasmBanner = isUsingBrowser && browserTTSDevice === "wasm" && !showBrowserErrorBanner && !wasmDismissed;
+
+  // Synthesis error banner (non-quota server errors like API outage, timeouts)
+  const [synthErrorDismissed, setSynthErrorDismissed] = useState(false);
+  const showSynthErrorBanner = !!serverTTSError && !usageLimitError && !synthErrorDismissed && !isUsingBrowser;
 
   const handleSwitchToCloud = useCallback(() => {
     const newSelection: VoiceSelection = {
@@ -503,6 +508,23 @@ const SoundControl = memo(function SoundControl({
               <X className="h-4 w-4" />
             </button>
           </div>
+        </div>
+      )}
+
+      {/* Synthesis error banner (non-quota) */}
+      {showSynthErrorBanner && (
+        <div className="flex items-center justify-center gap-2 mb-3 py-2 px-4 bg-destructive/10 rounded-lg text-sm border border-destructive/20">
+          <AlertTriangle className="h-4 w-4 text-destructive shrink-0" />
+          <span className="text-foreground font-medium">Audio generation failed</span>
+          <span className="text-muted-foreground">·</span>
+          <span className="text-muted-foreground">Tap play to retry</span>
+          <button
+            onClick={() => setSynthErrorDismissed(true)}
+            className="ml-2 p-2 min-w-[44px] min-h-[44px] flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent rounded-md transition-colors"
+            aria-label="Dismiss"
+          >
+            <X className="h-4 w-4" />
+          </button>
         </div>
       )}
 

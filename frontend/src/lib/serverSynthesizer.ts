@@ -236,6 +236,7 @@ export function createServerSynthesizer(deps: ServerSynthesizerDeps): Synthesize
       if (!req) return;
       clearTimeout(req.timer);
       pending.delete(key);
+      lastError = null;
 
       deps.fetchAudio(msg.audio_url)
         .then(async (arrayBuffer) => {

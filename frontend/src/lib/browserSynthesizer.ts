@@ -56,6 +56,7 @@ export function createBrowserSynthesizer(deps: BrowserSynthesizerDeps): Synthesi
         const req = pending.get(msg.requestId);
         if (!req) break;
         pending.delete(msg.requestId);
+        lastError = null;
 
         const audio = new Float32Array(msg.audioData);
         const audioBuffer = deps.audioContext.createBuffer(1, audio.length, msg.sampleRate);
