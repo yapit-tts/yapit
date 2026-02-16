@@ -149,7 +149,7 @@ sync-metrics:
 	@mkdir -p gateway-data
 	@echo "Exporting metrics from prod..."
 	@ssh $(PROD_HOST) 'docker exec $$(docker ps -qf name=metrics-db) \
-		psql -U metrics -d metrics -c "COPY (SELECT * FROM metrics_event ORDER BY timestamp DESC LIMIT 100000) TO STDOUT WITH CSV HEADER"' \
+		psql -U metrics -d metrics -c "COPY (SELECT * FROM metrics_event ORDER BY timestamp) TO STDOUT WITH CSV HEADER"' \
 		> gateway-data/metrics_raw.csv
 	@echo "Exporting hourly aggregates..."
 	@ssh $(PROD_HOST) 'docker exec $$(docker ps -qf name=metrics-db) \
