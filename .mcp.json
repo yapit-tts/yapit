@@ -5,14 +5,6 @@
       "command": "npx",
       "args": ["-y", "chrome-devtools-mcp@latest"],
       "env": {}
-    },
-    "memex": {
-      "command": "uvx",
-      "args": ["memex-md-mcp@latest"],
-      "env": {
-        "MEMEX_VAULTS": "/home/max/repos/code/yapit-tts/yapit/agent:/home/max/.claude/plans",
-        "MEMEX_DISABLE_SEMANTIC": "1"
-      }
     }
   }
 }

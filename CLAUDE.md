@@ -5,6 +5,39 @@ Yapit TTS - Open-source text-to-speech platform for reading documents, web pages
 
 **GitHub**: https://github.com/yapit-tts/yapit (public)
 
+### Core
+
+- `docs/architecture.md` has mermaid diagrams of the overall architecture and sequence flows.
+- [[tts-flow]] — Audio synthesis pipeline: WebSocket protocol, Redis queues, pull-based workers, caching. Read for TTS bugs, latency issues, worker scaling.
+- [[document-processing]] — How content becomes blocks: input paths (text/URL/file), Gemini extraction, YOLO figure detection, markdown parsing, block splitting. Read for document upload bugs, extraction failures, rendering issues.
+- [[frontend]] — React architecture, component hierarchy, chrome devtools MCP workflows. Read for UI work, frontend debugging.
+- [[features]] — User-facing capabilities: sharing, JS rendering, etc.
+
+### Operations
+
+- [[migrations]] — Alembic workflow, MANAGED_TABLES filter, seed data. Read before any DB schema changes.
+- [[vps-setup]] — Production server config, Traefik, nginx reverse proxy routing, debugging. Read for prod issues or nginx config changes (`frontend/nginx.conf`).
+- [[infrastructure]] — Docker compose structure (base/dev/prod layers), CI/CD pipeline, worker services, config change checklist. Read for deployment issues or adding services.
+- [[env-config]] — Secrets management, .env files, sops encryption.
+- [[dev-setup]] — **READ BEFORE TESTING.** Test commands, fixture gotchas, uv/pyproject structure. Tests WILL fail without proper env setup.
+- [[dependency-updates]] — Version-specific gotchas, license checking. Read before updating/adding dependencies.
+- [[metrics]] — TimescaleDB pipeline, event types, dashboard, health reports. Read when adding/modifying metrics.
+- [[logging]] — Loguru JSON logging configuration.
+
+**Testing:** You can claim "all tests pass" if and only if `make test-local` passes (after `make dev-cpu` if you made backend changes).
+
+### Other domains
+
+- [[auth]] — Stack Auth integration, token handling.
+- [[stripe-integration]] — Token-based billing, waterfall consumption, Stripe SDK gotchas, webhook handling. Read for billing bugs, subscription issues.
+- [[security]] — Security considerations and audits.
+- [[licensing]] — Dependency license checking.
+
+### Notes for distill agents
+
+- Upon any metrics/logging changes, update the monitoring agent prompt in `scripts/report.sh`.
+- In addition to knowledge, make sure `docs/architecture.md`, `README.md`, etc. are up-to-date.
+
 ## Development
 
 - **ALWAYS ask user before stopping/restarting Docker services** — they may be actively testing
@@ -30,26 +63,6 @@ Ask explicitly: "I need to run `[exact command]` on prod. This will [effect]. Ty
 
 Do NOT assume approval from vague statements like "fix it" or "go ahead". Prod is prod.
 
-### What Good Exploration Looks Like
-
-**Example: "Fix a bug where audio doesn't play for some documents"**
-
-1. **Read overview** → see Core section links to [[tts-flow]] and [[document-processing]]
-2. **Read both** — the bug could be in either pipeline. Note:
-   - tts-flow has "Voice change race condition" gotcha — could this be it?
-   - document-processing explains block splitting — maybe blocks aren't getting `audio_block_idx`?
-3. **Follow cross-references** — tts-flow links to [[document-processing]] for "how documents become blocks", document-processing links back to [[tts-flow]] for "variant caching"
-4. **Read the Key Files tables** — now you know which source files to examine
-5. **Check related knowledge** — if it's a WebSocket issue, [[frontend]] might have relevant info
-
-This takes ~30 seconds. Without it, you'd grep around, miss the gotcha, and waste time rediscovering the race condition.
-
-**This applies to brainstorming and discussion too** — not just implementation. Context gathering (knowledge + code + docs/web links where indicated) is required before meaningful discussion.
-
-**Bad exploration:** Read overview, skim one file, skip cross-references and gotchas. Miss critical context.
-
-The knowledge base is a graph, not a tree. Files are flat but connected via `[[wikilinks]]`. You don't load everything — you navigate to what you need with increasing detail.
-
 ## Branch Strategy
 
 - `main` - production (deploys on push)
@@ -72,34 +85,17 @@ git worktree remove ../yapit-main
 git checkout dev && git merge main  # brings dev up to date with main
 ```
 
-## Codebase Structure
+## Codebase Orientation
 
-**FIRST STEP FOR ANY AGENT — Preflight checklist:**
+`tre` for code structure, `mx` for knowledge navigation — don't mix them.
 
-1. `tre -L 10` — gitignore-respecting tree view for orientation
-2. `git log --oneline -30` — recent commits to understand current state, spot relevant changes, identify potential bug sources
-
-**When to run preflight:**
-- Starting any task (mandatory)
-- Debugging general flows or cross-cutting concerns
-- Working on anything that touches more than 2-3 files
-- Looking for where something lives
-- After creating/moving files
-
-**tre tips:** Always use `-L 10` for full depth. For less output, scope to a specific directory instead of reducing depth (which hides files):
-- Full repo: `tre -L 10` (discouraged for this repo; use ls -la for the root, then *full* tre on first-level subdirs)
-- Frontend only: `tre frontend -L 10`
-- Backend only: `tre yapit -L 10`
-
-`tre` respects `.gitignore` by default. Use `-e`/`--exclude` to additionally exclude:
-- Code only (no task files): `tre -e agent -L 10`
-- Wildcards work: `tre -e "*.log" -e test_*`
-
-Conversely, `tre agent -L 10` shows all task files including `private/` and `knowledge/` subdirs — useful when specifically looking for task/knowledge files.
+- **Code:** `tre -e agent` scoped to relevant dirs (`tre frontend`, `tre yapit`). Full repo is too noisy.
+- **Knowledge:** `mx explore <topic> yapit` or `mx search "<question>" -v yapit`. Don't `tre` the agent/ dir (unless you want to read hundreds of filenames).
+- **Recent activity:** `git log --oneline -30`
 
 ## Memex
 
-Semantic search is disabled. Wikilinks provide the necessary structure for this project.
+Vault: `yapit` (configured for project root). Semantic search + wikilink navigation.
 
 ## Coding Conventions
 
@@ -113,8 +109,6 @@ Semantic search is disabled. Wikilinks provide the necessary structure for this 
 - Test API assumptions before implementing features that depend on them.
 - **Before updating dependencies**, read [[dependency-updates]] — there are version constraints and gotchas that will break prod if ignored.
 - Never use git add -u or git add . — we work with many parallel agents in the same repo.
-- Don't push without being asked to
-
 - include "[skip tests]" anywhere (at the end) of your commit message to avoid running tests in ci (takes 10mins) if your changes don't interfere with code that's covered by tests. You don't need to add this for doc changes.
 
 ## Legacy Workflow Notes
