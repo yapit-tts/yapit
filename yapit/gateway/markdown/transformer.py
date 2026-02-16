@@ -66,6 +66,13 @@ def _is_tag(node: SyntaxTreeNode, tag: str) -> bool:
     return node.type == "html_inline" and node.content == tag
 
 
+def _node_contains_inline_tag(node: SyntaxTreeNode, tag: str) -> bool:
+    """Check if node contains the given tag as an html_inline descendant."""
+    if _is_tag(node, tag):
+        return True
+    return any(_node_contains_inline_tag(c, tag) for c in node.children)
+
+
 # === INLINE PROCESSING ===
 
 
@@ -1013,6 +1020,15 @@ class DocumentTransformer:
                 continue
 
             if yap_show_acc is not None:
+                if _node_contains_inline_tag(child, YAP_SHOW_CLOSE):
+                    # Close tag ended up as html_inline (blank line in yap-show
+                    # block causes markdown-it to split it across nodes)
+                    yap_show_acc.extend(self._transform_node(child, parent=node, index=i))
+                    _strip_audio_recursive(yap_show_acc)
+                    self._audio_idx_counter = saved_audio_idx
+                    blocks.extend(yap_show_acc)
+                    yap_show_acc = None
+                    continue
                 # Non-html_block inside yap-show — transform normally, accumulate
                 yap_show_acc.extend(self._transform_node(child, parent=node, index=i))
                 continue
