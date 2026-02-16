@@ -13,6 +13,7 @@ import { useApi } from '@/api';
 import { Loader2, FileQuestion, Download, X, AudioLines, AlertTriangle } from "lucide-react";
 import { AxiosError } from "axios";
 import { buildSectionIndex, findSectionForBlock, type Section } from '@/lib/sectionIndex';
+import { buildSlugMap } from '@/components/structuredDocument';
 import { type VoiceSelection, getVoiceSelection, getPlaybackSpeed, setPlaybackSpeed as savePlaybackSpeed, getVolume, setVolume as saveVolume } from '@/lib/voiceSelection';
 import { useSettings } from '@/hooks/useSettings';
 import { useUserPreferences } from '@/hooks/useUserPreferences';
@@ -96,6 +97,7 @@ const PlaybackPage = () => {
   const [sections, setSections] = useState<Section[]>([]);
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
   const [skippedSections, setSkippedSections] = useState<Set<string>>(new Set());
+  const [slugMap, setSlugMap] = useState<Map<string, string>>(new Map());
 
   // Voice and playback settings (UI-owned, synced into engine)
   const [voiceSelection, setVoiceSelection] = useState<VoiceSelection>(getVoiceSelection);
@@ -500,6 +502,7 @@ const PlaybackPage = () => {
       const parsed = JSON.parse(structuredContent);
       const sectionIndex = buildSectionIndex(parsed, documentBlocks);
       setSections(sectionIndex);
+      setSlugMap(buildSlugMap(parsed.blocks ?? []));
 
       const savedState = localStorage.getItem(OUTLINER_STATE_KEY_PREFIX + documentId);
       if (savedState) {
@@ -575,7 +578,13 @@ const PlaybackPage = () => {
   const handleOutlinerNavigate = useCallback((blockIdx: number) => {
     engine.seekToBlock(blockIdx);
     scrollToBlock(blockIdx);
-  }, [engine, scrollToBlock]);
+    const section = sections.find(s => s.startBlockIdx === blockIdx)
+      ?? sections.flatMap(s => s.subsections).find(s => s.blockIdx === blockIdx);
+    const slug = section ? slugMap.get(section.id) : undefined;
+    if (slug) {
+      history.replaceState(null, "", `#${slug}`);
+    }
+  }, [engine, scrollToBlock, sections, slugMap]);
 
   const shouldShowOutliner = sections.length > 0 && documentBlocks.length >= 30;
 

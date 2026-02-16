@@ -1334,5 +1334,6 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
 
 // Export types for use elsewhere
 export type { StructuredDocument, ContentBlock, InlineContent, AudioChunk };
+export { buildSlugMap };
 // Test-only exports
 export { AudioContent, BlockErrorBoundary };
