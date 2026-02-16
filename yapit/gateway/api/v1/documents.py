@@ -7,6 +7,7 @@ import time
 from datetime import datetime
 from email.message import EmailMessage
 from html import escape as html_escape
+from html import unescape as html_unescape
 from pathlib import Path
 from typing import Annotated, Literal
 from uuid import UUID, uuid4
@@ -1441,7 +1442,7 @@ def _extract_document_info(content: bytes, content_type: str) -> tuple[int, str 
         html_text = content.decode("utf-8", errors="ignore")
         title_match = re.search(r"<title[^>]*>([^<]+)</title>", html_text, re.IGNORECASE)
         if title_match:
-            title = title_match.group(1).strip()
+            title = html_unescape(title_match.group(1).strip())
         else:
             logger.warning(f"Failed to extract title from HTML content:\n{html_text}")
     elif content_type.lower().startswith("text/"):
