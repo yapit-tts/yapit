@@ -6,7 +6,7 @@ Loguru with two outputs: stdout (for Docker logs) + JSON file (persistent).
 
 Set in `yapit/gateway/logging_config.py`:
 - **stdout**: Colored, human-readable, INFO level
-- **file**: JSON lines at `$LOG_DIR/gateway.jsonl`, rotation 100MB x 100 files = 10GB max
+- **file**: JSON lines at `$LOG_DIR/gateway.jsonl`, rotation 100MB x 100 files, gzip compressed on rotation
 
 `LOG_DIR` is `/data/gateway/logs` in prod, `gateway/logs` in dev.
 

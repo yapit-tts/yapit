@@ -25,6 +25,7 @@ Layered compose files via `-f` flags:
 - `docker-compose.yml` — Base services (postgres, redis, gateway, stack-auth, kokoro-cpu, yolo-cpu)
 - `docker-compose.dev.yml` — Dev overrides (ports, volumes, stripe-cli)
 - `docker-compose.prod.yml` — Production (Swarm mode, Traefik labels, image refs)
+- `docker-compose.selfhost.yml` — Self-hosting overlay (no billing, no SOPS, `DB_CREATE_TABLES` for Alembic-free setup)
 
 **Worker replicas** configured via env vars (`KOKORO_CPU_REPLICAS`, `YOLO_CPU_REPLICAS`) in the base compose file, set in `.env.{dev,prod}`.
 
@@ -65,7 +66,7 @@ On push to `main`:
 
 Skip tests: `[skip tests]` in commit message.
 
-~10 min total (tests ~5 min, build+deploy ~5 min).
+~10 min total (tests ~5 min, build+deploy ~5 min). Frontend tests (vitest) also run in CI.
 
 **Gotcha — Swarm image pruning:** `docker image prune -af` doesn't work in Swarm — all pulled `:latest` digests are considered "in use" by service specs. Deploy script compares each image ID against running container image IDs and removes non-matching ones.
 
@@ -125,10 +126,13 @@ When **adding or removing** config files or Settings fields, check ALL of these:
 - `test_clock_setup.py` — Stripe test clock for billing tests. Flags: `--tier`, `--usage-tokens`, `--advance-days`, `--cleanup`
 
 **Cache warming:**
-- `warm_cache.py` — Pre-synthesizes voice preview sentences for all active models/voices. Systemd timer (`scripts/warm_cache.timer`, daily 04:00). See [[tts-flow]].
+- `yapit/gateway/warm_cache.py` — Pre-synthesizes voice previews and showcase documents. Runs as gateway background task on startup. See [[tts-flow]].
+
+**Stress testing:**
+- `stress_test.py` — TTS stress testing. Run: `uv run scripts/stress_test.py --help`
+- `stress_test_yolo.py` — YOLO overflow testing with synthetic PDFs. Run: `uv run scripts/stress_test_yolo.py --help`
 
 **Development:**
-- `load_test.py` — TTS load testing (stale; should be rewritten for prod). Flags: `--users`, `--blocks`, `--burst`, `--base-url`
 - `deploy.sh` — Production deploy (called by CI)
 
 For VPS setup, Traefik config, debugging: [[vps-setup]].

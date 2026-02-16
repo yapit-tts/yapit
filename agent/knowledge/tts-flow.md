@@ -24,7 +24,7 @@ Markdown processing creates speakable blocks with `audio_block_idx`:
 
 Blocks with audio: heading, paragraph, list, blockquote. No audio: code, math, table, image, hr.
 
-Block splitting: Markdown structure → paragraphs → sentence stoppers → hard cutoff. See `_split_into_sentences()` in transformer.
+Block splitting: Markdown structure → paragraphs → sentences → clauses → word boundaries. See `TextSplitter` in transformer.
 
 ### 2. WebSocket Protocol
 
@@ -39,7 +39,9 @@ Frontend connects via WebSocket for real-time synthesis control:
 |-----------|------|---------|
 | Client→Server | `synthesize` | Request synthesis for block indices |
 | Client→Server | `cursor_moved` | Evict blocks outside playback window |
-| Server→Client | `block_status` | Status update (queued/processing/cached/error/skipped) |
+| Server→Client | `status` | Per-block status update (queued/processing/cached/error/skipped) |
+| Server→Client | `evicted` | Blocks evicted after cursor move |
+| Server→Client | `error` | Document-level errors (not found, invalid model) |
 
 **Cursor-aware eviction:** When cursor moves, backend evicts queued blocks the user likely won't play. Uses sorted set for O(log N) eviction.
 
@@ -48,14 +50,14 @@ Frontend connects via WebSocket for real-time synthesis control:
 Before queuing, check if variant already exists:
 
 ```
-variant_hash = hash(text + model_slug + voice_slug + codec + voice_parameters)
+variant_hash = hash(text | model_slug | voice_slug | sorted key=value pairs from voice.parameters)
 ```
 
 - If cached → return audio URL immediately
 - If in-flight → subscribe to existing job
 - Otherwise → create job, queue it
 
-See `BlockVariant.get_hash()` in `domain_models.py` and `_maybe_enqueue()` in `ws.py`.
+See `BlockVariant.get_hash()` in `domain_models.py` and `request_synthesis()` in `gateway/synthesis.py`.
 
 ### 4. Worker Architecture
 
@@ -85,25 +87,25 @@ Workers only need Redis access. No Postgres, no HTTP endpoints. Gateway handles 
 
 `yapit/gateway/result_consumer.py`
 
-Background task that consumes from `tts:results` and finalizes:
+Background task that consumes from `tts:results`. Each result spawns its own task for parallelism across results, but within a single result the steps are sequential:
 1. Write audio to SQLite cache
-2. Create/update BlockVariant in Postgres
-3. Record usage for billing
-4. Notify subscribers via Redis pubsub
+2. Notify subscribers via Redis pubsub
+3. Upsert BlockVariant in Postgres
+4. Record usage for billing
 
 ### 6. Reliability
 
 **Visibility scanner** (`yapit/gateway/visibility_scanner.py`):
 - Jobs move to processing set with timestamp when pulled
-- Scanner runs every 15s, re-queues jobs stuck > 30s
+- Scanner runs every 15s, re-queues jobs stuck > 20s (constants in `gateway/__init__.py`)
 - Retry count increments; jobs exceeding max retries → DLQ
 
 **Overflow scanner** (`yapit/gateway/overflow_scanner.py`):
-- Monitors queue depth; jobs waiting > 30s trigger overflow
-- Sends stale jobs to RunPod serverless as fallback
-- Per-model configurable thresholds
+- Native async (`AsyncioEndpoint`), claims all stale jobs per cycle
+- Polls outstanding RunPod handles across cycles
+- Failures requeue with retry; at max retries → DLQ + error result to `tts:results`
 
-**Dead letter queue:** Jobs that fail repeatedly go to `tts:dlq`. Alert on DLQ growth.
+**Dead letter queue:** `tts:dlq:{model}` (per-model). DLQ entries push error results so result_consumer cleans up.
 
 ### 7. Cache & Storage
 
@@ -116,7 +118,7 @@ Background task that consumes from `tts:results` and finalizes:
 Frontend fetches via HTTP:
 
 - `yapit/gateway/api/v1/audio.py` — GET `/v1/audio/{variant_hash}`
-- PCM audio wrapped in WAV header on-the-fly
+- Returns cached bytes directly (`audio/ogg` media type)
 
 ## Browser-Side Synthesis
 
@@ -132,15 +134,14 @@ The `Synthesizer` interface unifies both paths — the playback engine doesn't c
 
 ## Models & Voices
 
-See [[models-voices]] for model configuration, voice parameters, usage multipliers.
-
-Current models: kokoro, inworld-1.5, inworld-1.5-max. HIGGS removed (API models simpler to support as premium, avoiding RunPod complexity and higher costs).
+Current models: kokoro, inworld-1.5, inworld-1.5-max. Model/voice definitions in `yapit/gateway/seed.py`. See [[inworld-tts]] for Inworld-specific details.
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `gateway/api/v1/ws.py` | WebSocket endpoint, synthesis orchestration |
+| `gateway/api/v1/ws.py` | WebSocket endpoint |
+| `gateway/synthesis.py` | Synthesis orchestration (dedup, queuing, cache check) |
 | `gateway/result_consumer.py` | Consumes results, finalizes (cache, DB, billing) |
 | `gateway/visibility_scanner.py` | Re-queues stuck jobs |
 | `gateway/overflow_scanner.py` | Sends stale jobs to RunPod |
@@ -154,13 +155,16 @@ Current models: kokoro, inworld-1.5, inworld-1.5-max. HIGGS removed (API models 
 ## Gotchas
 
 - **Billing happens in result_consumer, not ws.py:** `ws.py` only checks usage limits (gating). Actual billing (`record_usage`) happens in `result_consumer.py` after synthesis completes. Don't look for billing code in ws.py.
-- **Per-block vs document-level errors:** Document-level errors (not found, invalid model) send `{"type": "error", ...}`. Per-block errors (usage limit exceeded) send `WSBlockStatus` with `type="status"` and `status="error"`. Tests must check the correct field.
+- **Per-block vs document-level errors:** Document-level errors use `error` message type (see table above). Per-block errors (usage limit exceeded) use `status` message type with `status="error"` field. Tests must check the correct message type.
 - **Eviction timing:** Pending check happens at dequeue time, not enqueue. Jobs can sit in queue, then get skipped if cursor moved.
 - **Variant sharing:** Two users requesting same text+model+voice share the cached audio. Good for efficiency, but means cache eviction affects everyone.
 - **Empty audio:** Some blocks produce empty audio (whitespace-only). Marked as "skipped", frontend auto-advances.
 - **Usage multiplier:** Different models have different character costs. `TTSModel.usage_multiplier` in database. Passed in job to avoid DB query on finalization.
 - **Voice change race condition:** WebSocket status messages include `model_slug` and `voice_slug` to prevent stale cache hits when user changes voice mid-playback. Without this, status messages from old voice arriving after reset would incorrectly mark blocks as cached.
 - **Double billing prevention:** Inflight key deletion happens at START of result processing. First result atomically deletes key and proceeds; duplicates (from visibility timeout requeue + original completion) see delete() return 0 and skip.
-- **Cache warming:** `yapit/gateway/warm_cache.py` pre-synthesizes voice preview sentences for all active models/voices. Run via systemd timer (`scripts/warm_cache.timer`) daily at 04:00. Uses `synthesize_and_wait()` to go through the normal queue→worker→cache pipeline.
-- **Inworld duration is estimated:** Calculated from MP3 file size (~16KB/sec). Frontend uses decoded AudioBuffer for accurate playback timing.
-- **Cross-tab voice contamination:** Multiple tabs playing the same document with different voices share the same Redis pubsub channel. A notification from one voice would incorrectly update the other tab. Fix: Compare incoming `model_slug` and `voice_slug` against what was requested; ignore mismatched notifications.
+- **Cache warming:** `yapit/gateway/warm_cache.py` pre-synthesizes voice previews and showcase documents. Runs as a gateway background task on startup.
+- **Inworld duration is estimated:** Calculated from OGG Opus file size (~14.5KB/sec assumption in adapter). Frontend uses decoded AudioBuffer for accurate playback timing.
+- **Codec is not part of variant hash:** In normal dev flow, `make dev-cpu` clears cache (`down -v`). If you run experiments without full teardown, stale cached blobs can make codec/endpoint A/B tests invalid.
+- **Per-document pubsub channels:** Pubsub scoped to `tts:done:{user_id}:{document_id}` — prevents cross-tab contamination.
+- **Eviction orphaning:** Inflight key stores `job_id`. On eviction, inflight key is conditionally deleted only if its value matches the evicted job — prevents orphaned semaphores from blocking future requests.
+- **WS reconnect resilience:** `ServerSynthesizer` retries pending blocks on reconnect. `useTTSWebSocket` queues messages while disconnected, drains on connect.

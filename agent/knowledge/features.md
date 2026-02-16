@@ -18,3 +18,8 @@ User-facing capabilities. Links to task files (for simpler features) or dedicate
 - Voice picker bottom sheet on mobile (replaces overflowing popover)
 - Tips page — local TTS troubleshooting, feature guides, keyboard/headphone docs
 - AudioContext auto-resume — diagnostic logging + automatic resume on mobile suspension (app switch, phone call)
+- URL catch-all routing — `yapit.md/<any-url>` extracts URL, redirects to home with pre-fill
+- Gemini Batch Mode — large documents use Gemini Batch API with status page. See [[document-processing]]
+- Markdown export — copy/download with yap tags stripped, annotated export option
+- Showcase documents — pre-warmed cached content for new users without WebGPU
+- Self-hosting — `make self-host` one-command setup

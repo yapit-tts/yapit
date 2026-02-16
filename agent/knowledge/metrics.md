@@ -30,21 +30,33 @@ Separate TimescaleDB instance for metrics (isolated from main Postgres).
 
 ### Extraction
 - `extraction_estimate` — Pre-check token estimate before processing (estimated_tokens, num_pages, tolerance)
-- `page_extraction_complete` — Gemini page extraction (all token counts)
+- `page_extraction_complete` — Gemini page extraction (all token counts + `cached_content_token_count` for prompt cache utilization)
 - `page_extraction_error` — Extraction failed (status codes)
 - `figure_count_mismatch` — YOLO detected N figures but Gemini output M placeholders (page_idx, yolo_count, gemini_count, delta, content_hash)
 
 ### Cache
 - `document_cache_hit` — URL/upload cache hit
 - `extraction_cache_hit` — All requested pages already cached
-- `audio_cache_hit` — Variant already synthesized
+- `cache_hit` — Variant already synthesized (audio cache)
 
 ### URL Fetching
 - `url_fetch` — HTTP download (duration_ms, content_type, size_bytes, errors)
 - `playwright_fetch` — JS rendering fallback path (duration_ms)
+- `html_fallback_triggered` — html2text fallback when trafilatura returns None
+- `markxiv_error` — arXiv extraction failures
 
-### Webhooks
+### WebSocket
+- `ws_connect` / `ws_disconnect` — Connection lifecycle
+
+### Batch
+- `batch_job_submitted` / `batch_job_complete` / `batch_job_failed` — Gemini batch extraction lifecycle
+
+### Billing
 - `stripe_webhook` — Stripe webhook processing (duration_ms, event_type, errors)
+- `billing_sync_drift` — Background sync detected drift from Stripe
+
+### Queue
+- `eviction_triggered` — Queued blocks evicted after cursor move
 
 ## Retention & Aggregates
 
@@ -108,5 +120,6 @@ make report-post-deploy  # with deploy context
 
 ## Gotchas
 
-- **Inworld `audio_duration_ms` is estimated** — Calculated from MP3 file size (~16KB/sec assumption), can be off 10-20%. Realtime ratio metrics for Inworld are approximate. Kokoro duration is accurate (calculated from PCM bytes). Frontend uses accurate duration from decoded AudioBuffer regardless.
-- **Token counts are Gemini-specific** — `prompt_tokens`, `candidates_tokens`, `thoughts_tokens`, `total_tokens` columns only populated for Gemini extractions.
+- **Inworld `audio_duration_ms` is estimated** — Calculated from OGG Opus file size (~14.5KB/sec assumption in adapter), can be off 10-20%. Realtime ratio metrics for Inworld are approximate. Kokoro duration is accurate (calculated from PCM bytes). Frontend uses accurate duration from decoded AudioBuffer regardless.
+- **Token counts are Gemini-specific** — `prompt_tokens`, `candidates_tokens`, `thoughts_tokens`, `cached_content_token_count`, `total_tokens` columns only populated for Gemini extractions.
+- **Schema design: columns vs JSONB `data`** — Dedicated columns for fields that need aggregation (token counts, latencies, queue depths — used in continuous aggregates and dashboard queries). JSONB `data` field for ad-hoc context (error messages, content hashes, job IDs). When adding a new field, ask: "will this be aggregated/trended?" → column. "Just extra context for debugging?" → `data`.

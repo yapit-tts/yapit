@@ -27,13 +27,11 @@ pip show <package> | grep -i license
 **Frontend (548 packages):** All AGPL-compatible
 - MIT (418), ISC (61), Apache-2.0 (24), BSD (24), LGPL-3 (2)
 - MPL-2.0 (3): lightningcss (build tool, no modification)
-- DOMPurify: dual-licensed MPL-2.0 OR Apache-2.0 — using under Apache-2.0
 
 **Backend:** All MIT, Apache-2.0, BSD, PSF/Python — no issues
 
 **Key dependencies verified:**
 - kokoro-js: Apache-2.0
-- markitdown (Microsoft): MIT
 - Stack Auth SDK: MIT
 
 ## AGPL Compatibility Notes

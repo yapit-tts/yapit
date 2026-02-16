@@ -10,29 +10,60 @@ Three ways content enters the system:
 |----------|-------|------------|
 | `POST /v1/documents/text` | Direct text/markdown | Parse directly |
 | `POST /v1/documents/website` | URL | See below* |
-| `POST /v1/documents/document` | File upload | Gemini extraction → Parse |
+| `POST /v1/documents/document` | File upload | See format routing table |
 
-*Website flow branches: arXiv URLs → markxiv (sidecar) → cleanup → Parse. Other URLs → httpx (+ Playwright if JS-heavy) → MarkItDown → Parse.
+*Website flow branches: arXiv URLs → markxiv (sidecar) → cleanup → Parse. Other URLs → `extract_website_content` in `website.py`: JS framework detection → optional Playwright → trafilatura (+ html2text fallback) → Parse.
+
+### Format Routing
+
+| Format | Free Path | AI Path |
+|--------|-----------|---------|
+| PDF | PyMuPDF `get_text()` via `processors/pdf.py` | Gemini via `processors/gemini.py` |
+| Images | — (AI only) | Gemini |
+| Text/Markdown | Passthrough (parse directly) | — |
+| HTML (file upload) | trafilatura via `extract_website_content()` | — (future: Gemini) |
+| HTML (URL) | trafilatura via `extract_website_content()` | — (future: Gemini) |
+
+`GET /v1/documents/supported-formats` (public, no auth) returns format capabilities (free/ai/has_pages/batch per MIME type). Frontend fetches once per session via `useSupportedFormats` hook and derives UI from it (toggle visibility, metadata banner, accepted file types).
+
+### Prepare → Create Pattern
 
 For URLs and files, there's a **prepare → create** pattern:
-1. `POST /prepare` or `/prepare/upload` — Downloads/caches content, returns hash + metadata
+1. `POST /prepare` or `/prepare/upload` — Downloads/caches content, returns hash + metadata + uncached AI extraction pages
 2. `POST /<endpoint>` — Uses hash to retrieve cached content, creates document
 
-This allows showing page count, title, OCR cost estimate before committing.
+This allows showing page count, title, cached AI pages before committing. Text/markdown file uploads skip prepare (frontend-enforced) — frontend reads the file client-side and POSTs to `/text` directly.
 
-MarkItDown runs synchronously on the gateway; Gemini uses parallel async tasks per page. See [[2026-01-21-markitdown-parallel-extraction-analysis]] for why parallelizing MarkItDown isn't worth it.
+**Caching:** Free extraction is not cached (fast enough to re-run). AI extraction (Gemini) is cached per-page by content hash + prompt version. `uncached_pages` in prepare response shows which pages still need AI extraction.
+
+### Async Extraction
+
+Document creation returns **202 Accepted**. Extraction runs in a background task keyed by `extraction_id`, result delivered via polling. Cancellable via `POST /v1/documents/extraction/cancel`.
+
+### Gemini Batch Mode
+
+`yapit/gateway/document/batch.py` + `yapit/gateway/document/batch_poller.py`
+
+For large documents (auto-toggled at >100 pages), extraction uses the Gemini Batch API: JSONL upload → background poller → document creation on completion. Frontend shows `/batch/:contentHash` status page.
 
 ### arXiv URLs (markxiv)
 
 `yapit/gateway/document/markxiv.py`
 
-arXiv URLs (arxiv.org, alphaxiv.org, ar5iv) are routed to markxiv — a Docker sidecar that extracts papers from LaTeX source via pandoc. Produces cleaner markdown than MarkItDown for free-tier users.
+arXiv URLs (arxiv.org, alphaxiv.org, ar5iv) are routed to markxiv — a Docker sidecar that extracts papers from LaTeX source via pandoc. Strips pandoc cruft like `{#sec:foo}` anchors, `{reference-type="..."}` attributes, citations `[@author]`, and orphan label refs `[fig:X]`.
 
-The markxiv service runs as a separate container (built from `docker/Dockerfile.markxiv`). Strips pandoc cruft like `{#sec:foo}` anchors, `{reference-type="..."}` attributes, citations `[@author]`, and orphan label refs `[fig:X]`.
+## Website Extraction
 
-## URL Fetching & JS Rendering
+`yapit/gateway/document/website.py`
 
-For URL inputs, the system first downloads HTML via httpx. If the page appears to be JS-rendered (detected via content sniffing for React/Vue/marked.js patterns, or size heuristic when large HTML yields tiny markdown), Playwright renders it in a headless browser first.
+**`extract_website_content(content, url, markxiv_url) → (markdown, extraction_method)`** — orchestrates the full pipeline for both URL-based websites and HTML file uploads.
+
+1. **JS framework detection** — fast pre-check; if detected, Playwright renders first
+2. **Trafilatura** (primary) — article extraction with boilerplate removal
+3. **Playwright retry** — if trafilatura returns None and Playwright wasn't already used
+4. **html2text** (fallback) — when trafilatura returns None after all attempts. Metric `html_fallback_triggered` + URL logged.
+
+`used_playwright` flag prevents redundant re-renders across the JS-detection and post-trafilatura paths.
 
 `yapit/gateway/document/playwright_renderer.py`
 
@@ -41,9 +72,17 @@ For URL inputs, the system first downloads HTML via httpx. If the page appears t
 - Semaphore at 100 concurrent renders (defense in depth)
 - Falls back gracefully if rendering fails
 
-## PDF Extraction
+## Free PDF Extraction
 
-`yapit/gateway/document/gemini.py`
+`yapit/gateway/document/processors/pdf.py`
+
+PyMuPDF `get_text("dict")` per page — uses dict mode for structured data with direction vectors to filter rotated text (axis labels, watermarks). Fast (<1s for 714-page textbooks), releases GIL (C extension), not cached.
+
+**Gotcha:** `get_text("text")` extracts all text indiscriminately — body text, figure labels, annotations. Papers with embedded text in figures (e.g., attention heatmaps) produce garbage. See task `2026-02-12-pymupdf-free-extraction-quality` for improvement investigation.
+
+## AI PDF Extraction (Gemini)
+
+`yapit/gateway/document/processors/gemini.py`
 
 Uses Gemini with vision for PDF extraction:
 
@@ -96,7 +135,7 @@ Cache key format: `{slug}:{resolution}:{prompt_version}`
    - Bad: "Drastically simplify complex notation: $W_i^Q \in \mathbb{R}^{d \times k}$ → W Q" — misses the point, could misguide in other cases
    - Good: "Write as a human would read: $W_i^Q \in \mathbb{R}^{d \times k}$ → W Q" — same output, but captures the actual goal
 
-4. **Test parser behavior.** The transformer has specific requirements (e.g., blank line required BEFORE each `$$block$$`). Check existing test cases in `tests/yapit/gateway/markdown/test_markdown.py` or add new ones — this couples prompt to parser so changes don't silently drift.
+4. **Test parser behavior.** The transformer has specific requirements (e.g., blank line required BEFORE each `$$block$$`). Check existing test cases in `tests/yapit/gateway/markdown/test_parser_v2.py` or add new ones — this couples prompt to parser so changes don't silently drift.
 
 5. **Balance specificity.** Too general → model doesn't know what to do. Too specific → doesn't generalize to similar cases.
 
@@ -190,7 +229,9 @@ Long content is split to keep synthesis chunks manageable (applies to paragraphs
 if len(tts_text) > max_block_chars:
     split at sentence boundaries (.!?)
     if sentence still too long:
-        hard split at word boundaries
+        split at clause separators (, — : ;)
+        if clause still too long:
+            hard split at word boundaries
 ```
 
 Split content gets multiple `AudioChunk` entries with consecutive `audio_block_idx` values. The HTML contains `<span data-audio-idx="N">` wrappers so frontend can highlight the currently-playing chunk.
@@ -268,17 +309,37 @@ The `StructuredDocumentView` component:
 
 **Click handling:** Clicks on `data-audio-idx` spans trigger playback seek to that audio chunk.
 
+## Processors
+
+`yapit/gateway/document/processors/`
+
+Processors extract file content into markdown pages via `process_with_billing`. Each has a `ProcessorConfig` and an `extract()` async iterator. `_run_extraction` in `documents.py` routes to the right one based on `ai_transform` flag.
+
+- `processors/pdf.py` — free PDF extraction (PyMuPDF), module-level `config` + `extract()`
+- `processors/gemini.py` — AI extraction, stateful `GeminiExtractor` managed via FastAPI DI
+
+To add a new format: create `processors/<format>.py` with config + extract(), add entry to `/supported-formats`.
+
+**CPU-bound work** uses a dedicated `ThreadPoolExecutor` (`processing.cpu_executor`) so heavy PDF processing doesn't starve quick `to_thread` calls. `process_pages_to_document` also runs on this executor.
+
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `gateway/api/v1/documents.py` | Document CRUD endpoints, prepare/create flow |
+| `gateway/api/v1/documents.py` | Document CRUD, prepare/create, `/supported-formats` |
 | `gateway/markdown/parser.py` | markdown-it-py wrapper |
 | `gateway/markdown/transformer.py` | AST → StructuredDocument |
 | `gateway/markdown/models.py` | Block type definitions |
-| `gateway/document/gemini.py` | Gemini extraction with YOLO |
+| `gateway/document/processors/gemini.py` | Gemini AI extraction with YOLO |
+| `gateway/document/processors/pdf.py` | Free PDF extraction (PyMuPDF) |
+| `gateway/document/processing.py` | ProcessorConfig, process_with_billing, cpu_executor |
+| `gateway/document/website.py` | Website extraction (trafilatura + html2text) |
 | `gateway/document/yolo_client.py` | YOLO queue client |
 | `gateway/document/extraction.py` | PDF/image utilities |
+| `gateway/cache.py` | Cache ABC + SqliteCache (includes batch_exists, batch_retrieve) |
 | `workers/yolo/` | YOLO detection worker |
+| `frontend/src/components/unifiedInput.tsx` | Upload flow, format-driven UI, race condition handling |
+| `frontend/src/hooks/useSupportedFormats.ts` | Fetches format capabilities from backend (module-level cache) |
+| `frontend/src/components/metadataBanner.tsx` | Metadata display, page selector, AI toggle |
 | `frontend/src/components/structuredDocument.tsx` | Block views, types, layout |
 | `frontend/src/components/inlineContent.tsx` | AST → React component renderer |

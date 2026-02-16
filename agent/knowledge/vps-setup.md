@@ -26,6 +26,8 @@ VPS (Hetzner)
 - **Provider:** Hetzner
 - **Type:** CX53 (16 vCPU, 32 GB RAM, 320 GB SSD)
 - **Domain:** yapit.md
+- **Tailscale IP:** 100.87.244.58 (hostname `yapit-prod`)
+- **Docker log rotation:** `/etc/docker/daemon.json` — 50MB x 3 files per container
 
 ## Initial Setup
 
@@ -183,6 +185,27 @@ ufw enable
 Tailscale traffic bypasses UFW (uses its own tun interface + routing rules).
 
 ## Gotchas
+
+### API routes have `/api` prefix in prod
+
+Code defines routes as `/v1/...` but in prod they're served at `/api/v1/...`:
+- Dev: `http://localhost:8000/v1/documents/text`
+- Prod: `https://yapit.md/api/v1/documents/text`
+- WebSocket: `wss://yapit.md/api/v1/ws/tts`
+
+This is handled by `VITE_API_BASE_URL=/api` in `frontend/.env.production`. When scripting against prod, always include the `/api` prefix.
+
+### Nginx reverse proxy handles both HTTP and WebSocket
+
+Frontend nginx (`frontend/nginx.conf`) reverse-proxies `/api/*` to the gateway. The WebSocket path (`/api/v1/ws/tts`) matches the `/api/` location block — nginx prefix matching means a `location /api/ws` would NOT catch it. The `map $http_upgrade` pattern conditionally sets Connection headers for keepalive (HTTP) vs upgrade (WebSocket) in the same block. Read `frontend/nginx.conf` before touching proxy routing.
+
+### Stack Auth user IDs aren't directly queryable
+
+Users are managed by Stack Auth. To find a user's ID for database operations:
+1. Authenticate as the user
+2. Create a temporary document
+3. Query `SELECT user_id FROM document WHERE id = '<doc_id>'`
+4. Delete the temp document
 
 ### Docker Swarm cannot bind ports to specific IPs
 

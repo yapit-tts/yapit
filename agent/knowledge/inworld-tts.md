@@ -8,6 +8,28 @@ Premium TTS provider. REST streaming API, 65 voices across 15 languages.
 
 **Voice listing requires separate API scope:** The synthesis API key doesn't have permissions to call `/voices/v1/voices`. Need a key with voice management scope, or check the [TTS Playground](https://platform.inworld.ai/tts-playground) manually.
 
+**Streaming vs non-streaming are not acoustically equivalent at block start:** In local testing, non-streaming (`/tts/v1/voice`) produced noticeably higher first 10-20ms energy than streaming (`/tts/v1/voice:stream`) for the same text/voice/model/codec. This was audible as a startup artifact in Firefox. Streaming removed the artifact.
+
+**Use the right payload shape per endpoint:**
+- `/tts/v1/voice:stream` expects snake_case (`voice_id`, `model_id`, `audio_config`, `audio_encoding`, `sample_rate_hertz`)
+- `/tts/v1/voice` expects camelCase (`voiceId`, `modelId`, `audioConfig`, `audioEncoding`, `sampleRateHertz`)
+
+**`LINEAR16` response is WAV-wrapped:** Inworld returns RIFF/WAV bytes for `LINEAR16`, not bare PCM. Parse WAV properly before treating payload as samples.
+
+**OGG_OPUS (non-streaming) returns stereo:** Observed 2-channel output despite docs often implying mono.
+
+**Codec experiments can be invalidated by cache reuse:** `variant_hash` currently does not include codec. In normal dev flow, `make dev-cpu` clears caches (`down -v`) so this is handled. If you test without full teardown, stale cached blobs can invalidate A/B results.
+
+## Canonical Path (2026-02)
+
+Current inworld adapter path (`yapit/workers/adapters/inworld.py`):
+
+- Endpoint: `/tts/v1/voice:stream`
+- Codec: `OGG_OPUS`
+- Sample rate: `48_000`
+
+This is the canonical path because it eliminated the Firefox startup artifact seen with non-streaming responses.
+
 ## Models
 
 | Model | API ID | Our Slug | Price | Latency (P50) |

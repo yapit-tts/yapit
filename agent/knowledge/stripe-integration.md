@@ -22,8 +22,8 @@ Production-ready Stripe Managed Payments integration with:
 3. **Relevant subtask sources** — listed in each subtask's MUST READ section
 
 **After completing work:**
-- If you added a feature or changed behavior, check [[stripe-e2e-testing]] for relevant test cases
-- Add new test cases if needed
+- If you changed billing logic, run `make test-unit` — the 77 deterministic billing tests catch most regressions
+- If you added a feature or changed behavior, check whether it needs new deterministic tests AND/OR E2E validation per [[stripe-e2e-testing]]
 - Update this file's "Completed Work" section
 
 ## Sources (MUST READ for All Agents)
@@ -61,6 +61,9 @@ Production-ready Stripe Managed Payments integration with:
 | Path | Why |
 |------|-----|
 | `yapit/gateway/api/v1/billing.py` | Core billing logic, webhooks, downgrade endpoint |
+| `yapit/gateway/usage.py` | Waterfall consumption, limits, reservations |
+| `yapit/gateway/billing_sync.py` | Background reconciliation, point-of-decision sync |
+| `yapit/gateway/domain_models.py` | Plan, UserSubscription, UsagePeriod models |
 | `scripts/stripe_setup.py` | Current IaC script — products, prices |
 | `yapit/gateway/config.py` | Stripe settings (price IDs from env) |
 
@@ -127,9 +130,26 @@ Best handled by one agent sequentially (all touch `stripe_setup.py`, share conte
 - [[stripe-iac-webhooks-tos]] — Webhook endpoint + ToS/Privacy URLs via API
 
 ### Testing
-- [[stripe-e2e-testing]] — Testing workflow template, test clock patterns
-- [[stripe-testing-pricing-restructure]] — Comprehensive E2E tests for token billing, waterfall consumption, debt/rollover behavior (2026-01)
-- `scripts/test_clock_setup.py` — Helper script for test clock testing (creates customer+subscription+DB records)
+
+**Two testing layers:**
+
+1. **Deterministic unit/API-integration tests** (77 tests, no live Stripe calls):
+   - `tests/yapit/gateway/api/test_billing_webhook.py` — Webhook handler logic, stale guards, invoice period handling
+   - `tests/yapit/gateway/api/test_billing_endpoints.py` — Origin validation, "No such customer" retry, plan validation, trial eligibility
+   - `tests/yapit/gateway/api/test_billing_handlers_matrix.py` — Grace period matrix (downgrade, multi-downgrade, upgrade during grace)
+   - `tests/yapit/gateway/api/test_billing_ordering.py` — Handler ordering convergence, idempotency (duplicate checkout/invoice), stale replay
+   - `tests/yapit/gateway/api/test_billing_sync.py` — `sync_subscription` drift detection/correction, "subscription gone" path
+   - `tests/yapit/gateway/api/test_users_subscription_summary.py` — Cancellation flags (`cancel_at`, `cancel_at_period_end`), grace in summary
+   - `tests/yapit/gateway/api/test_usage.py` — Waterfall consumption, debt blocking, redis reservations, effective plan fallback
+
+   Conventions: shared factories in `test_billing_webhook.py`, `sync_subscription` monkeypatched in endpoint tests (testing gate logic not sync), testcontainers Postgres+Redis.
+
+2. **Manual E2E with real Stripe sandbox** (for what deterministic tests can't cover):
+   - [[stripe-e2e-testing]] — Testing workflow template, test clock patterns
+   - [[stripe-testing-pricing-restructure]] — E2E results for token billing, waterfall, debt/rollover (2026-01)
+   - `scripts/test_clock_setup.py` — Helper script for test clock testing
+
+   Covers: real Checkout/Portal UI flows, actual webhook delivery + signature verification, card payments + dunning, promo code application, billing sync loop against live Stripe, frontend subscription state rendering.
 
 ### Research
 - [[stripe-eu-withdrawal]] — EU 14-day withdrawal research ✅ (resolved 2026-01-07, see file for Stripe support response)
@@ -278,7 +298,6 @@ Fix: With Issue 1 fixed, script now reaches product updates. Re-run `stripe_setu
 
 ## Related
 
-- [[billing-pricing-strategy]] — Pricing decisions (legacy plan file)
 - [Stripe Python SDK](https://github.com/stripe/stripe-python) — SDK source for debugging
 - [Stripe Python SDK Releases](https://github.com/stripe/stripe-python/releases) — changelog for "emptyable" types
 

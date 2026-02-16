@@ -31,6 +31,8 @@ cd frontend && npm run dev  # Start frontend separately
 - Unit tests (`tests/yapit/`) use testcontainers — independent, don't need backend running
 - Integration tests (`tests/integration/`) connect to localhost:8000 — need `make dev-cpu` running
 
+**Billing tests (77 tests):** The `test_billing_*.py` and `test_usage.py` files have comprehensive deterministic coverage for webhook handlers, endpoint guards, usage waterfall, ordering/idempotency, and billing sync. Shared factories live in `test_billing_webhook.py`. Convention: `sync_subscription` is monkeypatched in endpoint tests (testing gate logic, not sync behavior). See [[stripe-integration]] Testing section for the full file list and what each covers.
+
 **Test fixture gotcha:** The test fixture relies on `uv run --env-file=.env.dev` loading most Settings. But if a field triggers initialization of components needing API keys (e.g., `ai_processor=gemini` → GeminiProcessor → needs `google_api_key`), explicitly disable it in conftest.py.
 
 **CI debugging:** When CI breaks, first find the exact commit where it started failing (`gh run list`). Don't trust error messages at face value - they may be downstream symptoms. Diff the breaking commit to find the actual cause.
@@ -45,7 +47,14 @@ cd frontend && npm run dev  # Start frontend separately
 
 ## Debugging
 
-Use info logs or set log level to debug before restarting the backend.
+**When something breaks after backend changes, check container logs FIRST:**
+
+```bash
+docker logs yapit-gateway-1 --tail 200 2>&1 | grep -i "error\|exception\|traceback"
+docker logs yapit-kokoro-cpu-1 --tail 200 2>&1 | grep -i "error\|exception"
+```
+
+This takes 5 seconds and catches most runtime failures (import errors, type errors, bad assumptions about external API data).
 
 ## Frontend (npm)
 
@@ -54,26 +63,26 @@ Use info logs or set log level to debug before restarting the backend.
 
 ## Dependencies (uv)
 
-**Project structure:** `pyproject.toml` has optional dependency groups:
-- `gateway` — backend API (FastAPI, SQLModel, etc.)
-- `test` — testing (pytest, testcontainers)
-- Base `dependencies` is minimal (just pydantic for shared contracts)
+**Project structure:** `pyproject.toml` has:
+- `dependencies` — the full gateway stack (~25 packages: FastAPI, SQLModel, Redis, Stripe, etc.)
+- `test` optional group — testing (pytest, testcontainers, websockets)
+- `dev` optional group — development tools (pre-commit, tyro)
 
 **Local dev setup:**
 ```bash
-uv sync --all-extras  # Install ALL optional deps (gateway + test)
+uv sync --all-extras  # Install base + test + dev
 ```
 
 **Adding dependencies:**
 ```bash
-uv add --optional gateway <package>~=<version>  # Backend deps
-uv add --optional test <package>~=<version>     # Test deps
+uv add <package>~=<version>             # Backend deps (base)
+uv add --optional test <package>~=<version>   # Test deps
+uv add --optional dev <package>~=<version>    # Dev tools
 ```
 
 **Common mistakes:**
-- `uv add <package>` without `--optional` → adds to base deps (wrong!)
 - `uv add <package>>=<version>` → use `~=` for compatible releases
-- `uv sync` without `--all-extras` → missing gateway/test deps
+- `uv sync` without `--all-extras` → missing test/dev deps
 
 **Running Python:**
 - Always use `uv run ...` or activate venv first

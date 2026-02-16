@@ -16,9 +16,15 @@ Standalone state machine that owns all playback logic. Extracted from PlaybackPa
 
 **Architecture:** The engine exposes a `PlaybackEngine` interface (play/pause/stop/skip/seek/setVoice etc.) and a `subscribe`/`getSnapshot` pair for React integration. All I/O is injected via `PlaybackEngineDeps` (audio player, synthesizer), making the engine fully testable without DOM or network.
 
-**Variant-keyed cache:** Audio is cached by `{documentId}:{blockIdx}:{model}:{voice}` — changing voice or document invalidates the right entries without clearing everything.
+**Variant-keyed cache:** Audio is cached by `{blockIdx}:{model}:{voice}`. Changing voice invalidates entries. Changing document clears the entire cache (document identity is implicit).
 
 **Cancellation pattern:** Pending synthesis promises resolve to `null` on voice change, stop, or document change. The `playBlock` loop checks for null and aborts, preventing orphaned audio from playing after the user moved on. See [[tts-flow]] for the server-side pipeline.
+
+**Audio output:** `AudioPlayer` (`frontend/src/lib/audio.ts`) plays through `HTMLAudioElement` directly (no Web Audio routing). Speed control via `audioElement.playbackRate` + `preservesPitch`. Volume via `audioElement.volume` (read-only on iOS — hardware buttons only). An `AudioContext` exists separately for `decodeAudioData`/`createBuffer` in synthesizers but is NOT on the audio output path.
+
+**Gotcha — HTMLAudioElement is required for pitch-preserving speed:** `AudioBufferSourceNode.playbackRate` changes speed AND pitch (chipmunk effect). Only `HTMLAudioElement` has `preservesPitch`. An intermediate SoundTouchJS approach was tried but had quality degradation above 1.6x. Don't go back to AudioBufferSourceNode for playback.
+
+**Gotcha — do NOT route HTMLAudioElement through Web Audio (createMediaElementSource):** iOS Safari has a known bug (WebKit 211394) where `MediaElementAudioSourceNode` causes glitchy/choppy audio, especially with `playbackRate > 1`. Previous approach used this for GainNode volume control — caused audio to skip words, stutter on pause, and generally be unusable on mobile Safari. Volume slider is non-functional on iOS (audioElement.volume is read-only); this is acceptable since iOS users control volume via hardware buttons.
 
 ## Document Outliner
 
@@ -28,11 +34,12 @@ Right sidebar for navigating large documents. Shows section index from H1/H2 hea
 - Collapse/expand sections — hides content in document view
 - Skip sections — exclude from playback entirely (right-click/long-press)
 - Filtered playback — progress bar scoped to expanded sections only
-- State persisted to localStorage per document
+- Per-document section state (expanded/skipped sections) persisted to localStorage in PlaybackPage
+- Outliner panel open/closed state persisted to cookie via `useOutliner`
 
 **Key files:**
 - `frontend/src/components/documentOutliner.tsx` — section tree with collapse/skip controls
-- `frontend/src/hooks/useOutliner.tsx` — section state management
+- `frontend/src/hooks/useOutliner.tsx` — outliner panel toggle state
 - `frontend/src/hooks/useFilteredPlayback.ts` — maps visual↔absolute block indices
 - `frontend/src/lib/sectionIndex.ts` — builds section tree from structured content
 
@@ -75,6 +82,8 @@ Action tools (click, fill, hover, etc.) automatically return full page snapshots
 2. **Sync task file first if context < 50%** — write current findings and next steps before the snapshot might consume remaining context
 3. **Prefer screenshots for visual checks** — `take_screenshot` is much smaller than snapshots
 
+Or even better: Use sub-agents that use devtools to debug for you!!!
+
 **Exceptions:**
 - If debugging a specific bug on a known large document, the large snapshot is unavoidable — just be handoff-ready first.
 - For many bugs, screenshots lack precision — DevTools snapshots let you inspect element UIDs, exact positioning, and DOM structure. When you need that accuracy, the snapshot cost is worth it.
@@ -106,8 +115,8 @@ See [[2026-01-28-smart-scroll-detach]] for implementation details and additional
 ## Keyboard & Media Controls
 
 Keyboard shortcuts are registered in two places:
-- **Global** (`frontend/src/components/ui/sidebar.tsx`) — sidebar toggle (`s`), works on any page
-- **PlaybackPage** (`frontend/src/pages/PlaybackPage.tsx`) — playback controls (hjkl, arrows, space, volume, etc.)
+- **Global** (`frontend/src/components/ui/sidebar.tsx`) — sidebar toggle (`Ctrl+b` or bare `s`), works on any page
+- **PlaybackPage** (`frontend/src/pages/PlaybackPage.tsx`) — playback controls: hjkl/arrows (skip/speed), space (play/pause), `+`/`-` (volume), `m` (mute), `o` (outliner), `r` (back to reading), `?` (help)
 
 **MediaSession API** handles headphone/media key controls and OS media notifications (lock screen, dynamic island, notification shade).
 
