@@ -118,7 +118,7 @@ function SmoothProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
     const stateToColor = (state: BlockState, isCurrent: boolean) => {
       if (isCurrent) return 'var(--primary)';
       if (state === 'cached') return 'var(--muted)';
-      if (state === 'synthesizing') return 'oklch(0.85 0.12 90 / 0.5)';
+      if (state === 'synthesizing') return 'var(--synthesizing)';
       return 'color-mix(in oklch, var(--muted-warm) 50%, transparent)';
     };
 
@@ -219,7 +219,7 @@ function BlockyProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
             style={{
               flex: '1 1 0',
               minWidth: 0,
-              borderRight: idx < numBlocks - 1 ? '1px solid rgba(0,0,0,0.1)' : 'none',
+              borderRight: idx < numBlocks - 1 ? '1px solid color-mix(in oklch, var(--foreground), transparent 90%)' : 'none',
             }}
           />
         );
@@ -451,7 +451,7 @@ const SoundControl = memo(function SoundControl({
           </Button>
           <button
             onClick={() => setQuotaDismissed(true)}
-            className="ml-2 p-2 min-w-[44px] min-h-[44px] flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent rounded-md transition-colors"
+            className="ml-2 p-2 min-w-11 min-h-11 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent rounded-md transition-colors"
             aria-label="Dismiss"
           >
             <X className="h-4 w-4" />
@@ -476,7 +476,7 @@ const SoundControl = memo(function SoundControl({
             </Link>
             <button
               onClick={() => setBrowserErrorDismissed(true)}
-              className="p-2 min-w-[44px] min-h-[44px] flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent rounded-md transition-colors"
+              className="p-2 min-w-11 min-h-11 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent rounded-md transition-colors"
               aria-label="Dismiss"
             >
               <X className="h-4 w-4" />
@@ -502,7 +502,7 @@ const SoundControl = memo(function SoundControl({
             </Link>
             <button
               onClick={handleDismissWasm}
-              className="p-2 min-w-[44px] min-h-[44px] flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent rounded-md transition-colors"
+              className="p-2 min-w-11 min-h-11 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent rounded-md transition-colors"
               aria-label="Dismiss"
             >
               <X className="h-4 w-4" />
@@ -520,7 +520,7 @@ const SoundControl = memo(function SoundControl({
           <span className="text-muted-foreground">Tap play to retry</span>
           <button
             onClick={() => setSynthErrorDismissed(true)}
-            className="ml-2 p-2 min-w-[44px] min-h-[44px] flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent rounded-md transition-colors"
+            className="ml-2 p-2 min-w-11 min-h-11 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent rounded-md transition-colors"
             aria-label="Dismiss"
           >
             <X className="h-4 w-4" />

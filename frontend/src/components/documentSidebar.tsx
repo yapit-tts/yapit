@@ -32,10 +32,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
-import { ChevronUp, FileText, Plus, Loader2, MoreHorizontal, User2, LogOut, LogIn, Trash2, Pencil, CreditCard, Lightbulb, Settings, Info, Link2, Check } from "lucide-react";
+import { ChevronUp, FileText, Plus, Loader2, MoreHorizontal, User2, LogOut, LogIn, Trash2, Pencil, CreditCard, Lightbulb, Settings, Info, Link2, Check, Sun, Moon } from "lucide-react";
 import { useApi } from "@/api";
 import { useUser } from "@stackframe/react";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { useSettings, useIsDark } from "@/hooks/useSettings";
 
 const formatCompact = (n: number): string => {
   const abs = Math.abs(n);
@@ -63,6 +64,25 @@ interface SubscriptionSummary {
     purchased_tokens: number;
     purchased_voice_chars: number;
   };
+}
+
+function ThemeToggle() {
+  const { setSettings } = useSettings();
+  const isDark = useIsDark();
+
+  return (
+    <SidebarMenuItem>
+      <SidebarMenuButton
+        size="lg"
+        onClick={() => setSettings({ theme: isDark ? "light" : "dark" })}
+      >
+        {isDark
+          ? <Sun className="h-4 w-4 text-muted-foreground" />
+          : <Moon className="h-4 w-4 text-muted-foreground" />}
+        <span>{isDark ? "Light mode" : "Dark mode"}</span>
+      </SidebarMenuButton>
+    </SidebarMenuItem>
+  );
 }
 
 function DocumentSidebar() {
@@ -362,6 +382,9 @@ function DocumentSidebar() {
               </Link>
             </SidebarMenuButton>
           </SidebarMenuItem>
+
+          {/* Theme toggle */}
+          <ThemeToggle />
 
           {/* User button */}
           <SidebarMenuItem>

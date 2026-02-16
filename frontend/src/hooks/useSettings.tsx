@@ -2,12 +2,14 @@ import { useState, useEffect, useCallback, useContext, createContext, ReactNode 
 
 export type ContentWidth = "narrow" | "medium" | "wide" | "full";
 export type ScrollPosition = "top" | "center" | "bottom";
+export type Theme = "light" | "dark" | "system";
 
 export interface AppSettings {
   scrollOnRestore: boolean;
   liveScrollTracking: boolean;
   contentWidth: ContentWidth;
   scrollPosition: ScrollPosition;
+  theme: Theme;
 }
 
 const SETTINGS_KEY = "yapit-settings";
@@ -17,6 +19,7 @@ const defaultSettings: AppSettings = {
   liveScrollTracking: true,
   contentWidth: "medium",
   scrollPosition: "top",
+  theme: "system",
 };
 
 function loadSettings(): AppSettings {
@@ -37,6 +40,11 @@ function saveSettings(settings: AppSettings): void {
   } catch (e) {
     console.warn("Failed to save settings:", e);
   }
+}
+
+function resolveTheme(theme: Theme, systemDark: boolean): boolean {
+  if (theme === "system") return systemDark;
+  return theme === "dark";
 }
 
 interface SettingsContextValue {
@@ -60,6 +68,22 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener("storage", handler);
   }, []);
 
+  // Apply theme to document
+  useEffect(() => {
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const apply = () => {
+      const dark = resolveTheme(settings.theme, mq.matches);
+      document.documentElement.classList.toggle("dark", dark);
+    };
+
+    apply();
+
+    if (settings.theme === "system") {
+      mq.addEventListener("change", apply);
+      return () => mq.removeEventListener("change", apply);
+    }
+  }, [settings.theme]);
+
   const setSettings = useCallback((updates: Partial<AppSettings>) => {
     setSettingsState((prev) => {
       const next = { ...prev, ...updates };
@@ -81,4 +105,20 @@ export function useSettings() {
     throw new Error("useSettings must be used within a SettingsProvider");
   }
   return context;
+}
+
+export function useIsDark(): boolean {
+  const { settings } = useSettings();
+  const [systemDark, setSystemDark] = useState(
+    () => window.matchMedia("(prefers-color-scheme: dark)").matches
+  );
+
+  useEffect(() => {
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const handler = (e: MediaQueryListEvent) => setSystemDark(e.matches);
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, []);
+
+  return resolveTheme(settings.theme, systemDark);
 }

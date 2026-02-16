@@ -891,7 +891,7 @@ function ActionButtons({
         className="p-2 rounded hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         title={copied ? "Copied!" : "Copy markdown"}
       >
-        {copied ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4 text-muted-foreground" />}
+        {copied ? <Check className="h-4 w-4 text-accent-success" /> : <Copy className="h-4 w-4 text-muted-foreground" />}
       </button>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>

@@ -8,8 +8,8 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { Settings } from "lucide-react";
-import { useSettings, type ContentWidth, type ScrollPosition } from "@/hooks/useSettings";
+import { Settings, Sun, Moon, Monitor } from "lucide-react";
+import { useSettings, type ContentWidth, type ScrollPosition, type Theme } from "@/hooks/useSettings";
 import { cn } from "@/lib/utils";
 import { useUserPreferences } from "@/hooks/useUserPreferences";
 import { useApi } from "@/api";
@@ -68,6 +68,33 @@ export function SettingsDialog({ size = "default" }: SettingsDialogProps) {
         </DialogHeader>
 
         <div className="flex flex-col">
+          <SettingRow
+            label="Appearance"
+            description="Light, dark, or match your system"
+          >
+            <div className="flex gap-1">
+              {([
+                { value: "light" as Theme, icon: Sun, label: "Light" },
+                { value: "dark" as Theme, icon: Moon, label: "Dark" },
+                { value: "system" as Theme, icon: Monitor, label: "System" },
+              ]).map(({ value, icon: Icon, label }) => (
+                <button
+                  key={value}
+                  onClick={() => setSettings({ theme: value })}
+                  className={cn(
+                    "px-2 py-1 text-xs rounded transition-colors flex items-center gap-1",
+                    settings.theme === value
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-muted hover:bg-muted/80 text-muted-foreground"
+                  )}
+                >
+                  <Icon className="h-3 w-3" />
+                  {label}
+                </button>
+              ))}
+            </div>
+          </SettingRow>
+
           <SettingRow
             label="Scroll on restore"
             description="Scroll to saved position when opening a document"
