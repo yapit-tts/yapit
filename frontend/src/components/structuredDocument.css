@@ -1,0 +1,135 @@
+/* Base link style */
+.structured-content a {
+  color: var(--primary);
+  text-decoration: none;
+}
+.structured-content a:hover {
+  opacity: 0.8;
+}
+
+/* Internal anchor links - dotted underline */
+.structured-content a[href^="#"]:not(.dead-link) {
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+}
+
+/* External links - solid underline + icon */
+.structured-content a[href^="http"] {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.structured-content a[href^="http"]::after {
+  content: "";
+  display: inline-block;
+  width: 0.5em;
+  height: 0.5em;
+  margin-left: 0.06em;
+  vertical-align: -0.1em;
+  background-color: currentColor;
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9 5h10v10'/%3E%3Cpath d='M5 19L19 5'/%3E%3C/svg%3E");
+  mask-size: contain;
+  mask-repeat: no-repeat;
+}
+
+/* Dead links - slightly muted, no underline */
+.structured-content a[href^="/"],
+.structured-content a[href^="#"].dead-link {
+  color: var(--primary);
+  opacity: 0.7;
+  text-decoration: none;
+  cursor: default;
+}
+.structured-content a[href^="/"]::after,
+.structured-content a.dead-link::after {
+  content: none;
+}
+
+.structured-content strong {
+  font-weight: 600;
+}
+.structured-content em {
+  font-style: italic;
+}
+.structured-content code:not(pre code) {
+  background: var(--muted-brown);
+  padding: 0.125rem 0.375rem;
+  border-radius: 0.25rem;
+  font-size: 0.875em;
+  font-family: ui-monospace, monospace;
+}
+
+/* Inline images */
+.structured-content img {
+  display: block;
+  max-width: 100%;
+  max-height: 24rem;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  border-radius: 0.25rem;
+  margin: 0.75rem auto;
+}
+
+/* Embedded videos */
+.structured-content video {
+  display: block;
+  margin: 0.75rem auto;
+}
+
+/* Block-level audio blocks - padding + negative margin keeps text position unchanged */
+.structured-content [data-audio-block-idx] {
+  padding-left: 0.625rem;
+  padding-right: 0.625rem;
+  margin-left: -0.625rem;
+  margin-right: -0.625rem;
+  border-radius: 0.5rem;
+}
+/* Inside callouts: keep highlight within the callout bounds */
+.structured-content blockquote [data-audio-block-idx] {
+  margin-left: 0;
+  margin-right: 0;
+  padding-left: 0.375rem;
+  padding-right: 0.375rem;
+}
+/* Inner audio spans (within split paragraphs/captions) - clickable and highlightable */
+.structured-content [data-audio-idx] {
+  cursor: pointer;
+  padding-left: 0.125rem;
+  padding-right: 0.125rem;
+  margin-left: -0.125rem;
+  margin-right: -0.125rem;
+  border-radius: 0.25rem;
+  transition: background-color 0.15s;
+}
+
+/* Active audio block highlighting */
+.structured-content .audio-block-active {
+  background: var(--audio-highlight);
+  border-left-color: var(--primary);
+}
+/* Nested list wrapper: stay highlighted when ANY child marker is active */
+.structured-content .nested-list-audio:has(.audio-block-active) {
+  background: var(--audio-highlight);
+}
+
+/* Hover highlighting from progress bar */
+.structured-content .audio-block-hovered {
+  background: var(--audio-hover);
+  border-left-color: var(--audio-hover-border);
+}
+.structured-content .nested-list-audio:has(.audio-block-hovered) {
+  background: var(--audio-hover);
+}
+
+/* Native hover on clickable blocks */
+.structured-content .clickable-block:hover:not(.audio-block-active) {
+  background: var(--audio-hover);
+}
+.structured-content .clickable-span:hover:not(.audio-block-active) {
+  background: var(--audio-hover);
+}
+/* Native hover on inner audio spans */
+.structured-content [data-audio-idx]:hover:not(.audio-block-active) {
+  background: var(--audio-hover);
+}

@@ -84,6 +84,10 @@
   --sidebar-ring: oklch(0.708 0 0);
   --accent-success: oklch(0.45 0.12 145);
   --accent-warning: oklch(0.5 0.1 80);
+  --audio-highlight: oklch(0.55 0.1 133.7 / 0.15);
+  --audio-hover: oklch(0.55 0.1 133.7 / 0.1);
+  --audio-hover-border: oklch(0.55 0.1 133.7 / 0.6);
+  --audio-glow: oklch(0.55 0.1 133.7 / 0.8);
 }
 
 .dark {

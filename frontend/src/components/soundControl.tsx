@@ -9,6 +9,8 @@ import { type VoiceSelection, setVoiceSelection, isInworldModel, KOKORO_SLUG, KO
 import { useSidebar } from "@/components/ui/sidebar";
 import { useOutlinerOptional } from "@/hooks/useOutliner";
 import { useHasWebGPU } from "@/hooks/useWebGPU";
+import { useProgressBarInteraction } from "@/hooks/useProgressBarInteraction";
+import { useDismissableBanner } from "@/hooks/useDismissableBanner";
 
 type BlockState = 'pending' | 'synthesizing' | 'cached';
 
@@ -104,129 +106,20 @@ interface ProgressBarProps {
   visualToAbsolute?: (visualIdx: number) => number; // For filtered playback
 }
 
-// Smooth gradient visualization for large documents
 function SmoothProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHover, visualToAbsolute }: ProgressBarProps) {
-  const barRef = useRef<HTMLDivElement>(null);
   const numBlocks = blockStates.length;
+  const { barRef, seekPosition, handlers } = useProgressBarInteraction({
+    numBlocks, onBlockClick, onBlockHover, visualToAbsolute,
+  });
 
-  // Drag state (local)
-  const [isDragging, setIsDragging] = useState(false);
-  const [seekPosition, setSeekPosition] = useState<number | null>(null); // Block index being seeked to
-  const dragStartXRef = useRef<number | null>(null);
-  const DRAG_THRESHOLD = 5; // pixels before we consider it a drag vs click
-
-  const getBlockFromX = useCallback((clientX: number) => {
-    if (!barRef.current) return 0;
-    const rect = barRef.current.getBoundingClientRect();
-    const x = clientX - rect.left;
-    const pct = Math.max(0, Math.min(1, x / rect.width));
-    return Math.min(numBlocks - 1, Math.floor(pct * numBlocks));
-  }, [numBlocks]);
-
-  // Get X coordinate from either mouse or touch event
-  const getClientX = (e: React.MouseEvent | React.TouchEvent): number => {
-    if ('touches' in e) {
-      return e.touches[0]?.clientX ?? e.changedTouches[0]?.clientX ?? 0;
-    }
-    return e.clientX;
-  };
-
-  const handleStart = (clientX: number) => {
-    dragStartXRef.current = clientX;
-  };
-
-  const handleMove = (clientX: number) => {
-    const visualIdx = getBlockFromX(clientX);
-
-    let currentlyDragging = isDragging;
-    if (dragStartXRef.current !== null && !isDragging) {
-      const moved = Math.abs(clientX - dragStartXRef.current) > DRAG_THRESHOLD;
-      if (moved) {
-        setIsDragging(true);
-        currentlyDragging = true;
-      }
-    }
-
-    setSeekPosition(visualIdx);
-    // Translate to absolute index for hover callback (DOM elements use absolute indices)
-    const absoluteIdx = visualToAbsolute ? visualToAbsolute(visualIdx) : visualIdx;
-    onBlockHover?.(absoluteIdx, currentlyDragging);
-  };
-
-  const handleEnd = (clientX: number) => {
-    const visualIdx = getBlockFromX(clientX);
-    const absoluteIdx = visualToAbsolute ? visualToAbsolute(visualIdx) : visualIdx;
-    onBlockClick(absoluteIdx);
-    setIsDragging(false);
-    setSeekPosition(null);
-    dragStartXRef.current = null;
-    onBlockHover?.(null, false);
-  };
-
-  const handleCancel = () => {
-    setIsDragging(false);
-    setSeekPosition(null);
-    dragStartXRef.current = null;
-    onBlockHover?.(null, false);
-  };
-
-  // Track last hover position to avoid unnecessary updates
-  const lastHoverBlockRef = useRef<number | null>(null);
-
-  // Mouse events
-  const handleMouseDown = (e: React.MouseEvent) => {
-    e.preventDefault();
-    handleStart(e.clientX);
-  };
-  const handleMouseMove = (e: React.MouseEvent) => {
-    if (dragStartXRef.current !== null) {
-      handleMove(e.clientX);
-    } else {
-      // Just hovering - show indicator but only update if block changed
-      const visualIdx = getBlockFromX(e.clientX);
-      if (visualIdx !== lastHoverBlockRef.current) {
-        lastHoverBlockRef.current = visualIdx;
-        setSeekPosition(visualIdx);
-        // Translate to absolute index for hover callback
-        const absoluteIdx = visualToAbsolute ? visualToAbsolute(visualIdx) : visualIdx;
-        onBlockHover?.(absoluteIdx, false);
-      }
-    }
-  };
-  const handleMouseUp = (e: React.MouseEvent) => {
-    handleEnd(e.clientX);
-  };
-  const handleMouseLeave = () => {
-    lastHoverBlockRef.current = null;
-    setSeekPosition(null);
-    if (!isDragging) {
-      onBlockHover?.(null, false);
-    }
-  };
-
-  // Touch events
-  const handleTouchStart = (e: React.TouchEvent) => {
-    e.preventDefault();
-    handleStart(getClientX(e));
-  };
-  const handleTouchMove = (e: React.TouchEvent) => {
-    e.preventDefault();
-    handleMove(getClientX(e));
-  };
-  const handleTouchEnd = (e: React.TouchEvent) => {
-    handleEnd(getClientX(e));
-  };
-
-  // Build CSS gradient from block states - memoized to avoid rebuilding on every hover
   const gradient = useMemo(() => {
     if (numBlocks === 0) return 'transparent';
 
-    // State colors: pending=warm brown, cached=light green, current=solid green
     const stateToColor = (state: BlockState, isCurrent: boolean) => {
       if (isCurrent) return 'var(--primary)';
-      if (state === 'cached') return 'var(--muted)'; // cached - light green
-      if (state === 'synthesizing') return 'oklch(0.85 0.12 90 / 0.5)'; // muted yellow
-      return 'color-mix(in oklch, var(--muted-warm) 50%, transparent)'; // pending - warm tan
+      if (state === 'cached') return 'var(--muted)';
+      if (state === 'synthesizing') return 'oklch(0.85 0.12 90 / 0.5)';
+      return 'color-mix(in oklch, var(--muted-warm) 50%, transparent)';
     };
 
     const stops: string[] = [];
@@ -239,7 +132,6 @@ function SmoothProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
       const state = i < numBlocks ? blockStates[i] : currentState;
       const nextIsCurrent = i < numBlocks ? i === currentBlock : false;
 
-      // Check if we need to close the current segment
       if (i === numBlocks || state !== currentState || isCurrent !== currentIsCurrent) {
         const endPct = (i / numBlocks) * 100;
         const color = stateToColor(currentState, currentIsCurrent);
@@ -261,31 +153,22 @@ function SmoothProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
       ref={barRef}
       className="flex-1 h-10 md:h-5 rounded overflow-hidden cursor-pointer relative touch-none"
       style={{ background: gradient }}
-      onMouseDown={handleMouseDown}
-      onMouseMove={handleMouseMove}
-      onMouseUp={handleMouseUp}
-      onMouseLeave={handleMouseLeave}
-      onTouchStart={handleTouchStart}
-      onTouchMove={handleTouchMove}
-      onTouchEnd={handleTouchEnd}
-      onTouchCancel={handleCancel}
+      {...handlers}
       role="slider"
       aria-valuemin={1}
       aria-valuemax={numBlocks}
       aria-valuenow={currentBlock + 1}
       tabIndex={0}
     >
-      {/* Current position indicator - primary green */}
       <div
         className="absolute top-0 bottom-0 w-1 pointer-events-none"
         style={{
           left: `${currentPct}%`,
           transform: 'translateX(-50%)',
           backgroundColor: 'var(--primary)',
-          boxShadow: '0 0 6px oklch(0.55 0.1 133.7 / 0.8)',
+          boxShadow: '0 0 6px var(--audio-glow)',
         }}
       />
-      {/* Seek position indicator - same width as current position */}
       {seekPosition !== null && seekPosition !== currentBlock && (
         <div
           className="absolute top-0 bottom-0 w-1 pointer-events-none"
@@ -293,7 +176,7 @@ function SmoothProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
             left: `${(seekPosition / numBlocks) * 100}%`,
             transform: 'translateX(-50%)',
             backgroundColor: 'var(--primary)',
-            boxShadow: '0 0 6px oklch(0.55 0.1 133.7 / 0.8)',
+            boxShadow: '0 0 6px var(--audio-glow)',
           }}
         />
       )}
@@ -301,137 +184,31 @@ function SmoothProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHov
   );
 }
 
-// Individual block visualization for smaller documents
 function BlockyProgressBar({ blockStates, currentBlock, onBlockClick, onBlockHover, visualToAbsolute }: ProgressBarProps) {
-  const barRef = useRef<HTMLDivElement>(null);
   const numBlocks = blockStates.length;
-
-  // Drag state (matches SmoothProgressBar exactly)
-  const [isDragging, setIsDragging] = useState(false);
-  const [seekPosition, setSeekPosition] = useState<number | null>(null);
-  const dragStartXRef = useRef<number | null>(null);
-  const DRAG_THRESHOLD = 5;
-
-  const getBlockFromX = useCallback((clientX: number) => {
-    if (!barRef.current) return 0;
-    const rect = barRef.current.getBoundingClientRect();
-    const x = clientX - rect.left;
-    const pct = Math.max(0, Math.min(1, x / rect.width));
-    return Math.min(numBlocks - 1, Math.floor(pct * numBlocks));
-  }, [numBlocks]);
+  const { barRef, seekPosition, handlers } = useProgressBarInteraction({
+    numBlocks, onBlockClick, onBlockHover, visualToAbsolute,
+  });
 
   if (numBlocks === 0) {
     return <div className="flex-1 h-10 md:h-5 bg-muted rounded" />;
   }
 
-  // Get X coordinate from touch event
-  const getClientX = (e: React.TouchEvent): number => {
-    return e.touches[0]?.clientX ?? e.changedTouches[0]?.clientX ?? 0;
-  };
-
-  const handleStart = (clientX: number) => {
-    dragStartXRef.current = clientX;
-  };
-
-  const handleMove = (clientX: number) => {
-    const visualIdx = getBlockFromX(clientX);
-    let currentlyDragging = isDragging;
-    if (dragStartXRef.current !== null && !isDragging) {
-      const moved = Math.abs(clientX - dragStartXRef.current) > DRAG_THRESHOLD;
-      if (moved) {
-        setIsDragging(true);
-        currentlyDragging = true;
-      }
-    }
-    setSeekPosition(visualIdx);
-    // Translate to absolute index for hover callback (DOM elements use absolute indices)
-    const absoluteIdx = visualToAbsolute ? visualToAbsolute(visualIdx) : visualIdx;
-    onBlockHover?.(absoluteIdx, currentlyDragging);
-  };
-
-  const handleEnd = (clientX: number) => {
-    const visualIdx = getBlockFromX(clientX);
-    const absoluteIdx = visualToAbsolute ? visualToAbsolute(visualIdx) : visualIdx;
-    onBlockClick(absoluteIdx);
-    setIsDragging(false);
-    setSeekPosition(null);
-    dragStartXRef.current = null;
-    onBlockHover?.(null, false);
-  };
-
-  const handleCancel = () => {
-    setIsDragging(false);
-    setSeekPosition(null);
-    dragStartXRef.current = null;
-    onBlockHover?.(null, false);
-  };
-
-  // Mouse events (matches SmoothProgressBar)
-  const handleMouseDown = (e: React.MouseEvent) => {
-    e.preventDefault();
-    handleStart(e.clientX);
-  };
-  const handleMouseMove = (e: React.MouseEvent) => {
-    if (dragStartXRef.current !== null) {
-      handleMove(e.clientX);
-    } else {
-      const visualIdx = getBlockFromX(e.clientX);
-      setSeekPosition(visualIdx);
-      // Translate to absolute index for hover callback
-      const absoluteIdx = visualToAbsolute ? visualToAbsolute(visualIdx) : visualIdx;
-      onBlockHover?.(absoluteIdx, false);
-    }
-  };
-  const handleMouseUp = (e: React.MouseEvent) => {
-    handleEnd(e.clientX);
-  };
-  const handleMouseLeave = () => {
-    setSeekPosition(null);
-    if (!isDragging) onBlockHover?.(null, false);
-  };
-
-  // Touch events
-  const handleTouchStart = (e: React.TouchEvent) => {
-    e.preventDefault();
-    handleStart(getClientX(e));
-  };
-  const handleTouchMove = (e: React.TouchEvent) => {
-    e.preventDefault();
-    handleMove(getClientX(e));
-  };
-  const handleTouchEnd = (e: React.TouchEvent) => {
-    handleEnd(getClientX(e));
-  };
-
   return (
     <div
       ref={barRef}
       className="flex-1 flex items-center h-10 md:h-5 bg-muted/30 rounded overflow-hidden touch-none cursor-pointer"
-      onMouseDown={handleMouseDown}
-      onMouseMove={handleMouseMove}
-      onMouseUp={handleMouseUp}
-      onMouseLeave={handleMouseLeave}
-      onTouchStart={handleTouchStart}
-      onTouchMove={handleTouchMove}
-      onTouchEnd={handleTouchEnd}
-      onTouchCancel={handleCancel}
+      {...handlers}
     >
       {blockStates.map((state, idx) => {
         const isCurrent = idx === currentBlock;
         const isSeekTarget = seekPosition === idx && seekPosition !== currentBlock;
 
-        // State-based colors: pending=warm brown, cached=light green, current=solid green
-        let bgColor = 'bg-muted-warm/50'; // pending - warm tan
-        if (state === 'synthesizing') bgColor = 'bg-yellow-500/40'; // muted yellow, no pulse
-        else if (state === 'cached') bgColor = 'bg-muted'; // cached - light green
+        let bgColor = 'bg-muted-warm/50';
+        if (state === 'synthesizing') bgColor = 'bg-yellow-500/40';
+        else if (state === 'cached') bgColor = 'bg-muted';
 
-        // Current block is solid green - the focal point
-        if (isCurrent) {
-          bgColor = 'bg-primary';
-        }
-
-        // Seek target gets green highlight (same as current playing)
-        if (isSeekTarget) {
+        if (isCurrent || isSeekTarget) {
           bgColor = 'bg-primary';
         }
 
@@ -536,17 +313,7 @@ const SoundControl = memo(function SoundControl({
   const isUsingInworld = isInworldModel(voiceSelection.model);
   const isUsingKokoroServer = voiceSelection.model === KOKORO_SLUG;
 
-  // Banner dismissed state
-  const [quotaDismissed, setQuotaDismissed] = useState(false);
-
-  // Reset dismissed when voice model changes
-  const prevModel = useRef(voiceSelection.model);
-  useEffect(() => {
-    if (voiceSelection.model !== prevModel.current) {
-      setQuotaDismissed(false);
-    }
-    prevModel.current = voiceSelection.model;
-  }, [voiceSelection.model]);
+  const [quotaDismissed, setQuotaDismissed] = useDismissableBanner(voiceSelection.model);
 
   const showQuotaBanner = usageLimitError && !quotaDismissed;
 
@@ -587,14 +354,8 @@ const SoundControl = memo(function SoundControl({
     setQuotaDismissed(true);
   }, [voiceSelection, onVoiceChange]);
 
-  // Browser TTS error banner — resets on model change (same as quota banner)
   const isUsingBrowser = voiceSelection.model === KOKORO_BROWSER_SLUG;
-  const [browserErrorDismissed, setBrowserErrorDismissed] = useState(false);
-  useEffect(() => {
-    if (voiceSelection.model !== prevModel.current) {
-      setBrowserErrorDismissed(false);
-    }
-  }, [voiceSelection.model]);
+  const [browserErrorDismissed, setBrowserErrorDismissed] = useDismissableBanner(voiceSelection.model);
   const showBrowserErrorBanner = isUsingBrowser && browserTTSError && !browserErrorDismissed;
 
   // WASM fallback info banner — localStorage, persists across sessions
