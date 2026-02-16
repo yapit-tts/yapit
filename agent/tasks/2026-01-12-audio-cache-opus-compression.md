@@ -1,6 +1,7 @@
 ---
-status: active
+status: done
 started: 2026-01-12
+completed: 2026-02-09
 ---
 
 # Task: Audio Cache Opus Compression
@@ -61,7 +62,12 @@ Reduce audio cache storage by ~5x by compressing TTS output with Opus codec befo
 - Don't break existing cached audio (migration path or just let old cache expire)
 - Encoding should be fast enough to not add noticeable latency
 
+## Commits
+
+- `1d69419` — feat: switch all TTS audio to OGG Opus, drop TTSModel codec columns
+
 ## Related
 
+- [[2026-02-09-inworld-opus-firefox-artifact]] — Firefox startup artifact found during this work, fixed by using streaming endpoint
 - [[2026-01-12-gemini-processor-integration]] — mentions audio cache LRU as separate task
 - Audio cache also needs LRU implementation (same pattern as extraction cache)

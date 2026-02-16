@@ -4,6 +4,8 @@ started: 2026-01-14
 ---
 
 - NOTE: When we implement this, we should cleanup the documents.py code... processors shoud have extract_webpage and extract_pdf or sth similar, rather than calling markitdown directly in documents.py as we do rn.
+- f6fa93d5-207c-4f50-b402-1e5833ab0dbf check this for a discussion on the UX !!!!! and the latest state of the spec 
+- refactoring task that resulted from that website /home/max/repos/code/yapit-tts/yapit/agent/tasks/2026-02-11-remove-markitdown-processor-refactor.md
 
 # Task: AI Transform Retry for Webpages
 
@@ -110,6 +112,40 @@ If file cache miss (HTML evicted):
 2. Re-fetch URL
 3. Process with Gemini
 4. Note: page content might have changed — acceptable tradeoff
+
+## Preliminary Findings (from trafilatura integration work)
+
+### Input for Gemini
+
+- Feed cleaned HTML (not trafilatura markdown) — preserves semantic structure (`<sup>` for citations, `<a href>` links, `<video>` tags)
+- Get cleaned HTML by: patching `trafilatura.settings.MANUALLY_CLEANED` to keep video/audio/iframe/source, capture tree after `tree_cleaning`, convert `<graphic>` → `<img>`, serialize to HTML
+- This gives ~50% size reduction (boilerplate stripped) while preserving multimedia
+
+### Footnote handling
+
+- Parser does two-pass matching: collects all `[^label]: content` definitions first, then resolves `[^label]` refs
+- Position is irrelevant — `[^1]` on line 5 and `[^1]: definition` on line 500 match correctly
+- Orphan refs (no definition) become literal text, orphan definitions get dropped
+- Gemini can output refs scattered in text + definitions at end — parser handles it
+
+### Citation handling
+
+- Antikythera-style cross-page bibliography: refs link to `/bibliography/#ref-NNN` (separate page), no definitions exist in HTML
+- Gemini should wrap/convert inline citation markers — exact format TBD: `<yap-show>[1](/bibliography/#ref-NNN)</yap-show>` vs `<yap-show>[¹](/bibliography/#ref-NNN)</yap-show>` vs converting to `[^1]` proper footnotes
+- For inline citations like `[13]` in running text: wrap in `<yap-show>`
+- For author citations ("Smith et al. (2020)"): naturalize to "Smith and colleagues"
+- Existing PDF prompt (lines 107-123 of extraction.txt) already has these rules — webpage prompt shares them
+
+### Video handling
+
+- Cleaned HTML preserves `<video>` + `<source>` tags (with the MANUALLY_CLEANED patch)
+- Gemini can output them as `[Video description](/path/to/video.mp4)` — frontend's existing transform (structuredDocument.tsx:898-918) renders `<a href="...mp4">` links as `<video>` elements
+
+### Chunking consideration
+
+- If document is chunked for Gemini, footnote refs and definitions may be in different chunks
+- But final markdown is concatenated, so parser sees full document and matches them correctly
+- Each chunk can handle citations independently (wrap in `<yap-show>`) — no cross-chunk context needed
 
 ## Considered & Rejected
 

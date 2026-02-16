@@ -9,14 +9,16 @@ Parent: [[stripe-integration]]
 
 ## Purpose
 
-This file defines the **testing workflow** for Stripe billing features. Concrete testing sessions are separate task files that link here.
+This file defines the **manual E2E testing workflow** for Stripe billing features. Concrete testing sessions are separate task files that link here.
+
+**Deterministic tests exist separately.** 77 unit/API-integration tests in `tests/yapit/gateway/api/test_billing_*.py` + `test_usage.py` cover webhook handlers, endpoint guards, usage waterfall, ordering/idempotency, grace period matrix, and billing sync drift — all without live Stripe calls. See [[stripe-integration]] Testing section for details. Manual E2E testing (this workflow) covers what those tests can't: real Checkout/Portal UI, actual webhook delivery, card payments, promo codes, and frontend rendering.
 
 ## Agent Instructions
 
 When working through this test suite:
 
 **Test Execution:**
-- Work through sections 1-10 sequentially
+- Work through sections 1-9 sequentially
 - Use Chrome DevTools MCP for UI interactions (login, checkout, portal)
 - Use CLI/API for verification (DB queries, Stripe CLI, webhook logs)
 
@@ -50,6 +52,8 @@ When working through this test suite:
 | [[stripe-testing-fresh-sandbox]] | ✅ Done | Fresh sandbox full E2E validation (2026-01-05). All sections complete. |
 | [[stripe-testing-beta-launch]] | Reference | Pre-beta testing, detailed observations |
 | [[stripe-testing-targeted-validation]] | ✅ Done | Portal downgrade, duplicate prevention, promo codes verified |
+| [[stripe-testing-pricing-restructure]] | ✅ Done | Token billing, waterfall, rollover/debt, grace period, interval switching (2026-01-23) |
+| [[2026-02-15-billing-unit-api-integration-tests]] | ✅ Done | 77 deterministic tests — no Stripe calls, covers handler logic/ordering/idempotency/grace matrix/sync |
 
 ## Environment Setup
 
@@ -205,7 +209,7 @@ stripe customers delete cus_XXXXX --confirm
 
 - **Users with existing subscription** → UI shows "Upgrade/Downgrade" buttons that go to portal, NOT checkout
 - **Canceled users must go to Checkout** — Portal can't resubscribe; must use Checkout with existing customer ID. Frontend fixed in commit `675521a` to detect `status === "canceled"` and route to checkout.
-- **Duplicate subscription prevention** — `billing.py:119-124` blocks checkout for users with active/trialing subscription; returns 400 error
+- **Duplicate subscription prevention** — `/subscribe` blocks checkout for any non-canceled status (active, trialing, past_due, incomplete); returns 400
 - **Portal downgrades** — Now work with "immediately" setting (fixed via `_clear_portal_schedule_conditions()`)
 
 ### Database
@@ -220,17 +224,17 @@ stripe customers delete cus_XXXXX --confirm
 - Guest → each tier (Basic/Plus/Max)
 - Monthly vs Yearly pricing
 - Trial eligibility (first time vs returning)
+- User with past_due/incomplete status → verify frontend shows appropriate state, subscribe blocked in UI
+- Subscribe triggers billing sync → verify 503 shown to user if Stripe unreachable
 
 ### 2. Upgrade Flows
 - Tier upgrades via portal (immediate, prorated)
 - Cross-tier + interval changes
 
 ### 3. Downgrade Flows (Grace Period)
-- Portal → select lower tier → Stripe applies immediately
-- Webhook `customer.subscription.updated` triggers grace period setup
-- Verify DB: `grace_tier` = old tier, `grace_until` = period_end
-- Verify `get_effective_plan()` returns old tier during grace
-- Verify grace clears on renewal
+- Portal → select lower tier → verify frontend shows grace badge with correct tier and expiry date
+- Use higher-tier features during grace → should work
+- After renewal (test clock advance) → grace badge disappears, features limited to new tier
 
 ### 4. Cancel Flows
 - Cancel at period end
@@ -243,30 +247,25 @@ stripe customers delete cus_XXXXX --confirm
 
 ### 6. Resubscribe Flows
 - After full cancel → new checkout
-- Trial eligibility based on highest_tier_subscribed
+- Checkout UI shows/hides trial offer correctly based on subscription history
 - Resubscribe with promo code (fully canceled user should be able to use promo codes)
 
-### 7. Edge Cases
-- Multiple downgrades in same period
-- Upgrade during grace period
-- Downgrade during trial
-- Grace expiry fallback: if `invoice.payment_succeeded` webhook delayed, verify `get_effective_plan()` checks `grace_until < now` (user loses grace access at correct time, not when webhook arrives)
-
-### 8. Payment Failures
+### 7. Payment Failures
 - Declined card on renewal
 - Declined card on upgrade
 - Payment recovery: user `past_due` → updates card in portal → Stripe retries → `invoice.payment_succeeded` → status returns to `active`
 - Dunning exhaustion: Stripe gives up retrying → `customer.subscription.deleted` with `cancellation_details.reason = "payment_failed"` → handler marks as canceled
 
-### 9. Promo Codes
+### 8. Promo Codes
 - See `scripts/stripe_setup.py` for current promo code definitions
 - Valid code applies discount (verify in checkout UI and on invoice)
 - Invalid code shows "promotional code is invalid" error
 - Check redemption counts: `stripe promotion_codes list --code=<CODE>`
 
-### 10. Webhook Reliability
-- Delayed webhook (simulate outage): webhook arrives hours after event → handlers still work (idempotent, set state from webhook data)
-- Webhook ordering: `subscription.updated` before `checkout.completed` → updated handler no-ops if subscription doesn't exist, checkout creates it later (self-corrects)
+### 9. Billing Sync
+- Tamper DB state (e.g. set status=canceled for an active Stripe subscription), hit `/subscribe` → verify sync corrects state and frontend reflects it
+- Kill Stripe connectivity (e.g. block outbound on gateway container), hit `/subscribe` → verify user sees error, not silent pass-through
+- Background sync loop: tamper DB, wait for loop iteration (~5min), verify frontend reflects corrected state without user action
 
 ## Creating a New Testing Session
 

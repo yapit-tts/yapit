@@ -6,6 +6,8 @@ status: active
 
 Add temperature as advanced toggle in voice picker for Inworld models.
 
+UPDATE: Idea - after testing whether it makes a diff at all, at most allow a small range like 0.8-1.3, and in steps of 0.1.
+
 ## API Reference
 
 - [Inworld Generating Audio docs](https://docs.inworld.ai/docs/tts/capabilities/generating-audio)
