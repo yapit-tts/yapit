@@ -989,3 +989,335 @@ async def test_invoice_failed_no_crash_when_missing_sub_id_with_subscription_rea
     # No subscriptions mutated
     after = (await session.exec(select(UserSubscription))).all()
     assert len(after) == len(before)
+
+
+# --- Realistic Stripe data shape tests ---
+# These tests use invoice/subscription data shaped like real Stripe payloads.
+
+
+@pytest.mark.asyncio
+async def test_subscription_create_invoice_does_not_overwrite_period_dates(session):
+    """Stripe subscription_create invoices have period_start == period_end (a point-in-time,
+    not a billing cycle). The handler must not overwrite the subscription's correct period dates.
+    """
+    now = datetime.now(tz=dt.UTC).replace(microsecond=0)
+    period_end = now + timedelta(days=30)
+
+    plan = await ensure_plan(
+        session,
+        tier=PlanTier.plus,
+        monthly_price_id="price_plus_monthly_create_inv",
+        yearly_price_id="price_plus_yearly_create_inv",
+    )
+
+    await create_subscription(
+        session,
+        user_id="user-create-invoice",
+        plan_id=plan.id,
+        stripe_subscription_id="sub_create_invoice",
+        status=SubscriptionStatus.active,
+        current_period_start=now,
+        current_period_end=period_end,
+        ever_paid=False,
+    )
+
+    # Real Stripe: subscription_create invoices have period_start == period_end
+    invoice = make_invoice(
+        subscription_id="sub_create_invoice",
+        billing_reason="subscription_create",
+        period_start=now,
+        period_end=now,  # same as period_start — this is what Stripe actually sends
+        invoice_id="in_create",
+    )
+
+    await billing_api._handle_invoice_paid(invoice, session)
+
+    refreshed = await session.get(UserSubscription, "user-create-invoice")
+    assert refreshed is not None
+    assert refreshed.ever_paid is True
+    # Period dates must be preserved from the subscription, not overwritten by the invoice
+    assert refreshed.current_period_start == now
+    assert refreshed.current_period_end == period_end
+
+
+@pytest.mark.asyncio
+async def test_new_subscription_full_webhook_sequence(session):
+    """Simulates the real webhook sequence for a new paid subscription (no trial):
+    1. checkout.session.completed → creates row with correct period
+    2. customer.subscription.created → upserts (effectively no-op)
+    3. invoice.payment_succeeded (subscription_create) → sets ever_paid, must NOT corrupt period
+
+    This is the exact sequence that caused the period_start == period_end bug in production.
+    """
+    creation_time = datetime.now(tz=dt.UTC).replace(microsecond=0)
+    period_end = creation_time + timedelta(days=30)
+
+    plan = await ensure_plan(
+        session,
+        tier=PlanTier.plus,
+        monthly_price_id="price_plus_monthly_seq",
+        yearly_price_id="price_plus_yearly_seq",
+    )
+
+    stripe_sub = make_stripe_subscription(
+        sub_id="sub_sequence",
+        user_id="user-sequence",
+        price_id=plan.stripe_price_id_monthly,
+        period_start=creation_time,
+        period_end=period_end,
+        status="active",
+        customer="cus_sequence",
+        plan_tier=PlanTier.plus,
+    )
+
+    # Event 1: checkout.session.completed
+    retrieve_async = AsyncMock(return_value=stripe_sub)
+    fake_client = SimpleNamespace(v1=SimpleNamespace(subscriptions=SimpleNamespace(retrieve_async=retrieve_async)))
+    checkout = make_checkout_session(
+        user_id="user-sequence", subscription_id="sub_sequence", customer_id="cus_sequence"
+    )
+    await billing_api._handle_checkout_completed(checkout, fake_client, session)
+
+    sub = await session.get(UserSubscription, "user-sequence")
+    assert sub is not None
+    assert sub.current_period_start == creation_time
+    assert sub.current_period_end == period_end
+
+    # Event 2: customer.subscription.created (same data, upserts over existing row)
+    await billing_api._handle_subscription_updated(stripe_sub, session)
+
+    await session.refresh(sub)
+    assert sub.current_period_start == creation_time
+    assert sub.current_period_end == period_end
+
+    # Event 3: invoice.payment_succeeded (subscription_create — period_start == period_end)
+    invoice = make_invoice(
+        subscription_id="sub_sequence",
+        billing_reason="subscription_create",
+        period_start=creation_time,
+        period_end=creation_time,  # real Stripe behavior
+        invoice_id="in_sequence_create",
+    )
+    await billing_api._handle_invoice_paid(invoice, session)
+
+    # Final state: period dates must still be correct
+    await session.refresh(sub)
+    assert sub.current_period_start == creation_time
+    assert sub.current_period_end == period_end
+    assert sub.ever_paid is True
+    assert sub.status == SubscriptionStatus.active
+
+
+@pytest.mark.asyncio
+async def test_trial_subscription_webhook_sequence(session):
+    """Simulates webhook sequence for a trial subscription:
+    1. checkout.session.completed → creates row (status=trialing, period_end=trial_end)
+    2. invoice.payment_succeeded ($0, subscription_create) → must not corrupt period
+    3. subscription.updated (trialing→active, period shifts to post-trial) → updates period
+    4. invoice.payment_succeeded (subscription_cycle, first real payment) → updates period + rollover
+    """
+    trial_start = datetime.now(tz=dt.UTC).replace(microsecond=0)
+    trial_end = trial_start + timedelta(days=3)
+    first_paid_period_end = trial_end + timedelta(days=30)
+
+    plan = await ensure_plan(
+        session,
+        tier=PlanTier.plus,
+        monthly_price_id="price_plus_monthly_trial_seq",
+        yearly_price_id="price_plus_yearly_trial_seq",
+        trial_days=3,
+        ocr_tokens=100_000,
+    )
+
+    # During trial: current_period_end = trial_end (NOT trial_end + billing interval)
+    trial_sub = make_stripe_subscription(
+        sub_id="sub_trial_seq",
+        user_id="user-trial-seq",
+        price_id=plan.stripe_price_id_monthly,
+        period_start=trial_start,
+        period_end=trial_end,  # trial period, not billing cycle
+        status="trialing",
+        customer="cus_trial_seq",
+        plan_tier=PlanTier.plus,
+    )
+
+    # Event 1: checkout.session.completed
+    retrieve_async = AsyncMock(return_value=trial_sub)
+    fake_client = SimpleNamespace(v1=SimpleNamespace(subscriptions=SimpleNamespace(retrieve_async=retrieve_async)))
+    checkout = make_checkout_session(
+        user_id="user-trial-seq", subscription_id="sub_trial_seq", customer_id="cus_trial_seq"
+    )
+    await billing_api._handle_checkout_completed(checkout, fake_client, session)
+
+    sub = await session.get(UserSubscription, "user-trial-seq")
+    assert sub.status == SubscriptionStatus.trialing
+    assert sub.current_period_end == trial_end
+
+    # Event 2: $0 invoice.payment_succeeded (subscription_create, period_start == period_end)
+    trial_invoice = make_invoice(
+        subscription_id="sub_trial_seq",
+        billing_reason="subscription_create",
+        period_start=trial_start,
+        period_end=trial_start,  # point-in-time for subscription_create
+        invoice_id="in_trial_zero",
+    )
+    await billing_api._handle_invoice_paid(trial_invoice, session)
+
+    await session.refresh(sub)
+    # Period must still reflect trial, not the invoice's point-in-time
+    assert sub.current_period_start == trial_start
+    assert sub.current_period_end == trial_end
+
+    # Event 3: subscription.updated (trial ends → active, period shifts)
+    active_sub = make_stripe_subscription(
+        sub_id="sub_trial_seq",
+        user_id="user-trial-seq",
+        price_id=plan.stripe_price_id_monthly,
+        period_start=trial_end,  # new period starts at trial end
+        period_end=first_paid_period_end,  # first real billing cycle
+        status="active",
+        customer="cus_trial_seq",
+    )
+    await billing_api._handle_subscription_updated(active_sub, session)
+
+    await session.refresh(sub)
+    assert sub.status == SubscriptionStatus.active
+    assert sub.current_period_start == trial_end
+    assert sub.current_period_end == first_paid_period_end
+
+    # Event 4: invoice.payment_succeeded (subscription_cycle, first real payment)
+    cycle_invoice = make_invoice(
+        subscription_id="sub_trial_seq",
+        billing_reason="subscription_cycle",
+        period_start=trial_end,  # accrual window start
+        period_end=first_paid_period_end,
+        invoice_id="in_trial_first_paid",
+    )
+    await billing_api._handle_invoice_paid(cycle_invoice, session)
+
+    await session.refresh(sub)
+    assert sub.ever_paid is True
+    assert sub.current_period_start == trial_end
+    assert sub.current_period_end == first_paid_period_end
+
+
+@pytest.mark.asyncio
+async def test_cancel_at_period_end_preserves_active_status(session):
+    """When a user cancels at period end, Stripe sends subscription.updated with
+    cancel_at_period_end=True, canceled_at=<request time>, cancel_at=<period_end>,
+    but status remains 'active'. The subscription should stay active until period end.
+    """
+    now = datetime.now(tz=dt.UTC).replace(microsecond=0)
+    period_end = now + timedelta(days=15)
+    cancel_request_time = now + timedelta(days=5)
+
+    plan = await ensure_plan(
+        session,
+        tier=PlanTier.plus,
+        monthly_price_id="price_plus_monthly_cancel_end",
+        yearly_price_id="price_plus_yearly_cancel_end",
+    )
+
+    await create_subscription(
+        session,
+        user_id="user-cancel-end",
+        plan_id=plan.id,
+        stripe_subscription_id="sub_cancel_end",
+        status=SubscriptionStatus.active,
+        current_period_start=now,
+        current_period_end=period_end,
+    )
+
+    # Stripe sends subscription.updated: still active, but marked for cancellation
+    stripe_sub = make_stripe_subscription(
+        sub_id="sub_cancel_end",
+        user_id="user-cancel-end",
+        price_id=plan.stripe_price_id_monthly,
+        period_start=now,
+        period_end=period_end,
+        status="active",  # still active!
+        cancel_at_period_end=True,
+        cancel_at=period_end,
+        canceled_at=cancel_request_time,  # when user clicked cancel
+    )
+
+    await billing_api._handle_subscription_updated(stripe_sub, session)
+
+    refreshed = await session.get(UserSubscription, "user-cancel-end")
+    assert refreshed.status == SubscriptionStatus.active
+    assert refreshed.cancel_at_period_end is True
+    assert refreshed.cancel_at == period_end
+    assert refreshed.canceled_at == cancel_request_time
+
+
+@pytest.mark.asyncio
+async def test_resubscribe_after_cancel_full_sequence(session):
+    """Simulates: user had Plus, canceled, resubscribes to Plus (no trial).
+    Exercises the resubscribe path where an existing canceled row gets overwritten
+    by checkout.completed, then subscription_create invoice fires with period_start == period_end.
+    """
+    now = datetime.now(tz=dt.UTC).replace(microsecond=0)
+    new_period_end = now + timedelta(days=30)
+
+    plan = await ensure_plan(
+        session,
+        tier=PlanTier.plus,
+        monthly_price_id="price_plus_monthly_resub",
+        yearly_price_id="price_plus_yearly_resub",
+    )
+
+    # Existing canceled subscription
+    await create_subscription(
+        session,
+        user_id="user-resub",
+        plan_id=plan.id,
+        stripe_subscription_id="sub_old_canceled",
+        status=SubscriptionStatus.canceled,
+        current_period_start=now - timedelta(days=60),
+        current_period_end=now - timedelta(days=30),
+        canceled_at=now - timedelta(days=30),
+        ever_paid=True,
+        highest_tier_subscribed=PlanTier.plus,
+    )
+
+    # New subscription via checkout (different stripe_subscription_id)
+    new_stripe_sub = make_stripe_subscription(
+        sub_id="sub_new_resub",
+        user_id="user-resub",
+        price_id=plan.stripe_price_id_monthly,
+        period_start=now,
+        period_end=new_period_end,
+        status="active",
+        customer="cus_resub",
+        plan_tier=PlanTier.plus,
+    )
+
+    # Event 1: checkout.session.completed overwrites canceled row
+    retrieve_async = AsyncMock(return_value=new_stripe_sub)
+    fake_client = SimpleNamespace(v1=SimpleNamespace(subscriptions=SimpleNamespace(retrieve_async=retrieve_async)))
+    checkout = make_checkout_session(user_id="user-resub", subscription_id="sub_new_resub", customer_id="cus_resub")
+    await billing_api._handle_checkout_completed(checkout, fake_client, session)
+
+    sub = await session.get(UserSubscription, "user-resub")
+    assert sub.stripe_subscription_id == "sub_new_resub"
+    assert sub.status == SubscriptionStatus.active
+    assert sub.canceled_at is None
+    assert sub.current_period_end == new_period_end
+    # highest_tier_subscribed preserved from old row (not overwritten by checkout upsert)
+    assert sub.highest_tier_subscribed == PlanTier.plus
+
+    # Event 2: subscription_create invoice (period_start == period_end)
+    invoice = make_invoice(
+        subscription_id="sub_new_resub",
+        billing_reason="subscription_create",
+        period_start=now,
+        period_end=now,
+        invoice_id="in_resub_create",
+    )
+    await billing_api._handle_invoice_paid(invoice, session)
+
+    await session.refresh(sub)
+    # Period dates preserved
+    assert sub.current_period_start == now
+    assert sub.current_period_end == new_period_end
+    assert sub.ever_paid is True

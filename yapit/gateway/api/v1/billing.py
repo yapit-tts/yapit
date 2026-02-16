@@ -611,9 +611,10 @@ async def _handle_invoice_paid(invoice: stripe.Invoice, db: DbSession) -> None:
         subscription.ever_paid = True
         log.info("First payment received")
 
-    # Only update period dates for full-cycle invoices. subscription_update invoices
-    # carry proration windows, not billing cycle boundaries.
-    is_full_cycle = invoice.billing_reason in ("subscription_create", "subscription_cycle")
+    # Only update period dates for renewal invoices. subscription_create invoices have
+    # period_start == period_end (point-in-time), and subscription_update invoices carry
+    # proration windows — neither represents billing cycle boundaries.
+    is_full_cycle = invoice.billing_reason == "subscription_cycle"
     if is_full_cycle and invoice.period_start and invoice.period_end:
         subscription.current_period_start = datetime.fromtimestamp(invoice.period_start, tz=dt.UTC)
         subscription.current_period_end = datetime.fromtimestamp(invoice.period_end, tz=dt.UTC)
