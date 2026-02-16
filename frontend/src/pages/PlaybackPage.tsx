@@ -111,6 +111,7 @@ const PlaybackPage = () => {
   const [isScrollDetached, setIsScrollDetached] = useState(false);
   const [backToReadingDismissed, setBackToReadingDismissed] = useState(false);
   const scrollCooldownRef = useRef(false);
+  const scrollCooldownTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Derived
   const documentTitle = document?.title ?? initialTitle;
@@ -306,8 +307,11 @@ const PlaybackPage = () => {
 
   const scrollToBlock = useCallback((blockIdx: number, behavior: ScrollBehavior = "smooth") => {
     if (blockIdx < 0) return;
+    scrollCooldownRef.current = true;
+    if (scrollCooldownTimerRef.current) clearTimeout(scrollCooldownTimerRef.current);
     const element = findElementsByAudioIdx(blockIdx)[0];
     if (element) element.scrollIntoView({ behavior, block: scrollBlockPosition });
+    scrollCooldownTimerRef.current = setTimeout(() => { scrollCooldownRef.current = false; }, 1200);
   }, [findElementsByAudioIdx, scrollBlockPosition]);
 
   // Preview scroll position change immediately
@@ -319,17 +323,13 @@ const PlaybackPage = () => {
     if (currentBlock < 0 || !isPlaying) return;
     if (!settings.liveScrollTracking || isScrollDetached) return;
     if (scrollCooldownRef.current) return;
-    scrollCooldownRef.current = true;
     scrollToBlock(currentBlock);
-    setTimeout(() => { scrollCooldownRef.current = false; }, 800);
   }, [currentBlock, settings.liveScrollTracking, isScrollDetached, scrollToBlock, isPlaying]);
 
   useEffect(() => {
     if (!isPlaying || !settings.liveScrollTracking || isScrollDetached || currentBlock < 0) return;
     if (scrollCooldownRef.current) return;
-    scrollCooldownRef.current = true;
     scrollToBlock(currentBlock);
-    setTimeout(() => { scrollCooldownRef.current = false; }, 800);
   }, [isPlaying, settings.liveScrollTracking, isScrollDetached, currentBlock, scrollToBlock]);
 
   useEffect(() => {
@@ -345,14 +345,15 @@ const PlaybackPage = () => {
   }, [settings.liveScrollTracking, isScrollDetached, isPlaying]);
 
   useEffect(() => {
-    if (isPlaying && isScrollDetached) setBackToReadingDismissed(false);
-  }, [isPlaying, isScrollDetached]);
+    if (isPlaying && isScrollDetached) {
+      setIsScrollDetached(false);
+      scrollToBlock(currentBlock);
+    }
+  }, [isPlaying]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleBackToReading = useCallback(() => {
-    scrollCooldownRef.current = true;
     setIsScrollDetached(false);
     scrollToBlock(currentBlock, "smooth");
-    setTimeout(() => { scrollCooldownRef.current = false; }, 800);
   }, [currentBlock, scrollToBlock]);
 
   // --- Keyboard and MediaSession ---
