@@ -197,6 +197,65 @@ class TestYapShow:
         assert "the docs" not in tts
         assert "Check" in tts and "details" in tts
 
+    def test_block_yap_show_with_blank_line_splits_correctly(self):
+        """Block-level yap-show with blank line inside doesn't eat rest of document.
+
+        When a block-level <yap-show> contains a blank line, markdown-it splits it:
+        - Opening tag + content before blank → html_block
+        - Content after blank + close tag → paragraph with html_inline </yap-show>
+
+        The transformer must detect </yap-show> as html_inline inside the paragraph
+        and close the accumulation. Otherwise, all subsequent content becomes
+        display-only (no audio).
+        """
+        md = """\
+<yap-show>
+Footnote text here.
+
+Conference info.
+</yap-show>
+
+## Introduction
+
+Regular paragraph with audio content.
+"""
+        ast = parse_markdown(md)
+        doc = transform(ast)
+        audio = doc.get_audio_blocks()
+
+        # The heading and paragraph AFTER </yap-show> must have audio
+        assert any("Introduction" in t for t in audio), f"Heading after yap-show block lost audio. Got: {audio}"
+        assert any("Regular paragraph" in t for t in audio), f"Paragraph after yap-show block lost audio. Got: {audio}"
+
+        # Content inside yap-show should NOT have audio
+        assert not any("Footnote" in t for t in audio)
+        assert not any("Conference" in t for t in audio)
+
+    def test_block_yap_show_blank_line_preserves_audio_indices(self):
+        """Audio indices stay sequential after a blank-line-split yap-show block."""
+        md = """\
+# Title
+
+<yap-show>
+Display only content.
+
+More display only.
+</yap-show>
+
+## Section One
+
+First paragraph.
+
+## Section Two
+
+Second paragraph.
+"""
+        chunks = get_all_audio_chunks(md)
+        indices = [c.audio_block_idx for c in chunks]
+        assert indices == list(range(len(indices))), f"Audio indices not sequential: {indices}"
+        # Should have audio for: Title, Section One, First paragraph, Section Two, Second paragraph
+        assert len(chunks) >= 5, f"Expected at least 5 audio chunks, got {len(chunks)}"
+
 
 # === 4. YAP-CAP TAG (IMAGE CAPTIONS) ===
 

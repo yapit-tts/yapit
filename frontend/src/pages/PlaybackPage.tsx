@@ -209,6 +209,11 @@ const PlaybackPage = () => {
     if (!isAuthReady) return;
     if (!documentId) { setError("No document ID provided"); setIsLoading(false); return; }
 
+    setDocument(null);
+    setDocumentBlocks([]);
+    setIsLoading(true);
+    setError(null);
+
     const fetchData = async () => {
       try {
         const [docResponse, blocksResponse] = await Promise.all([
