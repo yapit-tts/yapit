@@ -22,7 +22,7 @@ from yapit.gateway.domain_models import (
     UserSubscription,
 )
 from yapit.gateway.stack_auth.users import delete_user as stack_auth_delete_user
-from yapit.gateway.usage import get_usage_summary, get_user_subscription
+from yapit.gateway.usage import get_usage_breakdown, get_usage_summary, get_user_subscription
 
 router = APIRouter(prefix="/v1/users", tags=["Users"])
 
@@ -34,6 +34,37 @@ async def get_my_subscription(
 ) -> dict:
     """Get current user's subscription and usage summary."""
     return await get_usage_summary(auth_user.id, db)
+
+
+class VoiceUsageItem(BaseModel):
+    voice_slug: str | None
+    voice_name: str | None
+    model_slug: str | None
+    total_chars: int
+    event_count: int
+
+
+class DocumentUsageItem(BaseModel):
+    document_id: str | None
+    document_title: str | None
+    content_hash: str
+    total_tokens: int
+    page_count: int
+
+
+class UsageBreakdownResponse(BaseModel):
+    premium_voice: list[VoiceUsageItem]
+    ocr: list[DocumentUsageItem]
+
+
+@router.get("/me/usage-breakdown", response_model=UsageBreakdownResponse)
+async def get_my_usage_breakdown(
+    auth_user: AuthenticatedUser,
+    db: DbSession,
+) -> UsageBreakdownResponse:
+    """Get per-voice and per-document usage breakdown for the current billing period."""
+    data = await get_usage_breakdown(auth_user.id, db)
+    return UsageBreakdownResponse(**data)
 
 
 # Cross-device sync: User preferences

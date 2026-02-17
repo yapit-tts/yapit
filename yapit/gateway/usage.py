@@ -5,18 +5,22 @@ from datetime import datetime
 
 from loguru import logger
 from redis.asyncio import Redis
+from sqlalchemy import func
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlmodel import select
+from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from yapit.gateway.domain_models import (
+    Document,
     Plan,
     PlanTier,
     SubscriptionStatus,
+    TTSModel,
     UsageLog,
     UsagePeriod,
     UsageType,
     UserSubscription,
+    Voice,
 )
 from yapit.gateway.exceptions import UsageLimitExceededError
 from yapit.gateway.reservations import get_pending_reservations_total
@@ -399,3 +403,127 @@ async def get_usage_summary(
         "extra_balances": extra_balances,
         "period": period_info,
     }
+
+
+async def get_usage_breakdown(
+    user_id: str,
+    db: AsyncSession,
+) -> dict:
+    """Get per-voice and per-document usage breakdown for the current billing period."""
+    subscription = await get_user_subscription(user_id, db)
+    if not subscription or subscription.status not in (SubscriptionStatus.active, SubscriptionStatus.trialing):
+        return {"premium_voice": [], "ocr": []}
+
+    period_start = subscription.current_period_start
+    period_end = subscription.current_period_end
+
+    premium_voice = await _voice_breakdown(user_id, period_start, period_end, db)
+    ocr = await _document_breakdown(user_id, period_start, period_end, db)
+
+    return {"premium_voice": premium_voice, "ocr": ocr}
+
+
+async def _voice_breakdown(
+    user_id: str,
+    period_start: datetime,
+    period_end: datetime,
+    db: AsyncSession,
+) -> list[dict]:
+    voice_slug_col = UsageLog.details["voice_slug"].astext  # type: ignore[index]
+    model_slug_col = UsageLog.details["model_slug"].astext  # type: ignore[index]
+
+    rows = (
+        await db.exec(
+            select(
+                voice_slug_col.label("voice_slug"),
+                model_slug_col.label("model_slug"),
+                func.sum(UsageLog.amount).label("total_chars"),
+                func.count().label("event_count"),
+            )
+            .where(
+                col(UsageLog.user_id) == user_id,
+                UsageLog.type == UsageType.premium_voice,
+                col(UsageLog.created) >= period_start,
+                col(UsageLog.created) < period_end,
+            )
+            .group_by(voice_slug_col, model_slug_col)
+            .order_by(func.sum(UsageLog.amount).desc())
+        )
+    ).all()
+
+    if not rows:
+        return []
+
+    # Resolve voice display names: (voice_slug, model_slug) → voice_name
+    voice_names: dict[tuple[str, str], str] = {}
+    voices = (
+        await db.exec(select(Voice.slug, Voice.name, TTSModel.slug.label("model_slug")).join(TTSModel))  # type: ignore[arg-type]
+    ).all()
+    for v in voices:
+        voice_names[(v.slug, v.model_slug)] = v.name
+
+    return [
+        {
+            "voice_slug": r.voice_slug,
+            "voice_name": voice_names.get((r.voice_slug, r.model_slug)) if r.voice_slug else None,
+            "model_slug": r.model_slug,
+            "total_chars": r.total_chars,
+            "event_count": r.event_count,
+        }
+        for r in rows
+    ]
+
+
+async def _document_breakdown(
+    user_id: str,
+    period_start: datetime,
+    period_end: datetime,
+    db: AsyncSession,
+) -> list[dict]:
+    rows = (
+        await db.exec(
+            select(
+                UsageLog.reference_id.label("content_hash"),  # type: ignore[union-attr]
+                func.sum(UsageLog.amount).label("total_tokens"),
+                func.count(func.distinct(UsageLog.details["page_idx"].astext)).label("page_count"),  # type: ignore[index]
+            )
+            .where(
+                col(UsageLog.user_id) == user_id,
+                UsageLog.type == UsageType.ocr_tokens,
+                col(UsageLog.created) >= period_start,
+                col(UsageLog.created) < period_end,
+            )
+            .group_by(UsageLog.reference_id)
+            .order_by(func.sum(UsageLog.amount).desc())
+        )
+    ).all()
+
+    if not rows:
+        return []
+
+    # Resolve document titles via content_hash
+    content_hashes = [r.content_hash for r in rows if r.content_hash]
+    doc_map: dict[str, tuple[str, str | None]] = {}  # content_hash → (doc_id, title)
+    if content_hashes:
+        docs = (
+            await db.exec(
+                select(Document.content_hash, Document.id, Document.title).where(
+                    col(Document.content_hash).in_(content_hashes),
+                    col(Document.user_id) == user_id,
+                )
+            )
+        ).all()
+        for d in docs:
+            if d.content_hash not in doc_map:
+                doc_map[d.content_hash] = (str(d.id), d.title)
+
+    return [
+        {
+            "document_id": doc_map.get(r.content_hash, (None, None))[0],
+            "document_title": doc_map.get(r.content_hash, (None, None))[1],
+            "content_hash": r.content_hash,
+            "total_tokens": r.total_tokens,
+            "page_count": r.page_count,
+        }
+        for r in rows
+    ]

@@ -10,10 +10,9 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { Loader2, ArrowLeft, Check, Clock } from "lucide-react";
+import { UsageBreakdown } from "@/components/UsageBreakdown";
 
 type PlanTier = "free" | "basic" | "plus" | "max";
 type BillingInterval = "monthly" | "yearly";
@@ -164,11 +163,6 @@ const SubscriptionPage = () => {
     return n.toLocaleString();
   };
 
-  const getUsagePercent = (used: number, limit: number | null): number => {
-    if (limit === null || limit === 0) return 0;
-    return Math.min(100, (used / limit) * 100);
-  };
-
   const getDaysRemaining = (endDate: string): number => {
     const end = new Date(endDate);
     const now = new Date();
@@ -255,94 +249,14 @@ const SubscriptionPage = () => {
             </div>
           </CardHeader>
 
-          {/* Usage bars - only show for subscribed users with limits */}
           {isSubscribed && subscription.period && (
-            <CardContent className="space-y-4">
-              {subscription.limits.premium_voice_characters !== null &&
-                subscription.limits.premium_voice_characters > 0 && (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <div className="cursor-help">
-                        <div className="flex justify-between text-sm mb-1.5">
-                          <span>Premium Voice</span>
-                          <span className="text-muted-foreground">
-                            {formatNumber(subscription.usage.premium_voice_characters)} /{" "}
-                            {formatNumber(subscription.limits.premium_voice_characters, true)}
-                          </span>
-                        </div>
-                        <Progress
-                          value={getUsagePercent(
-                            subscription.usage.premium_voice_characters,
-                            subscription.limits.premium_voice_characters
-                          )}
-                        />
-                        {(() => {
-                          const extra = (subscription.extra_balances?.rollover_voice_chars ?? 0) + (subscription.extra_balances?.purchased_voice_chars ?? 0);
-                          if (extra === 0) return null;
-                          return (
-                            <p className={`text-sm mt-0.5 text-right ${extra > 0 ? "text-accent-success" : "text-accent-warning"}`}>
-                              {extra > 0 ? "+" : ""}{formatNumber(extra)}
-                            </p>
-                          );
-                        })()}
-                      </div>
-                    </TooltipTrigger>
-                    <TooltipContent side="bottom" className="text-xs">
-                      <div className="space-y-0.5">
-                        <p>Subscription: {formatNumber(subscription.usage.premium_voice_characters)} / {formatNumber(subscription.limits.premium_voice_characters)}</p>
-                        {(subscription.extra_balances?.rollover_voice_chars ?? 0) !== 0 && (
-                          <p>
-                            Rollover: {(subscription.extra_balances?.rollover_voice_chars ?? 0) > 0 ? "+" : ""}{formatNumber(subscription.extra_balances?.rollover_voice_chars ?? 0)}
-                          </p>
-                        )}
-                        {(subscription.extra_balances?.purchased_voice_chars ?? 0) > 0 && (
-                          <p>Top-up: +{formatNumber(subscription.extra_balances?.purchased_voice_chars ?? 0)}</p>
-                        )}
-                      </div>
-                    </TooltipContent>
-                  </Tooltip>
-                )}
-
-              {subscription.limits.ocr_tokens !== null && subscription.limits.ocr_tokens > 0 && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <div className="cursor-help">
-                      <div className="flex justify-between text-sm mb-1.5">
-                        <span>AI Transform</span>
-                        <span className="text-muted-foreground">
-                          {formatNumber(subscription.usage.ocr_tokens)} /{" "}
-                          {formatNumber(subscription.limits.ocr_tokens, true)}
-                        </span>
-                      </div>
-                      <Progress
-                        value={getUsagePercent(subscription.usage.ocr_tokens, subscription.limits.ocr_tokens)}
-                      />
-                      {(() => {
-                        const extra = (subscription.extra_balances?.rollover_tokens ?? 0) + (subscription.extra_balances?.purchased_tokens ?? 0);
-                        if (extra === 0) return null;
-                        return (
-                          <p className={`text-sm mt-0.5 text-right ${extra > 0 ? "text-accent-success" : "text-accent-warning"}`}>
-                            {extra > 0 ? "+" : ""}{formatNumber(extra)}
-                          </p>
-                        );
-                      })()}
-                    </div>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom" className="text-xs">
-                    <div className="space-y-0.5">
-                      <p>Subscription: {formatNumber(subscription.usage.ocr_tokens)} / {formatNumber(subscription.limits.ocr_tokens)}</p>
-                      {(subscription.extra_balances?.rollover_tokens ?? 0) !== 0 && (
-                        <p>
-                          Rollover: {(subscription.extra_balances?.rollover_tokens ?? 0) > 0 ? "+" : ""}{formatNumber(subscription.extra_balances?.rollover_tokens ?? 0)}
-                        </p>
-                      )}
-                      {(subscription.extra_balances?.purchased_tokens ?? 0) > 0 && (
-                        <p>Top-up: +{formatNumber(subscription.extra_balances?.purchased_tokens ?? 0)}</p>
-                      )}
-                    </div>
-                  </TooltipContent>
-                </Tooltip>
-              )}
+            <CardContent>
+              <UsageBreakdown
+                usage={subscription.usage}
+                limits={subscription.limits}
+                extraBalances={subscription.extra_balances}
+                formatNumber={formatNumber}
+              />
             </CardContent>
           )}
         </Card>

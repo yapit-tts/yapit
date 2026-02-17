@@ -139,6 +139,8 @@ async def _handle_success(
             details={
                 "variant_hash": result.variant_hash,
                 "model_slug": result.model_slug,
+                "voice_slug": result.voice_slug,
+                "document_id": str(result.document_id),
                 "duration_ms": result.duration_ms,
                 "usage_multiplier": result.usage_multiplier,
             },
