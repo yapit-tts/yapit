@@ -1,6 +1,5 @@
 import { StackProvider, StackTheme } from "@stackframe/react";
 import { Suspense } from "react";
-import "./App.css";
 import AppRoutes from "@/routes/AppRoutes";
 import { stackClientApp } from "@/auth";
 import { ApiProvider } from "@/api";

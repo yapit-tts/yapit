@@ -8,8 +8,8 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { Settings } from "lucide-react";
-import { useSettings, type ContentWidth, type ScrollPosition } from "@/hooks/useSettings";
+import { Settings, Sun, Moon, Monitor } from "lucide-react";
+import { useSettings, useIsDark, type ContentWidth, type ScrollPosition, type Theme, type DarkTheme } from "@/hooks/useSettings";
 import { cn } from "@/lib/utils";
 import { useUserPreferences } from "@/hooks/useUserPreferences";
 import { useApi } from "@/api";
@@ -41,8 +41,15 @@ interface SettingsDialogProps {
   size?: "default" | "lg";
 }
 
+const darkThemes: { value: DarkTheme; label: string; bg: string; accent: string }[] = [
+  { value: "default", label: "Charcoal", bg: "oklch(0.13 0.006 70)", accent: "oklch(0.63 0.11 140)" },
+  { value: "dusk", label: "Dusk", bg: "oklch(0.12 0.016 305)", accent: "oklch(0.68 0.15 145)" },
+  { value: "lavender", label: "Lavender", bg: "oklch(0.243 0.030 283.9)", accent: "oklch(0.858 0.109 142.8)" },
+];
+
 export function SettingsDialog({ size = "default" }: SettingsDialogProps) {
   const { settings, setSettings } = useSettings();
+  const isDark = useIsDark();
   const { isAnonymous } = useApi();
   const isMobile = useIsMobile();
   const {
@@ -68,6 +75,61 @@ export function SettingsDialog({ size = "default" }: SettingsDialogProps) {
         </DialogHeader>
 
         <div className="flex flex-col">
+          <SettingRow
+            label="Appearance"
+            description="Light, dark, or match your system"
+          >
+            <div className="flex gap-1">
+              {([
+                { value: "light" as Theme, icon: Sun, label: "Light" },
+                { value: "dark" as Theme, icon: Moon, label: "Dark" },
+                { value: "system" as Theme, icon: Monitor, label: "System" },
+              ]).map(({ value, icon: Icon, label }) => (
+                <button
+                  key={value}
+                  onClick={() => setSettings({ theme: value })}
+                  className={cn(
+                    "px-2 py-1 text-xs rounded transition-colors flex items-center gap-1",
+                    settings.theme === value
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-muted hover:bg-muted/80 text-muted-foreground"
+                  )}
+                >
+                  <Icon className="h-3 w-3" />
+                  {label}
+                </button>
+              ))}
+            </div>
+          </SettingRow>
+
+          {isDark && (
+            <SettingRow
+              label="Dark theme"
+            >
+              <div className="flex gap-1.5">
+                {darkThemes.map(({ value, label, bg, accent }) => (
+                  <button
+                    key={value}
+                    onClick={() => setSettings({ darkTheme: value })}
+                    className={cn(
+                      "relative flex items-center gap-1.5 px-2 py-1 text-xs rounded transition-colors",
+                      settings.darkTheme === value
+                        ? "ring-1 ring-primary"
+                        : "opacity-70 hover:opacity-100"
+                    )}
+                    style={{ backgroundColor: bg, color: "oklch(0.9 0.02 80)" }}
+                  >
+                    <span
+                      className="w-2 h-2 rounded-full shrink-0"
+                      style={{ backgroundColor: accent }}
+                    />
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </SettingRow>
+          )}
+
           <SettingRow
             label="Scroll on restore"
             description="Scroll to saved position when opening a document"

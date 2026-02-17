@@ -53,7 +53,7 @@ export function WebGPUWarningBanner() {
       </div>
       <button
         onClick={handleDismiss}
-        className="shrink-0 p-2 min-w-[44px] min-h-[44px] flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent rounded-md transition-colors"
+        className="shrink-0 p-2 min-w-11 min-h-11 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent rounded-md transition-colors"
         title="Don't show again"
       >
         <X className="h-4 w-4" />
