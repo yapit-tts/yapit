@@ -27,14 +27,18 @@
   </head>
   <body>
     <script>
-      // Apply dark mode before first paint to prevent flash
+      // Apply dark mode + theme before first paint to prevent flash
       (function() {
         try {
           var s = JSON.parse(localStorage.getItem("yapit-settings") || "{}");
           var theme = s.theme || "system";
           var dark = theme === "dark" ||
             (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
-          if (dark) document.documentElement.classList.add("dark");
+          if (dark) {
+            document.documentElement.classList.add("dark");
+            var dt = s.darkTheme;
+            if (dt && dt !== "default") document.documentElement.classList.add("theme-" + dt);
+          }
         } catch(e) {}
       })();
     </script>

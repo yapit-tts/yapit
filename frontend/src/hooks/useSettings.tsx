@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback, useContext, createContext, ReactNode 
 export type ContentWidth = "narrow" | "medium" | "wide" | "full";
 export type ScrollPosition = "top" | "center" | "bottom";
 export type Theme = "light" | "dark" | "system";
+export type DarkTheme = "default" | "dusk" | "mocha";
 
 export interface AppSettings {
   scrollOnRestore: boolean;
@@ -10,9 +11,12 @@ export interface AppSettings {
   contentWidth: ContentWidth;
   scrollPosition: ScrollPosition;
   theme: Theme;
+  darkTheme: DarkTheme;
 }
 
 const SETTINGS_KEY = "yapit-settings";
+
+const THEME_CLASSES = ["theme-dusk", "theme-mocha"] as const;
 
 const defaultSettings: AppSettings = {
   scrollOnRestore: true,
@@ -20,6 +24,7 @@ const defaultSettings: AppSettings = {
   contentWidth: "medium",
   scrollPosition: "top",
   theme: "system",
+  darkTheme: "default",
 };
 
 function loadSettings(): AppSettings {
@@ -74,6 +79,10 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     const apply = () => {
       const dark = resolveTheme(settings.theme, mq.matches);
       document.documentElement.classList.toggle("dark", dark);
+      document.documentElement.classList.remove(...THEME_CLASSES);
+      if (dark && settings.darkTheme !== "default") {
+        document.documentElement.classList.add(`theme-${settings.darkTheme}`);
+      }
     };
 
     apply();
@@ -82,7 +91,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       mq.addEventListener("change", apply);
       return () => mq.removeEventListener("change", apply);
     }
-  }, [settings.theme]);
+  }, [settings.theme, settings.darkTheme]);
 
   const setSettings = useCallback((updates: Partial<AppSettings>) => {
     setSettingsState((prev) => {
