@@ -85,6 +85,7 @@ const PlaybackPage = () => {
   const [documentBlocks, setDocumentBlocks] = useState<Block[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const loadedDocumentIdRef = useRef<string | undefined>(undefined);
 
   // Public document viewing
   const [isPublicView, setIsPublicView] = useState(false);
@@ -209,6 +210,7 @@ const PlaybackPage = () => {
     if (!isAuthReady) return;
     if (!documentId) { setError("No document ID provided"); setIsLoading(false); return; }
 
+    loadedDocumentIdRef.current = undefined;
     setDocument(null);
     setDocumentBlocks([]);
     setIsLoading(true);
@@ -220,6 +222,7 @@ const PlaybackPage = () => {
           api.get<DocumentResponse>(`/v1/documents/${documentId}`),
           api.get<Block[]>(`/v1/documents/${documentId}/blocks`),
         ]);
+        loadedDocumentIdRef.current = documentId;
         setDocument(docResponse.data);
         setDocumentBlocks(blocksResponse.data);
         setIsPublicView(false);
@@ -230,6 +233,7 @@ const PlaybackPage = () => {
               api.get<PublicDocumentResponse>(`/v1/documents/${documentId}/public`),
               api.get<Block[]>(`/v1/documents/${documentId}/public/blocks`),
             ]);
+            loadedDocumentIdRef.current = documentId;
             setDocument({
               id: publicDocResponse.data.id,
               title: publicDocResponse.data.title,
@@ -504,6 +508,7 @@ const PlaybackPage = () => {
       setSections([]);
       return;
     }
+    if (loadedDocumentIdRef.current !== documentId) return;
     try {
       const parsed = JSON.parse(structuredContent);
       const sectionIndex = buildSectionIndex(parsed, documentBlocks);
@@ -540,6 +545,7 @@ const PlaybackPage = () => {
 
   useEffect(() => {
     if (!documentId || sections.length === 0) return;
+    if (loadedDocumentIdRef.current !== documentId) return;
     localStorage.setItem(OUTLINER_STATE_KEY_PREFIX + documentId, JSON.stringify({
       expanded: Array.from(expandedSections),
       skipped: Array.from(skippedSections),
