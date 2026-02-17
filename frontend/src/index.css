@@ -91,7 +91,7 @@
   --audio-glow: oklch(0.55 0.1 133.7 / 0.8);
 }
 
-/* Default dark theme: Warm Gray */
+/* Default dark theme: Charcoal */
 .dark {
   --background: oklch(0.13 0.006 70);
   --foreground: oklch(0.92 0.025 80);
@@ -103,9 +103,9 @@
   --primary-foreground: oklch(0.13 0.006 70);
   --secondary: oklch(0.26 0.008 68);
   --secondary-foreground: oklch(0.92 0.025 80);
-  --muted: oklch(0.27 0.007 72);
+  --muted: oklch(0.40 0.008 72);
   --muted-foreground: oklch(0.65 0.012 70);
-  --muted-warm: oklch(0.23 0.007 68);
+  --muted-warm: oklch(0.22 0.006 68);
   --muted-brown: oklch(0.24 0.006 72);
   --muted-table: oklch(0.25 0.008 68);
   --accent: oklch(0.20 0.008 70);
@@ -148,9 +148,9 @@
   --primary-foreground: oklch(0.12 0.016 305);
   --secondary: oklch(0.25 0.02 302);
   --secondary-foreground: oklch(0.92 0.025 85);
-  --muted: oklch(0.23 0.018 303);
+  --muted: oklch(0.35 0.020 303);
   --muted-foreground: oklch(0.64 0.015 300);
-  --muted-warm: oklch(0.20 0.016 298);
+  --muted-warm: oklch(0.19 0.014 298);
   --muted-brown: oklch(0.20 0.014 310);
   --muted-table: oklch(0.22 0.018 300);
   --accent: oklch(0.18 0.018 305);
@@ -181,8 +181,8 @@
   --sidebar-ring: oklch(0.55 0.10 145);
 }
 
-/* Mocha: exact Catppuccin Mocha palette (catppuccin.com) */
-.dark.theme-mocha {
+/* Lavender: based on Catppuccin Mocha palette (catppuccin.com) */
+.dark.theme-lavender {
   --background: oklch(0.243 0.030 283.9);
   --foreground: oklch(0.879 0.043 272.3);
   --card: oklch(0.324 0.032 282.0);
@@ -193,9 +193,9 @@
   --primary-foreground: oklch(0.243 0.030 283.9);
   --secondary: oklch(0.324 0.032 282.0);
   --secondary-foreground: oklch(0.879 0.043 272.3);
-  --muted: oklch(0.324 0.032 282.0);
+  --muted: oklch(0.404 0.032 280.1);
   --muted-foreground: oklch(0.618 0.037 276.0);
-  --muted-warm: oklch(0.283 0.028 283.0);
+  --muted-warm: oklch(0.263 0.028 283.0);
   --muted-brown: oklch(0.324 0.032 282.0);
   --muted-table: oklch(0.324 0.032 282.0);
   --accent: oklch(0.283 0.028 283.0);

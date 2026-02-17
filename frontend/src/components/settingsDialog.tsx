@@ -42,9 +42,9 @@ interface SettingsDialogProps {
 }
 
 const darkThemes: { value: DarkTheme; label: string; bg: string; accent: string }[] = [
-  { value: "default", label: "Warm Gray", bg: "oklch(0.13 0.006 70)", accent: "oklch(0.63 0.11 140)" },
+  { value: "default", label: "Charcoal", bg: "oklch(0.13 0.006 70)", accent: "oklch(0.63 0.11 140)" },
   { value: "dusk", label: "Dusk", bg: "oklch(0.12 0.016 305)", accent: "oklch(0.68 0.15 145)" },
-  { value: "mocha", label: "Mocha", bg: "oklch(0.243 0.030 283.9)", accent: "oklch(0.858 0.109 142.8)" },
+  { value: "lavender", label: "Lavender", bg: "oklch(0.243 0.030 283.9)", accent: "oklch(0.858 0.109 142.8)" },
 ];
 
 export function SettingsDialog({ size = "default" }: SettingsDialogProps) {

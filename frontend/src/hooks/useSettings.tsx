@@ -3,7 +3,7 @@ import { useState, useEffect, useCallback, useContext, createContext, ReactNode 
 export type ContentWidth = "narrow" | "medium" | "wide" | "full";
 export type ScrollPosition = "top" | "center" | "bottom";
 export type Theme = "light" | "dark" | "system";
-export type DarkTheme = "default" | "dusk" | "mocha";
+export type DarkTheme = "default" | "dusk" | "lavender";
 
 export interface AppSettings {
   scrollOnRestore: boolean;
@@ -16,7 +16,7 @@ export interface AppSettings {
 
 const SETTINGS_KEY = "yapit-settings";
 
-const THEME_CLASSES = ["theme-dusk", "theme-mocha"] as const;
+const THEME_CLASSES = ["theme-dusk", "theme-lavender"] as const;
 
 const defaultSettings: AppSettings = {
   scrollOnRestore: true,
