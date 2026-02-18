@@ -60,10 +60,6 @@ class Settings(BaseSettings):
     soft_limit_mult: float
     min_chunk_size: int
 
-    # TTS prefetch eviction window
-    tts_buffer_behind: int  # Blocks to keep behind cursor for skip-back
-    tts_buffer_ahead: int  # Prefetch window ahead of cursor
-
     stripe_secret_key: str | None = None
     stripe_webhook_secret: str | None = None
 

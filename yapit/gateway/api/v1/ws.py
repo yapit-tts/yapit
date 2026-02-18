@@ -113,7 +113,7 @@ async def tts_websocket(
                     await _handle_synthesize(ws, msg, user, redis, cache, settings)
                 elif msg_type == "cursor_moved":
                     msg = WSCursorMoved.model_validate(data)
-                    await _handle_cursor_moved(ws, msg, user, redis, settings)
+                    await _handle_cursor_moved(ws, msg, user, redis)
                 else:
                     await ws.send_json({"type": "error", "error": f"Unknown message type: {msg_type}"})
 
@@ -261,31 +261,22 @@ async def _handle_cursor_moved(
     msg: WSCursorMoved,
     user: User,
     redis: Redis,
-    settings: Settings,
 ):
-    """Handle cursor_moved - evict blocks outside the buffer window."""
+    """Handle cursor_moved - evict all pending blocks.
+
+    The frontend cancels its own promises before sending cursor_moved,
+    then re-requests exactly what it needs via the next synthesize message.
+    """
     pending_key = TTS_PENDING.format(user_id=user.id, document_id=msg.document_id)
     pending_indices = await redis.smembers(pending_key)
 
     if not pending_indices:
         return
 
-    # Calculate eviction window
-    min_idx = msg.cursor - settings.tts_buffer_behind
-    max_idx = msg.cursor + settings.tts_buffer_ahead
-
-    # Find indices to evict (outside window)
-    to_evict = []
-    for idx_bytes in pending_indices:
-        idx = int(idx_bytes)
-        if idx < min_idx or idx > max_idx:
-            to_evict.append(idx)
-
-    if not to_evict:
-        return
+    to_evict = [int(idx_bytes) for idx_bytes in pending_indices]
 
     # Remove from pending set
-    await redis.srem(pending_key, *to_evict)
+    await redis.srem(pending_key, *pending_indices)
 
     # Remove jobs from queue for each evicted block
     for idx in to_evict:
@@ -321,7 +312,6 @@ async def _handle_cursor_moved(
         document_id=str(msg.document_id),
         data={
             "cursor": msg.cursor,
-            "window": [min_idx, max_idx],
             "evicted_indices": to_evict,
             "evicted_count": len(to_evict),
         },
@@ -334,7 +324,6 @@ async def _handle_cursor_moved(
             block_indices=to_evict,
         ).model_dump(mode="json")
     )
-    logger.debug(f"Evicted {len(to_evict)} blocks outside window [{min_idx}, {max_idx}]")
 
 
 async def _pubsub_listener(ws: WebSocket, pubsub):

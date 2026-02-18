@@ -404,6 +404,32 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
 
   // --- Public API ---
 
+  function resetSynthesis(target: number) {
+    synthesizer.cancelAll();
+    synthesisPromises.clear();
+    prefetchedUpTo = -1;
+    if (documentId) synthesizer.onCursorMove?.(documentId, target);
+  }
+
+  function moveCursor(target: number) {
+    const wasPlaying = status === "playing";
+    const wasBuffering = status === "buffering";
+
+    deps.audioPlayer.stop();
+    resetSynthesis(target);
+
+    currentBlock = target;
+    blockStartTime = calcProgressToBlock(target);
+    audioProgress = blockStartTime;
+    notify();
+
+    if (wasPlaying) {
+      playBlock(target);
+    } else if (wasBuffering) {
+      triggerPrefetch(target, BATCH_SIZE);
+    }
+  }
+
   function play() {
     console.debug("[PlaybackEngine] play()", { status, currentBlock, model, voiceSlug });
     if (status === "playing" || status === "buffering") return;
@@ -450,15 +476,7 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
     deps.audioPlayer.stop();
     setStatus("stopped", "stop");
     isSynthesizingCurrent = false;
-
-
-    if (documentId) {
-      synthesizer.onCursorMove?.(documentId, currentBlock);
-    }
-
-    synthesizer.cancelAll();
-    prefetchedUpTo = -1;
-    synthesisPromises.clear();
+    resetSynthesis(currentBlock);
     notify();
   }
 
@@ -466,52 +484,20 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
     if (!blocks.length || currentBlock >= blocks.length - 1) return;
     const next = findNextPlayable(currentBlock + 1);
     if (next < 0) return;
-    deps.audioPlayer.stop();
-
-    currentBlock = next;
-    blockStartTime = calcProgressToBlock(next);
-    audioProgress = blockStartTime;
-    notify();
-    if (status === "playing") playBlock(next);
+    moveCursor(next);
   }
 
   function skipBack() {
-    deps.audioPlayer.stop();
-
     if (currentBlock < 0 || !blocks.length) return;
-
     const prev = findPrevPlayable(currentBlock - 1);
-    if (prev >= 0) {
-      currentBlock = prev;
-      blockStartTime = calcProgressToBlock(prev);
-      audioProgress = blockStartTime;
-      notify();
-      if (status === "playing") playBlock(prev);
-    } else {
-      const first = findNextPlayable(0);
-      if (first < 0) return;
-      currentBlock = first;
-      blockStartTime = 0;
-      audioProgress = 0;
-      notify();
-      if (status === "playing") playBlock(first);
-    }
+    const target = prev >= 0 ? prev : findNextPlayable(0);
+    if (target < 0) return;
+    moveCursor(target);
   }
 
   function seekToBlock(blockIdx: number) {
     if (blockIdx < 0 || blockIdx >= blocks.length) return;
-    deps.audioPlayer.stop();
-
-
-    if (documentId) {
-      synthesizer.onCursorMove?.(documentId, blockIdx);
-    }
-
-    currentBlock = blockIdx;
-    blockStartTime = calcProgressToBlock(blockIdx);
-    audioProgress = blockStartTime;
-    notify();
-    if (status === "playing") playBlock(blockIdx);
+    moveCursor(blockIdx);
   }
 
   function setVoice(newModel: string, newVoiceSlug: string) {
