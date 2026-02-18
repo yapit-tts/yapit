@@ -13,7 +13,7 @@ const TermsPage = () => {
       </Button>
 
       <h1 className="text-4xl font-bold mb-2">Terms of Service</h1>
-      <p className="text-muted-foreground mb-8">Last updated: January 23, 2026</p>
+      <p className="text-muted-foreground mb-8">Last updated: February 18, 2026</p>
 
       <div className="prose prose-neutral dark:prose-invert max-w-none space-y-8">
         <section>
@@ -45,8 +45,7 @@ const TermsPage = () => {
 
           <h3 className="text-lg font-medium mt-4 mb-2">Billing</h3>
           <ul className="list-disc pl-6 space-y-1">
-            <li>Payments processed by Stripe (merchant of record)</li>
-            <li>Prices shown include applicable taxes</li>
+            <li>Payments processed by Stripe</li>
             <li>Billing occurs at start of each period</li>
           </ul>
 
@@ -76,28 +75,30 @@ const TermsPage = () => {
         <section>
           <h2 className="text-2xl font-semibold mb-3">5. Usage Limits & Fair Use</h2>
           <p className="mb-3">Each plan has usage limits (voice characters, AI transform tokens). Limits reset monthly. We enforce limits — if you hit them, you'll need to wait or upgrade.</p>
-          <p className="mb-3">Unused allowances may roll over to subsequent periods, subject to caps.</p>
           <p>All offerings are subject to fair use. Rate limits may apply to ensure service quality for all users.</p>
         </section>
 
         <section>
           <h2 className="text-2xl font-semibold mb-3">6. User Content</h2>
+          <p className="mb-3">You are solely responsible for the content you upload and how you use the service.</p>
           <ul className="list-disc pl-6 space-y-1 mb-4">
             <li>You retain ownership of content you upload</li>
             <li>You own the audio output generated from your content</li>
             <li>You grant us a license to process your content for the service</li>
-            <li>You must have rights to content you upload</li>
+            <li>You represent that you have the necessary rights to any content you upload</li>
           </ul>
 
           <p className="mb-2"><strong>Prohibited uses:</strong></p>
           <ul className="list-disc pl-6 space-y-1 mb-3">
-            <li>Content you don't have rights to reproduce</li>
-            <li>Impersonating real people without consent</li>
-            <li>Generating fraudulent or deceptive content</li>
-            <li>Any illegal purpose</li>
+            <li>Uploading content you don't have rights to reproduce</li>
+            <li>Using TTS voices to impersonate real people without consent</li>
+            <li>Generating fraudulent, deceptive, or scam content</li>
+            <li>Distributing harmful or defamatory content via shared links</li>
+            <li>Any use that violates applicable law</li>
           </ul>
 
-          <p>We may remove content and terminate accounts that violate these terms.</p>
+          <p className="mb-3">We may remove content, restrict access, and terminate accounts that violate these terms. We may cooperate with law enforcement where required.</p>
+          <p>If you believe content on Yapit violates these terms or applicable law, contact <a href="mailto:yapit@mwolf.dev" className="text-primary hover:underline">yapit@mwolf.dev</a>.</p>
         </section>
 
         <section>
@@ -138,33 +139,28 @@ const TermsPage = () => {
         </section>
 
         <section>
-          <h2 className="text-2xl font-semibold mb-3">10. Indemnification</h2>
-          <p>You agree to indemnify and hold us harmless from any claims, damages, or expenses (including legal fees) arising from your use of the service, your content, or your violation of these terms. This includes claims from third parties related to content you upload.</p>
-        </section>
-
-        <section>
-          <h2 className="text-2xl font-semibold mb-3">11. Termination</h2>
-          <p className="mb-3">We may terminate your account for:</p>
+          <h2 className="text-2xl font-semibold mb-3">10. Termination</h2>
+          <p className="mb-3">We may terminate or suspend your account for:</p>
           <ul className="list-disc pl-6 space-y-1">
             <li>Violation of these terms</li>
             <li>Non-payment</li>
-            <li>Extended inactivity</li>
             <li>At our discretion with 30 days notice</li>
           </ul>
+          <p className="mt-3">Anonymous (guest) sessions and their data are temporary and may be deleted at any time. For registered accounts, we may delete data after prolonged inactivity, with 30 days' prior email notice.</p>
         </section>
 
         <section>
-          <h2 className="text-2xl font-semibold mb-3">12. Governing Law</h2>
+          <h2 className="text-2xl font-semibold mb-3">11. Governing Law & Jurisdiction</h2>
           <p>These terms are governed by Austrian law. Disputes will be resolved in Austrian courts, except where EU consumer protection law gives you rights in your home jurisdiction.</p>
         </section>
 
         <section>
-          <h2 className="text-2xl font-semibold mb-3">13. Changes to Terms</h2>
+          <h2 className="text-2xl font-semibold mb-3">12. Changes to Terms</h2>
           <p>We may update these terms. Continued use after changes = acceptance. Material changes get 30 days notice.</p>
         </section>
 
         <section>
-          <h2 className="text-2xl font-semibold mb-3">14. Contact</h2>
+          <h2 className="text-2xl font-semibold mb-3">13. Contact</h2>
           <p>Questions? Email <a href="mailto:yapit@mwolf.dev" className="text-primary hover:underline">yapit@mwolf.dev</a></p>
         </section>
       </div>

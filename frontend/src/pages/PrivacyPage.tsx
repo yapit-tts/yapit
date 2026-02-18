@@ -13,7 +13,7 @@ const PrivacyPage = () => {
       </Button>
 
       <h1 className="text-4xl font-bold mb-2">Privacy Policy</h1>
-      <p className="text-muted-foreground mb-8">Last updated: January 13, 2026</p>
+      <p className="text-muted-foreground mb-8">Last updated: February 18, 2026</p>
 
       <div className="prose prose-neutral dark:prose-invert max-w-none space-y-8">
         <section>
@@ -70,6 +70,7 @@ const PrivacyPage = () => {
             <li>To improve the service</li>
             <li>To communicate with you (support, important updates)</li>
           </ul>
+          <p className="mt-3">An email address is required to create an account. Payment information is required for paid plans. Without these, we cannot provide the respective services. All other data collection (usage analytics, performance metrics) is necessary for service operation and is not optional.</p>
         </section>
 
         <section>
@@ -132,7 +133,8 @@ const PrivacyPage = () => {
             <li>Object to processing</li>
             <li>Restrict processing</li>
           </ul>
-          <p>Your data (documents, audio, usage stats) is accessible directly in your account. For other requests, email <a href="mailto:yapit@mwolf.dev" className="text-primary hover:underline">yapit@mwolf.dev</a></p>
+          <p className="mb-3">Your data (documents, audio, usage stats) is accessible directly in your account. For other requests, email <a href="mailto:yapit@mwolf.dev" className="text-primary hover:underline">yapit@mwolf.dev</a></p>
+          <p>You also have the right to lodge a complaint with the Austrian data protection authority (<a href="https://www.dsb.gv.at" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">Datenschutzbehörde</a>).</p>
         </section>
 
         <section>

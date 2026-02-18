@@ -38,12 +38,13 @@ const AboutPage = () => {
           </Link>
         </div>
 
-        {/* Imprint */}
+        {/* Imprint (ECG §5, MedienG §25) */}
         <div className="text-sm text-muted-foreground">
           <h3 className="font-medium text-foreground mb-2">Imprint</h3>
           <p>Maximilian Wolf</p>
-          {/* TODO: Add address */}
+          <p>Carl Moll Gasse 8, 2301 Oberhausen, Austria</p>
           <p>yapit@mwolf.dev</p>
+          <p className="mt-2">Text-to-speech platform (Einzelunternehmen)</p>
         </div>
       </section>
     </div>
