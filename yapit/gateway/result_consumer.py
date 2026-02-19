@@ -1,17 +1,20 @@
-"""Consumes results from workers and finalizes synthesis."""
+"""Hot path: consumes worker results, caches audio, notifies subscribers.
+
+No Postgres. Billing and metadata updates are pushed to tts:billing
+for the billing consumer to process asynchronously.
+"""
 
 import asyncio
 import base64
 import time
 import uuid
-from datetime import date
 
 from loguru import logger
+from pydantic import BaseModel
 from redis.asyncio import Redis
-from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlmodel import col, update
 
 from yapit.contracts import (
+    TTS_BILLING,
     TTS_INFLIGHT,
     TTS_PENDING,
     TTS_RESULTS,
@@ -21,16 +24,30 @@ from yapit.contracts import (
 )
 from yapit.gateway.api.v1.ws import BlockStatus, WSBlockStatus
 from yapit.gateway.cache import Cache
-from yapit.gateway.config import Settings
-from yapit.gateway.db import create_session
-from yapit.gateway.domain_models import BlockVariant, UsageType, UserVoiceStats
 from yapit.gateway.metrics import log_error, log_event
-from yapit.gateway.usage import record_usage
 
 _background_tasks: set[asyncio.Task] = set()
 
 
-async def run_result_consumer(redis: Redis, cache: Cache, settings: Settings) -> None:
+class BillingEvent(BaseModel):
+    """Pushed to tts:billing after user notification. Contains everything
+    the billing consumer needs for Postgres writes (BlockVariant update,
+    usage recording, engagement stats).
+    """
+
+    variant_hash: str
+    user_id: str
+    model_slug: str
+    voice_slug: str
+    text_length: int
+    usage_multiplier: float
+    duration_ms: int | None
+    document_id: str
+    block_idx: int
+    cache_ref: str | None
+
+
+async def run_result_consumer(redis: Redis, cache: Cache) -> None:
     logger.info("Result consumer starting")
 
     while True:
@@ -41,7 +58,7 @@ async def run_result_consumer(redis: Redis, cache: Cache, settings: Settings) ->
 
             _, result_json = result
             worker_result = WorkerResult.model_validate_json(result_json)
-            task = asyncio.create_task(_process_result(redis, cache, worker_result, settings))
+            task = asyncio.create_task(_process_result(redis, cache, worker_result))
             _background_tasks.add(task)
             task.add_done_callback(_background_tasks.discard)
 
@@ -54,7 +71,7 @@ async def run_result_consumer(redis: Redis, cache: Cache, settings: Settings) ->
             await asyncio.sleep(1)
 
 
-async def _process_result(redis: Redis, cache: Cache, result: WorkerResult, settings: Settings) -> None:
+async def _process_result(redis: Redis, cache: Cache, result: WorkerResult) -> None:
     result_log = logger.bind(
         variant_hash=result.variant_hash,
         user_id=result.user_id,
@@ -65,9 +82,9 @@ async def _process_result(redis: Redis, cache: Cache, result: WorkerResult, sett
     )
     try:
         if result.error:
-            await _handle_error(redis, result, settings)
+            await _handle_error(redis, result)
         else:
-            await _handle_success(redis, cache, result, settings)
+            await _handle_success(redis, cache, result)
     except Exception as e:
         result_log.exception(f"Error processing result: {e}")
         await log_error(
@@ -79,16 +96,10 @@ async def _process_result(redis: Redis, cache: Cache, result: WorkerResult, sett
             document_id=str(result.document_id),
             block_idx=result.block_idx,
         )
-        # Notify subscribers so frontend isn't stuck waiting forever
         await _notify_subscribers(redis, result, status="error", error=f"Internal error: {e}")
 
 
-async def _handle_success(
-    redis: Redis,
-    cache: Cache,
-    result: WorkerResult,
-    settings: Settings,
-) -> None:
+async def _handle_success(redis: Redis, cache: Cache, result: WorkerResult) -> None:
     log = logger.bind(
         variant_hash=result.variant_hash,
         user_id=result.user_id,
@@ -97,8 +108,7 @@ async def _handle_success(
         job_id=str(result.job_id),
         worker_id=result.worker_id,
     )
-    # Atomically claim this result - prevents double-processing if job was requeued
-    # and both workers completed. First to delete wins, others skip.
+
     inflight_key = TTS_INFLIGHT.format(hash=result.variant_hash)
     if await redis.delete(inflight_key) == 0:
         log.info("Variant already finalized, skipping duplicate result")
@@ -121,57 +131,21 @@ async def _handle_success(
         audio_url=f"/v1/audio/{result.variant_hash}",
     )
 
-    async for db in create_session(settings):
-        await db.exec(
-            update(BlockVariant)
-            .where(col(BlockVariant.hash) == result.variant_hash)
-            .values(duration_ms=result.duration_ms, cache_ref=cache_ref)
-        )
+    billing_event = BillingEvent(
+        variant_hash=result.variant_hash,
+        user_id=result.user_id,
+        model_slug=result.model_slug,
+        voice_slug=result.voice_slug,
+        text_length=result.text_length,
+        usage_multiplier=result.usage_multiplier,
+        duration_ms=result.duration_ms,
+        document_id=str(result.document_id),
+        block_idx=result.block_idx,
+        cache_ref=cache_ref,
+    )
+    await redis.lpush(TTS_BILLING, billing_event.model_dump_json())
 
-        usage_type = UsageType.server_kokoro if result.model_slug.startswith("kokoro") else UsageType.premium_voice
-        characters_used = int(result.text_length * result.usage_multiplier)
-
-        await record_usage(
-            user_id=result.user_id,
-            usage_type=usage_type,
-            amount=characters_used,
-            db=db,
-            reference_id=result.variant_hash,
-            description=f"TTS synthesis: {result.text_length} chars ({result.model_slug})",
-            details={
-                "variant_hash": result.variant_hash,
-                "model_slug": result.model_slug,
-                "voice_slug": result.voice_slug,
-                "document_id": str(result.document_id),
-                "duration_ms": result.duration_ms,
-                "usage_multiplier": result.usage_multiplier,
-            },
-        )
-
-        # Engagement stats: persistent per-voice-per-month aggregation
-        month_start = date.today().replace(day=1)
-        engagement_stmt = pg_insert(UserVoiceStats).values(
-            user_id=result.user_id,
-            voice_slug=result.voice_slug,
-            model_slug=result.model_slug,
-            month=month_start,
-            total_characters=characters_used,
-            total_duration_ms=result.duration_ms or 0,
-            synth_count=1,
-        )
-        engagement_stmt = engagement_stmt.on_conflict_do_update(
-            constraint="uq_user_voice_stats",
-            set_={
-                "total_characters": UserVoiceStats.total_characters + engagement_stmt.excluded.total_characters,
-                "total_duration_ms": UserVoiceStats.total_duration_ms + engagement_stmt.excluded.total_duration_ms,
-                "synth_count": UserVoiceStats.synth_count + 1,
-            },
-        )
-        await db.exec(engagement_stmt)
-        await db.commit()
-        break
-
-    finalize_time_ms = int((time.time() - finalize_start) * 1000)
+    finalize_ms = int((time.time() - finalize_start) * 1000)
 
     await log_event(
         "synthesis_complete",
@@ -181,7 +155,7 @@ async def _handle_success(
         text_length=result.text_length,
         queue_wait_ms=result.queue_wait_ms,
         worker_latency_ms=result.processing_time_ms,
-        total_latency_ms=result.queue_wait_ms + result.processing_time_ms + finalize_time_ms,
+        total_latency_ms=result.queue_wait_ms + result.processing_time_ms + finalize_ms,
         audio_duration_ms=result.duration_ms,
         worker_id=result.worker_id,
         queue_type="tts",
@@ -191,7 +165,7 @@ async def _handle_success(
     )
 
 
-async def _handle_error(redis: Redis, result: WorkerResult, settings: Settings) -> None:
+async def _handle_error(redis: Redis, result: WorkerResult) -> None:
     log = logger.bind(
         variant_hash=result.variant_hash,
         user_id=result.user_id,
@@ -200,7 +174,7 @@ async def _handle_error(redis: Redis, result: WorkerResult, settings: Settings) 
         job_id=str(result.job_id),
         worker_id=result.worker_id,
     )
-    # Atomically claim this result - same dedup logic as _handle_success
+
     inflight_key = TTS_INFLIGHT.format(hash=result.variant_hash)
     if await redis.delete(inflight_key) == 0:
         log.info("Variant already finalized, skipping duplicate error result")

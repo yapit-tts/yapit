@@ -83,15 +83,26 @@ Workers only need Redis access. No Postgres, no HTTP endpoints. Gateway handles 
 - Any device can be a worker (home GPU, VPS, RunPod)
 - Zero gateway changes to add/remove workers
 
-### 5. Result Consumer
+### 5. Result Processing (Hot/Cold Split)
 
-`yapit/gateway/result_consumer.py`
+Two consumers with complete resource isolation:
 
-Background task that consumes from `tts:results`. Each result spawns its own task for parallelism across results, but within a single result the steps are sequential:
-1. Write audio to SQLite cache
-2. Notify subscribers via Redis pubsub
-3. Upsert BlockVariant in Postgres
-4. Record usage for billing
+**Result consumer (hot path)** — `yapit/gateway/result_consumer.py`
+
+Pops from `tts:results`, spawns a task per result. No Postgres.
+1. Atomically claim result (inflight key dedup)
+2. Write audio to SQLite cache
+3. Notify subscribers via Redis pubsub (user sees audio here)
+4. Push `BillingEvent` to `tts:billing` Redis list
+
+**Billing consumer (cold path)** — `yapit/gateway/billing_consumer.py`
+
+Pops from `tts:billing` serially. Own Postgres connection pool (2 connections), isolated from request path.
+1. Update BlockVariant metadata (duration_ms, cache_ref)
+2. Record usage via `record_usage()` (waterfall billing)
+3. Upsert engagement stats (UserVoiceStats)
+
+**Why the split:** Fast GPU workers can dump 40+ results in seconds. Previously, each result held a Postgres connection for billing (FOR UPDATE lock on subscription row). 30+ connections held by billing tasks waiting for the lock → pool exhaustion → WebSocket request path starved → new blocks can't be queued → workers idle. The hot path is now Postgres-free, and the cold path uses its own pool so it can never interfere with the request path.
 
 ### 6. Reliability
 
@@ -142,7 +153,8 @@ Current models: kokoro, inworld-1.5, inworld-1.5-max. Model/voice definitions in
 |------|---------|
 | `gateway/api/v1/ws.py` | WebSocket endpoint |
 | `gateway/synthesis.py` | Synthesis orchestration (dedup, queuing, cache check) |
-| `gateway/result_consumer.py` | Consumes results, finalizes (cache, DB, billing) |
+| `gateway/result_consumer.py` | Hot path: cache audio, notify subscribers, push billing event |
+| `gateway/billing_consumer.py` | Cold path: BlockVariant update, usage billing, engagement stats |
 | `gateway/visibility_scanner.py` | Re-queues stuck jobs |
 | `gateway/overflow_scanner.py` | Sends stale jobs to RunPod |
 | `workers/tts_loop.py` | Pull-based worker main loop |
@@ -154,7 +166,7 @@ Current models: kokoro, inworld-1.5, inworld-1.5-max. Model/voice definitions in
 
 ## Gotchas
 
-- **Billing happens in result_consumer, not ws.py:** `ws.py` only checks usage limits (gating). Actual billing (`record_usage`) happens in `result_consumer.py` after synthesis completes. Don't look for billing code in ws.py.
+- **Billing is async, not in result_consumer:** `ws.py` checks usage limits (gating). Result consumer handles cache + notification only. Actual billing (`record_usage`) happens in `billing_consumer.py` via the `tts:billing` Redis queue. Billing is eventually consistent — a few seconds of delay is normal.
 - **Per-block vs document-level errors:** Document-level errors use `error` message type (see table above). Per-block errors (usage limit exceeded) use `status` message type with `status="error"` field. Tests must check the correct message type.
 - **Eviction timing:** Pending check happens at dequeue time, not enqueue. Jobs can sit in queue, then get skipped if cursor moved.
 - **Variant sharing:** Two users requesting same text+model+voice share the cached audio. Good for efficiency, but means cache eviction affects everyone.

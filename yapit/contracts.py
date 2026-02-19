@@ -28,6 +28,7 @@ TTS_JOBS: Final[str] = "tts:jobs"  # hash: job_id -> job_json
 TTS_JOB_INDEX: Final[str] = "tts:job_index"  # hash: "user_id:doc_id:block_idx" -> job_id
 
 TTS_RESULTS: Final[str] = "tts:results"
+TTS_BILLING: Final[str] = "tts:billing"
 TTS_PROCESSING: Final[str] = "tts:processing:{worker_id}"
 TTS_DLQ: Final[str] = "tts:dlq:{model}"
 
