@@ -30,8 +30,8 @@ async def multi_block_document(subscribed_client):
 
 
 @pytest.mark.asyncio
-async def test_cursor_moved_sends_evicted_message(subscribed_ws_client, multi_block_document):
-    """Test that cursor_moved evicts blocks outside the window and sends WSEvicted."""
+async def test_cursor_moved_evicts_all_pending(subscribed_ws_client, multi_block_document):
+    """Test that cursor_moved evicts all pending blocks and sends WSEvicted."""
     document_id = multi_block_document["id"]
     blocks = multi_block_document["blocks"]
 
@@ -46,21 +46,14 @@ async def test_cursor_moved_sends_evicted_message(subscribed_ws_client, multi_bl
     # Wait briefly for queued status
     await asyncio.sleep(0.5)
 
-    # Move cursor far away (to block 25)
-    # Window becomes [25-8, 25+16] = [17, 41]
-    # Blocks 0-7 should be outside this window
+    # Move cursor to block 25 — all pending blocks should be evicted
     await subscribed_ws_client.cursor_moved(document_id, cursor=25)
 
-    # Wait for evicted message
     evicted_msg = await subscribed_ws_client.wait_for_evicted(timeout=5.0)
 
     assert evicted_msg is not None, "Expected WSEvicted message"
     assert evicted_msg["document_id"] == document_id
-    # At least some of blocks 0-7 should be evicted (those not yet processed)
     assert len(evicted_msg["block_indices"]) > 0, "Expected some blocks to be evicted"
-    # All evicted blocks should be < 17 (outside window)
-    for idx in evicted_msg["block_indices"]:
-        assert idx < 17, f"Block {idx} should not be evicted (inside window)"
 
 
 @pytest.mark.asyncio
@@ -94,14 +87,13 @@ async def test_evicted_blocks_not_synthesized(subscribed_ws_client, subscribed_c
             cached_indices.add(msg["block_idx"])
 
     # Evicted blocks should NOT be in cached set
-    # (they were skipped by worker)
     wrongly_cached = evicted_indices & cached_indices
     assert len(wrongly_cached) == 0, f"Evicted blocks {wrongly_cached} were still synthesized"
 
 
 @pytest.mark.asyncio
-async def test_cursor_moved_no_eviction_within_window(subscribed_ws_client, multi_block_document):
-    """Test that cursor_moved within window doesn't evict blocks."""
+async def test_cursor_moved_evicts_even_nearby_blocks(subscribed_ws_client, multi_block_document):
+    """Test that cursor_moved evicts all pending blocks, even those near the cursor."""
     document_id = multi_block_document["id"]
     blocks = multi_block_document["blocks"]
 
@@ -113,14 +105,13 @@ async def test_cursor_moved_no_eviction_within_window(subscribed_ws_client, mult
         cursor=0,
     )
 
-    # Move cursor to 5 (still within window)
-    # Window becomes [5-8, 5+16] = [-3, 21]
-    # Blocks 0-7 are still inside
-    await subscribed_ws_client.cursor_moved(document_id, cursor=5)
-
-    # Wait briefly
+    # Wait for blocks to be queued
     await asyncio.sleep(0.5)
 
-    # Should NOT receive evicted message
-    evicted_msgs = subscribed_ws_client.get_evicted_messages()
-    assert len(evicted_msgs) == 0, "Should not evict blocks within window"
+    # Move cursor to 5 — even though blocks 5-7 are "nearby", all pending get evicted.
+    # The frontend re-requests what it needs after eviction.
+    await subscribed_ws_client.cursor_moved(document_id, cursor=5)
+
+    evicted_msg = await subscribed_ws_client.wait_for_evicted(timeout=5.0)
+    assert evicted_msg is not None, "cursor_moved should evict all pending blocks"
+    assert len(evicted_msg["block_indices"]) > 0
