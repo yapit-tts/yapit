@@ -96,7 +96,7 @@ self.addEventListener("message", async (e: MessageEvent<MainMessage>) => {
         return;
       }
 
-      const audioData = audio.audio.buffer.slice(0);
+      const audioData = audio.data.buffer.slice(0);
       post(
         { type: "audio", requestId, audioData, sampleRate: audio.sampling_rate },
         [audioData]
