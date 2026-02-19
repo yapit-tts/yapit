@@ -87,7 +87,7 @@ export function createBrowserSynthesizer(deps: BrowserSynthesizerDeps): Synthesi
   };
 
   function synthesize(
-    _blockIdx: number,
+    blockIdx: number,
     text: string,
     _documentId: string,
     _model: string,
@@ -104,6 +104,7 @@ export function createBrowserSynthesizer(deps: BrowserSynthesizerDeps): Synthesi
         voice,
         requestId,
         generation,
+        blockIdx,
       });
     });
   }

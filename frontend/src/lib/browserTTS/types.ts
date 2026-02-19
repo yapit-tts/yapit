@@ -17,5 +17,5 @@ export type WorkerMessage =
 
 // Messages FROM main thread TO worker
 export type MainMessage =
-  | { type: "synthesize"; text: string; voice: string; requestId: string; generation: number }
+  | { type: "synthesize"; text: string; voice: string; requestId: string; generation: number; blockIdx: number }
   | { type: "cancel"; generation: number };

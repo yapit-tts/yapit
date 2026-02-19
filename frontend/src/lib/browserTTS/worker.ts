@@ -1,9 +1,9 @@
 /**
  * Web Worker for browser-side TTS using Kokoro.js
  *
- * Processes synthesis requests sequentially. Supports cancellation
- * between requests via generation counter — cancel(N) drops all
- * requests with generation <= N.
+ * Maintains an explicit FIFO queue processed one at a time.
+ * On cancel(generation), the queue is flushed and only the single
+ * in-flight synthesis (if any) runs to completion before being discarded.
  */
 
 import { KokoroTTS } from "kokoro-js";
@@ -14,6 +14,10 @@ let loadingPromise: Promise<KokoroTTS> | null = null;
 let cancelledGeneration = -1;
 
 const MODEL_ID = "onnx-community/Kokoro-82M-v1.0-ONNX";
+
+type QueueEntry = { text: string; voice: string; requestId: string; generation: number; blockIdx: number };
+const queue: QueueEntry[] = [];
+let processing = false;
 
 function post(message: WorkerMessage, transfer?: Transferable[]) {
   if (transfer) {
@@ -53,20 +57,17 @@ async function loadModel(): Promise<KokoroTTS> {
   return instance;
 }
 
-self.addEventListener("message", async (e: MessageEvent<MainMessage>) => {
-  const { type } = e.data;
+async function processQueue() {
+  if (processing) return;
+  processing = true;
 
-  if (type === "cancel") {
-    cancelledGeneration = e.data.generation;
-    return;
-  }
-
-  if (type === "synthesize") {
-    const { text, voice, requestId, generation } = e.data;
+  while (queue.length > 0) {
+    const entry = queue.shift()!;
+    const { text, voice, requestId, generation, blockIdx } = entry;
 
     if (generation < cancelledGeneration) {
       post({ type: "error", requestId, error: "cancelled" });
-      return;
+      continue;
     }
 
     try {
@@ -85,15 +86,15 @@ self.addEventListener("message", async (e: MessageEvent<MainMessage>) => {
         post({ type: "ready", voices });
       }
 
-      console.log(`[TTS Worker] Synthesizing ${text.length} chars...`);
+      console.log(`[TTS Worker] Synthesizing block ${blockIdx} (${text.length} chars)...`);
       const genStart = performance.now();
       const audio = await tts.generate(text, { voice: voice as "af_heart" });
-      console.log(`[TTS Worker] Generated in ${(performance.now() - genStart).toFixed(0)}ms`);
+      console.log(`[TTS Worker] Block ${blockIdx} done in ${(performance.now() - genStart).toFixed(0)}ms`);
 
-      // Stale check after generation (voice may have changed mid-synthesis)
+      // Stale check after generation (cursor may have moved mid-synthesis)
       if (generation < cancelledGeneration) {
         post({ type: "error", requestId, error: "cancelled" });
-        return;
+        continue;
       }
 
       const audioData = audio.data.buffer.slice(0);
@@ -103,8 +104,32 @@ self.addEventListener("message", async (e: MessageEvent<MainMessage>) => {
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      console.error("[TTS Worker] Error:", message);
+      console.error(`[TTS Worker] Error on block ${blockIdx}:`, message);
       post({ type: "error", requestId, error: message });
     }
+  }
+
+  processing = false;
+}
+
+self.addEventListener("message", (e: MessageEvent<MainMessage>) => {
+  const { type } = e.data;
+
+  if (type === "cancel") {
+    cancelledGeneration = e.data.generation;
+    const flushed = queue.length;
+    for (const entry of queue) {
+      post({ type: "error", requestId: entry.requestId, error: "cancelled" });
+    }
+    queue.length = 0;
+    if (flushed > 0) {
+      console.log(`[TTS Worker] Flushed ${flushed} queued requests (gen ${e.data.generation})`);
+    }
+    return;
+  }
+
+  if (type === "synthesize") {
+    queue.push(e.data);
+    processQueue();
   }
 });
