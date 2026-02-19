@@ -100,6 +100,7 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
 
   const audioCache = new Map<VariantKey, AudioBufferData>();
   const synthesisPromises = new Map<VariantKey, Promise<AudioBufferData | null>>();
+  const knownCached = new Set<VariantKey>();
 
   let prefetchedUpTo = -1;
 
@@ -296,6 +297,7 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
         synthesisPromises.delete(key);
         if (result) {
           audioCache.set(key, result);
+          knownCached.add(key);
           const blk = blocks[blockIdx];
           if (blk && result.duration_ms > 0) recordDurationCorrection(blk, result.duration_ms);
           checkBufferReady();
@@ -396,7 +398,7 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
   function deriveBlockStates(): BlockVisualState[] {
     return blocks.map((_block, idx) => {
       const key = currentVariantKey(idx);
-      if (audioCache.has(key)) return "cached";
+      if (audioCache.has(key) || knownCached.has(key)) return "cached";
       if (synthesisPromises.has(key)) return "synthesizing";
       return "pending";
     });
@@ -511,9 +513,12 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
     model = newModel;
     voiceSlug = newVoiceSlug;
 
-    // Evict old voice audio and cancel pending synthesis
+    // Evict old voice audio/visual state and cancel pending synthesis
     for (const key of audioCache.keys()) {
       if (key.includes(`:${oldModel}:${oldVoice}`)) audioCache.delete(key);
+    }
+    for (const key of knownCached) {
+      if (key.includes(`:${oldModel}:${oldVoice}`)) knownCached.delete(key);
     }
 
     synthesizer.cancelAll();
@@ -552,6 +557,7 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
     prefetchedUpTo = -1;
 
     audioCache.clear();
+    knownCached.clear();
     durationCorrections.clear();
 
     initialTotalEstimate = newBlocks.reduce((sum, b) => sum + (b.est_duration_ms || 0), 0);
@@ -589,6 +595,7 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
     synthesizer.cancelAll();
     synthesisPromises.clear();
     audioCache.clear();
+    knownCached.clear();
     listeners = [];
   }
 
