@@ -4,9 +4,11 @@ import asyncio
 import base64
 import time
 import uuid
+from datetime import date
 
 from loguru import logger
 from redis.asyncio import Redis
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlmodel import col, update
 
 from yapit.contracts import (
@@ -21,7 +23,7 @@ from yapit.gateway.api.v1.ws import BlockStatus, WSBlockStatus
 from yapit.gateway.cache import Cache
 from yapit.gateway.config import Settings
 from yapit.gateway.db import create_session
-from yapit.gateway.domain_models import BlockVariant, UsageType
+from yapit.gateway.domain_models import BlockVariant, UsageType, UserVoiceStats
 from yapit.gateway.metrics import log_error, log_event
 from yapit.gateway.usage import record_usage
 
@@ -145,6 +147,28 @@ async def _handle_success(
                 "usage_multiplier": result.usage_multiplier,
             },
         )
+
+        # Engagement stats: persistent per-voice-per-month aggregation
+        month_start = date.today().replace(day=1)
+        engagement_stmt = pg_insert(UserVoiceStats).values(
+            user_id=result.user_id,
+            voice_slug=result.voice_slug,
+            model_slug=result.model_slug,
+            month=month_start,
+            total_characters=characters_used,
+            total_duration_ms=result.duration_ms or 0,
+            synth_count=1,
+        )
+        engagement_stmt = engagement_stmt.on_conflict_do_update(
+            constraint="uq_user_voice_stats",
+            set_={
+                "total_characters": UserVoiceStats.total_characters + engagement_stmt.excluded.total_characters,
+                "total_duration_ms": UserVoiceStats.total_duration_ms + engagement_stmt.excluded.total_duration_ms,
+                "synth_count": UserVoiceStats.synth_count + 1,
+            },
+        )
+        await db.exec(engagement_stmt)
+        await db.commit()
         break
 
     finalize_time_ms = int((time.time() - finalize_start) * 1000)

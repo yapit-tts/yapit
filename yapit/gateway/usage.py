@@ -20,6 +20,7 @@ from yapit.gateway.domain_models import (
     UsagePeriod,
     UsageType,
     UserSubscription,
+    UserVoiceStats,
     Voice,
 )
 from yapit.gateway.exceptions import UsageLimitExceededError
@@ -527,3 +528,52 @@ async def _document_breakdown(
         }
         for r in rows
     ]
+
+
+async def get_engagement_stats(user_id: str, db: AsyncSession) -> dict:
+    """Get lifetime engagement stats aggregated from UserVoiceStats."""
+    rows = (
+        await db.exec(
+            select(  # type: ignore[call-overload]
+                UserVoiceStats.voice_slug,
+                UserVoiceStats.model_slug,
+                func.sum(UserVoiceStats.total_duration_ms).label("total_duration_ms"),
+                func.sum(UserVoiceStats.total_characters).label("total_characters"),
+                func.sum(UserVoiceStats.synth_count).label("synth_count"),
+            )
+            .where(col(UserVoiceStats.user_id) == user_id)
+            .group_by(UserVoiceStats.voice_slug, UserVoiceStats.model_slug)
+            .order_by(func.sum(UserVoiceStats.total_duration_ms).desc())
+        )
+    ).all()
+
+    # Resolve voice display names
+    voice_names: dict[tuple[str, str], str] = {}
+    if rows:
+        voices = (
+            await db.exec(select(Voice.slug, Voice.name, TTSModel.slug.label("model_slug")).join(TTSModel))  # type: ignore[arg-type]
+        ).all()
+        for v in voices:
+            voice_names[(v.slug, v.model_slug)] = v.name
+
+    voices_list = [
+        {
+            "voice_slug": r.voice_slug,
+            "voice_name": voice_names.get((r.voice_slug, r.model_slug)),
+            "model_slug": r.model_slug,
+            "total_duration_ms": r.total_duration_ms,
+            "total_characters": r.total_characters,
+            "synth_count": r.synth_count,
+        }
+        for r in rows
+    ]
+
+    doc_count = (await db.exec(select(func.count(Document.id)).where(Document.user_id == user_id))).one()
+
+    return {
+        "total_duration_ms": sum(v["total_duration_ms"] for v in voices_list),
+        "total_characters": sum(v["total_characters"] for v in voices_list),
+        "total_synths": sum(v["synth_count"] for v in voices_list),
+        "document_count": doc_count,
+        "voices": voices_list,
+    }

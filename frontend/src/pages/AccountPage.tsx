@@ -1,9 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 import { useUser } from "@stackframe/react";
 import { useApi } from "@/api";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -18,24 +18,41 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Loader2, ArrowLeft, FileText, Clock, Type, Trash2, AlertTriangle, Mail, Settings, Share2, Calendar } from "lucide-react";
+import { Loader2, ArrowLeft, Trash2, AlertTriangle, Calendar, Sun, Moon, Monitor, Settings } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
+import { SettingRow, darkThemes } from "@/components/settingsDialog";
+import { useSettings, useIsDark, type ContentWidth, type ScrollPosition, type Theme } from "@/hooks/useSettings";
 import { useUserPreferences } from "@/hooks/useUserPreferences";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { cn } from "@/lib/utils";
 
 // LOTR trilogy stats for comparisons (Rob Inglis unabridged, trilogy only)
 const LOTR_TRILOGY_MS = 194_400_000; // ~54 hours
-const LOTR_TRILOGY_CHARS = 2_730_000; // ~455k words × ~6 chars
 
-interface UserStats {
-  total_audio_ms: number;
+interface VoiceEngagement {
+  voice_slug: string;
+  voice_name: string | null;
+  model_slug: string;
+  total_duration_ms: number;
   total_characters: number;
+  synth_count: number;
+}
+
+interface EngagementStats {
+  total_duration_ms: number;
+  total_characters: number;
+  total_synths: number;
   document_count: number;
+  voices: VoiceEngagement[];
 }
 
 const AccountPage = () => {
   const { api, isAuthReady, isAnonymous } = useApi();
   const navigate = useNavigate();
   const user = useUser();
+  const { settings, setSettings } = useSettings();
+  const isDark = useIsDark();
+  const isMobile = useIsMobile();
   const {
     autoImportSharedDocuments,
     setAutoImportSharedDocuments,
@@ -43,7 +60,7 @@ const AccountPage = () => {
     setDefaultDocumentsPublic,
   } = useUserPreferences();
 
-  const [stats, setStats] = useState<UserStats | null>(null);
+  const [engagement, setEngagement] = useState<EngagementStats | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -59,25 +76,28 @@ const AccountPage = () => {
       return;
     }
 
-    const fetchStats = async () => {
-      try {
-        const response = await api.get<UserStats>("/v1/users/me/stats");
-        setStats(response.data);
-      } catch (error) {
-        console.error("Failed to fetch user stats:", error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    fetchStats();
+    api.get<EngagementStats>("/v1/users/me/engagement")
+      .then((r) => setEngagement(r.data))
+      .catch((e) => console.error("Failed to fetch engagement stats:", e))
+      .finally(() => setIsLoading(false));
   }, [api, isAuthReady, isAnonymous]);
+
+  // Group voices by model for display
+  const voicesByModel = useMemo(() => {
+    if (!engagement?.voices.length) return new Map<string, VoiceEngagement[]>();
+    const grouped = new Map<string, VoiceEngagement[]>();
+    for (const v of engagement.voices) {
+      const existing = grouped.get(v.model_slug) ?? [];
+      existing.push(v);
+      grouped.set(v.model_slug, existing);
+    }
+    return grouped;
+  }, [engagement?.voices]);
 
   const handleDeleteAccount = async () => {
     setIsDeleting(true);
     try {
       await api.delete("/v1/users/me");
-      // Redirect to home after deletion - Stack Auth session will be invalid
       window.location.href = "/";
     } catch (error) {
       console.error("Failed to delete account:", error);
@@ -90,8 +110,8 @@ const AccountPage = () => {
     try {
       const params = bulkDeleteDays ? `?older_than_days=${bulkDeleteDays}` : "";
       await api.delete<{ deleted_count: number }>(`/v1/documents/bulk${params}`);
-      const statsResponse = await api.get<UserStats>("/v1/users/me/stats");
-      setStats(statsResponse.data);
+      const r = await api.get<EngagementStats>("/v1/users/me/engagement");
+      setEngagement(r.data);
       setBulkDeleteDialogOpen(false);
       setBulkDeleteDays(null);
     } catch (error) {
@@ -102,94 +122,9 @@ const AccountPage = () => {
   };
 
   const openBulkDeleteDialog = (days: number | null) => {
-    setBulkDeleteDropdownOpen(false); // Close dropdown first to avoid Radix portal conflict
+    setBulkDeleteDropdownOpen(false);
     setBulkDeleteDays(days);
     setBulkDeleteDialogOpen(true);
-  };
-
-  const formatDuration = (ms: number): string => {
-    const hours = Math.floor(ms / 3_600_000);
-    const minutes = Math.floor((ms % 3_600_000) / 60_000);
-
-    if (hours === 0) {
-      return `${minutes} minute${minutes !== 1 ? "s" : ""}`;
-    }
-    if (minutes === 0) {
-      return `${hours} hour${hours !== 1 ? "s" : ""}`;
-    }
-    return `${hours} hour${hours !== 1 ? "s" : ""} ${minutes} min`;
-  };
-
-  const formatCharacters = (chars: number): string => {
-    if (chars >= 1_000_000) {
-      return `${(chars / 1_000_000).toFixed(1)}M`;
-    }
-    if (chars >= 1_000) {
-      return `${(chars / 1_000).toFixed(1)}K`;
-    }
-    return chars.toLocaleString();
-  };
-
-  const getCharacterComparison = (chars: number): string | null => {
-    if (chars < 1000) return null;
-
-    const trilogies = chars / LOTR_TRILOGY_CHARS;
-    const books = trilogies * 3; // 3 books in trilogy
-
-    if (books < 0.01) {
-      return "A few pages of the Fellowship";
-    }
-    if (books < 0.1) {
-      return "A chapter of the Fellowship";
-    }
-    if (books < 1) {
-      const percent = (books * 100).toFixed(0);
-      return `${percent}% of the Fellowship`;
-    }
-    if (trilogies < 1) {
-      return `${books.toFixed(1)} LOTR books`;
-    }
-    if (trilogies < 10) {
-      return `${trilogies.toFixed(1)}× the LOTR trilogy`;
-    }
-    return `${Math.round(trilogies)}× the LOTR trilogy`;
-  };
-
-  const getDocumentComparison = (count: number): string | null => {
-    if (count === 0) return null;
-    if (count === 1) return "Your first scroll";
-    if (count < 10) return "A hobbit's reading list";
-    if (count < 30) return "Bilbo's study";
-    if (count < 50) return "A corner of Rivendell's library";
-    if (count < 100) return "The library of Rivendell";
-    return "The archives of Minas Tirith";
-  };
-
-  const getLotrComparison = (ms: number): string | null => {
-    if (ms < 60_000) return null; // Less than 1 minute, skip comparison
-
-    // LOTR unabridged audiobook: ~57 hours total, ~19 hours per book
-    const trilogies = ms / LOTR_TRILOGY_MS;
-    const audiobooks = trilogies * 3;
-
-    if (trilogies < 0.01) {
-      // Less than 1% of trilogy (~34 min)
-      const percent = (ms / (LOTR_TRILOGY_MS / 3)) * 100;
-      return `${percent.toFixed(0)}% of the Fellowship audiobook`;
-    }
-    if (audiobooks < 1) {
-      // Less than one audiobook
-      const percent = audiobooks * 100;
-      return `${percent.toFixed(0)}% of an LOTR audiobook`;
-    }
-    if (trilogies < 1) {
-      // 1-3 audiobooks
-      return `${audiobooks.toFixed(1)} LOTR audiobooks`;
-    }
-    if (trilogies < 10) {
-      return `${trilogies.toFixed(1)}× the LOTR trilogy`;
-    }
-    return `${Math.round(trilogies)}× the LOTR trilogy`;
   };
 
   if (isLoading) {
@@ -218,9 +153,9 @@ const AccountPage = () => {
     );
   }
 
-  const lotrComparison = stats ? getLotrComparison(stats.total_audio_ms) : null;
-  const charComparison = stats ? getCharacterComparison(stats.total_characters) : null;
-  const docComparison = stats ? getDocumentComparison(stats.document_count) : null;
+  const hasEngagement = engagement && engagement.total_synths > 0;
+  const maxVoiceDuration = engagement?.voices[0]?.total_duration_ms ?? 0;
+  const multipleModels = voicesByModel.size > 1;
 
   return (
     <div className="container max-w-4xl mx-auto py-8 px-6">
@@ -229,115 +164,215 @@ const AccountPage = () => {
         Back
       </Button>
 
-      <h1 className="text-4xl font-bold mb-2">Account</h1>
-      <p className="text-lg text-muted-foreground mb-8">Your listening journey so far</p>
+      {/* Header */}
+      <div className="flex items-baseline justify-between mb-10">
+        <div>
+          <h1 className="text-4xl font-bold mb-1">Account</h1>
+          <p className="text-muted-foreground">{user?.primaryEmail ?? ""}</p>
+        </div>
+        <Button variant="outline" size="sm" onClick={() => navigate("/account/settings")}>
+          <Settings className="h-4 w-4 mr-2" />
+          Manage
+        </Button>
+      </div>
 
-      {/* Profile Section */}
-      <Card className="mb-8">
+      {/* Listening Journey */}
+      {hasEngagement ? (
+        <>
+          <div className="mb-6">
+            <div className="text-4xl font-bold">{formatDuration(engagement.total_duration_ms)} listened</div>
+            <p className="text-muted-foreground mt-1">
+              {[
+                getLotrComparison(engagement.total_duration_ms),
+                formatCharacters(engagement.total_characters),
+              ].filter(Boolean).join(" · ")}
+            </p>
+          </div>
+
+          {/* Voices by model */}
+          {voicesByModel.size > 0 && (
+            <Card className="mb-10">
+              <CardContent className="pt-6">
+                {[...voicesByModel.entries()].map(([modelSlug, voices]) => (
+                  <div key={modelSlug} className={multipleModels ? "mb-6 last:mb-0" : ""}>
+                    {multipleModels && (
+                      <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-3">
+                        {modelSlug}
+                      </div>
+                    )}
+                    <div className="space-y-2.5">
+                      {voices.map((v) => (
+                        <div key={v.voice_slug} className="flex items-center gap-3">
+                          <span className="w-20 shrink-0 text-sm font-medium truncate">
+                            {v.voice_name ?? v.voice_slug}
+                          </span>
+                          <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-primary rounded-full transition-all"
+                              style={{ width: `${(v.total_duration_ms / maxVoiceDuration) * 100}%` }}
+                            />
+                          </div>
+                          <span className="text-xs text-muted-foreground w-16 text-right shrink-0">
+                            {formatDuration(v.total_duration_ms)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          )}
+        </>
+      ) : (
+        <Card className="mb-10">
+          <CardContent className="py-8 text-center">
+            <p className="text-muted-foreground">
+              {engagement && engagement.document_count > 0
+                ? `${engagement.document_count} document${engagement.document_count !== 1 ? "s" : ""} in your library. Listening stats will appear as you use Yapit.`
+                : "Your listening stats will appear here as you use Yapit."}
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Settings */}
+      <Card className="mb-10">
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Mail className="h-5 w-5" />
-            Profile
-          </CardTitle>
+          <CardTitle className="text-base">Settings</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-muted-foreground">Email</p>
-              <p className="font-medium">{user?.primaryEmail ?? "—"}</p>
-            </div>
-            <Button variant="outline" onClick={() => navigate("/account/settings")}>
-              <Settings className="h-4 w-4 mr-2" />
-              Manage
-            </Button>
+          {/* Appearance */}
+          <div className="mb-2 text-xs font-medium text-muted-foreground uppercase tracking-wide">Appearance</div>
+          <div className="flex flex-col">
+            <SettingRow label="Theme" description="Light, dark, or match your system">
+              <div className="flex gap-1">
+                {([
+                  { value: "light" as Theme, icon: Sun, label: "Light" },
+                  { value: "dark" as Theme, icon: Moon, label: "Dark" },
+                  { value: "system" as Theme, icon: Monitor, label: "System" },
+                ] as const).map(({ value, icon: Icon, label }) => (
+                  <button
+                    key={value}
+                    onClick={() => setSettings({ theme: value })}
+                    className={cn(
+                      "px-2 py-1 text-xs rounded transition-colors flex items-center gap-1",
+                      settings.theme === value
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-muted hover:bg-muted/80 text-muted-foreground"
+                    )}
+                  >
+                    <Icon className="h-3 w-3" />
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </SettingRow>
+
+            {isDark && (
+              <SettingRow label="Dark theme">
+                <div className="flex gap-1.5">
+                  {darkThemes.map(({ value, label, bg, accent }) => (
+                    <button
+                      key={value}
+                      onClick={() => setSettings({ darkTheme: value })}
+                      className={cn(
+                        "relative flex items-center gap-1.5 px-2 py-1 text-xs rounded transition-colors",
+                        settings.darkTheme === value
+                          ? "ring-1 ring-primary"
+                          : "opacity-70 hover:opacity-100"
+                      )}
+                      style={{ backgroundColor: bg, color: "oklch(0.9 0.02 80)" }}
+                    >
+                      <span
+                        className="w-2 h-2 rounded-full shrink-0"
+                        style={{ backgroundColor: accent }}
+                      />
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </SettingRow>
+            )}
+          </div>
+
+          {/* Reading */}
+          <div className="mt-6 mb-2 text-xs font-medium text-muted-foreground uppercase tracking-wide">Reading</div>
+          <div className="flex flex-col">
+            <SettingRow label="Scroll on restore" description="Scroll to saved position when opening a document">
+              <Switch
+                checked={settings.scrollOnRestore}
+                onCheckedChange={(checked) => setSettings({ scrollOnRestore: checked })}
+              />
+            </SettingRow>
+
+            <SettingRow label="Live scroll tracking" description="Keep current block centered during playback">
+              <Switch
+                checked={settings.liveScrollTracking}
+                onCheckedChange={(checked) => setSettings({ liveScrollTracking: checked })}
+              />
+            </SettingRow>
+
+            {!isMobile && (
+              <SettingRow label="Content width" description="Maximum width of document text">
+                <div className="flex gap-1">
+                  {(["narrow", "medium", "wide", "full"] as ContentWidth[]).map((width) => (
+                    <button
+                      key={width}
+                      onClick={() => setSettings({ contentWidth: width })}
+                      className={cn(
+                        "px-2 py-1 text-xs rounded transition-colors capitalize",
+                        settings.contentWidth === width
+                          ? "bg-primary text-primary-foreground"
+                          : "bg-muted hover:bg-muted/80 text-muted-foreground"
+                      )}
+                    >
+                      {width}
+                    </button>
+                  ))}
+                </div>
+              </SettingRow>
+            )}
+
+            <SettingRow label="Scroll position" description="Where the current block appears on screen">
+              <div className="flex gap-1">
+                {(["top", "center", "bottom"] as ScrollPosition[]).map((pos) => (
+                  <button
+                    key={pos}
+                    onClick={() => setSettings({ scrollPosition: pos })}
+                    className={cn(
+                      "px-2 py-1 text-xs rounded transition-colors capitalize",
+                      settings.scrollPosition === pos
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-muted hover:bg-muted/80 text-muted-foreground"
+                    )}
+                  >
+                    {pos}
+                  </button>
+                ))}
+              </div>
+            </SettingRow>
+          </div>
+
+          {/* Sharing */}
+          <div className="mt-6 mb-2 text-xs font-medium text-muted-foreground uppercase tracking-wide">Sharing</div>
+          <div className="flex flex-col">
+            <SettingRow label="Auto-import shared documents" description="Add to library automatically when opening">
+              <Switch
+                checked={autoImportSharedDocuments}
+                onCheckedChange={setAutoImportSharedDocuments}
+              />
+            </SettingRow>
+
+            <SettingRow label="New documents shareable" description="Make new documents shareable by default">
+              <Switch
+                checked={defaultDocumentsPublic}
+                onCheckedChange={setDefaultDocumentsPublic}
+              />
+            </SettingRow>
           </div>
         </CardContent>
       </Card>
-
-      {/* Sharing Preferences */}
-      <Card className="mb-8">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Share2 className="h-5 w-5" />
-            Sharing
-          </CardTitle>
-          <CardDescription>Control how documents are shared</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-6">
-          <div className="flex items-center justify-between">
-            <div className="space-y-0.5">
-              <p className="font-medium">Auto-import shared documents</p>
-              <p className="text-sm text-muted-foreground">
-                Automatically add shared documents to your library when you open them
-              </p>
-            </div>
-            <Switch
-              checked={autoImportSharedDocuments}
-              onCheckedChange={setAutoImportSharedDocuments}
-            />
-          </div>
-          <div className="flex items-center justify-between">
-            <div className="space-y-0.5">
-              <p className="font-medium">Make new documents shareable by default</p>
-              <p className="text-sm text-muted-foreground">
-                New documents will be shareable via link when created
-              </p>
-            </div>
-            <Switch
-              checked={defaultDocumentsPublic}
-              onCheckedChange={setDefaultDocumentsPublic}
-            />
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Stats Section */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardDescription className="flex items-center gap-2">
-              <Clock className="h-4 w-4" />
-              Time Listened
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold">{formatDuration(stats?.total_audio_ms ?? 0)}</div>
-            {lotrComparison && (
-              <p className="text-sm text-muted-foreground mt-1 italic">{lotrComparison}</p>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2">
-            <CardDescription className="flex items-center gap-2">
-              <Type className="h-4 w-4" />
-              Characters
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold">{formatCharacters(stats?.total_characters ?? 0)}</div>
-            {charComparison && (
-              <p className="text-sm text-muted-foreground mt-1 italic">{charComparison}</p>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2">
-            <CardDescription className="flex items-center gap-2">
-              <FileText className="h-4 w-4" />
-              Documents
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold">{stats?.document_count ?? 0}</div>
-            {docComparison && (
-              <p className="text-sm text-muted-foreground mt-1 italic">{docComparison}</p>
-            )}
-          </CardContent>
-        </Card>
-      </div>
 
       {/* Danger Zone */}
       <Card className="border-destructive/50">
@@ -348,7 +383,6 @@ const AccountPage = () => {
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-6">
-          {/* Delete Documents */}
           <div className="flex items-center justify-between">
             <div>
               <p className="font-medium">Delete Documents</p>
@@ -391,7 +425,6 @@ const AccountPage = () => {
             </DropdownMenu>
           </div>
 
-          {/* Delete Account */}
           <div className="flex items-center justify-between">
             <div>
               <p className="font-medium">Delete Account</p>
@@ -407,7 +440,7 @@ const AccountPage = () => {
         </CardContent>
       </Card>
 
-      {/* Delete Confirmation Dialog */}
+      {/* Delete Account Confirmation */}
       <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <DialogContent>
           <DialogHeader>
@@ -421,9 +454,9 @@ const AccountPage = () => {
                 <li>All your documents and their audio</li>
                 <li>Your preferences and settings</li>
               </ul>
-              {stats && stats.document_count > 0 && (
+              {engagement && engagement.document_count > 0 && (
                 <p className="font-medium">
-                  You have {stats.document_count} document{stats.document_count !== 1 ? "s" : ""} that will be
+                  You have {engagement.document_count} document{engagement.document_count !== 1 ? "s" : ""} that will be
                   deleted.
                 </p>
               )}
@@ -450,7 +483,7 @@ const AccountPage = () => {
         </DialogContent>
       </Dialog>
 
-      {/* Bulk Delete Confirmation Dialog */}
+      {/* Bulk Delete Confirmation */}
       <Dialog open={bulkDeleteDialogOpen} onOpenChange={setBulkDeleteDialogOpen}>
         <DialogContent>
           <DialogHeader>
@@ -484,9 +517,41 @@ const AccountPage = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
     </div>
   );
 };
 
 export default AccountPage;
+
+// --- Helpers ---
+
+function formatDuration(ms: number): string {
+  const hours = Math.floor(ms / 3_600_000);
+  const minutes = Math.floor((ms % 3_600_000) / 60_000);
+
+  if (hours === 0 && minutes === 0) return "< 1 min";
+  if (hours === 0) return `${minutes} min`;
+  if (minutes === 0) return `${hours} hour${hours !== 1 ? "s" : ""}`;
+  return `${hours}h ${minutes}m`;
+}
+
+function formatCharacters(chars: number): string {
+  if (chars >= 1_000_000) return `${(chars / 1_000_000).toFixed(1)}M characters`;
+  if (chars >= 1_000) return `${(chars / 1_000).toFixed(1)}K characters`;
+  return `${chars.toLocaleString()} characters`;
+}
+
+function getLotrComparison(ms: number): string | null {
+  if (ms < 60_000) return null;
+
+  const trilogies = ms / LOTR_TRILOGY_MS;
+  const audiobooks = trilogies * 3;
+
+  if (trilogies < 0.01) {
+    return `${((ms / (LOTR_TRILOGY_MS / 3)) * 100).toFixed(0)}% of the Fellowship audiobook`;
+  }
+  if (audiobooks < 1) return `${(audiobooks * 100).toFixed(0)}% of an LOTR audiobook`;
+  if (trilogies < 1) return `${audiobooks.toFixed(1)} LOTR audiobooks`;
+  if (trilogies < 10) return `${trilogies.toFixed(1)}× the LOTR trilogy`;
+  return `${Math.round(trilogies)}× the LOTR trilogy`;
+}

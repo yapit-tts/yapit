@@ -359,6 +359,21 @@ class UsageLog(SQLModel, table=True):
     )
 
 
+class UserVoiceStats(SQLModel, table=True):
+    """Persistent per-voice-per-month engagement stats. Survives document deletion."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    user_id: str = Field(index=True)
+    voice_slug: str
+    model_slug: str
+    month: dt.date  # first day of month, e.g. 2026-02-01
+    total_characters: int = Field(default=0)
+    total_duration_ms: int = Field(default=0)
+    synth_count: int = Field(default=0)
+
+    __table_args__ = (UniqueConstraint("user_id", "voice_slug", "model_slug", "month", name="uq_user_voice_stats"),)
+
+
 class UserPreferences(SQLModel, table=True):
     """User-synced preferences (cross-device)."""
 

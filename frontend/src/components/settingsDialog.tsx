@@ -11,11 +11,9 @@ import { Button } from "@/components/ui/button";
 import { Settings, Sun, Moon, Monitor } from "lucide-react";
 import { useSettings, useIsDark, type ContentWidth, type ScrollPosition, type Theme, type DarkTheme } from "@/hooks/useSettings";
 import { cn } from "@/lib/utils";
-import { useUserPreferences } from "@/hooks/useUserPreferences";
-import { useApi } from "@/api";
 import { useIsMobile } from "@/hooks/use-mobile";
 
-function SettingRow({
+export function SettingRow({
   label,
   description,
   children,
@@ -41,7 +39,7 @@ interface SettingsDialogProps {
   size?: "default" | "lg";
 }
 
-const darkThemes: { value: DarkTheme; label: string; bg: string; accent: string }[] = [
+export const darkThemes: { value: DarkTheme; label: string; bg: string; accent: string }[] = [
   { value: "default", label: "Charcoal", bg: "oklch(0.13 0.006 70)", accent: "oklch(0.63 0.11 140)" },
   { value: "dusk", label: "Dusk", bg: "oklch(0.12 0.016 305)", accent: "oklch(0.68 0.15 145)" },
   { value: "lavender", label: "Lavender", bg: "oklch(0.243 0.030 283.9)", accent: "oklch(0.858 0.109 142.8)" },
@@ -50,14 +48,7 @@ const darkThemes: { value: DarkTheme; label: string; bg: string; accent: string 
 export function SettingsDialog({ size = "default" }: SettingsDialogProps) {
   const { settings, setSettings } = useSettings();
   const isDark = useIsDark();
-  const { isAnonymous } = useApi();
   const isMobile = useIsMobile();
-  const {
-    autoImportSharedDocuments,
-    setAutoImportSharedDocuments,
-    defaultDocumentsPublic,
-    setDefaultDocumentsPublic,
-  } = useUserPreferences();
 
   const buttonClass = size === "lg" ? "h-10 w-10" : "";
   const iconClass = size === "lg" ? "h-5 w-5" : "h-4 w-4";
@@ -200,34 +191,6 @@ export function SettingsDialog({ size = "default" }: SettingsDialogProps) {
             </div>
           </SettingRow>
 
-          {/* Sharing settings - only for signed-in users */}
-          {!isAnonymous && (
-            <>
-              <div className="mt-4 mb-2 text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                Sharing
-              </div>
-
-              <SettingRow
-                label="Auto-import shared documents"
-                description="Add to library automatically when opening"
-              >
-                <Switch
-                  checked={autoImportSharedDocuments}
-                  onCheckedChange={setAutoImportSharedDocuments}
-                />
-              </SettingRow>
-
-              <SettingRow
-                label="New documents shareable"
-                description="Make new documents shareable by default"
-              >
-                <Switch
-                  checked={defaultDocumentsPublic}
-                  onCheckedChange={setDefaultDocumentsPublic}
-                />
-              </SettingRow>
-            </>
-          )}
         </div>
       </DialogContent>
     </Dialog>

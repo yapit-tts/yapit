@@ -20,9 +20,10 @@ from yapit.gateway.domain_models import (
     UsagePeriod,
     UserPreferences,
     UserSubscription,
+    UserVoiceStats,
 )
 from yapit.gateway.stack_auth.users import delete_user as stack_auth_delete_user
-from yapit.gateway.usage import get_usage_breakdown, get_usage_summary, get_user_subscription
+from yapit.gateway.usage import get_engagement_stats, get_usage_breakdown, get_usage_summary, get_user_subscription
 
 router = APIRouter(prefix="/v1/users", tags=["Users"])
 
@@ -65,6 +66,36 @@ async def get_my_usage_breakdown(
     """Get per-voice and per-document usage breakdown for the current billing period."""
     data = await get_usage_breakdown(auth_user.id, db)
     return UsageBreakdownResponse(**data)
+
+
+# Engagement stats
+
+
+class VoiceEngagement(BaseModel):
+    voice_slug: str
+    voice_name: str | None
+    model_slug: str
+    total_duration_ms: int
+    total_characters: int
+    synth_count: int
+
+
+class EngagementResponse(BaseModel):
+    total_duration_ms: int
+    total_characters: int
+    total_synths: int
+    document_count: int
+    voices: list[VoiceEngagement]
+
+
+@router.get("/me/engagement", response_model=EngagementResponse)
+async def get_my_engagement(
+    auth_user: AuthenticatedUser,
+    db: DbSession,
+) -> EngagementResponse:
+    """Get lifetime engagement stats (persistent, survives document deletion)."""
+    data = await get_engagement_stats(auth_user.id, db)
+    return EngagementResponse(**data)
 
 
 # Cross-device sync: User preferences
@@ -242,6 +273,7 @@ async def delete_account(
     await db.exec(update(UserSubscription).where(col(UserSubscription.user_id) == user_id).values(user_id=anon_id))
     await db.exec(update(UsagePeriod).where(col(UsagePeriod.user_id) == user_id).values(user_id=anon_id))
     await db.exec(update(UsageLog).where(col(UsageLog.user_id) == user_id).values(user_id=anon_id))
+    await db.exec(update(UserVoiceStats).where(col(UserVoiceStats.user_id) == user_id).values(user_id=anon_id))
 
     await db.commit()
 
