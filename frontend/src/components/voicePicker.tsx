@@ -1,4 +1,4 @@
-import { useState, useMemo, memo, startTransition, useRef, useCallback } from "react";
+import { useState, useMemo, memo, useRef, useCallback } from "react";
 import { ChevronDown, Star, ChevronRight, Monitor, Cloud, Loader2, Info, Play, Square } from "lucide-react";
 import { useApi } from "@/api";
 import { Button } from "@/components/ui/button";
@@ -43,6 +43,11 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
   // Track which language sections are expanded (user manages, we just remember)
   const [expandedKokoroLangs, setExpandedKokoroLangs] = useState<Set<KokoroLanguageCode>>(new Set(["a"]));
   const [expandedInworldLangs, setExpandedInworldLangs] = useState<Set<InworldLanguageCode>>(new Set(["en"]));
+
+  // Ref to latest value — VoiceRow memo skips function props, so stale closures
+  // from onSelect would read outdated model state without this.
+  const valueRef = useRef(value);
+  valueRef.current = value;
 
   // Fetch Inworld voices from API
   const { voices: inworldVoices, isLoading: inworldLoading } = useInworldVoices();
@@ -144,15 +149,9 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
   const activeTab = isKokoroModelSelected ? "kokoro" : "inworld";
 
   const handleVoiceSelect = (voiceSlug: string) => {
-    let model: ModelType;
-    if (activeTab === "kokoro") {
-      model = isKokoroServer ? KOKORO_SLUG : KOKORO_BROWSER_SLUG;
-    } else {
-      model = isInworldMax ? INWORLD_MAX_SLUG : INWORLD_SLUG;
-    }
+    const current = valueRef.current;
     const newSelection: VoiceSelection = {
-      ...value,
-      model,
+      ...current,
       voiceSlug,
     };
     onChange(newSelection);
@@ -193,10 +192,7 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
       model: newModel,
       voiceSlug,
     };
-    // Mark as non-urgent transition so UI stays responsive during cache clearing
-    startTransition(() => {
-      onChange(newSelection);
-    });
+    onChange(newSelection);
     setVoiceSelection(newSelection);
   };
 
