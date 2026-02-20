@@ -15,7 +15,7 @@ flowchart TD
         subgraph GW ["Gateway (FastAPI)"]
             direction LR
             API["REST API · WebSocket"]
-            BG["Background tasks<br/>(result consumer, dispatchers, scanners)"]
+            BG["Background tasks<br/>(consumers, dispatchers, scanners)"]
         end
 
         GW --> PG[(Postgres)] & Redis[(Redis)] & SQLite[(SQLite Caches)]
@@ -36,26 +36,24 @@ flowchart TD
     Kokoro -.->|overflow| RunPod["RunPod Serverless"]
 ```
 
-**Gateway** is a FastAPI process that handles all HTTP and WebSocket traffic.
-It also runs background tasks (result consumer, Inworld dispatchers,
-visibility/overflow scanners). Only service with Postgres access.
+**Gateway** is a FastAPI process handling all HTTP/WebSocket traffic plus
+background tasks (result consumer, billing consumer, cache persister,
+Inworld dispatchers, visibility/overflow scanners). Only service with
+Postgres access.
 
-**Workers** pull jobs from Redis sorted sets via `BZPOPMIN` and push results
-back. The gateway never pushes to workers directly. Any machine with Redis
-access can run workers without gateway config changes. Kokoro and YOLO run
-as separate containers. Inworld dispatchers run inside the gateway since
-they're just HTTP calls to the Inworld API.
+**Workers** pull jobs from Redis queues and push results back. The gateway
+never pushes to workers directly — any machine with Redis access can be a
+worker. Kokoro and YOLO run as separate containers. Inworld dispatchers run
+inside the gateway (just HTTP calls).
 
-**Redis** stores job queues, inflight tracking, pubsub notifications, rate
-limits, and async extraction state.
+**Storage:**
 
-**SQLite caches** on the gateway filesystem (WAL mode):
-
-| Cache | Keyed by | Eviction |
-|-------|----------|----------|
-| Audio | variant hash (sha256 of text+model+voice+params) | LRU, size-limited |
-| Document | URL hash or content hash | TTL-based |
-| Extraction | content_hash:processor:version:page | Prompt version bump |
+| Store | Role |
+|-------|------|
+| Redis | Job queues, inflight tracking, pubsub, audio hot cache (300s TTL) |
+| SQLite | Audio cold cache (persistent, LRU-evicted), document cache, extraction cache |
+| Postgres | Documents, blocks, variants, billing, user data |
+| TimescaleDB | Metrics and events |
 
 
 ## Document Processing
@@ -102,17 +100,18 @@ flowchart TD
     TRAF --> EMPTY{"Extraction<br/>empty?"}
     EMPTY -->|Yes| FALLBACK["MarkItDown fallback"]
     EMPTY -->|No| JS{"JS-rendered page?<br/>(React/Vue patterns, or<br/>large HTML → tiny markdown)"}
-    JS -->|Yes| PW["Playwright render<br/>(browser pool, semaphore=100)"]
+    JS -->|Yes| PW["Playwright render<br/>(browser pool)"]
     PW --> RESOLVE
     JS -->|No| RESOLVE["Resolve relative URLs<br/>to absolute"]
     FALLBACK --> RESOLVE
 ```
 
-### AI extraction (non-batch)
+### AI extraction
 
 Gemini vision-based extraction for PDFs and images. Pages are processed in
-parallel via `asyncio.as_completed`. Results are cached per-page, so
-re-extracting a 100-page PDF where 3 pages changed only re-processes those 3.
+parallel, cached per-page — re-extracting a 100-page PDF where 3 pages
+changed only re-processes those 3. YOLO figure detection runs first to
+identify charts, diagrams, and figures that PyMuPDF can't extract.
 
 ```mermaid
 sequenceDiagram
@@ -138,11 +137,10 @@ sequenceDiagram
 
     par Per-page (asyncio.as_completed)
         Gateway->>External: YOLO figure detection (queue → worker)
-        Note over External: Render page, run DocLayout-YOLO,<br/>crop figures, store images
         External-->>Gateway: figure URLs
-        Gateway->>External: Gemini API (page PDF + figure prompt)
-        External-->>Gateway: markdown with placeholders
-        Note over Gateway: Substitute placeholders → image URLs<br/>Cache: content_hash:processor:version:page
+        Gateway->>External: Gemini API (page PDF + figures)
+        External-->>Gateway: markdown
+        Note over Gateway: Cache per page
     end
     deactivate Gateway
 
@@ -152,7 +150,7 @@ sequenceDiagram
             Gateway-->>Browser: {completed: [0,1,3], status: "processing"}
         else All pages done
             activate Gateway
-            Note over Gateway: Parse markdown → transform → blocks → Postgres
+            Note over Gateway: Parse markdown → blocks → Postgres
             Gateway-->>Browser: {status: "complete", document_id}
             deactivate Gateway
         end
@@ -162,72 +160,24 @@ sequenceDiagram
 Batch mode submits all pages to the Gemini Batch API instead (50% cost
 reduction), with a background poller checking for completion.
 
-**Why YOLO for figure detection?** PyMuPDF only extracts embedded raster
-images. YOLO handles vector graphics, filters decorative elements, groups
-multi-part figures, and provides layout info (width percentages, side-by-side
-arrangement).
+### Markdown → blocks
 
-### Markdown parsing and block transformation
-
-The markdown is parsed by `markdown-it-py` (CommonMark + tables + dollar
-math + strikethrough + footnotes). `DocumentTransformer` walks the AST and
-produces typed blocks with HTML for display and `AudioChunk`s for TTS:
-
-| Block type | Speakable | Notes |
-|------------|-----------|-------|
-| heading    | yes       | H1-H6, split if long |
-| paragraph  | yes       | Main content |
-| list       | yes       | Per-item |
-| blockquote | yes       | Callout title only |
-| image      | caption   | `<yap-cap>` or alt text |
-| footnotes  | yes       | Per-item, collected at document end |
-| code       | no        | Displayed only |
-| math       | no*       | Silent unless followed by `<yap-speak>` |
-| table      | no        | Displayed only |
+Parsed by markdown-it-py (CommonMark + extensions). The transformer walks
+the AST and produces typed blocks with HTML for display and audio chunks
+for TTS. Speakable block types: heading, paragraph, list, blockquote,
+image captions, footnotes. Non-speakable: code, math, tables.
 
 Custom HTML tags route content between display and speech:
-`<yap-show>` (display only, silent), `<yap-speak>` (TTS only, invisible),
-`<yap-cap>` (image captions, both displayed and spoken).
-
-Long blocks are split to keep synthesis chunks short:
-
-```mermaid
-flowchart TD
-    A{"text > max_block_chars?"} -->|No| DONE["Single AudioChunk"]
-    A -->|Yes| B["Split at sentence boundaries<br/>(. ! ?)"]
-    B --> C{"Still too long?"}
-    C -->|No| DONE2["Multiple AudioChunks<br/>with consecutive audio_block_idx"]
-    C -->|Yes| D["Split at clause boundaries<br/>(, — : ;)"]
-    D --> E{"Still too long?"}
-    E -->|No| DONE2
-    E -->|Yes| F["Split at word boundaries<br/>(last resort)"]
-    F --> DONE2
-```
-
-Split content gets multiple `AudioChunk` entries with consecutive
-`audio_block_idx` values. The HTML wraps each chunk in
-`<span data-audio-idx="N">` for playback highlighting.
+`<yap-show>` (display only), `<yap-speak>` (TTS only),
+`<yap-cap>` (image captions, both). Long blocks are split at sentence →
+clause → word boundaries to keep synthesis chunks short.
 
 
 ## TTS Pipeline
 
-```mermaid
-flowchart LR
-    A["Document blocks<br/><i>text + audio_idx</i>"] --> B["WebSocket handler<br/><i>dedup + enqueue</i>"]
-    B --> C["Redis queue<br/><i>sorted set FIFO</i>"]
-    C --> D["Worker<br/><i>pull + synthesize</i>"]
-    D --> E["Result consumer<br/><i>cache + notify</i>"]
-```
-
-Two synthesis paths:
-- **Server synthesis**: the pipeline above. Workers produce audio, it's cached
-  in SQLite, and the frontend fetches it over HTTP.
-- **Browser synthesis**: Kokoro.js runs in a Web Worker (WASM/WebGPU). Audio
-  stays in memory as an `AudioBuffer`. No server round-trip. Free, private,
-  but limited to the Kokoro model.
-
-Both implement the same `Synthesizer` interface. The playback engine does
-not know which path produced the audio.
+Two synthesis paths, same interface:
+- **Server**: WebSocket → Redis queue → worker → result consumer → cached audio over HTTP
+- **Browser**: Kokoro.js in a Web Worker (WASM/WebGPU). Audio stays in memory. Free, private, Kokoro-only.
 
 ### Synthesis lifecycle
 
@@ -246,230 +196,134 @@ sequenceDiagram
         participant Worker
     end
 
-    Browser->>Gateway: synthesize {block_indices, model, voice, cursor}
+    Browser->>Gateway: synthesize {block_indices, model, voice}
     activate Gateway
 
-    Note over Gateway: For each block:<br/>variant_hash = sha256(text+model+voice+params)
+    Note over Gateway: For each block:<br/>variant_hash = hash(text + model + voice + params)
 
-    alt Cached (SQLite + Postgres)
+    alt Cached (Redis or SQLite)
         Gateway-->>Browser: status: cached + audio_url
     else Already in-flight
-        Note over Gateway: Subscribe to variant_hash
+        Note over Gateway: Subscribe to existing job
         Gateway-->>Browser: status: queued
     else New job
-        Gateway->>Redis: SET inflight key (NX)<br/>ZADD tts:queue:{model}
+        Gateway->>Redis: Queue job
         Gateway-->>Browser: status: queued
     end
     deactivate Gateway
 
-    Worker->>Redis: BZPOPMIN tts:queue:{model}
+    Worker->>Redis: Pull job from queue
     activate Worker
-    Note over Worker: Synthesize audio<br/>(Kokoro or Inworld API)
-    Worker->>Redis: LPUSH tts:results
+    Note over Worker: Synthesize audio<br/>(Kokoro local or Inworld API)
+    Worker->>Redis: Push result
     deactivate Worker
 
     activate Gateway
-    Note over Gateway: Result consumer (BRPOP)
-    Gateway->>Redis: DELETE inflight key (first wins)
+    Note over Gateway: Result consumer picks up result
 
-    alt Duplicate result
-        Note over Gateway: DELETE returned 0 → skip
-    else Empty audio
-        Gateway-->>Browser: status: skipped
-    else Success
-        Gateway->>Gateway: Write audio to SQLite cache
+    alt Success
+        Gateway->>Redis: SET audio (hot cache, 300s TTL)
         Gateway-->>Browser: status: cached + audio_url
-        Note over Gateway: PUBLISH → pubsub → WebSocket
-        Gateway->>Gateway: UPDATE BlockVariant
-        Gateway->>Gateway: Record usage (chars × multiplier)
+        Note over Gateway: Push billing event (async)
+        Note over Gateway: Push persist event (async)
+    else Error / Empty
+        Gateway-->>Browser: status: error or skipped
     end
     deactivate Gateway
 
+    Note over Gateway: Cache persister: batch-write<br/>Redis audio → SQLite (background)
+
     Browser->>Gateway: GET /v1/audio/{hash}
+    Note over Gateway: Redis first → SQLite fallback
     Gateway-->>Browser: audio/ogg bytes
 ```
 
-### Per-block synthesis flow
+### Result processing
+
+Three isolated consumers process results in parallel:
 
 ```mermaid
-flowchart TD
-    A["Compute variant_hash<br/>sha256(text + model + voice + params)"] --> B{"Cached?<br/>(SQLite data + Postgres variant)"}
-    B -->|Yes| C["Return <b>cached</b> + audio_url"]
-    B -->|No| D{"Usage limit<br/>exceeded?"}
-    D -->|Over limit| E["Return <b>error</b>"]
-    D -->|OK| F["Track subscriber<br/>(if WebSocket)"]
-    F --> G{"Inflight key<br/>exists?"}
-    G -->|Yes| H["Already processing →<br/>return <b>queued</b>"]
-    G -->|No| I["SET inflight key (NX)<br/>Create BlockVariant<br/>ZADD tts:queue:{model}"]
-    I --> J["Return <b>queued</b>"]
+flowchart LR
+    RES["tts:results"] --> RC["Result consumer<br/><b>hot path</b>"]
+    RC --> REDIS_SET["Redis SET audio<br/>(sub-ms)"]
+    REDIS_SET --> NOTIFY["Notify client<br/>(pubsub → WS)"]
+    NOTIFY --> BILL["Push to<br/>tts:billing"]
+    NOTIFY --> PERSIST["Push to<br/>tts:persist"]
+
+    BILL --> BC["Billing consumer<br/><b>cold path</b>"]
+    BC --> PG[(Postgres<br/>usage + metadata)]
+
+    PERSIST --> CP["Cache persister<br/><b>batch writes</b>"]
+    CP --> SQLite[(SQLite<br/>cold cache)]
 ```
 
-### WebSocket protocol
-
-Single connection at `/v1/ws/tts` per session. Auth via query parameter.
-
-```
-Client → Server
-──────────────────────────────────────────────────
-synthesize     Request synthesis for a batch of blocks.
-               {document_id, block_indices, cursor, model, voice}
-
-cursor_moved   User skipped to a new position. Backend evicts
-               queued blocks outside the buffer window.
-
-Server → Client
-──────────────────────────────────────────────────
-status         Per-block update: queued | processing | cached | skipped | error
-               Includes audio_url when cached.
-               Includes model_slug + voice_slug (prevents stale updates
-               after voice change).
-
-evicted        Confirms which block indices were evicted.
-
-error          Document-level error (not found, invalid model, rate limit).
-```
-
-### Queue structure
-
-Each model gets its own Redis sorted set. Workers pop with `BZPOPMIN`
-(oldest job first).
-
-```
-tts:queue:{model}                Sorted set. job_id → timestamp.
-
-tts:jobs                         Hash. job_id → {retry_count, job JSON, queued_at}.
-                                 Separated from queue so eviction can delete a
-                                 job without scanning the sorted set.
-
-tts:job_index                    Hash. "user:doc:block" → job_id.
-                                 Cursor-based eviction looks up which job
-                                 corresponds to a block, removes it.
-
-tts:results                      List. Workers LPUSH results here.
-                                 Result consumer BRPOPs from the other end.
-
-tts:processing:{worker_id}       Hash. job_id → {started, retry_count, job, ...}.
-                                 Visibility scanner checks these for stuck jobs.
-
-tts:inflight:{variant_hash}      String with TTL. Prevents duplicate queuing.
-                                 First request sets it; later requests subscribe.
-
-tts:subscribers:{variant_hash}   Set. "user:doc:block" entries. When synthesis
-                                 completes, notify all subscribers via pubsub.
-
-tts:pending:{user}:{doc}         Set of block indices currently queued.
-                                 Used by cursor_moved eviction.
-
-tts:dlq:{model}                  Dead letter queue. TTL 7 days.
-```
+- **Result consumer** (hot path): Redis SET + notify. No disk I/O. Sub-ms.
+- **Billing consumer**: Drain-on-wake batching. Own Postgres pool, can never starve the request path.
+- **Cache persister**: Drain-on-wake batching. N rows in one SQLite transaction = one fsync instead of N.
 
 ### Workers
 
-**Kokoro** (local model): Sequential processing, one job per replica.
-`BZPOPMIN` from queue, track in processing set, run KPipeline (text to
-float32 PCM at 24kHz), encode to OGG Opus (PyAV/libopus), `LPUSH` result.
-Runs in its own Docker container with a separate `pyproject.toml` (CPU and
-GPU deps differ). Replica count scales with CPU cores.
+**Kokoro** (local model): Sequential processing, one job per replica. Runs
+in its own container. Replica count scales with CPU cores.
 
-**Inworld** (API model): Parallel dispatching, unlimited concurrency. Runs
-as background tasks inside the gateway (not separate containers) since
-they're just HTTP calls. Pull from `tts:queue:inworld-*`, spawn an async
-task per job, POST to Inworld API with exponential backoff, re-encode the
-returned OGG Opus, push result to `tts:results`.
-
-### Result consumer
-
-```mermaid
-flowchart TD
-    BRPOP["BRPOP tts:results"] --> CLAIM["DELETE inflight key<br/>(atomic, first deleter wins)"]
-    CLAIM --> DUP{"DELETE<br/>returned 0?"}
-    DUP -->|Yes| SKIP_DUP["Skip — already finalized"]
-    DUP -->|No| CHECK{"Result type?"}
-    CHECK -->|Error| ERR["Notify subscribers with error"]
-    CHECK -->|Empty audio| SKIP["Notify: <b>skipped</b><br/>(whitespace-only blocks)"]
-    CHECK -->|Success| S1["Decode base64 → SQLite cache"]
-    S1 --> S2["PUBLISH notification<br/>(pubsub → WebSocket → client)"]
-    S2 --> S3["UPDATE BlockVariant<br/>(duration_ms, cache_ref)"]
-    S3 --> S4["Record usage<br/>(chars × model multiplier)"]
-```
+**Inworld** (API model): Parallel dispatching inside the gateway. One async
+task per job, unlimited concurrency.
 
 ### Reliability
 
 ```mermaid
 flowchart TD
-    subgraph vis ["Visibility Scanner (every 15s)"]
-        VS["Scan tts:processing:*<br/>for jobs > timeout"]
-        VS --> RETRY{"retries < max?"}
-        RETRY -->|Yes| REQUEUE["Re-queue with<br/>retry_count++"]
-        RETRY -->|No| DLQ["Dead letter queue<br/>(TTL 7 days)"]
-        DLQ --> ERRSUB["Push error result<br/>for subscriber notification"]
+    subgraph vis ["Visibility Scanner"]
+        VS["Detect stuck jobs<br/>(processing > timeout)"]
+        VS --> RETRY{"Retries left?"}
+        RETRY -->|Yes| REQUEUE["Re-queue"]
+        RETRY -->|No| DLQ["Dead letter queue"]
+        DLQ --> ERRSUB["Notify subscribers<br/>of failure"]
     end
 
-    subgraph overflow ["Overflow Scanner (every 5s)"]
-        OS["ZRANGEBYSCORE for<br/>jobs waiting > threshold"]
-        OS --> RP["Remove from local queue<br/>Submit to RunPod serverless"]
-        RP --> POLL["Poll for completion"]
-        POLL --> RESULT["Push to tts:results<br/>(same path as local workers)"]
+    subgraph overflow ["Overflow Scanner"]
+        OS["Detect queue backlog<br/>(waiting > threshold)"]
+        OS --> RP["Offload to<br/>RunPod serverless"]
+        RP --> RESULT["Results return via<br/>same tts:results path"]
     end
 ```
 
-### Audio caching
+### Frontend playback
 
-Audio is keyed by variant hash (`sha256(text + model + voice + params)`).
-Same text with a different voice produces a different hash. Same text and
-voice from different users or documents shares the cache entry.
+State machine decoupled from React, bridged via `useSyncExternalStore`.
+Prefetches 8 blocks ahead. Audio and synthesis are injected dependencies —
+the engine doesn't know if audio came from server or browser synthesis.
 
-The SQLite cache uses WAL mode with separate reader/writer connections. LRU
-timestamps are batched in memory and flushed every 10 seconds to avoid write
-contention on reads. Eviction removes the oldest entries by `last_accessed`
-when the cache exceeds its size limit.
-
-### Frontend playback engine
-
-Standalone state machine decoupled from React (bridged via
-`useSyncExternalStore`):
-- **States:** stopped | buffering | playing
-- **Prefetch:** 8 blocks ahead, refill when < 8 remain
-- **Cache:** variant-keyed `{blockIdx:model:voice}`
-- **Cancel:** pending promises resolve to null on voice change / stop
-- **I/O:** injected via `PlaybackEngineDeps` — `AudioPlayer`
-  (HTMLAudioElement, preservesPitch) and `Synthesizer` (browser or server)
-
-The server synthesizer batches per-block calls within a microtask into a
-single WebSocket message. Audio playback uses `HTMLAudioElement` directly
-instead of Web Audio API because `AudioBufferSourceNode.playbackRate`
-changes pitch with speed, and routing through `MediaElementAudioSourceNode`
-causes glitchy audio on iOS Safari.
+Server synthesizer batches per-block calls into a single WebSocket message.
+Audio playback uses `HTMLAudioElement` directly (not Web Audio API) because
+`AudioBufferSourceNode.playbackRate` changes pitch with speed.
 
 
 ## Key Design Decisions
 
-**Pull-based workers**: Workers call `BZPOPMIN` on Redis sorted sets. Faster
-workers naturally pull more jobs. Any machine with Redis access (e.g. via
-Tailscale VPN) can run workers. The gateway does not need to know how many
-workers exist.
+**Pull-based workers**: Workers pull from Redis queues. Faster workers
+naturally pull more. Any machine with Redis access can be a worker. The
+gateway doesn't need to know how many workers exist.
 
-**Content-addressed audio cache**: Audio is keyed by
-`sha256(text + model + voice + params)`, not by document or user. Two users
-reading the same article with the same voice share cached audio.
+**Content-addressed cache**: Audio keyed by `hash(text + model + voice + params)`,
+not by document or user. Two users reading the same article with the same
+voice share cached audio.
 
-**Cursor-aware eviction**: When the user skips forward, blocks behind the
-cursor are removed from the queue. The frontend sends `cursor_moved` and
-the gateway evicts jobs outside a configurable buffer window.
+**Redis-first audio serving**: Recently synthesized audio is served from
+Redis (sub-ms). SQLite is the durable cold cache. The cache persister
+batch-writes in the background — one fsync per batch instead of per row.
 
-**Double-billing prevention**: The inflight key is atomically deleted at the
-start of result processing. If a job was requeued (by the visibility
-scanner) and both the original and retry complete, the first to `DELETE`
-the key wins. The second sees `DELETE` return 0 and skips finalization.
+**Three-path result processing**: Hot path (Redis + notify) has zero disk
+I/O. Billing and cache persistence run independently with their own
+resources. No path can starve another.
 
-**Two synthesis paths**: Server synthesis (WebSocket, Redis queue, worker,
-cache) and browser synthesis (Kokoro.js WASM/WebGPU in a Web Worker). Both
-implement the same `Synthesizer` interface.
+**Duplicate prevention**: Inflight keys are atomically deleted at the start
+of result processing. If a job completes twice (original + retry), only the
+first to delete the key proceeds.
 
 **Prepare/create split**: Document creation is two API calls. `/prepare`
-downloads and caches content, returns metadata. The create endpoint uses the
-cache key. This lets the frontend show costs and get user confirmation
-before starting extraction.
+downloads and caches content, returns metadata. The create endpoint uses
+the cache key. Frontend shows costs before starting extraction.
 
 
 ## Deployment
@@ -485,6 +339,5 @@ docker-compose.yml              Base: all services + worker definitions
 Production runs on Docker Swarm (single node). CI/CD pushes to `main`
 trigger lint, test, build, push to ghcr.io, SSH deploy, and health check.
 
-Worker replica counts are configured via env vars (`KOKORO_CPU_REPLICAS`,
-`YOLO_CPU_REPLICAS`). External workers connect via Tailscale VPN.
-
+Worker replica counts are configured via env vars. External workers connect
+via Tailscale VPN.
