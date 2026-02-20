@@ -8,6 +8,7 @@ import random
 import httpx
 from loguru import logger
 
+from yapit.gateway.metrics import log_event
 from yapit.workers.adapters.base import SynthAdapter
 
 INWORLD_API_BASE = "https://api.inworld.ai/tts/v1"
@@ -53,6 +54,14 @@ class InworldAdapter(SynthAdapter):
                 last_error = e
                 if e.response.status_code not in RETRYABLE_STATUS_CODES:
                     raise
+
+                if e.response.status_code == 429:
+                    await log_event(
+                        "api_rate_limit",
+                        status_code=429,
+                        retry_count=attempt,
+                        data={"api_name": "inworld", "model_id": self._model_id},
+                    )
 
                 if attempt < MAX_RETRIES - 1:
                     delay = min(BASE_DELAY_SECONDS * (2**attempt), MAX_DELAY_SECONDS)

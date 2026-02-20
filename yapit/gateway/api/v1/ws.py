@@ -41,7 +41,6 @@ class WSSynthesizeRequest(BaseModel):
     type: Literal["synthesize"] = "synthesize"
     document_id: uuid.UUID
     block_indices: list[int]
-    cursor: int
     model: str
     voice: str
     synthesis_mode: SynthesisMode
@@ -305,17 +304,6 @@ async def _handle_cursor_moved(
                     await redis.delete(inflight_key)
 
         await redis.hdel(TTS_JOB_INDEX, index_key)
-
-    await log_event(
-        "eviction_triggered",
-        user_id=user.id,
-        document_id=str(msg.document_id),
-        data={
-            "cursor": msg.cursor,
-            "evicted_indices": to_evict,
-            "evicted_count": len(to_evict),
-        },
-    )
 
     # Notify frontend
     await ws.send_json(

@@ -5,7 +5,6 @@ interface WSSynthesizeRequest {
   type: "synthesize";
   document_id: string;
   block_indices: number[];
-  cursor: number;
   model: string;
   voice: string;
   synthesis_mode: "server";
@@ -70,7 +69,7 @@ export function createServerSynthesizer(deps: ServerSynthesizerDeps): Synthesize
   let lastError: string | null = null;
 
   // Batch: collect synthesize calls within a microtask, send as one WS message
-  let batchQueue: { blockIdx: number; documentId: string; model: string; voice: string; cursor: number } | null = null;
+  let batchQueue: { documentId: string; model: string; voice: string } | null = null;
   let batchIndices: number[] = [];
   let batchScheduled = false;
 
@@ -78,12 +77,11 @@ export function createServerSynthesizer(deps: ServerSynthesizerDeps): Synthesize
     return `${documentId}:${blockIdx}:${model}:${voice}`;
   }
 
-  function sendSynthesizeMsg(documentId: string, blockIndices: number[], cursor: number, model: string, voice: string) {
+  function sendSynthesizeMsg(documentId: string, blockIndices: number[], model: string, voice: string) {
     deps.sendWS({
       type: "synthesize",
       document_id: documentId,
       block_indices: blockIndices,
-      cursor,
       model,
       voice,
       synthesis_mode: "server",
@@ -100,7 +98,7 @@ export function createServerSynthesizer(deps: ServerSynthesizerDeps): Synthesize
         req.retryCount++;
         if (deps.checkWSConnected()) {
           console.warn(`[ServerSynth] Retrying block ${req.blockIdx} (attempt ${req.retryCount})`);
-          sendSynthesizeMsg(req.documentId, [req.blockIdx], req.blockIdx, req.model, req.voice);
+          sendSynthesizeMsg(req.documentId, [req.blockIdx], req.model, req.voice);
         }
         // Reset timer regardless — if WS is down, retryAllPending() handles bulk recovery on reconnect
         req.timer = createRetryTimer(key, req);
@@ -120,7 +118,6 @@ export function createServerSynthesizer(deps: ServerSynthesizerDeps): Synthesize
     sendSynthesizeMsg(
       batchQueue.documentId,
       batchIndices,
-      batchQueue.cursor,
       batchQueue.model,
       batchQueue.voice,
     );
@@ -162,7 +159,7 @@ export function createServerSynthesizer(deps: ServerSynthesizerDeps): Synthesize
         batchScheduled = true;
         queueMicrotask(flushBatch);
       }
-      batchQueue = { blockIdx, documentId, model, voice, cursor: blockIdx };
+      batchQueue = { documentId, model, voice };
       batchIndices.push(blockIdx);
     });
   }
@@ -198,7 +195,7 @@ export function createServerSynthesizer(deps: ServerSynthesizerDeps): Synthesize
     }
 
     for (const group of groups.values()) {
-      sendSynthesizeMsg(group.documentId, group.indices, Math.min(...group.indices), group.model, group.voice);
+      sendSynthesizeMsg(group.documentId, group.indices, group.model, group.voice);
     }
 
     // Reset all timers (reconnect resets the clock)

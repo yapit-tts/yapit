@@ -226,7 +226,6 @@ class TTSWebSocketClient:
         model: str = "kokoro",
         voice: str = "af_heart",
         synthesis_mode: str = "server",
-        cursor: int | None = None,
     ) -> None:
         """Send synthesize request."""
         await self.ws.send(
@@ -235,7 +234,6 @@ class TTSWebSocketClient:
                     "type": "synthesize",
                     "document_id": document_id,
                     "block_indices": block_indices,
-                    "cursor": cursor if cursor is not None else (block_indices[0] if block_indices else 0),
                     "model": model,
                     "voice": voice,
                     "synthesis_mode": synthesis_mode,

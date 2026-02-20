@@ -150,6 +150,7 @@ def _summary_stats(df: pd.DataFrame):
     overflow = get_events(df, "job_overflow")
     overflow_complete = get_events(df, "overflow_complete")
     overflow_error = get_events(df, "overflow_error")
+    rate_limits = get_events(df, "api_rate_limit")
 
     # Calculate incomplete jobs (synthesis only for now)
     queued_hashes = set(get_events(df, "synthesis_queued")["variant_hash"].dropna())
@@ -158,7 +159,7 @@ def _summary_stats(df: pd.DataFrame):
     finished_hashes = completed_hashes | errored_hashes
     incomplete = queued_hashes - finished_hashes
 
-    col1, col2, col3, col4, col5 = st.columns(5)
+    col1, col2, col3, col4, col5, col6 = st.columns(6)
     with col1:
         st.metric("Requeued Jobs", format_number(len(requeued)), help="Jobs requeued due to visibility timeout")
     with col2:
@@ -171,6 +172,17 @@ def _summary_stats(df: pd.DataFrame):
         st.metric("Overflow Success", format_percent(overflow_success))
     with col5:
         st.metric("Incomplete Jobs", format_number(len(incomplete)), help="Queued but never finished")
+    with col6:
+        rl_by_api = rate_limits["data"].apply(
+            lambda d: d.get("api_name", "unknown") if isinstance(d, dict) else "unknown"
+        )
+        rl_breakdown = rl_by_api.value_counts().to_dict() if not rate_limits.empty else {}
+        help_parts = [f"{name}: {count}" for name, count in rl_breakdown.items()]
+        st.metric(
+            "API Rate Limits",
+            format_number(len(rate_limits)),
+            help=", ".join(help_parts) if help_parts else "429 responses from Gemini/Inworld",
+        )
 
 
 def _retry_timeline(df: pd.DataFrame) -> go.Figure | None:
@@ -386,6 +398,45 @@ def _incomplete_jobs_chart(df: pd.DataFrame) -> go.Figure | None:
     return fig
 
 
+def _rate_limit_timeline(df: pd.DataFrame) -> go.Figure | None:
+    """API rate limit (429) events over time, by API."""
+    rate_limits = get_events(df, "api_rate_limit")
+    if rate_limits.empty:
+        return None
+
+    rate_limits = rate_limits.copy()
+    rate_limits["api_name"] = rate_limits["data"].apply(
+        lambda d: d.get("api_name", "unknown") if isinstance(d, dict) else "unknown"
+    )
+    rate_limits = bin_by_time(rate_limits, "1h")
+
+    api_colors = {"gemini": COLORS["accent_blue"], "inworld": COLORS["accent_coral"]}
+
+    fig = go.Figure()
+    for api_name in sorted(rate_limits["api_name"].unique()):
+        api_data = rate_limits[rate_limits["api_name"] == api_name]
+        hourly = api_data.groupby("time_bin").size().reset_index(name="count")
+        fig.add_trace(
+            go.Bar(
+                x=hourly["time_bin"],
+                y=hourly["count"],
+                name=api_name,
+                marker_color=api_colors.get(api_name, COLORS["text_muted"]),
+                hovertemplate=f"{api_name}: %{{y}} rate limits<extra></extra>",
+            )
+        )
+
+    fig.update_layout(
+        title="API Rate Limits Over Time (hourly)",
+        height=300,
+        xaxis_title="Time",
+        yaxis_title="429 Responses",
+        barmode="stack",
+    )
+    apply_plotly_theme(fig)
+    return fig
+
+
 def _reliability_by_queue(df: pd.DataFrame):
     """Reliability stats by queue type."""
     requeued = get_events(df, "job_requeued")
@@ -441,6 +492,16 @@ def render(df: pd.DataFrame):
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.caption("No webhook errors (great!)")
+
+    st.divider()
+
+    # API rate limits
+    section_header("API Rate Limits", "429 responses from external APIs")
+    fig = _rate_limit_timeline(df)
+    if fig:
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.caption("No rate limit events (great!)")
 
     st.divider()
 

@@ -368,6 +368,14 @@ class GeminiExtractor:
                 if e.code not in RETRYABLE_STATUS_CODES:
                     raise
 
+                if e.code == 429:
+                    await log_event(
+                        "api_rate_limit",
+                        status_code=429,
+                        retry_count=attempt,
+                        data={"api_name": "gemini", "context": context},
+                    )
+
                 if attempt < MAX_RETRIES - 1:
                     delay = min(BASE_DELAY_SECONDS * (2**attempt), MAX_DELAY_SECONDS)
                     jitter = random.uniform(0, delay * 0.5)

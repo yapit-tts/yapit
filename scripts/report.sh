@@ -126,6 +126,13 @@ Yapit is a text-to-speech platform with these components:
 - `extraction_estimate` — pre-check token estimate (compare with actual for tuning)
 - `page_extraction_complete`, `page_extraction_error` — Gemini API calls
 
+**API rate limits:**
+- `api_rate_limit` — emitted on every 429 response from external APIs before retry
+  - `data.api_name` — which API ("gemini" or "inworld")
+  - `status_code` — always 429
+  - `retry_count` — 0-indexed attempt number when the 429 occurred
+  - Any occurrence means we're hitting rate limits. Occasional is expected under load; sustained = need to throttle or increase quota.
+
 **Gateway-internal errors and warnings:**
 - `error` — gateway-side failures caught by exception handlers (e.g., cache write failures, DB errors during result processing). These are NOT pipeline-specific errors — they indicate something broke inside the gateway itself. Check `data.message` for details.
 - `warning` — non-fatal issues worth tracking (e.g., near-failures, degraded behavior)

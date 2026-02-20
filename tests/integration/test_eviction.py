@@ -35,12 +35,11 @@ async def test_cursor_moved_evicts_all_pending(subscribed_ws_client, multi_block
     document_id = multi_block_document["id"]
     blocks = multi_block_document["blocks"]
 
-    # Request blocks 0-7 with cursor at 0
+    # Request blocks 0-7
     block_indices = [b["idx"] for b in blocks[:8]]
     await subscribed_ws_client.synthesize(
         document_id=document_id,
         block_indices=block_indices,
-        cursor=0,
     )
 
     # Wait briefly for queued status
@@ -62,12 +61,11 @@ async def test_evicted_blocks_not_synthesized(subscribed_ws_client, subscribed_c
     document_id = multi_block_document["id"]
     blocks = multi_block_document["blocks"]
 
-    # Request blocks 0-7 with cursor at 0
+    # Request blocks 0-7
     block_indices = [b["idx"] for b in blocks[:8]]
     await subscribed_ws_client.synthesize(
         document_id=document_id,
         block_indices=block_indices,
-        cursor=0,
     )
 
     # Immediately move cursor far away before worker can process
@@ -97,12 +95,11 @@ async def test_cursor_moved_evicts_even_nearby_blocks(subscribed_ws_client, mult
     document_id = multi_block_document["id"]
     blocks = multi_block_document["blocks"]
 
-    # Request blocks 0-7 with cursor at 0
+    # Request blocks 0-7
     block_indices = [b["idx"] for b in blocks[:8]]
     await subscribed_ws_client.synthesize(
         document_id=document_id,
         block_indices=block_indices,
-        cursor=0,
     )
 
     # Wait for blocks to be queued
