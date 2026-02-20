@@ -122,14 +122,19 @@ async def _handle_success(redis: Redis, cache: Cache, result: WorkerResult) -> N
         return
 
     audio = base64.b64decode(result.audio_base64)
-    cache_ref = await cache.store(result.variant_hash, audio)
 
+    t0 = time.time()
+    cache_ref = await cache.store(result.variant_hash, audio)
+    cache_ms = int((time.time() - t0) * 1000)
+
+    t1 = time.time()
     await _notify_subscribers(
         redis,
         result,
         status="cached",
         audio_url=f"/v1/audio/{result.variant_hash}",
     )
+    notify_ms = int((time.time() - t1) * 1000)
 
     billing_event = BillingEvent(
         variant_hash=result.variant_hash,
@@ -162,6 +167,7 @@ async def _handle_success(redis: Redis, cache: Cache, result: WorkerResult) -> N
         user_id=result.user_id,
         document_id=str(result.document_id),
         block_idx=result.block_idx,
+        data={"cache_store_ms": cache_ms, "notify_ms": notify_ms},
     )
 
 

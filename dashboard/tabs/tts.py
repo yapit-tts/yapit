@@ -496,6 +496,91 @@ def _latency_breakdown_chart(df: pd.DataFrame) -> go.Figure | None:
     return fig
 
 
+def _billing_section(df: pd.DataFrame):
+    """Billing consumer health: reconciliation and processing time."""
+    billing = get_events(df, "billing_processed")
+    synthesis = get_events(df, "synthesis_complete")
+
+    if billing.empty and synthesis.empty:
+        section_header("Billing Consumer", "Cold path health")
+        st.caption("No billing data")
+        return
+
+    # Reconciliation: synthesis events vs billed events
+    synthesized_count = len(synthesis)
+    billed_count = int(billing["data"].apply(lambda d: d.get("events_count", 0) if isinstance(d, dict) else 0).sum())
+    delta = synthesized_count - billed_count
+
+    if delta <= 5:
+        delta_color = COLORS["success"]
+    elif delta <= 50:
+        delta_color = COLORS["warning"]
+    else:
+        delta_color = COLORS["error"]
+
+    section_header("Billing Consumer", "Cold path health")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Events Billed", format_number(billed_count))
+    with col2:
+        durations = billing["duration_ms"].dropna()
+        if not durations.empty:
+            st.metric(
+                "Batch Processing",
+                f"P50 {format_duration(durations.median())} / P95 {format_duration(durations.quantile(0.95))}",
+            )
+        else:
+            st.metric("Batch Processing", "-")
+    with col3:
+        st.markdown(
+            f"**Reconciliation Delta**"
+            f"<br><span style='font-size:1.8em;color:{delta_color}'>{delta:+d}</span>"
+            f"<br><span style='color:{COLORS['text_muted']};font-size:0.85em'>"
+            f"{format_number(synthesized_count)} synthesized − {format_number(billed_count)} billed</span>",
+            unsafe_allow_html=True,
+        )
+
+    # Processing time scatter
+    if not billing.empty:
+        fig = _billing_processing_chart(billing)
+        if fig:
+            st.plotly_chart(fig, use_container_width=True)
+
+
+def _billing_processing_chart(billing: pd.DataFrame) -> go.Figure | None:
+    """Billing batch processing time over time."""
+    billing = billing.dropna(subset=["duration_ms"])
+    if billing.empty:
+        return None
+
+    batch_sizes = billing["data"].apply(lambda d: d.get("events_count", 1) if isinstance(d, dict) else 1)
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=billing["local_time"],
+            y=billing["duration_ms"],
+            mode="markers",
+            marker=dict(
+                size=batch_sizes.clip(upper=20).apply(lambda s: max(5, s)),
+                color=COLORS["accent_teal"],
+                opacity=0.7,
+            ),
+            customdata=batch_sizes,
+            hovertemplate="%{y:.0f}ms (%{customdata} events)<extra></extra>",
+        )
+    )
+
+    fig.update_layout(
+        title="Billing Batch Processing Time",
+        height=250,
+        xaxis_title="Time",
+        yaxis_title="Duration (ms)",
+    )
+    apply_plotly_theme(fig)
+    return fig
+
+
 def render(df: pd.DataFrame):
     """Render the TTS tab."""
     if df.empty:
@@ -569,3 +654,7 @@ def render(df: pd.DataFrame):
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.caption("No text length data")
+
+    # Billing consumer health
+    st.divider()
+    _billing_section(df)

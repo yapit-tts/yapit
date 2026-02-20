@@ -140,6 +140,11 @@ Yapit is a text-to-speech platform with these components:
   - `data.user_id` — affected user
   - `data.drift` — what drifted (list of field names, or "sub_gone")
   - Any occurrence means a webhook was missed. Occasional is expected; sustained = webhook issues.
+- `billing_processed` — TTS billing consumer batch processed
+  - `duration_ms` — batch processing time
+  - `text_length` — total characters billed in batch
+  - `data.events_count` — number of synthesis events in the batch
+  - `data.users_count` — unique users in the batch
 
 **URL/Document fetching:**
 - `url_fetch` — document URL downloads
@@ -189,6 +194,14 @@ This is the most important section. Don't just count errors — read the actual 
 - `page_extraction_error` — rate limit (429), server errors (5xx)?
 - Token counts — unusual spikes?
 
+### Billing Health
+- Reconciliation: compare count(synthesis_complete) vs sum(data->>'events_count') from billing_processed.
+  Delta = unbilled events. Small delta (<10) is normal (in-flight).
+  Growing delta = billing consumer falling behind or losing events.
+- Consumer liveness: if synthesis_complete events exist in the last hour but no billing_processed events,
+  the billing consumer may be down.
+- billing_processed errors: any `error` events with billing context indicate billing consumer failures.
+
 ### Cache
 
 - "vacuum" events. Are they running? Are they effective? Do they take too long?
@@ -207,6 +220,7 @@ This is the most important section. Don't just count errors — read the actual 
 | Requeues | Rare/isolated | Pattern (same worker, same error) |
 | Overflow usage | Occasional spikes | Constant (capacity issue) |
 | Billing sync drift | 0 | Any (check which webhooks are being missed) |
+| Billing reconciliation delta | <10 | >50 sustained (lost events) |
 
 Events older than 3-7 days can be ignored unless part of a larger pattern / investigation.
 E.g. items on the DLQ from >7 days ago are almost certainly already taken care of.

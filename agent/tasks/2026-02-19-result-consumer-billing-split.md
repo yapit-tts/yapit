@@ -26,12 +26,13 @@ New metric event `billing_processed` tracks cold path health (processing time pe
 
 ## Done When
 
-- [ ] Result consumer rewritten — no Postgres imports, no settings dependency
-- [ ] Billing consumer running on own connection pool
-- [ ] `billing_processed` metric event logged per billing event
-- [ ] Dashboard updated with billing consumer panel (processing time, queue depth)
-- [ ] Monitoring agent (`scripts/report.sh`) updated: billing queue depth check, billing reconciliation (sum synthesis_complete chars vs sum billing_processed chars — drift = lost events)
-- [ ] Knowledge file [[tts-flow]] updated to reflect the split architecture
+- [x] Result consumer rewritten — no Postgres imports, no settings dependency
+- [x] Billing consumer running on own connection pool
+- [x] Billing consumer batched: drain-on-wake collection, per-user transactions via `record_usage(commit=False)`
+- [x] `billing_processed` metric event logged per batch (events_count, users_count, duration_ms, text_length)
+- [x] Dashboard updated with billing consumer section (reconciliation delta, processing time chart)
+- [x] Monitoring agent (`scripts/report.sh`) updated: billing_processed event docs, reconciliation check, liveness check
+- [x] Knowledge files updated: [[tts-flow]] (split architecture), [[metrics]] (billing_processed event)
 - [ ] Stress test validates: no pool starvation at 5+ users with GPU workers
 
 ## Considered & Rejected

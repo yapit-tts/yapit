@@ -298,13 +298,16 @@ async def record_usage(
     reference_id: str | None = None,
     description: str | None = None,
     details: dict | None = None,
+    commit: bool = True,
 ) -> None:
     """Record usage and consume from subscription → rollover → purchased.
 
     Creates audit log for all users. Only consumes from tiers for subscribed users.
     Uses FOR UPDATE lock to prevent concurrent modifications (TOCTOU safety).
+
+    When commit=False, the caller manages the transaction (e.g., billing consumer
+    batching multiple record_usage calls per user in one transaction).
     """
-    # FOR UPDATE ensures concurrent record_usage calls serialize
     subscription = await get_user_subscription(user_id, db, for_update=True)
     breakdown = None
 
@@ -317,7 +320,6 @@ async def record_usage(
         else:
             _increment_usage(usage_period, usage_type, amount)
 
-    # Always create audit log (for analytics)
     log_details = details.copy() if details else {}
     if breakdown:
         log_details["consumption_breakdown"] = breakdown
@@ -332,7 +334,8 @@ async def record_usage(
     )
     db.add(log_entry)
 
-    await db.commit()
+    if commit:
+        await db.commit()
 
 
 async def get_usage_summary(
