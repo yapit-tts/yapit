@@ -83,26 +83,31 @@ Workers only need Redis access. No Postgres, no HTTP endpoints. Gateway handles 
 - Any device can be a worker (home GPU, VPS, RunPod)
 - Zero gateway changes to add/remove workers
 
-### 5. Result Processing (Hot/Cold Split)
+### 5. Result Processing (Hot/Cold/Persist Split)
 
-Two consumers with complete resource isolation:
+Three consumers with complete resource isolation:
 
 **Result consumer (hot path)** — `yapit/gateway/result_consumer.py`
 
-Pops from `tts:results`, spawns a task per result. No Postgres.
+Pops from `tts:results`, spawns a task per result. No Postgres, no SQLite.
 1. Atomically claim result (inflight key dedup)
-2. Write audio to SQLite cache
+2. Redis SET audio (`tts:audio:{hash}`, 300s TTL) — sub-ms
 3. Notify subscribers via Redis pubsub (user sees audio here)
 4. Push `BillingEvent` to `tts:billing` Redis list
+5. Push variant_hash to `tts:persist` for background SQLite persistence
+
+**Cache persister** — `yapit/gateway/cache_persister.py`
+
+Drain-on-wake from `tts:persist` (same pattern as billing consumer). MGET audio from Redis, batch-write to SQLite in one transaction (one COMMIT = one fsync for the whole batch). Turns 40 fsyncs into 1.
 
 **Billing consumer (cold path)** — `yapit/gateway/billing_consumer.py`
 
-Pops from `tts:billing` serially. Own Postgres connection pool (2 connections), isolated from request path.
-1. Update BlockVariant metadata (duration_ms, cache_ref)
+Drain-on-wake from `tts:billing`. Own Postgres connection pool (2 connections), isolated from request path.
+1. Update BlockVariant metadata (duration_ms)
 2. Record usage via `record_usage()` (waterfall billing)
 3. Upsert engagement stats (UserVoiceStats)
 
-**Why the split:** Fast GPU workers can dump 40+ results in seconds. Previously, each result held a Postgres connection for billing (FOR UPDATE lock on subscription row). 30+ connections held by billing tasks waiting for the lock → pool exhaustion → WebSocket request path starved → new blocks can't be queued → workers idle. The hot path is now Postgres-free, and the cold path uses its own pool so it can never interfere with the request path.
+**Why three paths:** Fast GPU workers can dump 40+ results in seconds. The hot path must be sub-ms so users get audio immediately. SQLite's single writer + fsync-per-COMMIT serializes concurrent writes — 40 results × ~1s/fsync under VPS I/O load = 42s avg finalize time. Redis SET is sub-ms regardless of concurrency. The persister batches SQLite writes (N rows, 1 fsync) for throughput. Billing uses its own Postgres pool so it can never starve the request path.
 
 ### 6. Reliability
 
@@ -120,8 +125,9 @@ Pops from `tts:billing` serially. Own Postgres connection pool (2 connections), 
 
 ### 7. Cache & Storage
 
-- **Audio cache:** SQLite (`cache.py`) keyed by variant_hash. Dual persistent connections (reader for reads, writer for mutations) with WAL mode. LRU updates batched in-memory, flushed every ~10s to avoid write contention on reads
-- **Metadata:** BlockVariant in Postgres tracks duration_ms, cache_ref
+- **Audio hot cache:** Redis (`tts:audio:{hash}`, 300s TTL). All recently synthesized audio lives here. Sub-ms reads.
+- **Audio cold cache:** SQLite (`cache.py`) keyed by variant_hash. Dual persistent connections (reader for reads, writer for mutations) with WAL mode. LRU updates batched in-memory, flushed every ~10s. Populated by the cache persister.
+- **Metadata:** BlockVariant in Postgres tracks duration_ms
 - **Usage:** Characters recorded for billing on synthesis complete
 
 ### 8. Audio Fetch
@@ -129,6 +135,7 @@ Pops from `tts:billing` serially. Own Postgres connection pool (2 connections), 
 Frontend fetches via HTTP:
 
 - `yapit/gateway/api/v1/audio.py` — GET `/v1/audio/{variant_hash}`
+- Checks Redis first (hot cache), falls back to SQLite (cold cache)
 - Returns cached bytes directly (`audio/ogg` media type)
 
 ## Browser-Side Synthesis
@@ -153,7 +160,8 @@ Current models: kokoro, inworld-1.5, inworld-1.5-max. Model/voice definitions in
 |------|---------|
 | `gateway/api/v1/ws.py` | WebSocket endpoint |
 | `gateway/synthesis.py` | Synthesis orchestration (dedup, queuing, cache check) |
-| `gateway/result_consumer.py` | Hot path: cache audio, notify subscribers, push billing event |
+| `gateway/result_consumer.py` | Hot path: Redis SET audio, notify subscribers, push billing + persist events |
+| `gateway/cache_persister.py` | Drain-on-wake batched Redis→SQLite persistence |
 | `gateway/billing_consumer.py` | Cold path: BlockVariant update, usage billing, engagement stats |
 | `gateway/visibility_scanner.py` | Re-queues stuck jobs |
 | `gateway/overflow_scanner.py` | Sends stale jobs to RunPod |
