@@ -1,0 +1,91 @@
+/* Theme variables for Remotion — extracted from frontend/src/index.css */
+/* Switch themes by changing the class on the scene's root element */
+
+/* Light mode (default) — warm cream/green */
+:root, .theme-light {
+  color-scheme: light;
+  --background: oklch(0.96 0.0267 97.61);
+  --foreground: oklch(0.35 0.0355 43.21);
+  --card: oklch(0.98 0.0178 97.61);
+  --card-foreground: oklch(0.35 0.0355 43.21);
+  --primary: oklch(0.55 0.1 133.7);
+  --primary-foreground: oklch(0.96 0.0267 97.61);
+  --secondary: oklch(0.65 0.0841 83.58);
+  --muted: oklch(0.86 0.0461 115.51);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.93 0.025 130);
+  --accent-foreground: oklch(0.30 0.04 130);
+  --border: oklch(0.76 0.0662 86.21);
+  --audio-highlight: oklch(0.55 0.1 133.7 / 0.15);
+  --audio-hover-border: oklch(0.55 0.1 133.7 / 0.6);
+}
+
+/* Charcoal dark — the default dark mode */
+.theme-charcoal {
+  color-scheme: dark;
+  --background: oklch(0.13 0.006 70);
+  --foreground: oklch(0.92 0.025 80);
+  --card: oklch(0.18 0.006 68);
+  --card-foreground: oklch(0.92 0.025 80);
+  --primary: oklch(0.63 0.11 140);
+  --primary-foreground: oklch(0.13 0.006 70);
+  --secondary: oklch(0.26 0.008 68);
+  --muted: oklch(0.40 0.008 72);
+  --muted-foreground: oklch(0.65 0.012 70);
+  --accent: oklch(0.20 0.008 70);
+  --accent-foreground: oklch(0.87 0.03 130);
+  --border: oklch(0.38 0.010 72);
+  --audio-highlight: oklch(0.63 0.11 140 / 0.28);
+  --audio-hover-border: oklch(0.63 0.11 140 / 0.5);
+}
+
+/* Dusk — plum surfaces, green accents */
+.theme-dusk {
+  color-scheme: dark;
+  --background: oklch(0.12 0.016 305);
+  --foreground: oklch(0.92 0.025 85);
+  --card: oklch(0.16 0.014 303);
+  --card-foreground: oklch(0.92 0.025 85);
+  --primary: oklch(0.68 0.15 145);
+  --primary-foreground: oklch(0.12 0.016 305);
+  --secondary: oklch(0.25 0.02 302);
+  --muted: oklch(0.35 0.020 303);
+  --muted-foreground: oklch(0.64 0.015 300);
+  --accent: oklch(0.18 0.018 305);
+  --accent-foreground: oklch(0.88 0.04 145);
+  --border: oklch(0.34 0.022 303);
+  --audio-highlight: oklch(0.68 0.15 145 / 0.25);
+  --audio-hover-border: oklch(0.68 0.15 145 / 0.5);
+}
+
+/* Lavender — Catppuccin Mocha palette */
+.theme-lavender {
+  color-scheme: dark;
+  --background: oklch(0.243 0.030 283.9);
+  --foreground: oklch(0.879 0.043 272.3);
+  --card: oklch(0.324 0.032 282.0);
+  --card-foreground: oklch(0.879 0.043 272.3);
+  --primary: oklch(0.858 0.109 142.8);
+  --primary-foreground: oklch(0.243 0.030 283.9);
+  --secondary: oklch(0.324 0.032 282.0);
+  --muted: oklch(0.404 0.032 280.1);
+  --muted-foreground: oklch(0.618 0.037 276.0);
+  --accent: oklch(0.283 0.028 283.0);
+  --accent-foreground: oklch(0.817 0.040 272.8);
+  --border: oklch(0.404 0.032 280.1);
+  --audio-highlight: oklch(0.858 0.109 142.8 / 0.15);
+  --audio-hover-border: oklch(0.858 0.109 142.8 / 0.50);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: "Inter", system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}

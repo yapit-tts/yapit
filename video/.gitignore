@@ -1,0 +1,19 @@
+node_modules
+dist
+.DS_Store
+.env
+
+# Ignore the output video from Git but not videos you import into src/.
+out
+
+# All generated/captured assets (regeneratable via scripts/)
+public/clips/
+
+# Auth state (sensitive)
+.auth-state.json
+
+# Claude agent skills
+.agents/
+
+# Agent transcripts
+agent/transcripts/
