@@ -23,6 +23,7 @@ export interface WSBlockStatusMessage {
   status: "queued" | "processing" | "cached" | "skipped" | "error";
   audio_url?: string;
   error?: string;
+  recoverable?: boolean;
   model_slug?: string;
   voice_slug?: string;
 }
@@ -67,6 +68,7 @@ export function createServerSynthesizer(deps: ServerSynthesizerDeps): Synthesize
 } {
   const pending = new Map<string, PendingRequest>();
   let lastError: string | null = null;
+  let lastErrorRecoverable = true;
 
   // Batch: collect synthesize calls within a microtask, send as one WS message
   let batchQueue: { documentId: string; model: string; voice: string } | null = null;
@@ -173,6 +175,7 @@ export function createServerSynthesizer(deps: ServerSynthesizerDeps): Synthesize
     batchQueue = null;
     batchIndices = [];
     lastError = null;
+    lastErrorRecoverable = true;
   }
 
   /**
@@ -234,6 +237,7 @@ export function createServerSynthesizer(deps: ServerSynthesizerDeps): Synthesize
       clearTimeout(req.timer);
       pending.delete(key);
       lastError = null;
+      lastErrorRecoverable = true;
 
       deps.fetchAudio(msg.audio_url)
         .then(async (arrayBuffer) => {
@@ -250,6 +254,7 @@ export function createServerSynthesizer(deps: ServerSynthesizerDeps): Synthesize
         });
     } else if (msg.status === "error") {
       lastError = msg.error || "Synthesis error";
+      lastErrorRecoverable = msg.recoverable ?? true;
       if (req) {
         clearTimeout(req.timer);
         req.resolve(null);
@@ -279,6 +284,7 @@ export function createServerSynthesizer(deps: ServerSynthesizerDeps): Synthesize
     onCursorMove,
     retryAllPending,
     getError: () => lastError,
+    isRecoverable: () => lastErrorRecoverable,
     destroy: cancelAll,
   };
 }

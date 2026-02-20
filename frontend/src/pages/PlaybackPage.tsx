@@ -806,6 +806,7 @@ const PlaybackPage = () => {
           voiceSelection={voiceSelection}
           onVoiceChange={setVoiceSelection}
           serverTTSError={serverTTS.error}
+          serverTTSRecoverable={serverTTS.recoverable}
           browserTTSError={browserTTS.error}
           browserTTSDevice={browserTTS.device}
         />

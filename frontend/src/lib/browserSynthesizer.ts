@@ -128,6 +128,7 @@ export function createBrowserSynthesizer(deps: BrowserSynthesizerDeps): Synthesi
     synthesize,
     cancelAll,
     getError: () => lastError,
+    isRecoverable: () => true,
     destroy,
     getDevice: () => device,
     getDtype: () => dtype,

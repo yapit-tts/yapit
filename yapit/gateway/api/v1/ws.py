@@ -29,7 +29,7 @@ from yapit.gateway.deps import get_db_session
 from yapit.gateway.domain_models import Block, Document, TTSModel, Voice
 from yapit.gateway.metrics import log_error, log_event
 from yapit.gateway.stack_auth.users import User
-from yapit.gateway.synthesis import request_synthesis
+from yapit.gateway.synthesis import ErrorResult, request_synthesis
 
 router = APIRouter(tags=["websocket"])
 
@@ -59,6 +59,7 @@ class WSBlockStatus(BaseModel):
     status: BlockStatus
     audio_url: str | None = None
     error: str | None = None
+    recoverable: bool = True
     model_slug: str | None = None
     voice_slug: str | None = None
 
@@ -233,6 +234,7 @@ async def _handle_synthesize(
                         status=result.status,
                         audio_url=result.audio_url,
                         error=getattr(result, "error", None),
+                        recoverable=not isinstance(result, ErrorResult),
                         model_slug=model.slug,
                         voice_slug=voice.slug,
                     ).model_dump(mode="json")

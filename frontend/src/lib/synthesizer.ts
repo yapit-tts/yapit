@@ -15,5 +15,6 @@ export interface Synthesizer {
   onCursorMove?(documentId: string, cursor: number): void;
 
   getError(): string | null;
+  isRecoverable(): boolean;
   destroy(): void;
 }

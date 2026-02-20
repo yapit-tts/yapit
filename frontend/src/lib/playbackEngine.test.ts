@@ -64,6 +64,7 @@ function mockSynthesizer(): Synthesizer & { onSynthesize: SynthesizeHandler; can
     cancelAll: vi.fn(),
     onCursorMove: vi.fn(),
     getError: () => null,
+    isRecoverable: () => true,
     destroy: vi.fn(),
   };
   return synth;
@@ -423,10 +424,11 @@ describe("createPlaybackEngine", () => {
   });
 
   describe("synthesis error handling", () => {
-    it("stops immediately when synthesizer has a persistent error (buffering)", async () => {
+    it("stops immediately when synthesizer has an unrecoverable error (buffering)", async () => {
       const synth = mockSynthesizer();
       let errorMsg: string | null = null;
       synth.getError = () => errorMsg;
+      synth.isRecoverable = () => false;
       synth.onSynthesize = () => {
         errorMsg = "Usage limit exceeded for premium_voice: limit 0, used 0, requested 16, remaining 0";
         return Promise.resolve(null);
@@ -445,12 +447,12 @@ describe("createPlaybackEngine", () => {
       });
     });
 
-    it("stops when reaching an error block during playback", async () => {
+    it("stops when reaching an unrecoverable error block during playback", async () => {
       const synth = mockSynthesizer();
       let errorMsg: string | null = null;
       let callCount = 0;
       synth.getError = () => errorMsg;
-      // First 2 blocks succeed (fills MIN_BUFFER_TO_START=2), rest fail
+      synth.isRecoverable = () => errorMsg === null;
       synth.onSynthesize = () => {
         callCount++;
         if (callCount > 2) {
@@ -511,6 +513,68 @@ describe("createPlaybackEngine", () => {
 
       await vi.waitFor(() => {
         expect(e.getSnapshot().currentBlock).toBe(1);
+        expect(e.getSnapshot().status).toBe("playing");
+      });
+    });
+
+    it("advances past recoverable error during playback instead of stopping", async () => {
+      const synth = mockSynthesizer();
+      let errorMsg: string | null = null;
+      synth.getError = () => errorMsg;
+      synth.isRecoverable = () => true;
+      // Block 1 always fails (recoverable), all others succeed
+      synth.onSynthesize = (blockIdx) => {
+        if (blockIdx === 1) {
+          errorMsg = "[Errno 12] Cannot allocate memory";
+          return Promise.resolve(null);
+        }
+        errorMsg = null;
+        return Promise.resolve(FAKE_AUDIO);
+      };
+
+      const d = makeDeps({ synthesizer: synth });
+      const e = createPlaybackEngine(d);
+
+      e.setVoice("kokoro", "af_heart");
+      e.setDocument("doc-1", makeBlocks(5));
+      e.play();
+
+      await vi.waitFor(() => {
+        expect(e.getSnapshot().status).toBe("playing");
+      });
+
+      // Block 0 finishes → tries block 1 (recoverable error) → should advance to block 2
+      const setOnEnded = d.audioPlayer.setOnEnded as Mock;
+      const onEnded = setOnEnded.mock.calls.at(-1)?.[0];
+      onEnded();
+
+      await vi.waitFor(() => {
+        expect(e.getSnapshot().currentBlock).toBe(2);
+        expect(e.getSnapshot().status).toBe("playing");
+      });
+    });
+
+    it("transitions from buffering to playing when first block is skipped", async () => {
+      const synth = mockSynthesizer();
+      let callCount = 0;
+      // First block returns null (skipped), rest succeed
+      synth.onSynthesize = () => {
+        callCount++;
+        if (callCount === 1) return Promise.resolve(null);
+        return Promise.resolve(FAKE_AUDIO);
+      };
+
+      const d = makeDeps({ synthesizer: synth });
+      const e = createPlaybackEngine(d);
+
+      e.setVoice("inworld-1.5", "blake");
+      e.setDocument("doc-1", makeBlocks(5));
+      e.play();
+      expect(e.getSnapshot().status).toBe("buffering");
+
+      // Block 0 resolves null (skipped) → resolvedEmpty. Block 1 resolves with audio.
+      // checkBufferReady should count block 0 (resolvedEmpty) + block 1 (cached) → buffer ready.
+      await vi.waitFor(() => {
         expect(e.getSnapshot().status).toBe("playing");
       });
     });

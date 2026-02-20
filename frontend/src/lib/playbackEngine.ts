@@ -101,6 +101,7 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
   const audioCache = new Map<VariantKey, AudioBufferData>();
   const synthesisPromises = new Map<VariantKey, Promise<AudioBufferData | null>>();
   const knownCached = new Set<VariantKey>();
+  const resolvedEmpty = new Set<VariantKey>();
 
   let prefetchedUpTo = -1;
 
@@ -214,12 +215,12 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
 
       if (!audioData) {
         const err = synthesizer.getError();
-        if (err) {
-          console.debug("[PlaybackEngine] playBlock: persistent synth error, stopping", { blockIdx, error: err });
+        if (err && !synthesizer.isRecoverable()) {
+          console.debug("[PlaybackEngine] playBlock: unrecoverable error, stopping", { blockIdx, error: err });
           engineStop();
           return;
         }
-        console.debug("[PlaybackEngine] playBlock: synthesis returned null, advancing", { blockIdx });
+        console.debug("[PlaybackEngine] playBlock: block skipped/failed, advancing", { blockIdx, error: err });
         advanceToNext();
         return;
       }
@@ -301,9 +302,13 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
           const blk = blocks[blockIdx];
           if (blk && result.duration_ms > 0) recordDurationCorrection(blk, result.duration_ms);
           checkBufferReady();
-        } else if (status === "buffering" && synthesizer.getError()) {
-          // Persistent error while buffering (e.g. usage limit) — buffer will never fill
-          engineStop();
+        } else {
+          resolvedEmpty.add(key);
+          if (status === "buffering" && synthesizer.getError() && !synthesizer.isRecoverable()) {
+            engineStop();
+          } else {
+            checkBufferReady();
+          }
         }
         notify();
         return result;
@@ -384,7 +389,8 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
   function countCachedAhead(fromIdx: number): number {
     let count = 0;
     for (let idx = fromIdx; idx < blocks.length; idx++) {
-      if (audioCache.has(currentVariantKey(idx))) {
+      const key = currentVariantKey(idx);
+      if (audioCache.has(key) || resolvedEmpty.has(key)) {
         count++;
       } else {
         break;
@@ -520,6 +526,9 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
     for (const key of knownCached) {
       if (key.includes(`:${oldModel}:${oldVoice}`)) knownCached.delete(key);
     }
+    for (const key of resolvedEmpty) {
+      if (key.includes(`:${oldModel}:${oldVoice}`)) resolvedEmpty.delete(key);
+    }
 
     synthesizer.cancelAll();
     synthesisPromises.clear();
@@ -558,6 +567,7 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
 
     audioCache.clear();
     knownCached.clear();
+    resolvedEmpty.clear();
     durationCorrections.clear();
 
     initialTotalEstimate = newBlocks.reduce((sum, b) => sum + (b.est_duration_ms || 0), 0);
@@ -596,6 +606,7 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
     synthesisPromises.clear();
     audioCache.clear();
     knownCached.clear();
+    resolvedEmpty.clear();
     listeners = [];
   }
 

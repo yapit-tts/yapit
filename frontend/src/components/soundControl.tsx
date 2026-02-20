@@ -258,6 +258,7 @@ interface Props {
   voiceSelection: VoiceSelection;
   onVoiceChange: (selection: VoiceSelection) => void;
   serverTTSError?: string | null;
+  serverTTSRecoverable?: boolean;
   browserTTSError?: string | null;
   browserTTSDevice?: "webgpu" | "wasm" | null;
 }
@@ -295,6 +296,7 @@ const SoundControl = memo(function SoundControl({
   voiceSelection,
   onVoiceChange,
   serverTTSError,
+  serverTTSRecoverable,
   browserTTSError,
   browserTTSDevice,
 }: Props) {
@@ -308,7 +310,7 @@ const SoundControl = memo(function SoundControl({
   const [isDraggingProgressBar, setIsDraggingProgressBar] = useState(false);
   const navigate = useNavigate();
 
-  const usageLimitError = serverTTSError?.includes("Usage limit exceeded") ? serverTTSError
+  const usageLimitError = (serverTTSError && serverTTSRecoverable === false) ? serverTTSError
     : connectionError?.includes("Usage limit exceeded") ? connectionError : null;
   const isUsingInworld = isInworldModel(voiceSelection.model);
   const isUsingKokoroServer = voiceSelection.model === KOKORO_SLUG;

@@ -25,6 +25,7 @@ export interface UsePlaybackEngineReturn {
   };
   serverTTS: {
     error: string | null;
+    recoverable: boolean;
   };
   browserTTS: {
     error: string | null;
@@ -188,6 +189,7 @@ export function usePlaybackEngine(
     },
     serverTTS: {
       error: serverSynthRef.current!.getError(),
+      recoverable: serverSynthRef.current!.isRecoverable(),
     },
     browserTTS: {
       error: browserSynth.getError(),
