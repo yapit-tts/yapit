@@ -90,7 +90,7 @@ async def request_synthesis(
 
     variant = (await db.exec(select(BlockVariant).where(BlockVariant.hash == variant_hash))).first()
     in_redis = await redis.exists(TTS_AUDIO_CACHE.format(hash=variant_hash))
-    is_cached = variant is not None and (in_redis or await cache.retrieve_data(variant_hash) is not None)
+    is_cached = variant is not None and (in_redis or await cache.exists(variant_hash))
 
     if is_cached:
         await log_event(
