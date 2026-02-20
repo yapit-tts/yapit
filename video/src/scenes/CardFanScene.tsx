@@ -8,6 +8,7 @@ import {
   spring,
 } from "remotion";
 import { BRAND } from "../config";
+import { fontFamily } from "../fonts";
 
 /**
  * Sequential card fan — screenshots slide in one by one from the right,
@@ -17,11 +18,11 @@ import { BRAND } from "../config";
  */
 
 const CARDS = [
-  { file: "clips/cards/paper.png", label: "Paper" },
-  { file: "clips/cards/blog.png", label: "Blog" },
-  { file: "clips/cards/article.png", label: "Article" },
-  { file: "clips/cards/book.png", label: "Book" },
-  { file: "clips/cards/news.png", label: "News" },
+  { file: "clips/cards/paper.png" },
+  { file: "clips/cards/blog.png" },
+  { file: "clips/darkmode-1.png" },
+  { file: "clips/darkmode-2.png" },
+  { file: "clips/darkmode-3.png" },
 ];
 
 const CARD_W = 680;
@@ -48,6 +49,49 @@ export const CardFanScene: React.FC = () => {
         overflow: "hidden",
       }}
     >
+      {/* Title overlay */}
+      <div
+        style={{
+          position: "absolute",
+          top: 80,
+          width: "100%",
+          textAlign: "center",
+          zIndex: 10,
+          fontFamily,
+          opacity: interpolate(frame, [8, 20], [0, 1], {
+            extrapolateLeft: "clamp",
+            extrapolateRight: "clamp",
+          }),
+          transform: `translateY(${interpolate(
+            spring({ frame: Math.max(0, frame - 8), fps, config: { damping: 30, stiffness: 100 } }),
+            [0, 1],
+            [20, 0],
+          )}px)`,
+        }}
+      >
+        <div
+          style={{
+            fontSize: 52,
+            fontWeight: 600,
+            color: BRAND.brown,
+            letterSpacing: "-0.03em",
+          }}
+        >
+          Listen to anything!
+        </div>
+        <div
+          style={{
+            fontSize: 22,
+            fontWeight: 400,
+            color: BRAND.brown,
+            opacity: 0.6,
+            marginTop: 8,
+          }}
+        >
+          Articles · Papers · Books · News · Blogs
+        </div>
+      </div>
+
       {CARDS.map((card, i) => {
         const delay = i * STAGGER;
         const p = spring({

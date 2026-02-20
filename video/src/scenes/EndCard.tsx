@@ -98,19 +98,6 @@ export const EndCard: React.FC<{ theme?: keyof typeof THEME_CLASS }> = ({
 
       <div
         style={{
-          fontSize: 15,
-          color: "var(--muted-foreground)",
-          opacity: urlOpacity,
-          marginTop: 28,
-          fontWeight: 400,
-          letterSpacing: "0.01em",
-        }}
-      >
-        65 voices · 15 languages · and counting
-      </div>
-
-      <div
-        style={{
           fontSize: 16,
           color: "var(--primary)",
           opacity: urlOpacity,

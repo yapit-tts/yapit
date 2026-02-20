@@ -11,10 +11,10 @@ Two sets:
 Edit the lists below to change lines. Re-run to regenerate.
 
 Usage:
-    uv run scripts/generate_voice_clips.py
-    uv run scripts/generate_voice_clips.py --dry-run
-    uv run scripts/generate_voice_clips.py --only narration
-    uv run scripts/generate_voice_clips.py --only showcase
+    cd video && uv run generate_voice_clips.py
+    cd video && uv run generate_voice_clips.py --dry-run
+    cd video && uv run generate_voice_clips.py --only narration
+    cd video && uv run generate_voice_clips.py --only showcase
 """
 
 import asyncio
@@ -38,22 +38,16 @@ INWORLD_API = "https://api.inworld.ai/tts/v1/voice"
 NARRATION: list[tuple[str, str, str, float]] = [
     ("Craig", "Articles, papers, books — just paste the link.", "en", 1.0),
     ("Deborah", "Listen to anything, in any voice you want!", "en", 1.0),
-    ("Hana", "Make it yours.", "en", 1.0),
     ("Blake", "Try it now, on yapit.md!", "en", 1.0),
 ]
 
 # --- Multilingual showcase (the voice cycling scene) ---
-# Relay story told across languages — a morning vignette.
+# Each voice describes the app in their language — sounds natural to native speakers.
 SHOWCASE: list[tuple[str, str, str, float]] = [
-    ("Diego", "En más de quince idiomas.", "es", 1.5),  # "In more than fifteen languages."
-    ("Asuka", "ある朝、彼女は窓を開けた。", "ja", 1.5),  # "One morning, she opened the window."
-    ("Alain", "Ça sentait le café et la pluie.", "fr", 1.5),  # "It smelled of coffee and rain."
-    ("Svetlana", "Она надела наушники.", "ru", 1.5),  # "She put on the headphones."
-    ("Johanna", "Sie drückte auf Play.", "de", 1.5),  # "She pressed play."
-    ("Gianni", "Una voce cominciò a leggere.", "it", 1.5),  # "A voice began to read."
-    ("Xiaoyin", "一页，又一页。", "zh", 1.5),  # "One page, then another."
-    ("Minji", "어느새 한 시간이 지났다.", "ko", 1.5),  # "Before she knew it, an hour had passed."
-    ("Heitor", "E ela sorriu.", "pt", 1.5),  # "And she smiled."
+    ("Diego", "En más de quince idiomas.", "es", 1.2),  # "In more than fifteen languages."
+    ("Asuka", "どんな記事でも、声で聴ける。", "ja", 1.2),  # "Any article, you can listen to it."
+    ("Alain", "Des voix qui sonnent vraiment naturelles.", "fr", 1.2),  # "Voices that sound truly natural."
+    ("Gianni", "Qualsiasi documento, letto ad alta voce.", "it", 1.2),  # "Any document, read aloud."
 ]
 
 
@@ -62,8 +56,8 @@ class Args:
     model: str = "inworld-tts-1.5-max"
     """InWorld model ID. 'max' for quality, 'mini' for speed."""
 
-    out_dir: str = "video/public/clips"
-    """Base output directory."""
+    out_dir: str = "public/clips"
+    """Base output directory (relative to video/)."""
 
     dry_run: bool = False
     """Print config and exit without calling the API."""
@@ -163,7 +157,7 @@ async def generate_set(
 
 
 async def main_async(args: Args) -> None:
-    load_dotenv(Path(__file__).parent.parent / ".env")
+    load_dotenv(Path(__file__).parent.parent / ".env")  # repo root .env
     api_key = os.getenv("INWORLD_API_KEY")
     if not api_key:
         print("ERROR: INWORLD_API_KEY not in .env")

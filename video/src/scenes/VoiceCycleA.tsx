@@ -15,7 +15,7 @@ import voiceManifest from "../../public/clips/showcase/manifest.json";
 /**
  * Voice cycling scene — audio-driven.
  * Timing is computed from the voice manifest (durations from actual audio files).
- * Re-generate clips with scripts/generate_voice_clips.py to change content.
+ * Re-generate clips: cd video && make clips
  */
 
 const LANG_LABELS: Record<string, string> = {
@@ -23,28 +23,15 @@ const LANG_LABELS: Record<string, string> = {
   fr: "Français",
   ja: "日本語",
   es: "Español",
-  de: "Deutsch",
-  ru: "Русский",
   it: "Italiano",
-  zh: "中文",
-  ko: "한국어",
-  pt: "Português",
 };
-
-// Override displayed text when it differs from generation text
-const DISPLAY_OVERRIDES: Record<string, string> = {};
 
 // English subtitles for non-English lines, keyed by voice_id
 const SUBTITLES: Record<string, string> = {
   Diego: "In more than fifteen languages.",
-  Asuka: "One morning, she opened the window.",
-  Alain: "It smelled of coffee and rain.",
-  Svetlana: "She put on the headphones.",
-  Johanna: "She pressed play.",
-  Gianni: "A voice began to read.",
-  Xiaoyin: "One page, then another.",
-  Minji: "Before she knew it, an hour had passed.",
-  Heitor: "And she smiled.",
+  Asuka: "Any article, you can listen to it.",
+  Alain: "Voices that sound truly natural.",
+  Gianni: "Any document, read aloud.",
 };
 
 // Frames of visual lead-in before audio, and gap after
@@ -189,7 +176,7 @@ export const VoiceCycleA: React.FC<{ theme?: ThemeName }> = ({
                 fontStyle: "italic",
               }}
             >
-              &ldquo;{DISPLAY_OVERRIDES[v.voiceId] ?? v.text}&rdquo;
+              &ldquo;{v.text}&rdquo;
             </div>
             {SUBTITLES[v.voiceId] && v.language !== "en" && (
               <div

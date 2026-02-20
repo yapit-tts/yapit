@@ -15,10 +15,10 @@ moments so Remotion can trim into separate scenes:
 Auto-converts intercepted OGG audio to MP3 for Remotion compatibility.
 
 Usage:
-    uv run scripts/capture_trailer.py
-    uv run scripts/capture_trailer.py --light-mode --duration 15
-    uv run scripts/capture_trailer.py --url "https://arxiv.org/pdf/1706.03762"
-    uv run scripts/capture_trailer.py --headed  # debug in visible browser
+    cd video && uv run capture_trailer.py
+    cd video && uv run capture_trailer.py --light-mode --duration 15
+    cd video && uv run capture_trailer.py --url "https://arxiv.org/pdf/1706.03762"
+    cd video && uv run capture_trailer.py --headed  # debug in visible browser
 """
 
 import asyncio
@@ -52,8 +52,8 @@ class Args:
     base_url: str = "http://localhost:5173"
     """App base URL."""
 
-    out_dir: str = "video/public/clips"
-    """Output directory for captured clips."""
+    out_dir: str = "public/clips"
+    """Output directory for captured clips (relative to video/)."""
 
     duration: float = 12.0
     """Seconds of playback to record after clicking play."""
@@ -83,7 +83,7 @@ class Args:
     theme_hold: float = 1.5
     """Seconds to hold each theme during cycling."""
 
-    auth: str = "video/.auth-state.json"
+    auth: str = ".auth-state.json"
     """Playwright storage state file (cookies + localStorage).
     If missing, opens interactive browser for login first."""
 

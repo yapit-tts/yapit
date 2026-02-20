@@ -12,7 +12,9 @@ import { BRAND } from "../config";
  * start at the document view with playback.
  */
 
-const audioBlocks: ClipAudioBlock[] = meta.audio.map((block) => ({
+const audioBlocks: ClipAudioBlock[] = (
+  meta.audio as Array<{ idx: number; duration_s: number }>
+).map((block) => ({
   idx: block.idx,
   file: `clips/audio/block-${String(block.idx).padStart(3, "0")}.mp3`,
   durationS: block.duration_s,

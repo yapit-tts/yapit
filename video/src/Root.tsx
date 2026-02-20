@@ -3,8 +3,8 @@ import { Composition, Folder } from "remotion";
 import { YapitTrailer, TRAILER_DURATION } from "./YapitTrailer";
 import { EndCard } from "./scenes/EndCard";
 import { CardFanScene } from "./scenes/CardFanScene";
-import { DarkModeScene } from "./scenes/DarkModeScene";
 import { VoiceCycleA, totalVoiceCycleFrames } from "./scenes/VoiceCycleA";
+import { LanguageWallScene } from "./scenes/LanguageWallScene";
 import { FPS, WIDTH, HEIGHT } from "./config";
 
 const VOICE_CYCLE_FRAMES = totalVoiceCycleFrames(FPS);
@@ -33,14 +33,6 @@ export const RemotionRoot: React.FC = () => {
           height={HEIGHT}
         />
         <Composition
-          id="DarkModeScene"
-          component={DarkModeScene}
-          durationInFrames={Math.round(5 * FPS)}
-          fps={FPS}
-          width={WIDTH}
-          height={HEIGHT}
-        />
-        <Composition
           id="VoiceCycleA"
           component={VoiceCycleA}
           durationInFrames={VOICE_CYCLE_FRAMES}
@@ -52,6 +44,14 @@ export const RemotionRoot: React.FC = () => {
           id="VoiceCycleA-Light"
           component={() => <VoiceCycleA theme="light" />}
           durationInFrames={VOICE_CYCLE_FRAMES}
+          fps={FPS}
+          width={WIDTH}
+          height={HEIGHT}
+        />
+        <Composition
+          id="LanguageWall"
+          component={LanguageWallScene}
+          durationInFrames={Math.round(3.5 * FPS)}
           fps={FPS}
           width={WIDTH}
           height={HEIGHT}
