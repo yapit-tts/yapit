@@ -36,8 +36,12 @@ class Cache(abc.ABC):
         self.config = config
 
     @abc.abstractmethod
-    async def store(self, key: str, data: bytes) -> str | None:
+    async def store(self, key: str, data: bytes, *, commit: bool = True) -> str | None:
         """Store `data` under `key`. Return cache_ref or None on failure."""
+
+    @abc.abstractmethod
+    async def commit(self) -> None:
+        """Flush pending writes."""
 
     @abc.abstractmethod
     async def exists(self, key: str) -> bool:
@@ -159,17 +163,24 @@ class SqliteCache(Cache):
         except Exception:
             logger.exception(f"LRU flush failed for {self.db_path}")
 
-    async def store(self, key: str, data: bytes) -> str | None:
+    async def store(self, key: str, data: bytes, *, commit: bool = True) -> str | None:
         ts = time.time()
         db = await self._get_writer()
         await db.execute(
             "REPLACE INTO cache(key, data, size, created_at, last_accessed) VALUES(?, ?, ?, ?, ?)",
             (key, data, len(data), ts, ts),
         )
+        if commit:
+            await db.commit()
+            if self._max_size_bytes:
+                await self._enforce_max_size()
+        return key
+
+    async def commit(self) -> None:
+        db = await self._get_writer()
         await db.commit()
         if self._max_size_bytes:
             await self._enforce_max_size()
-        return key
 
     async def exists(self, key: str) -> bool:
         db = await self._get_reader()

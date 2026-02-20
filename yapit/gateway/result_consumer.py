@@ -1,7 +1,8 @@
-"""Hot path: consumes worker results, caches audio, notifies subscribers.
+"""Hot path: consumes worker results, buffers audio in Redis, notifies subscribers.
 
-No Postgres. Billing and metadata updates are pushed to tts:billing
-for the billing consumer to process asynchronously.
+No Postgres, no SQLite. Audio is SET in Redis (sub-ms) for immediate serving,
+then queued for batch persistence to SQLite via tts:persist.
+Billing events are pushed to tts:billing for the billing consumer.
 """
 
 import asyncio
@@ -14,17 +15,20 @@ from pydantic import BaseModel
 from redis.asyncio import Redis
 
 from yapit.contracts import (
+    TTS_AUDIO_CACHE,
     TTS_BILLING,
     TTS_INFLIGHT,
     TTS_PENDING,
+    TTS_PERSIST,
     TTS_RESULTS,
     TTS_SUBSCRIBERS,
     WorkerResult,
     get_pubsub_channel,
 )
 from yapit.gateway.api.v1.ws import BlockStatus, WSBlockStatus
-from yapit.gateway.cache import Cache
 from yapit.gateway.metrics import log_error, log_event
+
+AUDIO_CACHE_TTL_S = 300
 
 _background_tasks: set[asyncio.Task] = set()
 
@@ -44,10 +48,9 @@ class BillingEvent(BaseModel):
     duration_ms: int | None
     document_id: str
     block_idx: int
-    cache_ref: str | None
 
 
-async def run_result_consumer(redis: Redis, cache: Cache) -> None:
+async def run_result_consumer(redis: Redis) -> None:
     logger.info("Result consumer starting")
 
     while True:
@@ -58,7 +61,7 @@ async def run_result_consumer(redis: Redis, cache: Cache) -> None:
 
             _, result_json = result
             worker_result = WorkerResult.model_validate_json(result_json)
-            task = asyncio.create_task(_process_result(redis, cache, worker_result))
+            task = asyncio.create_task(_process_result(redis, worker_result))
             _background_tasks.add(task)
             task.add_done_callback(_background_tasks.discard)
 
@@ -71,7 +74,7 @@ async def run_result_consumer(redis: Redis, cache: Cache) -> None:
             await asyncio.sleep(1)
 
 
-async def _process_result(redis: Redis, cache: Cache, result: WorkerResult) -> None:
+async def _process_result(redis: Redis, result: WorkerResult) -> None:
     result_log = logger.bind(
         variant_hash=result.variant_hash,
         user_id=result.user_id,
@@ -84,7 +87,7 @@ async def _process_result(redis: Redis, cache: Cache, result: WorkerResult) -> N
         if result.error:
             await _handle_error(redis, result)
         else:
-            await _handle_success(redis, cache, result)
+            await _handle_success(redis, result)
     except Exception as e:
         result_log.exception(f"Error processing result: {e}")
         await log_error(
@@ -99,7 +102,7 @@ async def _process_result(redis: Redis, cache: Cache, result: WorkerResult) -> N
         await _notify_subscribers(redis, result, status="error", error=f"Internal error: {e}")
 
 
-async def _handle_success(redis: Redis, cache: Cache, result: WorkerResult) -> None:
+async def _handle_success(redis: Redis, result: WorkerResult) -> None:
     log = logger.bind(
         variant_hash=result.variant_hash,
         user_id=result.user_id,
@@ -123,18 +126,15 @@ async def _handle_success(redis: Redis, cache: Cache, result: WorkerResult) -> N
 
     audio = base64.b64decode(result.audio_base64)
 
-    t0 = time.time()
-    cache_ref = await cache.store(result.variant_hash, audio)
-    cache_ms = int((time.time() - t0) * 1000)
+    audio_key = TTS_AUDIO_CACHE.format(hash=result.variant_hash)
+    await redis.set(audio_key, audio, ex=AUDIO_CACHE_TTL_S)
 
-    t1 = time.time()
     await _notify_subscribers(
         redis,
         result,
         status="cached",
         audio_url=f"/v1/audio/{result.variant_hash}",
     )
-    notify_ms = int((time.time() - t1) * 1000)
 
     billing_event = BillingEvent(
         variant_hash=result.variant_hash,
@@ -146,9 +146,9 @@ async def _handle_success(redis: Redis, cache: Cache, result: WorkerResult) -> N
         duration_ms=result.duration_ms,
         document_id=str(result.document_id),
         block_idx=result.block_idx,
-        cache_ref=cache_ref,
     )
     await redis.lpush(TTS_BILLING, billing_event.model_dump_json())
+    await redis.lpush(TTS_PERSIST, result.variant_hash)
 
     finalize_ms = int((time.time() - finalize_start) * 1000)
 
@@ -167,7 +167,7 @@ async def _handle_success(redis: Redis, cache: Cache, result: WorkerResult) -> N
         user_id=result.user_id,
         document_id=str(result.document_id),
         block_idx=result.block_idx,
-        data={"cache_store_ms": cache_ms, "notify_ms": notify_ms},
+        data={"finalize_ms": finalize_ms},
     )
 
 

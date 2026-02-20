@@ -30,6 +30,7 @@ from yapit.gateway.api.v1 import routers as v1_routers
 from yapit.gateway.billing_consumer import run_billing_consumer
 from yapit.gateway.billing_sync import run_billing_sync_loop
 from yapit.gateway.cache import Cache
+from yapit.gateway.cache_persister import run_cache_persister
 from yapit.gateway.config import Settings, get_settings
 from yapit.gateway.db import close_db, create_session, prepare_database
 from yapit.gateway.deps import create_cache, create_image_storage
@@ -94,9 +95,13 @@ async def lifespan(app: FastAPI):
 
     background_tasks: list[asyncio.Task] = []
 
-    # TTS result consumer (hot path: cache + notify, no Postgres)
-    result_consumer_task = asyncio.create_task(run_result_consumer(app.state.redis_client, app.state.audio_cache))
+    # TTS result consumer (hot path: Redis SET + notify, no SQLite, no Postgres)
+    result_consumer_task = asyncio.create_task(run_result_consumer(app.state.redis_client))
     background_tasks.append(result_consumer_task)
+
+    # Cache persister (drain-on-wake: Redis audio → batched SQLite writes)
+    cache_persister_task = asyncio.create_task(run_cache_persister(app.state.redis_client, app.state.audio_cache))
+    background_tasks.append(cache_persister_task)
 
     # TTS billing consumer (cold path: Postgres on own connection pool)
     billing_consumer_task = asyncio.create_task(run_billing_consumer(app.state.redis_client, settings.database_url))

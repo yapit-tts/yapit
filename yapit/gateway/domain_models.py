@@ -143,8 +143,7 @@ class BlockVariant(SQLModel, table=True):
     model_id: int = Field(foreign_key="ttsmodel.id")
     voice_id: int = Field(foreign_key="voice.id")
 
-    duration_ms: int | None = Field(default=None)  # real duration of synthesized audio
-    cache_ref: str | None = Field(default=None)  # FS path or S3 key
+    duration_ms: int | None = Field(default=None)
 
     created: datetime = Field(
         default_factory=lambda: datetime.now(tz=dt.UTC),

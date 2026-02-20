@@ -87,7 +87,7 @@ async def _process_batch(
             await db.exec(
                 update(BlockVariant)
                 .where(col(BlockVariant.hash) == event.variant_hash)
-                .values(duration_ms=event.duration_ms, cache_ref=event.cache_ref)
+                .values(duration_ms=event.duration_ms)
             )
         await db.commit()
 

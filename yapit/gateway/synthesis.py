@@ -11,6 +11,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlmodel import select
 
 from yapit.contracts import (
+    TTS_AUDIO_CACHE,
     TTS_INFLIGHT,
     TTS_JOB_INDEX,
     TTS_JOBS,
@@ -88,8 +89,8 @@ async def request_synthesis(
     )
 
     variant = (await db.exec(select(BlockVariant).where(BlockVariant.hash == variant_hash))).first()
-    cached_data = await cache.retrieve_data(variant_hash)
-    is_cached = cached_data is not None and variant is not None
+    in_redis = await redis.exists(TTS_AUDIO_CACHE.format(hash=variant_hash))
+    is_cached = variant is not None and (in_redis or await cache.retrieve_data(variant_hash) is not None)
 
     if is_cached:
         await log_event(
@@ -248,9 +249,10 @@ async def synthesize_and_wait(
         return result
 
     variant_hash = result.variant_hash
+    audio_key = TTS_AUDIO_CACHE.format(hash=variant_hash)
     elapsed = 0.0
     while elapsed < timeout_seconds:
-        if await cache.exists(variant_hash):
+        if await redis.exists(audio_key) or await cache.exists(variant_hash):
             return CachedResult(variant_hash=variant_hash)
         await asyncio.sleep(poll_interval)
         elapsed += poll_interval

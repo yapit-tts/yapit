@@ -29,6 +29,8 @@ TTS_JOB_INDEX: Final[str] = "tts:job_index"  # hash: "user_id:doc_id:block_idx" 
 
 TTS_RESULTS: Final[str] = "tts:results"
 TTS_BILLING: Final[str] = "tts:billing"
+TTS_AUDIO_CACHE: Final[str] = "tts:audio:{hash}"
+TTS_PERSIST: Final[str] = "tts:persist"
 TTS_PROCESSING: Final[str] = "tts:processing:{worker_id}"
 TTS_DLQ: Final[str] = "tts:dlq:{model}"
 
