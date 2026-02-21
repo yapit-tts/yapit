@@ -2,7 +2,6 @@ import { Routes, Route, useLocation } from "react-router";
 import MainLayout from "../layouts/MainLayout";
 import PlaybackPage from "../pages/PlaybackPage";
 import TextInputPage from "@/pages/TextInputPage";
-import AdminPanelPage from "@/pages/AdminPanelPage";
 import SubscriptionPage from "@/pages/SubscriptionPage";
 import TipsPage from "@/pages/TipsPage";
 import AccountPage from "@/pages/AccountPage";
@@ -54,14 +53,6 @@ const AppRoutes = () => (
 			element={
 				<MainLayout>
 					<BatchStatusPage />
-				</MainLayout>
-			}
-		/>
-		<Route
-			path="/admin"
-			element={
-				<MainLayout>
-					<AdminPanelPage />
 				</MainLayout>
 			}
 		/>
