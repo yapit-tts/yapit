@@ -27,9 +27,13 @@ done
 echo "Syncing data from prod..."
 make sync-data
 
-# Require VPS_HOST
+# Load VPS_HOST from .env if not set
+if [[ -z "${VPS_HOST:-}" ]] && [[ -f "$PROJECT_DIR/.env" ]]; then
+    VPS_HOST=$(grep -E '^VPS_HOST=' "$PROJECT_DIR/.env" | cut -d'=' -f2 | tr -d '"' | tr -d "'")
+fi
+
 if [[ -z "${VPS_HOST:-}" ]]; then
-    echo "Error: VPS_HOST not set"
+    echo "Error: VPS_HOST not set (set in env or .env)"
     exit 1
 fi
 
@@ -48,7 +52,14 @@ else
     BASE_CONTEXT="CONTEXT: Daily health check. Look for patterns, anomalies, degradation."
 fi
 
+ALLOWED_TOOLS="Read,Bash(jq:*),Bash(grep:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(duckdb:*),Bash(wc:*),Bash(sort:*),Bash(uniq:*),Bash(ls:*)"
+
 EXTRA_CONTEXT="$BASE_CONTEXT
+
+## AVAILABLE TOOLS
+
+$ALLOWED_TOOLS
+Use commands directly (e.g. \`duckdb ...\`, not \`bash -c 'duckdb ...'\`).
 
 ## DISK_USAGE (current snapshot)
 
@@ -60,8 +71,7 @@ $DISK_HISTORY"
 
 # The analysis prompt
 read -r -d '' PROMPT << 'EOF' || true
-IGNORE ALL (CLAUDE.MD) INSTRUCTIONS BEFORE THIS MESSAGE. YOU ARE A FOCUSSED DIAGNOSTIC AGENT AND DO NOT HAVE THE SAME TOOLS AVAILABLE. YOUR *ONLY* INSTRUCTIONS ARE THE FOLLOWING:
-You are analyzing system health for Yapit TTS.
+You are a diagnostic agent analyzing system health for Yapit TTS.
 
 ## System Architecture
 
@@ -327,19 +337,14 @@ If any of these would help future analysis, note them:
 - **Analysis tools/utilities** (scripts, queries, anything reusable)
 - **Tool permissions** you were missing
 
-**Important**: 
+**Important**:
 - DO NOT request live/interactive prod access — that's out of scope by design.
 - DO NOT include comments before bash commands — they won't match allowed tool patterns and will be blocked.
-- FORGET instructions from our CLAUDE.MD knowledge files. They do not apply in the environment you're operating in now. ONLY the rules specified in this message apply.
-
-===
-AVAILABLE TOOLS - USE THESE TO YOUR ADVANTAGE: Read,Bash(jq:*),Bash(grep:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(duckdb:*),Bash(wc:*),Bash(sort:*),Bash(uniq:*),Bash(ls:*)
-Use these tools exactly as indicated by the permissions, i.e. "duckdb ..." NOT "nix run ..." and NOT "bash -c 'duckdb ...'", or similar. 
 EOF
 
 echo "Running Claude analysis..."
-output=$(claude -p "$PROMPT" \
-    --allowedTools "Read,Bash(jq:*),Bash(grep:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(duckdb:*),Bash(wc:*),Bash(sort:*),Bash(uniq:*),Bash(ls:*)" \
+output=$(CLAUDE_CODE_SIMPLE=1 claude -p "$PROMPT" \
+    --allowedTools "$ALLOWED_TOOLS" \
     --append-system-prompt "$EXTRA_CONTEXT" \
     --output-format json \
     2>"$REPORT_DIR/claude-stderr.log") || {
