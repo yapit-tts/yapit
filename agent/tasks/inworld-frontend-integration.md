@@ -1,6 +1,8 @@
 ---
 status: done
 type: implementation
+refs:
+  - "[[inworld-tts]]"
 ---
 
 # Task: Inworld Frontend Integration

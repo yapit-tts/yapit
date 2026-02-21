@@ -1,5 +1,7 @@
 ---
 status: active
+refs:
+  - "[[inworld-tts]]"
 ---
 
 # Task: Inworld Temperature Setting

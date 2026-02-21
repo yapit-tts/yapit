@@ -1,12 +1,12 @@
 # Inworld TTS
 
-Premium TTS provider. REST streaming API, 65 voices across 15 languages.
+Premium TTS provider. REST streaming API, 113 voices across 15 languages (73 English).
 
 ## Gotchas
 
 **Model ID format uses dots, not dashes:** The API model IDs are `inworld-tts-1.5-mini` and `inworld-tts-1.5-max` (with dots in "1.5"). Using dashes like `inworld-tts-1-5-mini` returns 400 Bad Request.
 
-**Voice listing requires separate API scope:** The synthesis API key doesn't have permissions to call `/voices/v1/voices`. Need a key with voice management scope, or check the [TTS Playground](https://platform.inworld.ai/tts-playground) manually.
+**Voice listing endpoint is deprecated (July 2026):** `GET /tts/v1/voices` still works with the synthesis API key as of 2026-02. The voices themselves and the synthesis API are NOT deprecated — only the listing endpoint. Voice data is canonical in `yapit/data/inworld/voices.json`; no need to call the API at runtime.
 
 **Streaming vs non-streaming are not acoustically equivalent at block start:** In local testing, non-streaming (`/tts/v1/voice`) produced noticeably higher first 10-20ms energy than streaming (`/tts/v1/voice:stream`) for the same text/voice/model/codec. This was audible as a startup artifact in Firefox. Streaming removed the artifact.
 
@@ -61,21 +61,34 @@ This is the canonical path because it eliminated the Firefox startup artifact se
 
 Benchmark: `experiments/benchmark_inworld_speaking_rate.py`
 
+## Voices
+
+113 voices across 15 languages. Canonical source: `yapit/data/inworld/voices.json` (fetched from `GET /tts/v1/voices`). Same voices are shared between both inworld-1.5 and inworld-1.5-max models.
+
+**Adding voices:** Update `voices.json` from the API, then:
+- Dev/self-host: seed script auto-syncs missing voices on startup (`_sync_inworld_voices` in `seed.py`)
+- Prod: direct SQL INSERT (see pattern in git history: `231922c`), then `make warm-cache`
+
+**Voice picker** has search (name + description substring match) in the Inworld tab. With 73 EN voices, search is essential.
+
+## Cache Warming & Pinning
+
+Showcase docs and voice previews are pre-synthesized and **pinned** in the SQLite audio cache — pinned entries are exempt from LRU eviction. See [[tts-flow]] for cache architecture.
+
+- `yapit/gateway/warm_cache.py` — one-shot CLI, run via `make warm-cache` on prod
+- Warming synthesizes missing entries, then bulk-pins all warmed variant hashes
+- No background warming loop — run manually when voices or showcase content change
+
 ## Key Files
 
 - `yapit/workers/adapters/inworld.py` — REST streaming adapter
-- `yapit/data/inworld/voices.json` — 65 voices (en, zh, nl, fr, de, it, ja, ko, pl, pt, es, ru, hi, ar, he)
-- `yapit/gateway/seed.py:96-139` — model/voice definitions
-- `frontend/src/lib/voiceSelection.ts` — `INWORLD_SLUG`, `INWORLD_MAX_SLUG` constants + `isInworldModel()` helper
+- `yapit/data/inworld/voices.json` — 113 voices, canonical voice data
+- `yapit/gateway/seed.py` — model/voice definitions, additive voice sync
+- `yapit/gateway/warm_cache.py` — one-shot cache warming + pinning
+- `frontend/src/components/voicePicker.tsx` — voice picker with search
+- `frontend/src/lib/voiceSelection.ts` — `INWORLD_SLUG`, `INWORLD_MAX_SLUG` constants
 
 **For model version upgrades:** Update the two slug constants in `voiceSelection.ts` — all comparison sites use the helper or constants, so only one file changes.
-
-## Related Tasks
-
-- [[inworld-api-evaluation]] — original evaluation, API research, voice selection
-- [[inworld-frontend-integration]] — voice picker, MP3 decoding fix
-- [[2026-01-21-inworld-tts-1.5-upgrade]] — upgrade to TTS-1.5 models
-- [[2026-01-18-inworld-temperature-setting]] — temperature slider (pending)
 
 ## External Docs
 

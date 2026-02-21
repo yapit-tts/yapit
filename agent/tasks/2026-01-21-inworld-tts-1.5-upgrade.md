@@ -2,6 +2,8 @@
 status: done
 started: 2026-01-21
 completed: 2026-01-24
+refs:
+  - "[[inworld-tts]]"
 ---
 
 # Task: Inworld TTS-1.5 Upgrade

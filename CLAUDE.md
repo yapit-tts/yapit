@@ -9,6 +9,7 @@ Yapit TTS - Open-source text-to-speech platform for reading documents, web pages
 
 - `docs/architecture.md` has mermaid diagrams of the overall architecture and sequence flows.
 - [[tts-flow]] — Audio synthesis pipeline: WebSocket protocol, Redis queues, pull-based workers, caching. Read for TTS bugs, latency issues, worker scaling.
+- [[inworld-tts]] — Inworld API specifics: voices, models, gotchas, cache warming/pinning. Read for Inworld voice issues, warming, voice picker.
 - [[document-processing]] — How content becomes blocks: input paths (text/URL/file), Gemini extraction, YOLO figure detection, markdown parsing, block splitting. Read for document upload bugs, extraction failures, rendering issues.
 - [[frontend]] — React architecture, component hierarchy, chrome devtools MCP workflows. Read for UI work, frontend debugging.
 - [[features]] — User-facing capabilities: sharing, JS rendering, etc.
@@ -30,7 +31,7 @@ Yapit TTS - Open-source text-to-speech platform for reading documents, web pages
 
 - [[auth]] — Stack Auth integration, token handling.
 - [[stripe-integration]] — Token-based billing, waterfall consumption, Stripe SDK gotchas, webhook handling. Read for billing bugs, subscription issues.
-- [[security]] — Security considerations and audits.
+- [[security]] — SSRF (Smokescreen proxy), auth trust boundaries, anonymous sessions, frontend XSS architecture, infrastructure hardening, billing security. Read for any security-related work.
 - [[licensing]] — Dependency license checking.
 
 ### Notes for distill agents
@@ -96,6 +97,8 @@ git checkout dev && git merge main  # brings dev up to date with main
 ## Memex
 
 Vault: `yapit` (configured for project root). Semantic search + wikilink navigation.
+
+Don't delegate reading knowledge files.
 
 ## Coding Conventions
 

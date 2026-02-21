@@ -141,8 +141,14 @@ deploy-higgs-push:
 deploy-higgs-runpod:
 	uv run --env-file=.env python infra/runpod/deploy.py higgs-native --image-tag $(HIGGS_TAG)
 
-# Metrics
+# Prod operations
 PROD_HOST := root@46.224.195.97
+PROD_GATEWAY = $$(docker ps -qf name=yapit_gateway)
+
+warm-cache:
+	ssh $(PROD_HOST) 'docker exec $(PROD_GATEWAY) python -m yapit.gateway.warm_cache'
+
+# Metrics
 
 # Sync metrics from prod TimescaleDB to local DuckDB
 sync-metrics:

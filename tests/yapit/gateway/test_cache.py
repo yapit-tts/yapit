@@ -183,6 +183,51 @@ class TestConcurrency:
         assert await unlimited_cache.exists("key1")
 
 
+class TestPinning:
+    @pytest.mark.asyncio
+    async def test_pinned_entries_survive_eviction(self, small_cache):
+        await small_cache.store("pinned", b"x" * 40, pinned=True)
+        await small_cache.store("unpinned1", b"y" * 40)
+        await small_cache.store("unpinned2", b"y" * 40)
+        # Unpinned total now 80, adding 40 more pushes to 120 > 100 limit
+        await small_cache.store("unpinned3", b"z" * 40)
+
+        assert await small_cache.exists("pinned")
+        assert not await small_cache.exists("unpinned1")
+        assert await small_cache.exists("unpinned3")
+
+    @pytest.mark.asyncio
+    async def test_pin_existing_entries(self, unlimited_cache):
+        await unlimited_cache.store("a", b"data1")
+        await unlimited_cache.store("b", b"data2")
+        await unlimited_cache.store("c", b"data3")
+
+        pinned = await unlimited_cache.pin(["a", "c"])
+        assert pinned == 2
+
+        # Pin again — already pinned, no change
+        pinned_again = await unlimited_cache.pin(["a", "c"])
+        assert pinned_again == 0
+
+    @pytest.mark.asyncio
+    async def test_pin_nonexistent_key(self, unlimited_cache):
+        pinned = await unlimited_cache.pin(["does_not_exist"])
+        assert pinned == 0
+
+    @pytest.mark.asyncio
+    async def test_eviction_only_counts_unpinned_size(self, small_cache):
+        """Pinned entries don't count toward max_size_bytes."""
+        # Fill 90 bytes pinned — over the 100 byte limit, but all pinned
+        await small_cache.store("p1", b"x" * 45, pinned=True)
+        await small_cache.store("p2", b"y" * 45, pinned=True)
+        # Add unpinned — should survive since unpinned total (40) < limit (100)
+        await small_cache.store("u1", b"z" * 40)
+
+        assert await small_cache.exists("p1")
+        assert await small_cache.exists("p2")
+        assert await small_cache.exists("u1")
+
+
 class TestCacheStats:
     @pytest.mark.asyncio
     async def test_stats_empty_cache(self, unlimited_cache):

@@ -1,6 +1,8 @@
 ---
 status: done
 type: research
+refs:
+  - "[[inworld-tts]]"
 ---
 
 # Task: Inworld.ai TTS API Evaluation
