@@ -12,6 +12,7 @@ import {
 } from "react";
 import {
 	clearAnonymousId,
+	getAnonymousToken,
 	getOrCreateAnonymousId,
 	hasAnonymousId,
 } from "./lib/anonymousId";
@@ -62,8 +63,9 @@ export const ApiProvider: FC<PropsWithChildren> = ({ children }) => {
 				}
 			}
 
-			// Anonymous user or token fetch failed - send anonymous ID
-			config.headers["X-Anonymous-ID"] = getOrCreateAnonymousId();
+			// Anonymous user or token fetch failed - send anonymous ID + HMAC token
+			config.headers["X-Anonymous-ID"] = await getOrCreateAnonymousId();
+			config.headers["X-Anonymous-Token"] = getAnonymousToken();
 			return config;
 		});
 
@@ -96,11 +98,14 @@ export const ApiProvider: FC<PropsWithChildren> = ({ children }) => {
 				// Claim anonymous data if user just logged in and has anonymous ID
 				if (accessToken && hasAnonymousId() && !claimAttempted.current) {
 					claimAttempted.current = true;
-					const anonId = getOrCreateAnonymousId();
+					const anonId = await getOrCreateAnonymousId();
+					const anonToken = getAnonymousToken();
 					try {
-						await api.post("/v1/users/claim-anonymous", null, {
-							headers: { "X-Anonymous-ID": anonId },
-						});
+						await api.post(
+							"/v1/users/claim-anonymous",
+							{ anonymous_token: anonToken },
+							{ headers: { "X-Anonymous-ID": anonId } },
+						);
 						clearAnonymousId();
 					} catch (err) {
 						console.error("Failed to claim anonymous data:", err);

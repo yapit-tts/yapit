@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useUser } from "@stackframe/react";
-import { getOrCreateAnonymousId } from "@/lib/anonymousId";
+import { getAnonymousToken, getOrCreateAnonymousId } from "@/lib/anonymousId";
 
 const WS_BASE_URL = import.meta.env.VITE_WS_BASE_URL ||
 	`${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/api`;
@@ -54,8 +54,9 @@ export function useTTSWebSocket(
         console.error("[TTS WS] Failed to get access token:", err);
       }
     }
-    const anonymousId = getOrCreateAnonymousId();
-    return `${baseUrl}?anonymous_id=${encodeURIComponent(anonymousId)}`;
+    const anonymousId = await getOrCreateAnonymousId();
+    const anonymousToken = getAnonymousToken();
+    return `${baseUrl}?anonymous_id=${encodeURIComponent(anonymousId)}&anonymous_token=${encodeURIComponent(anonymousToken ?? "")}`;
   }, [user]);
 
   const connect = useCallback(async () => {

@@ -1,15 +1,17 @@
 import datetime as dt
 import hashlib
+import hmac
+import uuid
 from datetime import datetime
 
 import stripe
-from fastapi import APIRouter, Header, Request, status
+from fastapi import APIRouter, Header, HTTPException, Request, status
 from loguru import logger
 from pydantic import BaseModel
 from sqlalchemy import func, update
 from sqlmodel import col, delete, select
 
-from yapit.gateway.auth import ANONYMOUS_ID_PREFIX
+from yapit.gateway.auth import ANONYMOUS_ID_PREFIX, verify_anonymous_token
 from yapit.gateway.constants import estimate_duration_ms
 from yapit.gateway.deps import AuthenticatedUser, DbSession, SettingsDep
 from yapit.gateway.domain_models import (
@@ -194,6 +196,28 @@ async def get_user_stats(
     )
 
 
+# Anonymous session tokens
+
+
+def _sign_anonymous_id(anonymous_id: str, secret: str) -> str:
+    return hmac.new(secret.encode(), anonymous_id.encode(), hashlib.sha256).hexdigest()
+
+
+class AnonymousSessionResponse(BaseModel):
+    id: str
+    token: str
+
+
+@router.post("/anonymous-session", response_model=AnonymousSessionResponse)
+async def create_anonymous_session(
+    settings: SettingsDep,
+) -> AnonymousSessionResponse:
+    """Issue a server-signed anonymous session ID."""
+    session_id = str(uuid.uuid4())
+    token = _sign_anonymous_id(session_id, settings.anonymous_session_secret)
+    return AnonymousSessionResponse(id=session_id, token=token)
+
+
 # Guest-to-registered conversion
 
 
@@ -201,9 +225,15 @@ class ClaimResponse(BaseModel):
     claimed_documents: int
 
 
+class ClaimRequest(BaseModel):
+    anonymous_token: str
+
+
 @router.post("/claim-anonymous", response_model=ClaimResponse)
 async def claim_anonymous_data(
+    body: ClaimRequest,
     auth_user: AuthenticatedUser,
+    settings: SettingsDep,
     db: DbSession,
     x_anonymous_id: str | None = Header(None, alias="X-Anonymous-ID"),
 ) -> ClaimResponse:
@@ -213,6 +243,9 @@ async def claim_anonymous_data(
     """
     if auth_user.is_anonymous or not x_anonymous_id:
         return ClaimResponse(claimed_documents=0)
+
+    if not verify_anonymous_token(x_anonymous_id, body.anonymous_token, settings.anonymous_session_secret):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="invalid anonymous session token")
 
     anon_user_id = f"{ANONYMOUS_ID_PREFIX}{x_anonymous_id}"
 

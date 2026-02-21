@@ -1,3 +1,5 @@
+import hashlib
+import hmac
 import time
 from typing import Annotated
 
@@ -11,6 +13,11 @@ from yapit.gateway.stack_auth import User, get_me
 bearer = HTTPBearer(auto_error=False)
 
 ANONYMOUS_ID_PREFIX = "anon-"
+
+
+def verify_anonymous_token(anonymous_id: str, token: str, secret: str) -> bool:
+    expected = hmac.new(secret.encode(), anonymous_id.encode(), hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, token)
 
 
 def create_anonymous_user(anonymous_id: str) -> User:
@@ -29,6 +36,7 @@ async def authenticate(
     settings: Annotated[Settings, Depends(get_settings)],
     creds: HTTPAuthorizationCredentials | None = Security(bearer),
     x_anonymous_id: str | None = Header(None, alias="X-Anonymous-ID"),
+    x_anonymous_token: str | None = Header(None, alias="X-Anonymous-Token"),
 ) -> User:
     # Try Bearer token first (authenticated user)
     if creds is not None:
@@ -42,8 +50,12 @@ async def authenticate(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Fall back to anonymous ID
+    # Fall back to anonymous ID + HMAC token
     if x_anonymous_id is not None:
+        if not x_anonymous_token or not verify_anonymous_token(
+            x_anonymous_id, x_anonymous_token, settings.anonymous_session_secret
+        ):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid anonymous session")
         logger.debug(f"Anonymous user: {x_anonymous_id[:8]}...")
         return create_anonymous_user(x_anonymous_id)
 
@@ -63,6 +75,7 @@ async def authenticate_ws(
     """Authenticate WebSocket connection via query param token or anonymous ID."""
     token = websocket.query_params.get("token")
     anonymous_id = websocket.query_params.get("anonymous_id")
+    anonymous_token = websocket.query_params.get("anonymous_token")
 
     if token:
         try:
@@ -75,6 +88,10 @@ async def authenticate_ws(
         raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid token")
 
     if anonymous_id:
+        if not anonymous_token or not verify_anonymous_token(
+            anonymous_id, anonymous_token, settings.anonymous_session_secret
+        ):
+            raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid anonymous session")
         return create_anonymous_user(anonymous_id)
 
     raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION, reason="Not authenticated")
