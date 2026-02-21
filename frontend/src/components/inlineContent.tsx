@@ -58,7 +58,7 @@ function renderNode(node: InlineContent, key: number): React.ReactNode {
       );
     }
     case "inline_image":
-      return <img key={key} src={node.src} alt={node.alt} />;
+      return <img key={key} src={node.src} alt={node.alt} referrerPolicy="no-referrer" />;
     case "math_inline":
       return <InlineMath key={key} content={node.content} />;
     case "hardbreak":
