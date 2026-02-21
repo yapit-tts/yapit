@@ -29,6 +29,7 @@ async def render_with_js(url: str, timeout_ms: int = 30000) -> str:
 
     Uses browser pooling (single browser, new page per request).
     Semaphore limits concurrent renders to bound memory usage.
+    All requests route through Smokescreen proxy to prevent SSRF.
 
     Args:
         url: URL to render
@@ -42,7 +43,8 @@ async def render_with_js(url: str, timeout_ms: int = 30000) -> str:
 
     async with _semaphore:
         browser = await _get_browser()
-        page = await browser.new_page()
+        context = await browser.new_context(proxy={"server": "http://smokescreen:4750"})
+        page = await context.new_page()
         start = time.monotonic()
         try:
             await page.goto(url, wait_until="networkidle", timeout=timeout_ms)
@@ -56,3 +58,4 @@ async def render_with_js(url: str, timeout_ms: int = 30000) -> str:
             raise
         finally:
             await page.close()
+            await context.close()
