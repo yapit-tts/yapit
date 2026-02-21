@@ -30,7 +30,6 @@ async def test_tts_usage_limit_exceeded(regular_ws_client, regular_document):
         block_indices=[block_idx],
         model="kokoro",
         voice="af_heart",
-        synthesis_mode="server",
     )
 
     await asyncio.sleep(0.5)  # Wait for message
@@ -57,7 +56,6 @@ async def test_tts_cached_no_additional_synthesis(subscribed_ws_client, subscrib
         block_indices=[block_idx],
         model="kokoro",
         voice="af_heart",
-        synthesis_mode="server",
     )
 
     # Wait for completion
@@ -73,7 +71,6 @@ async def test_tts_cached_no_additional_synthesis(subscribed_ws_client, subscrib
         block_indices=[block_idx],
         model="kokoro",
         voice="af_heart",
-        synthesis_mode="server",
     )
 
     # Second request should get 'cached' status immediately (not 'queued')
@@ -123,7 +120,6 @@ async def test_cross_user_audio_sharing():
                 block_indices=[blocks_a[0]["idx"]],
                 model="kokoro",
                 voice="af_heart",
-                synthesis_mode="server",
             )
 
             # Wait for synthesis to complete
@@ -153,7 +149,6 @@ async def test_cross_user_audio_sharing():
                 block_indices=[blocks_b[0]["idx"]],
                 model="kokoro",
                 voice="af_heart",
-                synthesis_mode="server",
             )
 
             # User B should get immediate cache hit (not "queued")

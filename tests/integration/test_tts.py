@@ -25,7 +25,6 @@ async def test_tts_integration(model_slug, voice_slug, subscribed_ws_client, sub
         block_indices=[block_idx],
         model=model_slug,
         voice=voice_slug,
-        synthesis_mode="server",
     )
 
     # Wait for "queued" or "cached" status
@@ -60,7 +59,6 @@ async def test_tts_integration(model_slug, voice_slug, subscribed_ws_client, sub
         block_indices=[block_idx],
         model=model_slug,
         voice=voice_slug,
-        synthesis_mode="server",
     )
 
     cached_status = await subscribed_ws_client.wait_for_status(block_idx, "cached", timeout=5.0)

@@ -70,7 +70,6 @@ async def request_synthesis(
     text: str,
     model: TTSModel,
     voice: Voice,
-    synthesis_mode: Literal["browser", "server"],
     billing_enabled: bool,
     document_id: uuid.UUID,
     block_idx: int,
@@ -104,13 +103,12 @@ async def request_synthesis(
         )
         return CachedResult(variant_hash=variant_hash)
 
-    if synthesis_mode != "browser":
-        usage_type = UsageType.server_kokoro if model.slug.startswith("kokoro") else UsageType.premium_voice
-        block_chars = int(len(text) * model.usage_multiplier)
-        try:
-            await check_usage_limit(user_id, usage_type, block_chars, db, billing_enabled=billing_enabled)
-        except UsageLimitExceededError as e:
-            return ErrorResult(error=str(e))
+    usage_type = UsageType.server_kokoro if model.slug.startswith("kokoro") else UsageType.premium_voice
+    block_chars = int(len(text) * model.usage_multiplier)
+    try:
+        await check_usage_limit(user_id, usage_type, block_chars, db, billing_enabled=billing_enabled)
+    except UsageLimitExceededError as e:
+        return ErrorResult(error=str(e))
 
     variant_hash = await _queue_job(
         db=db,
@@ -238,7 +236,6 @@ async def synthesize_and_wait(
         text=text,
         model=model,
         voice=voice,
-        synthesis_mode="server",
         billing_enabled=billing_enabled,
         document_id=document_id,
         block_idx=block_idx,

@@ -7,7 +7,6 @@ interface WSSynthesizeRequest {
   block_indices: number[];
   model: string;
   voice: string;
-  synthesis_mode: "server";
 }
 
 interface WSCursorMoved {
@@ -86,7 +85,6 @@ export function createServerSynthesizer(deps: ServerSynthesizerDeps): Synthesize
       block_indices: blockIndices,
       model,
       voice,
-      synthesis_mode: "server",
     });
   }
 

@@ -33,7 +33,6 @@ from yapit.gateway.synthesis import ErrorResult, request_synthesis
 
 router = APIRouter(tags=["websocket"])
 
-SynthesisMode = Literal["browser", "server"]
 BlockStatus = Literal["queued", "processing", "cached", "skipped", "error"]
 
 
@@ -43,7 +42,6 @@ class WSSynthesizeRequest(BaseModel):
     block_indices: list[int]
     model: str
     voice: str
-    synthesis_mode: SynthesisMode
 
 
 class WSCursorMoved(BaseModel):
@@ -220,7 +218,6 @@ async def _handle_synthesize(
                     text=block.text,
                     model=model,
                     voice=voice,
-                    synthesis_mode=msg.synthesis_mode,
                     billing_enabled=settings.billing_enabled,
                     document_id=msg.document_id,
                     block_idx=idx,

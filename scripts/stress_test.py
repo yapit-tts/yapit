@@ -248,7 +248,6 @@ async def run_user_session(
                                 "cursor": block_idx,
                                 "model": model,
                                 "voice": voice,
-                                "synthesis_mode": "server",
                             }
                         )
                     )
