@@ -1,10 +1,10 @@
-"""Cache warming for voice previews and showcase documents.
+"""One-shot cache warming and pinning for voice previews and showcase documents.
 
 Pre-synthesizes audio so preview sentences and showcase docs are cached and
-playable for free by anyone (cached audio skips billing). Runs as a background
-task inside the gateway process to avoid cross-process SQLite contention.
+playable for free (cached audio skips billing). Pins warmed entries so LRU
+eviction never touches them.
 
-Can also be run standalone for manual one-off warming:
+Run manually when voices or showcase content changes:
     python -m yapit.gateway.warm_cache
 """
 
@@ -24,7 +24,7 @@ from yapit.gateway.cache import Cache
 from yapit.gateway.config import Settings
 from yapit.gateway.db import close_db, create_session
 from yapit.gateway.deps import create_cache
-from yapit.gateway.domain_models import Document, TTSModel, Voice
+from yapit.gateway.domain_models import BlockVariant, Document, TTSModel, Voice
 from yapit.gateway.synthesis import CachedResult, QueuedResult, synthesize_and_wait
 
 PREVIEW_DOCUMENT_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
@@ -81,7 +81,9 @@ async def warm_texts(
     texts: list[str],
     document_id: uuid.UUID,
     stats: WarmingStats,
-) -> None:
+) -> list[str]:
+    """Synthesize texts for each voice, return variant hashes of all successful entries."""
+    hashes: list[str] = []
     for vi, voice in enumerate(voices, 1):
         voice_cached = voice_synthesized = voice_failed = 0
         for idx, text in enumerate(texts):
@@ -102,12 +104,15 @@ async def warm_texts(
                 )
                 break
 
+            h = BlockVariant.get_hash(text, model.slug, voice.slug, voice.parameters)
             if isinstance(result, CachedResult):
                 stats.cached += 1
                 voice_cached += 1
+                hashes.append(h)
             elif isinstance(result, QueuedResult):
                 stats.synthesized += 1
                 voice_synthesized += 1
+                hashes.append(h)
             else:
                 stats.failed += 1
                 voice_failed += 1
@@ -119,10 +124,11 @@ async def warm_texts(
             f"  {voice.slug} ({vi}/{len(voices)}): "
             f"{voice_synthesized} synthesized, {voice_cached} cached, {voice_failed} failed"
         )
+    return hashes
 
 
 async def run_warming(cache: Cache, redis_client: Redis, settings: Settings) -> WarmingStats:
-    """Run the full warming cycle. Called from the gateway background task or standalone."""
+    """Run the full warming cycle: synthesize missing entries, then pin all warmed keys."""
     async for db in create_session(settings):
         models = (
             await db.exec(
@@ -132,6 +138,7 @@ async def run_warming(cache: Cache, redis_client: Redis, settings: Settings) -> 
         break
 
     stats = WarmingStats()
+    all_hashes: list[str] = []
 
     # --- Voice previews ---
     total_voices = sum(len([v for v in m.voices if v.is_active]) for m in models)
@@ -142,7 +149,10 @@ async def run_warming(cache: Cache, redis_client: Redis, settings: Settings) -> 
     for model in models:
         active = [v for v in model.voices if v.is_active]
         logger.info(f"{model.slug}: {len(active)} voices")
-        await warm_texts(settings, redis_client, cache, model, active, PREVIEW_SENTENCES, PREVIEW_DOCUMENT_ID, stats)
+        hashes = await warm_texts(
+            settings, redis_client, cache, model, active, PREVIEW_SENTENCES, PREVIEW_DOCUMENT_ID, stats
+        )
+        all_hashes.extend(hashes)
 
     # --- Showcase documents ---
     for showcase in SHOWCASE_DOCS:
@@ -164,9 +174,15 @@ async def run_warming(cache: Cache, redis_client: Redis, settings: Settings) -> 
         for model in models:
             voices = filter_voices(model, showcase.voice_filter)
             logger.info(f"  {model.slug}: {len(voices)} voices")
-            await warm_texts(settings, redis_client, cache, model, voices, block_texts, showcase.id, stats)
+            hashes = await warm_texts(settings, redis_client, cache, model, voices, block_texts, showcase.id, stats)
+            all_hashes.extend(hashes)
 
-    logger.info(f"Cache warming done: {stats.cached} cached, {stats.synthesized} synthesized, {stats.failed} failed")
+    # --- Pin all warmed entries ---
+    pinned = await cache.pin(all_hashes)
+    logger.info(
+        f"Cache warming done: {stats.cached} cached, {stats.synthesized} synthesized, "
+        f"{stats.failed} failed, {pinned} newly pinned"
+    )
     return stats
 
 

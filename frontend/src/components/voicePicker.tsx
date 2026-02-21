@@ -1,5 +1,5 @@
 import { useState, useMemo, memo, useRef, useCallback } from "react";
-import { ChevronDown, Star, ChevronRight, Monitor, Cloud, Loader2, Info, Play, Square } from "lucide-react";
+import { ChevronDown, Star, ChevronRight, Monitor, Cloud, Loader2, Info, Play, Square, Search, X } from "lucide-react";
 import { useApi } from "@/api";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -43,6 +43,7 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
   // Track which language sections are expanded (user manages, we just remember)
   const [expandedKokoroLangs, setExpandedKokoroLangs] = useState<Set<KokoroLanguageCode>>(new Set(["a"]));
   const [expandedInworldLangs, setExpandedInworldLangs] = useState<Set<InworldLanguageCode>>(new Set(["en"]));
+  const [inworldSearch, setInworldSearch] = useState("");
 
   // Ref to latest value — VoiceRow memo skips function props, so stale closures
   // from onSelect would read outdated model state without this.
@@ -233,6 +234,14 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
   );
   const pinnedInworld = useMemo(() => inworldVoices.filter(v => pinnedVoices.includes(v.slug)), [inworldVoices, pinnedVoices]);
 
+  const inworldSearchLower = inworldSearch.toLowerCase();
+  const filteredInworldVoices = useMemo(
+    () => inworldSearchLower
+      ? inworldVoices.filter(v => v.name.toLowerCase().includes(inworldSearchLower) || (v.description ?? "").toLowerCase().includes(inworldSearchLower))
+      : null,
+    [inworldVoices, inworldSearchLower],
+  );
+
   const triggerButton = (
     <Button variant="ghost" size="sm" className="h-9 gap-1.5 text-sm text-muted-foreground hover:text-foreground">
       <span className="font-medium">{modelLabel}</span>
@@ -379,11 +388,48 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
           </div>
         </div>
 
+        {/* Search */}
+        <div className="relative border-b">
+          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <input
+            type="text"
+            value={inworldSearch}
+            onChange={e => setInworldSearch(e.target.value)}
+            placeholder="Search voices..."
+            className="w-full pl-9 pr-8 py-2.5 text-sm bg-transparent outline-none placeholder:text-muted-foreground"
+          />
+          {inworldSearch && (
+            <button onClick={() => setInworldSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+              <X className="h-4 w-4" />
+            </button>
+          )}
+        </div>
+
         {inworldLoading ? (
           <div className="flex items-center justify-center py-8 text-muted-foreground">
             <Loader2 className="h-5 w-5 animate-spin mr-2" />
             <span className="text-sm">Loading voices...</span>
           </div>
+        ) : filteredInworldVoices ? (
+          /* Flat filtered list when searching */
+          filteredInworldVoices.length === 0 ? (
+            <div className="px-4 py-8 text-center text-sm text-muted-foreground">No voices match "{inworldSearch}"</div>
+          ) : (
+            filteredInworldVoices.map(voice => (
+              <VoiceRow
+                key={voice.slug}
+                name={voice.name}
+                flag={INWORLD_LANGUAGE_INFO[voice.lang]?.flag}
+                detail={voice.description ?? undefined}
+                isPinned={pinnedVoices.includes(voice.slug)}
+                isSelected={value.voiceSlug === voice.slug}
+                isPlaying={previewingVoice === `${INWORLD_SLUG}:${voice.slug}`}
+                onSelect={() => handleVoiceSelect(voice.slug)}
+                onPinToggle={() => togglePinnedVoice(voice.slug)}
+                onPreviewClick={() => playPreview(INWORLD_SLUG, voice.slug)}
+              />
+            ))
+          )
         ) : (
           <>
             {/* Starred section */}

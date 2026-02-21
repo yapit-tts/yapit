@@ -47,7 +47,6 @@ from yapit.gateway.metrics import init_metrics_db, start_metrics_writer, stop_me
 from yapit.gateway.overflow_scanner import run_overflow_scanner
 from yapit.gateway.result_consumer import run_result_consumer
 from yapit.gateway.visibility_scanner import run_visibility_scanner
-from yapit.gateway.warm_cache import run_warming
 from yapit.workers.adapters.inworld import InworldAdapter
 from yapit.workers.tts_loop import run_api_tts_dispatcher
 
@@ -199,10 +198,6 @@ async def lifespan(app: FastAPI):
 
     background_tasks.append(asyncio.create_task(_usage_log_cleanup_task(settings)))
 
-    background_tasks.append(
-        asyncio.create_task(_cache_warming_task(app.state.audio_cache, app.state.redis_client, settings))
-    )
-
     background_tasks.append(asyncio.create_task(run_billing_sync_loop(settings, app.state.redis_client)))
 
     # Batch extraction poller
@@ -247,17 +242,6 @@ async def _cache_maintenance_task(caches: list[Cache]) -> None:
                 await cache.vacuum_if_needed(bloat_threshold=2.0)
             except Exception as e:
                 logger.exception(f"Cache vacuum failed: {e}")
-        await asyncio.sleep(86400)
-
-
-async def _cache_warming_task(cache: Cache, redis_client: redis.Redis, settings: Settings) -> None:
-    """Background task to keep voice previews and showcase docs warm in cache."""
-    await asyncio.sleep(300)  # let gateway fully stabilize before first run
-    while True:
-        try:
-            await run_warming(cache, redis_client, settings)
-        except Exception as e:
-            logger.exception(f"Cache warming failed: {e}")
         await asyncio.sleep(86400)
 
 

@@ -36,7 +36,7 @@ class Cache(abc.ABC):
         self.config = config
 
     @abc.abstractmethod
-    async def store(self, key: str, data: bytes, *, commit: bool = True) -> str | None:
+    async def store(self, key: str, data: bytes, *, commit: bool = True, pinned: bool = False) -> str | None:
         """Store `data` under `key`. Return cache_ref or None on failure."""
 
     @abc.abstractmethod
@@ -74,6 +74,10 @@ class Cache(abc.ABC):
     @abc.abstractmethod
     async def vacuum_if_needed(self, bloat_threshold: float = 2.0) -> bool:
         """Vacuum the cache if bloat ratio exceeds threshold. Returns True if vacuumed."""
+
+    @abc.abstractmethod
+    async def pin(self, keys: list[str]) -> int:
+        """Mark keys as pinned (exempt from LRU eviction). Returns count updated."""
 
     @abc.abstractmethod
     async def close(self) -> None:
@@ -118,10 +122,16 @@ class SqliteCache(Cache):
                     data BLOB NOT NULL,
                     size INTEGER NOT NULL,
                     created_at REAL NOT NULL,
-                    last_accessed REAL NOT NULL
+                    last_accessed REAL NOT NULL,
+                    pinned INTEGER NOT NULL DEFAULT 0
                 )
                 """
             )
+            # Migrate existing DBs that lack the pinned column
+            try:
+                db.execute("ALTER TABLE cache ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")
+            except sqlite3.OperationalError:
+                pass  # column already exists
             db.execute("CREATE INDEX IF NOT EXISTS idx_cache_last_accessed ON cache(last_accessed)")
             db.execute("PRAGMA journal_mode=WAL")
 
@@ -163,12 +173,12 @@ class SqliteCache(Cache):
         except Exception:
             logger.exception(f"LRU flush failed for {self.db_path}")
 
-    async def store(self, key: str, data: bytes, *, commit: bool = True) -> str | None:
+    async def store(self, key: str, data: bytes, *, commit: bool = True, pinned: bool = False) -> str | None:
         ts = time.time()
         db = await self._get_writer()
         await db.execute(
-            "REPLACE INTO cache(key, data, size, created_at, last_accessed) VALUES(?, ?, ?, ?, ?)",
-            (key, data, len(data), ts, ts),
+            "REPLACE INTO cache(key, data, size, created_at, last_accessed, pinned) VALUES(?, ?, ?, ?, ?, ?)",
+            (key, data, len(data), ts, ts, int(pinned)),
         )
         if commit:
             await db.commit()
@@ -238,21 +248,21 @@ class SqliteCache(Cache):
         return cursor.rowcount > 0
 
     async def _enforce_max_size(self) -> int:
-        """Evict oldest entries (by last_accessed) until total size is under max_size_bytes."""
+        """Evict oldest unpinned entries (by last_accessed) until under max_size_bytes."""
         if not self._max_size_bytes:
             return 0
 
         db = await self._get_writer()
-        async with db.execute("SELECT COALESCE(SUM(size), 0) FROM cache") as cursor:
+        async with db.execute("SELECT COALESCE(SUM(size), 0) FROM cache WHERE pinned=0") as cursor:
             row = await cursor.fetchone()
             assert row is not None
-            total_size = row[0]
+            unpinned_size = row[0]
 
-        if total_size <= self._max_size_bytes:
+        if unpinned_size <= self._max_size_bytes:
             return 0
 
-        excess = total_size - self._max_size_bytes
-        async with db.execute("SELECT AVG(size) FROM cache") as cursor:
+        excess = unpinned_size - self._max_size_bytes
+        async with db.execute("SELECT AVG(size) FROM cache WHERE pinned=0") as cursor:
             row = await cursor.fetchone()
             assert row is not None
             avg_size = row[0] or 1
@@ -261,7 +271,7 @@ class SqliteCache(Cache):
         estimate = int(excess / avg_size * 1.2) + 1
 
         cursor = await db.execute(
-            "DELETE FROM cache WHERE key IN (SELECT key FROM cache ORDER BY last_accessed ASC LIMIT ?)",
+            "DELETE FROM cache WHERE key IN (SELECT key FROM cache WHERE pinned=0 ORDER BY last_accessed ASC LIMIT ?)",
             (estimate,),
         )
         evicted = cursor.rowcount
@@ -313,6 +323,22 @@ class SqliteCache(Cache):
         )
 
         return True
+
+    async def pin(self, keys: list[str]) -> int:
+        if not keys:
+            return 0
+        db = await self._get_writer()
+        total = 0
+        for i in range(0, len(keys), 999):
+            chunk = keys[i : i + 999]
+            placeholders = ",".join("?" for _ in chunk)
+            cursor = await db.execute(
+                f"UPDATE cache SET pinned=1 WHERE key IN ({placeholders}) AND pinned=0",
+                chunk,
+            )
+            total += cursor.rowcount
+        await db.commit()
+        return total
 
     async def close(self) -> None:
         self._closed = True
