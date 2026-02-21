@@ -15,6 +15,7 @@ import {
 	getAnonymousToken,
 	getOrCreateAnonymousId,
 	hasAnonymousId,
+	renewAnonymousSession,
 } from "./lib/anonymousId";
 
 const baseURL = import.meta.env.VITE_API_BASE_URL;
@@ -67,6 +68,23 @@ export const ApiProvider: FC<PropsWithChildren> = ({ children }) => {
 			config.headers["X-Anonymous-ID"] = await getOrCreateAnonymousId();
 			config.headers["X-Anonymous-Token"] = getAnonymousToken();
 			return config;
+		});
+
+		// On 401 for anonymous users, renew session and retry once
+		instance.interceptors.response.use(undefined, async (error) => {
+			const config = error.config;
+			if (
+				error.response?.status === 401 &&
+				config?.headers?.["X-Anonymous-ID"] &&
+				!config._anonRetried
+			) {
+				config._anonRetried = true;
+				await renewAnonymousSession();
+				config.headers["X-Anonymous-ID"] = await getOrCreateAnonymousId();
+				config.headers["X-Anonymous-Token"] = getAnonymousToken();
+				return instance.request(config);
+			}
+			return Promise.reject(error);
 		});
 
 		return instance;

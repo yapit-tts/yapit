@@ -26,6 +26,11 @@ export function getAnonymousToken(): string | null {
   return localStorage.getItem(TOKEN_STORAGE_KEY);
 }
 
+export async function renewAnonymousSession(): Promise<void> {
+  clearAnonymousId();
+  await getOrCreateAnonymousId();
+}
+
 export function clearAnonymousId(): void {
   localStorage.removeItem(STORAGE_KEY);
   localStorage.removeItem(TOKEN_STORAGE_KEY);
