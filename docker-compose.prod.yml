@@ -165,8 +165,11 @@ services:
         - "traefik.http.routers.stack-auth-dashboard.entrypoints=websecure"
         - "traefik.http.routers.stack-auth-dashboard.tls=true"
         - "traefik.http.routers.stack-auth-dashboard.priority=10"
+        - "traefik.http.routers.stack-auth-dashboard.middlewares=tailscale-only"
         - "traefik.http.routers.stack-auth-dashboard.service=stack-auth-dashboard"
         - "traefik.http.services.stack-auth-dashboard.loadbalancer.server.port=8101"
+        # Middleware: restrict dashboard to Tailscale CGNAT range
+        - "traefik.http.middlewares.tailscale-only.ipallowlist.sourcerange=100.64.0.0/10"
 
   markxiv:
     image: ghcr.io/yapit-tts/markxiv:latest
