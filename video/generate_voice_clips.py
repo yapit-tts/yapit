@@ -36,9 +36,9 @@ INWORLD_API = "https://api.inworld.ai/tts/v1/voice"
 
 # --- Narrator lines (placed over capture scenes) ---
 NARRATION: list[tuple[str, str, str, float]] = [
-    ("Craig", "Articles, papers, books — just paste the link.", "en", 1.0),
-    ("Deborah", "Listen to anything, in any voice you want!", "en", 1.0),
-    ("Blake", "Try it now, on yapit.md!", "en", 1.0),
+    ("Clive", "Articles, papers, books — just paste the link.", "en", 1.0),
+    ("Jessica", "Listen to anything, in any voice you want!", "en", 1.0),
+    ("Dennis", "Try it now, on yapit.md!", "en", 1.0),
 ]
 
 # --- Multilingual showcase (the voice cycling scene) ---
@@ -67,6 +67,33 @@ class Args:
 
     sample_rate: int = 48000
     """Audio sample rate in Hz."""
+
+
+async def normalize_loudness(path: Path, target_lufs: float = -20.0) -> None:
+    """Normalize audio to target LUFS using ffmpeg loudnorm (two-pass)."""
+    tmp = path.with_suffix(".norm.mp3")
+    # Single-pass loudnorm with linear normalization
+    proc = await asyncio.create_subprocess_exec(
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(path),
+        "-af",
+        f"loudnorm=I={target_lufs}:TP=-1.5:LRA=11:linear=true",
+        "-codec:a",
+        "libmp3lame",
+        "-q:a",
+        "2",
+        str(tmp),
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    await proc.wait()
+    if proc.returncode == 0:
+        tmp.rename(path)
+    else:
+        tmp.unlink(missing_ok=True)
+        print(f"    WARNING: loudness normalization failed for {path.name}")
 
 
 async def get_duration(path: Path) -> float:
@@ -134,6 +161,7 @@ async def generate_set(
         filename = f"{i:02d}-{voice_id.lower()}.mp3"
         path = out_dir / filename
         path.write_bytes(audio)
+        await normalize_loudness(path)
 
         duration = await get_duration(path)
         print(f"    → {path.name} ({duration:.2f}s)")
