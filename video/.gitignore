@@ -6,8 +6,11 @@ dist
 # Ignore the output video from Git but not videos you import into src/.
 out
 
-# All generated/captured assets (regeneratable via scripts/)
-public/clips/
+# Generated/captured assets (regeneratable via scripts)
+public/clips/*
+!public/clips/cards/
+!public/clips/darkmode-*.png
+!public/clips/meta.json
 
 # Auth state (sensitive)
 .auth-state.json

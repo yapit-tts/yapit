@@ -1,0 +1,14 @@
+{
+  "video": "video/public/clips/playback.webm",
+  "light_mode": true,
+  "markers": {
+    "home_visible": 0.0,
+    "input_submitted": 0.5,
+    "document_loaded": 2.0,
+    "play_clicked": 3.0,
+    "playback_started": 3.5,
+    "theme_cycle_start": 0.0
+  },
+  "audio": [],
+  "total_audio_duration_s": 0
+}

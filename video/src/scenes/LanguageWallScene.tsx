@@ -64,7 +64,7 @@ export const LanguageWallScene: React.FC<{ theme?: ThemeName }> = ({
           marginBottom: 12,
         }}
       >
-        120+ voices · 15 languages
+        170+ voices · 15 languages
       </div>
 
       <div

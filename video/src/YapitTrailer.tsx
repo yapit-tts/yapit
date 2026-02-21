@@ -41,11 +41,15 @@ export const YapitTrailer: React.FC = () => {
   const fadeTiming = linearTiming({ durationInFrames: TRANSITION_FRAMES });
 
   return (
+    <>
+    {/* Background music — low volume, plays from start */}
+    <Audio src={staticFile("clips/music.mp3")} volume={0.05} />
+
     <TransitionSeries>
       {/* Scene 1: URL paste flow */}
       <TransitionSeries.Sequence durationInFrames={FLOW_DURATION}>
         <ClipScene videoSrc="clips/playback.webm" background={bg} />
-        <Sequence from={Math.round(0.8 * fps)} premountFor={fps}>
+        <Sequence from={Math.round(0.3 * fps)} premountFor={fps}>
           <Audio src={staticFile(`clips/narration/${narr[0].file}`)} />
         </Sequence>
       </TransitionSeries.Sequence>
@@ -97,6 +101,7 @@ export const YapitTrailer: React.FC = () => {
         <EndCard theme={isLight ? "light" : "charcoal"} />
       </TransitionSeries.Sequence>
     </TransitionSeries>
+    </>
   );
 };
 
