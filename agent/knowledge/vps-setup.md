@@ -336,6 +336,12 @@ After initial setup:
    - Set `STACK_SEED_INTERNAL_PROJECT_SIGN_UP_ENABLED=false` in env
    - Or disable via dashboard after creating your admin account
 
+3. **Dashboard behind Cloudflare Access** — `auth.yapit.md` is protected by Cloudflare Zero Trust Access. Two applications configured:
+   - `auth.yapit.md` → Allow policy (admin email only) — dashboard gets an auth wall at Cloudflare's edge
+   - `auth.yapit.md/api/` → Bypass policy (everyone) — SDK auth calls pass through unprotected
+   - Login via One-time PIN (email OTP) at Cloudflare's login page
+   - Config: Cloudflare Zero Trust dashboard → Access → Applications
+
 ## Operations
 
 ### Service status
