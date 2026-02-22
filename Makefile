@@ -148,7 +148,7 @@ PROD_GATEWAY = $$(docker ps -qf name=yapit_gateway)
 warm-cache:
 	@echo "Starting warm-cache in tmux session on prod..."
 	@ssh $(PROD_HOST) 'tmux kill-session -t warm-cache 2>/dev/null; tmux new-session -d -s warm-cache "docker exec $(PROD_GATEWAY) python -m yapit.gateway.warm_cache 2>&1 | tee /tmp/warm-cache.log; echo DONE; sleep 86400"'
-	@echo "Attaching to tmux session (Ctrl+B D to detach without killing)..."
+	@echo "Attaching to tmux session..."
 	@ssh -t $(PROD_HOST) 'tmux attach -t warm-cache'
 
 # Metrics

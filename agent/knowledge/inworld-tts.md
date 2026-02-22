@@ -75,9 +75,11 @@ Benchmark: `experiments/benchmark_inworld_speaking_rate.py`
 
 Showcase docs and voice previews are pre-synthesized and **pinned** in the SQLite audio cache — pinned entries are exempt from LRU eviction. See [[tts-flow]] for cache architecture.
 
-- `yapit/gateway/warm_cache.py` — one-shot CLI, run via `make warm-cache` on prod
+- `yapit/gateway/warm_cache.py` — one-shot CLI, run via `make warm-cache` on prod (tmux session, survives SSH disconnects)
 - Warming synthesizes missing entries, then bulk-pins all warmed variant hashes
 - No background warming loop — run manually when voices or showcase content change
+- `voice_filter` supports `"skip"` to exclude a model from showcase warming (e.g. to defer expensive inworld-1.5-max warming)
+- As of 2026-02: ~45K pinned entries, ~5.5 GB pinned out of 50 GB budget (~16% total with unpinned)
 
 ## Key Files
 

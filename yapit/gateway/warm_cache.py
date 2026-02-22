@@ -189,10 +189,11 @@ async def run_warming(cache: Cache, redis_client: Redis, settings: Settings) -> 
             all_hashes.extend(hashes)
 
     # --- Pin all warmed entries ---
-    pinned = await cache.pin(all_hashes)
+    unique_hashes = list(dict.fromkeys(all_hashes))  # deduplicate, preserve order
+    newly_pinned = await cache.pin(unique_hashes)
     logger.info(
         f"Cache warming done: {stats.cached} cached, {stats.synthesized} synthesized, "
-        f"{stats.failed} failed, {pinned} newly pinned"
+        f"{stats.failed} failed, {newly_pinned} newly pinned ({len(unique_hashes)} total pinnable)"
     )
     return stats
 
