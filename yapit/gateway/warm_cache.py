@@ -42,7 +42,7 @@ PREVIEW_SENTENCES = [
 class ShowcaseDoc:
     id: uuid.UUID
     # Per-model voice filter: "all" warms every active voice, "english" only lang.startswith("en")
-    voice_filter: dict[str, Literal["all", "english"]] = field(default_factory=dict)
+    voice_filter: dict[str, Literal["all", "english", "skip"]] = field(default_factory=dict)
 
 
 SHOWCASE_DOCS = [
@@ -64,9 +64,14 @@ class WarmingStats:
     failed: int = 0
 
 
-def filter_voices(model: TTSModel, voice_filter: dict[str, Literal["all", "english"]]) -> list[Voice]:
-    active = [v for v in model.voices if v.is_active]
+def filter_voices(
+    model: TTSModel,
+    voice_filter: dict[str, Literal["all", "english", "skip"]],
+) -> list[Voice]:
     strategy = voice_filter.get(model.slug, "all")
+    if strategy == "skip":
+        return []
+    active = [v for v in model.voices if v.is_active]
     if strategy == "english":
         active = [v for v in active if v.lang and v.lang.startswith("en")]
     return active
@@ -86,7 +91,18 @@ async def warm_texts(
     hashes: list[str] = []
     for vi, voice in enumerate(voices, 1):
         voice_cached = voice_synthesized = voice_failed = 0
-        for idx, text in enumerate(texts):
+
+        # Check which entries already exist so we can report accurate counts
+        text_hashes = [BlockVariant.get_hash(text, model.slug, voice.slug, voice.parameters) for text in texts]
+        already_cached = await cache.batch_exists(text_hashes)
+
+        for idx, (text, h) in enumerate(zip(texts, text_hashes)):
+            if h in already_cached:
+                stats.cached += 1
+                voice_cached += 1
+                hashes.append(h)
+                continue
+
             async for db in create_session(settings):
                 result = await synthesize_and_wait(
                     db=db,
@@ -104,12 +120,7 @@ async def warm_texts(
                 )
                 break
 
-            h = BlockVariant.get_hash(text, model.slug, voice.slug, voice.parameters)
-            if isinstance(result, CachedResult):
-                stats.cached += 1
-                voice_cached += 1
-                hashes.append(h)
-            elif isinstance(result, QueuedResult):
+            if isinstance(result, (CachedResult, QueuedResult)):
                 stats.synthesized += 1
                 voice_synthesized += 1
                 hashes.append(h)
