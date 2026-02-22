@@ -108,7 +108,7 @@ echo "  ✓ All services OK"
 
 # Final end-to-end verification
 log "Verifying endpoints..."
-if ! curl -sf "https://api.yapit.md/health" > /dev/null 2>&1; then
+if ! curl -sf "https://yapit.md/api/health" > /dev/null 2>&1; then
   die "API health check failed after update completed"
 fi
 echo "  ✓ API healthy"
@@ -120,7 +120,7 @@ echo "  ✓ Frontend OK"
 
 # Only check commit match when gateway was actually rebuilt (BUILT_IMAGES set by CI)
 if [ -z "${BUILT_IMAGES:-}" ] || echo "$BUILT_IMAGES" | grep -q "gateway"; then
-  RUNNING_COMMIT=$(curl -sf "https://api.yapit.md/version" 2>/dev/null | grep -oP '"commit":\s*"\K[^"]+' || echo "")
+  RUNNING_COMMIT=$(curl -sf "https://yapit.md/api/version" 2>/dev/null | grep -oP '"commit":\s*"\K[^"]+' || echo "")
   if [ -n "$RUNNING_COMMIT" ] && [ "$RUNNING_COMMIT" != "$GIT_COMMIT" ] && [ "$RUNNING_COMMIT" != "unknown" ]; then
     die "Gateway reports ${RUNNING_COMMIT:0:12}, expected ${GIT_COMMIT:0:12}"
   fi

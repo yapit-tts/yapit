@@ -125,12 +125,6 @@ services:
       update_config:
         order: start-first
         failure_action: rollback
-      labels:
-        - "traefik.enable=true"
-        - "traefik.http.routers.yapit-gateway.rule=Host(`api.yapit.md`)"
-        - "traefik.http.routers.yapit-gateway.entrypoints=websecure"
-        - "traefik.http.routers.yapit-gateway.tls=true"
-        - "traefik.http.services.yapit-gateway.loadbalancer.server.port=8000"
 
   stack-auth:
     image: ghcr.io/yapit-tts/stack-auth:latest

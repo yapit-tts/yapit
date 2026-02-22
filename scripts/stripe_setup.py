@@ -77,10 +77,6 @@ PRODUCTS = [
         "description": "Unlimited Kokoro TTS, 5M AI extraction tokens/month",
         "active": True,
         "prices": [
-            # === OLD PRICES (deactivated) ===
-            {"id": "yapit_basic_monthly", "amount": 700, "interval": "month", "active": False},
-            {"id": "yapit_basic_yearly", "amount": 7500, "interval": "year", "active": False},
-            # === NEW PRICES (v2) ===
             {"id": "yapit_basic_monthly_v2", "amount": 1000, "interval": "month"},
             {"id": "yapit_basic_yearly_v2", "amount": 9000, "interval": "year"},
         ],
@@ -91,10 +87,6 @@ PRODUCTS = [
         "description": "1M premium voice chars/month, 10M AI extraction tokens/month",
         "active": True,
         "prices": [
-            # === OLD PRICES (deactivated) ===
-            {"id": "yapit_plus_monthly", "amount": 2000, "interval": "month", "active": False},
-            {"id": "yapit_plus_yearly", "amount": 19200, "interval": "year", "active": False},
-            # === NEW PRICES (v2) ===
             {"id": "yapit_plus_monthly_v2", "amount": 2000, "interval": "month"},
             {"id": "yapit_plus_yearly_v2", "amount": 18000, "interval": "year"},
         ],
@@ -105,10 +97,6 @@ PRODUCTS = [
         "description": "3M premium voice chars/month, 15M AI extraction tokens/month",
         "active": True,
         "prices": [
-            # === OLD PRICES (deactivated) ===
-            {"id": "yapit_max_monthly", "amount": 4000, "interval": "month", "active": False},
-            {"id": "yapit_max_yearly", "amount": 24000, "interval": "year", "active": False},
-            # === NEW PRICES (v2) ===
             {"id": "yapit_max_monthly_v2", "amount": 4000, "interval": "month"},
             {"id": "yapit_max_yearly_v2", "amount": 36000, "interval": "year"},
         ],
@@ -118,49 +106,6 @@ PRODUCTS = [
 # Coupons define the discount. Promo codes are customer-facing codes that reference coupons.
 # Using amount_off (not percent_off) to cap discount value regardless of billing interval.
 COUPONS = [
-    # === OLD COUPONS (deactivated) ===
-    {
-        "id": "beta_100",
-        "name": "Beta - Free First Month (DEPRECATED)",
-        "percent_off": 100,
-        "duration": "once",
-        "active": False,
-    },
-    {
-        "id": "launch_basic_100",
-        "name": "Launch - Free Basic Month (DEPRECATED)",
-        "percent_off": 100,
-        "duration": "once",
-        "applies_to": ["yapit_basic"],
-        "active": False,
-    },
-    {
-        "id": "launch_plus_50",
-        "name": "Launch Plus 50% Off (DEPRECATED)",
-        "percent_off": 50,
-        "duration": "once",
-        "applies_to": ["yapit_plus"],
-        "active": False,
-    },
-    {
-        "id": "yapit_7_off",
-        "name": "€7 Off Basic (DEPRECATED)",
-        "amount_off": 700,
-        "currency": "eur",
-        "duration": "once",
-        "applies_to": ["yapit_basic"],
-        "active": False,
-    },
-    {
-        "id": "yapit_10_off",
-        "name": "€10 Off Plus (DEPRECATED)",
-        "amount_off": 1000,
-        "currency": "eur",
-        "duration": "once",
-        "applies_to": ["yapit_plus"],
-        "active": False,
-    },
-    # === NEW COUPONS (v2) ===
     # €10 off any plan: 100% off Basic, 50% off Plus, 25% off Max
     {
         "id": "yapit_10_off_v2",
@@ -184,38 +129,6 @@ COUPONS = [
 
 # Promo codes are what customers enter at checkout
 PROMO_CODES = [
-    # === OLD PROMO CODES (deactivated) ===
-    {
-        "coupon": "beta_100",
-        "code": "BETA",
-        "max_redemptions": 10,
-        "active": False,
-    },
-    {
-        "coupon": "launch_basic_100",
-        "code": "LAUNCH",
-        "max_redemptions": 300,
-        "active": False,
-    },
-    {
-        "coupon": "launch_plus_50",
-        "code": "LAUNCHPLUS",
-        "max_redemptions": 100,
-        "active": False,
-    },
-    {
-        "coupon": "yapit_7_off",
-        "code": "YAPIT7",
-        "max_redemptions": 500,
-        "active": False,
-    },
-    {
-        "coupon": "yapit_10_off",
-        "code": "YAPIT10",
-        "max_redemptions": 200,
-        "active": False,
-    },
-    # === NEW PROMO CODES (v2) ===
     {
         "coupon": "yapit_10_off_v2",
         "code": "YAP10",
@@ -276,7 +189,7 @@ PORTAL_CONFIG = {
 }
 
 # Webhook configuration
-WEBHOOK_URL = "https://api.yapit.md/v1/billing/webhook"
+WEBHOOK_URL = "https://yapit.md/api/v1/billing/webhook"
 WEBHOOK_EVENTS = [  # must match SUBSCRIPTION_EVENTS in billing.py
     "checkout.session.completed",
     "customer.subscription.created",

@@ -227,7 +227,7 @@ make dev-env
 - [x] Prices exist (monthly + yearly for each)
 - [x] Promo codes exist (BETA, LAUNCH, LAUNCHPLUS)
 - [x] Portal configured (cancellation, plan switching)
-- [x] Webhook configured (`https://api.yapit.md/v1/billing/webhook`, secret in sops)
+- [x] Webhook configured (`https://yapit.md/api/v1/billing/webhook`, secret in sops)
 
 **Post-launch monitoring:**
 - Check gateway logs for webhook errors
@@ -329,7 +329,7 @@ Stripe MCP provides direct API access and documentation search. Uses OAuth.
 - IaC setup — use `scripts/stripe_setup.py` (has idempotent upserts, validation)
 - Anything you'd want reproducible — script it instead
 
-**Available tools:** `list_customers`, `list_subscriptions`, `list_products`, `list_prices`, `list_invoices`, `search_stripe_documentation`, `get_stripe_account_info`, and more. See [[stripe-integration]] for full list.
+**Available tools:** `list_customers`, `list_subscriptions`, `list_products`, `list_prices`, `list_invoices`, `search_stripe_documentation`, `get_stripe_account_info`, and more.
 
 ### Webhook Secret (Dev)
 

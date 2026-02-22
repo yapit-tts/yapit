@@ -253,7 +253,6 @@ gh secret set VPS_SSH_KEY --repo yapit-tts/yapit --env production < ~/.ssh/yapit
 
 Create A records pointing to VPS IP (proxied):
 - `yapit.md` → `46.224.195.97`
-- `api.yapit.md` → `46.224.195.97`
 - `auth.yapit.md` → `46.224.195.97`
 
 ## CI SSH Key
