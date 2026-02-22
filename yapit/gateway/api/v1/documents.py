@@ -13,7 +13,7 @@ from typing import Annotated, Literal
 from uuid import UUID, uuid4
 
 import pymupdf
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import HTMLResponse
 from loguru import logger
 from pydantic import BaseModel, Field, HttpUrl, StringConstraints
@@ -62,6 +62,7 @@ from yapit.gateway.document.website import extract_website_content
 from yapit.gateway.domain_models import Block, Document, DocumentMetadata, UsageType, UserPreferences, UserSubscription
 from yapit.gateway.exceptions import ResourceNotFoundError
 from yapit.gateway.metrics import log_error, log_event
+from yapit.gateway.rate_limit import limiter
 from yapit.gateway.reservations import create_reservation, release_reservation
 from yapit.gateway.storage import ImageStorage
 from yapit.gateway.usage import check_usage_limit
@@ -369,15 +370,17 @@ async def get_batch_status(
 
 
 @router.post("/prepare", response_model=DocumentPrepareResponse)
+@limiter.limit("20/minute")
 async def prepare_document(
-    request: DocumentPrepareRequest,
+    request: Request,
+    body: DocumentPrepareRequest,
     file_cache: DocumentCache,
     extraction_cache: ExtractionCache,
     settings: SettingsDep,
     ai_extractor_config: AiExtractorConfigDep,
 ) -> DocumentPrepareResponse:
     """Prepare a document from URL for creation."""
-    url_hash = hashlib.sha256(str(request.url).encode()).hexdigest()
+    url_hash = hashlib.sha256(str(body.url).encode()).hexdigest()
 
     # Check URL cache first (same URL within TTL = no download needed)
     cached_data = await file_cache.retrieve_data(url_hash)
@@ -404,15 +407,15 @@ async def prepare_document(
             uncached_pages=uncached_pages,
         )
 
-    content, content_type = await download_document(request.url, settings.document_max_download_size)
+    content, content_type = await download_document(body.url, settings.document_max_download_size)
 
     page_count, title = await asyncio.to_thread(_extract_document_info, content, content_type)
     metadata = DocumentMetadata(
         content_type=content_type,
         total_pages=page_count,
         title=title,
-        url=str(request.url),
-        file_name=Path(request.url.path or "/").name or None,
+        url=str(body.url),
+        file_name=Path(body.url.path or "/").name or None,
         file_size=len(content),
     )
 
@@ -433,7 +436,9 @@ async def prepare_document(
 
 
 @router.post("/prepare/upload", response_model=DocumentPrepareResponse)
+@limiter.limit("20/minute")
 async def prepare_document_upload(
+    request: Request,
     file: UploadFile,
     file_cache: DocumentCache,
     extraction_cache: ExtractionCache,
@@ -536,7 +541,9 @@ async def create_text_document(
 
 
 @router.post("/website", response_model=DocumentCreateResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit("10/minute")
 async def create_website_document(
+    request: Request,
     req: WebsiteDocumentCreateRequest,
     db: DbSession,
     file_cache: DocumentCache,
@@ -982,7 +989,9 @@ async def _run_extraction(
     response_model=ExtractionAcceptedResponse | BatchSubmittedResponse,
     status_code=status.HTTP_202_ACCEPTED,
 )
+@limiter.limit("20/minute")
 async def create_document(
+    request: Request,
     req: DocumentCreateRequest,
     db: DbSession,
     file_cache: DocumentCache,
@@ -1377,7 +1386,9 @@ class DocumentImportResponse(BaseModel):
 
 
 @router.post("/{document_id}/import", response_model=DocumentImportResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit("10/minute")
 async def import_document(
+    request: Request,
     document_id: UUID,
     db: DbSession,
     user: AuthenticatedUser,

@@ -25,6 +25,7 @@ from yapit.gateway.domain_models import (
     tier_rank,
 )
 from yapit.gateway.metrics import log_event
+from yapit.gateway.rate_limit import limiter
 from yapit.gateway.usage import (
     MAX_ROLLOVER_TOKENS,
     MAX_ROLLOVER_VOICE_CHARS,
@@ -250,6 +251,7 @@ SUBSCRIPTION_EVENTS = {
 
 
 @router.post("/webhook")
+@limiter.exempt
 async def stripe_webhook(
     request: Request,
     settings: SettingsDep,

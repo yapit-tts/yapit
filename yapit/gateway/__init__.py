@@ -9,10 +9,8 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, ORJSONResponse
 from loguru import logger
-from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
-from slowapi.util import get_remote_address
 from sqlmodel import col, delete
 
 from yapit.contracts import (
@@ -45,6 +43,7 @@ from yapit.gateway.logging_config import (
 )
 from yapit.gateway.metrics import init_metrics_db, start_metrics_writer, stop_metrics_writer
 from yapit.gateway.overflow_scanner import run_overflow_scanner
+from yapit.gateway.rate_limit import limiter
 from yapit.gateway.result_consumer import run_result_consumer
 from yapit.gateway.visibility_scanner import run_visibility_scanner
 from yapit.workers.adapters.inworld import InworldAdapter
@@ -272,8 +271,6 @@ def create_app(
 
     configure_logging(Path(settings.log_dir))
 
-    limiter = Limiter(key_func=get_remote_address, default_limits=["1000/minute"])
-
     app = FastAPI(
         title="Yapit Gateway",
         version="0.1.0",
@@ -296,7 +293,11 @@ def create_app(
 
     @app.exception_handler(RateLimitExceeded)
     async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
-        return JSONResponse(status_code=429, content={"detail": "Rate limit exceeded"})
+        client_ip = request.client.host if request.client else "unknown"
+        logger.warning(f"Rate limit hit: {client_ip} on {request.url.path}")
+        return JSONResponse(
+            status_code=429, content={"detail": "Too many requests. Please wait a moment and try again."}
+        )
 
     @app.exception_handler(APIError)
     async def api_error_handler(request: Request, exc: APIError):

@@ -494,6 +494,8 @@ export function UnifiedInput() {
     } else if (typeof detail === "object" && detail?.code === "STORAGE_LIMIT_EXCEEDED") {
       setStorageLimitError(detail.message || "Storage limit reached");
       setError(null);
+    } else if (typeof detail === "string") {
+      setError(detail);
     } else {
       setError(err instanceof Error ? err.message : "Failed to create document");
     }

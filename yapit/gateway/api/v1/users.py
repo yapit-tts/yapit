@@ -24,6 +24,7 @@ from yapit.gateway.domain_models import (
     UserSubscription,
     UserVoiceStats,
 )
+from yapit.gateway.rate_limit import limiter
 from yapit.gateway.stack_auth.users import delete_user as stack_auth_delete_user
 from yapit.gateway.usage import get_engagement_stats, get_usage_breakdown, get_usage_summary, get_user_subscription
 
@@ -209,7 +210,9 @@ class AnonymousSessionResponse(BaseModel):
 
 
 @router.post("/anonymous-session", response_model=AnonymousSessionResponse)
+@limiter.limit("10/hour")
 async def create_anonymous_session(
+    request: Request,
     settings: SettingsDep,
 ) -> AnonymousSessionResponse:
     """Issue a server-signed anonymous session ID."""

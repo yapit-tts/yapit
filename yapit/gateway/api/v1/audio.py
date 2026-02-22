@@ -4,11 +4,13 @@ from fastapi.responses import Response
 from yapit.contracts import TTS_AUDIO_CACHE
 from yapit.gateway.auth import authenticate
 from yapit.gateway.deps import AudioCache, CurrentBlockVariant, RedisClient
+from yapit.gateway.rate_limit import limiter
 
 router = APIRouter(prefix="/v1", tags=["audio"])
 
 
 @router.get("/audio/{variant_hash}", dependencies=[Depends(authenticate)])
+@limiter.exempt
 async def get_audio(
     variant: CurrentBlockVariant,
     redis: RedisClient,
