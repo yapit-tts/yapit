@@ -105,16 +105,20 @@ jobs:
           KOKORO_CPU_REPLICAS=1
           YOLO_CPU_REPLICAS=1
           EOF
+      - name: Prepare bind mount dirs for non-root containers
+        run: |
+          mkdir -p gateway-data images
+          sudo chown -R 1000:1000 gateway-data images
       - run: make dev-ci
       - run: make test-integration-local
       - name: Show logs on failure
         if: failure()
         run: |
-          docker compose -f docker-compose.yml -f docker-compose.dev.yml logs gateway
-          docker compose -f docker-compose.yml -f docker-compose.dev.yml logs stack-auth
-          docker compose -f docker-compose.yml -f docker-compose.dev.yml logs kokoro-cpu
-          docker compose -f docker-compose.yml -f docker-compose.dev.yml logs yolo-cpu
-          docker compose -f docker-compose.yml -f docker-compose.dev.yml ps -a
+          docker compose -p yapit-dev --env-file .env --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml logs gateway
+          docker compose -p yapit-dev --env-file .env --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml logs stack-auth
+          docker compose -p yapit-dev --env-file .env --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml logs kokoro-cpu
+          docker compose -p yapit-dev --env-file .env --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml logs yolo-cpu
+          docker compose -p yapit-dev --env-file .env --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml ps -a
 
   test-frontend:
     if: ${{ inputs.skip_tests != true && !contains(github.event.head_commit.message, '[skip tests]') }}
