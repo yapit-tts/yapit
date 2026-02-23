@@ -1,7 +1,9 @@
 ---
-status: active
+status: done
 refs:
   - "[[2026-02-21-red-team-security-audit]]"
+  - 143ac7e
+  - 25d04b5
 ---
 
 # Server-issued anonymous session tokens
@@ -34,7 +36,7 @@ HMAC-signed tokens. Stateless, no Redis/DB state needed.
 
 - `anonymous_session_secret` goes in `.env.sops` (new secret, generated once)
 - HMAC-SHA256 is sufficient
-- No need to validate anonymous IDs on every request — only on claim. The ID itself is still opaque for document ownership.
+- HMAC must be validated on **every request** that uses anonymous auth (in `auth.py`), not just on claim. Without this, attackers can still send arbitrary `X-Anonymous-ID` headers to bypass per-user rate limits (each unique ID gets its own bucket). Rejecting unrecognized anonymous IDs makes per-user rate limits meaningful.
 
 ## Done When
 

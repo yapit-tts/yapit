@@ -1,5 +1,5 @@
 ---
-status: active
+status: done
 refs: []
 ---
 
@@ -33,7 +33,7 @@ New metric event `billing_processed` tracks cold path health (processing time pe
 - [x] Dashboard updated with billing consumer section (reconciliation delta, processing time chart)
 - [x] Monitoring agent (`scripts/report.sh`) updated: billing_processed event docs, reconciliation check, liveness check
 - [x] Knowledge files updated: [[tts-flow]] (split architecture), [[metrics]] (billing_processed event)
-- [ ] Stress test validates: no pool starvation at 5+ users with GPU workers
+- [x] Stress test validates: no pool starvation at 5+ users with GPU workers — billing reconciliation 180/180, zero delta. Pool starvation eliminated. Remaining latency (p50 45s finalize) is entirely cache.store (SQLite fsync) — tracked in [[2026-02-20-cache-store-hot-path]]
 
 ## Considered & Rejected
 

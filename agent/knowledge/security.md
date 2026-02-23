@@ -4,14 +4,44 @@
 
 - [[xss-security-audit]] — XSS and SSRF analysis, DOMPurify, Smokescreen proxy
 - [[beta-launch-security-checklist]] — CORS, CSP, secrets, SQL injection, CSRF, auth gaps, deps, HTTPS, error leakage, SSRF
+- [[2026-02-21-red-team-security-audit]] — Offensive pre-public-launch audit: billing bypass, SSRF, anonymous session theft, infrastructure trust boundaries
 
-## Patterns
+## Auth & Trust Boundaries
 
-- SSRF protection via Smokescreen proxy (network-layer, not application-level IP validation)
-- Frontend renders from inline AST (no `dangerouslySetInnerHTML`), raw `html_inline` nodes dropped in transformer
-- File uploads stored by content hash, not user-supplied filename
-- Security headers set in `frontend/nginx.conf`: HSTS, X-Frame-Options DENY, X-Content-Type-Options nosniff, Referrer-Policy
+- **Anonymous sessions** are server-issued UUIDs with HMAC-SHA256 tokens. The server validates the token on every request (both HTTP and WebSocket) — not just on claim. This prevents forged anonymous IDs and closes the rate-limit bucket multiplication vector (each anonymous ID gets its own rate-limit bucket). Session endpoint: `POST /v1/users/anonymous-session`. Frontend auto-renews on 401 (handles secret rotation). See [[2026-02-21-anonymous-session-hmac]] for the implementation task.
+- **Token-based auth** (Bearer tokens via Stack Auth), not cookie-based → CSRF not applicable.
+- **WebSocket auth** uses query params (`?token=...`) — a known limitation since browsers don't support headers on WS upgrade. Tokens appear in proxy logs. Keep Stack Auth token expiry short.
+- **Content-addressed resources** (audio variants, images) have no per-user ownership check by design — they're shared cache keys (SHA256 of content). This is a deliberate tradeoff for cache efficiency, not a bug.
+
+## SSRF
+
+- All HTTP fetching routes through Smokescreen proxy (`http://smokescreen:4750`) — network-layer SSRF protection, no TOCTOU/DNS rebinding vulnerability.
+- **Playwright must also use the proxy** — `browser.new_context(proxy={"server": "http://smokescreen:4750"})`. Without this, `page.goto()` bypasses Smokescreen and can reach internal Docker services. Fixed in `174c47d`.
+- Application-level IP validation is insufficient for SSRF (DNS rebinding). See [[xss-security-audit]] for the full analysis of why Smokescreen was chosen over code-level validation.
+
+## Frontend Security
+
+- **No `dangerouslySetInnerHTML`** anywhere. Frontend uses a typed AST renderer — backend parses markdown into AST, frontend renders via React components. Unknown node types return `null`. Raw `html_inline` nodes dropped in `transformer.py`.
+- **CSP not deployed** (deferred since beta). See [[2026-02-09-content-security-policy]]. Blocker: inline `<style>` in `AccountSettingsPage.tsx` needs refactoring to CSS file first.
+- Security headers in `frontend/nginx.conf`: HSTS, X-Frame-Options DENY, X-Content-Type-Options nosniff, Referrer-Policy.
+
+## Infrastructure
+
+- **Authenticated Origin Pulls (mTLS)** — Traefik requires a valid client certificate signed by our custom CA. Only our Cloudflare zone has this cert, so direct-to-origin connections are rejected at the TLS handshake. This makes `CF-Connecting-IP` trustworthy (prerequisite for [[2026-02-21-endpoint-rate-limiting]]). Custom cert (not Cloudflare's shared one) because the origin IP is public and anyone can set up a Cloudflare zone cheaply. Cert expires 2036, CA key in sops. See [[vps-setup]] for Traefik config.
+- **Rate limiting** — Two layers. Cloudflare handles volumetric DDoS at the edge. App-level slowapi (`yapit/gateway/rate_limit.py`) handles per-IP abuse of expensive operations. Global default applies to all routes via `SlowAPIMiddleware`; expensive endpoints get tighter per-route limits via `@limiter.limit()` decorators; hot-path/external endpoints (audio, webhook) are exempt via `@limiter.exempt`. See [[2026-02-21-endpoint-rate-limiting]] for the endpoint table.
+- **Client IP resolution:** `CF-Connecting-IP` → nginx `map` rewrites `X-Forwarded-For` (falls back to `$remote_addr` without Cloudflare) → uvicorn `--proxy-headers` sets `request.client.host`. AOP guarantees the header is trustworthy in prod. Without AOP (selfhost), the header is spoofable — documented limitation.
+- **slowapi gotcha:** Decorated routes are handled by the decorator, not the middleware — `SlowAPIMiddleware` skips them. `override_defaults=True` (the default) means per-route limits *replace* the global default, they don't stack. Undecorated routes get the global default via middleware, which uses its own `Request` from ASGI scope — endpoint function signatures don't matter for the default.
+- **Stack Auth dashboard** (`auth.yapit.md`) is behind Cloudflare Access (email auth wall at the edge). SDK auth calls (`/api/*`) bypass the access policy. See [[vps-setup]] for details.
+- **Redis** has no auth but is firewall-protected (Hetzner + UFW). Not a meaningful risk — if you can reach Redis, you're already on the machine. Defense-in-depth, not a blocker.
+- **All containers run as non-root.** Custom images use `USER appuser` (UID 1000); third-party images use their native users (`node`, `nginx`, `redis`). `cap_drop: [ALL]` on every service strips all Linux capabilities. `no-new-privileges: true` set globally in `/etc/docker/daemon.json` (Swarm ignores per-service `security_opt`). Postgres/metrics-db get selective `cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID, KILL]` for their entrypoint privilege-drop dance. See [[2026-02-21-non-root-containers]] for implementation details.
+- **Flat Docker network** — all services on `yapit-network`. Workers only need Redis but can reach Postgres, Stack Auth. Segmentation would limit blast radius of a compromised worker.
+
+## Billing
+
+- Billing checks must run for every server-side synthesis job, unconditionally. The `synthesis_mode` bypass was removed — see [[2026-02-21-remove-synthesis-mode-billing-bypass]].
+- Free tier: `server_kokoro_characters=0` blocks server synthesis. Browser TTS (Kokoro.js) is unlimited and runs entirely client-side.
 
 ## Gotchas
 
 - **nginx `add_header` inheritance** — If a `location` block has ANY `add_header`, it stops inheriting ALL server-level `add_header` directives. Security headers must be repeated in every location block that has its own `add_header` (e.g., cache-control blocks). Auth proxy locations (`/auth/api/`, `/auth/`) must NOT get `X-Frame-Options DENY` — Stack Auth uses iframes for token refresh.
+- **SQL injection false positives** — `cache.py` and `metrics.py` use f-strings in SQL but only for structural elements (`IN (?, ?, ?)` placeholder construction, column name lists from hardcoded arrays). Actual values are always parameterized. Confirmed safe in both the beta audit and the red-team audit.

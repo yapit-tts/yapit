@@ -18,9 +18,13 @@ Standalone state machine that owns all playback logic. Extracted from PlaybackPa
 
 **Variant-keyed cache:** Audio is cached by `{blockIdx}:{model}:{voice}`. Changing voice invalidates entries. Changing document clears the entire cache (document identity is implicit).
 
-**Cancellation pattern:** Pending synthesis promises resolve to `null` on voice change, stop, or document change. The `playBlock` loop checks for null and aborts, preventing orphaned audio from playing after the user moved on. See [[tts-flow]] for the server-side pipeline.
+**Cancellation pattern:** Pending synthesis promises resolve to `null` on voice change, stop, or document change. Cursor jumps evict all pending synthesis — both frontend promises and server-side queue. See [[tts-flow]] for the server-side pipeline.
+
+**Error recovery:** Playback engine distinguishes per-block failures (advance past) from session-level errors like usage limit (stop). The `recoverable` flag on WS status messages drives this — see [[tts-flow]].
 
 **Audio output:** `AudioPlayer` (`frontend/src/lib/audio.ts`) plays through `HTMLAudioElement` directly (no Web Audio routing). Speed control via `audioElement.playbackRate` + `preservesPitch`. Volume via `audioElement.volume` (read-only on iOS — hardware buttons only). An `AudioContext` exists separately for `decodeAudioData`/`createBuffer` in synthesizers but is NOT on the audio output path.
+
+**Gotcha — kokoro-js WebGPU requires transformers.js v4 override:** kokoro-js 1.2.1 (last release May 2025, unmaintained) ships transformers.js v3 which uses onnxruntime-web's WebGPU path. This produces invalid buffer validation errors on certain chunks, causing corrupted audio. We override to `@huggingface/transformers@4.0.0-next.4` (native WebGPU EP) in `frontend/package.json` `overrides`. v4 also changes `RawAudio`: use `.data` getter (always returns `Float32Array`) instead of `.audio` property. Remove the override if kokoro-js ever updates to v4 natively.
 
 **Gotcha — HTMLAudioElement is required for pitch-preserving speed:** `AudioBufferSourceNode.playbackRate` changes speed AND pitch (chipmunk effect). Only `HTMLAudioElement` has `preservesPitch`. An intermediate SoundTouchJS approach was tried but had quality degradation above 1.6x. Don't go back to AudioBufferSourceNode for playback.
 
@@ -96,13 +100,19 @@ element (Xpx) → parent (Ypx) → grandparent (Zpx) → ...
 ```
 Find which ancestor is the constraint, fix there. Flex containers especially: children don't auto-stretch width in flex-row parents without `w-full`.
 
-## CSS Theming
+## CSS Theming & Dark Mode
 
-Check `frontend/src/index.css` for existing color variables before adding new colors. Prefer theme variables over hardcoded Tailwind classes (`text-emerald-600`) for consistency.
+Light mode + multiple dark themes. All colors defined as oklch CSS variables in `frontend/src/index.css`. Anti-FOUC script in `index.html` applies theme before first paint.
 
-When adding UI, proactively refactor repeated color values into theme variables. If you see the same oklch/color used in multiple places, extract it.
+- **`useSettings` hook** (`frontend/src/hooks/useSettings.tsx`) — persists theme and other user preferences to localStorage with cross-tab sync.
+
+Check `index.css` for existing color variables before adding new colors. Prefer theme variables over hardcoded Tailwind classes.
 
 **Gotcha — `text-primary` in dark mode:** Changes from green to gray between modes. Use `--accent-success` for text that should stay green in both modes.
+
+**Gotcha — Stack Auth theme detection:** Needs explicit `color-scheme` CSS property on `:root`. Chrome returns raw oklch from `getComputedStyle`, breaking Stack Auth's luminance-based detection fallback.
+
+**Gotcha — dark theme contrast:** Test switch thumbs, audio highlights, and borders in all dark themes. `--muted` controls progress bar cached/pending distinction.
 
 ## Scroll Handling
 

@@ -56,8 +56,8 @@ Separate TimescaleDB instance for metrics (isolated from main Postgres).
 - `billing_sync_drift` — Background sync detected drift from Stripe
 - `billing_processed` — TTS billing consumer batch (duration_ms, text_length, data.events_count, data.users_count). Reconcile count(synthesis_complete) vs sum(data.events_count) to detect lost billing events.
 
-### Queue
-- `eviction_triggered` — Queued blocks evicted after cursor move
+### Rate Limiting
+- `api_rate_limit` — External API returned 429 (status_code, retry_count, data.api_name). Emitted before retry from Gemini and Inworld adapters.
 
 ## Retention & Aggregates
 

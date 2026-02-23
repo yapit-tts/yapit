@@ -15,7 +15,7 @@ Stack Auth has two components: the Docker server image (`stackauth/server:<commi
 
 **Server (Docker image):**
 1. Pick a commit SHA from `main` branch (they don't use releases/tags)
-2. Update `docker/Dockerfile.stackauth`: `FROM stackauth/server:<new-sha>`
+2. Update `docker/Dockerfile.stackauth`: `FROM stackauth/server:<new-sha>` (verify USER hasn't changed)
 3. Run `make dev-cpu` — let migrations run on dev DB
 4. Check Stack Auth container logs for migration output
 5. If schema changed significantly: regenerate `dev/init-db.sql` (see [[stack-auth-dev-setup]])

@@ -1,6 +1,7 @@
 ---
-status: active
+status: done
 started: 2026-01-24
+refs: [6ca67aa, #71]
 ---
 
 # Task: Design/CSS Audit

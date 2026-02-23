@@ -28,6 +28,7 @@ VPS (Hetzner)
 - **Domain:** yapit.md
 - **Tailscale IP:** 100.87.244.58 (hostname `yapit-prod`)
 - **Docker log rotation:** `/etc/docker/daemon.json` — 50MB x 3 files per container
+- **`no-new-privileges: true`** in daemon.json — prevents privilege escalation via setuid binaries in all containers. Required because Swarm ignores per-service `security_opt`.
 
 ## Initial Setup
 
@@ -100,6 +101,9 @@ Use "Full" (not "Full strict") with Origin Certificates.
 global:
   sendAnonymousUsage: false
 
+log:
+  level: INFO
+
 providers:
   swarm:
     exposedByDefault: false
@@ -122,6 +126,13 @@ entryPoints:
 
 api:
   insecure: false
+
+accessLog:
+  filePath: "/dev/stdout"
+  format: json
+  fields:
+    headers:
+      defaultMode: keep
 ```
 
 ### TLS Config: `/opt/yapit/traefik/dynamic/certs.yml`
@@ -136,7 +147,17 @@ tls:
       defaultCertificate:
         certFile: /etc/traefik/certs/origin.crt
         keyFile: /etc/traefik/certs/origin.key
+  options:
+    default:
+      clientAuth:
+        caFiles:
+          - /etc/traefik/certs/aop-ca.crt
+        clientAuthType: RequireAndVerifyClientCert
 ```
+
+The `default` TLS option name is special in Traefik — applies to all routers automatically, no per-router labels needed. The `options` block configures Authenticated Origin Pulls (mTLS): only connections presenting a client cert signed by our CA are accepted. See [[security]] for why.
+
+Dynamic config changes (including TLS options) are hot-reloaded by the file provider (`watch: true`) without restart. Static config changes (log level, API settings, entrypoints) require container recreation.
 
 ### Start Traefik
 
@@ -149,10 +170,12 @@ docker run -d \
   -v /opt/yapit/traefik:/etc/traefik:rw \
   --network yapit-network \
   -e DOCKER_API_VERSION=1.44 \
-  traefik:latest
+  traefik:v3.6
 ```
 
-**Note:** `DOCKER_API_VERSION=1.44` is required - newer Docker versions have API changes that break older Traefik images.
+**Notes:**
+- `DOCKER_API_VERSION=1.44` is required — newer Docker versions have API changes that break older Traefik images.
+- Pinned to `v3.6` (not `latest`) to prevent breaking changes on container recreation. Patch updates within v3.6.x are safe.
 
 ## Security Hardening
 
@@ -248,6 +271,10 @@ Deploy workflow uses `environment: production`. Secrets set at repo level (`gh s
 ```bash
 gh secret set VPS_SSH_KEY --repo yapit-tts/yapit --env production < ~/.ssh/yapit-deploy-ci
 ```
+
+## Cloudflare Zone
+
+**Zone ID:** `e307c22342c2d1dada1d4d45da3e1bce`
 
 ## DNS Records (Cloudflare)
 
@@ -387,7 +414,7 @@ docker run -d \
   -v /opt/yapit/traefik:/etc/traefik:rw \
   --network yapit-network \
   -e DOCKER_API_VERSION=1.44 \
-  traefik:latest
+  traefik:v3.6
 ```
 
 ### Debug Traefik
@@ -403,7 +430,7 @@ api:
 Then restart with port 8080 exposed:
 ```bash
 docker stop traefik && docker rm traefik
-docker run -d --name traefik ... -p 8080:8080 ... traefik:latest
+docker run -d --name traefik ... -p 8080:8080 ... traefik:v3.6
 curl http://localhost:8080/api/http/routers
 ```
 
@@ -417,4 +444,4 @@ curl http://localhost:8080/api/http/routers
 | `.env.sops` | Encrypted secrets |
 | `/opt/yapit/traefik/traefik.yml` | Traefik config (on VPS) |
 | `/opt/yapit/traefik/dynamic/certs.yml` | TLS cert config (on VPS) |
-| `/opt/yapit/traefik/certs/` | Origin cert + key (on VPS) |
+| `/opt/yapit/traefik/certs/` | Origin cert + key + AOP CA cert (on VPS) |

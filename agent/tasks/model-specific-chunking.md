@@ -1,10 +1,11 @@
 ---
-status: active
+status: done
 started: 2026-01-03
-priority: low
 ---
 
 # Task: Model-Specific Block Chunking
+
+Closed: won't implement.
 
 ## Idea
 

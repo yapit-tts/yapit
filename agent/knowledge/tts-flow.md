@@ -39,11 +39,11 @@ Frontend connects via WebSocket for real-time synthesis control:
 |-----------|------|---------|
 | Client→Server | `synthesize` | Request synthesis for block indices |
 | Client→Server | `cursor_moved` | Evict blocks outside playback window |
-| Server→Client | `status` | Per-block status update (queued/processing/cached/error/skipped) |
+| Server→Client | `status` | Per-block status update (queued/processing/cached/error/skipped). Includes `recoverable` bool — `false` only for session-level errors (usage limit). Playback engine advances past recoverable errors. |
 | Server→Client | `evicted` | Blocks evicted after cursor move |
 | Server→Client | `error` | Document-level errors (not found, invalid model) |
 
-**Cursor-aware eviction:** When cursor moves, backend evicts queued blocks the user likely won't play. Uses sorted set for O(log N) eviction.
+**Cursor-aware eviction:** When cursor moves (`cursor_moved` message), backend evicts ALL pending blocks — clean slate. The frontend is the sole authority on what blocks to synthesize; the next `synthesize` message fills the queue fresh. Uses sorted set for O(log N) eviction.
 
 ### 3. Deduplication
 
@@ -178,11 +178,11 @@ Current models: kokoro, inworld-1.5, inworld-1.5-max. Model/voice definitions in
 - **Per-block vs document-level errors:** Document-level errors use `error` message type (see table above). Per-block errors (usage limit exceeded) use `status` message type with `status="error"` field. Tests must check the correct message type.
 - **Eviction timing:** Pending check happens at dequeue time, not enqueue. Jobs can sit in queue, then get skipped if cursor moved.
 - **Variant sharing:** Two users requesting same text+model+voice share the cached audio. Good for efficiency, but means cache eviction affects everyone.
-- **Empty audio:** Some blocks produce empty audio (whitespace-only). Marked as "skipped", frontend auto-advances.
+- **Empty audio / per-block failures:** Some blocks produce empty audio (whitespace-only text, garbage markup from extraction). Marked as "skipped" or "error" with `recoverable: true`. Frontend tracks these in a `resolvedEmpty` set so buffer readiness checks still work, and auto-advances past them. Only session-level errors (`recoverable: false`, e.g. usage limit) stop playback.
 - **Usage multiplier:** Different models have different character costs. `TTSModel.usage_multiplier` in database. Passed in job to avoid DB query on finalization.
 - **Voice change race condition:** WebSocket status messages include `model_slug` and `voice_slug` to prevent stale cache hits when user changes voice mid-playback. Without this, status messages from old voice arriving after reset would incorrectly mark blocks as cached.
 - **Double billing prevention:** Inflight key deletion happens at START of result processing. First result atomically deletes key and proceeds; duplicates (from visibility timeout requeue + original completion) see delete() return 0 and skip.
-- **Cache warming:** `yapit/gateway/warm_cache.py` pre-synthesizes voice previews and showcase documents. Runs as a gateway background task on startup.
+- **Cache warming:** `yapit/gateway/warm_cache.py` is a one-shot CLI (not a background task). Run via `make warm-cache` when voices or showcase content change. Pinned entries are exempt from LRU eviction. See [[inworld-tts]] for details.
 - **Inworld duration is estimated:** Calculated from OGG Opus file size (~14.5KB/sec assumption in adapter). Frontend uses decoded AudioBuffer for accurate playback timing.
 - **Codec is not part of variant hash:** In normal dev flow, `make dev-cpu` clears cache (`down -v`). If you run experiments without full teardown, stale cached blobs can make codec/endpoint A/B tests invalid.
 - **Per-document pubsub channels:** Pubsub scoped to `tts:done:{user_id}:{document_id}` — prevents cross-tab contamination.

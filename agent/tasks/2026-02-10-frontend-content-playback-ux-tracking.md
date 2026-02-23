@@ -1,6 +1,7 @@
 ---
-status: active
+status: done
 started: 2026-02-10
+refs: [40b6503, 24182c0, 6a9bc28]
 ---
 
 # Task: Frontend Content, Playback & UX Issues — Research & Planning
@@ -17,26 +18,26 @@ Investigate and plan fixes/features for all frontend content-rendering, playback
 
 - **Pause-then-play required** — Blocks show green/filled but won't play until pause→play or restart. Especially with Inworld. Suggests state machine or audio element issue.
 - **Seek-to-start spinner bug** — Jumping back to start while playing shows infinite loading, but audio is cached. Pause→play resolves instantly.
-- **Minimum blocks to start** — Currently >1; should evaluate setting to 1 since TTS is faster-than-realtime.
+- ~~**Minimum blocks to start**~~ — ✅ Set to 1.
 
-### 2. LaTeX/Rendering
+### 2. LaTeX/Rendering — ✅ Fixed (AST-based rendering refactor)
 
-- **Intermittent LaTeX unrendering** — Inline math shows raw LaTeX when block is highlighted/played. Not reliably reproducible, goes away on refresh.
-- **Reload required for LaTeX** — Sometimes 1-2 reloads needed for all LaTeX to render. Possibly related to LaTeX within tables or other container elements.
+- ~~**Intermittent LaTeX unrendering**~~ — Fixed by AST-based rendering.
+- ~~**Reload required for LaTeX**~~ — Fixed in same refactor.
 
 ### 3. Content & Navigation
 
-- **Dead links refresh page** — `[link]()` with empty href causes navigation/refresh; should be inert but styled.
-- **Footnotes in collapsed sections** — If last section is collapsed, footnotes unreachable. Should be section-independent.
+- ~~**Dead links refresh page**~~ — ✅ Fixed in frontend refactor.
+- ~~**Footnotes in collapsed sections**~~ — ✅ Fixed in frontend refactor.
 - **Section URL sharing** — Outliner clicks should update URL hash so section links are shareable.
 
-### 4. Markdown Export UX
+### 4. Markdown Export UX — ✅ Done
 
-- **Tag stripping toggle** — Export with yap tags stripped (clean markdown) vs preserved. Default: stripped. Research best UX patterns for this.
+- ~~**Tag stripping toggle**~~ — Implemented.
 
-### 5. Back Buffer Sizing
+### 5. Back Buffer Sizing — ✅ Done
 
-- **Increase browser back buffer** — With Opus encoding, evaluate 16/32 blocks cached in-browser vs current.
+- ~~**Increase browser back buffer**~~ — Set to 32 blocks.
 
 ## Sources
 

@@ -20,12 +20,13 @@ Cloudflare (edge SSL)
 
 **Prefer `docker exec` for ad-hoc commands.** `docker compose exec` parses all compose files first — fails on unset env vars (e.g., `KOKORO_CPU_REPLICAS`). `docker exec yapit-postgres-1 psql ...` bypasses compose entirely.
 
-Layered compose files via `-f` flags:
+Compose files — **prod is standalone, not an overlay on base**:
 
-- `docker-compose.yml` — Base services (postgres, redis, gateway, stack-auth, kokoro-cpu, yolo-cpu)
-- `docker-compose.dev.yml` — Dev overrides (ports, volumes, stripe-cli)
-- `docker-compose.prod.yml` — Production (Swarm mode, Traefik labels, image refs)
-- `docker-compose.selfhost.yml` — Self-hosting overlay (no billing, no SOPS, `DB_CREATE_TABLES` for Alembic-free setup)
+- `docker-compose.yml` — Base services, used by dev and selfhost (NOT prod)
+- `docker-compose.dev.yml` — Dev overrides, layered on base via `-f`
+- `docker-compose.prod.yml` — **Standalone** production file for `docker stack deploy`. Duplicates service definitions with Swarm-specific config (Traefik labels, image refs, deploy constraints). Changes to base compose do NOT propagate to prod — both files must be updated independently.
+- `docker-compose.selfhost.yml` — Self-hosting overlay on base (no billing, no SOPS, `DB_CREATE_TABLES` for Alembic-free setup)
+- `docker-compose.worker.yml` — External GPU workers (connects to prod Redis via Tailscale)
 
 **Worker replicas** configured via env vars (`KOKORO_CPU_REPLICAS`, `YOLO_CPU_REPLICAS`) in the base compose file, set in `.env.{dev,prod}`.
 
@@ -56,17 +57,7 @@ Workers can run on separate machines (home GPU, external VPS, RunPod):
 
 ## CI/CD
 
-`.github/workflows/deploy.yml`
-
-On push to `main`:
-1. Lint + test (parallel)
-2. Build images → ghcr.io
-3. Deploy via SSH (`scripts/deploy.sh`)
-4. Verify health endpoints
-
-Skip tests: `[skip tests]` in commit message.
-
-~10 min total (tests ~5 min, build+deploy ~5 min). Frontend tests (vitest) also run in CI.
+See [[ci]] for the full pipeline, debugging, and gotchas.
 
 **Gotcha — Swarm image pruning:** `docker image prune -af` doesn't work in Swarm — all pulled `:latest` digests are considered "in use" by service specs. Deploy script compares each image ID against running container image IDs and removes non-matching ones.
 
@@ -126,7 +117,7 @@ When **adding or removing** config files or Settings fields, check ALL of these:
 - `test_clock_setup.py` — Stripe test clock for billing tests. Flags: `--tier`, `--usage-tokens`, `--advance-days`, `--cleanup`
 
 **Cache warming:**
-- `yapit/gateway/warm_cache.py` — Pre-synthesizes voice previews and showcase documents. Runs as gateway background task on startup. See [[tts-flow]].
+- `yapit/gateway/warm_cache.py` — One-shot CLI that pre-synthesizes voice previews and showcase documents, then pins them in the SQLite cache. Run via `make warm-cache` on prod (tmux session). No background loop — run manually when voices or showcase content change. See [[inworld-tts]] for cache pinning details.
 
 **Stress testing:**
 - `stress_test.py` — TTS stress testing. Run: `uv run scripts/stress_test.py --help`

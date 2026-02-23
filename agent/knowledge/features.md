@@ -23,3 +23,8 @@ User-facing capabilities. Links to task files (for simpler features) or dedicate
 - Markdown export — copy/download with yap tags stripped, annotated export option
 - Showcase documents — pre-warmed cached content for new users without WebGPU
 - Self-hosting — `make self-host` one-command setup
+- Dark mode with multiple theme variants + theme selector
+- Voice picker search (name + description match) — see [[inworld-tts]]
+- Lifetime engagement stats (per-voice listening time, survives document deletion) on account page
+- Usage breakdown — expandable per-voice and per-document breakdowns on subscription page
+- Section URL sharing — outliner clicks update URL hash

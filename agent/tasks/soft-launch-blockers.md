@@ -1,5 +1,5 @@
 ---
-status: active
+status: done
 type: tracking
 started: 2026-01-05
 ---
@@ -75,7 +75,7 @@ NOT public launch (HN, ToS, privacy policy, EU withdrawal). Just "10-20 friends 
 
 ## Public Launch Blockers (NOT soft launch)
 
-- [[stripe-eu-withdrawal]] — waiting on Stripe
-- Terms of Service
-- Privacy Policy
-- rate-limiting
+- ~~[[stripe-eu-withdrawal]] — waiting on Stripe~~ ✅ resolved 2026-01-07, waiver language in ToS
+- ~~Terms of Service~~ ✅ live at /terms (updated 2026-02-18)
+- ~~Privacy Policy~~ ✅ live at /privacy (updated 2026-02-18)
+- Per-endpoint rate limiting — in progress, see [[2026-02-21-endpoint-rate-limiting]]

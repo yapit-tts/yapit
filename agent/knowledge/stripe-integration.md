@@ -262,6 +262,7 @@ Fix: With Issue 1 fixed, script now reaches product updates. Re-run `stripe_setu
 - **Invoice subscription ID moved** — API 2025-03-31 changed `invoice.subscription` to `invoice.parent.subscription_details.subscription`
 - **Managed Payments changelog requires login** — can't fetch via WebFetch
 - **CLI-created subscriptions don't use Managed Payments** — verify with `stripe invoices list | jq '.data[0].issuer.type'` — should be `"stripe"` not `"self"`
+- **Webhook URL change = new endpoint + new signing secret** — `upsert_webhook` in `stripe_setup.py` matches by URL. Changing the URL creates a new webhook endpoint with a fresh signing secret (printed on creation). Must update `STRIPE_WEBHOOK_SECRET` in `.env.sops` and delete the old endpoint from Stripe.
 
 ### Portal Configuration
 - **Portal downgrades with "schedule at period end"** — uses subscription schedules, which don't work with Managed Payments. We set `schedule_at_period_end.conditions` to empty array for immediate downgrades.

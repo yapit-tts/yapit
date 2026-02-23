@@ -1,5 +1,5 @@
 ---
-status: active
+status: done
 refs:
   - "[[2026-02-21-endpoint-rate-limiting]]"
   - "[[security]]"
