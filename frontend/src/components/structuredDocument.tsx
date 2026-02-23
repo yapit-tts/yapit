@@ -1158,7 +1158,7 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-4 pb-2 border-b border-b-border">
             <p
               className={cn(
-                "text-4xl font-bold sm:mr-4",
+                "text-4xl font-bold sm:mr-4 break-words",
                 sourceUrl && "cursor-pointer hover:opacity-80"
               )}
               onClick={sourceUrl ? handleTitleClick : undefined}
@@ -1199,7 +1199,7 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
           )}
           onClick={onTitleChange ? () => { setEditedTitle(title); setIsEditingTitle(true); } : undefined}
         >
-          <h1 className="text-4xl font-bold sm:mr-4 break-all min-w-0 flex-1">
+          <h1 className="text-4xl font-bold sm:mr-4 break-words min-w-0 flex-1">
             {sourceUrl ? (
               <a
                 href={sourceUrl}
