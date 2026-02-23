@@ -609,7 +609,9 @@ async def _billing_precheck(
     redis: RedisClient,
 ) -> None:
     """Estimate tokens, check usage limit, create reservation."""
-    estimate = estimate_document_tokens(content, content_type, config.output_token_multiplier, pages)
+    estimate = await asyncio.get_running_loop().run_in_executor(
+        cpu_executor, estimate_document_tokens, content, content_type, config.output_token_multiplier, pages
+    )
     tolerance = PER_PAGE_TOLERANCE * estimate.num_pages
     amount_to_check = max(0, estimate.total_tokens - tolerance)
 

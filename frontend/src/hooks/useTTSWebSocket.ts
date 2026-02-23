@@ -31,8 +31,8 @@ export function useTTSWebSocket(
   const onConnectRef = useRef(onConnect);
   onConnectRef.current = onConnect;
 
-  const MAX_RECONNECT_ATTEMPTS = 5;
   const BASE_RECONNECT_DELAY = 1000;
+  const MAX_RECONNECT_DELAY = 30000;
 
   const [isConnected, setIsConnected] = useState(false);
   const [isReconnecting, setIsReconnecting] = useState(false);
@@ -111,18 +111,13 @@ export function useTTSWebSocket(
         wsRef.current = null;
 
         if (event.code !== 1000 && event.code !== 1008) {
-          if (reconnectAttemptsRef.current < MAX_RECONNECT_ATTEMPTS) {
-            setIsReconnecting(true);
-            const delay = BASE_RECONNECT_DELAY * Math.pow(2, reconnectAttemptsRef.current);
-            console.log(`[TTS WS] Reconnecting in ${delay}ms (attempt ${reconnectAttemptsRef.current + 1})`);
-            reconnectTimeoutRef.current = window.setTimeout(() => {
-              reconnectAttemptsRef.current++;
-              connect();
-            }, delay);
-          } else {
-            setIsReconnecting(false);
-            setConnectionError("Connection lost. Please refresh the page.");
-          }
+          setIsReconnecting(true);
+          const delay = Math.min(BASE_RECONNECT_DELAY * Math.pow(2, reconnectAttemptsRef.current), MAX_RECONNECT_DELAY);
+          console.log(`[TTS WS] Reconnecting in ${delay}ms (attempt ${reconnectAttemptsRef.current + 1})`);
+          reconnectTimeoutRef.current = window.setTimeout(() => {
+            reconnectAttemptsRef.current++;
+            connect();
+          }, delay);
         } else if (event.code === 1008) {
           setIsReconnecting(false);
           setConnectionError("Authentication failed. Please log in again.");
@@ -130,7 +125,12 @@ export function useTTSWebSocket(
       };
     } catch (err) {
       console.error("[TTS WS] Failed to connect:", err);
-      setConnectionError("Failed to connect to server");
+      setIsReconnecting(true);
+      const delay = Math.min(BASE_RECONNECT_DELAY * Math.pow(2, reconnectAttemptsRef.current), MAX_RECONNECT_DELAY);
+      reconnectTimeoutRef.current = window.setTimeout(() => {
+        reconnectAttemptsRef.current++;
+        connect();
+      }, delay);
     }
   }, [getWebSocketUrl]);
 

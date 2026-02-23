@@ -43,7 +43,7 @@ def detect_arxiv_url(url: str) -> tuple[str, str] | None:
 async def fetch_from_markxiv(markxiv_url: str, arxiv_id: str) -> str:
     """Fetch markdown from markxiv service."""
     try:
-        async with httpx.AsyncClient(timeout=120.0) as client:
+        async with httpx.AsyncClient(timeout=45.0) as client:
             response = await client.get(f"{markxiv_url}/abs/{arxiv_id}")
     except httpx.TimeoutException:
         await log_event("markxiv_error", data={"arxiv_id": arxiv_id, "error": "timeout"})

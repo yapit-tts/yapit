@@ -31,6 +31,12 @@ def _extract_with_trafilatura(html: str) -> str | None:
     )
 
 
+def _convert_with_html2text(html: str) -> str:
+    converter = html2text.HTML2Text()
+    converter.body_width = 0
+    return converter.handle(html)
+
+
 def _has_js_framework(html: str) -> bool:
     return bool(_JS_PATTERN_REGEX.search(html))
 
@@ -74,9 +80,7 @@ async def extract_website_content(
     if not markdown:
         logger.warning(f"Trafilatura returned None, falling back to html2text for {url}")
         await log_event("html_fallback_triggered", data={"url": url})
-        converter = html2text.HTML2Text()
-        converter.body_width = 0
-        markdown = converter.handle(html_str)
+        markdown = await asyncio.to_thread(_convert_with_html2text, html_str)
         extraction_method = "html2text"
 
     if url:

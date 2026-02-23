@@ -1,5 +1,6 @@
 """Document extraction models, billing orchestration, and token estimation."""
 
+import asyncio
 import os
 from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
@@ -160,7 +161,14 @@ async def process_with_billing(
     # 3. Check usage limit and create reservation (paid processors only)
     estimated_tokens = 0
     if config.is_paid:
-        estimate = estimate_document_tokens(content, content_type, config.output_token_multiplier, list(uncached_pages))
+        estimate = await asyncio.get_running_loop().run_in_executor(
+            cpu_executor,
+            estimate_document_tokens,
+            content,
+            content_type,
+            config.output_token_multiplier,
+            list(uncached_pages),
+        )
         tolerance = PER_PAGE_TOLERANCE * estimate.num_pages
         amount_to_check = max(0, estimate.total_tokens - tolerance)
         estimated_tokens = estimate.total_tokens
