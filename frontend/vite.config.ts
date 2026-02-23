@@ -20,6 +20,9 @@ export default defineConfig(() => {
 			},
 		},
 		server: {
+			fs: {
+				allow: [".", ".."],
+			},
 			proxy: {
 				"/images": {
 					target: "http://localhost:8000",

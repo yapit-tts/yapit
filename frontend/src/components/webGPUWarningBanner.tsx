@@ -30,7 +30,6 @@ export function WebGPUWarningBanner() {
     return null;
   }
 
-  // TODO make sure all these links are correct once we add the sections
   return (
     <div className="flex items-center justify-between gap-4 bg-muted-warm px-4 py-3 border-b border-border">
       <div className="flex items-center gap-3 text-sm">

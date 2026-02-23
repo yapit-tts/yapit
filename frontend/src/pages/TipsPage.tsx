@@ -1,17 +1,23 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router";
+import { ChevronDown, Copy, Check } from "lucide-react";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { cn } from "@/lib/utils";
 import { SHOWCASE_DOCS } from "@/config/showcase";
+import extractionPrompt from "../../../yapit/gateway/document/prompts/extraction.txt?raw";
 
 const codeClass = "text-sm font-mono px-1.5 py-0.5 rounded" as const;
 const codeStyle = { background: "var(--muted-brown)" } as const;
 
 const sections = [
+  { id: "getting-started", label: "Getting started" },
   { id: "showcase", label: "Try it out" },
   { id: "controls", label: "Controls" },
   { id: "local-tts", label: "Local TTS" },
   { id: "premium-voices", label: "Premium voices" },
   { id: "document-processing", label: "Document processing" },
   { id: "billing", label: "Billing & quota" },
+  { id: "faq", label: "FAQ" },
 ] as const;
 
 const kbdClass = codeClass;
@@ -20,8 +26,70 @@ const extLink = (href: string, children: React.ReactNode) => (
   <a href={href} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">{children}</a>
 );
 
+const FAQ_ITEMS: { q: string; a: React.ReactNode }[] = [
+  {
+    q: "Can I use Yapit on my phone?",
+    a: "Yes. Premium voices and the hosted Kokoro (Cloud) voices work on any device. The free local voices are desktop-only since they need WebGPU.",
+  },
+  {
+    q: "Does it work offline?",
+    a: <>No, Yapit is a web app. But it's fully open source and self-hostable — you can <a href="https://github.com/yapit-tts/yapit#self-hosting" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">run your own instance</a>.</>,
+  },
+  {
+    q: "Are there any usage limits?",
+    a: <>Local Kokoro voices are always unlimited, even on the free tier. On paid plans, cloud Kokoro voices are also unlimited. Premium voices have a monthly allowance that depends on your plan — unused hours <Link to="/tips#billing" className="text-primary hover:underline">roll over</Link>. AI document processing has a separate allowance.</>,
+  },
+  {
+    q: "Do I need an account?",
+    a: "No — you can use local voices without signing up. But creating an account gives you document sync across devices and more document storage. Subscribing to any paid plan permanently increases your storage limit, even if you cancel later.",
+  },
+];
+
+const FaqItem = ({ q, a }: { q: string; a: React.ReactNode }) => {
+  const [open, setOpen] = useState(false);
+  return (
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <CollapsibleTrigger asChild>
+        <button className="w-full flex items-center justify-between py-4 text-left cursor-pointer group">
+          <span className="font-medium pr-4">{q}</span>
+          <ChevronDown className={cn(
+            "h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200",
+            open && "rotate-180",
+          )} />
+        </button>
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <p className="text-muted-foreground pb-4">{a}</p>
+      </CollapsibleContent>
+    </Collapsible>
+  );
+};
+
+const CopyButton = ({ text }: { text: string }) => {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <button
+      onClick={handleCopy}
+      className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+      title="Copy to clipboard"
+    >
+      {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+      {copied ? "Copied" : "Copy"}
+    </button>
+  );
+};
+
 const TipsPage = () => {
   const { hash } = useLocation();
+  const [promptOpen, setPromptOpen] = useState(false);
 
   useEffect(() => {
     if (!hash) return;
@@ -48,10 +116,30 @@ const TipsPage = () => {
         ))}
       </nav>
 
+      <section id="getting-started" className="mb-12 scroll-mt-24">
+        <h2 className="text-2xl font-semibold mb-4">Getting started</h2>
+        <p className="text-muted-foreground mb-3">
+          Paste a URL, upload a PDF, or type text directly. Yapit converts it into a document
+          in your library.
+        </p>
+        <p className="text-muted-foreground mb-3">
+          Press <kbd className={kbdClass} style={codeStyle}>Space</kbd> or click the play button
+          to start listening. The text highlights as it's read aloud. Click any paragraph to jump there.
+        </p>
+        <p className="text-muted-foreground mb-3">
+          For longer documents, open the outliner
+          (<kbd className={kbdClass} style={codeStyle}>o</kbd>) to see
+          the section structure. You can collapse sections to focus the playbar or exclude them completely from auto-play if you want to skip them (right-click/long-press).
+        </p>
+        <p className="text-muted-foreground">
+          You can run the english Kokoro models entirely in your browser — for free, no account needed.
+        </p>
+      </section>
+
       <section id="showcase" className="mb-12 scroll-mt-24">
         <h2 className="text-2xl font-semibold mb-4">Try it out</h2>
         <p className="text-muted-foreground">
-          Try these documents for free:{" "}
+          Try any voice for free with these already ai-transformed documents:{" "}
           {SHOWCASE_DOCS.map((doc, i) => (
             <span key={doc.id}>
               <Link to={`/listen/${doc.id}`} className="text-primary font-medium hover:underline">
@@ -201,11 +289,43 @@ const TipsPage = () => {
           Estimates are based on typical academic content; pages with dense
           tables or many figures may use more.
         </p>
-        <p className="text-muted-foreground">
+        <p className="text-muted-foreground mb-3">
           Pages that finished extracting are <strong className="text-foreground">cached</strong>.
           If you re-process a document or accidentally close the tab mid-extraction, already-finished pages
           load instantly and won't count toward your usage again.
         </p>
+
+        <h3 id="extraction-prompt" className="text-xl font-semibold mb-3 mt-6 scroll-mt-24">Extraction prompt</h3>
+        <p className="text-muted-foreground mb-4">
+          This is the exact prompt Yapit sends to Gemini for each page. It tells the model
+          how to produce clean markdown and when to use
+          {" "}<code className={codeClass} style={codeStyle}>&lt;yap-show&gt;</code>,{" "}
+          <code className={codeClass} style={codeStyle}>&lt;yap-speak&gt;</code>, and{" "}
+          <code className={codeClass} style={codeStyle}>&lt;yap-cap&gt;</code> tags
+          to separate what's displayed from what's read aloud.
+          You can use it with any LLM and paste the output straight into Yapit.
+        </p>
+        <Collapsible open={promptOpen} onOpenChange={setPromptOpen}>
+          <CollapsibleTrigger asChild>
+            <button className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer mb-2">
+              <ChevronDown className={cn(
+                "h-3.5 w-3.5 transition-transform duration-200",
+                promptOpen && "rotate-180",
+              )} />
+              {promptOpen ? "Hide prompt" : "Show full prompt"}
+            </button>
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <div className="relative">
+              <div className="absolute top-2 right-2">
+                <CopyButton text={extractionPrompt} />
+              </div>
+              <pre className="text-xs leading-relaxed p-4 rounded-lg border bg-muted/30 overflow-x-auto max-h-[600px] overflow-y-auto whitespace-pre-wrap break-words">
+                {extractionPrompt}
+              </pre>
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
       </section>
 
       <section id="billing" className="mb-12 scroll-mt-24">
@@ -221,9 +341,14 @@ const TipsPage = () => {
         </p>
       </section>
 
-      {/* TODO: Getting Started section */}
-      {/* TODO: Document Preprocessing prompts */}
-      {/* TODO: FAQ */}
+      <section id="faq" className="mb-12 scroll-mt-24">
+        <h2 className="text-2xl font-semibold mb-2">FAQ</h2>
+        <div className="divide-y">
+          {FAQ_ITEMS.map((item) => (
+            <FaqItem key={item.q} q={item.q} a={item.a} />
+          ))}
+        </div>
+      </section>
     </div>
   );
 };
