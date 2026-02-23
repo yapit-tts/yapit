@@ -18,29 +18,13 @@
 
 ---
 
-Paste a URL or upload a PDF. Yapit renders the document faithfully and reads it aloud with natural voices. Math, figures, tables, and citations display correctly while the audio adapts for a natural listening experience: citations become prose, equations get spoken descriptions, page noise is skipped. Choose between server-side premium voices or free synthesis that runs entirely in your browser.
+Paste a URL or upload a PDF. Yapit renders the document and reads it aloud.
 
----
+- Handles the documents other TTS tools can't: academic papers with math, citations, figures, tables, messy formatting. Equations get spoken descriptions, citations become prose, page noise is skipped. The original content displays faithfully.
+- 170+ voices across 15 languages. Premium voices or free local synthesis that runs entirely in your browser, no account needed.
+- Vim-style keyboard shortcuts, document outliner, media key support, adjustable speed, dark mode, share by link.
 
-## Features
-
-Core features:
-
-- **[Gemini 3 Flash](https://ai.google.dev/gemini-api) extraction**: Each page is processed as an image with figure context from [DocLayout-YOLO](https://huggingface.co/juliozhao/DocLayout-YOLO-DocStructBench). Page noise (page numbers, headers, watermarks) is filtered. Results are cached per-page, so re-processing a large document only touches changed pages.
-
-- **Display and speech routing**: Custom tags (`<yap-show>`, `<yap-speak>`, `<yap-cap>`) route content between visual display and audio. Math renders but stays silent unless Gemini adds a spoken description. Figures display with cropped images; captions are spoken. In-text citations are naturalized for listening.
-
-- **Free browser-local TTS**: [Kokoro](https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX) runs in a Web Worker via WASM/WebGPU. No server round-trip, no cost, fully private.
-
-Additional:
-
-- Multiple input paths: URLs, PDFs, images, file uploads, raw text
-- [Inworld TTS 1.5](https://inworld.ai) premium voices for server-side synthesis
-- arXiv papers via [Markxiv](https://github.com/tonydavis629/markxiv) (LaTeX source to markdown, better handling of formulas without needing Gemini)
-- Document sharing by link
-- Keyboard and media controls (hjkl, space, volume; OS media session with lock screen and headphone support)
-- Document outliner for navigating large documents
-- ...and much more!
+Powered by [Gemini](https://ai.google.dev/gemini-api), [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M), [Inworld TTS](https://inworld.ai), [DocLayout-YOLO](https://huggingface.co/juliozhao/DocLayout-YOLO-DocStructBench), [Markxiv](https://github.com/tonydavis629/markxiv).
 
 ## Self-hosting
 
@@ -71,6 +55,21 @@ GPU and CPU workers run side-by-side; faster workers naturally pull more jobs. S
 
 To stop: `make self-host-down`.
 
+
+## Roadmap
+
+Now:
+- Launch
+
+Next:
+- Support uploading images, EPUB.
+- Support AI-transform for websites.
+- Support exporting audio as MP3.
+
+Later:
+- Better support for self-hosting (better modularity for adding voices, extraction methods, documentation)
+
+
 ## Development
 
 ```bash
@@ -82,3 +81,4 @@ make test-local # run tests
 See [agent/knowledge/dev-setup.md](agent/knowledge/dev-setup.md) for full setup instructions.
 
 The `agent/knowledge/` directory is the project's in-depth knowledge base, maintained jointly with Claude during development.
+

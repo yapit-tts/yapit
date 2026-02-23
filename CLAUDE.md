@@ -17,8 +17,9 @@ Yapit TTS - Open-source text-to-speech platform for reading documents, web pages
 ### Operations
 
 - [[migrations]] — Alembic workflow, MANAGED_TABLES filter, seed data. Read before any DB schema changes.
-- [[vps-setup]] — Production server config, Traefik, nginx reverse proxy routing, debugging. Read for prod issues or nginx config changes (`frontend/nginx.conf`).
-- [[infrastructure]] — Docker compose structure (base/dev/prod layers), CI/CD pipeline, worker services, config change checklist. Read for deployment issues or adding services.
+- [[vps-setup]] — Production server config, Traefik, nginx reverse proxy routing, debugging. **READ BEFORE ANY SSH/prod commands** (DB creds, container names, security rules). Read for prod issues or nginx config changes (`frontend/nginx.conf`).
+- [[infrastructure]] — Docker compose structure (base/dev/prod layers), worker services, config change checklist. Read for deployment issues or adding services.
+- [[ci]] — GitHub Actions pipeline (~10 min), integration test setup, workflow dispatch options, debugging failures. Read when CI breaks or when changes might affect it (Dockerfiles, compose, Makefile, env files, project structure, test setup).
 - [[env-config]] — Secrets management, .env files, sops encryption.
 - [[dev-setup]] — **READ BEFORE TESTING.** Test commands, fixture gotchas, uv/pyproject structure. Tests WILL fail without proper env setup.
 - [[dependency-updates]] — Version-specific gotchas, license checking. Read before updating/adding dependencies.
