@@ -13,16 +13,14 @@ import { fontFamily } from "../fonts";
 /**
  * Sequential card fan — screenshots slide in one by one from the right,
  * each overlapping the previous. Like dealing cards left to right.
- *
- * Replace placeholder images in video/public/clips/cards/.
  */
 
 const CARDS = [
-  { file: "clips/cards/paper.png" },
-  { file: "clips/cards/blog.png" },
-  { file: "clips/darkmode-1.png" },
-  { file: "clips/darkmode-2.png" },
-  { file: "clips/darkmode-3.png" },
+  { file: "clips/cards/card-1.png" },
+  { file: "clips/cards/card-2.png" },
+  { file: "clips/cards/card-3.png" },
+  { file: "clips/cards/card-4.png" },
+  { file: "clips/cards/card-5.png" },
 ];
 
 const CARD_W = 680;

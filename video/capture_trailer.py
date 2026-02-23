@@ -76,13 +76,6 @@ class Args:
     settle_time: float = 1.0
     """Seconds to let the page settle before clicking play."""
 
-    theme_cycle: bool = False
-    """After playback starts, cycle through dark themes (charcoal → dusk → lavender).
-    Output goes to darkmode.webm instead of playback.webm."""
-
-    theme_hold: float = 1.5
-    """Seconds to hold each theme during cycling."""
-
     auth: str = ".auth-state.json"
     """Playwright storage state file (cookies + localStorage).
     If missing, opens interactive browser for login first."""
@@ -98,7 +91,6 @@ class Markers:
     document_loaded: float = 0.0
     play_clicked: float = 0.0
     playback_started: float = 0.0
-    theme_cycle_start: float = 0.0
 
 
 async def convert_ogg_to_mp3(ogg_path: Path) -> Path:
@@ -284,57 +276,25 @@ async def capture(args: Args) -> Path:
         await play_btn.click(timeout=5000)
         mark("play_clicked")
 
-        if args.theme_cycle:
-            # Brief wait for synthesis to start and highlighting to appear
-            await page.wait_for_timeout(2000)
+        # Wait for synthesis to start (spinner appears, then pause icon)
+        try:
+            await page.wait_for_selector("svg.lucide-loader-2, svg.lucide-pause", timeout=10_000)
             mark("playback_started")
-        else:
-            # Wait for synthesis to start (spinner appears, then pause icon)
-            try:
-                await page.wait_for_selector("svg.lucide-loader-2, svg.lucide-pause", timeout=10_000)
-                mark("playback_started")
-            except Exception:
-                print("WARNING: Could not detect playback start, continuing")
-                markers.playback_started = markers.play_clicked + 1.0
+        except Exception:
+            print("WARNING: Could not detect playback start, continuing")
+            markers.playback_started = markers.play_clicked + 1.0
 
-        if args.theme_cycle:
-            hold_ms = int(args.theme_hold * 1000)
-            # Start in light mode (already there), cycle through dark themes
-            themes = [
-                ("charcoal", "el.classList.add('dark'); el.className = el.className.replace(/theme-\\S+/g, '');"),
-                ("dusk", "el.className = el.className.replace(/theme-\\S+/g, ''); el.classList.add('theme-dusk');"),
-                (
-                    "lavender",
-                    "el.className = el.className.replace(/theme-\\S+/g, ''); el.classList.add('theme-lavender');",
-                ),
-            ]
-
-            # Hold light mode briefly before first transition
-            mark("theme_cycle_start")
-            await page.wait_for_timeout(hold_ms)
-
-            print("Theme cycling:")
-            for name, js_code in themes:
-                js = f"() => {{ const el = document.documentElement; {js_code} }}"
-                await page.evaluate(js)
-                elapsed = time.monotonic() - t0
-                print(f"  [{elapsed:.1f}s] → {name}")
-                await page.wait_for_timeout(hold_ms)
-
-            # Hold last theme
-            await page.wait_for_timeout(hold_ms)
-        else:
-            # Record playback, pressing "j" to advance blocks so highlighting moves
-            print(f"Recording {args.duration}s of playback (pressing j to advance)...")
-            elapsed = 0.0
-            step = 1.5  # seconds between j presses
-            while elapsed < args.duration:
-                wait = min(step, args.duration - elapsed)
-                await page.wait_for_timeout(int(wait * 1000))
-                elapsed += wait
-                if elapsed < args.duration:
-                    await page.keyboard.press("j")
-                    print(f"  [{time.monotonic() - t0:.1f}s] pressed j")
+        # Record playback, pressing "j" to advance blocks so highlighting moves
+        print(f"Recording {args.duration}s of playback (pressing j to advance)...")
+        elapsed = 0.0
+        step = 1.5  # seconds between j presses
+        while elapsed < args.duration:
+            wait = min(step, args.duration - elapsed)
+            await page.wait_for_timeout(int(wait * 1000))
+            elapsed += wait
+            if elapsed < args.duration:
+                await page.keyboard.press("j")
+                print(f"  [{time.monotonic() - t0:.1f}s] pressed j")
 
         # Finalize
         video_path_str = await page.video.path()
@@ -342,8 +302,7 @@ async def capture(args: Args) -> Path:
         await browser.close()
 
     # Move video to final location
-    video_filename = "darkmode.webm" if args.theme_cycle else "playback.webm"
-    final_path = out / video_filename
+    final_path = out / "playback.webm"
     shutil.move(str(video_path_str), str(final_path))
     if raw_dir.exists():
         shutil.rmtree(raw_dir, ignore_errors=True)
@@ -367,7 +326,6 @@ async def capture(args: Args) -> Path:
             "document_loaded": markers.document_loaded,
             "play_clicked": markers.play_clicked,
             "playback_started": markers.playback_started,
-            "theme_cycle_start": markers.theme_cycle_start,
         },
         "audio": [
             {
@@ -381,8 +339,7 @@ async def capture(args: Args) -> Path:
         ],
         "total_audio_duration_s": sum(af["duration_s"] for af in audio_files),
     }
-    meta_filename = "meta-darkmode.json" if args.theme_cycle else "meta.json"
-    meta_path = out / meta_filename
+    meta_path = out / "meta.json"
     meta_path.write_text(json.dumps(meta, indent=2))
 
     print("\nCapture complete:")

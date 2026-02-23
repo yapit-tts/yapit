@@ -16,13 +16,10 @@
   },
   "devDependencies": {
     "@remotion/eslint-config-flat": "4.0.420",
-    "@remotion/tailwind-v4": "^4.0.420",
-    "@tailwindcss/postcss": "^4.1.18",
     "@types/react": "19.2.7",
     "@types/web": "0.0.166",
     "eslint": "9.19.0",
     "prettier": "3.6.0",
-    "tailwindcss": "^4.1.18",
     "typescript": "5.9.3"
   },
   "scripts": {

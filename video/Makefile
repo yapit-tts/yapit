@@ -1,4 +1,4 @@
-.PHONY: studio render clips clips-narration clips-showcase clips-dry capture capture-darkmode check
+.PHONY: studio render clips clips-narration clips-showcase clips-dry capture check
 
 studio:
 	npx remotion studio
@@ -20,9 +20,6 @@ clips-dry:
 
 capture:
 	uv run capture_trailer.py --url "https://whatisintelligence.antikythera.org/chapter-01/" --light-mode
-
-capture-darkmode:
-	uv run capture_trailer.py --url "https://whatisintelligence.antikythera.org/chapter-01/" --light-mode --theme-cycle
 
 check:
 	npx tsc --noEmit && npx eslint src

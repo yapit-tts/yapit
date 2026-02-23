@@ -9,7 +9,7 @@ out
 # Generated/captured assets (regeneratable via scripts)
 public/clips/*
 !public/clips/cards/
-!public/clips/darkmode-*.png
+!public/clips/cards/*
 !public/clips/meta.json
 
 # Auth state (sensitive)
