@@ -5,7 +5,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 ADD https://astral.sh/uv/install.sh /uv-install.sh
-RUN CARGO_HOME=/usr/local sh /uv-install.sh && rm /uv-install.sh
+RUN UV_INSTALL_DIR=/usr/local sh /uv-install.sh && rm /uv-install.sh
 ENV PATH="/usr/local/bin:$PATH"
 
 WORKDIR /app
