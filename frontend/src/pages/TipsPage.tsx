@@ -4,7 +4,7 @@ import { ChevronDown, Copy, Check } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
 import { SHOWCASE_DOCS } from "@/config/showcase";
-import extractionPrompt from "../../../yapit/gateway/document/prompts/extraction.txt?raw";
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
 
 const codeClass = "text-sm font-mono px-1.5 py-0.5 rounded" as const;
 const codeStyle = { background: "var(--muted-brown)" } as const;
@@ -90,6 +90,14 @@ const CopyButton = ({ text }: { text: string }) => {
 const TipsPage = () => {
   const { hash } = useLocation();
   const [promptOpen, setPromptOpen] = useState(false);
+  const [extractionPrompt, setExtractionPrompt] = useState("");
+
+  useEffect(() => {
+    fetch(`${API_BASE_URL}/v1/extraction-prompt`)
+      .then((r) => r.ok ? r.text() : "")
+      .then(setExtractionPrompt)
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (!hash) return;

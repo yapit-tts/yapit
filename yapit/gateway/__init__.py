@@ -7,7 +7,7 @@ from pathlib import Path
 import redis.asyncio as redis
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, ORJSONResponse
+from fastapi.responses import JSONResponse, ORJSONResponse, PlainTextResponse
 from loguru import logger
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
@@ -58,6 +58,7 @@ VISIBILITY_SCAN_INTERVAL_S = 15
 OVERFLOW_SCAN_INTERVAL_S = 2
 MAX_RETRIES = 3
 USAGE_LOG_RETENTION_DAYS = 31
+EXTRACTION_PROMPT_PATH = Path(__file__).parent / "document" / "prompts" / "extraction.txt"
 
 
 @asynccontextmanager
@@ -79,12 +80,11 @@ async def lifespan(app: FastAPI):
     # Document extractors
     if settings.ai_processor == "gemini":
         app.state.ai_extractor_config = create_gemini_config()
-        prompt_path = Path(__file__).parent / "document" / "prompts" / "extraction.txt"
         app.state.ai_extractor = GeminiExtractor(
             api_key=settings.google_api_key,
             redis=app.state.redis_client,
             image_storage=app.state.image_storage,
-            prompt_path=prompt_path,
+            prompt_path=EXTRACTION_PROMPT_PATH,
         )
         logger.info("AI extractor: gemini")
     else:
@@ -321,5 +321,9 @@ def create_app(
         except FileNotFoundError:
             commit = "unknown"
         return {"commit": commit}
+
+    @app.get("/v1/extraction-prompt")
+    async def extraction_prompt():
+        return PlainTextResponse(EXTRACTION_PROMPT_PATH.read_text())
 
     return app
