@@ -9,6 +9,9 @@ services:
     init: true
     image: postgres:16-alpine
     restart: unless-stopped
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID, KILL]
+    security_opt: ["no-new-privileges:true"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-yapit}"]
       start_period: 30s
@@ -22,6 +25,9 @@ services:
     init: true
     image: timescale/timescaledb:latest-pg16
     restart: unless-stopped
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID, KILL]
+    security_opt: ["no-new-privileges:true"]
     environment:
       POSTGRES_USER: metrics
       POSTGRES_PASSWORD: metrics
@@ -41,13 +47,18 @@ services:
   redis:
     init: true
     image: redis:7-alpine
+    user: redis
     restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
 
   smokescreen:
     init: true
     build:
       dockerfile: ./docker/Dockerfile.smokescreen
     restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
 
   # -------- api-gateway
   gateway:
@@ -69,10 +80,12 @@ services:
       markxiv:
         condition: service_healthy
     restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     expose: ["8000"]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()"]
-      start_period: 80s 
+      start_period: 80s
       start_interval: 1s
       interval: 30s
       timeout: 5s
@@ -80,9 +93,12 @@ services:
 
   # -------- auth
   stack-auth:
+    init: true
     build:
       dockerfile: ./docker/Dockerfile.stackauth
     restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -107,6 +123,8 @@ services:
     build:
       dockerfile: ./docker/Dockerfile.markxiv
     restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     environment:
       PORT: "8080"
       MARKXIV_CACHE_CAP: "500"
@@ -128,6 +146,8 @@ services:
       context: .
       dockerfile: yapit/workers/kokoro/Dockerfile.cpu
     command: python -m yapit.workers.kokoro
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     environment:
       REDIS_URL: redis://redis:6379
       OMP_NUM_THREADS: ${OMP_NUM_THREADS}
@@ -141,10 +161,11 @@ services:
       context: .
       dockerfile: yapit/workers/yolo/Dockerfile.cpu
     command: python -m yapit.workers.yolo
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     environment:
       REDIS_URL: redis://redis:6379
       OMP_NUM_THREADS: ${OMP_NUM_THREADS}
     restart: unless-stopped
     deploy:
       replicas: ${YOLO_CPU_REPLICAS}
-

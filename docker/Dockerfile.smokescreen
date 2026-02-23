@@ -5,5 +5,7 @@ RUN go install github.com/stripe/smokescreen@a7fdfcb5b9301fefb4ecb0e65624551a2a2
 FROM alpine:3.21
 RUN apk add --no-cache ca-certificates
 COPY --from=builder /go/bin/smokescreen /usr/local/bin/
+RUN adduser -D -u 1000 appuser
+USER appuser
 EXPOSE 4750
 ENTRYPOINT ["smokescreen", "--listen-ip", "0.0.0.0"]

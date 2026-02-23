@@ -22,8 +22,10 @@ RUN python -c "import json; from huggingface_hub import hf_hub_download; \
 # Copy the rest of the application code
 COPY yapit/ /app/yapit
 
-ENV HF_HUB_OFFLINE=1
+RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /models /app
 
+USER appuser
+ENV HF_HUB_OFFLINE=1
 ENV PYTHONUNBUFFERED=1
 ENV DEVICE=cpu
 ENV LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so.2

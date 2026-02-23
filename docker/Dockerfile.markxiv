@@ -34,9 +34,11 @@ WORKDIR /app
 # Copy binary from builder
 COPY --from=builder /app/target/release/markxiv /app/markxiv
 
-# Create cache directory
-RUN mkdir -p /cache
+RUN mkdir -p /cache \
+    && useradd -m -u 1000 appuser \
+    && chown appuser:appuser /cache /app
 
+USER appuser
 ENV PORT=8080
 ENV MARKXIV_CACHE_DIR=/cache
 ENV RUST_LOG=info

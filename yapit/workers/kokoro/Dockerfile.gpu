@@ -5,8 +5,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 ADD https://astral.sh/uv/install.sh /uv-install.sh
-RUN sh /uv-install.sh && rm /uv-install.sh
-ENV PATH="/root/.local/bin:$PATH"
+RUN CARGO_HOME=/usr/local sh /uv-install.sh && rm /uv-install.sh
+ENV PATH="/usr/local/bin:$PATH"
 
 WORKDIR /app
 
@@ -23,6 +23,9 @@ RUN uv run python -c "import json; from huggingface_hub import hf_hub_download; 
 
 COPY yapit/ /app/yapit
 
+RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /models /app
+
+USER appuser
 ENV HF_HUB_OFFLINE=1
 ENV PYTHONUNBUFFERED=1
 ENV DEVICE=cuda

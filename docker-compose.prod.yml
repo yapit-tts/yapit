@@ -13,7 +13,9 @@ networks:
 
 services:
   frontend:
+    init: true
     image: ghcr.io/yapit-tts/frontend:latest
+    cap_drop: [ALL]
     networks:
       - yapit-network
     deploy:
@@ -26,10 +28,13 @@ services:
         - "traefik.http.routers.yapit-frontend.rule=Host(`yapit.md`)"
         - "traefik.http.routers.yapit-frontend.entrypoints=websecure"
         - "traefik.http.routers.yapit-frontend.tls=true"
-        - "traefik.http.services.yapit-frontend.loadbalancer.server.port=80"
+        - "traefik.http.services.yapit-frontend.loadbalancer.server.port=8080"
 
   postgres:
+    init: true
     image: postgres:16-alpine
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID, KILL]
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -51,7 +56,10 @@ services:
         order: stop-first  # Stateful - stop old before starting new
 
   redis:
+    init: true
     image: redis:7-alpine
+    user: redis
+    cap_drop: [ALL]
     ports:
       - target: 6379
         published: 6379
@@ -67,7 +75,9 @@ services:
         order: stop-first
 
   smokescreen:
+    init: true
     image: ghcr.io/yapit-tts/smokescreen:latest
+    cap_drop: [ALL]
     networks:
       - yapit-network
     deploy:
@@ -77,7 +87,10 @@ services:
         failure_action: rollback
 
   metrics-db:
+    init: true
     image: timescale/timescaledb:latest-pg16
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID, KILL]
     environment:
       POSTGRES_USER: ${METRICS_DB_USER}
       POSTGRES_PASSWORD: ${METRICS_DB_PASSWORD}
@@ -100,7 +113,9 @@ services:
         order: stop-first
 
   gateway:
+    init: true
     image: ghcr.io/yapit-tts/gateway:latest
+    cap_drop: [ALL]
     env_file:
       - ./.env
       - ./.env.prod
@@ -127,7 +142,9 @@ services:
         failure_action: rollback
 
   stack-auth:
+    init: true
     image: ghcr.io/yapit-tts/stack-auth:latest
+    cap_drop: [ALL]
     env_file:
       - ./.env
       - ./.env.prod
@@ -163,7 +180,9 @@ services:
         - "traefik.http.services.stack-auth-dashboard.loadbalancer.server.port=8101"
 
   markxiv:
+    init: true
     image: ghcr.io/yapit-tts/markxiv:latest
+    cap_drop: [ALL]
     environment:
       PORT: "8080"
       MARKXIV_CACHE_CAP: "500"
@@ -186,8 +205,10 @@ services:
         failure_action: rollback
 
   kokoro-cpu:
+    init: true
     image: ghcr.io/yapit-tts/kokoro-cpu:latest
     command: python -m yapit.workers.kokoro
+    cap_drop: [ALL]
     environment:
       REDIS_URL: redis://redis:6379
       WORKER_ID: swarm-kokoro-cpu-{{.Task.Slot}}
@@ -201,8 +222,10 @@ services:
         failure_action: rollback
 
   yolo-cpu:
+    init: true
     image: ghcr.io/yapit-tts/yolo-cpu:latest
     command: python -m yapit.workers.yolo
+    cap_drop: [ALL]
     environment:
       REDIS_URL: redis://redis:6379
       WORKER_ID: swarm-yolo-cpu-{{.Task.Slot}}

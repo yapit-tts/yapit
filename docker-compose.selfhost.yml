@@ -13,7 +13,9 @@ services:
       args:
         VITE_ENV_FILE: .env.selfhost
     ports:
-      - "80:80"
+      - "80:8080"
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     depends_on:
       gateway:
         condition: service_healthy

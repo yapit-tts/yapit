@@ -10,7 +10,10 @@
 
 services:
   kokoro-gpu:
+    init: true
     image: ghcr.io/yapit-tts/kokoro-gpu:latest
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     environment:
       REDIS_URL: ${REDIS_URL}
       WORKER_ID: ${HOSTNAME:-worker}-kokoro-gpu
@@ -24,7 +27,10 @@ services:
     restart: unless-stopped
 
   kokoro-cpu:
+    init: true
     image: ghcr.io/yapit-tts/kokoro-cpu:latest
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     environment:
       REDIS_URL: ${REDIS_URL}
       WORKER_ID: ${HOSTNAME:-worker}-kokoro-cpu
@@ -33,7 +39,10 @@ services:
     restart: unless-stopped
 
   yolo-gpu:
+    init: true
     image: ghcr.io/yapit-tts/yolo-gpu:latest
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     environment:
       REDIS_URL: ${REDIS_URL}
       WORKER_ID: ${HOSTNAME:-worker}-yolo-gpu
@@ -47,7 +56,10 @@ services:
     restart: unless-stopped
 
   yolo-cpu:
+    init: true
     image: ghcr.io/yapit-tts/yolo-cpu:latest
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     environment:
       REDIS_URL: ${REDIS_URL}
       WORKER_ID: ${HOSTNAME:-worker}-yolo-cpu
