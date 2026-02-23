@@ -275,3 +275,55 @@ async def test_highest_tier_subscribed_updated(session):
     assert await sync_subscription(sub, client, session) is True
     assert sub.highest_tier_subscribed == PlanTier.max
     assert sub.plan_id == max_plan.id
+
+
+@pytest.mark.asyncio
+async def test_period_drift_corrected_despite_autoflush(session, monkeypatch):
+    """Period-only drift must be detected even when db.is_modified() lies.
+
+    In production, sync_subscription mutates the subscription, then select(Plan)
+    triggers SQLAlchemy autoflush which clears attribute history. db.is_modified()
+    returns False, silently dropping the correction. We simulate this by patching
+    is_modified to always return False.
+    """
+    now = datetime.now(tz=dt.UTC).replace(microsecond=0)
+    old_start = now - timedelta(days=30)
+    old_end = now
+    new_start = now
+    new_end = now + timedelta(days=30)
+
+    plan = await ensure_plan(
+        session,
+        tier=PlanTier.plus,
+        monthly_price_id="price_sync_period_m",
+        yearly_price_id="price_sync_period_y",
+    )
+    sub = await create_subscription(
+        session,
+        user_id="user-sync-period",
+        plan_id=plan.id,
+        stripe_subscription_id="sub_sync_period",
+        status=SubscriptionStatus.active,
+        current_period_start=old_start,
+        current_period_end=old_end,
+        stripe_customer_id="cus_sync_period",
+        ever_paid=True,
+    )
+
+    stripe_sub = make_stripe_subscription(
+        sub_id="sub_sync_period",
+        user_id="user-sync-period",
+        price_id=plan.stripe_price_id_monthly,
+        status="active",
+        period_start=new_start,
+        period_end=new_end,
+        customer="cus_sync_period",
+    )
+    client = _make_client(stripe_sub)
+
+    # Simulate the autoflush bug: is_modified always returns False
+    monkeypatch.setattr(session, "is_modified", lambda *a, **kw: False)
+
+    assert await sync_subscription(sub, client, session) is True
+    assert sub.current_period_start == new_start
+    assert sub.current_period_end == new_end

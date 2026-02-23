@@ -163,11 +163,15 @@ async def test_duplicate_invoice_paid_idempotent_rollover(session):
     )
     await session.commit()
 
+    new_start = now
+    new_end = now + timedelta(days=30)
     invoice = make_invoice(
         subscription_id="sub_dup_invoice",
         billing_reason="subscription_cycle",
         period_start=old_start,
-        period_end=now + timedelta(days=30),
+        period_end=now,
+        line_period_start=new_start,
+        line_period_end=new_end,
     )
 
     # First call — sets rollover from 40K used of 100K limit → 60K rollover
@@ -183,10 +187,10 @@ async def test_duplicate_invoice_paid_idempotent_rollover(session):
     await session.refresh(sub)
     assert sub.rollover_tokens == rollover_after_first
 
-    # No duplicate usage periods
+    # Old period + new period (created by first call)
     periods = await session.exec(select(UsagePeriod).where(UsagePeriod.user_id == "user-dup-invoice"))
     all_periods = periods.all()
-    assert len(all_periods) == 1
+    assert len(all_periods) == 2
 
 
 @pytest.mark.asyncio

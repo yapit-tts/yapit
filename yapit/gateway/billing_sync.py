@@ -48,8 +48,17 @@ async def sync_subscription(
         await log_event("billing_sync_drift", data={"user_id": subscription.user_id, "drift": "sub_gone"})
         return True
 
+    # Snapshot all reconcilable fields before mutation — db.is_modified() is unreliable
+    # because select(Plan) triggers autoflush which clears attribute history.
     old_status = subscription.status
     old_plan_id = subscription.plan_id
+    old_period_start = subscription.current_period_start
+    old_period_end = subscription.current_period_end
+    old_cancel_at_period_end = subscription.cancel_at_period_end
+    old_cancel_at = subscription.cancel_at
+    old_canceled_at = subscription.canceled_at
+    old_customer_id = subscription.stripe_customer_id
+    old_ever_paid = subscription.ever_paid
 
     # Overwrite all reconcilable fields from Stripe
     subscription.status = SubscriptionStatus.from_stripe(stripe_sub.status)
@@ -85,10 +94,21 @@ async def sync_subscription(
     if subscription.status == SubscriptionStatus.active and not subscription.ever_paid:
         subscription.ever_paid = True
 
-    # Only commit + log if something actually changed
+    # Detect changes via snapshot comparison (not db.is_modified — see docstring above)
     status_changed = old_status != subscription.status
     plan_changed = old_plan_id != subscription.plan_id
-    if not db.is_modified(subscription):
+    has_changes = (
+        status_changed
+        or plan_changed
+        or old_period_start != subscription.current_period_start
+        or old_period_end != subscription.current_period_end
+        or old_cancel_at_period_end != subscription.cancel_at_period_end
+        or old_cancel_at != subscription.cancel_at
+        or old_canceled_at != subscription.canceled_at
+        or old_customer_id != subscription.stripe_customer_id
+        or old_ever_paid != subscription.ever_paid
+    )
+    if not has_changes:
         return False
 
     subscription.updated = datetime.now(tz=dt.UTC)

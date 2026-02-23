@@ -586,6 +586,31 @@ def _get_invoice_subscription_id(invoice: stripe.Invoice) -> str | None:
     return None
 
 
+def _extract_line_item_period(invoice: stripe.Invoice, log) -> tuple[datetime | None, datetime | None]:
+    """Extract the new billing cycle from the invoice's subscription line item.
+
+    Returns (period_start, period_end) from the non-proration subscription line item,
+    or (None, None) if no suitable line item is found.
+    """
+    if not invoice.lines or not invoice.lines.data:
+        log.warning("Invoice has no line items, cannot extract billing cycle")
+        return None, None
+
+    for li in invoice.lines.data:
+        parent = li.parent
+        if not parent or not li.period:
+            continue
+        sub_details = parent.subscription_item_details
+        if parent.type == "subscription_item_details" and sub_details and not sub_details.proration:
+            return (
+                datetime.fromtimestamp(li.period.start, tz=dt.UTC),
+                datetime.fromtimestamp(li.period.end, tz=dt.UTC),
+            )
+
+    log.warning("No subscription line item found in invoice, cannot extract billing cycle")
+    return None, None
+
+
 async def _handle_invoice_paid(invoice: stripe.Invoice, db: DbSession) -> None:
     """Handle successful invoice payment - mark ever_paid and calculate rollover on billing cycle."""
     subscription_id = _get_invoice_subscription_id(invoice)
@@ -616,24 +641,29 @@ async def _handle_invoice_paid(invoice: stripe.Invoice, db: DbSession) -> None:
     # Only update period dates for renewal invoices. subscription_create invoices have
     # period_start == period_end (point-in-time), and subscription_update invoices carry
     # proration windows — neither represents billing cycle boundaries.
+    #
+    # The new billing cycle comes from the invoice LINE ITEM period (not invoice-level
+    # period_start/end, which "looks back one period" per Stripe docs).
     is_full_cycle = invoice.billing_reason == "subscription_cycle"
-    if is_full_cycle and invoice.period_start and invoice.period_end:
-        subscription.current_period_start = datetime.fromtimestamp(invoice.period_start, tz=dt.UTC)
-        subscription.current_period_end = datetime.fromtimestamp(invoice.period_end, tz=dt.UTC)
-        subscription.updated = datetime.now(tz=dt.UTC)
+    if is_full_cycle:
+        new_period_start, new_period_end = _extract_line_item_period(invoice, log)
+        if new_period_start and new_period_end:
+            subscription.current_period_start = new_period_start
+            subscription.current_period_end = new_period_end
+            subscription.updated = datetime.now(tz=dt.UTC)
 
-        stmt = pg_insert(UsagePeriod).values(
-            user_id=subscription.user_id,
-            period_start=subscription.current_period_start,
-            period_end=subscription.current_period_end,
-        )
-        stmt = stmt.on_conflict_do_nothing(index_elements=["user_id", "period_start"])
-        result = await db.exec(stmt)
-        if result.rowcount > 0:
-            log.bind(
-                period_start=str(subscription.current_period_start),
-                period_end=str(subscription.current_period_end),
-            ).info("New usage period created")
+            stmt = pg_insert(UsagePeriod).values(
+                user_id=subscription.user_id,
+                period_start=subscription.current_period_start,
+                period_end=subscription.current_period_end,
+            )
+            stmt = stmt.on_conflict_do_nothing(index_elements=["user_id", "period_start"])
+            result = await db.exec(stmt)
+            if result.rowcount > 0:
+                log.bind(
+                    period_start=str(subscription.current_period_start),
+                    period_end=str(subscription.current_period_end),
+                ).info("New usage period created")
 
     if invoice.billing_reason != "subscription_cycle":
         await db.commit()

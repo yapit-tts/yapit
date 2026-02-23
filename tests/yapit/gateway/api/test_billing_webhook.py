@@ -77,14 +77,32 @@ def make_invoice(
     period_start: datetime | None,
     period_end: datetime | None,
     invoice_id: str = "in_test",
+    line_period_start: datetime | None = None,
+    line_period_end: datetime | None = None,
 ):
     parent = SimpleNamespace(subscription_details=SimpleNamespace(subscription=subscription_id))
+
+    lines = None
+    if line_period_start and line_period_end:
+        line_item = SimpleNamespace(
+            period=SimpleNamespace(
+                start=int(line_period_start.timestamp()),
+                end=int(line_period_end.timestamp()),
+            ),
+            parent=SimpleNamespace(
+                type="subscription_item_details",
+                subscription_item_details=SimpleNamespace(proration=False),
+            ),
+        )
+        lines = SimpleNamespace(data=[line_item], has_more=False)
+
     return SimpleNamespace(
         id=invoice_id,
         parent=parent,
         billing_reason=billing_reason,
         period_start=int(period_start.timestamp()) if period_start else None,
         period_end=int(period_end.timestamp()) if period_end else None,
+        lines=lines,
     )
 
 
@@ -527,6 +545,7 @@ async def test_invoice_paid_subscription_cycle_updates_period_and_clears_grace(s
     now = datetime.now(tz=dt.UTC).replace(microsecond=0)
     old_start = now - timedelta(days=30)
     old_end = now
+    new_start = now
     new_end = now + timedelta(days=30)
 
     plan = await ensure_plan(
@@ -564,8 +583,10 @@ async def test_invoice_paid_subscription_cycle_updates_period_and_clears_grace(s
         subscription_id="sub_invoice_cycle",
         billing_reason="subscription_cycle",
         period_start=old_start,
-        period_end=new_end,
+        period_end=old_end,
         invoice_id="in_subscription_cycle",
+        line_period_start=new_start,
+        line_period_end=new_end,
     )
 
     await billing_api._handle_invoice_paid(invoice, session)
@@ -573,20 +594,105 @@ async def test_invoice_paid_subscription_cycle_updates_period_and_clears_grace(s
     refreshed = await session.get(UserSubscription, "user-invoice-cycle")
     assert refreshed is not None
     assert refreshed.ever_paid is True
-    assert refreshed.current_period_start == old_start
+    assert refreshed.current_period_start == new_start
     assert refreshed.current_period_end == new_end
     assert refreshed.grace_tier is None
     assert refreshed.grace_until is None
 
-    usage_period = (
+    new_period = (
         await session.exec(
             select(UsagePeriod).where(
                 UsagePeriod.user_id == "user-invoice-cycle",
+                UsagePeriod.period_start == new_start,
+            )
+        )
+    ).first()
+    assert new_period is not None
+
+
+@pytest.mark.asyncio
+async def test_invoice_paid_subscription_cycle_advances_period(session):
+    """Renewal invoice must advance current_period to the NEW billing cycle from line items."""
+    now = datetime.now(tz=dt.UTC).replace(microsecond=0)
+    old_start = now - timedelta(days=30)
+    old_end = now
+    new_start = now
+    new_end = now + timedelta(days=30)
+
+    plan = await ensure_plan(
+        session,
+        tier=PlanTier.plus,
+        monthly_price_id="price_plus_monthly_advance",
+        yearly_price_id="price_plus_yearly_advance",
+        ocr_tokens=100_000,
+    )
+
+    await create_subscription(
+        session,
+        user_id="user-advance-period",
+        plan_id=plan.id,
+        stripe_subscription_id="sub_advance_period",
+        status=SubscriptionStatus.active,
+        current_period_start=old_start,
+        current_period_end=old_end,
+        ever_paid=True,
+    )
+
+    session.add(
+        UsagePeriod(
+            user_id="user-advance-period",
+            period_start=old_start,
+            period_end=old_end,
+            ocr_tokens=40_000,
+        )
+    )
+    await session.commit()
+
+    invoice = make_invoice(
+        subscription_id="sub_advance_period",
+        billing_reason="subscription_cycle",
+        period_start=old_start,
+        period_end=old_end,
+        invoice_id="in_advance_period",
+        line_period_start=new_start,
+        line_period_end=new_end,
+    )
+
+    await billing_api._handle_invoice_paid(invoice, session)
+
+    refreshed = await session.get(UserSubscription, "user-advance-period")
+    assert refreshed is not None
+    # Period must advance to the NEW billing cycle (from line items)
+    assert refreshed.current_period_start == new_start
+    assert refreshed.current_period_end == new_end
+
+    # New usage period must exist with zero counters
+    new_period = (
+        await session.exec(
+            select(UsagePeriod).where(
+                UsagePeriod.user_id == "user-advance-period",
+                UsagePeriod.period_start == new_start,
+            )
+        )
+    ).first()
+    assert new_period is not None
+    assert new_period.ocr_tokens == 0
+    assert new_period.premium_voice_characters == 0
+
+    # Old period must still exist with original usage
+    old_period = (
+        await session.exec(
+            select(UsagePeriod).where(
+                UsagePeriod.user_id == "user-advance-period",
                 UsagePeriod.period_start == old_start,
             )
         )
     ).first()
-    assert usage_period is not None
+    assert old_period is not None
+    assert old_period.ocr_tokens == 40_000
+
+    # Rollover: 100K limit - 40K used = 60K unused
+    assert refreshed.rollover_tokens == 60_000
 
 
 @pytest.mark.asyncio
@@ -916,12 +1022,14 @@ async def test_invoice_paid_rollover_uses_invoice_period_start(session):
     )
     await session.commit()
 
-    # Invoice references the OLD period (period_start=old_start)
+    # Invoice references the OLD period (period_start=old_start); line items carry the new cycle
     invoice = make_invoice(
         subscription_id="sub_rollover_lookup",
         billing_reason="subscription_cycle",
         period_start=old_start,
-        period_end=new_end,
+        period_end=old_end,
+        line_period_start=new_start,
+        line_period_end=new_end,
     )
 
     await billing_api._handle_invoice_paid(invoice, session)
@@ -1192,6 +1300,8 @@ async def test_trial_subscription_webhook_sequence(session):
         period_start=trial_end,  # accrual window start
         period_end=first_paid_period_end,
         invoice_id="in_trial_first_paid",
+        line_period_start=trial_end,
+        line_period_end=first_paid_period_end,
     )
     await billing_api._handle_invoice_paid(cycle_invoice, session)
 
