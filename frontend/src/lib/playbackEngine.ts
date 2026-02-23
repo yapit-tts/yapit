@@ -452,6 +452,7 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
       blockStartTime = 0;
     } else if (isBlockSkipped(currentBlock)) {
       startBlock = findNextPlayable(currentBlock + 1);
+      if (startBlock < 0) startBlock = findNextPlayable(0);
       if (startBlock < 0) return;
       currentBlock = startBlock;
     }
