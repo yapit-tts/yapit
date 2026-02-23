@@ -36,9 +36,11 @@ export const UserPreferencesProvider: FC<PropsWithChildren> = ({ children }) => 
   const [isLoading, setIsLoading] = useState(true);
   const hasFetched = useRef(false);
 
-  // Track isAnonymous via ref for use in callbacks
+  // Refs for use in callbacks (avoids stale closures in memo'd consumers)
   const isAnonymousRef = useRef(isAnonymous);
   isAnonymousRef.current = isAnonymous;
+  const pinnedRef = useRef(pinnedVoices);
+  pinnedRef.current = pinnedVoices;
 
   // Fetch server preferences on init for authenticated users
   useEffect(() => {
@@ -85,7 +87,7 @@ export const UserPreferencesProvider: FC<PropsWithChildren> = ({ children }) => 
   }, [api, isAuthReady, isAnonymous]);
 
   const togglePinnedVoice = useCallback((slug: string): string[] => {
-    const newPinned = [...pinnedVoices];
+    const newPinned = [...pinnedRef.current];
     const index = newPinned.indexOf(slug);
     if (index >= 0) {
       newPinned.splice(index, 1);
@@ -98,13 +100,11 @@ export const UserPreferencesProvider: FC<PropsWithChildren> = ({ children }) => 
 
     // Sync to server for authenticated users
     if (!isAnonymousRef.current) {
-      api.patch("/v1/users/me/preferences", { pinned_voices: newPinned }).catch(() => {
-        // Silently ignore sync failures - localStorage is the fallback
-      });
+      api.patch("/v1/users/me/preferences", { pinned_voices: newPinned }).catch(() => {});
     }
 
     return newPinned;
-  }, [pinnedVoices, api]);
+  }, [api]);
 
   const setAutoImportSharedDocuments = useCallback((value: boolean) => {
     setAutoImportSharedDocumentsState(value);
