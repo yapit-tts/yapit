@@ -5,8 +5,7 @@ import type { Section } from "@/lib/sectionIndex";
  * Filter document blocks based on section expand/collapse state.
  *
  * Rules:
- * - Footnotes are always visible
- * - Section headings are visible unless skipped
+ * - Section headings (and the footnotes block) are visible unless skipped
  * - Blocks with audio inherit visibility from their section
  * - Display-only blocks (no audio_chunks) inherit visibility from the
  *   last seen section, OR are always visible if before the first heading
@@ -18,6 +17,8 @@ export function filterVisibleBlocks(
   skippedSections: Set<string>,
   sectionByHeadingId: Map<string, Section>,
 ): ContentBlock[] {
+  const sectionById = new Map(sections.map(s => [s.id, s]));
+
   const findSectionForAudioIdx = (audioIdx: number): Section | undefined => {
     return sections.find(
       (s) => audioIdx >= s.startBlockIdx && audioIdx <= s.endBlockIdx,
@@ -28,8 +29,12 @@ export function filterVisibleBlocks(
   let lastSeenSectionId: string | null = null;
 
   for (const block of blocks) {
-    if (block.type === "footnotes") {
-      visible.push(block);
+    // Footnotes block acts as a section header (synthetic section created in buildSectionIndex)
+    if (block.type === "footnotes" && sectionById.has(block.id)) {
+      lastSeenSectionId = block.id;
+      if (!skippedSections.has(block.id) && expandedSections.has(block.id)) {
+        visible.push(block);
+      }
       continue;
     }
 

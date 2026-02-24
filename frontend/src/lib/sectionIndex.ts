@@ -150,6 +150,40 @@ export function buildSectionIndex(
     });
   }
 
+  // Split footnotes into their own section (they'd otherwise be absorbed into the last section)
+  const footnotesBlock = blocks.find(b => b.type === "footnotes") as
+    | { type: "footnotes"; id: string; items: { blocks: { audio_chunks: AudioChunk[] }[] }[]; audio_chunks: AudioChunk[] }
+    | undefined;
+  if (footnotesBlock && sections.length > 0) {
+    const firstAudioIdx = footnotesBlock.items
+      .flatMap(item => item.blocks.flatMap(b => b.audio_chunks))
+      .reduce((min, chunk) => Math.min(min, chunk.audio_block_idx), Infinity);
+
+    if (isFinite(firstAudioIdx)) {
+      const lastSection = sections[sections.length - 1];
+      lastSection.endBlockIdx = firstAudioIdx - 1;
+      lastSection.durationMs = 0;
+      for (let j = lastSection.startBlockIdx; j <= lastSection.endBlockIdx && j < documentBlocks.length; j++) {
+        lastSection.durationMs += documentBlocks[j]?.est_duration_ms ?? 0;
+      }
+
+      let footnoteDurationMs = 0;
+      for (let j = firstAudioIdx; j < documentBlocks.length; j++) {
+        footnoteDurationMs += documentBlocks[j]?.est_duration_ms ?? 0;
+      }
+
+      sections.push({
+        id: footnotesBlock.id,
+        title: "Footnotes",
+        level: 2,
+        startBlockIdx: firstAudioIdx,
+        endBlockIdx: documentBlocks.length - 1,
+        durationMs: footnoteDurationMs,
+        subsections: [],
+      });
+    }
+  }
+
   return sections;
 }
 
