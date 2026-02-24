@@ -8,7 +8,6 @@ import trafilatura
 from loguru import logger
 
 from yapit.gateway.document.http import resolve_relative_urls
-from yapit.gateway.document.markxiv import detect_arxiv_url, fetch_from_markxiv
 from yapit.gateway.document.playwright_renderer import render_with_js
 from yapit.gateway.metrics import log_event
 
@@ -44,14 +43,8 @@ def _has_js_framework(html: str) -> bool:
 async def extract_website_content(
     content: bytes,
     url: str | None,
-    markxiv_url: str | None,
 ) -> tuple[str, str]:
     """Extract markdown from website content. Returns (markdown, extraction_method)."""
-    arxiv_match = detect_arxiv_url(url) if url else None
-    if arxiv_match and markxiv_url:
-        arxiv_id, _ = arxiv_match
-        return await fetch_from_markxiv(markxiv_url, arxiv_id), "markxiv"
-
     html_str = content.decode("utf-8", errors="ignore")
 
     # JS framework detected in raw HTML — render with Playwright before extraction

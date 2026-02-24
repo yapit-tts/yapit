@@ -52,7 +52,7 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from yapit.gateway.document.extraction import deduplicate_footnotes, stitch_pages  # noqa: E402
-from yapit.gateway.document.gemini import GeminiExtractor  # noqa: E402
+from yapit.gateway.document.processors.gemini import GeminiExtractor  # noqa: E402
 
 SCRIPT_DIR = Path(__file__).parent
 DOCS_DIR = SCRIPT_DIR / "docs"
@@ -434,7 +434,7 @@ async def run_web_extraction(
         await download_file(url, html_path)
         content = html_path.read_bytes()
 
-        markdown, method = await extract_website_content(content, url, markxiv_url=None)
+        markdown, method = await extract_website_content(content, url)
         print(f"  Method: {method}, {len(markdown)} chars")
 
         (run_dir / f"{name}.md").write_text(markdown)

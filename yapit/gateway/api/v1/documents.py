@@ -380,7 +380,16 @@ async def prepare_document(
     ai_extractor_config: AiExtractorConfigDep,
 ) -> DocumentPrepareResponse:
     """Prepare a document from URL for creation."""
-    url_hash = hashlib.sha256(str(body.url).encode()).hexdigest()
+    url = str(body.url)
+
+    # arXiv URLs → rewrite to PDF so they flow through the document path
+    # (banner with free/AI transform choice, markxiv handled by /document endpoint)
+    arxiv_match = detect_arxiv_url(url)
+    if arxiv_match:
+        arxiv_id, _ = arxiv_match
+        url = f"https://arxiv.org/pdf/{arxiv_id}"
+
+    url_hash = hashlib.sha256(url.encode()).hexdigest()
 
     # Check URL cache first (same URL within TTL = no download needed)
     cached_data = await file_cache.retrieve_data(url_hash)
@@ -407,15 +416,15 @@ async def prepare_document(
             uncached_pages=uncached_pages,
         )
 
-    content, content_type = await download_document(body.url, settings.document_max_download_size)
+    content, content_type = await download_document(HttpUrl(url), settings.document_max_download_size)
 
     page_count, title = await asyncio.to_thread(_extract_document_info, content, content_type)
     metadata = DocumentMetadata(
         content_type=content_type,
         total_pages=page_count,
         title=title,
-        url=str(body.url),
-        file_name=Path(body.url.path or "/").name or None,
+        url=url,
+        file_name=Path(HttpUrl(url).path or "/").name or None,
         file_size=len(content),
     )
 
@@ -572,9 +581,7 @@ async def create_website_document(
             detail="Cached document has no content. This should not happen.",
         )
 
-    markdown, extraction_method = await extract_website_content(
-        cached_doc.content, cached_doc.metadata.url, settings.markxiv_url
-    )
+    markdown, extraction_method = await extract_website_content(cached_doc.content, cached_doc.metadata.url)
 
     processed = await asyncio.get_running_loop().run_in_executor(
         cpu_executor,
