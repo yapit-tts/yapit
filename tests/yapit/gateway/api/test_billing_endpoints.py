@@ -204,15 +204,20 @@ async def test_subscribe_retries_with_email_on_no_such_customer(client, app, as_
 @pytest.mark.asyncio
 async def test_subscribe_rejects_inactive_plan(client, billing_app, as_test_user, session):
     """EP-101: Subscribing to a deactivated plan → 400."""
-    from sqlmodel import select
-
     from yapit.gateway.domain_models import Plan
 
-    # Deactivate the max plan (may exist from seed data)
-    max_plan = (await session.exec(select(Plan).where(Plan.tier == PlanTier.max))).first()
-    if max_plan:
-        max_plan.is_active = False
-        await session.commit()
+    plan = Plan(
+        tier=PlanTier.max,
+        name="Max",
+        server_kokoro_characters=None,
+        premium_voice_characters=3_000_000,
+        ocr_tokens=15_000_000,
+        is_active=False,
+        stripe_price_id_monthly="price_max_monthly_inactive",
+        stripe_price_id_yearly="price_max_yearly_inactive",
+    )
+    session.add(plan)
+    await session.commit()
 
     response = await client.post(
         "/v1/billing/subscribe",

@@ -25,17 +25,13 @@ cd frontend && npm run dev  # Start frontend separately
 - `make test` — full suite (needs API keys)
 - `make check` — type checking (backend: ty, frontend: tsc + eslint)
 
-**Running tests manually:** Use `uv run --env-file=.env.dev pytest ...` — NOT `source .venv/bin/activate && pytest`. The Settings class requires env vars from `.env.dev`.
+**Running tests:** `uv run pytest tests/...` just works — `tests/conftest.py` auto-loads `.env.dev` via python-dotenv.
 
 **Test types:**
-- Unit tests (`tests/yapit/`) use testcontainers — independent, don't need backend running
-- Integration tests (`tests/integration/`) connect to localhost:8000 — need `make dev-cpu` running
+- Unit tests (`tests/yapit/`) — testcontainers, no backend needed
+- Integration tests (`tests/integration/`) — need `make dev-cpu` running
 
-**Billing tests (77 tests):** The `test_billing_*.py` and `test_usage.py` files have comprehensive deterministic coverage for webhook handlers, endpoint guards, usage waterfall, ordering/idempotency, and billing sync. Shared factories live in `test_billing_webhook.py`. Convention: `sync_subscription` is monkeypatched in endpoint tests (testing gate logic, not sync behavior). See [[stripe-integration]] Testing section for the full file list and what each covers.
-
-**Test fixture gotcha:** The test fixture relies on `uv run --env-file=.env.dev` loading most Settings. But if a field triggers initialization of components needing API keys (e.g., `ai_processor=gemini` → GeminiProcessor → needs `google_api_key`), explicitly disable it in conftest.py.
-
-**Test speed investigation (2026-01):** Unit tests take ~40s total, but the tests themselves only take ~12s — the rest is testcontainer startup (~30s). Investigated: pytest-xdist (overhead exceeds gains for fast tests), CI service containers (slower than testcontainers), pre-started containers via env vars (2x faster but adds complexity). Conclusion: no easy wins, testcontainer startup is the bottleneck and there's no simple fix. testcontainers-python doesn't support cross-run reuse like the Java version.
+**Test architecture:** API tests use a session-scoped app (`tests/yapit/gateway/api/conftest.py`). Testcontainers, schema, and app state are created once. Between tests: DB rows deleted, Redis flushed, SQLite caches cleared. No seed data — tests create their own. Event loop is session-scoped (`pyproject.toml`). Billing test factories live in `test_billing_webhook.py`; `sync_subscription` is monkeypatched in endpoint tests.
 
 ## CI/CD
 

@@ -44,25 +44,25 @@ test: test-unit test-frontend test-integration
 test-local: test-unit test-frontend test-integration-local
 
 test-unit:
-	uv run --env-file=.env.dev pytest tests --ignore=tests/integration -v -m "not runpod and not inworld and not gemini"
+	uv run pytest tests --ignore=tests/integration -v -m "not runpod and not inworld and not gemini"
 
 test-frontend:
 	npm test --prefix frontend
 
 test-integration:
-	uv run --env-file=.env.dev --env-file=.env pytest tests/integration -v
+	uv run pytest tests/integration -v
 
 test-integration-local:
-	uv run --env-file=.env.dev pytest tests/integration -v -m "not runpod and not inworld and not gemini"
+	uv run pytest tests/integration -v -m "not runpod and not inworld and not gemini"
 
 test-runpod:
-	uv run --env-file=.env.dev --env-file=.env pytest tests/integration -v -m "runpod"
+	uv run pytest tests/integration -v -m "runpod"
 
 test-inworld:
-	uv run --env-file=.env.dev --env-file=.env pytest tests/integration -v -m "inworld"
+	uv run pytest tests/integration -v -m "inworld"
 
 test-gemini:
-	uv run --env-file=.env.dev --env-file=.env pytest tests -v -m "gemini"
+	uv run pytest tests -v -m "gemini"
 
 # Database migrations (for prod schema changes)
 # Resets DB to migration state, generates migration, auto-fixes known issues, and tests it

@@ -27,16 +27,9 @@ from yapit.gateway.usage import check_usage_limit, record_usage
 
 @pytest.fixture
 async def subscribed_user(session):
-    """Create a subscribed user with a test-specific plan (isolated from seed changes)."""
+    """Create a subscribed user with a plan and usage data for waterfall testing."""
     now = datetime.now(tz=dt.UTC)
 
-    # Delete seeded basic plan and create our own with known test values
-    seeded_plan = (await session.exec(select(Plan).where(Plan.tier == PlanTier.basic))).first()
-    if seeded_plan:
-        await session.delete(seeded_plan)
-        await session.flush()
-
-    # Create test plan with known limits (isolated from seed changes)
     plan = Plan(
         tier=PlanTier.basic,
         name="Test Basic",
@@ -514,19 +507,15 @@ class TestEffectivePlanFallback:
 
         now = datetime.now(tz=dt.UTC)
 
-        seeded = (await session.exec(select(Plan).where(Plan.tier == PlanTier.plus))).first()
-        if not seeded:
-            plan = Plan(
-                tier=PlanTier.plus,
-                name="Test Plus",
-                server_kokoro_characters=None,
-                premium_voice_characters=5_000,
-                ocr_tokens=100_000,
-            )
-            session.add(plan)
-            await session.flush()
-        else:
-            plan = seeded
+        plan = Plan(
+            tier=PlanTier.plus,
+            name="Test Plus",
+            server_kokoro_characters=None,
+            premium_voice_characters=5_000,
+            ocr_tokens=100_000,
+        )
+        session.add(plan)
+        await session.flush()
 
         sub = UserSubscription(
             user_id=f"user-fallback-{status.value}",
@@ -548,19 +537,15 @@ class TestEffectivePlanFallback:
 
         now = datetime.now(tz=dt.UTC)
 
-        seeded = (await session.exec(select(Plan).where(Plan.tier == PlanTier.plus))).first()
-        if not seeded:
-            plan = Plan(
-                tier=PlanTier.plus,
-                name="Test Plus",
-                server_kokoro_characters=None,
-                premium_voice_characters=5_000,
-                ocr_tokens=100_000,
-            )
-            session.add(plan)
-            await session.flush()
-        else:
-            plan = seeded
+        plan = Plan(
+            tier=PlanTier.plus,
+            name="Test Plus",
+            server_kokoro_characters=None,
+            premium_voice_characters=5_000,
+            ocr_tokens=100_000,
+        )
+        session.add(plan)
+        await session.flush()
 
         sub = UserSubscription(
             user_id="user-fallback-past_due",

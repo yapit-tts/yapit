@@ -45,7 +45,7 @@ Yapit TTS - Open-source text-to-speech platform for reading documents, web pages
 - **ALWAYS ask user before stopping/restarting Docker services** — they may be actively testing
 - **Backend changes require restart** — If you modify backend Python code, tell user: "Backend code changed - please restart with `make dev-cpu`"
 - Running integration tests / "validating everything still works" makes no sense if you applied backend changes, without running make dev-cpu to rebuild it first.
-- IF you want to check for unit tests, which works without restarting the gateway, use make test-unit
+- Unit tests work without restarting the gateway. Run `make test-unit` for the full suite or `uv run pytest tests/path/to/test.py` for specific files.
 - If you can debug something without ssh access, e.g. by running make sync-logs and inspecting the logs and metrics locally, do that instead, since ssh requires user approval / unnecessary friction.
 - NEVER push in the same Bash tool call as git committing. Generally, NEVER push on your own except being explicitly told to push.
 - The pre-commit hook runs ruff (lint + format), ty type checks, and frontend build — no need to run these separately right before committing.

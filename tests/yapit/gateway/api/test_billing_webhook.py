@@ -211,9 +211,11 @@ async def create_subscription(
 def webhook_app_setup(app):
     """Set webhook-required settings/deps for endpoint tests."""
     settings = app.dependency_overrides[get_settings]()
+    original_secret = settings.stripe_webhook_secret
     settings.stripe_webhook_secret = "whsec_test"
     app.dependency_overrides[get_stripe_client] = lambda: object()
     yield
+    settings.stripe_webhook_secret = original_secret
     app.dependency_overrides.pop(get_stripe_client, None)
 
 
