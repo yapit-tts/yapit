@@ -26,6 +26,9 @@ from yapit.gateway.domain_models import (
 from yapit.gateway.exceptions import UsageLimitExceededError
 from yapit.gateway.reservations import get_pending_reservations_total
 
+# past_due: user keeps access during Stripe's dunning window.
+ENTITLED_STATUSES = frozenset({SubscriptionStatus.active, SubscriptionStatus.trialing, SubscriptionStatus.past_due})
+
 # Default free plan for users without subscription
 FREE_PLAN = Plan(
     id=0,
@@ -61,7 +64,7 @@ async def get_user_subscription(user_id: str, db: AsyncSession, *, for_update: b
 
 async def get_effective_plan(subscription: UserSubscription | None, db: AsyncSession) -> Plan:
     """Get the effective plan for a user, considering grace period after downgrade."""
-    if not subscription or subscription.status not in (SubscriptionStatus.active, SubscriptionStatus.trialing):
+    if not subscription or subscription.status not in ENTITLED_STATUSES:
         return FREE_PLAN
 
     # Check if user has grace period access to a higher tier
@@ -194,7 +197,7 @@ async def check_usage_limit(
 
     # Get current usage (need subscription for usage period)
     current = 0
-    if subscription and subscription.status in (SubscriptionStatus.active, SubscriptionStatus.trialing):
+    if subscription and subscription.status in ENTITLED_STATUSES:
         usage_period = await get_or_create_usage_period(user_id, subscription, db)
         current = _get_current_usage(usage_period, usage_type)
 
@@ -311,7 +314,9 @@ async def record_usage(
     subscription = await get_user_subscription(user_id, db, for_update=True)
     breakdown = None
 
-    if subscription and subscription.status in (SubscriptionStatus.active, SubscriptionStatus.trialing):
+    # Always deduct — the usage already happened (TTS was synthesized).
+    # check_usage_limit gates new requests; this is bookkeeping for completed work.
+    if subscription:
         plan = await get_effective_plan(subscription, db)
         usage_period = await get_or_create_usage_period(user_id, subscription, db)
 
@@ -356,7 +361,7 @@ async def get_usage_summary(
         "purchased_voice_chars": 0,
     }
 
-    if subscription and subscription.status in (SubscriptionStatus.active, SubscriptionStatus.trialing):
+    if subscription and subscription.status in ENTITLED_STATUSES:
         usage_period = await get_or_create_usage_period(user_id, subscription, db)
         usage = {
             "server_kokoro_characters": usage_period.server_kokoro_characters,
@@ -375,9 +380,7 @@ async def get_usage_summary(
         }
 
     subscribed_tier = (
-        subscription.plan.tier
-        if subscription and subscription.status in (SubscriptionStatus.active, SubscriptionStatus.trialing)
-        else PlanTier.free
+        subscription.plan.tier if subscription and subscription.status in ENTITLED_STATUSES else PlanTier.free
     )
 
     return {
@@ -415,7 +418,7 @@ async def get_usage_breakdown(
 ) -> dict:
     """Get per-voice and per-document usage breakdown for the current billing period."""
     subscription = await get_user_subscription(user_id, db)
-    if not subscription or subscription.status not in (SubscriptionStatus.active, SubscriptionStatus.trialing):
+    if not subscription or subscription.status not in ENTITLED_STATUSES:
         return {"premium_voice": [], "ocr": []}
 
     period_start = subscription.current_period_start

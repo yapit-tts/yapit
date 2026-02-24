@@ -13,6 +13,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlmodel import col, select
 from stripe.params.checkout._session_create_params import SessionCreateParams
 
+from yapit.gateway.billing_ops import apply_plan_change
 from yapit.gateway.billing_sync import sync_subscription
 from yapit.gateway.deps import AuthenticatedUser, DbSession, SettingsDep, StripeClient
 from yapit.gateway.domain_models import (
@@ -286,7 +287,7 @@ async def stripe_webhook(
             await _handle_checkout_completed(session, client, db)
         elif event.type in ("customer.subscription.created", "customer.subscription.updated"):
             sub = cast(stripe.Subscription, event.data.object)
-            await _handle_subscription_updated(sub, db)
+            await _handle_subscription_updated(sub, client, db)
         elif event.type == "customer.subscription.deleted":
             sub = cast(stripe.Subscription, event.data.object)
             await _handle_subscription_deleted(sub, db)
@@ -406,8 +407,14 @@ async def _handle_checkout_completed(
     log.bind(status=sub_status).info("Subscription upserted via checkout")
 
 
-async def _handle_subscription_updated(stripe_sub: stripe.Subscription, db: DbSession) -> None:
-    """Handle subscription updates using user_id as consistent lookup key with atomic upsert for creation."""
+async def _handle_subscription_updated(
+    stripe_sub: stripe.Subscription, client: stripe.StripeClient, db: DbSession
+) -> None:
+    """Handle subscription updates by fetching current state from Stripe API.
+
+    Uses event payload only for subscription ID and user_id lookup, then fetches
+    authoritative current state from the API to prevent out-of-order webhook issues.
+    """
     user_id = stripe_sub.metadata.get("user_id") if stripe_sub.metadata else None
 
     # Look up by user_id (consistent with checkout handler) or fall back to stripe_subscription_id
@@ -420,6 +427,9 @@ async def _handle_subscription_updated(stripe_sub: stripe.Subscription, db: DbSe
             user_id = subscription.user_id
 
     log = logger.bind(stripe_sub_id=stripe_sub.id, user_id=user_id, lookup="user_id" if user_id else "sub_id")
+
+    # Fetch authoritative current state from Stripe API (not the potentially stale event payload)
+    stripe_sub = await client.v1.subscriptions.retrieve_async(stripe_sub.id)
 
     first_item = stripe_sub["items"].data[0]
     now = datetime.now(tz=dt.UTC)
@@ -511,35 +521,7 @@ async def _handle_subscription_updated(stripe_sub: stripe.Subscription, db: DbSe
         )
         new_plan = plan_result.first()
         if new_plan and new_plan.id and new_plan.id != subscription.plan_id:
-            old_tier = subscription.plan.tier
-            is_downgrade = tier_rank(new_plan.tier) < tier_rank(old_tier)
-            is_upgrade = tier_rank(new_plan.tier) > tier_rank(old_tier)
-
-            # Downgrade: set grace period (user keeps higher-tier access until period end)
-            # Skip grace if downgrading from trial (user never paid for higher tier)
-            if is_downgrade and old_status != SubscriptionStatus.trialing:
-                # Preserve existing grace tier if it's higher (Max→Plus→Basic keeps Max grace)
-                if tier_rank(old_tier) > tier_rank(subscription.grace_tier):
-                    subscription.grace_tier = old_tier
-                subscription.grace_until = subscription.current_period_end
-                log.bind(old_tier=old_tier, new_tier=new_plan.tier, grace_until=str(subscription.grace_until)).info(
-                    "Downgrade with grace period"
-                )
-            elif is_downgrade:
-                log.bind(old_tier=old_tier, new_tier=new_plan.tier).info("Downgrade from trial, no grace")
-            elif (
-                is_upgrade
-                and subscription.grace_tier
-                and tier_rank(new_plan.tier) >= tier_rank(subscription.grace_tier)
-            ):
-                subscription.grace_tier = None
-                subscription.grace_until = None
-                log.info("Upgrade cleared grace period")
-
-            subscription.plan_id = new_plan.id
-            if tier_rank(new_plan.tier) > tier_rank(subscription.highest_tier_subscribed):
-                subscription.highest_tier_subscribed = new_plan.tier
-            log.bind(old_tier=old_tier, new_tier=new_plan.tier).info("Plan changed")
+            apply_plan_change(subscription, new_plan, old_status, log)
 
     subscription.updated = now
     await db.commit()
@@ -638,14 +620,11 @@ async def _handle_invoice_paid(invoice: stripe.Invoice, db: DbSession) -> None:
         subscription.ever_paid = True
         log.info("First payment received")
 
-    # Only update period dates for renewal invoices. subscription_create invoices have
-    # period_start == period_end (point-in-time), and subscription_update invoices carry
-    # proration windows — neither represents billing cycle boundaries.
-    #
-    # The new billing cycle comes from the invoice LINE ITEM period (not invoice-level
-    # period_start/end, which "looks back one period" per Stripe docs).
-    is_full_cycle = invoice.billing_reason == "subscription_cycle"
-    if is_full_cycle:
+    # Update period dates for renewal invoices from the line item's billing cycle. The line
+    # item period is authoritative — invoice-level period_start/end "looks back one period"
+    # per Stripe docs. subscription_create is handled by checkout + subscription.updated;
+    # subscription_update carries proration windows, not billing cycle boundaries.
+    if invoice.billing_reason == "subscription_cycle":
         new_period_start, new_period_end = _extract_line_item_period(invoice, log)
         if new_period_start and new_period_end:
             subscription.current_period_start = new_period_start
@@ -666,6 +645,9 @@ async def _handle_invoice_paid(invoice: stripe.Invoice, db: DbSession) -> None:
                 ).info("New usage period created")
 
     if invoice.billing_reason != "subscription_cycle":
+        if invoice.billing_reason == "subscription_update" and subscription.previous_plan_id:
+            subscription.previous_plan_id = None
+            log.info("Cleared previous_plan_id after successful proration")
         await db.commit()
         return
 
@@ -695,7 +677,12 @@ async def _handle_invoice_paid(invoice: stripe.Invoice, db: DbSession) -> None:
             period_start=invoice_period_start,
             period_end=datetime.fromtimestamp(invoice.period_end, tz=dt.UTC),
         )
-    plan = subscription.plan
+    # Use grace plan limits if active — user had higher-tier access during the ending period
+    if subscription.grace_tier:
+        grace_result = await db.exec(select(Plan).where(Plan.tier == subscription.grace_tier))
+        plan = grace_result.first() or subscription.plan
+    else:
+        plan = subscription.plan
 
     # Token rollover
     if plan.ocr_tokens:
@@ -724,11 +711,13 @@ async def _handle_invoice_paid(invoice: stripe.Invoice, db: DbSession) -> None:
 
     subscription.last_rollover_invoice_id = invoice.id
 
-    # Clear grace period - new billing cycle means downgrade is now fully effective
+    # New billing cycle: clear transient state from previous cycle
     if subscription.grace_tier:
         log.bind(grace_tier=subscription.grace_tier).info("Clearing grace period on renewal")
         subscription.grace_tier = None
         subscription.grace_until = None
+    if subscription.previous_plan_id:
+        subscription.previous_plan_id = None
 
     await db.commit()
 
@@ -755,5 +744,16 @@ async def _handle_invoice_failed(invoice: stripe.Invoice, db: DbSession) -> None
 
     subscription.status = SubscriptionStatus.past_due
     subscription.updated = datetime.now(tz=dt.UTC)
+
+    # Revert plan on failed upgrade proration — user should keep their old plan, not get the upgrade for free
+    if invoice.billing_reason == "subscription_update" and subscription.previous_plan_id:
+        log.bind(
+            user_id=subscription.user_id,
+            reverted_from=subscription.plan_id,
+            reverted_to=subscription.previous_plan_id,
+        ).info("Reverting plan after failed upgrade proration")
+        subscription.plan_id = subscription.previous_plan_id
+        subscription.previous_plan_id = None
+
     await db.commit()
     log.bind(user_id=subscription.user_id).info("Subscription marked past_due")

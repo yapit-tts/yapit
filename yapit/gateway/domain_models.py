@@ -282,6 +282,9 @@ class UserSubscription(SQLModel, table=True):
     grace_tier: PlanTier | None = Field(default=None)
     grace_until: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
 
+    # Previous plan: set on plan change, used to revert on failed upgrade proration
+    previous_plan_id: int | None = Field(default=None)
+
     # Rollover: unused subscription tokens/chars carried forward (capped)
     rollover_tokens: int = Field(default=0)  # Capped at 10M
     rollover_voice_chars: int = Field(default=0)  # Capped at 1M

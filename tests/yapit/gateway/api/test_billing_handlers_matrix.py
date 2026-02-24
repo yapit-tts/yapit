@@ -14,7 +14,7 @@ import pytest
 from yapit.gateway.api.v1 import billing as billing_api
 from yapit.gateway.domain_models import PlanTier, SubscriptionStatus, UserSubscription
 
-from .test_billing_webhook import create_subscription, ensure_plan, make_stripe_subscription
+from .test_billing_webhook import create_subscription, ensure_plan, make_stripe_client, make_stripe_subscription
 
 
 async def _setup_tiers(session):
@@ -69,7 +69,7 @@ class TestDowngradeGrace:
             status="active",
         )
 
-        await billing_api._handle_subscription_updated(stripe_sub, session)
+        await billing_api._handle_subscription_updated(stripe_sub, make_stripe_client(stripe_sub), session)
 
         refreshed = await session.get(UserSubscription, "user-paid-downgrade")
         assert refreshed.plan_id == basic.id
@@ -101,7 +101,7 @@ class TestDowngradeGrace:
             status="trialing",
         )
 
-        await billing_api._handle_subscription_updated(stripe_sub, session)
+        await billing_api._handle_subscription_updated(stripe_sub, make_stripe_client(stripe_sub), session)
 
         refreshed = await session.get(UserSubscription, "user-trial-downgrade")
         assert refreshed.plan_id == basic.id
@@ -138,7 +138,9 @@ class TestMultiDowngradePreservation:
             period_end=now + timedelta(days=30),
             status="active",
         )
-        await billing_api._handle_subscription_updated(stripe_sub_to_plus, session)
+        await billing_api._handle_subscription_updated(
+            stripe_sub_to_plus, make_stripe_client(stripe_sub_to_plus), session
+        )
 
         mid = await session.get(UserSubscription, "user-multi-downgrade")
         assert mid.grace_tier == PlanTier.max
@@ -153,7 +155,9 @@ class TestMultiDowngradePreservation:
             period_end=now + timedelta(days=30),
             status="active",
         )
-        await billing_api._handle_subscription_updated(stripe_sub_to_basic, session)
+        await billing_api._handle_subscription_updated(
+            stripe_sub_to_basic, make_stripe_client(stripe_sub_to_basic), session
+        )
 
         final = await session.get(UserSubscription, "user-multi-downgrade")
         assert final.plan_id == basic.id
@@ -197,7 +201,7 @@ class TestUpgradeGraceClearing:
             status="active",
         )
 
-        await billing_api._handle_subscription_updated(stripe_sub, session)
+        await billing_api._handle_subscription_updated(stripe_sub, make_stripe_client(stripe_sub), session)
 
         refreshed = await session.get(UserSubscription, "user-upgrade-below")
         assert refreshed.plan_id == plus.id
@@ -231,7 +235,7 @@ class TestUpgradeGraceClearing:
             status="active",
         )
 
-        await billing_api._handle_subscription_updated(stripe_sub, session)
+        await billing_api._handle_subscription_updated(stripe_sub, make_stripe_client(stripe_sub), session)
 
         refreshed = await session.get(UserSubscription, "user-upgrade-match")
         assert refreshed.plan_id == plus.id
@@ -265,7 +269,7 @@ class TestUpgradeGraceClearing:
             status="active",
         )
 
-        await billing_api._handle_subscription_updated(stripe_sub, session)
+        await billing_api._handle_subscription_updated(stripe_sub, make_stripe_client(stripe_sub), session)
 
         refreshed = await session.get(UserSubscription, "user-upgrade-above")
         assert refreshed.plan_id == maxx.id

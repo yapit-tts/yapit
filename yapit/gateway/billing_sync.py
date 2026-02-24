@@ -14,9 +14,10 @@ from redis.asyncio import Redis
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from yapit.gateway.billing_ops import apply_plan_change
 from yapit.gateway.config import Settings
 from yapit.gateway.db import create_session
-from yapit.gateway.domain_models import Plan, SubscriptionStatus, UserSubscription, tier_rank
+from yapit.gateway.domain_models import Plan, SubscriptionStatus, UserSubscription
 from yapit.gateway.metrics import log_event
 
 
@@ -86,10 +87,8 @@ async def sync_subscription(
             select(Plan).where((Plan.stripe_price_id_monthly == price_id) | (Plan.stripe_price_id_yearly == price_id))
         )
         plan = plan_result.first()
-        if plan and plan.id:
-            subscription.plan_id = plan.id
-            if tier_rank(plan.tier) > tier_rank(subscription.highest_tier_subscribed):
-                subscription.highest_tier_subscribed = plan.tier
+        if plan and plan.id and plan.id != subscription.plan_id:
+            apply_plan_change(subscription, plan, old_status, log)
 
     if subscription.status == SubscriptionStatus.active and not subscription.ever_paid:
         subscription.ever_paid = True

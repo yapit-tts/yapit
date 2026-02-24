@@ -115,6 +115,15 @@ def make_checkout_session(*, user_id: str, subscription_id: str, customer_id: st
     )
 
 
+def make_stripe_client(stripe_sub):
+    """Create a fake Stripe client that returns the given subscription from retrieve_async."""
+    return SimpleNamespace(
+        v1=SimpleNamespace(
+            subscriptions=SimpleNamespace(retrieve_async=AsyncMock(return_value=stripe_sub)),
+        )
+    )
+
+
 async def ensure_plan(
     session,
     *,
@@ -344,7 +353,7 @@ async def test_subscription_updated_skips_stale_replaced_subscription(session):
         status="canceled",
     )
 
-    await billing_api._handle_subscription_updated(stripe_sub, session)
+    await billing_api._handle_subscription_updated(stripe_sub, make_stripe_client(stripe_sub), session)
 
     refreshed = await session.get(UserSubscription, sub.user_id)
     assert refreshed is not None
@@ -421,7 +430,7 @@ async def test_subscription_updated_clears_canceled_at_when_stripe_has_none(sess
         canceled_at=None,
     )
 
-    await billing_api._handle_subscription_updated(stripe_sub, session)
+    await billing_api._handle_subscription_updated(stripe_sub, make_stripe_client(stripe_sub), session)
 
     refreshed = await session.get(UserSubscription, sub.user_id)
     assert refreshed is not None
@@ -816,7 +825,7 @@ async def test_subscription_updated_creates_row_when_absent_with_metadata(sessio
         customer="cus_create",
     )
 
-    await billing_api._handle_subscription_updated(stripe_sub, session)
+    await billing_api._handle_subscription_updated(stripe_sub, make_stripe_client(stripe_sub), session)
 
     created = await session.get(UserSubscription, "user-create-new")
     assert created is not None
@@ -847,7 +856,7 @@ async def test_subscription_updated_noop_when_row_absent_and_missing_user_id(ses
     )
 
     # Should not raise and should not create any row
-    await billing_api._handle_subscription_updated(stripe_sub, session)
+    await billing_api._handle_subscription_updated(stripe_sub, make_stripe_client(stripe_sub), session)
 
     # Verify no subscription was created (can't look up by user_id since it's None,
     # but we can check by stripe_subscription_id)
@@ -871,7 +880,7 @@ async def test_subscription_updated_noop_when_row_absent_and_missing_price(sessi
         status="active",
     )
 
-    await billing_api._handle_subscription_updated(stripe_sub, session)
+    await billing_api._handle_subscription_updated(stripe_sub, make_stripe_client(stripe_sub), session)
 
     created = await session.get(UserSubscription, "user-no-price")
     assert created is None
@@ -1192,7 +1201,7 @@ async def test_new_subscription_full_webhook_sequence(session):
     assert sub.current_period_end == period_end
 
     # Event 2: customer.subscription.created (same data, upserts over existing row)
-    await billing_api._handle_subscription_updated(stripe_sub, session)
+    await billing_api._handle_subscription_updated(stripe_sub, make_stripe_client(stripe_sub), session)
 
     await session.refresh(sub)
     assert sub.current_period_start == creation_time
@@ -1286,7 +1295,7 @@ async def test_trial_subscription_webhook_sequence(session):
         status="active",
         customer="cus_trial_seq",
     )
-    await billing_api._handle_subscription_updated(active_sub, session)
+    await billing_api._handle_subscription_updated(active_sub, make_stripe_client(active_sub), session)
 
     await session.refresh(sub)
     assert sub.status == SubscriptionStatus.active
@@ -1351,7 +1360,7 @@ async def test_cancel_at_period_end_preserves_active_status(session):
         canceled_at=cancel_request_time,  # when user clicked cancel
     )
 
-    await billing_api._handle_subscription_updated(stripe_sub, session)
+    await billing_api._handle_subscription_updated(stripe_sub, make_stripe_client(stripe_sub), session)
 
     refreshed = await session.get(UserSubscription, "user-cancel-end")
     assert refreshed.status == SubscriptionStatus.active
@@ -1431,3 +1440,215 @@ async def test_resubscribe_after_cancel_full_sequence(session):
     assert sub.current_period_start == now
     assert sub.current_period_end == new_period_end
     assert sub.ever_paid is True
+
+
+# --- Proration tests ---
+
+
+@pytest.mark.asyncio
+async def test_upgrade_proration_success_clears_previous_plan(session):
+    """Upgrade via portal → proration invoice paid → previous_plan_id cleared."""
+    now = datetime.now(tz=dt.UTC).replace(microsecond=0)
+    basic = await ensure_plan(
+        session, tier=PlanTier.basic, monthly_price_id="price_basic_m_pror", yearly_price_id="price_basic_y_pror"
+    )
+    plus = await ensure_plan(
+        session, tier=PlanTier.plus, monthly_price_id="price_plus_m_pror", yearly_price_id="price_plus_y_pror"
+    )
+
+    await create_subscription(
+        session,
+        user_id="user-pror-success",
+        plan_id=basic.id,
+        stripe_subscription_id="sub_pror_success",
+        status=SubscriptionStatus.active,
+        current_period_start=now,
+        current_period_end=now + timedelta(days=30),
+    )
+
+    # Step 1: subscription.updated — upgrade Basic→Plus
+    stripe_sub = make_stripe_subscription(
+        sub_id="sub_pror_success",
+        user_id="user-pror-success",
+        price_id=plus.stripe_price_id_monthly,
+        period_start=now,
+        period_end=now + timedelta(days=30),
+        status="active",
+    )
+    await billing_api._handle_subscription_updated(stripe_sub, make_stripe_client(stripe_sub), session)
+
+    sub = await session.get(UserSubscription, "user-pror-success")
+    assert sub.plan_id == plus.id
+    assert sub.previous_plan_id == basic.id
+
+    # Step 2: invoice.payment_succeeded (subscription_update proration)
+    invoice = make_invoice(
+        subscription_id="sub_pror_success",
+        billing_reason="subscription_update",
+        period_start=now,
+        period_end=now + timedelta(days=30),
+        invoice_id="in_pror_success",
+    )
+    await billing_api._handle_invoice_paid(invoice, session)
+
+    await session.refresh(sub)
+    assert sub.plan_id == plus.id
+    assert sub.previous_plan_id is None
+
+
+@pytest.mark.asyncio
+async def test_upgrade_proration_failure_reverts_plan(session):
+    """Upgrade via portal → proration invoice fails → plan reverted to previous."""
+    now = datetime.now(tz=dt.UTC).replace(microsecond=0)
+    basic = await ensure_plan(
+        session, tier=PlanTier.basic, monthly_price_id="price_basic_m_revert", yearly_price_id="price_basic_y_revert"
+    )
+    plus = await ensure_plan(
+        session, tier=PlanTier.plus, monthly_price_id="price_plus_m_revert", yearly_price_id="price_plus_y_revert"
+    )
+
+    await create_subscription(
+        session,
+        user_id="user-pror-fail",
+        plan_id=basic.id,
+        stripe_subscription_id="sub_pror_fail",
+        status=SubscriptionStatus.active,
+        current_period_start=now,
+        current_period_end=now + timedelta(days=30),
+    )
+
+    # Step 1: subscription.updated — upgrade Basic→Plus
+    stripe_sub = make_stripe_subscription(
+        sub_id="sub_pror_fail",
+        user_id="user-pror-fail",
+        price_id=plus.stripe_price_id_monthly,
+        period_start=now,
+        period_end=now + timedelta(days=30),
+        status="active",
+    )
+    await billing_api._handle_subscription_updated(stripe_sub, make_stripe_client(stripe_sub), session)
+
+    sub = await session.get(UserSubscription, "user-pror-fail")
+    assert sub.plan_id == plus.id
+    assert sub.previous_plan_id == basic.id
+
+    # Step 2: invoice.payment_failed (proration charge declined)
+    invoice = make_invoice(
+        subscription_id="sub_pror_fail",
+        billing_reason="subscription_update",
+        period_start=now,
+        period_end=now + timedelta(days=30),
+        invoice_id="in_pror_fail",
+    )
+    await billing_api._handle_invoice_failed(invoice, session)
+
+    await session.refresh(sub)
+    assert sub.status == SubscriptionStatus.past_due
+    assert sub.plan_id == basic.id
+    assert sub.previous_plan_id is None
+
+
+@pytest.mark.asyncio
+async def test_rollover_uses_grace_plan_limits(session):
+    """Rollover during grace period uses the higher (grace) plan's limits, not the current plan."""
+    now = datetime.now(tz=dt.UTC).replace(microsecond=0)
+    old_start = now - timedelta(days=30)
+
+    basic = await ensure_plan(
+        session,
+        tier=PlanTier.basic,
+        monthly_price_id="price_basic_m_grace_roll",
+        yearly_price_id="price_basic_y_grace_roll",
+        ocr_tokens=50_000,
+    )
+    await ensure_plan(
+        session,
+        tier=PlanTier.plus,
+        monthly_price_id="price_plus_m_grace_roll",
+        yearly_price_id="price_plus_y_grace_roll",
+        ocr_tokens=100_000,
+    )
+
+    # User downgraded Plus→Basic mid-cycle, has grace_tier=Plus
+    await create_subscription(
+        session,
+        user_id="user-grace-rollover",
+        plan_id=basic.id,
+        stripe_subscription_id="sub_grace_rollover",
+        status=SubscriptionStatus.active,
+        current_period_start=old_start,
+        current_period_end=now,
+        grace_tier=PlanTier.plus,
+        grace_until=now,
+        ever_paid=True,
+    )
+
+    # User consumed 80K tokens (within Plus's 100K, but over Basic's 50K)
+    session.add(
+        UsagePeriod(
+            user_id="user-grace-rollover",
+            period_start=old_start,
+            period_end=now,
+            ocr_tokens=80_000,
+        )
+    )
+    await session.commit()
+
+    # Renewal invoice
+    new_end = now + timedelta(days=30)
+    invoice = make_invoice(
+        subscription_id="sub_grace_rollover",
+        billing_reason="subscription_cycle",
+        period_start=old_start,
+        period_end=now,
+        invoice_id="in_grace_rollover",
+        line_period_start=now,
+        line_period_end=new_end,
+    )
+    await billing_api._handle_invoice_paid(invoice, session)
+
+    sub = await session.get(UserSubscription, "user-grace-rollover")
+    # Rollover should use Plus limits (100K): 100K - 80K = 20K rollover
+    # NOT Basic limits (50K): max(0, 50K - 80K) = 0 rollover
+    assert sub.rollover_tokens == 20_000
+    assert sub.grace_tier is None  # cleared on renewal
+
+
+@pytest.mark.asyncio
+async def test_interval_change_no_plan_change(session):
+    """Monthly→yearly same tier: no grace logic, no plan change."""
+    now = datetime.now(tz=dt.UTC).replace(microsecond=0)
+    plus = await ensure_plan(
+        session,
+        tier=PlanTier.plus,
+        monthly_price_id="price_plus_m_interval",
+        yearly_price_id="price_plus_y_interval",
+    )
+
+    await create_subscription(
+        session,
+        user_id="user-interval",
+        plan_id=plus.id,
+        stripe_subscription_id="sub_interval",
+        status=SubscriptionStatus.active,
+        current_period_start=now,
+        current_period_end=now + timedelta(days=30),
+    )
+
+    # Stripe sends subscription.updated with yearly price for same tier
+    stripe_sub = make_stripe_subscription(
+        sub_id="sub_interval",
+        user_id="user-interval",
+        price_id=plus.stripe_price_id_yearly,
+        period_start=now,
+        period_end=now + timedelta(days=365),
+        status="active",
+    )
+    await billing_api._handle_subscription_updated(stripe_sub, make_stripe_client(stripe_sub), session)
+
+    sub = await session.get(UserSubscription, "user-interval")
+    assert sub.plan_id == plus.id  # unchanged
+    assert sub.grace_tier is None
+    assert sub.previous_plan_id is None
+    # Period updated to yearly
+    assert sub.current_period_end == now + timedelta(days=365)

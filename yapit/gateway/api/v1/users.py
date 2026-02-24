@@ -292,7 +292,11 @@ async def delete_account(
 
     # 1. Cancel Stripe subscription if active
     sub = await get_user_subscription(user_id, db)
-    if sub and sub.stripe_subscription_id and sub.status in (SubscriptionStatus.active, SubscriptionStatus.trialing):
+    if (
+        sub
+        and sub.stripe_subscription_id
+        and sub.status in (SubscriptionStatus.active, SubscriptionStatus.trialing, SubscriptionStatus.past_due)
+    ):
         if settings.stripe_secret_key:
             try:
                 client = stripe.StripeClient(settings.stripe_secret_key)

@@ -504,14 +504,12 @@ class TestUnsubscribedUsageLog:
 
 
 class TestEffectivePlanFallback:
-    """US-202: get_effective_plan falls back to free for non-active statuses."""
+    """US-202: get_effective_plan falls back to free for non-entitled statuses."""
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        "status", [SubscriptionStatus.past_due, SubscriptionStatus.incomplete, SubscriptionStatus.canceled]
-    )
-    async def test_non_active_status_gets_free_plan(self, session, status):
-        """past_due, incomplete, canceled all fall back to free plan."""
+    @pytest.mark.parametrize("status", [SubscriptionStatus.incomplete, SubscriptionStatus.canceled])
+    async def test_non_entitled_status_gets_free_plan(self, session, status):
+        """incomplete, canceled fall back to free plan."""
         from yapit.gateway.usage import FREE_PLAN, get_effective_plan
 
         now = datetime.now(tz=dt.UTC)
@@ -542,3 +540,37 @@ class TestEffectivePlanFallback:
 
         effective = await get_effective_plan(sub, session)
         assert effective.tier == FREE_PLAN.tier
+
+    @pytest.mark.asyncio
+    async def test_past_due_keeps_plan_access(self, session):
+        """past_due users keep access during Stripe's dunning window."""
+        from yapit.gateway.usage import get_effective_plan
+
+        now = datetime.now(tz=dt.UTC)
+
+        seeded = (await session.exec(select(Plan).where(Plan.tier == PlanTier.plus))).first()
+        if not seeded:
+            plan = Plan(
+                tier=PlanTier.plus,
+                name="Test Plus",
+                server_kokoro_characters=None,
+                premium_voice_characters=5_000,
+                ocr_tokens=100_000,
+            )
+            session.add(plan)
+            await session.flush()
+        else:
+            plan = seeded
+
+        sub = UserSubscription(
+            user_id="user-fallback-past_due",
+            plan_id=plan.id,
+            status=SubscriptionStatus.past_due,
+            current_period_start=now - timedelta(days=30),
+            current_period_end=now,
+        )
+        session.add(sub)
+        await session.commit()
+
+        effective = await get_effective_plan(sub, session)
+        assert effective.tier == PlanTier.plus

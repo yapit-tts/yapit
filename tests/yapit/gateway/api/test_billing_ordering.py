@@ -21,6 +21,7 @@ from .test_billing_webhook import (
     ensure_plan,
     make_checkout_session,
     make_invoice,
+    make_stripe_client,
     make_stripe_subscription,
 )
 
@@ -52,7 +53,7 @@ async def test_subscription_updated_before_checkout_converges(session):
         plan_tier=PlanTier.plus,
     )
 
-    await billing_api._handle_subscription_updated(stripe_sub, session)
+    await billing_api._handle_subscription_updated(stripe_sub, make_stripe_client(stripe_sub), session)
 
     # Verify row was created by subscription.updated
     sub = await session.get(UserSubscription, "user-order-test")
@@ -229,7 +230,7 @@ async def test_old_webhook_replay_after_replacement_held_by_stale_guard(session)
     )
 
     # subscription.updated for old sub → no-op
-    await billing_api._handle_subscription_updated(old_sub, session)
+    await billing_api._handle_subscription_updated(old_sub, make_stripe_client(old_sub), session)
     refreshed = await session.get(UserSubscription, "user-replay")
     assert refreshed.stripe_subscription_id == "sub_new_current"
     assert refreshed.status == SubscriptionStatus.active
