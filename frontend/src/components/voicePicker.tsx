@@ -274,52 +274,33 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
       <TabsContent value="kokoro" className="m-0 max-h-[60vh] sm:max-h-[28rem] overflow-y-auto">
         {/* Local/Cloud toggle */}
         <div className="flex items-center justify-between px-4 py-3 border-b bg-muted/30">
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5 flex-wrap">
             <span className="text-sm text-muted-foreground">Run on</span>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button className="text-muted-foreground hover:text-foreground">
-                  <Info className="h-3.5 w-3.5" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="top" className="max-w-xs">
-                <p><strong>Local:</strong> English voices only.</p>
-                <p><strong>Cloud:</strong> All available languages and voices.</p>
-              </TooltipContent>
-            </Tooltip>
+            <InfoTip isMobile={isMobile}>
+              <p><strong>Local:</strong> English voices only.</p>
+              <p><strong>Cloud:</strong> All available languages and voices.</p>
+            </InfoTip>
           </div>
           <div className="flex rounded-md border bg-background relative">
-            <Popover open={localUnavailableOpen} onOpenChange={setLocalUnavailableOpen}>
-              <PopoverTrigger asChild>
-                <button
-                  onClick={() => {
-                    if (canUseLocalTTS === false) {
-                      setLocalUnavailableOpen(true);
-                    } else if (isKokoroServer) {
-                      handleKokoroSourceToggle();
-                    }
-                  }}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-l-md transition-colors ${
-                    canUseLocalTTS === false
-                      ? "text-muted-foreground/50 cursor-not-allowed"
-                      : !isKokoroServer
-                        ? "bg-primary text-primary-foreground"
-                        : "text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  <Monitor className="h-4 w-4" />
-                  Local
-                </button>
-              </PopoverTrigger>
-              {canUseLocalTTS === false && (
-                <PopoverContent side="top" className="w-64 text-sm">
-                  <p>Requires a desktop browser with WebGPU support.</p>
-                  <Link to="/tips#local-tts" className="text-primary font-medium hover:underline" onClick={() => setOpen(false)}>
-                    Learn more
-                  </Link>
-                </PopoverContent>
-              )}
-            </Popover>
+            <button
+              onClick={() => {
+                if (canUseLocalTTS === false) {
+                  setLocalUnavailableOpen(v => !v);
+                } else if (isKokoroServer) {
+                  handleKokoroSourceToggle();
+                }
+              }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-l-md transition-colors ${
+                canUseLocalTTS === false
+                  ? "text-muted-foreground/50 cursor-not-allowed"
+                  : !isKokoroServer
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <Monitor className="h-4 w-4" />
+              Local
+            </button>
             <button
               onClick={() => !isKokoroServer && handleKokoroSourceToggle()}
               className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-r-md transition-colors ${
@@ -331,6 +312,14 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
             </button>
           </div>
         </div>
+        {canUseLocalTTS === false && localUnavailableOpen && (
+          <div className="px-4 py-2.5 border-b bg-muted/50 text-sm text-muted-foreground">
+            Requires a desktop browser with WebGPU support.{" "}
+            <Link to="/tips#local-tts" className="text-primary font-medium hover:underline" onClick={() => setOpen(false)}>
+              Learn more
+            </Link>
+          </div>
+        )}
         {/* Starred section */}
         {pinnedKokoro.length > 0 && (
           <div className="border-b">
@@ -390,18 +379,11 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
       <TabsContent value="inworld" className="m-0 max-h-[60vh] sm:max-h-[28rem] overflow-y-auto">
         {/* Model toggle: TTS-1.5 vs TTS-1.5-Max */}
         <div className="flex items-center justify-between px-4 py-3 border-b bg-muted/30">
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5 flex-wrap">
             <span className="text-sm text-muted-foreground">Quality</span>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button className="text-muted-foreground hover:text-foreground">
-                  <Info className="h-3.5 w-3.5" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="top" className="max-w-xs">
-                <p>TTS-1.5-Max uses a larger model for more natural speech and better multilingual pronunciation. Uses 2× your voice quota.</p>
-              </TooltipContent>
-            </Tooltip>
+            <InfoTip isMobile={isMobile}>
+              <p>TTS-1.5-Max uses a larger model for more natural speech and better multilingual pronunciation. Uses 2× your voice quota.</p>
+            </InfoTip>
           </div>
           <div className="flex rounded-md border bg-background">
             <button
@@ -548,6 +530,31 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
         {voicePickerContent}
       </PopoverContent>
     </Popover>
+  );
+}
+
+/** Info icon: hover tooltip on desktop, tap-to-toggle inline text on mobile. */
+function InfoTip({ children, isMobile }: { children: React.ReactNode; isMobile: boolean }) {
+  const [open, setOpen] = useState(false);
+  if (isMobile) {
+    return (
+      <>
+        <button className="text-muted-foreground hover:text-foreground" onClick={() => setOpen(v => !v)}>
+          <Info className="h-3.5 w-3.5" />
+        </button>
+        {open && <div className="basis-full text-xs text-muted-foreground pt-1">{children}</div>}
+      </>
+    );
+  }
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button className="text-muted-foreground hover:text-foreground">
+          <Info className="h-3.5 w-3.5" />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="top" className="max-w-xs">{children}</TooltipContent>
+    </Tooltip>
   );
 }
 
