@@ -3,9 +3,11 @@ import type { Section } from "@/lib/sectionIndex";
 
 /**
  * Filter document blocks based on section expand/collapse state.
+ * Collapsed sections are hidden from the document view (heading stays visible).
  *
  * Rules:
- * - Section headings (and the footnotes block) are visible unless skipped
+ * - Section headings are always visible (collapsed ones render grayed)
+ * - Footnotes block visible only if its section is expanded
  * - Blocks with audio inherit visibility from their section
  * - Display-only blocks (no audio_chunks) inherit visibility from the
  *   last seen section, OR are always visible if before the first heading
@@ -14,7 +16,6 @@ export function filterVisibleBlocks(
   blocks: ContentBlock[],
   sections: Section[],
   expandedSections: Set<string>,
-  skippedSections: Set<string>,
   sectionByHeadingId: Map<string, Section>,
 ): ContentBlock[] {
   const sectionById = new Map(sections.map(s => [s.id, s]));
@@ -32,32 +33,22 @@ export function filterVisibleBlocks(
     // Footnotes block acts as a section header (synthetic section created in buildSectionIndex)
     if (block.type === "footnotes" && sectionById.has(block.id)) {
       lastSeenSectionId = block.id;
-      if (!skippedSections.has(block.id) && expandedSections.has(block.id)) {
+      if (expandedSections.has(block.id)) {
         visible.push(block);
       }
       continue;
     }
 
+    // Section headings are always visible (collapsed ones render grayed with chevron)
     if (block.type === "heading" && sectionByHeadingId.has(block.id)) {
-      const sectionId = block.id;
-      if (skippedSections.has(sectionId)) {
-        lastSeenSectionId = sectionId;
-        continue;
-      }
+      lastSeenSectionId = block.id;
       visible.push(block);
-      lastSeenSectionId = sectionId;
       continue;
     }
 
     const audioIdx = block.audio_chunks?.[0]?.audio_block_idx;
     if (audioIdx === undefined) {
-      // Display-only blocks (code, table, hr, yap-show content):
-      // Show if before any heading, or if their section is expanded
-      if (
-        !lastSeenSectionId ||
-        (expandedSections.has(lastSeenSectionId) &&
-          !skippedSections.has(lastSeenSectionId))
-      ) {
+      if (!lastSeenSectionId || expandedSections.has(lastSeenSectionId)) {
         visible.push(block);
       }
       continue;
@@ -70,10 +61,7 @@ export function filterVisibleBlocks(
       lastSeenSectionId = section.id;
     }
 
-    if (
-      expandedSections.has(section.id) &&
-      !skippedSections.has(section.id)
-    ) {
+    if (expandedSections.has(section.id)) {
       visible.push(block);
     }
   }

@@ -8,6 +8,7 @@ import { SettingsDialog } from "@/components/settingsDialog";
 import { type VoiceSelection, setVoiceSelection, isInworldModel, KOKORO_SLUG, KOKORO_BROWSER_SLUG } from "@/lib/voiceSelection";
 import { useSidebar } from "@/components/ui/sidebar";
 import { useOutlinerOptional } from "@/hooks/useOutliner";
+import { OUTLINER_WIDTH } from "@/components/outlinerSidebar";
 import { useHasWebGPU } from "@/hooks/useWebGPU";
 import { useProgressBarInteraction } from "@/hooks/useProgressBarInteraction";
 import { useDismissableBanner } from "@/hooks/useDismissableBanner";
@@ -388,19 +389,38 @@ const SoundControl = memo(function SoundControl({
     setBrowserErrorDismissed(true);
   }, [voiceSelection, onVoiceChange]);
 
-  // Wrap onBlockHover to track hover state locally for display swap
-  const handleBlockHover = useCallback((idx: number | null, isDragging: boolean) => {
-    setHoveredBlock(idx);
-    setIsHoveringProgressBar(idx !== null);
+  // Wrap onBlockHover to track visual hover position for display,
+  // and convert to absolute index for document highlighting
+  const handleBlockHover = useCallback((visualIdx: number | null, isDragging: boolean) => {
+    setHoveredBlock(visualIdx);
+    setIsHoveringProgressBar(visualIdx !== null);
     setIsDraggingProgressBar(isDragging);
-    onBlockHover?.(idx, isDragging);
-  }, [onBlockHover]);
+    const absoluteIdx = visualIdx !== null && visualToAbsolute ? visualToAbsolute(visualIdx) : visualIdx;
+    onBlockHover?.(absoluteIdx, isDragging);
+  }, [onBlockHover, visualToAbsolute]);
 
   // Get sidebar state for responsive positioning and mobile toggle
   const { state: sidebarState, isMobile, toggleSidebar } = useSidebar();
 
   // Get outliner state for mobile toggle (optional - only available when document has sections)
   const outliner = useOutlinerOptional();
+
+  // Measure playbar dimensions for compact layout switching and height reporting
+  const playbarRef = useRef<HTMLDivElement>(null);
+  const [isCompact, setIsCompact] = useState(isMobile);
+  const COMPACT_BREAKPOINT = 640;
+
+  useEffect(() => {
+    const el = playbarRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([entry]) => {
+      const width = entry.contentRect.width;
+      setIsCompact(width < COMPACT_BREAKPOINT);
+      document.documentElement.style.setProperty("--playbar-height", `${el.offsetHeight}px`);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   const numBlocks = numberOfBlocks ?? 0;
 
@@ -424,13 +444,15 @@ const SoundControl = memo(function SoundControl({
 
   const blockNum = (currentBlock ?? 0) + 1;
 
-  // Playbar positioning: on mobile or collapsed sidebar, use full width; on desktop with expanded sidebar, offset by sidebar width
-  const playbarPositionClass = isMobile || sidebarState === "collapsed"
+  // Playbar positioning: offset left/right edges to avoid overlapping sidebars
+  const playbarLeftClass = isMobile || sidebarState === "collapsed"
     ? "left-0"
     : "left-[var(--sidebar-width)]";
+  const playbarRight = isMobile || outliner?.state !== "expanded"
+    ? "0" : OUTLINER_WIDTH;
 
   return (
-    <div className={`fixed bottom-0 right-0 bg-background/80 backdrop-blur-lg border-t border-border p-4 transition-[left] duration-200 ease-linear ${playbarPositionClass}`}>
+    <div ref={playbarRef} style={{ right: playbarRight }} className={`fixed bottom-0 bg-background/80 backdrop-blur-lg border-t border-border p-4 transition-[left,right] duration-200 ease-linear ${playbarLeftClass}`}>
       {/* Usage limit banner */}
       {showQuotaBanner && (
         <div className="flex items-center justify-center gap-2 mb-3 py-2 px-4 bg-muted-warm rounded-lg text-sm border border-border">
@@ -532,8 +554,8 @@ const SoundControl = memo(function SoundControl({
 
       {/* Playback controls - same layout as progress bar below for alignment */}
       <div className="flex items-center gap-4 mb-3 max-w-2xl mx-auto">
-        {/* Left slot: sidebar toggle on mobile only - matches time display width and alignment */}
-        {isMobile && (
+        {/* Left slot: sidebar toggle in compact mode - matches time display width and alignment */}
+        {isCompact && (
           <button
             onClick={toggleSidebar}
             aria-label="Toggle sidebar"
@@ -583,8 +605,8 @@ const SoundControl = memo(function SoundControl({
           </Button>
         </div>
 
-        {/* Right slot: always render on mobile to keep layout symmetric */}
-        {isMobile && (
+        {/* Right slot: always render in compact mode to keep layout symmetric */}
+        {isCompact && (
           <div className="w-16 h-10 flex items-center justify-start">
             {outliner?.enabled && (
               <button
@@ -629,8 +651,8 @@ const SoundControl = memo(function SoundControl({
         </span>
       </div>
 
-      {/* Mobile: connection status + expand toggle */}
-      {isMobile && (
+      {/* Compact: connection status + expand toggle */}
+      {isCompact && (
         <div className="flex items-center justify-end gap-2 mt-2 max-w-2xl mx-auto">
           {(isReconnecting || (connectionError && !usageLimitError)) && (
             <span className={`flex items-center gap-1 text-xs ${connectionError ? 'text-destructive' : 'text-yellow-600'}`}>
@@ -649,8 +671,8 @@ const SoundControl = memo(function SoundControl({
         </div>
       )}
 
-      {/* Mobile expanded: voice, speed, volume - aligned columns */}
-      {isMobile && isMobileExpanded && (
+      {/* Compact expanded: voice, speed, volume - aligned columns */}
+      {isCompact && isMobileExpanded && (
         <div className="mt-3 pt-3 border-t border-border/50 max-w-2xl mx-auto space-y-4">
           <div className="flex justify-center">
             <VoicePicker value={voiceSelection} onChange={onVoiceChange} />
@@ -695,7 +717,7 @@ const SoundControl = memo(function SoundControl({
       )}
 
       {/* Desktop: horizontal layout with all controls */}
-      {!isMobile && (
+      {!isCompact && (
         <div className="flex items-center justify-between mt-3 max-w-xl mx-auto">
           <div className="flex items-center gap-4">
             <VoicePicker value={voiceSelection} onChange={onVoiceChange} />

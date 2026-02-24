@@ -48,7 +48,7 @@ export function useProgressBarInteraction({
     }
 
     setSeekPosition(visualIdx);
-    onBlockHover?.(toAbsolute(visualIdx), currentlyDragging);
+    onBlockHover?.(visualIdx, currentlyDragging);
   };
 
   const handleEnd = (clientX: number) => {
@@ -83,7 +83,7 @@ export function useProgressBarInteraction({
         if (visualIdx !== lastHoverBlockRef.current) {
           lastHoverBlockRef.current = visualIdx;
           setSeekPosition(visualIdx);
-          onBlockHover?.(toAbsolute(visualIdx), false);
+          onBlockHover?.(visualIdx, false);
         }
       }
     },

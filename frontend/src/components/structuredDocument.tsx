@@ -938,7 +938,6 @@ interface StructuredDocumentViewProps {
   // Section filtering for outliner integration
   sections?: Section[];
   expandedSections?: Set<string>;
-  skippedSections?: Set<string>;
   onSectionExpand?: (sectionId: string) => void;
   currentBlockIdx?: number; // To prevent collapsing section containing current block
 }
@@ -954,7 +953,6 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
   onTitleChange,
   sections,
   expandedSections,
-  skippedSections,
   onSectionExpand,
   currentBlockIdx,
 }: StructuredDocumentViewProps) {
@@ -1145,10 +1143,9 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
       doc.blocks,
       sections,
       expandedSections,
-      skippedSections ?? new Set<string>(),
       sectionByHeadingId,
     );
-  }, [doc?.blocks, sections, expandedSections, skippedSections, sectionByHeadingId]);
+  }, [doc?.blocks, sections, expandedSections, sectionByHeadingId]);
 
   // Fallback to plain text rendering
   if (!doc || !doc.blocks || doc.blocks.length === 0) {

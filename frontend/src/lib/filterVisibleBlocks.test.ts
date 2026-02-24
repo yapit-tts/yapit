@@ -59,20 +59,10 @@ function makeSection(
 // --- Tests ---
 
 describe("filterVisibleBlocks", () => {
-  it("returns all blocks when no sections exist", () => {
+  it("returns no blocks when no sections exist", () => {
     const blocks = [makeParagraph("p1", 0), makeParagraph("p2", 1)];
-    // When sections array is empty, the caller (useMemo) returns doc.blocks directly.
-    // filterVisibleBlocks itself handles the filtering when sections DO exist.
-    // This test verifies it doesn't crash with empty sections.
-    const result = filterVisibleBlocks(
-      blocks,
-      [],
-      new Set(),
-      new Set(),
-      new Map(),
-    );
-    // With no sections, no block has a matching section → only display-only and footnotes pass
-    // Audio blocks without a section are dropped (line: if (!section) continue)
+    const result = filterVisibleBlocks(blocks, [], new Set(), new Map());
+    // Audio blocks without a matching section are dropped
     expect(result).toEqual([]);
   });
 
@@ -83,69 +73,21 @@ describe("filterVisibleBlocks", () => {
     const sections = [makeSection("h1", 0, 1)];
     const sectionMap = new Map([["h1", sections[0]]]);
 
-    const result = filterVisibleBlocks(
-      blocks,
-      sections,
-      new Set(["h1"]),
-      new Set(),
-      sectionMap,
-    );
+    const result = filterVisibleBlocks(blocks, sections, new Set(["h1"]), sectionMap);
     expect(result).toEqual([h1, p1]);
   });
 
-  it("hides blocks in collapsed sections", () => {
+  it("hides content but keeps heading when section is collapsed", () => {
     const h1 = makeHeading("h1", 0);
     const p1 = makeParagraph("p1", 1);
     const blocks = [h1, p1];
     const sections = [makeSection("h1", 0, 1)];
     const sectionMap = new Map([["h1", sections[0]]]);
 
-    const result = filterVisibleBlocks(
-      blocks,
-      sections,
-      new Set(), // none expanded
-      new Set(),
-      sectionMap,
-    );
-    // Heading is shown (not skipped), but paragraph is hidden (section not expanded)
+    const result = filterVisibleBlocks(blocks, sections, new Set(), sectionMap);
     expect(result).toEqual([h1]);
   });
 
-  it("hides heading and content when section is skipped", () => {
-    const h1 = makeHeading("h1", 0);
-    const p1 = makeParagraph("p1", 1);
-    const blocks = [h1, p1];
-    const sections = [makeSection("h1", 0, 1)];
-    const sectionMap = new Map([["h1", sections[0]]]);
-
-    const result = filterVisibleBlocks(
-      blocks,
-      sections,
-      new Set(["h1"]),
-      new Set(["h1"]), // skipped
-      sectionMap,
-    );
-    expect(result).toEqual([]);
-  });
-
-  it("always shows footnotes blocks", () => {
-    const fn = {
-      type: "footnotes",
-      id: "fn",
-      items: [],
-      audio_chunks: [],
-    } as ContentBlock;
-    const result = filterVisibleBlocks(
-      [fn],
-      [],
-      new Set(),
-      new Set(),
-      new Map(),
-    );
-    expect(result).toEqual([fn]);
-  });
-
-  // THE BUG: display-only blocks before first heading were hidden
   it("shows display-only blocks before the first heading", () => {
     const copyright = makeDisplayOnly("copyright");
     const h1 = makeHeading("h1", 0);
@@ -154,14 +96,7 @@ describe("filterVisibleBlocks", () => {
     const sections = [makeSection("h1", 0, 1)];
     const sectionMap = new Map([["h1", sections[0]]]);
 
-    const result = filterVisibleBlocks(
-      blocks,
-      sections,
-      new Set(["h1"]),
-      new Set(),
-      sectionMap,
-    );
-    expect(result).toContain(copyright);
+    const result = filterVisibleBlocks(blocks, sections, new Set(["h1"]), sectionMap);
     expect(result).toEqual([copyright, h1, p1]);
   });
 
@@ -173,13 +108,7 @@ describe("filterVisibleBlocks", () => {
     const sections = [makeSection("h1", 0, 0)];
     const sectionMap = new Map([["h1", sections[0]]]);
 
-    const result = filterVisibleBlocks(
-      blocks,
-      sections,
-      new Set(["h1"]),
-      new Set(),
-      sectionMap,
-    );
+    const result = filterVisibleBlocks(blocks, sections, new Set(["h1"]), sectionMap);
     expect(result).toEqual([notice1, notice2, h1]);
   });
 
@@ -191,13 +120,7 @@ describe("filterVisibleBlocks", () => {
     const sections = [makeSection("h1", 0, 1)];
     const sectionMap = new Map([["h1", sections[0]]]);
 
-    const result = filterVisibleBlocks(
-      blocks,
-      sections,
-      new Set(["h1"]),
-      new Set(),
-      sectionMap,
-    );
+    const result = filterVisibleBlocks(blocks, sections, new Set(["h1"]), sectionMap);
     expect(result).toEqual([h1, code, p1]);
   });
 
@@ -209,14 +132,7 @@ describe("filterVisibleBlocks", () => {
     const sections = [makeSection("h1", 0, 1)];
     const sectionMap = new Map([["h1", sections[0]]]);
 
-    const result = filterVisibleBlocks(
-      blocks,
-      sections,
-      new Set(), // collapsed
-      new Set(),
-      sectionMap,
-    );
-    // Heading visible, code and paragraph hidden
+    const result = filterVisibleBlocks(blocks, sections, new Set(), sectionMap);
     expect(result).toEqual([h1]);
   });
 
@@ -237,14 +153,22 @@ describe("filterVisibleBlocks", () => {
     ]);
 
     // h1 expanded, h2 collapsed
-    const result = filterVisibleBlocks(
-      blocks,
-      sections,
-      new Set(["h1"]),
-      new Set(),
-      sectionMap,
-    );
-    // copyright (before heading), h1 + p1 (expanded), h2 (shown), table + p2 (collapsed)
+    const result = filterVisibleBlocks(blocks, sections, new Set(["h1"]), sectionMap);
+    // copyright (before heading), h1 + p1 (expanded), h2 heading (always visible), table + p2 (collapsed)
     expect(result).toEqual([copyright, h1, p1, h2]);
+  });
+
+  it("shows footnotes block when its section is expanded", () => {
+    const fn = { type: "footnotes", id: "fn", items: [], audio_chunks: [] } as ContentBlock;
+    const sections = [makeSection("fn", 10, 12)];
+    const result = filterVisibleBlocks([fn], sections, new Set(["fn"]), new Map());
+    expect(result).toEqual([fn]);
+  });
+
+  it("hides footnotes block when its section is collapsed", () => {
+    const fn = { type: "footnotes", id: "fn", items: [], audio_chunks: [] } as ContentBlock;
+    const sections = [makeSection("fn", 10, 12)];
+    const result = filterVisibleBlocks([fn], sections, new Set(), new Map());
+    expect(result).toEqual([]);
   });
 });

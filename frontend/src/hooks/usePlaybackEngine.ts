@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { useApi } from "@/api";
 import { AudioPlayer } from "@/lib/audio";
 import {
@@ -40,7 +40,7 @@ export function usePlaybackEngine(
   blocks: Block[],
   voiceSelection: VoiceSelection,
   sections: Section[],
-  skippedSections: Set<string>,
+  expandedSections: Set<string>,
 ): UsePlaybackEngineReturn {
   const { api } = useApi();
 
@@ -147,10 +147,14 @@ export function usePlaybackEngine(
     engine.setVoice(voiceSelection.model, voiceSelection.voiceSlug);
   }, [voiceSelection.model, voiceSelection.voiceSlug, engine]);
 
-  // Sync sections
+  // Sync sections — derive collapsed (skipped) set from expandedSections
+  const collapsedSections = useMemo(
+    () => new Set(sections.filter(s => !expandedSections.has(s.id)).map(s => s.id)),
+    [sections, expandedSections],
+  );
   useEffect(() => {
-    engine.setSections(sections, skippedSections);
-  }, [sections, skippedSections, engine]);
+    engine.setSections(sections, collapsedSections);
+  }, [sections, collapsedSections, engine]);
 
   // Keep AudioContext alive during playback for ongoing synthesis/decoding.
   // If suspended (mobile app switch, phone call), browser synthesis may fail.

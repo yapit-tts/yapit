@@ -2,7 +2,7 @@ import { SoundControl } from '@/components/soundControl';
 import { StructuredDocumentView } from '@/components/structuredDocument';
 import { WebGPUWarningBanner } from '@/components/webGPUWarningBanner';
 import { DocumentOutliner } from '@/components/documentOutliner';
-import { OutlinerSidebar } from '@/components/outlinerSidebar';
+import { OutlinerSidebar, OUTLINER_WIDTH } from '@/components/outlinerSidebar';
 import { useOutliner } from '@/hooks/useOutliner';
 import { useSidebar } from '@/components/ui/sidebar';
 import { useFilteredPlayback } from '@/hooks/useFilteredPlayback';
@@ -97,7 +97,7 @@ const PlaybackPage = () => {
   // Outliner state
   const [sections, setSections] = useState<Section[]>([]);
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
-  const [skippedSections, setSkippedSections] = useState<Set<string>>(new Set());
+  // Collapsed sections = skipped from playback (single source of truth)
   const [slugMap, setSlugMap] = useState<Map<string, string>>(new Map());
 
   // Voice and playback settings (UI-owned, synced into engine)
@@ -128,7 +128,7 @@ const PlaybackPage = () => {
     documentBlocks,
     voiceSelection,
     sections,
-    skippedSections,
+    expandedSections,
   );
 
   const isPlaying = snapshot.status === "playing";
@@ -518,17 +518,14 @@ const PlaybackPage = () => {
       const savedState = localStorage.getItem(OUTLINER_STATE_KEY_PREFIX + documentId);
       if (savedState) {
         try {
-          const { expanded, skipped } = JSON.parse(savedState);
+          const { expanded } = JSON.parse(savedState);
           const validSectionIds = new Set(sectionIndex.map(s => s.id));
           setExpandedSections(new Set((expanded as string[]).filter(id => validSectionIds.has(id))));
-          setSkippedSections(new Set((skipped as string[]).filter(id => validSectionIds.has(id))));
         } catch {
           setExpandedSections(new Set(sectionIndex.map(s => s.id)));
-          setSkippedSections(new Set());
         }
       } else {
         setExpandedSections(new Set(sectionIndex.map(s => s.id)));
-        setSkippedSections(new Set());
       }
     } catch {
       setSections([]);
@@ -536,44 +533,18 @@ const PlaybackPage = () => {
   }, [structuredContent, documentBlocks, documentId]);
 
   useEffect(() => {
-    if (sections.length === 0 || currentBlock < 0) return;
-    const currentSection = findSectionForBlock(sections, currentBlock);
-    if (currentSection && !expandedSections.has(currentSection.id) && !skippedSections.has(currentSection.id)) {
-      setExpandedSections(prev => new Set([...prev, currentSection.id]));
-    }
-  }, [currentBlock, sections, expandedSections, skippedSections]);
-
-  useEffect(() => {
     if (!documentId || sections.length === 0) return;
     if (loadedDocumentIdRef.current !== documentId) return;
     localStorage.setItem(OUTLINER_STATE_KEY_PREFIX + documentId, JSON.stringify({
       expanded: Array.from(expandedSections),
-      skipped: Array.from(skippedSections),
     }));
-  }, [documentId, sections.length, expandedSections, skippedSections]);
+  }, [documentId, sections.length, expandedSections]);
 
   const handleSectionToggle = useCallback((sectionId: string) => {
     setExpandedSections(prev => {
       const next = new Set(prev);
       if (next.has(sectionId)) next.delete(sectionId);
       else next.add(sectionId);
-      return next;
-    });
-  }, []);
-
-  const handleSectionSkip = useCallback((sectionId: string) => {
-    setSkippedSections(prev => {
-      const next = new Set(prev);
-      if (next.has(sectionId)) {
-        next.delete(sectionId);
-      } else {
-        next.add(sectionId);
-        setExpandedSections(expanded => {
-          const newExpanded = new Set(expanded);
-          newExpanded.delete(sectionId);
-          return newExpanded;
-        });
-      }
       return next;
     });
   }, []);
@@ -621,7 +592,6 @@ const PlaybackPage = () => {
     expandedSections,
     snapshot.blockStates,
     currentBlock,
-    skippedSections,
   );
 
   const progressBarValues = useMemo(() => {
@@ -770,13 +740,19 @@ const PlaybackPage = () => {
           onTitleChange={isPublicView ? undefined : handleTitleChange}
           sections={shouldShowOutliner ? sections : undefined}
           expandedSections={shouldShowOutliner ? expandedSections : undefined}
-          skippedSections={shouldShowOutliner ? skippedSections : undefined}
           onSectionExpand={shouldShowOutliner ? handleSectionToggle : undefined}
           currentBlockIdx={shouldShowOutliner ? currentBlock : undefined}
         />
         {isPlaying && isScrollDetached && !backToReadingDismissed && (
-          <div className="fixed bottom-[200px] left-1/2 -translate-x-1/2 z-50">
-            <div className="flex items-center gap-2 bg-background/95 backdrop-blur-sm border border-border rounded-full px-4 py-2 shadow-lg">
+          <div
+            className="fixed z-50 flex justify-center pointer-events-none transition-[left,right] duration-200 ease-linear"
+            style={{
+              bottom: "calc(var(--playbar-height, 120px) + 80px)",
+              left: sidebar.isMobile || sidebar.state === "collapsed" ? 0 : "var(--sidebar-width)",
+              right: sidebar.isMobile || outliner.state !== "expanded" ? 0 : OUTLINER_WIDTH,
+            }}
+          >
+            <div className="flex items-center gap-2 bg-background/95 backdrop-blur-sm border border-border rounded-full px-4 py-2 shadow-lg pointer-events-auto">
               <button onClick={handleBackToReading} className="flex items-center gap-2 text-sm font-medium text-foreground hover:text-primary transition-colors">
                 <AudioLines className="h-4 w-4 text-primary" />
                 Back to Reading
@@ -815,10 +791,8 @@ const PlaybackPage = () => {
             <DocumentOutliner
               sections={sections}
               expandedSections={expandedSections}
-              skippedSections={skippedSections}
               currentBlockIdx={currentBlock}
               onSectionToggle={handleSectionToggle}
-              onSectionSkip={handleSectionSkip}
               onExpandAll={handleExpandAllSections}
               onCollapseAll={handleCollapseAllSections}
               onNavigate={handleOutlinerNavigate}

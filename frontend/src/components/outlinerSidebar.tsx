@@ -3,8 +3,8 @@ import { useOutlinerOptional } from "@/hooks/useOutliner";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 
-const SIDEBAR_WIDTH = "18rem"; // Slightly wider than left sidebar for readability
-const SIDEBAR_WIDTH_MOBILE = "20rem";
+export const OUTLINER_WIDTH = "18rem";
+const OUTLINER_WIDTH_MOBILE = "20rem";
 
 interface OutlinerSidebarProps {
   children: React.ReactNode;
@@ -32,7 +32,7 @@ export function OutlinerSidebar({ children, className }: OutlinerSidebarProps) {
           data-slot="outliner-sidebar"
           data-mobile="true"
           className="bg-sidebar text-sidebar-foreground p-0 [&>button]:hidden"
-          style={{ "--sidebar-width": SIDEBAR_WIDTH_MOBILE } as React.CSSProperties}
+          style={{ "--sidebar-width": OUTLINER_WIDTH_MOBILE } as React.CSSProperties}
           side="right"
         >
           <SheetHeader className="sr-only">
@@ -61,7 +61,7 @@ export function OutlinerSidebar({ children, className }: OutlinerSidebarProps) {
           "relative bg-transparent transition-[width] duration-200 ease-linear",
           state === "collapsed" ? "w-0" : "w-[var(--sidebar-width)]"
         )}
-        style={{ "--sidebar-width": SIDEBAR_WIDTH } as React.CSSProperties}
+        style={{ "--sidebar-width": OUTLINER_WIDTH } as React.CSSProperties}
       />
       {/* Fixed sidebar container */}
       <div
@@ -74,7 +74,7 @@ export function OutlinerSidebar({ children, className }: OutlinerSidebarProps) {
           "border-l",
           className
         )}
-        style={{ "--sidebar-width": SIDEBAR_WIDTH, width: SIDEBAR_WIDTH } as React.CSSProperties}
+        style={{ "--sidebar-width": OUTLINER_WIDTH, width: OUTLINER_WIDTH } as React.CSSProperties}
       >
         <div
           data-slot="outliner-sidebar-inner"
