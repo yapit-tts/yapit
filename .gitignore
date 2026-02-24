@@ -206,7 +206,7 @@ cython_debug/
 agent/*/private/
 agent/handoffs
 scripts/tts_speed_benchmark/results/
-gateway-data/
+data/
 
 experiments/**/output/**
 experiments/gemini-flash-doc-transform/

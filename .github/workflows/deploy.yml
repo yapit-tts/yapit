@@ -105,10 +105,6 @@ jobs:
           KOKORO_CPU_REPLICAS=1
           YOLO_CPU_REPLICAS=1
           EOF
-      - name: Prepare bind mount dirs for non-root containers
-        run: |
-          mkdir -p gateway-data images
-          sudo chown -R 1000:1000 gateway-data images
       - run: make dev-ci
       - run: make test-integration-local
       - name: Show logs on failure

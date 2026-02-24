@@ -64,6 +64,8 @@ async def app(postgres_container, redis_container) -> FastAPI:
         ai_processor=None,  # Disable Gemini (needs API key)
         # Disable metrics (no TimescaleDB in tests)
         metrics_database_url=None,
+        # Host-friendly log dir (container uses /data/gateway/logs)
+        log_dir="test_logs",
     )
 
     app = create_app(settings)

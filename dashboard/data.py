@@ -10,7 +10,7 @@ import pandas as pd
 import streamlit as st
 
 # Default path - synced from prod via make sync-metrics
-DEFAULT_DB_PATH = Path(os.environ.get("METRICS_DB", "gateway-data/metrics.duckdb"))
+DEFAULT_DB_PATH = Path(os.environ.get("METRICS_DB", "data/metrics.duckdb"))
 
 
 @st.cache_data(ttl=60)
@@ -35,6 +35,30 @@ def load_data(db_path: str) -> tuple[pd.DataFrame, str]:
         df["local_time"] = df["timestamp"].dt.tz_convert(local_tz).dt.tz_localize(None)
         # Parse JSON data column
         df["data"] = df["data"].apply(lambda x: json.loads(x) if isinstance(x, str) and x else {})
+
+        # DuckDB auto_detect infers all-NULL columns as VARCHAR from CSV.
+        # Coerce known numeric columns so downstream .sum()/.mean() work.
+        numeric_cols = [
+            "text_length",
+            "queue_wait_ms",
+            "worker_latency_ms",
+            "total_latency_ms",
+            "audio_duration_ms",
+            "queue_depth",
+            "retry_count",
+            "duration_ms",
+            "status_code",
+            "page_idx",
+            "block_idx",
+            "prompt_token_count",
+            "candidates_token_count",
+            "thoughts_token_count",
+            "cached_content_token_count",
+            "total_token_count",
+        ]
+        for col in numeric_cols:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
 
     loaded_at = datetime.now().strftime("%H:%M:%S")
     return df, loaded_at

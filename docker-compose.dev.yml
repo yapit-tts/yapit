@@ -1,3 +1,7 @@
+volumes:
+  gateway-data:
+  images:
+
 services:
   gateway:
     env_file:
@@ -9,8 +13,8 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - "./gateway-data:/app/gateway"
-      - "./images:/data/images"
+      - gateway-data:/data/gateway
+      - images:/data/images
 
   stack-auth:
     env_file: ./.env.dev

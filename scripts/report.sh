@@ -105,13 +105,13 @@ Yapit is a text-to-speech platform with these components:
 
 ## Data Locations
 
-- **Metrics DB**: gateway-data/metrics.duckdb
+- **Metrics DB**: data/metrics.duckdb
   - `metrics_event` — raw events (last 100k)
   - `metrics_hourly` — hourly aggregates
   - `metrics_daily` — daily aggregates
 
 **Schema note**: Fields like queue_wait_ms, worker_latency_ms, worker_id, model_slug, etc. are TOP-LEVEL COLUMNS on metrics_event, NOT nested inside the `data` JSON column. Use `SELECT queue_wait_ms FROM metrics_event`, NOT `data->>'queue_wait_ms'`. The `data` column is only for unstructured/overflow fields. Run `DESCRIBE metrics_event` first to see all available columns.
-- **Logs**: gateway-data/logs/*.jsonl (JSON lines, multiple rotated files)
+- **Logs**: data/logs/*.jsonl (JSON lines, multiple rotated files)
 - **Disk Report**: See DISK_USAGE section below (captured at report time)
 
 **Timezones**: Metrics DB uses CET (Europe/Vienna). Logs use UTC. Report times in CET, converting as needed.
@@ -182,7 +182,7 @@ This is the most important section. Don't just count errors — read the actual 
 - `job_dlq` — ANY entry means something is systematically broken. Investigate immediately.
 - `job_requeued` — occasional is fine (transient), sustained pattern = worker issues.
 
-**Log file errors (gateway-data/logs/*.jsonl):**
+**Log file errors (data/logs/*.jsonl):**
 - Scan ALL log files for ERROR and WARNING level entries. Don't skip this even if metrics look clean — some errors only appear in logs.
 - For each distinct error, report: the error message, count, and time range.
 - ERROR level in logs — stack traces, exceptions (include request context: method, path, user_id, request_id)

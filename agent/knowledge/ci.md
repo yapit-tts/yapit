@@ -16,7 +16,7 @@ On push to `main`:
 
 `make dev-ci` builds and starts the full stack with `--wait` (blocks until all healthchecks pass or timeout at 300s).
 
-**Bind mount permissions:** Dev overlay bind-mounts host dirs (`gateway-data`, `images`) into the gateway. Containers run as non-root (UID 1000). Docker creates missing bind mount targets as root-owned. CI pre-creates and chowns them before `make dev-ci`. When adding new bind mounts to `docker-compose.dev.yml`, add them to the CI prep step too.
+**Volume permissions:** Dev overlay uses Docker named volumes (`gateway-data`, `images`) for the gateway. Named volumes get correct ownership from the Dockerfile's `chown` on first mount — no host-side prep needed.
 
 **Log collection:** The "Show logs on failure" step must use the same compose flags as startup (`-p yapit-dev --env-file .env --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml`). Without matching project name, compose finds no containers.
 

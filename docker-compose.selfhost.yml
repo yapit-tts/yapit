@@ -35,10 +35,10 @@ services:
     environment:
       ENV_FILE: ""
     volumes:
-      - audio-cache:/app/audio_cache
-      - document-cache:/app/document_cache
-      - extraction-cache:/app/extraction_cache
-      - gateway-data:/app/gateway
+      - audio-cache:/data/audio_cache
+      - document-cache:/data/document_cache
+      - extraction-cache:/data/extraction_cache
+      - gateway-data:/data/gateway
       - images:/data/images
     ports:
       - "8000:8000"

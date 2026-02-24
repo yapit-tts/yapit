@@ -155,42 +155,42 @@ warm-cache:
 
 # Sync metrics from prod TimescaleDB to local DuckDB
 sync-metrics:
-	@mkdir -p gateway-data
+	@mkdir -p data
 	@echo "Exporting metrics from prod..."
 	@ssh $(PROD_HOST) 'docker exec $$(docker ps -qf name=metrics-db) \
 		psql -U metrics -d metrics -c "COPY (SELECT * FROM metrics_event ORDER BY timestamp) TO STDOUT WITH CSV HEADER"' \
-		> gateway-data/metrics_raw.csv
+		> data/metrics_raw.csv
 	@echo "Exporting hourly aggregates..."
 	@ssh $(PROD_HOST) 'docker exec $$(docker ps -qf name=metrics-db) \
 		psql -U metrics -d metrics -c "COPY (SELECT * FROM metrics_hourly ORDER BY bucket DESC) TO STDOUT WITH CSV HEADER"' \
-		> gateway-data/metrics_hourly.csv
+		> data/metrics_hourly.csv
 	@echo "Exporting daily aggregates..."
 	@ssh $(PROD_HOST) 'docker exec $$(docker ps -qf name=metrics-db) \
 		psql -U metrics -d metrics -c "COPY (SELECT * FROM metrics_daily ORDER BY bucket DESC) TO STDOUT WITH CSV HEADER"' \
-		> gateway-data/metrics_daily.csv
+		> data/metrics_daily.csv
 	@echo "Converting to DuckDB..."
 	@uv run --with duckdb python -c "\
 import duckdb; \
-conn = duckdb.connect('gateway-data/metrics.duckdb'); \
+conn = duckdb.connect('data/metrics.duckdb'); \
 conn.execute('DROP TABLE IF EXISTS metrics_event'); \
 conn.execute('DROP TABLE IF EXISTS metrics_hourly'); \
 conn.execute('DROP TABLE IF EXISTS metrics_daily'); \
-conn.execute(\"CREATE TABLE metrics_event AS SELECT * FROM read_csv('gateway-data/metrics_raw.csv', auto_detect=true)\"); \
-conn.execute(\"CREATE TABLE metrics_hourly AS SELECT * FROM read_csv('gateway-data/metrics_hourly.csv', auto_detect=true)\"); \
-conn.execute(\"CREATE TABLE metrics_daily AS SELECT * FROM read_csv('gateway-data/metrics_daily.csv', auto_detect=true)\"); \
+conn.execute(\"CREATE TABLE metrics_event AS SELECT * FROM read_csv('data/metrics_raw.csv', auto_detect=true)\"); \
+conn.execute(\"CREATE TABLE metrics_hourly AS SELECT * FROM read_csv('data/metrics_hourly.csv', auto_detect=true)\"); \
+conn.execute(\"CREATE TABLE metrics_daily AS SELECT * FROM read_csv('data/metrics_daily.csv', auto_detect=true)\"); \
 print(f'Synced: {conn.execute(\"SELECT COUNT(*) FROM metrics_event\").fetchone()[0]} raw events'); \
 conn.close()"
-	@rm -f gateway-data/metrics_raw.csv gateway-data/metrics_hourly.csv gateway-data/metrics_daily.csv
-	@echo "✓ Metrics synced to gateway-data/metrics.duckdb"
+	@rm -f data/metrics_raw.csv data/metrics_hourly.csv data/metrics_daily.csv
+	@echo "✓ Metrics synced to data/metrics.duckdb"
 
 # Sync logs from prod (from Docker volume)
 sync-logs:
 	@echo "Syncing logs from prod..."
-	@mkdir -p gateway-data/logs
-	@rsync -avz --progress $(PROD_HOST):/var/lib/docker/volumes/yapit_gateway-data/_data/logs/*.jsonl* gateway-data/logs/
+	@mkdir -p data/logs
+	@rsync -avz --progress $(PROD_HOST):/var/lib/docker/volumes/yapit_gateway-data/_data/logs/*.jsonl* data/logs/
 	@echo "Decompressing logs..."
-	@gunzip -f gateway-data/logs/*.jsonl.gz 2>/dev/null || true
-	@echo "✓ Logs synced to gateway-data/logs/"
+	@gunzip -f data/logs/*.jsonl.gz 2>/dev/null || true
+	@echo "✓ Logs synced to data/logs/"
 
 # Sync all data (metrics + logs)
 sync-data: sync-metrics sync-logs
