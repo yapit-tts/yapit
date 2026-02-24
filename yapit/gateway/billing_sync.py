@@ -113,13 +113,26 @@ async def sync_subscription(
     subscription.updated = datetime.now(tz=dt.UTC)
     await db.commit()
 
-    if status_changed:
-        log.bind(old=str(old_status), new=str(subscription.status)).warning("Billing sync: status drift")
-    elif plan_changed:
-        log.bind(old_plan=old_plan_id, new_plan=subscription.plan_id).warning("Billing sync: plan drift")
+    drifted = {
+        name: {"old": str(old), "new": str(new)}
+        for name, old, new in [
+            ("status", old_status, subscription.status),
+            ("plan_id", old_plan_id, subscription.plan_id),
+            ("period_start", old_period_start, subscription.current_period_start),
+            ("period_end", old_period_end, subscription.current_period_end),
+            ("cancel_at_period_end", old_cancel_at_period_end, subscription.cancel_at_period_end),
+            ("cancel_at", old_cancel_at, subscription.cancel_at),
+            ("canceled_at", old_canceled_at, subscription.canceled_at),
+            ("customer_id", old_customer_id, subscription.stripe_customer_id),
+            ("ever_paid", old_ever_paid, subscription.ever_paid),
+        ]
+        if old != new
+    }
+    if status_changed or plan_changed:
+        log.bind(drifted=drifted).warning("Billing sync: drift corrected")
     else:
-        log.info("Billing sync: minor drift corrected")
-    await log_event("billing_sync_drift", data={"user_id": subscription.user_id})
+        log.bind(drifted=drifted).info("Billing sync: drift corrected")
+    await log_event("billing_sync_drift", data={"user_id": subscription.user_id, "drifted": drifted})
     return True
 
 
