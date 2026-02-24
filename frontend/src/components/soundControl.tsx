@@ -15,10 +15,13 @@ import { useDismissableBanner } from "@/hooks/useDismissableBanner";
 
 type BlockState = 'pending' | 'synthesizing' | 'cached';
 
-// iOS makes audioElement.volume read-only — hide the slider when it's a no-op
+// iOS/iPadOS: volume is hardware-only, slider is a no-op.
+// Probe is unreliable (some iOS versions report volume as writable), so also UA-check.
+const _isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+  (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 const _probe = document.createElement("audio");
 _probe.volume = 0.5;
-const VOLUME_SETTABLE = _probe.volume === 0.5;
+const VOLUME_SETTABLE = !_isIOS && _probe.volume === 0.5;
 
 // Hook for repeat-on-hold with acceleration (like volume buttons)
 function useRepeatOnHold(callback: () => void, disabled?: boolean) {

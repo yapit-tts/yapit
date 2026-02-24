@@ -431,7 +431,7 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
             value={inworldSearch}
             onChange={e => setInworldSearch(e.target.value)}
             placeholder="Search voices..."
-            className="w-full pl-9 pr-8 py-2.5 text-sm bg-transparent outline-none placeholder:text-muted-foreground"
+            className="w-full pl-9 pr-8 py-2.5 text-base sm:text-sm bg-transparent outline-none placeholder:text-muted-foreground"
           />
           {inworldSearch && (
             <button onClick={() => setInworldSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
