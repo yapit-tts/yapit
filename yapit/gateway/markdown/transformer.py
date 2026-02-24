@@ -1568,13 +1568,9 @@ class DocumentTransformer:
 
         audio_chunks: list[AudioChunk] = []
         if tts_text.strip():
-            audio_chunks = [
-                AudioChunk(
-                    text=tts_text.strip(),
-                    audio_block_idx=self._next_audio_idx(),
-                    ast=[TextContent(content=tts_text.strip())],
-                )
-            ]
+            ast = [TextContent(content=tts_text.strip())]
+            _, audio_chunks = split_with_spans(tts_text, "", ast, self.splitter, self._audio_idx_counter)
+            self._audio_idx_counter += len(audio_chunks)
 
         return [
             MathBlock(

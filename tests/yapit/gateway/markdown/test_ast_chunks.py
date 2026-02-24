@@ -209,6 +209,38 @@ class TestChunkAstRoundtrip:
         assert chunk.ast
         assert render_ast_to_html(chunk.ast) == "E equals m c squared"
 
+    def test_math_block_long_speak_is_split(self):
+        """Math block with yap-speak exceeding max_block_chars must be split."""
+        long_speak = (
+            "The probability of a policy pi is a categorical distribution "
+            "parameterized by pi zero, where pi zero is the softmax of negative G. "
+            "The expected free energy G of pi is the negative expected divergence "
+            "between the approximate posterior and the prior over future states, "
+            "minus the expected log probability of future observations given preferences."
+        )
+        assert len(long_speak) > DEFAULT_MAX_BLOCK_CHARS
+        md = f"$$P(\\pi) = \\text{{Cat}}(\\pi_0)$$\n<yap-speak>{long_speak}</yap-speak>"
+        doc = transform(md)
+        math_blocks = [b for b in doc.blocks if isinstance(b, MathBlock)]
+        assert len(math_blocks) == 1
+        block = math_blocks[0]
+        soft_max = int(DEFAULT_MAX_BLOCK_CHARS * DEFAULT_SOFT_LIMIT_MULT)
+        assert len(block.audio_chunks) > 1, (
+            f"Speak text of {len(long_speak)} chars should be split (max_block_chars={DEFAULT_MAX_BLOCK_CHARS})"
+        )
+        for chunk in block.audio_chunks:
+            assert len(chunk.text) <= soft_max, f"Chunk len {len(chunk.text)} exceeds soft_max {soft_max}"
+
+    def test_math_block_speak_respects_max_block_chars(self):
+        """No audio block from math yap-speak should exceed soft_max, regardless of input size."""
+        huge_speak = "A " * 1000  # 2000 chars of simple text
+        md = f"$$x = 1$$\n<yap-speak>{huge_speak.strip()}</yap-speak>"
+        doc = transform(md)
+        audio_blocks = doc.get_audio_blocks()
+        soft_max = int(DEFAULT_MAX_BLOCK_CHARS * DEFAULT_SOFT_LIMIT_MULT)
+        for i, text in enumerate(audio_blocks):
+            assert len(text) <= soft_max, f"Audio block {i} has {len(text)} chars, exceeds soft_max {soft_max}"
+
     def test_footnote_content_chunk_has_ast(self):
         """Footnote content paragraph: chunk AST populated."""
         doc = transform("Text[^1].\n\n[^1]: Footnote with **bold** content.")

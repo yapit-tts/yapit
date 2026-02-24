@@ -287,10 +287,20 @@ def process_pages_to_document(
         min_chunk_size=settings.min_chunk_size,
     )
 
+    text_blocks = structured_doc.get_audio_blocks()
+    soft_max = int(settings.max_block_chars * settings.soft_limit_mult)
+    oversized = [(i, len(t)) for i, t in enumerate(text_blocks) if len(t) > soft_max]
+    if oversized:
+        logger.warning(
+            "Blocks exceed soft_max ({max}): {blocks}",
+            max=soft_max,
+            blocks=", ".join(f"block[{i}]={n} chars" for i, n in oversized),
+        )
+
     return ProcessedDocument(
         extracted_text=extracted_text,
         structured_content=structured_doc.model_dump_json(),
-        text_blocks=structured_doc.get_audio_blocks(),
+        text_blocks=text_blocks,
     )
 
 
