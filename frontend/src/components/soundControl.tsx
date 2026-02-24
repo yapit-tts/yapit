@@ -9,7 +9,7 @@ import { type VoiceSelection, setVoiceSelection, isInworldModel, KOKORO_SLUG, KO
 import { useSidebar } from "@/components/ui/sidebar";
 import { useOutlinerOptional } from "@/hooks/useOutliner";
 import { OUTLINER_WIDTH } from "@/components/outlinerSidebar";
-import { useHasWebGPU } from "@/hooks/useWebGPU";
+import { useCanUseLocalTTS } from "@/hooks/useCanUseLocalTTS";
 import { useProgressBarInteraction } from "@/hooks/useProgressBarInteraction";
 import { useDismissableBanner } from "@/hooks/useDismissableBanner";
 
@@ -343,7 +343,7 @@ const SoundControl = memo(function SoundControl({
     navigate("/subscription");
   }, [navigate]);
 
-  const hasWebGPU = useHasWebGPU();
+  const canUseLocalTTS = useCanUseLocalTTS();
 
   const handleSwitchToLocal = useCallback(() => {
     const newSelection: VoiceSelection = {
@@ -465,7 +465,7 @@ const SoundControl = memo(function SoundControl({
               Use Kokoro
             </Button>
           )}
-          {hasWebGPU && isUsingKokoroServer && (
+          {canUseLocalTTS && isUsingKokoroServer && (
             <Button variant="outline" size="sm" className="h-9 px-3" onClick={handleSwitchToLocal}>
               Use free local
             </Button>

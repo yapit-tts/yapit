@@ -1,5 +1,6 @@
-import { useState, useMemo, memo, useRef, useCallback } from "react";
+import { useState, useMemo, memo, useRef, useCallback, useEffect } from "react";
 import { ChevronDown, Star, ChevronRight, Monitor, Cloud, Loader2, Info, Play, Square, Search, X } from "lucide-react";
+import { Link } from "react-router";
 import { useApi } from "@/api";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -8,6 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { useCanUseLocalTTS } from "@/hooks/useCanUseLocalTTS";
 import {
   type VoiceSelection,
   type ModelType,
@@ -44,6 +46,17 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
   const [expandedKokoroLangs, setExpandedKokoroLangs] = useState<Set<KokoroLanguageCode>>(new Set(["a"]));
   const [expandedInworldLangs, setExpandedInworldLangs] = useState<Set<InworldLanguageCode>>(new Set(["en"]));
   const [inworldSearch, setInworldSearch] = useState("");
+  const canUseLocalTTS = useCanUseLocalTTS();
+  const [localUnavailableOpen, setLocalUnavailableOpen] = useState(false);
+
+  // Auto-switch away from local if device can't run it (e.g. persisted selection from desktop)
+  useEffect(() => {
+    if (canUseLocalTTS === false && value.model === KOKORO_BROWSER_SLUG) {
+      const fallback: VoiceSelection = { ...value, model: KOKORO_SLUG };
+      onChange(fallback);
+      setVoiceSelection(fallback);
+    }
+  }, [canUseLocalTTS]);
 
   // Ref to latest value — VoiceRow memo skips function props, so stale closures
   // from onSelect would read outdated model state without this.
@@ -275,16 +288,38 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
               </TooltipContent>
             </Tooltip>
           </div>
-          <div className="flex rounded-md border bg-background">
-            <button
-              onClick={() => isKokoroServer && handleKokoroSourceToggle()}
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-l-md transition-colors ${
-                !isKokoroServer ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              <Monitor className="h-4 w-4" />
-              Local
-            </button>
+          <div className="flex rounded-md border bg-background relative">
+            <Popover open={localUnavailableOpen} onOpenChange={setLocalUnavailableOpen}>
+              <PopoverTrigger asChild>
+                <button
+                  onClick={() => {
+                    if (canUseLocalTTS === false) {
+                      setLocalUnavailableOpen(true);
+                    } else if (isKokoroServer) {
+                      handleKokoroSourceToggle();
+                    }
+                  }}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-l-md transition-colors ${
+                    canUseLocalTTS === false
+                      ? "text-muted-foreground/50 cursor-not-allowed"
+                      : !isKokoroServer
+                        ? "bg-primary text-primary-foreground"
+                        : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <Monitor className="h-4 w-4" />
+                  Local
+                </button>
+              </PopoverTrigger>
+              {canUseLocalTTS === false && (
+                <PopoverContent side="top" className="w-64 text-sm">
+                  <p>Requires a desktop browser with WebGPU support.</p>
+                  <Link to="/tips#local-tts" className="text-primary font-medium hover:underline" onClick={() => setOpen(false)}>
+                    Learn more
+                  </Link>
+                </PopoverContent>
+              )}
+            </Popover>
             <button
               onClick={() => !isKokoroServer && handleKokoroSourceToggle()}
               className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-r-md transition-colors ${

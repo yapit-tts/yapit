@@ -1,15 +1,13 @@
 import { useState, useEffect } from "react";
 import { X, AlertTriangle } from "lucide-react";
 import { Link } from "react-router";
-import { useHasWebGPU } from "@/hooks/useWebGPU";
+import { useCanUseLocalTTS } from "@/hooks/useCanUseLocalTTS";
 import { useSubscription } from "@/hooks/useSubscription";
-import { useIsMobile } from "@/hooks/use-mobile";
 
 const DISMISSED_KEY = "yapit_webgpu_warning_dismissed";
 
 export function WebGPUWarningBanner() {
-  const hasWebGPU = useHasWebGPU();
-  const isMobile = useIsMobile();
+  const canUseLocalTTS = useCanUseLocalTTS();
   const { tier, isLoading } = useSubscription();
   const [dismissed, setDismissed] = useState(true); // Start hidden to prevent flash
 
@@ -22,11 +20,7 @@ export function WebGPUWarningBanner() {
     setDismissed(true);
   };
 
-  // Don't show if: loading, has paid plan, or dismissed
-  // On mobile: always show for free users (navigator.gpu is unreliable on iOS)
-  // On desktop: only show if WebGPU is confirmed absent
-  const noWebGPU = isMobile || (hasWebGPU !== undefined && !hasWebGPU);
-  if (isLoading || !noWebGPU || tier !== "free" || dismissed) {
+  if (isLoading || canUseLocalTTS !== false || tier !== "free" || dismissed) {
     return null;
   }
 
