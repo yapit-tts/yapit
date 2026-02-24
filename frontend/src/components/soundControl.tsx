@@ -97,7 +97,7 @@ function useRepeatOnHold(callback: () => void, disabled?: boolean) {
 }
 
 // Switch to smooth gradient visualization for documents with many blocks
-const SMOOTH_THRESHOLD = 200;
+const SMOOTH_THRESHOLD = 100;
 
 interface ProgressBarProps {
   blockStates: BlockState[];
