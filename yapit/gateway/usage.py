@@ -1,13 +1,14 @@
 """Subscription and usage tracking service."""
 
 import datetime as dt
+import uuid
 from datetime import datetime
 
 from loguru import logger
 from redis.asyncio import Redis
 from sqlalchemy import func
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlmodel import col, select
+from sqlmodel import col, select, update
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from yapit.gateway.domain_models import (
@@ -301,21 +302,47 @@ async def record_usage(
     reference_id: str | None = None,
     description: str | None = None,
     details: dict | None = None,
+    event_id: str | None = None,
     commit: bool = True,
-) -> None:
+) -> bool:
     """Record usage and consume from subscription → rollover → purchased.
 
     Creates audit log for all users. Only consumes from tiers for subscribed users.
     Uses FOR UPDATE lock to prevent concurrent modifications (TOCTOU safety).
 
+    When event_id is provided, deduplicates via UNIQUE constraint on UsageLog.event_id.
+    Returns False if the event was already processed (duplicate). OCR callers pass
+    event_id=None (no dedup needed — synchronous, no redelivery risk).
+
     When commit=False, the caller manages the transaction (e.g., billing consumer
     batching multiple record_usage calls per user in one transaction).
     """
+    # Dedup gate: insert the audit log first, bail on conflict before any tier mutations
+    log_id = uuid.uuid4()
+    now = datetime.now(tz=dt.UTC)
+    log_details = details.copy() if details else {}
+
+    insert_stmt = pg_insert(UsageLog).values(
+        id=log_id,
+        user_id=user_id,
+        type=usage_type,
+        amount=amount,
+        reference_id=reference_id,
+        description=description,
+        details=log_details if log_details else None,
+        event_id=event_id,
+        created=now,
+    )
+    if event_id is not None:
+        insert_stmt = insert_stmt.on_conflict_do_nothing(index_elements=["event_id"])
+    result = await db.exec(insert_stmt.returning(UsageLog.id))  # type: ignore[arg-type]
+    if not result.first():
+        return False
+
+    # Log inserted — safe to mutate tier balances
     subscription = await get_user_subscription(user_id, db, for_update=True)
     breakdown = None
 
-    # Always deduct — the usage already happened (TTS was synthesized).
-    # check_usage_limit gates new requests; this is bookkeeping for completed work.
     if subscription:
         plan = await get_effective_plan(subscription, db)
         usage_period = await get_or_create_usage_period(user_id, subscription, db)
@@ -325,22 +352,14 @@ async def record_usage(
         else:
             _increment_usage(usage_period, usage_type, amount)
 
-    log_details = details.copy() if details else {}
     if breakdown:
         log_details["consumption_breakdown"] = breakdown
-
-    log_entry = UsageLog(
-        user_id=user_id,
-        type=usage_type,
-        amount=amount,
-        reference_id=reference_id,
-        description=description,
-        details=log_details if log_details else None,
-    )
-    db.add(log_entry)
+        await db.exec(update(UsageLog).where(col(UsageLog.id) == log_id).values(details=log_details))
 
     if commit:
         await db.commit()
+
+    return True
 
 
 async def get_usage_summary(

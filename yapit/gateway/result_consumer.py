@@ -16,7 +16,7 @@ from redis.asyncio import Redis
 
 from yapit.contracts import (
     TTS_AUDIO_CACHE,
-    TTS_BILLING,
+    TTS_BILLING_STREAM,
     TTS_INFLIGHT,
     TTS_PENDING,
     TTS_PERSIST,
@@ -34,11 +34,12 @@ _background_tasks: set[asyncio.Task] = set()
 
 
 class BillingEvent(BaseModel):
-    """Pushed to tts:billing after user notification. Contains everything
+    """Pushed to tts:billing:stream after user notification. Contains everything
     the billing consumer needs for Postgres writes (BlockVariant update,
     usage recording, engagement stats).
     """
 
+    job_id: str
     variant_hash: str
     user_id: str
     model_slug: str
@@ -137,6 +138,7 @@ async def _handle_success(redis: Redis, result: WorkerResult) -> None:
     )
 
     billing_event = BillingEvent(
+        job_id=str(result.job_id),
         variant_hash=result.variant_hash,
         user_id=result.user_id,
         model_slug=result.model_slug,
@@ -147,7 +149,7 @@ async def _handle_success(redis: Redis, result: WorkerResult) -> None:
         document_id=str(result.document_id),
         block_idx=result.block_idx,
     )
-    await redis.lpush(TTS_BILLING, billing_event.model_dump_json())
+    await redis.xadd(TTS_BILLING_STREAM, {"data": billing_event.model_dump_json()})
     await redis.lpush(TTS_PERSIST, result.variant_hash)
 
     finalize_ms = int((time.time() - finalize_start) * 1000)

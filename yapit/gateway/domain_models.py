@@ -350,6 +350,9 @@ class UsageLog(SQLModel, table=True):
     # Reference to what was used (variant_hash, cache_key, etc.)
     reference_id: str | None = Field(default=None, index=True)
 
+    # Idempotency key for at-least-once billing (job_id for TTS, None for OCR)
+    event_id: str | None = Field(default=None, unique=True)
+
     created: datetime = Field(
         default_factory=lambda: datetime.now(tz=dt.UTC),
         sa_column=Column(DateTime(timezone=True)),

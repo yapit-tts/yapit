@@ -28,7 +28,9 @@ TTS_JOBS: Final[str] = "tts:jobs"  # hash: job_id -> job_json
 TTS_JOB_INDEX: Final[str] = "tts:job_index"  # hash: "user_id:doc_id:block_idx" -> job_id
 
 TTS_RESULTS: Final[str] = "tts:results"
-TTS_BILLING: Final[str] = "tts:billing"
+TTS_BILLING_STREAM: Final[str] = "tts:billing:stream"
+TTS_BILLING_GROUP: Final[str] = "billing-consumers"
+TTS_BILLING_CONSUMER: Final[str] = "billing-consumer"
 TTS_AUDIO_CACHE: Final[str] = "tts:audio:{hash}"
 TTS_PERSIST: Final[str] = "tts:persist"
 TTS_PROCESSING: Final[str] = "tts:processing:{worker_id}"
