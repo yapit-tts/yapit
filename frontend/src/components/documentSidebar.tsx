@@ -10,7 +10,6 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarMenuAction,
-  SidebarGroupAction,
   SidebarHeader,
   SidebarFooter,
 } from "@/components/ui/sidebar";
@@ -32,7 +31,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
-import { ChevronUp, FileText, Plus, Loader2, MoreHorizontal, User2, LogOut, LogIn, Trash2, Pencil, CreditCard, Lightbulb, Settings, Info, Link2, Check, Sun, Moon } from "lucide-react";
+import { ChevronUp, FileText, Loader2, MoreHorizontal, User2, LogOut, LogIn, Trash2, Pencil, CreditCard, Lightbulb, Settings, Info, Link2, Check, Sun, Moon } from "lucide-react";
 import { useApi } from "@/api";
 import { useUser } from "@stackframe/react";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -227,13 +226,6 @@ function DocumentSidebar() {
       <SidebarContent>
         <SidebarGroup>
           <SidebarGroupLabel>Documents</SidebarGroupLabel>
-          {location.pathname !== "/" && (
-            <SidebarGroupAction title="Add Document" asChild>
-              <Link to="/">
-                <Plus /> <span className="sr-only">Add Document</span>
-              </Link>
-            </SidebarGroupAction>
-          )}
           <SidebarGroupContent>
             <SidebarMenu>
               {isLoading ? (
