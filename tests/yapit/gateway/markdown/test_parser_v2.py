@@ -10,7 +10,7 @@ Tests are organized by feature area. Many will FAIL against the current
 implementation — they define the target spec for the rewrite.
 """
 
-from yapit.gateway.markdown import parse_markdown, transform_to_document
+from yapit.gateway.markdown import DocumentTransformer, parse_markdown
 from yapit.gateway.markdown.models import (
     ImageBlock,
     ListBlock,
@@ -25,13 +25,11 @@ DEFAULT_MIN_CHUNK_SIZE = 40
 
 
 def transform(ast, **kwargs):
-    """Helper that provides test defaults for transform_to_document."""
-    return transform_to_document(
-        ast,
+    return DocumentTransformer(
         max_block_chars=kwargs.get("max_block_chars", DEFAULT_MAX_BLOCK_CHARS),
         soft_limit_mult=kwargs.get("soft_limit_mult", DEFAULT_SOFT_LIMIT_MULT),
         min_chunk_size=kwargs.get("min_chunk_size", DEFAULT_MIN_CHUNK_SIZE),
-    )
+    ).transform(ast)
 
 
 # === HELPER FUNCTIONS ===

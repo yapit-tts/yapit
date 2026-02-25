@@ -12,12 +12,12 @@ from redis.asyncio import Redis
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from yapit.gateway.cache import Cache
-from yapit.gateway.config import Settings
 from yapit.gateway.db import create_session
 from yapit.gateway.document.extraction import PER_PAGE_TOLERANCE, deduplicate_footnotes, estimate_document_tokens
 from yapit.gateway.domain_models import Block, Document, DocumentMetadata, UsageType
 from yapit.gateway.exceptions import ValidationError
-from yapit.gateway.markdown import parse_markdown, transform_to_document
+from yapit.gateway.markdown import parse_markdown
+from yapit.gateway.markdown.transformer import DocumentTransformer
 from yapit.gateway.metrics import log_event
 from yapit.gateway.reservations import create_reservation, release_reservation
 from yapit.gateway.storage import ImageStorage
@@ -286,7 +286,7 @@ class ProcessedDocument:
 
 def process_pages_to_document(
     pages: dict[int, ExtractedPage],
-    settings: Settings,
+    transformer: DocumentTransformer,
 ) -> ProcessedDocument:
     """Transform extracted pages into structured document content."""
     page_markdowns = {idx: page.markdown for idx, page in pages.items()}
@@ -294,15 +294,10 @@ def process_pages_to_document(
     extracted_text = "\n\n".join(deduped_markdowns[idx] for idx in sorted(deduped_markdowns.keys()))
 
     ast = parse_markdown(extracted_text)
-    structured_doc = transform_to_document(
-        ast,
-        max_block_chars=settings.max_block_chars,
-        soft_limit_mult=settings.soft_limit_mult,
-        min_chunk_size=settings.min_chunk_size,
-    )
+    structured_doc = transformer.transform(ast)
 
     text_blocks = structured_doc.get_audio_blocks()
-    soft_max = int(settings.max_block_chars * settings.soft_limit_mult)
+    soft_max = transformer.splitter.soft_max
     oversized = [(i, len(t)) for i, t in enumerate(text_blocks) if len(t) > soft_max]
     if oversized:
         logger.warning(

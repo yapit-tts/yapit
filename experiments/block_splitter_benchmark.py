@@ -25,7 +25,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from yapit.gateway.markdown.parser import parse_markdown
-from yapit.gateway.markdown.transformer import transform_to_document
+from yapit.gateway.markdown.transformer import DocumentTransformer
 
 
 @dataclass
@@ -122,12 +122,11 @@ def analyze_params(
 
     for name, content in sections:
         ast = parse_markdown(content)
-        doc = transform_to_document(
-            ast,
+        doc = DocumentTransformer(
             max_block_chars=max_block_chars,
             soft_limit_mult=soft_limit_mult,
             min_chunk_size=min_chunk_size,
-        )
+        ).transform(ast)
 
         # Collect char counts from audio blocks only
         char_counts = []

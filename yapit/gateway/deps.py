@@ -25,6 +25,7 @@ from yapit.gateway.domain_models import (
     Voice,
 )
 from yapit.gateway.exceptions import ResourceNotFoundError
+from yapit.gateway.markdown.transformer import DocumentTransformer
 from yapit.gateway.stack_auth.users import User
 from yapit.gateway.storage import ImageStorage, LocalImageStorage, R2ImageStorage
 
@@ -163,6 +164,10 @@ async def get_ai_extractor(request: Request) -> GeminiExtractor | None:
     return request.app.state.ai_extractor
 
 
+async def get_document_transformer(request: Request) -> DocumentTransformer:
+    return request.app.state.document_transformer
+
+
 def get_stripe_client(settings: SettingsDep) -> stripe.StripeClient | None:
     """Stripe client for billing operations. Returns None if billing is not configured."""
     if not settings.stripe_secret_key:
@@ -182,4 +187,5 @@ CurrentVoice = Annotated[Voice, Depends(get_voice)]
 CurrentBlock = Annotated[Block, Depends(get_block)]
 CurrentBlockVariant = Annotated[BlockVariant, Depends(get_block_variant)]
 AuthenticatedUser = Annotated[User, Depends(authenticate)]
+DocumentTransformerDep = Annotated[DocumentTransformer, Depends(get_document_transformer)]
 StripeClient = Annotated[stripe.StripeClient | None, Depends(get_stripe_client)]

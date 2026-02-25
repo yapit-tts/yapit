@@ -22,7 +22,6 @@ from yapit.contracts import (
     build_tts_dlq_error,
     parse_queue_name,
 )
-from yapit.gateway.config import Settings
 from yapit.gateway.metrics import log_error, log_event
 from yapit.workers.queue import move_to_dlq, requeue_job
 
@@ -52,7 +51,8 @@ class _OutstandingJob:
 
 async def run_overflow_scanner(
     redis: Redis,
-    settings: Settings,
+    runpod_api_key: str,
+    runpod_request_timeout_seconds: int,
     queue_name: str,
     jobs_key: str,
     job_index_key: str | None,
@@ -64,14 +64,10 @@ async def run_overflow_scanner(
     max_retries: int,
     dlq_key: str,
 ) -> None:
-    if not settings.runpod_api_key or not settings.runpod_request_timeout_seconds:
-        logger.warning(f"{name} scanner disabled: missing RunPod API key or timeout config")
-        return
-
     import runpod
 
-    runpod.api_key = settings.runpod_api_key
-    runpod_timeout = settings.runpod_request_timeout_seconds
+    runpod.api_key = runpod_api_key
+    runpod_timeout = runpod_request_timeout_seconds
 
     session = aiohttp.ClientSession()
     endpoint = AsyncioEndpoint(endpoint_id, session)

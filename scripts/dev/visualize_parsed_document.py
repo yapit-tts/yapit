@@ -21,7 +21,7 @@ from pathlib import Path
 # Add project root to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from yapit.gateway.markdown import parse_markdown, transform_to_document
+from yapit.gateway.markdown import DocumentTransformer, parse_markdown
 
 
 def escape(text: str) -> str:
@@ -343,7 +343,7 @@ def main():
     ast = parse_markdown(markdown_text)
 
     print("Transforming to structured document...")
-    doc = transform_to_document(ast)
+    doc = DocumentTransformer().transform(ast)
 
     # Generate HTML
     print("Generating visualization...")

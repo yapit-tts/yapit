@@ -1,6 +1,6 @@
 import pytest
 
-from yapit.gateway.markdown import parse_markdown, transform_to_document
+from yapit.gateway.markdown import DocumentTransformer, parse_markdown
 from yapit.gateway.markdown.models import (
     BlockquoteBlock,
     FootnotesBlock,
@@ -26,12 +26,11 @@ DEFAULT_MIN_CHUNK_SIZE = 40
 
 def transform(md: str, **kwargs):
     ast = parse_markdown(md)
-    return transform_to_document(
-        ast,
+    return DocumentTransformer(
         max_block_chars=kwargs.get("max_block_chars", DEFAULT_MAX_BLOCK_CHARS),
         soft_limit_mult=kwargs.get("soft_limit_mult", DEFAULT_SOFT_LIMIT_MULT),
         min_chunk_size=kwargs.get("min_chunk_size", DEFAULT_MIN_CHUNK_SIZE),
-    )
+    ).transform(ast)
 
 
 # === 1. AUDIO CHUNK AST — ROUNDTRIP INVARIANT ===

@@ -37,6 +37,7 @@ from yapit.gateway.deps import (
     CurrentDoc,
     DbSession,
     DocumentCache,
+    DocumentTransformerDep,
     ExtractionCache,
     ImageStorageDep,
     RedisClient,
@@ -514,7 +515,7 @@ async def prepare_document_upload(
 async def create_text_document(
     req: TextDocumentCreateRequest,
     db: DbSession,
-    settings: SettingsDep,
+    transformer: DocumentTransformerDep,
     user: AuthenticatedUser,
 ) -> DocumentCreateResponse:
     """Create a document from direct text input."""
@@ -525,7 +526,7 @@ async def create_text_document(
         cpu_executor,
         process_pages_to_document,
         {0: ExtractedPage(markdown=req.content, images=[])},
-        settings,
+        transformer,
     )
 
     doc = await create_document_with_blocks(
@@ -556,7 +557,7 @@ async def create_website_document(
     req: WebsiteDocumentCreateRequest,
     db: DbSession,
     file_cache: DocumentCache,
-    settings: SettingsDep,
+    transformer: DocumentTransformerDep,
     user: AuthenticatedUser,
 ) -> DocumentCreateResponse:
     """Create a document from a live website."""
@@ -587,7 +588,7 @@ async def create_website_document(
         cpu_executor,
         process_pages_to_document,
         {0: ExtractedPage(markdown=markdown, images=[])},
-        settings,
+        transformer,
     )
 
     doc = await create_document_with_blocks(
@@ -679,7 +680,8 @@ async def _submit_batch_extraction(
     user_id: str,
     is_public: bool,
     db: DbSession,
-    settings: SettingsDep,
+    billing_enabled: bool,
+    transformer: DocumentTransformerDep,
     ai_extractor_config: AiExtractorConfigDep,
     ai_extractor: AiExtractorDep,
     redis: RedisClient,
@@ -721,7 +723,7 @@ async def _submit_batch_extraction(
             pages_submitted=[],
             figure_urls_by_page={},
         )
-        doc = await create_document_from_batch(job_info, cached_pages, settings)
+        doc = await create_document_from_batch(job_info, cached_pages, transformer)
         job_info.document_id = str(doc.id)
         await save_batch_job(redis, job_info)
         return BatchSubmittedResponse(
@@ -745,7 +747,7 @@ async def _submit_batch_extraction(
         user_id=user_id,
         pages=uncached_list,
         db=db,
-        billing_enabled=settings.billing_enabled,
+        billing_enabled=billing_enabled,
         redis=redis,
     )
 
@@ -856,12 +858,14 @@ async def _run_extraction(
     file_size: int,
     ai_transform: bool,
     arxiv_id: str | None,
+    markxiv_url: str | None,
+    billing_enabled: bool,
     title: str | None,
     pages: list[int] | None,
     user_id: str,
     is_public: bool,
     metadata: DocumentMetadata,
-    settings: SettingsDep,
+    transformer: DocumentTransformerDep,
     extraction_cache: ExtractionCache,
     image_storage: ImageStorageDep,
     ai_extractor_config: AiExtractorConfigDep,
@@ -881,8 +885,8 @@ async def _run_extraction(
     ext_log.info(f"Extraction starting: {method}, {total_pages} pages")
 
     try:
-        if arxiv_id and settings.markxiv_url:
-            markdown = await fetch_from_markxiv(settings.markxiv_url, arxiv_id)
+        if arxiv_id and markxiv_url:
+            markdown = await fetch_from_markxiv(markxiv_url, arxiv_id)
             extraction_result = DocumentExtractionResult(
                 pages={0: ExtractedPage(markdown=markdown, images=[])},
                 extraction_method="markxiv",
@@ -920,7 +924,7 @@ async def _run_extraction(
                 extraction_cache=extraction_cache,
                 image_storage=image_storage,
                 redis=redis,
-                billing_enabled=settings.billing_enabled,
+                billing_enabled=billing_enabled,
                 file_size=file_size,
                 pages=pages,
             )
@@ -942,7 +946,7 @@ async def _run_extraction(
 
         ext_log.info("Building structured document")
         processed = await asyncio.get_running_loop().run_in_executor(
-            cpu_executor, process_pages_to_document, extraction_result.pages, settings
+            cpu_executor, process_pages_to_document, extraction_result.pages, transformer
         )
         ext_log.info("Creating document in DB")
         async with create_session() as db:
@@ -1003,6 +1007,7 @@ async def create_document(
     extraction_cache: ExtractionCache,
     image_storage: ImageStorageDep,
     settings: SettingsDep,
+    transformer: DocumentTransformerDep,
     user: AuthenticatedUser,
     ai_extractor_config: AiExtractorConfigDep,
     ai_extractor: AiExtractorDep,
@@ -1056,7 +1061,8 @@ async def create_document(
             user_id=user.id,
             is_public=prefs.default_documents_public if prefs else False,
             db=db,
-            settings=settings,
+            billing_enabled=settings.billing_enabled,
+            transformer=transformer,
             ai_extractor_config=ai_extractor_config,
             ai_extractor=ai_extractor,
             redis=redis,
@@ -1113,12 +1119,14 @@ async def create_document(
             file_size=cached_doc.metadata.file_size or len(cached_doc.content),
             ai_transform=req.ai_transform,
             arxiv_id=arxiv_id,
+            markxiv_url=settings.markxiv_url,
+            billing_enabled=settings.billing_enabled,
             title=cached_doc.metadata.title or req.title or cached_doc.metadata.file_name,
             pages=req.pages,
             user_id=user.id,
             is_public=prefs.default_documents_public if prefs else False,
             metadata=cached_doc.metadata,
-            settings=settings,
+            transformer=transformer,
             extraction_cache=extraction_cache,
             image_storage=image_storage,
             ai_extractor_config=ai_extractor_config,

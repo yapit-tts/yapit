@@ -19,6 +19,7 @@ from yapit.gateway.cache import CacheConfig
 from yapit.gateway.config import Settings
 from yapit.gateway.db import close_db, create_session, get_engine, init_db
 from yapit.gateway.deps import create_cache, create_image_storage
+from yapit.gateway.markdown.transformer import DocumentTransformer
 from yapit.gateway.rate_limit import limiter
 from yapit.gateway.stack_auth.users import User
 
@@ -108,6 +109,11 @@ async def _shared_app(_create_schema, _test_settings) -> FastAPI:
         app.state.document_cache = create_cache(settings.document_cache_type, settings.document_cache_config)
         app.state.extraction_cache = create_cache(settings.extraction_cache_type, settings.extraction_cache_config)
         app.state.image_storage = create_image_storage(settings)
+        app.state.document_transformer = DocumentTransformer(
+            max_block_chars=settings.max_block_chars,
+            soft_limit_mult=settings.soft_limit_mult,
+            min_chunk_size=settings.min_chunk_size,
+        )
         app.state.ai_extractor_config = None
         app.state.ai_extractor = None
         yield

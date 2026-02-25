@@ -1660,20 +1660,3 @@ def _strip_audio_recursive(blocks: Sequence[ContentBlock]) -> None:
                 for item in block.items:
                     item.audio_chunks.clear()
                     _strip_audio_recursive(item.blocks)
-
-
-# === PUBLIC API ===
-
-
-def transform_to_document(
-    ast: SyntaxTreeNode,
-    max_block_chars: int,
-    soft_limit_mult: float,
-    min_chunk_size: int,
-) -> StructuredDocument:
-    """Transform markdown AST to StructuredDocument."""
-    return DocumentTransformer(
-        max_block_chars=max_block_chars,
-        soft_limit_mult=soft_limit_mult,
-        min_chunk_size=min_chunk_size,
-    ).transform(ast)

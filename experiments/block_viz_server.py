@@ -15,7 +15,7 @@ from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 
-from yapit.gateway.markdown import parse_markdown, transform_to_document
+from yapit.gateway.markdown import DocumentTransformer, parse_markdown
 
 app = FastAPI(title="Block Splitter Viz")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -67,12 +67,11 @@ def parse_document(
         return {"error": "No document loaded"}
 
     ast = parse_markdown(_current_doc)
-    doc = transform_to_document(
-        ast,
+    doc = DocumentTransformer(
         max_block_chars=max_chars,
         soft_limit_mult=soft_limit_mult,
         min_chunk_size=min_chunk_size,
-    )
+    ).transform(ast)
     blocks = [get_block_info(block, i) for i, block in enumerate(doc.blocks)]
 
     # Collect audio block sizes

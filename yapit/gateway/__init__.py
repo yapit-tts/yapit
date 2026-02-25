@@ -41,6 +41,7 @@ from yapit.gateway.logging_config import (
     configure_logging,
     unhandled_exception_handler,
 )
+from yapit.gateway.markdown.transformer import DocumentTransformer
 from yapit.gateway.metrics import init_metrics_db, start_metrics_writer, stop_metrics_writer
 from yapit.gateway.overflow_scanner import run_overflow_scanner
 from yapit.gateway.rate_limit import limiter
@@ -77,6 +78,11 @@ async def lifespan(app: FastAPI):
     app.state.document_cache = create_cache(settings.document_cache_type, settings.document_cache_config)
     app.state.extraction_cache = create_cache(settings.extraction_cache_type, settings.extraction_cache_config)
     app.state.image_storage = create_image_storage(settings)
+    app.state.document_transformer = DocumentTransformer(
+        max_block_chars=settings.max_block_chars,
+        soft_limit_mult=settings.soft_limit_mult,
+        min_chunk_size=settings.min_chunk_size,
+    )
 
     # Document extractors
     if settings.ai_processor == "gemini":
@@ -121,11 +127,16 @@ async def lifespan(app: FastAPI):
     background_tasks.append(tts_visibility_task)
 
     # TTS overflow scanner (for Kokoro)
-    if settings.kokoro_runpod_serverless_endpoint:
+    if (
+        settings.kokoro_runpod_serverless_endpoint
+        and settings.runpod_api_key
+        and settings.runpod_request_timeout_seconds
+    ):
         tts_overflow_task = asyncio.create_task(
             run_overflow_scanner(
                 app.state.redis_client,
-                settings,
+                runpod_api_key=settings.runpod_api_key,
+                runpod_request_timeout_seconds=settings.runpod_request_timeout_seconds,
                 queue_name=get_queue_name("kokoro"),
                 jobs_key=TTS_JOBS,
                 job_index_key=TTS_JOB_INDEX,
@@ -155,11 +166,12 @@ async def lifespan(app: FastAPI):
     background_tasks.append(yolo_visibility_task)
 
     # YOLO overflow scanner
-    if settings.yolo_runpod_serverless_endpoint:
+    if settings.yolo_runpod_serverless_endpoint and settings.runpod_api_key and settings.runpod_request_timeout_seconds:
         yolo_overflow_task = asyncio.create_task(
             run_overflow_scanner(
                 app.state.redis_client,
-                settings,
+                runpod_api_key=settings.runpod_api_key,
+                runpod_request_timeout_seconds=settings.runpod_request_timeout_seconds,
                 queue_name=YOLO_QUEUE,
                 jobs_key=YOLO_JOBS,
                 job_index_key=None,
@@ -198,7 +210,10 @@ async def lifespan(app: FastAPI):
 
     background_tasks.append(asyncio.create_task(_usage_log_cleanup_task()))
 
-    background_tasks.append(asyncio.create_task(run_billing_sync_loop(settings, app.state.redis_client)))
+    if settings.stripe_secret_key:
+        background_tasks.append(
+            asyncio.create_task(run_billing_sync_loop(settings.stripe_secret_key, app.state.redis_client))
+        )
 
     # Batch extraction poller
     batch_poller = None
@@ -209,7 +224,7 @@ async def lifespan(app: FastAPI):
             gemini_client=app.state.ai_extractor.client,
             redis=app.state.redis_client,
             extraction_cache=app.state.extraction_cache,
-            settings=settings,
+            transformer=app.state.document_transformer,
             extraction_cache_prefix=config.extraction_cache_prefix,
             output_token_multiplier=config.output_token_multiplier,
         )

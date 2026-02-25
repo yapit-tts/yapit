@@ -9,7 +9,6 @@ from loguru import logger
 from redis.asyncio import Redis
 
 from yapit.gateway.cache import Cache
-from yapit.gateway.config import Settings
 from yapit.gateway.db import create_session
 from yapit.gateway.document.batch import (
     BatchJobInfo,
@@ -28,6 +27,7 @@ from yapit.gateway.document.processing import (
     process_pages_to_document,
 )
 from yapit.gateway.domain_models import Document, DocumentMetadata, UsageType
+from yapit.gateway.markdown.transformer import DocumentTransformer
 from yapit.gateway.metrics import log_event
 from yapit.gateway.reservations import release_reservation
 from yapit.gateway.usage import record_usage
@@ -160,11 +160,11 @@ async def process_batch_completion(
 async def create_document_from_batch(
     job: BatchJobInfo,
     pages: dict[int, ExtractedPage],
-    settings: Settings,
+    transformer: DocumentTransformer,
 ) -> Document:
     """Create a Document from batch extraction results."""
     processed = await asyncio.get_running_loop().run_in_executor(
-        cpu_executor, process_pages_to_document, pages, settings
+        cpu_executor, process_pages_to_document, pages, transformer
     )
 
     metadata = DocumentMetadata(
@@ -227,14 +227,14 @@ class BatchPoller:
         gemini_client: genai.Client,
         redis: Redis,
         extraction_cache: Cache,
-        settings: Settings,
+        transformer: DocumentTransformer,
         extraction_cache_prefix: str,
         output_token_multiplier: int = 6,
     ):
         self._client = gemini_client
         self._redis = redis
         self._extraction_cache = extraction_cache
-        self._settings = settings
+        self._transformer = transformer
         self._extraction_cache_prefix = extraction_cache_prefix
         self._output_token_multiplier = output_token_multiplier
         self._running = False
@@ -313,7 +313,7 @@ class BatchPoller:
                     failed_pages.extend(sorted(missing))
 
             if pages:
-                doc = await create_document_from_batch(job, pages, self._settings)
+                doc = await create_document_from_batch(job, pages, self._transformer)
                 job.document_id = str(doc.id)
                 await save_batch_job(self._redis, job)
 
