@@ -185,4 +185,21 @@ def resolve_relative_urls(markdown: str, base_url: str) -> str:
     markdown = re.sub(r"!\[([^\]]*)\]\(([^)]+)\)", make_resolver(True), markdown)
     # Links: [text](url)
     markdown = re.sub(r"(?<!!)\[([^\]]*)\]\(([^)]+)\)", make_resolver(False), markdown)
+
+    # HTML <img> tags → markdown image syntax (our parser handles ![alt](url) but not <img>)
+    def img_to_markdown(match: re.Match) -> str:
+        url = match.group(1) or match.group(2) or match.group(3)
+        alt = ""
+        alt_match = re.search(r'alt=(?:"([^"]*)"|\'([^\']*)\'|(\S+))', match.group(0))
+        if alt_match:
+            alt = alt_match.group(1) or alt_match.group(2) or alt_match.group(3) or ""
+        if not url.startswith(("http://", "https://", "data:")):
+            url = urljoin(base_url, url.replace(" ", "%20"))
+        return f"![{alt}]({url})"
+
+    markdown = re.sub(
+        r"<img\s[^>]*?src=(?:\"([^\"]+)\"|'([^']+)'|([^\s>]+))[^>]*?>",
+        img_to_markdown,
+        markdown,
+    )
     return markdown
