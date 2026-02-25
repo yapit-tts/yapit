@@ -158,15 +158,15 @@ async def sync_subscription(
 
 
 LEADER_LOCK_KEY = "billing_sync:leader"
-LEADER_LOCK_TTL_S = 900  # Same as sync interval — if a run takes this long, something is very wrong
+LEADER_LOCK_TTL_S = 3600  # Same as sync interval — if a run takes this long, something is very wrong
 
 
-async def run_billing_sync_loop(settings: Settings, redis_client: Redis, interval_s: int = 900) -> None:
+async def run_billing_sync_loop(settings: Settings, redis_client: Redis, interval_s: int = 3600) -> None:
     """Background task: reconcile all subscriptions with Stripe every interval_s."""
     if not settings.stripe_secret_key:
         return
 
-    client = stripe.StripeClient(settings.stripe_secret_key)
+    client = stripe.StripeClient(settings.stripe_secret_key, max_network_retries=2)
     await asyncio.sleep(120)
 
     while True:

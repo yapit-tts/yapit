@@ -167,7 +167,7 @@ def get_stripe_client(settings: SettingsDep) -> stripe.StripeClient | None:
     """Stripe client for billing operations. Returns None if billing is not configured."""
     if not settings.stripe_secret_key:
         return None
-    return stripe.StripeClient(settings.stripe_secret_key)
+    return stripe.StripeClient(settings.stripe_secret_key, max_network_retries=2)
 
 
 RedisClient = Annotated[Redis, Depends(get_redis_client)]
