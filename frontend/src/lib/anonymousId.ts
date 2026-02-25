@@ -11,7 +11,7 @@ async function fetchAnonymousSession(): Promise<{ id: string; token: string }> {
 }
 
 export async function getOrCreateAnonymousId(): Promise<string> {
-  let id = localStorage.getItem(STORAGE_KEY);
+  const id = localStorage.getItem(STORAGE_KEY);
   if (id && localStorage.getItem(TOKEN_STORAGE_KEY)) {
     return id;
   }
