@@ -55,7 +55,13 @@ export function filterVisibleBlocks(
     }
 
     const section = findSectionForAudioIdx(audioIdx);
-    if (!section) continue;
+    if (!section) {
+      // Preamble: audio blocks before the first section heading — always visible
+      if (!lastSeenSectionId) {
+        visible.push(block);
+      }
+      continue;
+    }
 
     if (section.id !== lastSeenSectionId) {
       lastSeenSectionId = section.id;
