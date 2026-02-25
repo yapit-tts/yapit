@@ -59,11 +59,11 @@ function makeSection(
 // --- Tests ---
 
 describe("filterVisibleBlocks", () => {
-  it("returns no blocks when no sections exist", () => {
+  it("passes through all blocks when no sections exist", () => {
     const blocks = [makeParagraph("p1", 0), makeParagraph("p2", 1)];
     const result = filterVisibleBlocks(blocks, [], new Set(), new Map());
-    // Audio blocks without a matching section are dropped
-    expect(result).toEqual([]);
+    // No sections = no outliner = no filtering
+    expect(result).toEqual(blocks);
   });
 
   it("shows blocks in expanded sections", () => {
@@ -86,6 +86,19 @@ describe("filterVisibleBlocks", () => {
 
     const result = filterVisibleBlocks(blocks, sections, new Set(), sectionMap);
     expect(result).toEqual([h1]);
+  });
+
+  it("shows audio blocks before the first heading (preamble)", () => {
+    const p0 = makeParagraph("p0", 0);
+    const p1 = makeParagraph("p1", 1);
+    const h1 = makeHeading("h1", 2);
+    const p2 = makeParagraph("p2", 3);
+    const blocks = [p0, p1, h1, p2];
+    const sections = [makeSection("h1", 2, 3)];
+    const sectionMap = new Map([["h1", sections[0]]]);
+
+    const result = filterVisibleBlocks(blocks, sections, new Set(["h1"]), sectionMap);
+    expect(result).toEqual([p0, p1, h1, p2]);
   });
 
   it("shows display-only blocks before the first heading", () => {
