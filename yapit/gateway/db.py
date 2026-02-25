@@ -22,6 +22,8 @@ _session_factory: async_sessionmaker[AsyncSession] | None = None
 def init_db(settings: Settings) -> None:
     """Initialize the database engine and session factory. Call once at startup."""
     global _engine, _session_factory
+    if _engine is not None:
+        return
     _engine = create_async_engine(
         settings.database_url,
         echo=settings.sqlalchemy_echo,

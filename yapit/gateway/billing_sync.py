@@ -34,7 +34,14 @@ async def sync_subscription(
         if "No such subscription" not in str(e):
             raise
         async with create_session() as db:
-            subscription = (await db.exec(select(UserSubscription).where(UserSubscription.user_id == user_id))).first()
+            subscription = (
+                await db.exec(
+                    select(UserSubscription).where(
+                        UserSubscription.user_id == user_id,
+                        UserSubscription.stripe_subscription_id == stripe_subscription_id,
+                    )
+                )
+            ).first()
             if not subscription or subscription.status == SubscriptionStatus.canceled:
                 return False
             log.warning("Subscription gone from Stripe, marking canceled")
@@ -47,7 +54,14 @@ async def sync_subscription(
         return True
 
     async with create_session() as db:
-        subscription = (await db.exec(select(UserSubscription).where(UserSubscription.user_id == user_id))).first()
+        subscription = (
+            await db.exec(
+                select(UserSubscription).where(
+                    UserSubscription.user_id == user_id,
+                    UserSubscription.stripe_subscription_id == stripe_subscription_id,
+                )
+            )
+        ).first()
         if not subscription:
             return False
 

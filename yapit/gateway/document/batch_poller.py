@@ -122,7 +122,9 @@ async def process_batch_completion(
                         reference_id=job.content_hash,
                         description=record["description"],
                         details=record["details"],
+                        commit=False,
                     )
+                await db.commit()
     finally:
         await release_reservation(redis, job.user_id, job.content_hash)
 

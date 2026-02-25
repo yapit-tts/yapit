@@ -257,7 +257,9 @@ async def process_with_billing(
                         reference_id=content_hash,
                         description=record["description"],
                         details=record["details"],
+                        commit=False,
                     )
+                await db.commit()
     finally:
         if config.is_paid and estimated_tokens > 0:
             await release_reservation(redis, user_id, content_hash)

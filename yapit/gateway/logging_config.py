@@ -4,11 +4,11 @@ import logging
 import sys
 import uuid
 from pathlib import Path
-from typing import Any
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from loguru import logger
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from yapit.gateway.metrics import log_error
 
@@ -57,15 +57,10 @@ def configure_logging(log_dir: Path) -> None:
     logging.basicConfig(handlers=[InterceptHandler()], level=0, force=True)
 
 
-Scope = dict[str, Any]
-Receive = Any
-Send = Any
-
-
 class RequestContextMiddleware:
     """Raw ASGI middleware that adds request_id to loguru context for log correlation."""
 
-    def __init__(self, app: Any) -> None:
+    def __init__(self, app: ASGIApp) -> None:
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
