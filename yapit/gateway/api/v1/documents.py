@@ -457,7 +457,7 @@ async def prepare_document_upload(
     t0 = time.monotonic()
     content = await file.read()
     if not content:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Empty file")
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Empty file")
 
     cache_key = hashlib.sha256(content).hexdigest()
     cached_data = await file_cache.retrieve_data(cache_key)
@@ -572,7 +572,7 @@ async def create_website_document(
     cached_doc = CachedDocument.model_validate_json(cached_data)
     if _get_endpoint_type_from_content_type(cached_doc.metadata.content_type) != "website":
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="This endpoint is for websites only. Use /document for files.",
         )
     if not cached_doc.content:
@@ -721,7 +721,7 @@ async def _submit_batch_extraction(
             pages_submitted=[],
             figure_urls_by_page={},
         )
-        doc = await create_document_from_batch(job_info, cached_pages, db, settings)
+        doc = await create_document_from_batch(job_info, cached_pages, settings)
         job_info.document_id = str(doc.id)
         await save_batch_job(redis, job_info)
         return BatchSubmittedResponse(
@@ -881,74 +881,71 @@ async def _run_extraction(
     ext_log.info(f"Extraction starting: {method}, {total_pages} pages")
 
     try:
-        async for db in create_session(settings):
-            if arxiv_id and settings.markxiv_url:
-                markdown = await fetch_from_markxiv(settings.markxiv_url, arxiv_id)
-                extraction_result = DocumentExtractionResult(
-                    pages={0: ExtractedPage(markdown=markdown, images=[])},
-                    extraction_method="markxiv",
-                )
-            elif content_type.startswith("text/") and not ai_transform:
-                # Text content doesn't need extraction — pass through as-is
-                extraction_result = DocumentExtractionResult(
-                    pages={0: ExtractedPage(markdown=content.decode("utf-8", errors="ignore"), images=[])},
-                    extraction_method="passthrough",
+        if arxiv_id and settings.markxiv_url:
+            markdown = await fetch_from_markxiv(settings.markxiv_url, arxiv_id)
+            extraction_result = DocumentExtractionResult(
+                pages={0: ExtractedPage(markdown=markdown, images=[])},
+                extraction_method="markxiv",
+            )
+        elif content_type.startswith("text/") and not ai_transform:
+            extraction_result = DocumentExtractionResult(
+                pages={0: ExtractedPage(markdown=content.decode("utf-8", errors="ignore"), images=[])},
+                extraction_method="passthrough",
+            )
+        else:
+            if ai_transform:
+                assert ai_extractor is not None and ai_extractor_config is not None
+                config = ai_extractor_config
+                extractor = ai_extractor.extract(
+                    content,
+                    content_type,
+                    content_hash,
+                    pages,
+                    user_id=user_id,
+                    cancel_key=cancel_key,
                 )
             else:
-                if ai_transform:
-                    assert ai_extractor is not None and ai_extractor_config is not None
-                    config = ai_extractor_config
-                    extractor = ai_extractor.extract(
-                        content,
-                        content_type,
-                        content_hash,
-                        pages,
-                        user_id=user_id,
-                        cancel_key=cancel_key,
-                    )
-                else:
-                    config = pdf.config
-                    extractor = pdf.extract(content, pages)
+                config = pdf.config
+                extractor = pdf.extract(content, pages)
 
-                ext_log.info("Starting process_with_billing")
-                extraction_result = await process_with_billing(
-                    config=config,
-                    extractor=extractor,
-                    user_id=user_id,
-                    content=content,
-                    content_type=content_type,
-                    content_hash=content_hash,
-                    total_pages=total_pages,
-                    db=db,
-                    extraction_cache=extraction_cache,
-                    image_storage=image_storage,
-                    redis=redis,
-                    billing_enabled=settings.billing_enabled,
-                    file_size=file_size,
-                    pages=pages,
-                )
-                ext_log.info(
-                    f"Extraction done, {len(extraction_result.pages)} pages, "
-                    f"{len(extraction_result.failed_pages)} failed"
-                )
-
-            if await redis.exists(cancel_key):
-                ext_log.info("Extraction cancelled, skipping document creation")
-                return
-
-            if not extraction_result.pages:
-                await redis.set(
-                    result_key,
-                    json.dumps({"error": "Document extraction failed. Please try again later."}),
-                    ex=ASYNC_EXTRACTION_RESULT_TTL,
-                )
-                return
-
-            ext_log.info("Building structured document")
-            processed = await asyncio.get_running_loop().run_in_executor(
-                cpu_executor, process_pages_to_document, extraction_result.pages, settings
+            ext_log.info("Starting process_with_billing")
+            extraction_result = await process_with_billing(
+                config=config,
+                extractor=extractor,
+                user_id=user_id,
+                content=content,
+                content_type=content_type,
+                content_hash=content_hash,
+                total_pages=total_pages,
+                extraction_cache=extraction_cache,
+                image_storage=image_storage,
+                redis=redis,
+                billing_enabled=settings.billing_enabled,
+                file_size=file_size,
+                pages=pages,
             )
-            ext_log.info("Creating document in DB")
+            ext_log.info(
+                f"Extraction done, {len(extraction_result.pages)} pages, {len(extraction_result.failed_pages)} failed"
+            )
+
+        if await redis.exists(cancel_key):
+            ext_log.info("Extraction cancelled, skipping document creation")
+            return
+
+        if not extraction_result.pages:
+            await redis.set(
+                result_key,
+                json.dumps({"error": "Document extraction failed. Please try again later."}),
+                ex=ASYNC_EXTRACTION_RESULT_TTL,
+            )
+            return
+
+        ext_log.info("Building structured document")
+        processed = await asyncio.get_running_loop().run_in_executor(
+            cpu_executor, process_pages_to_document, extraction_result.pages, settings
+        )
+        ext_log.info("Creating document in DB")
+        async with create_session() as db:
             doc = await create_document_with_blocks(
                 db=db,
                 user_id=user_id,
@@ -962,18 +959,17 @@ async def _run_extraction(
                 content_hash=content_hash,
             )
 
-            await redis.set(
-                result_key,
-                json.dumps(
-                    {
-                        "document_id": str(doc.id),
-                        "title": doc.title,
-                        "failed_pages": extraction_result.failed_pages,
-                    }
-                ),
-                ex=ASYNC_EXTRACTION_RESULT_TTL,
-            )
-            break  # create_session is an async generator; only need one session
+        await redis.set(
+            result_key,
+            json.dumps(
+                {
+                    "document_id": str(doc.id),
+                    "title": doc.title,
+                    "failed_pages": extraction_result.failed_pages,
+                }
+            ),
+            ex=ASYNC_EXTRACTION_RESULT_TTL,
+        )
     except Exception as e:
         ext_log.exception("Async extraction failed")
         await log_error(f"Async extraction failed: {e}", content_hash=content_hash, user_id=user_id)
@@ -1030,7 +1026,7 @@ async def create_document(
 
     if _get_endpoint_type_from_content_type(cached_doc.metadata.content_type) == "website":
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="This endpoint is for documents only. Use /website for websites.",
         )
     _validate_page_numbers(req.pages, cached_doc.metadata.total_pages)
@@ -1044,7 +1040,7 @@ async def create_document(
 
     if req.batch_mode and not req.ai_transform:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="batch_mode requires ai_transform=true",
         )
 
@@ -1510,6 +1506,6 @@ def _validate_page_numbers(pages: list[int] | None, total_pages: int) -> None:
     invalid_pages = [p for p in pages if p < 0 or p >= total_pages]
     if invalid_pages:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Invalid page numbers: {invalid_pages!r}. Document has {total_pages} pages (0-indexed).",
         )

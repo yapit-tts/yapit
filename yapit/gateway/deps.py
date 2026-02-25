@@ -77,8 +77,8 @@ async def get_image_storage(request: Request) -> ImageStorage:
     return request.app.state.image_storage
 
 
-async def get_db_session(settings: Settings = Depends(get_settings)) -> AsyncIterator[AsyncSession]:
-    async for session in create_session(settings):
+async def get_db_session() -> AsyncIterator[AsyncSession]:
+    async with create_session() as session:
         yield session
 
 

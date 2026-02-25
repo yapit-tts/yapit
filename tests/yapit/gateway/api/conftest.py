@@ -16,8 +16,8 @@ from testcontainers.redis import RedisContainer
 from yapit.gateway import create_app
 from yapit.gateway.auth import authenticate
 from yapit.gateway.cache import CacheConfig
-from yapit.gateway.config import Settings, get_settings
-from yapit.gateway.db import _get_engine, close_db, create_session
+from yapit.gateway.config import Settings
+from yapit.gateway.db import close_db, create_session, get_engine, init_db
 from yapit.gateway.deps import create_cache, create_image_storage
 from yapit.gateway.rate_limit import limiter
 from yapit.gateway.stack_auth.users import User
@@ -102,6 +102,7 @@ async def _shared_app(_create_schema, _test_settings) -> FastAPI:
     @asynccontextmanager
     async def _test_lifespan(app: FastAPI):
         """Minimal lifespan: app state only, no background tasks."""
+        init_db(settings)
         app.state.redis_client = await aioredis.from_url(settings.redis_url, decode_responses=False)
         app.state.audio_cache = create_cache(settings.audio_cache_type, settings.audio_cache_config)
         app.state.document_cache = create_cache(settings.document_cache_type, settings.document_cache_config)
@@ -130,7 +131,7 @@ async def _clean_tables(_shared_app):
     if _delete_stmts is None:
         _delete_stmts = _make_delete_statements()
 
-    engine = _get_engine(_shared_app.dependency_overrides[get_settings]())
+    engine = get_engine()
     async with engine.begin() as conn:
         for stmt in _delete_stmts:
             await conn.execute(stmt)
@@ -174,8 +175,6 @@ async def client(app):
 
 
 @pytest_asyncio.fixture
-async def session(app):
-    settings = app.dependency_overrides[get_settings]()
-    async for session in create_session(settings):
+async def session():
+    async with create_session() as session:
         yield session
-        break

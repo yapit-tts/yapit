@@ -3,13 +3,12 @@
 import logging
 import sys
 import uuid
-from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
-from fastapi import Request, Response
+from fastapi import Request
 from fastapi.responses import JSONResponse
 from loguru import logger
-from starlette.middleware.base import BaseHTTPMiddleware
 
 from yapit.gateway.metrics import log_error
 
@@ -58,17 +57,27 @@ def configure_logging(log_dir: Path) -> None:
     logging.basicConfig(handlers=[InterceptHandler()], level=0, force=True)
 
 
-class RequestContextMiddleware(BaseHTTPMiddleware):
-    """Add request_id to logging context for correlation."""
+Scope = dict[str, Any]
+Receive = Any
+Send = Any
 
-    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+
+class RequestContextMiddleware:
+    """Raw ASGI middleware that adds request_id to loguru context for log correlation."""
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] not in ("http", "websocket"):
+            await self.app(scope, receive, send)
+            return
+
         request_id = uuid.uuid4().hex[:8]
-        request.state.request_id = request_id
+        scope.setdefault("state", {})["request_id"] = request_id
 
         with logger.contextualize(request_id=request_id):
-            response = await call_next(request)
-
-        return response
+            await self.app(scope, receive, send)
 
 
 async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:

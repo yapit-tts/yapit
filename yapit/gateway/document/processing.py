@@ -13,6 +13,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from yapit.gateway.cache import Cache
 from yapit.gateway.config import Settings
+from yapit.gateway.db import create_session
 from yapit.gateway.document.extraction import PER_PAGE_TOLERANCE, deduplicate_footnotes, estimate_document_tokens
 from yapit.gateway.domain_models import Block, Document, DocumentMetadata, UsageType
 from yapit.gateway.exceptions import ValidationError
@@ -102,7 +103,6 @@ async def process_with_billing(
     content_type: str,
     content_hash: str,
     total_pages: int,
-    db: AsyncSession,
     extraction_cache: Cache,
     image_storage: ImageStorage,
     redis: Redis,
@@ -115,8 +115,9 @@ async def process_with_billing(
     1. Validate content type and limits
     2. Check extraction cache for already-processed pages
     3. Estimate tokens, check usage limit, create reservation (paid processors)
-    4. Extract uncached pages, caching and billing each as it completes
-    5. Release reservation and return merged result (cached + fresh pages)
+    4. Extract uncached pages, caching each as it completes
+    5. Bill all successful pages
+    6. Release reservation and return merged result (cached + fresh pages)
     """
     # 1. Validate
     if not config.is_supported(content_type):
@@ -189,21 +190,23 @@ async def process_with_billing(
             },
         )
 
-        await check_usage_limit(
-            user_id,
-            UsageType.ocr_tokens,
-            amount_to_check,
-            db,
-            billing_enabled=billing_enabled,
-            redis=redis,
-        )
+        async with create_session() as db:
+            await check_usage_limit(
+                user_id,
+                UsageType.ocr_tokens,
+                amount_to_check,
+                db,
+                billing_enabled=billing_enabled,
+                redis=redis,
+            )
 
-        # Create reservation to prevent race conditions with concurrent requests
         await create_reservation(redis, user_id, content_hash, estimated_tokens)
 
-    # 4. Extract, cache, and bill each page as it completes
+    # 4. Extract and cache pages (no DB session held — extraction involves
+    # YOLO detection, Gemini API calls, etc. that can take minutes)
     fresh_pages: dict[int, ExtractedPage] = {}
     failed_pages: list[int] = []
+    billing_records: list[dict] = []
 
     try:
         async for result in extractor:
@@ -217,40 +220,49 @@ async def process_with_billing(
 
             fresh_pages[result.page_idx] = result.page
 
-            # Cache immediately
             if config.extraction_cache_prefix:
                 cache_key = config.extraction_cache_key(content_hash, result.page_idx)
                 await extraction_cache.store(cache_key, result.page.model_dump_json().encode())
 
-            # Bill immediately (paid processors only)
             if config.is_paid:
                 token_equiv = (
                     result.input_tokens
                     + (result.output_tokens + result.thoughts_tokens) * config.output_token_multiplier
                 )
-                await record_usage(
-                    user_id=user_id,
-                    usage_type=UsageType.ocr_tokens,
-                    amount=token_equiv,
-                    db=db,
-                    reference_id=content_hash,
-                    description=f"Page {result.page_idx + 1} extraction with {config.slug}",
-                    details={
-                        "processor": config.slug,
-                        "page_idx": result.page_idx,
-                        "input_tokens": result.input_tokens,
-                        "output_tokens": result.output_tokens,
-                        "thoughts_tokens": result.thoughts_tokens,
-                        "token_equiv": token_equiv,
-                        "is_fallback": result.is_fallback,
-                    },
+                billing_records.append(
+                    {
+                        "amount": token_equiv,
+                        "description": f"Page {result.page_idx + 1} extraction with {config.slug}",
+                        "details": {
+                            "processor": config.slug,
+                            "page_idx": result.page_idx,
+                            "input_tokens": result.input_tokens,
+                            "output_tokens": result.output_tokens,
+                            "thoughts_tokens": result.thoughts_tokens,
+                            "token_equiv": token_equiv,
+                            "is_fallback": result.is_fallback,
+                        },
+                    }
                 )
+
+        # 5. Bill all successful pages in one short DB session
+        if billing_records:
+            async with create_session() as db:
+                for record in billing_records:
+                    await record_usage(
+                        user_id=user_id,
+                        usage_type=UsageType.ocr_tokens,
+                        amount=record["amount"],
+                        db=db,
+                        reference_id=content_hash,
+                        description=record["description"],
+                        details=record["details"],
+                    )
     finally:
-        # Release reservation - actual billing already happened per-page above
         if config.is_paid and estimated_tokens > 0:
             await release_reservation(redis, user_id, content_hash)
 
-    # 5. Merge cached + fresh, sort by page index
+    # 6. Merge cached + fresh, sort by page index
     all_pages = {**cached_pages, **fresh_pages}
     sorted_pages = dict(sorted(all_pages.items()))
 

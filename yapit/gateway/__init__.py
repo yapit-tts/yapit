@@ -30,7 +30,7 @@ from yapit.gateway.billing_sync import run_billing_sync_loop
 from yapit.gateway.cache import Cache
 from yapit.gateway.cache_persister import run_cache_persister
 from yapit.gateway.config import Settings, get_settings
-from yapit.gateway.db import close_db, create_session, prepare_database
+from yapit.gateway.db import close_db, create_session, init_db, prepare_database
 from yapit.gateway.deps import create_cache, create_image_storage
 from yapit.gateway.document.batch_poller import BatchPoller
 from yapit.gateway.document.processors.gemini import GeminiExtractor, create_gemini_config
@@ -69,6 +69,7 @@ async def lifespan(app: FastAPI):
     await init_metrics_db(settings.metrics_database_url)
     await start_metrics_writer()
 
+    init_db(settings)
     await prepare_database(settings)
 
     app.state.redis_client = await redis.from_url(settings.redis_url, decode_responses=False)
@@ -195,7 +196,7 @@ async def lifespan(app: FastAPI):
     maintenance_task = asyncio.create_task(_cache_maintenance_task(all_caches))
     background_tasks.append(maintenance_task)
 
-    background_tasks.append(asyncio.create_task(_usage_log_cleanup_task(settings)))
+    background_tasks.append(asyncio.create_task(_usage_log_cleanup_task()))
 
     background_tasks.append(asyncio.create_task(run_billing_sync_loop(settings, app.state.redis_client)))
 
@@ -207,7 +208,6 @@ async def lifespan(app: FastAPI):
         batch_poller = BatchPoller(
             gemini_client=app.state.ai_extractor.client,
             redis=app.state.redis_client,
-            get_db_session=lambda: create_session(settings),
             extraction_cache=app.state.extraction_cache,
             settings=settings,
             extraction_cache_prefix=config.extraction_cache_prefix,
@@ -244,20 +244,19 @@ async def _cache_maintenance_task(caches: list[Cache]) -> None:
         await asyncio.sleep(86400)
 
 
-async def _usage_log_cleanup_task(settings: Settings) -> None:
+async def _usage_log_cleanup_task() -> None:
     """Delete UsageLog entries older than retention period."""
     await asyncio.sleep(3600)  # Wait 1h after startup before first run
     while True:
         try:
             cutoff = datetime.now(tz=dt.UTC) - timedelta(days=USAGE_LOG_RETENTION_DAYS)
-            async for db in create_session(settings):
+            async with create_session() as db:
                 result = await db.exec(delete(UsageLog).where(col(UsageLog.created) < cutoff))
                 await db.commit()
                 if result.rowcount:
                     logger.info(
                         f"UsageLog cleanup: deleted {result.rowcount} rows older than {USAGE_LOG_RETENTION_DAYS} days"
                     )
-                break
         except Exception as e:
             logger.exception(f"UsageLog cleanup failed: {e}")
         await asyncio.sleep(86400)

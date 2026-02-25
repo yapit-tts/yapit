@@ -22,7 +22,7 @@ from sqlmodel import col, select
 
 from yapit.gateway.cache import Cache
 from yapit.gateway.config import Settings
-from yapit.gateway.db import close_db, create_session
+from yapit.gateway.db import close_db, create_session, init_db
 from yapit.gateway.deps import create_cache
 from yapit.gateway.domain_models import BlockVariant, Document, TTSModel, Voice
 from yapit.gateway.synthesis import CachedResult, QueuedResult, synthesize_and_wait
@@ -78,7 +78,6 @@ def filter_voices(
 
 
 async def warm_texts(
-    settings: Settings,
     redis_client: Redis,
     cache: Cache,
     model: TTSModel,
@@ -103,7 +102,7 @@ async def warm_texts(
                 hashes.append(h)
                 continue
 
-            async for db in create_session(settings):
+            async with create_session() as db:
                 result = await synthesize_and_wait(
                     db=db,
                     redis=redis_client,
@@ -118,7 +117,6 @@ async def warm_texts(
                     timeout_seconds=30.0,
                     poll_interval=0.2,
                 )
-                break
 
             if isinstance(result, (CachedResult, QueuedResult)):
                 stats.synthesized += 1
@@ -138,15 +136,14 @@ async def warm_texts(
     return hashes
 
 
-async def run_warming(cache: Cache, redis_client: Redis, settings: Settings) -> WarmingStats:
+async def run_warming(cache: Cache, redis_client: Redis) -> WarmingStats:
     """Run the full warming cycle: synthesize missing entries, then pin all warmed keys."""
-    async for db in create_session(settings):
+    async with create_session() as db:
         models = (
             await db.exec(
                 select(TTSModel).where(col(TTSModel.is_active).is_(True)).options(selectinload(TTSModel.voices))  # type: ignore[arg-type]
             )
         ).all()
-        break
 
     stats = WarmingStats()
     all_hashes: list[str] = []
@@ -160,20 +157,17 @@ async def run_warming(cache: Cache, redis_client: Redis, settings: Settings) -> 
     for model in models:
         active = [v for v in model.voices if v.is_active]
         logger.info(f"{model.slug}: {len(active)} voices")
-        hashes = await warm_texts(
-            settings, redis_client, cache, model, active, PREVIEW_SENTENCES, PREVIEW_DOCUMENT_ID, stats
-        )
+        hashes = await warm_texts(redis_client, cache, model, active, PREVIEW_SENTENCES, PREVIEW_DOCUMENT_ID, stats)
         all_hashes.extend(hashes)
 
     # --- Showcase documents ---
     for showcase in SHOWCASE_DOCS:
-        async for db in create_session(settings):
+        async with create_session() as db:
             doc = (
                 await db.exec(
                     select(Document).where(Document.id == showcase.id).options(selectinload(Document.blocks))  # type: ignore[arg-type]
                 )
             ).first()
-            break
 
         if doc is None:
             logger.warning(f"Showcase doc {showcase.id} not found, skipping")
@@ -185,7 +179,7 @@ async def run_warming(cache: Cache, redis_client: Redis, settings: Settings) -> 
         for model in models:
             voices = filter_voices(model, showcase.voice_filter)
             logger.info(f"  {model.slug}: {len(voices)} voices")
-            hashes = await warm_texts(settings, redis_client, cache, model, voices, block_texts, showcase.id, stats)
+            hashes = await warm_texts(redis_client, cache, model, voices, block_texts, showcase.id, stats)
             all_hashes.extend(hashes)
 
     # --- Pin all warmed entries ---
@@ -201,11 +195,12 @@ async def run_warming(cache: Cache, redis_client: Redis, settings: Settings) -> 
 async def main() -> int:
     """Standalone entry point for manual one-off warming."""
     settings = Settings()  # type: ignore[call-arg]
+    init_db(settings)
     redis_client = await aioredis.from_url(settings.redis_url, decode_responses=False)
     cache = create_cache(settings.audio_cache_type, settings.audio_cache_config)
 
     try:
-        stats = await run_warming(cache, redis_client, settings)
+        stats = await run_warming(cache, redis_client)
         return 0 if stats.failed == 0 else 1
     finally:
         await cache.close()

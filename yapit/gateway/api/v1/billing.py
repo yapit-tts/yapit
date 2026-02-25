@@ -142,13 +142,15 @@ async def create_subscription_checkout(
     # Reconcile with Stripe before gating — local state may be stale in either direction
     if existing_sub and existing_sub.stripe_subscription_id:
         try:
-            await sync_subscription(existing_sub, client, db)
+            await sync_subscription(existing_sub.user_id, existing_sub.stripe_subscription_id, client)
         except Exception:
             logger.bind(user_id=user.id).exception("Billing sync failed during subscribe gate")
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Unable to verify subscription status. Please try again.",
             )
+        # Re-fetch: sync uses its own session, so existing_sub is stale
+        existing_sub = await get_user_subscription(user.id, db)
 
     if existing_sub and existing_sub.status != SubscriptionStatus.canceled:
         raise HTTPException(

@@ -25,7 +25,7 @@ from yapit.contracts import (
 from yapit.gateway.auth import authenticate_ws
 from yapit.gateway.cache import Cache
 from yapit.gateway.config import Settings, get_settings
-from yapit.gateway.deps import get_db_session
+from yapit.gateway.db import create_session
 from yapit.gateway.domain_models import Block, Document, TTSModel, Voice
 from yapit.gateway.metrics import log_error, log_event
 from yapit.gateway.stack_auth.users import User
@@ -173,7 +173,7 @@ async def _handle_synthesize(
         await ws.send_json({"type": "error", "error": "Rate limit exceeded. Please slow down."})
         return
 
-    async for db in get_db_session(settings):
+    async with create_session() as db:
         # Validate document ownership
         doc = (await db.exec(select(Document).where(Document.id == msg.document_id))).first()
         if not doc or (doc.user_id != user.id and not doc.is_public):
@@ -251,7 +251,6 @@ async def _handle_synthesize(
                         voice_slug=voice.slug,
                     ).model_dump(mode="json")
                 )
-        break
 
 
 async def _handle_cursor_moved(
@@ -273,38 +272,70 @@ async def _handle_cursor_moved(
 
     to_evict = [int(idx_bytes) for idx_bytes in pending_indices]
 
-    # Remove from pending set
     await redis.srem(pending_key, *pending_indices)
 
-    # Remove jobs from queue for each evicted block
-    for idx in to_evict:
-        index_key = f"{user.id}:{msg.document_id}:{idx}"
-        job_id = await redis.hget(TTS_JOB_INDEX, index_key)
-        if job_id is None:
-            continue
+    # Pipeline 1: look up job IDs for all evicted blocks
+    index_keys = [f"{user.id}:{msg.document_id}:{idx}" for idx in to_evict]
+    async with redis.pipeline() as pipe:
+        for key in index_keys:
+            pipe.hget(TTS_JOB_INDEX, key)
+        job_ids = await pipe.execute()
 
-        job_id_str = job_id.decode()
+    active: list[tuple[str, str]] = []  # (job_id_str, index_key)
+    for index_key, job_id in zip(index_keys, job_ids):
+        if job_id is not None:
+            active.append((job_id.decode(), index_key))
 
-        job_wrapper = await redis.hget(TTS_JOBS, job_id_str)
-        if job_wrapper is not None:
-            wrapper = json.loads(job_wrapper)
-            job = SynthesisJob.model_validate_json(wrapper["job"])
-            queue_name = get_queue_name(job.model_slug)
-            removed_from_queue = await redis.zrem(queue_name, job_id_str)
-            await redis.hdel(TTS_JOBS, job_id_str)
+    if not active:
+        await ws.send_json(WSEvicted(document_id=msg.document_id, block_indices=to_evict).model_dump(mode="json"))
+        return
 
-            # If the job was still in the queue (not yet pulled by a worker),
-            # clean up the inflight semaphore — otherwise future requests for
-            # the same variant see "already processing" but nobody is.
-            if removed_from_queue:
-                inflight_key = TTS_INFLIGHT.format(hash=job.variant_hash)
-                inflight_owner = await redis.get(inflight_key)
-                if inflight_owner and inflight_owner.decode() == job_id_str:
-                    await redis.delete(inflight_key)
+    # Pipeline 2: fetch job data
+    async with redis.pipeline() as pipe:
+        for job_id_str, _ in active:
+            pipe.hget(TTS_JOBS, job_id_str)
+        wrappers = await pipe.execute()
 
-        await redis.hdel(TTS_JOB_INDEX, index_key)
+    # Parse wrappers to figure out which queues to remove from
+    parsed: list[tuple[str, str, SynthesisJob | None]] = []  # (job_id_str, index_key, job_or_none)
+    for (job_id_str, index_key), wrapper_json in zip(active, wrappers):
+        if wrapper_json is not None:
+            wrapper = json.loads(wrapper_json)
+            parsed.append((job_id_str, index_key, SynthesisJob.model_validate_json(wrapper["job"])))
+        else:
+            parsed.append((job_id_str, index_key, None))
 
-    # Notify frontend
+    # Pipeline 3: remove from queues (1:1 with parsed entries that have jobs)
+    has_job = [(jid, ik, job) for jid, ik, job in parsed if job is not None]
+    async with redis.pipeline() as pipe:
+        for job_id_str, _, job in has_job:
+            pipe.zrem(get_queue_name(job.model_slug), job_id_str)
+        zrem_results = await pipe.execute()
+
+    # Pipeline 4: clean up index + job keys
+    async with redis.pipeline() as pipe:
+        for job_id_str, index_key, job in parsed:
+            pipe.hdel(TTS_JOB_INDEX, index_key)
+            if job is not None:
+                pipe.hdel(TTS_JOBS, job_id_str)
+        await pipe.execute()
+
+    # Pipeline 5: clean up inflight keys for jobs that were still in the queue
+    # (not yet pulled by a worker). Without this, future requests for the same
+    # variant see "already processing" but nobody is.
+    removed = [(jid, job) for (jid, _, job), was_removed in zip(has_job, zrem_results) if was_removed]
+    if removed:
+        async with redis.pipeline() as pipe:
+            for _, job in removed:
+                pipe.get(TTS_INFLIGHT.format(hash=job.variant_hash))
+            owners = await pipe.execute()
+
+        async with redis.pipeline() as pipe:
+            for (job_id_str, job), owner in zip(removed, owners):
+                if owner and owner.decode() == job_id_str:
+                    pipe.delete(TTS_INFLIGHT.format(hash=job.variant_hash))
+            await pipe.execute()
+
     await ws.send_json(
         WSEvicted(
             document_id=msg.document_id,

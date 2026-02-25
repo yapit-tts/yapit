@@ -2,20 +2,19 @@
 
 import asyncio
 import time
-from collections.abc import AsyncIterator, Callable
 from datetime import datetime, timezone
 
 from google import genai
-from google.genai import types
 from loguru import logger
 from redis.asyncio import Redis
-from sqlmodel.ext.asyncio.session import AsyncSession
 
 from yapit.gateway.cache import Cache
 from yapit.gateway.config import Settings
+from yapit.gateway.db import create_session
 from yapit.gateway.document.batch import (
     BatchJobInfo,
     BatchJobStatus,
+    BatchResult,
     get_batch_results,
     list_pending_batch_jobs,
     poll_batch_job,
@@ -37,11 +36,9 @@ POLL_INTERVAL_SECONDS = 15
 
 
 async def process_batch_completion(
-    client: genai.Client,
+    results: list[BatchResult],
     job: BatchJobInfo,
-    batch_job: types.BatchJob,
     redis: Redis,
-    db: AsyncSession,
     extraction_cache: Cache,
     extraction_cache_prefix: str,
     output_token_multiplier: int,
@@ -52,10 +49,10 @@ async def process_batch_completion(
         (pages dict, failed_page_indices list)
     """
     start_time = time.monotonic()
-    results = await get_batch_results(client, batch_job)
 
     pages: dict[int, ExtractedPage] = {}
     failed_pages: list[int] = []
+    billing_records: list[dict] = []
     total_input_tokens = 0
     total_output_tokens = 0
     total_thoughts_tokens = 0
@@ -96,25 +93,36 @@ async def process_batch_completion(
                 total_thoughts_tokens += thoughts_tokens
 
                 token_equiv = input_tokens + (output_tokens + thoughts_tokens) * output_token_multiplier
-                await record_usage(
-                    user_id=job.user_id,
-                    usage_type=UsageType.ocr_tokens,
-                    amount=token_equiv,
-                    db=db,
-                    reference_id=job.content_hash,
-                    description=f"Batch page {page_idx + 1} extraction",
-                    details={
-                        "page_idx": page_idx,
-                        "input_tokens": input_tokens,
-                        "output_tokens": output_tokens,
-                        "thoughts_tokens": thoughts_tokens,
-                        "token_equiv": token_equiv,
-                        "batch_job": job.job_name,
-                    },
+                billing_records.append(
+                    {
+                        "amount": token_equiv,
+                        "description": f"Batch page {page_idx + 1} extraction",
+                        "details": {
+                            "page_idx": page_idx,
+                            "input_tokens": input_tokens,
+                            "output_tokens": output_tokens,
+                            "thoughts_tokens": thoughts_tokens,
+                            "token_equiv": token_equiv,
+                            "batch_job": job.job_name,
+                        },
+                    }
                 )
 
             cache_key = f"{job.content_hash}:{extraction_cache_prefix}:{page_idx}"
             await extraction_cache.store(cache_key, pages[page_idx].model_dump_json().encode())
+
+        if billing_records:
+            async with create_session() as db:
+                for record in billing_records:
+                    await record_usage(
+                        user_id=job.user_id,
+                        usage_type=UsageType.ocr_tokens,
+                        amount=record["amount"],
+                        db=db,
+                        reference_id=job.content_hash,
+                        description=record["description"],
+                        details=record["details"],
+                    )
     finally:
         await release_reservation(redis, job.user_id, job.content_hash)
 
@@ -150,7 +158,6 @@ async def process_batch_completion(
 async def create_document_from_batch(
     job: BatchJobInfo,
     pages: dict[int, ExtractedPage],
-    db: AsyncSession,
     settings: Settings,
 ) -> Document:
     """Create a Document from batch extraction results."""
@@ -167,18 +174,19 @@ async def create_document_from_batch(
         file_size=job.file_size,
     )
 
-    doc = await create_document_with_blocks(
-        db=db,
-        user_id=job.user_id,
-        title=job.title,
-        original_text=processed.extracted_text,
-        structured_content=processed.structured_content,
-        metadata=metadata,
-        extraction_method="gemini",
-        text_blocks=processed.text_blocks,
-        is_public=job.is_public,
-        content_hash=job.content_hash,
-    )
+    async with create_session() as db:
+        doc = await create_document_with_blocks(
+            db=db,
+            user_id=job.user_id,
+            title=job.title,
+            original_text=processed.extracted_text,
+            structured_content=processed.structured_content,
+            metadata=metadata,
+            extraction_method="gemini",
+            text_blocks=processed.text_blocks,
+            is_public=job.is_public,
+            content_hash=job.content_hash,
+        )
 
     logger.info(f"Created document {doc.id} from batch job {job.job_name}")
     return doc
@@ -216,7 +224,6 @@ class BatchPoller:
         self,
         gemini_client: genai.Client,
         redis: Redis,
-        get_db_session: Callable[[], AsyncIterator[AsyncSession]],
         extraction_cache: Cache,
         settings: Settings,
         extraction_cache_prefix: str,
@@ -224,7 +231,6 @@ class BatchPoller:
     ):
         self._client = gemini_client
         self._redis = redis
-        self._get_db_session = get_db_session
         self._extraction_cache = extraction_cache
         self._settings = settings
         self._extraction_cache_prefix = extraction_cache_prefix
@@ -274,41 +280,40 @@ class BatchPoller:
         job, batch_job = await poll_batch_job(self._client, self._redis, job)
 
         if job.status == BatchJobStatus.SUCCEEDED:
-            async for db in self._get_db_session():
-                pages, failed_pages = await process_batch_completion(
-                    client=self._client,
-                    job=job,
-                    batch_job=batch_job,
-                    redis=self._redis,
-                    db=db,
-                    extraction_cache=self._extraction_cache,
-                    extraction_cache_prefix=self._extraction_cache_prefix,
-                    output_token_multiplier=self._output_token_multiplier,
-                )
+            results = await get_batch_results(self._client, batch_job)
 
-                # Merge in cached pages that were skipped during batch submission
-                pages_submitted = set(job.pages_submitted if job.pages_submitted is not None else job.pages_requested)
-                cached_page_indices = set(job.pages_requested) - pages_submitted
-                if cached_page_indices:
-                    cache_key_map = {
-                        f"{job.content_hash}:{self._extraction_cache_prefix}:{idx}": idx for idx in cached_page_indices
-                    }
-                    cached_data = await self._extraction_cache.batch_retrieve(list(cache_key_map.keys()))
-                    for key, data in cached_data.items():
-                        pages[cache_key_map[key]] = ExtractedPage.model_validate_json(data)
+            pages, failed_pages = await process_batch_completion(
+                results=results,
+                job=job,
+                redis=self._redis,
+                extraction_cache=self._extraction_cache,
+                extraction_cache_prefix=self._extraction_cache_prefix,
+                output_token_multiplier=self._output_token_multiplier,
+            )
 
-                    missing = cached_page_indices - {cache_key_map[k] for k in cached_data}
-                    if missing:
-                        logger.warning(
-                            f"Batch {job.job_name}: {len(missing)} cached pages evicted from extraction cache: "
-                            f"{sorted(missing)}"
-                        )
-                        failed_pages.extend(sorted(missing))
+            # Merge in cached pages that were skipped during batch submission
+            pages_submitted = set(job.pages_submitted if job.pages_submitted is not None else job.pages_requested)
+            cached_page_indices = set(job.pages_requested) - pages_submitted
+            if cached_page_indices:
+                cache_key_map = {
+                    f"{job.content_hash}:{self._extraction_cache_prefix}:{idx}": idx for idx in cached_page_indices
+                }
+                cached_data = await self._extraction_cache.batch_retrieve(list(cache_key_map.keys()))
+                for key, data in cached_data.items():
+                    pages[cache_key_map[key]] = ExtractedPage.model_validate_json(data)
 
-                if pages:
-                    doc = await create_document_from_batch(job, pages, db, self._settings)
-                    job.document_id = str(doc.id)
-                    await save_batch_job(self._redis, job)
+                missing = cached_page_indices - {cache_key_map[k] for k in cached_data}
+                if missing:
+                    logger.warning(
+                        f"Batch {job.job_name}: {len(missing)} cached pages evicted from extraction cache: "
+                        f"{sorted(missing)}"
+                    )
+                    failed_pages.extend(sorted(missing))
+
+            if pages:
+                doc = await create_document_from_batch(job, pages, self._settings)
+                job.document_id = str(doc.id)
+                await save_batch_job(self._redis, job)
 
         elif job.status in (BatchJobStatus.FAILED, BatchJobStatus.EXPIRED):
             await handle_batch_failure(job, self._redis)

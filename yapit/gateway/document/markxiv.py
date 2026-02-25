@@ -62,7 +62,7 @@ async def fetch_from_markxiv(markxiv_url: str, arxiv_id: str) -> str:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Paper not found on arXiv")
     if response.status_code == 422:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Paper has no source available and PDF extraction failed",
         )
     if response.status_code == 502:

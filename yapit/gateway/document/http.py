@@ -42,7 +42,7 @@ async def download_document(url: HttpUrl, max_size: int) -> tuple[bytes, str]:
                 content_length = head_response.headers.get("content-length")
                 if content_length and int(content_length) > max_size:
                     raise HTTPException(
-                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                        status_code=status.HTTP_413_CONTENT_TOO_LARGE,
                         detail=f"File too large: {int(content_length)} bytes exceeds maximum of {max_size} bytes",
                     )
             response = await client.get(str(url))
@@ -53,7 +53,7 @@ async def download_document(url: HttpUrl, max_size: int) -> tuple[bytes, str]:
                 downloaded += len(chunk)
                 if downloaded > max_size:
                     raise HTTPException(
-                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                        status_code=status.HTTP_413_CONTENT_TOO_LARGE,
                         detail=f"File too large: downloaded {downloaded} bytes exceeds maximum of {max_size} bytes",
                     )
                 content.write(chunk)
@@ -73,14 +73,14 @@ async def download_document(url: HttpUrl, max_size: int) -> tuple[bytes, str]:
             code = e.response.status_code
             await log_event("url_fetch", duration_ms=duration_ms, status_code=code, data={"error": "http_status"})
             detail = get_http_error_message(code)
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=detail)
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=detail)
         except httpx.RequestError as e:
             duration_ms = int((time.monotonic() - start) * 1000)
             await log_event(
                 "url_fetch", duration_ms=duration_ms, status_code=0, data={"error": "request_error", "detail": str(e)}
             )
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="Unable to reach URL - check it's correct and accessible",
             )
 
