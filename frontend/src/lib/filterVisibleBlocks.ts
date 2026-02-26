@@ -1,5 +1,6 @@
 import type { ContentBlock } from "@/components/structuredDocument";
 import type { Section } from "@/lib/sectionIndex";
+import { perfStart } from "@/lib/perfMonitor";
 
 /**
  * Filter document blocks based on section expand/collapse state.
@@ -18,13 +19,16 @@ export function filterVisibleBlocks(
   expandedSections: Set<string>,
   sectionByHeadingId: Map<string, Section>,
 ): ContentBlock[] {
+  const end = perfStart('filterVisibleBlocks');
   const sectionById = new Map(sections.map(s => [s.id, s]));
 
-  const findSectionForAudioIdx = (audioIdx: number): Section | undefined => {
-    return sections.find(
-      (s) => audioIdx >= s.startBlockIdx && audioIdx <= s.endBlockIdx,
-    );
-  };
+  // Precompute audioIdx → Section map (O(total block range) build, O(1) lookup)
+  const sectionByAudioIdx = new Map<number, Section>();
+  for (const s of sections) {
+    for (let idx = s.startBlockIdx; idx <= s.endBlockIdx; idx++) {
+      sectionByAudioIdx.set(idx, s);
+    }
+  }
 
   const visible: ContentBlock[] = [];
   let lastSeenSectionId: string | null = null;
@@ -54,7 +58,7 @@ export function filterVisibleBlocks(
       continue;
     }
 
-    const section = findSectionForAudioIdx(audioIdx);
+    const section = sectionByAudioIdx.get(audioIdx);
     if (!section) {
       // Preamble: audio blocks before the first section heading — always visible
       if (!lastSeenSectionId) {
@@ -72,5 +76,6 @@ export function filterVisibleBlocks(
     }
   }
 
+  end();
   return visible;
 }

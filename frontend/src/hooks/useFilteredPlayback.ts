@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import type { Section } from "@/lib/sectionIndex";
+import { perfStart } from "@/lib/perfMonitor";
 
 type BlockState = "pending" | "synthesizing" | "cached";
 
@@ -41,13 +42,14 @@ export function useFilteredPlayback(
   currentBlock: number,
 ): FilteredPlayback {
   return useMemo(() => {
+    const end = perfStart('useFilteredPlayback');
     // No sections = no filtering, return identity mapping
     if (sections.length === 0) {
       let elapsedMs = 0;
       for (let i = 0; i < currentBlock && i < documentBlocks.length; i++) {
         elapsedMs += documentBlocks[i]?.est_duration_ms ?? 0;
       }
-      return {
+      const result = {
         filteredBlockStates: blockStates,
         filteredDuration: documentBlocks.reduce((sum, b) => sum + (b.est_duration_ms ?? 0), 0),
         filteredBlockCount: documentBlocks.length,
@@ -57,6 +59,8 @@ export function useFilteredPlayback(
         isCurrentBlockHidden: false,
         filteredElapsedMs: elapsedMs,
       };
+      end();
+      return result;
     }
 
     // Build set of visible absolute block indices (expanded sections only)
@@ -105,7 +109,7 @@ export function useFilteredPlayback(
       }
     }
 
-    return {
+    const result = {
       filteredBlockStates,
       filteredDuration,
       filteredBlockCount: visibleAbsoluteIndices.length,
@@ -115,5 +119,7 @@ export function useFilteredPlayback(
       isCurrentBlockHidden,
       filteredElapsedMs,
     };
+    end();
+    return result;
   }, [documentBlocks, sections, expandedSections, blockStates, currentBlock]);
 }

@@ -2,6 +2,7 @@ import type { AudioPlayer } from "./audio";
 import type { Section } from "./sectionIndex";
 import { findSectionForBlock } from "./sectionIndex";
 import type { Synthesizer } from "./synthesizer";
+import { perfStart } from "./perfMonitor";
 
 // --- Types ---
 
@@ -107,6 +108,13 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
 
   let listeners: Array<() => void> = [];
   let snapshot: PlaybackSnapshot | null = null;
+
+  // deriveBlockStates cache — only recompute when underlying maps change
+  let blockStatesVersion = 0;
+  let cachedBlockStates: BlockVisualState[] | null = null;
+  let cachedBlockStatesVersion = -1;
+
+  function invalidateBlockStates() { blockStatesVersion++; }
 
   deps.audioPlayer.setOnProgress((percentPlayed, blockDurationMs) => {
     const blockProgress = (percentPlayed / 100) * blockDurationMs;
@@ -296,9 +304,11 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
     const promise = synthesizer.synthesize(blockIdx, block.text, documentId, model, voiceSlug)
       .then((result) => {
         synthesisPromises.delete(key);
+        invalidateBlockStates();
         if (result) {
           audioCache.set(key, result);
           knownCached.add(key);
+          invalidateBlockStates();
           const blk = blocks[blockIdx];
           if (blk && result.duration_ms > 0) recordDurationCorrection(blk, result.duration_ms);
           checkBufferReady();
@@ -315,11 +325,13 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
       })
       .catch(() => {
         synthesisPromises.delete(key);
+        invalidateBlockStates();
         notify();
         return null;
       });
 
     synthesisPromises.set(key, promise);
+    invalidateBlockStates();
     return promise;
   }
 
@@ -365,9 +377,11 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
 
   function evictOldBlocks() {
     if (currentBlock <= EVICT_BEHIND) return;
+    let evicted = false;
     for (let i = 0; i < currentBlock - EVICT_BEHIND; i++) {
-      audioCache.delete(currentVariantKey(i));
+      if (audioCache.delete(currentVariantKey(i))) evicted = true;
     }
+    if (evicted) invalidateBlockStates();
   }
 
   // --- Buffer readiness check (for buffering → playing transition) ---
@@ -402,19 +416,30 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
   // --- Derive block visual states ---
 
   function deriveBlockStates(): BlockVisualState[] {
-    return blocks.map((_block, idx) => {
+    if (cachedBlockStates && cachedBlockStatesVersion === blockStatesVersion) {
+      return cachedBlockStates;
+    }
+    const end = perfStart('deriveBlockStates');
+    const result = blocks.map((_block, idx) => {
       const key = currentVariantKey(idx);
       if (audioCache.has(key) || knownCached.has(key)) return "cached";
       if (synthesisPromises.has(key)) return "synthesizing";
       return "pending";
     });
+    end();
+    cachedBlockStates = result;
+    cachedBlockStatesVersion = blockStatesVersion;
+    return result;
   }
 
   // --- Public API ---
 
   function resetSynthesis(target: number) {
     synthesizer.cancelAll();
-    synthesisPromises.clear();
+    if (synthesisPromises.size > 0) {
+      synthesisPromises.clear();
+      invalidateBlockStates();
+    }
     prefetchedUpTo = -1;
     if (documentId) synthesizer.onCursorMove?.(documentId, target);
   }
@@ -533,6 +558,7 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
 
     synthesizer.cancelAll();
     synthesisPromises.clear();
+    invalidateBlockStates();
 
     durationCorrections.clear();
     recalcTotalDuration();
@@ -569,6 +595,7 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
     audioCache.clear();
     knownCached.clear();
     resolvedEmpty.clear();
+    invalidateBlockStates();
     durationCorrections.clear();
 
     initialTotalEstimate = newBlocks.reduce((sum, b) => sum + (b.est_duration_ms || 0), 0);
@@ -608,6 +635,7 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
     audioCache.clear();
     knownCached.clear();
     resolvedEmpty.clear();
+    invalidateBlockStates();
     listeners = [];
   }
 
@@ -615,6 +643,7 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
 
   function getSnapshot(): PlaybackSnapshot {
     if (snapshot) return snapshot;
+    const end = perfStart('getSnapshot');
     snapshot = {
       status,
       currentBlock,
@@ -623,6 +652,7 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
       audioProgress,
       totalDuration,
     };
+    end();
     return snapshot;
   }
 
