@@ -1,11 +1,11 @@
 """Database seeding for models, voices, plans, etc."""
 
 import json
-from collections.abc import Sequence
 from pathlib import Path
 
+from loguru import logger
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlmodel import col, select
+from sqlmodel import col, delete, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from yapit.gateway.config import Settings
@@ -121,24 +121,35 @@ async def seed_database(db: AsyncSession, settings: Settings) -> None:
         await db.commit()
         return
 
-    await _sync_inworld_voices(db, existing_models)
+    await sync_inworld_voices(db)
 
 
-async def _sync_inworld_voices(db: AsyncSession, models: Sequence[TTSModel]) -> None:
-    """Insert any Inworld voices present in voices.json but missing from the DB."""
-    inworld_models = {m.slug: m for m in models if m.slug.startswith("inworld")}
-    if not inworld_models:
+async def sync_inworld_voices(db: AsyncSession) -> None:
+    """Sync Inworld voices in DB to match voices.json (add missing, remove stale)."""
+    models = (await db.exec(select(TTSModel).where(col(TTSModel.slug).startswith("inworld")))).all()
+    if not models:
         return
 
     voice_defs = _load_inworld_voices()
-    for model_slug, model in inworld_models.items():
+    canonical_slugs = {vd["slug"] for vd in voice_defs}
+
+    for model in models:
         existing_slugs = set((await db.exec(select(Voice.slug).where(col(Voice.model_id) == model.id))).all())
+
+        # Add missing
         new_voices = [vd for vd in voice_defs if vd["slug"] not in existing_slugs]
-        if not new_voices:
-            continue
-        await db.exec(
-            pg_insert(Voice)
-            .values([{**vd, "model_id": model.id} for vd in new_voices])
-            .on_conflict_do_nothing(constraint="unique_voice_per_model")
-        )
-        await db.commit()
+        if new_voices:
+            await db.exec(
+                pg_insert(Voice)
+                .values([{**vd, "model_id": model.id} for vd in new_voices])
+                .on_conflict_do_nothing(constraint="unique_voice_per_model")
+            )
+            logger.info(f"Added {len(new_voices)} Inworld voices to {model.slug}: {[v['slug'] for v in new_voices]}")
+
+        # Remove stale
+        stale_slugs = existing_slugs - canonical_slugs
+        if stale_slugs:
+            await db.exec(delete(Voice).where(col(Voice.model_id) == model.id, col(Voice.slug).in_(stale_slugs)))
+            logger.warning(f"Removed {len(stale_slugs)} stale Inworld voices from {model.slug}: {sorted(stale_slugs)}")
+
+    await db.commit()
