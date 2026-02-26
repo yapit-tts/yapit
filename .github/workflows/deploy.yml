@@ -1,4 +1,4 @@
-name: CI/CD
+name: CI
 
 on:
   push:
@@ -17,7 +17,7 @@ on:
   workflow_dispatch:
     inputs:
       skip_tests:
-        description: 'Skip tests and deploy directly'
+        description: 'Skip tests and build directly'
         required: false
         default: false
         type: boolean
@@ -361,71 +361,3 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-  # === Deploy via SSH + Docker Stack ===
-  deploy:
-    needs: [build-frontend, build-gateway, build-workers, build-stack-auth, build-smokescreen, build-markxiv]
-    if: always() && github.ref == 'refs/heads/main' && !contains(needs.*.result, 'failure')
-    runs-on: ubuntu-latest
-    environment: production
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Collect built images
-        id: built
-        run: |
-          BUILT=""
-          [ "${{ needs.build-frontend.result }}" = "success" ] && BUILT="${BUILT}frontend,"
-          [ "${{ needs.build-gateway.result }}" = "success" ] && BUILT="${BUILT}gateway,"
-          [ "${{ needs.build-stack-auth.result }}" = "success" ] && BUILT="${BUILT}stack-auth,"
-          [ "${{ needs.build-smokescreen.result }}" = "success" ] && BUILT="${BUILT}smokescreen,"
-          [ "${{ needs.build-markxiv.result }}" = "success" ] && BUILT="${BUILT}markxiv,"
-          # Workers are a matrix - if any succeeded, add the CPU workers (we verify those, GPU rarely deployed)
-          [ "${{ needs.build-workers.result }}" = "success" ] && BUILT="${BUILT}kokoro-cpu,yolo-cpu,"
-          echo "images=${BUILT%,}" >> "$GITHUB_OUTPUT"
-          echo "Built images: ${BUILT%,}"
-
-      - name: Setup SSH
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -H 46.224.195.97 >> ~/.ssh/known_hosts
-
-      - name: Install sops
-        run: |
-          curl -LO https://github.com/getsops/sops/releases/download/v3.9.4/sops-v3.9.4.linux.amd64
-          sudo install sops-v3.9.4.linux.amd64 /usr/local/bin/sops
-
-      - name: Deploy
-        run: ./scripts/deploy.sh
-        env:
-          GIT_COMMIT: ${{ github.sha }}
-          SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
-          BUILT_IMAGES: ${{ steps.built.outputs.images }}
-
-  # === Notify ===
-  notify:
-    needs: [deploy]
-    if: always() && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Send ntfy notification
-        env:
-          COMMIT_MSG: ${{ github.event.head_commit.message }}
-        run: |
-          STATUS="${{ needs.deploy.result }}"
-          if [ "$STATUS" = "success" ]; then
-            ICON="✅"
-            PRIORITY="default"
-          else
-            ICON="❌"
-            PRIORITY="high"
-          fi
-          printf '%s' "$COMMIT_MSG" | curl -s \
-            -H "Title: ${ICON} yapit deploy: ${STATUS}" \
-            -H "Priority: ${PRIORITY}" \
-            -H "Tags: rocket" \
-            -H "Click: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
-            -d @- \
-            https://ntfy.sh/${{ secrets.NTFY_DEPLOY_TOPIC }}

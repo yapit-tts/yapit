@@ -142,7 +142,10 @@ deploy-higgs-runpod:
 	uv run --env-file=.env python infra/runpod/deploy.py higgs-native --image-tag $(HIGGS_TAG)
 
 # Prod operations
-PROD_HOST := root@46.224.195.97
+deploy:
+	./scripts/deploy.sh
+
+PROD_HOST := root@yapit-prod
 PROD_GATEWAY = $$(docker ps -qf name=yapit_gateway)
 
 warm-cache:

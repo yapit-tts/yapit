@@ -17,14 +17,9 @@ The blocker is CI/CD: current workflow auto-deploys on merge to main via GitHub 
 
 ## Decision
 
-**Defer until the app stabilizes.** Right now, frequent pushes make manual deploys annoying. Once update cadence slows down, switch to:
-- Manual `make deploy` from local machine (via Tailscale SSH)
-- Close port 22 publicly
-- CI only runs tests, no deploy step
+CI runs tests + builds images. Deploy is manual via `make prod-env && make deploy` (Tailscale SSH).
 
-## When to revisit
-
-When deploy frequency drops to ~weekly or less. At that point the manual step is negligible and the security benefit is clear.
+Remaining manual step: close port 22 publicly (Hetzner firewall + UFW) and remove `VPS_SSH_KEY` / `SOPS_AGE_KEY` from GitHub Actions secrets.
 
 ## Assumptions
 
