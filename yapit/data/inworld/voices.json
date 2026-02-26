@@ -284,16 +284,6 @@
       "languages": [
         "en"
       ],
-      "voiceId": "Grant",
-      "displayName": "Grant",
-      "description": "Calm, attentive, helpful male voice, ideal for insurance claims, troubleshooting walkthroughs, and helpdesk interactions.",
-      "tags": [],
-      "isCustom": false
-    },
-    {
-      "languages": [
-        "en"
-      ],
       "voiceId": "Hades",
       "displayName": "Hades",
       "description": "Commanding and gruff male voice, think an omniscient narrator or castle guard",
@@ -334,16 +324,6 @@
       "languages": [
         "en"
       ],
-      "voiceId": "Jake",
-      "displayName": "Jake",
-      "description": "Amiable, introspective male voice, ideal for motivational talks, personal growth content, and charming interviews.",
-      "tags": [],
-      "isCustom": false
-    },
-    {
-      "languages": [
-        "en"
-      ],
       "voiceId": "James",
       "displayName": "James",
       "description": "Vibrant, expressive male voice, perfect for animated video content, lively event hosting, and captivating children's stories.",
@@ -377,16 +357,6 @@
       "voiceId": "Julia",
       "displayName": "Julia",
       "description": "Quirky, high-pitched female voice that delivers lines with playful energy",
-      "tags": [],
-      "isCustom": false
-    },
-    {
-      "languages": [
-        "en"
-      ],
-      "voiceId": "Kayla",
-      "displayName": "Kayla",
-      "description": "Enthusiastic, youthful female voice, ideal for reaction videos, trendy product reviews, and energetic lifestyle vlogs.",
       "tags": [],
       "isCustom": false
     },
