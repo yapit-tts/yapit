@@ -7,7 +7,6 @@ import { perfStart } from "./perfMonitor";
 // --- Types ---
 
 export interface Block {
-  id: number;
   idx: number;
   text: string;
   est_duration_ms: number;
@@ -119,7 +118,6 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
   deps.audioPlayer.setOnProgress((percentPlayed, blockDurationMs) => {
     const blockProgress = (percentPlayed / 100) * blockDurationMs;
     audioProgress = blockStartTime + blockProgress;
-    notify();
   });
 
   // --- Helpers ---
@@ -170,7 +168,7 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
 
   function recordDurationCorrection(block: Block, actualDurationMs: number) {
     const correction = actualDurationMs - (block.est_duration_ms || 0);
-    durationCorrections.set(block.id, correction);
+    durationCorrections.set(block.idx, correction);
     recalcTotalDuration();
   }
 

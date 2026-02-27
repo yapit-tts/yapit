@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 from loguru import logger
 from pydantic import BaseModel, ValidationError
 from redis.asyncio import Redis
-from sqlmodel import col, select
+from sqlmodel import select
 from starlette.applications import Starlette
 
 from yapit.contracts import (
@@ -26,7 +26,7 @@ from yapit.gateway.auth import authenticate_ws
 from yapit.gateway.cache import Cache
 from yapit.gateway.config import Settings, get_settings
 from yapit.gateway.db import create_session
-from yapit.gateway.domain_models import Block, Document, TTSModel, Voice
+from yapit.gateway.domain_models import Document, TTSModel, Voice
 from yapit.gateway.metrics import log_error, log_event
 from yapit.gateway.stack_auth.users import User
 from yapit.gateway.synthesis import ErrorResult, request_synthesis
@@ -186,17 +186,10 @@ async def _handle_synthesize(
             await ws.send_json({"type": "error", "error": str(e)})
             return
 
-        blocks = (
-            await db.exec(
-                select(Block).where(Block.document_id == msg.document_id).where(col(Block.idx).in_(msg.block_indices))
-            )
-        ).all()
-
-        block_map = {b.idx: b for b in blocks}
+        audio_texts = doc.audio_texts
 
         for idx in msg.block_indices:
-            block = block_map.get(idx)
-            if not block:
+            if idx < 0 or idx >= len(audio_texts):
                 logger.bind(user_id=user.id, document_id=str(msg.document_id)).warning(f"Block {idx} not found")
                 await ws.send_json(
                     WSBlockStatus(
@@ -215,7 +208,7 @@ async def _handle_synthesize(
                     redis=redis,
                     cache=cache,
                     user_id=user.id,
-                    text=block.text,
+                    text=audio_texts[idx],
                     model=model,
                     voice=voice,
                     billing_enabled=settings.billing_enabled,

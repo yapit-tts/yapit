@@ -14,7 +14,6 @@ import type { Synthesizer } from "./synthesizer";
 
 function makeBlocks(n: number): Block[] {
   return Array.from({ length: n }, (_, i) => ({
-    id: i,
     idx: i,
     text: `Block ${i}`,
     est_duration_ms: 1000,

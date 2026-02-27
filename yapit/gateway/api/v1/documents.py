@@ -28,7 +28,7 @@ from yapit.contracts import (
 )
 from yapit.gateway.auth import authenticate
 from yapit.gateway.cache import Cache
-from yapit.gateway.constants import SUPPORTED_WEB_MIME_TYPES
+from yapit.gateway.constants import SUPPORTED_WEB_MIME_TYPES, estimate_duration_ms
 from yapit.gateway.db import create_session
 from yapit.gateway.deps import (
     AiExtractorConfigDep,
@@ -54,13 +54,12 @@ from yapit.gateway.document.processing import (
     ExtractedPage,
     ProcessorConfig,
     cpu_executor,
-    create_document_with_blocks,
     process_pages_to_document,
     process_with_billing,
 )
 from yapit.gateway.document.processors import pdf
 from yapit.gateway.document.website import extract_website_content
-from yapit.gateway.domain_models import Block, Document, DocumentMetadata, UsageType, UserPreferences, UserSubscription
+from yapit.gateway.domain_models import Document, DocumentMetadata, UsageType, UserPreferences, UserSubscription
 from yapit.gateway.exceptions import ResourceNotFoundError
 from yapit.gateway.metrics import log_error, log_event
 from yapit.gateway.rate_limit import limiter
@@ -529,8 +528,7 @@ async def create_text_document(
         transformer,
     )
 
-    doc = await create_document_with_blocks(
-        db=db,
+    doc = Document.from_content(
         user_id=user.id,
         title=req.title,
         original_text=processed.extracted_text,
@@ -544,9 +542,10 @@ async def create_text_document(
             file_size=len(req.content.encode("utf-8")),
         ),
         extraction_method=None,
-        text_blocks=processed.text_blocks,
         is_public=prefs.default_documents_public if prefs else False,
     )
+    db.add(doc)
+    await db.commit()
     return DocumentCreateResponse(id=doc.id, title=doc.title)
 
 
@@ -591,17 +590,17 @@ async def create_website_document(
         transformer,
     )
 
-    doc = await create_document_with_blocks(
-        db=db,
+    doc = Document.from_content(
         user_id=user.id,
         title=cached_doc.metadata.title or req.title or cached_doc.metadata.file_name,
         original_text=processed.extracted_text,
         structured_content=processed.structured_content,
         metadata=cached_doc.metadata,
         extraction_method=extraction_method,
-        text_blocks=processed.text_blocks,
         is_public=prefs.default_documents_public if prefs else False,
     )
+    db.add(doc)
+    await db.commit()
     return DocumentCreateResponse(id=doc.id, title=doc.title)
 
 
@@ -950,18 +949,18 @@ async def _run_extraction(
         )
         ext_log.info("Creating document in DB")
         async with create_session() as db:
-            doc = await create_document_with_blocks(
-                db=db,
+            doc = Document.from_content(
                 user_id=user_id,
                 title=title,
                 original_text=processed.extracted_text,
                 structured_content=processed.structured_content,
                 metadata=metadata,
                 extraction_method=extraction_result.extraction_method,
-                text_blocks=processed.text_blocks,
                 is_public=is_public,
                 content_hash=content_hash,
             )
+            db.add(doc)
+            await db.commit()
 
         await redis.set(
             result_key,
@@ -1268,18 +1267,21 @@ async def delete_document(
             await image_storage.delete_all(content_hash)
 
 
-@router.get("/{document_id}/blocks")
-async def get_document_blocks(
-    document: CurrentDoc,
-    db: DbSession,
-) -> list[Block]:
-    """Get all document blocks for playback.
+class AudioBlock(BaseModel):
+    idx: int
+    text: str
+    est_duration_ms: int
 
-    Returns all blocks without pagination - needed for playback to work correctly.
-    Data size is small (~200 bytes/block), so even 1000+ blocks is fine.
-    """
-    result = await db.exec(select(Block).where(Block.document_id == document.id).order_by(col(Block.idx)))
-    return list(result.all())
+
+def _get_audio_blocks(doc: Document) -> list[AudioBlock]:
+    return [
+        AudioBlock(idx=i, text=t, est_duration_ms=estimate_duration_ms(len(t))) for i, t in enumerate(doc.audio_texts)
+    ]
+
+
+@router.get("/{document_id}/blocks")
+async def get_document_blocks(document: CurrentDoc) -> list[AudioBlock]:
+    return _get_audio_blocks(document)
 
 
 class PositionUpdate(BaseModel):
@@ -1327,14 +1329,13 @@ async def get_public_document(
     if not document:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
 
-    block_count = (await db.exec(select(Block).where(Block.document_id == document_id))).all()
     return PublicDocumentResponse(
         id=document.id,
         title=document.title,
         structured_content=document.structured_content,
         original_text=document.original_text,
         metadata_dict=document.metadata_dict,
-        block_count=len(block_count),
+        block_count=len(_get_audio_blocks(document)),
     )
 
 
@@ -1342,15 +1343,12 @@ async def get_public_document(
 async def get_public_document_blocks(
     document_id: UUID,
     db: DbSession,
-) -> list[Block]:
-    """Get blocks for a public document without authentication."""
+) -> list[AudioBlock]:
     result = await db.exec(select(Document).where(Document.id == document_id, col(Document.is_public).is_(True)))
     document = result.first()
     if not document:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
-
-    result = await db.exec(select(Block).where(Block.document_id == document_id).order_by(col(Block.idx)))
-    return list(result.all())
+    return _get_audio_blocks(document)
 
 
 @public_router.get("/{document_id}/og-preview", response_class=HTMLResponse)
@@ -1413,7 +1411,6 @@ async def import_document(
     if not source_doc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
 
-    # Clone the document
     new_doc = Document(
         user_id=user.id,
         is_public=False,
@@ -1421,24 +1418,10 @@ async def import_document(
         original_text=source_doc.original_text,
         extraction_method=source_doc.extraction_method,
         structured_content=source_doc.structured_content,
+        audio_characters=source_doc.audio_characters,
         metadata_dict=source_doc.metadata_dict,
     )
     db.add(new_doc)
-
-    # Clone the blocks
-    source_blocks = await db.exec(select(Block).where(Block.document_id == document_id).order_by(col(Block.idx)))
-    db.add_all(
-        [
-            Block(
-                document_id=new_doc.id,
-                document=new_doc,
-                idx=block.idx,
-                text=block.text,
-            )
-            for block in source_blocks.all()
-        ]
-    )
-
     await db.commit()
     return DocumentImportResponse(id=new_doc.id, title=new_doc.title)
 

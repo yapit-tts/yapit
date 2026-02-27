@@ -5,7 +5,6 @@ import { perfStart } from "@/lib/perfMonitor";
 type BlockState = "pending" | "synthesizing" | "cached";
 
 interface Block {
-  id: number;
   idx: number;
   est_duration_ms: number;
 }

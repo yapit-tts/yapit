@@ -15,7 +15,6 @@ from yapit.gateway.auth import ANONYMOUS_ID_PREFIX, verify_anonymous_token
 from yapit.gateway.constants import estimate_duration_ms
 from yapit.gateway.deps import AuthenticatedUser, DbSession, SettingsDep
 from yapit.gateway.domain_models import (
-    Block,
     Document,
     SubscriptionStatus,
     UsageLog,
@@ -180,15 +179,13 @@ async def get_user_stats(
     db: DbSession,
 ) -> UserStatsResponse:
     """Get user's lifetime usage stats."""
-    stats_result = await db.exec(
-        select(func.coalesce(func.sum(func.length(Block.text)), 0))
-        .join(Document)
-        .where(Document.user_id == auth_user.id)
+    result = await db.exec(
+        select(
+            func.coalesce(func.sum(Document.audio_characters), 0),
+            func.count(Document.id),
+        ).where(Document.user_id == auth_user.id)
     )
-    total_characters = stats_result.one()
-
-    doc_count_result = await db.exec(select(func.count(Document.id)).where(Document.user_id == auth_user.id))
-    document_count = doc_count_result.one()
+    total_characters, document_count = result.one()
 
     return UserStatsResponse(
         total_audio_ms=estimate_duration_ms(total_characters),

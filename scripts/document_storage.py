@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.12"
-# dependencies = ["psycopg"]
+# dependencies = ["psycopg", "python-dotenv"]
 # ///
 """Calculate storage usage for documents.
 
@@ -32,20 +32,13 @@ class DocumentStorage:
     original_text_bytes: int
     structured_content_bytes: int
     metadata_bytes: int
-    block_count: int
-    blocks_total_bytes: int
-    blocks_text_bytes: int
     image_count: int
     images_total_bytes: int
     image_files: list[tuple[str, int]]  # (filename, size)
 
     @property
-    def db_total_bytes(self) -> int:
-        return self.document_row_bytes + self.blocks_total_bytes
-
-    @property
     def total_bytes(self) -> int:
-        return self.db_total_bytes + self.images_total_bytes
+        return self.document_row_bytes + self.images_total_bytes
 
     def to_dict(self) -> dict:
         return {
@@ -56,10 +49,6 @@ class DocumentStorage:
                 "original_text_bytes": self.original_text_bytes,
                 "structured_content_bytes": self.structured_content_bytes,
                 "metadata_bytes": self.metadata_bytes,
-                "block_count": self.block_count,
-                "blocks_total_bytes": self.blocks_total_bytes,
-                "blocks_text_bytes": self.blocks_text_bytes,
-                "total_bytes": self.db_total_bytes,
             },
             "images": {
                 "count": self.image_count,
@@ -101,19 +90,6 @@ def get_document_storage(conn, doc_id: str, images_dir: Path) -> DocumentStorage
         if not doc:
             return None
 
-        cur.execute(
-            """
-            SELECT
-                COUNT(*) as block_count,
-                COALESCE(SUM(pg_column_size(b.*)), 0) as blocks_total_bytes,
-                COALESCE(SUM(pg_column_size(text)), 0) as blocks_text_bytes
-            FROM block b
-            WHERE document_id = %s::uuid
-            """,
-            (doc_id,),
-        )
-        blocks = cur.fetchone()
-
     image_files: list[tuple[str, int]] = []
     images_total = 0
     if doc["content_hash"]:
@@ -132,9 +108,6 @@ def get_document_storage(conn, doc_id: str, images_dir: Path) -> DocumentStorage
         original_text_bytes=doc["original_text_bytes"],
         structured_content_bytes=doc["structured_content_bytes"],
         metadata_bytes=doc["metadata_bytes"],
-        block_count=blocks["block_count"],
-        blocks_total_bytes=blocks["blocks_total_bytes"],
-        blocks_text_bytes=blocks["blocks_text_bytes"],
         image_count=len(image_files),
         images_total_bytes=images_total,
         image_files=image_files,
@@ -150,13 +123,10 @@ def get_all_document_ids(conn) -> list[str]:
 def print_storage(storage: DocumentStorage, verbose: bool = False) -> None:
     print(f"Document: {storage.id}")
     print(f"  Content hash: {storage.content_hash or 'none'}")
-    print(f"  Database: {format_bytes(storage.db_total_bytes)}")
-    print(f"    Document row: {format_bytes(storage.document_row_bytes)}")
-    print(f"      original_text: {format_bytes(storage.original_text_bytes)}")
-    print(f"      structured_content: {format_bytes(storage.structured_content_bytes)}")
-    print(f"      metadata: {format_bytes(storage.metadata_bytes)}")
-    print(f"    Blocks ({storage.block_count}): {format_bytes(storage.blocks_total_bytes)}")
-    print(f"      text content: {format_bytes(storage.blocks_text_bytes)}")
+    print(f"  Database: {format_bytes(storage.document_row_bytes)}")
+    print(f"    original_text: {format_bytes(storage.original_text_bytes)}")
+    print(f"    structured_content: {format_bytes(storage.structured_content_bytes)}")
+    print(f"    metadata: {format_bytes(storage.metadata_bytes)}")
     print(f"  Images ({storage.image_count}): {format_bytes(storage.images_total_bytes)}")
     if verbose and storage.image_files:
         for name, size in storage.image_files:
@@ -218,7 +188,7 @@ def run_local(args: argparse.Namespace) -> int:
                 storage = get_document_storage(conn, doc_id, images_dir)
                 if storage:
                     results.append(storage)
-                    totals["db"] += storage.db_total_bytes
+                    totals["db"] += storage.document_row_bytes
                     totals["images"] += storage.images_total_bytes
                     totals["total"] += storage.total_bytes
                     totals["count"] += 1
@@ -253,6 +223,10 @@ def run_local(args: argparse.Namespace) -> int:
 
 
 def main():
+    from dotenv import load_dotenv
+
+    load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+
     parser = argparse.ArgumentParser(description="Calculate document storage usage")
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--id", help="Document UUID")

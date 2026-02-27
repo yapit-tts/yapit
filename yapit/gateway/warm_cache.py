@@ -163,17 +163,13 @@ async def run_warming(cache: Cache, redis_client: Redis) -> WarmingStats:
     # --- Showcase documents ---
     for showcase in SHOWCASE_DOCS:
         async with create_session() as db:
-            doc = (
-                await db.exec(
-                    select(Document).where(Document.id == showcase.id).options(selectinload(Document.blocks))  # type: ignore[arg-type]
-                )
-            ).first()
+            doc = (await db.exec(select(Document).where(Document.id == showcase.id))).first()
 
         if doc is None:
             logger.warning(f"Showcase doc {showcase.id} not found, skipping")
             continue
 
-        block_texts = [b.text for b in sorted(doc.blocks, key=lambda b: b.idx)]
+        block_texts = doc.audio_texts
         logger.info(f"Showcase '{doc.title}': {len(block_texts)} blocks")
 
         for model in models:

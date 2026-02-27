@@ -3,7 +3,7 @@
 import pytest
 from fastapi import status
 
-from yapit.gateway.domain_models import Block, Document
+from yapit.gateway.domain_models import Document
 
 # Preferences tests
 
@@ -58,20 +58,15 @@ async def test_get_stats_empty(client, as_test_user):
 
 @pytest.mark.asyncio
 async def test_get_stats_with_documents(client, as_test_user, session, test_user):
-    """Test getting stats with documents and blocks."""
+    """Test getting stats with documents."""
     doc = Document(
         user_id=test_user.id,
         title="Test Doc",
         original_text="Hello world",
         structured_content="{}",
+        audio_characters=len("Hello world") + len("Testing stats"),
     )
     session.add(doc)
-    await session.flush()
-
-    block1 = Block(document=doc, idx=0, text="Hello world")
-    block2 = Block(document=doc, idx=1, text="Testing stats")
-    session.add(block1)
-    session.add(block2)
     await session.commit()
 
     response = await client.get("/v1/users/me/stats")

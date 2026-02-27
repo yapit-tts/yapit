@@ -23,7 +23,6 @@ from yapit.gateway.document.extraction import substitute_image_placeholders
 from yapit.gateway.document.processing import (
     ExtractedPage,
     cpu_executor,
-    create_document_with_blocks,
     process_pages_to_document,
 )
 from yapit.gateway.domain_models import Document, DocumentMetadata, UsageType
@@ -177,18 +176,18 @@ async def create_document_from_batch(
     )
 
     async with create_session() as db:
-        doc = await create_document_with_blocks(
-            db=db,
+        doc = Document.from_content(
             user_id=job.user_id,
             title=job.title,
             original_text=processed.extracted_text,
             structured_content=processed.structured_content,
             metadata=metadata,
             extraction_method="gemini",
-            text_blocks=processed.text_blocks,
             is_public=job.is_public,
             content_hash=job.content_hash,
         )
+        db.add(doc)
+        await db.commit()
 
     logger.info(f"Created document {doc.id} from batch job {job.job_name}")
     return doc

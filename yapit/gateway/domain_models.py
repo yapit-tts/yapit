@@ -3,16 +3,16 @@ import hashlib
 import uuid
 from datetime import datetime
 from enum import StrEnum, auto
+from functools import cached_property
 from typing import Any
 
 from pydantic import BaseModel as PydanticModel
-from pydantic import computed_field
 from sqlalchemy import Index, UniqueConstraint
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.types import JSON
 from sqlmodel import TEXT, Column, DateTime, Field, Relationship, SQLModel
 
-from yapit.gateway.constants import estimate_duration_ms
+from yapit.gateway.markdown.models import StructuredDocument
 
 # NOTE: Forward annotations do not work with SQLModel
 
@@ -102,9 +102,37 @@ class Document(SQLModel, table=True):
         sa_column=Column(DateTime(timezone=True)),
     )
 
-    blocks: list["Block"] = Relationship(
-        back_populates="document", sa_relationship_kwargs={"cascade": "all, delete-orphan"}
-    )
+    audio_characters: int = Field(default=0)
+
+    @cached_property
+    def audio_texts(self) -> list[str]:
+        return StructuredDocument.model_validate_json(self.structured_content).get_audio_blocks()
+
+    @classmethod
+    def from_content(
+        cls,
+        *,
+        user_id: str,
+        title: str | None,
+        original_text: str,
+        structured_content: str,
+        metadata: DocumentMetadata,
+        extraction_method: str | None,
+        is_public: bool,
+        content_hash: str | None = None,
+    ) -> "Document":
+        doc = cls(
+            user_id=user_id,
+            title=title,
+            original_text=original_text,
+            structured_content=structured_content,
+            extraction_method=extraction_method,
+            content_hash=content_hash,
+            is_public=is_public,
+            metadata_dict=metadata.model_dump(),
+        )
+        doc.audio_characters = sum(len(t) for t in doc.audio_texts)
+        return doc
 
     metadata_dict: dict | None = Field(  # Store as dict in DB - using different field name
         default=None,
@@ -116,23 +144,6 @@ class Document(SQLModel, table=True):
     )
 
     __table_args__ = (Index("idx_document_user_created", "user_id", "created"),)
-
-
-class Block(SQLModel, table=True):
-    """A text block within a document, about 10-20 seconds of audio."""
-
-    id: int | None = Field(default=None, primary_key=True)
-    document_id: uuid.UUID = Field(foreign_key="document.id")
-
-    idx: int  # zero-based position in document
-    text: str = Field(sa_column=Column(TEXT))
-
-    document: Document = Relationship(back_populates="blocks")
-
-    @computed_field
-    @property
-    def est_duration_ms(self) -> int:
-        return estimate_duration_ms(len(self.text))
 
 
 class BlockVariant(SQLModel, table=True):

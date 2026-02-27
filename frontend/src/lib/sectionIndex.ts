@@ -59,7 +59,6 @@ function extractTextFromAst(nodes: InlineContent[]): string {
 }
 
 interface DocumentBlock {
-  id: string | number;
   est_duration_ms?: number;
 }
 

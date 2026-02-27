@@ -7,7 +7,6 @@ from uuid import UUID
 import stripe
 from fastapi import Depends, HTTPException, Request, status
 from redis.asyncio import Redis
-from sqlalchemy.orm import selectinload
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -18,7 +17,6 @@ from yapit.gateway.db import create_session, get_or_404
 from yapit.gateway.document.processing import ProcessorConfig
 from yapit.gateway.document.processors.gemini import GeminiExtractor
 from yapit.gateway.domain_models import (
-    Block,
     BlockVariant,
     Document,
     TTSModel,
@@ -125,26 +123,6 @@ async def get_voice(
     return voice
 
 
-async def get_block(
-    document_id: UUID,
-    block_id: int,
-    db: DbSession,
-    user: AuthenticatedUser,
-) -> Block:
-    block = await get_or_404(db, Block, block_id, options=[selectinload("*")])
-    if block.document_id != document_id:
-        raise ResourceNotFoundError(
-            Block.__name__, block_id, message=f"Block {block_id!r} not found in document {document_id!r}"
-        )
-
-    if block.document.user_id != user.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail="Cannot access block in another user's document"
-        )
-
-    return block
-
-
 async def get_block_variant(
     variant_hash: str,
     db: DbSession,
@@ -184,7 +162,6 @@ ExtractionCache = Annotated[Cache, Depends(get_extraction_cache)]
 ImageStorageDep = Annotated[ImageStorage, Depends(get_image_storage)]
 CurrentDoc = Annotated[Document, Depends(get_doc)]
 CurrentVoice = Annotated[Voice, Depends(get_voice)]
-CurrentBlock = Annotated[Block, Depends(get_block)]
 CurrentBlockVariant = Annotated[BlockVariant, Depends(get_block_variant)]
 AuthenticatedUser = Annotated[User, Depends(authenticate)]
 DocumentTransformerDep = Annotated[DocumentTransformer, Depends(get_document_transformer)]
