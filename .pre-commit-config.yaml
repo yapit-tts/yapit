@@ -2,13 +2,15 @@ repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.11.6
     hooks:
-      # lint
+      # lint (check-only to avoid stash conflicts with unstaged changes)
       - id: ruff
         types_or: [ python ]
         language: python
-      # format
+        args: [ --no-fix ]
+      # format (check-only)
       - id: ruff-format
         types_or: [ python ]
+        args: [ --check ]
 
   - repo: local
     hooks:
