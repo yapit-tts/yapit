@@ -146,6 +146,8 @@ const PlaybackPage = () => {
 
   // --- DOM highlighting (imperative, no React state) ---
 
+  const currentBlockRef = useRef(currentBlock);
+  currentBlockRef.current = currentBlock;
   const prevBlockIdxRef = useRef<number>(-1);
   const hoveredBlockRef = useRef<number | null>(null);
   const isDraggingProgressBarRef = useRef(false);
@@ -586,6 +588,14 @@ const PlaybackPage = () => {
     engine.seekToBlock(audioBlockIdx);
   }, [engine]);
 
+  // Stable callback — reads currentBlock from ref at click-time, not render-time.
+  // This avoids re-rendering StructuredDocumentView on every cursor change.
+  const canCollapseSection = useCallback((section: Section) => {
+    const idx = currentBlockRef.current;
+    if (idx < 0) return true;
+    return !(idx >= section.startBlockIdx && idx <= section.endBlockIdx);
+  }, []);
+
   const filteredPlayback = useFilteredPlayback(
     documentBlocks,
     sections,
@@ -741,7 +751,7 @@ const PlaybackPage = () => {
           sections={shouldShowOutliner ? sections : undefined}
           expandedSections={shouldShowOutliner ? expandedSections : undefined}
           onSectionExpand={shouldShowOutliner ? handleSectionToggle : undefined}
-          currentBlockIdx={shouldShowOutliner ? currentBlock : undefined}
+          canCollapseSection={shouldShowOutliner ? canCollapseSection : undefined}
         />
         {isPlaying && isScrollDetached && !backToReadingDismissed && (
           <div

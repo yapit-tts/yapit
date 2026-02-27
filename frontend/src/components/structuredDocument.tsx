@@ -939,7 +939,7 @@ interface StructuredDocumentViewProps {
   sections?: Section[];
   expandedSections?: Set<string>;
   onSectionExpand?: (sectionId: string) => void;
-  currentBlockIdx?: number; // To prevent collapsing section containing current block
+  canCollapseSection?: (section: Section) => boolean;
 }
 
 // Memoized to prevent re-renders from parent's audioProgress updates
@@ -954,7 +954,7 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
   sections,
   expandedSections,
   onSectionExpand,
-  currentBlockIdx,
+  canCollapseSection,
 }: StructuredDocumentViewProps) {
   const contentRef = useRef<HTMLDivElement>(null);
   const [copied, setCopied] = useState(false);
@@ -1285,9 +1285,8 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
             // Check if this is a section header (H1/H2)
             const section = sectionByHeadingId.get(block.id);
             const isCollapsed = section ? !expandedSections?.has(section.id) : false;
-            // Can't collapse section if current block is in it
-            const canCollapse = section && currentBlockIdx !== undefined
-              ? !(currentBlockIdx >= section.startBlockIdx && currentBlockIdx <= section.endBlockIdx)
+            const canCollapse = section && canCollapseSection
+              ? canCollapseSection(section)
               : true;
             const handleToggleCollapse = section && onSectionExpand
               ? () => onSectionExpand(section.id)
