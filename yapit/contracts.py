@@ -15,7 +15,7 @@ TTS_PENDING: Final[str] = "tts:pending:{user_id}:{document_id}"
 RATELIMIT_EXTRACTION: Final[str] = "ratelimit:extraction:{user_id}"
 MAX_CONCURRENT_EXTRACTIONS: Final[int] = 10
 RATELIMIT_TTS: Final[str] = "ratelimit:tts:{user_id}"
-MAX_TTS_REQUESTS_PER_MINUTE: Final[int] = 300
+MAX_TTS_BLOCKS_PER_MINUTE: Final[int] = 300
 
 # Document storage limits (bytes) - DB text only (original_text + structured_content)
 MAX_STORAGE_GUEST: Final[int] = 10 * 1024 * 1024  # 10MB

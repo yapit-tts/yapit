@@ -6,13 +6,13 @@ from typing import Literal, cast
 
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 from loguru import logger
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 from redis.asyncio import Redis
 from sqlmodel import select
 from starlette.applications import Starlette
 
 from yapit.contracts import (
-    MAX_TTS_REQUESTS_PER_MINUTE,
+    MAX_TTS_BLOCKS_PER_MINUTE,
     RATELIMIT_TTS,
     TTS_INFLIGHT,
     TTS_JOB_INDEX,
@@ -39,7 +39,7 @@ BlockStatus = Literal["queued", "processing", "cached", "skipped", "error"]
 class WSSynthesizeRequest(BaseModel):
     type: Literal["synthesize"] = "synthesize"
     document_id: uuid.UUID
-    block_indices: list[int]
+    block_indices: list[int] = Field(max_length=32)  # frontend sends batches of 8; cap is a safety bound
     model: str
     voice: str
 
@@ -164,12 +164,12 @@ async def _handle_synthesize(
     settings: Settings,
 ):
     """Handle synthesize request - queue blocks for synthesis."""
-    # Rate limit TTS requests per user (protects unlimited Kokoro from flooding)
+    # Rate limit TTS blocks per user (protects unlimited Kokoro from flooding)
     rate_key = RATELIMIT_TTS.format(user_id=user.id)
-    count = await redis.incr(rate_key)
-    if count == 1:
+    count = await redis.incrby(rate_key, len(msg.block_indices))
+    if count == len(msg.block_indices):
         await redis.expire(rate_key, 60)
-    if count > MAX_TTS_REQUESTS_PER_MINUTE:
+    if count > MAX_TTS_BLOCKS_PER_MINUTE:
         await ws.send_json({"type": "error", "error": "Rate limit exceeded. Please slow down."})
         return
 
