@@ -63,15 +63,15 @@ STRIPE_FIXED_EUR = 0.30
 # Using conservative estimates to not overpromise page counts:
 GEMINI_INPUT_PRICE_PER_M_TOKENS_USD = 0.50
 GEMINI_OUTPUT_PRICE_PER_M_TOKENS_USD = 3.00
-GEMINI_INPUT_TOKENS = 2500  # Conservative (measured 2005, buffer for growing prompt)
-GEMINI_OUTPUT_TOKENS = 1000  # Conservative (measured 890, buffer for complex pages)
+GEMINI_INPUT_TOKENS = 4300  # 3100 prompt + 1200 image
+GEMINI_OUTPUT_TOKENS = 1100  # conservative
 GEMINI_THINKING_TOKENS = 0  # Thinking tokens (set 0 for minimal thinking mode)
 #
 # Token-based billing model:
 # - Output tokens cost 6x input tokens, so we use "token equivalents"
 # - token_equiv = input_tokens + (output_tokens * OUTPUT_MULTIPLIER)
 # - Plans define limits in token equivalents, displayed as "~pages" to users
-OUTPUT_TOKEN_MULTIPLIER = int(GEMINI_OUTPUT_PRICE_PER_M_TOKENS_USD / GEMINI_INPUT_PRICE_PER_M_TOKENS_USD)  # 6
+OUTPUT_TOKEN_MULTIPLIER = int(GEMINI_OUTPUT_PRICE_PER_M_TOKENS_USD / GEMINI_INPUT_PRICE_PER_M_TOKENS_USD)
 #
 # Average token equivalents per page (for display conversion):
 # input=2500, output=1000 → 2500 + (1000 * 6) = 8500 token equiv/page
@@ -89,9 +89,41 @@ RUNPOD_SELF_HOSTED_CAPACITY = 8  # Number of self-hosted (VPS) Kokoro instances
 # Overflow kicks in when concurrent requests exceed self-hosted capacity
 # Estimate: ~10 concurrent TTS requests per 1000 MAU at peak
 
+# --- R2 Object Storage (for extracted images) ---
+# Pricing: https://developers.cloudflare.com/r2/pricing/
+R2_FREE_STORAGE_GB = 10
+R2_COST_PER_GB_MONTH_USD = 0.015
+R2_FREE_CLASS_A_OPS = 1_000_000  # writes (PUT, POST, LIST)
+R2_COST_PER_M_CLASS_A_USD = 4.50
+R2_FREE_CLASS_B_OPS = 10_000_000  # reads (GET)
+R2_COST_PER_M_CLASS_B_USD = 0.36
+# TODO update with prod data:
+# Ratio of image storage to DB text storage (TODO: update with prod data)
+# Initial estimate: 11-page paper = 92KB DB, 1.4MB images → 15:1 for image-heavy docs
+# Adjusted for ~30% of docs using Gemini extraction: ~5:1 effective ratio
+R2_IMAGES_PER_MB_DB_STORAGE = 5  # MB of images per MB of DB text
+# Estimated image views per month (for read ops calculation)
+# Low because: users rarely revisit docs, browser caching reduces requests
+R2_IMAGE_VIEWS_PER_IMAGE_MONTH = 5
+
+# --- Document Storage Limits (DB text only, images on R2) ---
+# Limits check LENGTH(original_text) + LENGTH(structured_content) — uncompressed char count.
+# Actual on-disk usage is LESS because TOAST compresses structured_content ~4.8x,
+# which dominates total DB storage.
+# Measured: 0.5x on prod (353 docs, 20MB total DB, Feb 2026).
+# Conservative: 0.7x — allows for docs that compress less well, index growth, etc.
+STORAGE_LIMIT_GUEST_MB = 10
+STORAGE_LIMIT_FREE_MB = 50
+STORAGE_LIMIT_PAID_MB = 500
+STORAGE_ACTUAL_MULTIPLIER = 0.7
+
 # --- Fixed Infrastructure ---
 VPS_MONTHLY_EUR = 25.00  # Hetzner + Backups
 DOMAIN_MONTHLY_EUR = 2.10  # ~€26/year
+
+# --- VPS Capacity (640GB VPS with images on R2) ---
+# Conservative: 350GB after OS, Docker, caches, logs, TimescaleDB, headroom
+VPS_AVAILABLE_DB_STORAGE_GB = 350
 
 # --- Austrian Taxes (on profit) ---
 # Kleinunternehmerregelung: No VAT filing under €55k revenue ... but that's irrelevant anyways with Stripe MoR
@@ -100,6 +132,8 @@ AUSTRIAN_INCOME_TAX_RATE = 0.25  # ~25% effective rate (simplified)
 # SVS (social insurance): ~27% on profit above ~€6k threshold
 SVS_THRESHOLD_EUR = 6000  # Annual profit threshold
 SVS_RATE = 0.27  # Social insurance rate
+SVS_UNFALL_MONTHLY = 13  # even below threshold... # TODO
+
 
 # --- Plan Definitions ---
 # Format: (price_eur, interval, ocr_token_equiv_per_month, premium_voice_chars_per_month)
@@ -173,6 +207,45 @@ def get_runpod_max_monthly_usd() -> float:
     """Calculate max RunPod overflow cost (all workers 24/7)."""
     seconds_per_month = 60 * 60 * 24 * 30
     return RUNPOD_COST_PER_SECOND_USD * RUNPOD_MAX_WORKERS * seconds_per_month
+
+
+def get_r2_monthly_cost_usd(total_db_storage_mb: float) -> dict:
+    """Calculate R2 costs based on total DB storage across all users.
+
+    Returns breakdown: {storage, class_a, class_b, total}
+    """
+    # Image storage = DB storage × ratio
+    image_storage_mb = total_db_storage_mb * R2_IMAGES_PER_MB_DB_STORAGE
+    image_storage_gb = image_storage_mb / 1024
+
+    # Storage cost (after free tier)
+    billable_storage_gb = max(0, image_storage_gb - R2_FREE_STORAGE_GB)
+    storage_cost = billable_storage_gb * R2_COST_PER_GB_MONTH_USD
+
+    # Estimate number of images (~120KB average per image from prod data)
+    avg_image_kb = 120
+    num_images = (image_storage_mb * 1024) / avg_image_kb
+
+    # Class A ops (writes) - assume each image written once per month (new docs)
+    # In reality much lower since images persist, but conservative estimate
+    class_a_ops = num_images * 0.1  # ~10% of images are new per month
+    billable_class_a = max(0, class_a_ops - R2_FREE_CLASS_A_OPS)
+    class_a_cost = (billable_class_a / 1_000_000) * R2_COST_PER_M_CLASS_A_USD
+
+    # Class B ops (reads) - each image viewed N times per month
+    class_b_ops = num_images * R2_IMAGE_VIEWS_PER_IMAGE_MONTH
+    billable_class_b = max(0, class_b_ops - R2_FREE_CLASS_B_OPS)
+    class_b_cost = (billable_class_b / 1_000_000) * R2_COST_PER_M_CLASS_B_USD
+
+    return {
+        "storage_gb": image_storage_gb,
+        "storage_cost": storage_cost,
+        "class_a_ops": class_a_ops,
+        "class_a_cost": class_a_cost,
+        "class_b_ops": class_b_ops,
+        "class_b_cost": class_b_cost,
+        "total": storage_cost + class_a_cost + class_b_cost,
+    }
 
 
 def get_fixed_costs_eur() -> float:
@@ -331,9 +404,22 @@ def calculate_business_metrics(
         # Assume overflow runs ~10% of the month during peaks
         runpod_overflow = usd_to_eur(RUNPOD_COST_PER_SECOND_USD * overflow_workers * 60 * 60 * 24 * 30 * 0.1)
 
-    total_costs = total_variable_costs + total_stripe_fees + fixed_costs + runpod_overflow
+    # R2 storage costs (for extracted images)
+    # Estimate actual DB usage from storage limit × utilization × overhead multiplier
+    db_storage_per_user_mb = STORAGE_LIMIT_PAID_MB * utilization * STORAGE_ACTUAL_MULTIPLIER
+    total_db_storage_mb = num_users * db_storage_per_user_mb
+    r2_costs = get_r2_monthly_cost_usd(total_db_storage_mb)
+    r2_monthly = usd_to_eur(r2_costs["total"])
+
+    total_costs = total_variable_costs + total_stripe_fees + fixed_costs + runpod_overflow + r2_monthly
     gross_profit = (
-        total_revenue - total_vat_paid - total_stripe_fees - total_variable_costs - fixed_costs - runpod_overflow
+        total_revenue
+        - total_vat_paid
+        - total_stripe_fees
+        - total_variable_costs
+        - fixed_costs
+        - runpod_overflow
+        - r2_monthly
     )
 
     # Austrian taxes on annual profit
@@ -350,6 +436,7 @@ def calculate_business_metrics(
         "monthly_variable": total_variable_costs,
         "monthly_fixed": fixed_costs,
         "monthly_runpod_overflow": runpod_overflow,
+        "monthly_r2": r2_monthly,
         "monthly_total_costs": total_costs,
         "monthly_gross_profit": gross_profit,
         "annual_gross_profit": annual_profit,
@@ -402,6 +489,12 @@ def print_unit_costs():
             f"RunPod Overflow max/mo\t${runpod_max:.2f}\t€{usd_to_eur(runpod_max):.2f}\t{RUNPOD_MAX_WORKERS} workers 24/7"
         )
         print(
+            f"R2 Storage/GB-month\t${R2_COST_PER_GB_MONTH_USD:.3f}\t€{usd_to_eur(R2_COST_PER_GB_MONTH_USD):.3f}\t{R2_FREE_STORAGE_GB}GB free"
+        )
+        print(
+            f"R2 Class B (reads)/M\t${R2_COST_PER_M_CLASS_B_USD:.2f}\t€{usd_to_eur(R2_COST_PER_M_CLASS_B_USD):.2f}\t{R2_FREE_CLASS_B_OPS / 1_000_000:.0f}M free"
+        )
+        print(
             f"Fixed Infrastructure\t${eur_to_usd(get_fixed_costs_eur()):.2f}\t€{get_fixed_costs_eur():.2f}\tVPS €{VPS_MONTHLY_EUR} + Domain €{DOMAIN_MONTHLY_EUR}"
         )
         print()
@@ -440,6 +533,20 @@ def print_unit_costs():
         f"${runpod_max:.2f}",
         f"€{usd_to_eur(runpod_max):.2f}",
         f"{RUNPOD_MAX_WORKERS} workers × 24/7",
+    )
+
+    table.add_row(
+        "R2 Storage (per GB-month)",
+        f"${R2_COST_PER_GB_MONTH_USD:.3f}",
+        f"€{usd_to_eur(R2_COST_PER_GB_MONTH_USD):.3f}",
+        f"{R2_FREE_STORAGE_GB}GB free tier",
+    )
+
+    table.add_row(
+        "R2 Class B reads (per M)",
+        f"${R2_COST_PER_M_CLASS_B_USD:.2f}",
+        f"€{usd_to_eur(R2_COST_PER_M_CLASS_B_USD):.2f}",
+        f"{R2_FREE_CLASS_B_OPS / 1_000_000:.0f}M free tier",
     )
 
     table.add_row(
@@ -706,11 +813,11 @@ def print_business_scaling():
     """Print business metrics at different user counts."""
     if PLAIN_MODE:
         print(f"6. BUSINESS SCALING ({DEFAULT_VAT} VAT, {DEFAULT_UTILIZATION * 100:.0f}% util)")
-        print("Users\tRevenue\tVAT\tStripe\tVariable\tFixed\tRunPod+\tGross Profit\tNet/yr")
+        print("Users\tRevenue\tVAT\tStripe\tVariable\tFixed\tRunPod+\tR2\tGross Profit\tNet/yr")
         for num_users in USER_COUNTS:
             biz = calculate_business_metrics(num_users, PLAN_DISTRIBUTION, DEFAULT_UTILIZATION, DEFAULT_VAT)
             print(
-                f"{num_users}\t€{biz['monthly_revenue']:.0f}\t€{biz['monthly_vat']:.0f}\t€{biz['monthly_stripe']:.0f}\t€{biz['monthly_variable']:.0f}\t€{biz['monthly_fixed']:.0f}\t€{biz['monthly_runpod_overflow']:.0f}\t€{biz['monthly_gross_profit']:.0f}\t€{biz['annual_net_profit']:.0f}"
+                f"{num_users}\t€{biz['monthly_revenue']:.0f}\t€{biz['monthly_vat']:.0f}\t€{biz['monthly_stripe']:.0f}\t€{biz['monthly_variable']:.0f}\t€{biz['monthly_fixed']:.0f}\t€{biz['monthly_runpod_overflow']:.0f}\t€{biz['monthly_r2']:.0f}\t€{biz['monthly_gross_profit']:.0f}\t€{biz['annual_net_profit']:.0f}"
             )
         print()
         return
@@ -728,6 +835,7 @@ def print_business_scaling():
     table.add_column("Variable", justify="right")
     table.add_column("Fixed", justify="right")
     table.add_column("RunPod+", justify="right")
+    table.add_column("R2", justify="right")
     table.add_column("Gross Profit", justify="right", style="bold")
     table.add_column("Net/yr*", justify="right")
 
@@ -744,6 +852,7 @@ def print_business_scaling():
             f"€{biz['monthly_variable']:,.0f}",
             f"€{biz['monthly_fixed']:,.0f}",
             f"€{biz['monthly_runpod_overflow']:,.0f}",
+            f"€{biz['monthly_r2']:,.0f}",
             f"[{profit_style}]€{biz['monthly_gross_profit']:,.0f}[/{profit_style}]",
             f"€{biz['annual_net_profit']:,.0f}",
         )
@@ -811,7 +920,7 @@ def print_recommendations():
             problems.append((name, metrics.breakeven_utilization["Hungary"]))
 
     if PLAIN_MODE:
-        print("8. SUMMARY")
+        print("9. SUMMARY")
         if problems:
             print("Plans at risk (break-even < 100% at Hungary VAT):")
             for name, be in problems:
@@ -829,7 +938,7 @@ def print_recommendations():
         print()
         return
 
-    console.print("\n[bold yellow]8. SUMMARY[/bold yellow]")
+    console.print("\n[bold yellow]9. SUMMARY[/bold yellow]")
 
     if problems:
         console.print("\n[bold red]⚠️  Plans at risk (break-even < 100% at Hungary VAT):[/bold red]")
@@ -857,6 +966,104 @@ def print_recommendations():
         )
 
     console.print(table)
+
+
+def print_free_user_analysis():
+    """Print analysis of free/guest user costs and VPS capacity."""
+    # Per-user actual DB storage at 75% utilization with overhead multiplier
+    guest_db_mb = STORAGE_LIMIT_GUEST_MB * DEFAULT_UTILIZATION * STORAGE_ACTUAL_MULTIPLIER
+    free_db_mb = STORAGE_LIMIT_FREE_MB * DEFAULT_UTILIZATION * STORAGE_ACTUAL_MULTIPLIER
+    paid_db_mb = STORAGE_LIMIT_PAID_MB * DEFAULT_UTILIZATION * STORAGE_ACTUAL_MULTIPLIER
+
+    # Note: Free/guest users don't have Gemini extraction, so no R2 image costs
+    # Paid users have images, but those are on R2 (not counted against VPS DB storage)
+
+    # VPS capacity by user type
+    vps_db_gb = VPS_AVAILABLE_DB_STORAGE_GB
+    guest_capacity = int((vps_db_gb * 1024) / guest_db_mb)
+    free_capacity = int((vps_db_gb * 1024) / free_db_mb)
+    paid_capacity = int((vps_db_gb * 1024) / paid_db_mb)
+
+    # Realistic mix: 30% guest (cleaned up periodically), 50% free, 20% paid
+    mix_avg_mb = 0.30 * guest_db_mb + 0.50 * free_db_mb + 0.20 * paid_db_mb
+    mix_capacity = int((vps_db_gb * 1024) / mix_avg_mb)
+
+    # Cost analysis: Free/guest use browser TTS
+    # The only real cost is DB storage (amortized VPS cost)
+    vps_monthly = VPS_MONTHLY_EUR
+    cost_per_gb_month = vps_monthly / vps_db_gb
+    guest_monthly_cost = (guest_db_mb / 1024) * cost_per_gb_month
+    free_monthly_cost = (free_db_mb / 1024) * cost_per_gb_month
+
+    if PLAIN_MODE:
+        print("8. FREE/GUEST USER ANALYSIS")
+        print()
+        print("DB Storage per User (75% util)")
+        print("Tier\tLimit\tActual DB")
+        print(f"Guest\t{STORAGE_LIMIT_GUEST_MB}MB\t{guest_db_mb:.0f}MB")
+        print(f"Free\t{STORAGE_LIMIT_FREE_MB}MB\t{free_db_mb:.0f}MB")
+        print(f"Paid\t{STORAGE_LIMIT_PAID_MB}MB\t{paid_db_mb:.0f}MB")
+        print()
+        print(f"VPS Capacity ({vps_db_gb}GB available for DB)")
+        print("Scenario\tUsers\tNotes")
+        print(f"All guests\t{guest_capacity:,}\tLower bound")
+        print(f"All free\t{free_capacity:,}\t")
+        print(f"All paid\t{paid_capacity:,}\tUpper bound")
+        print(f"Realistic mix\t{mix_capacity:,}\t30/50/20% guest/free/paid")
+        print()
+        print("Free User Cost (amortized VPS)")
+        print("Tier\tCost/mo\tNotes")
+        print(f"Guest\t€{guest_monthly_cost:.4f}\tDB storage only")
+        print(f"Free\t€{free_monthly_cost:.4f}\tDB storage only")
+        print()
+        print("Note: Free/guest use browser TTS (no API cost). No R2 costs (no extraction).")
+        print()
+        return
+
+    console.print("\n[bold yellow]8. FREE/GUEST USER ANALYSIS[/bold yellow]")
+    console.print("[dim]Impact of non-paying users on VPS capacity[/dim]\n")
+
+    # Storage per user table
+    table = Table(box=box.ROUNDED, show_header=True, header_style="bold", title="DB Storage per User (75% utilization)")
+    table.add_column("Tier", style="cyan")
+    table.add_column("Limit", justify="right")
+    table.add_column("Actual DB*", justify="right")
+    table.add_column("Has Images?", justify="center")
+
+    table.add_row("Guest", f"{STORAGE_LIMIT_GUEST_MB}MB", f"{guest_db_mb:.0f}MB", "No")
+    table.add_row("Free", f"{STORAGE_LIMIT_FREE_MB}MB", f"{free_db_mb:.0f}MB", "No")
+    table.add_row("Paid", f"{STORAGE_LIMIT_PAID_MB}MB", f"{paid_db_mb:.0f}MB", "[dim]Yes (R2)[/dim]")
+
+    console.print(table)
+    console.print(
+        f"[dim]*Actual DB = limit × {DEFAULT_UTILIZATION:.0%} util × {STORAGE_ACTUAL_MULTIPLIER}× TOAST ratio (measured 0.5x, conservative 0.7x)[/dim]\n"
+    )
+
+    # VPS capacity table
+    table2 = Table(
+        box=box.ROUNDED,
+        show_header=True,
+        header_style="bold",
+        title=f"VPS Capacity ({vps_db_gb}GB available for Postgres)",
+    )
+    table2.add_column("Scenario", style="cyan")
+    table2.add_column("Max Users", justify="right")
+    table2.add_column("Notes")
+
+    table2.add_row("All guests", f"{guest_capacity:,}", "[dim]Lower bound[/dim]")
+    table2.add_row("All free", f"{free_capacity:,}", "")
+    table2.add_row("All paid", f"{paid_capacity:,}", "[dim]Upper bound (DB only)[/dim]")
+    table2.add_row("[bold]Realistic mix[/bold]", f"[bold]{mix_capacity:,}[/bold]", "30/50/20% guest/free/paid")
+
+    console.print(table2)
+
+    # Cost per free user
+    console.print("\n[bold]Amortized Cost per Non-Paying User:[/bold]")
+    console.print(f"  Guest: [green]€{guest_monthly_cost:.4f}[/green]/month (DB storage)")
+    console.print(f"  Free:  [green]€{free_monthly_cost:.4f}[/green]/month (DB storage)")
+    console.print(
+        "\n[dim]Note: Free/guest use self-hosted TTS (no API cost until overflow). No R2 costs (no extraction access).[/dim]"
+    )
 
 
 def print_config_summary():
@@ -918,6 +1125,7 @@ def main():
     print_margin_breakdown()
     print_vat_comparison()
     print_business_scaling()
+    print_free_user_analysis()
     print_recommendations()
 
     if not PLAIN_MODE:
