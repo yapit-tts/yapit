@@ -126,21 +126,6 @@ check-backend:
 check-frontend:
 	cd frontend && npm run lint && npx tsc --noEmit
 
-# RunPod deployment
-HIGGS_TAG := $(shell date +%Y%m%d-%H%M%S)
-HIGGS_IMAGE := maxw01/higgs-worker:$(HIGGS_TAG)
-
-deploy-higgs: deploy-higgs-build deploy-higgs-push deploy-higgs-runpod
-
-deploy-higgs-build:
-	docker build -t $(HIGGS_IMAGE) -f yapit/workers/higgs_audio_v2_native/Dockerfile .
-
-deploy-higgs-push:
-	docker push $(HIGGS_IMAGE)
-
-deploy-higgs-runpod:
-	uv run --env-file=.env python infra/runpod/deploy.py higgs-native --image-tag $(HIGGS_TAG)
-
 # Prod operations
 deploy:
 	./scripts/deploy.sh

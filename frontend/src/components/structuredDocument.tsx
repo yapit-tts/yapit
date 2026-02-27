@@ -656,6 +656,7 @@ function ImageBlockView({ block, inRow }: BlockProps & { block: ImageBlock; inRo
         src={block.src}
         alt={block.alt}
         title={block.title}
+        referrerPolicy="no-referrer"
         className="max-w-full max-h-96 h-auto object-contain rounded"
       />
       {block.audio_chunks.length > 0 && (

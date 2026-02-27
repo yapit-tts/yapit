@@ -45,14 +45,19 @@ function renderNode(node: InlineContent, key: number): React.ReactNode {
         </s>
       );
     case "link": {
-      if (/\.(mp4|webm|mov|ogg)$/i.test(node.href)) {
+      const href = node.href;
+      if (/^(javascript|vbscript|data):/i.test(href.trim())) {
+        return <span key={key}><InlineContentRenderer nodes={node.content} /></span>;
+      }
+      if (/\.(mp4|webm|mov|ogg)$/i.test(href)) {
         return (
-          <video key={key} src={node.href} controls preload="metadata"
+          <video key={key} src={href} controls preload="metadata"
             className="max-w-full max-h-96 rounded my-2" />
         );
       }
       return (
-        <a key={key} href={node.href} title={node.title ?? undefined}>
+        <a key={key} href={href} title={node.title ?? undefined}
+          rel="noopener noreferrer">
           <InlineContentRenderer nodes={node.content} />
         </a>
       );
