@@ -1,11 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useApi } from "@/api";
 import { AudioPlayer } from "@/lib/audio";
 import {
   createPlaybackEngine,
   type Block,
   type PlaybackEngine,
-  type PlaybackSnapshot,
 } from "@/lib/playbackEngine";
 import { isServerSideModel, type VoiceSelection } from "@/lib/voiceSelection";
 import type { Section } from "@/lib/sectionIndex";
@@ -13,21 +12,17 @@ import { createServerSynthesizer, type ServerSynthesizerInstance, type WSBlockSt
 import { createBrowserSynthesizer, type BrowserSynthesizerInstance } from "@/lib/browserSynthesizer";
 import { useTTSWebSocket, type WSMessage } from "./useTTSWebSocket";
 
-export type { PlaybackSnapshot, Block };
+export type { Block };
 
 export interface UsePlaybackEngineReturn {
-  snapshot: PlaybackSnapshot;
   engine: PlaybackEngine;
   ws: {
     isConnected: boolean;
     isReconnecting: boolean;
     connectionError: string | null;
   };
-  serverTTS: {
-    error: string | null;
-    recoverable: boolean;
-  };
-  browserTTS: {
+  getServerTTSStatus: () => { error: string | null; recoverable: boolean };
+  getBrowserTTSStatus: () => {
     error: string | null;
     device: "webgpu" | "wasm" | null;
     loading: boolean;
@@ -180,26 +175,28 @@ export function usePlaybackEngine(
     };
   }, [engine, audioContext]);
 
-  const snapshot = useSyncExternalStore(engine.subscribe, engine.getSnapshot);
+  // Getter functions for TTS status — called by the overlay during its render
+  // to get fresh values without requiring a shell re-render.
+  const getServerTTSStatus = useCallback(() => ({
+    error: serverSynthRef.current!.getError(),
+    recoverable: serverSynthRef.current!.isRecoverable(),
+  }), []);
 
-  const browserSynth = browserSynthRef.current!;
+  const getBrowserTTSStatus = useCallback(() => ({
+    error: browserSynthRef.current!.getError(),
+    device: browserSynthRef.current!.getDevice(),
+    loading: browserSynthRef.current!.isLoading(),
+    loadingProgress: browserSynthRef.current!.getLoadingProgress(),
+  }), []);
+
   return {
-    snapshot,
     engine,
     ws: {
       isConnected: ttsWS.isConnected,
       isReconnecting: ttsWS.isReconnecting,
       connectionError: ttsWS.connectionError,
     },
-    serverTTS: {
-      error: serverSynthRef.current!.getError(),
-      recoverable: serverSynthRef.current!.isRecoverable(),
-    },
-    browserTTS: {
-      error: browserSynth.getError(),
-      device: browserSynth.getDevice(),
-      loading: browserSynth.isLoading(),
-      loadingProgress: browserSynth.getLoadingProgress(),
-    },
+    getServerTTSStatus,
+    getBrowserTTSStatus,
   };
 }

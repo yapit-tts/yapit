@@ -1,16 +1,12 @@
-import { SoundControl } from '@/components/soundControl';
 import { StructuredDocumentView } from '@/components/structuredDocument';
 import { WebGPUWarningBanner } from '@/components/webGPUWarningBanner';
-import { DocumentOutliner } from '@/components/documentOutliner';
-import { OutlinerSidebar, OUTLINER_WIDTH } from '@/components/outlinerSidebar';
+import { PlaybackOverlay } from '@/components/playbackOverlay';
 import { useOutliner } from '@/hooks/useOutliner';
-import { useSidebar } from '@/components/ui/sidebar';
-import { useFilteredPlayback } from '@/hooks/useFilteredPlayback';
 import { usePlaybackEngine, type Block } from '@/hooks/usePlaybackEngine';
 import { useParams, useLocation, Link, useNavigate } from "react-router";
-import { useRef, useState, useEffect, useLayoutEffect, useCallback, useMemo } from "react";
+import { useRef, useState, useEffect, useCallback } from "react";
 import { useApi } from '@/api';
-import { Loader2, FileQuestion, Download, X, AudioLines, AlertTriangle } from "lucide-react";
+import { Loader2, FileQuestion, Download, X, AlertTriangle } from "lucide-react";
 import { AxiosError } from "axios";
 import { buildSectionIndex, findSectionForBlock, type Section } from '@/lib/sectionIndex';
 import { buildSlugMap } from '@/components/structuredDocument';
@@ -32,10 +28,6 @@ function getPlaybackPosition(documentId: string): PlaybackPosition | null {
     if (stored) return JSON.parse(stored);
   } catch { /* ignore */ }
   return null;
-}
-
-function setPlaybackPosition(documentId: string, position: PlaybackPosition): void {
-  localStorage.setItem(POSITION_KEY_PREFIX + documentId, JSON.stringify(position));
 }
 
 interface DocumentMetadata {
@@ -78,7 +70,6 @@ const PlaybackPage = () => {
   const scrollBlockPosition: ScrollLogicalPosition = settings.scrollPosition === "top" ? "start"
     : settings.scrollPosition === "bottom" ? "end" : "center";
   const outliner = useOutliner();
-  const sidebar = useSidebar();
 
   // Document data
   const [document, setDocument] = useState<DocumentResponse | null>(null);
@@ -97,7 +88,6 @@ const PlaybackPage = () => {
   // Outliner state
   const [sections, setSections] = useState<Section[]>([]);
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
-  // Collapsed sections = skipped from playback (single source of truth)
   const [slugMap, setSlugMap] = useState<Map<string, string>>(new Map());
 
   // Voice and playback settings (UI-owned, synced into engine)
@@ -108,32 +98,21 @@ const PlaybackPage = () => {
   const setVolume = useCallback((v: number) => { setVolume_(v); saveVolume(v); }, []);
   const setPlaybackSpeed = useCallback((s: number) => { setPlaybackSpeed_(s); savePlaybackSpeed(s); }, []);
 
-  // Scroll detach state
-  const [isScrollDetached, setIsScrollDetached] = useState(false);
-  const [backToReadingDismissed, setBackToReadingDismissed] = useState(false);
-  const scrollCooldownRef = useRef(false);
-  const scrollCooldownTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
   // Derived
   const documentTitle = document?.title ?? initialTitle;
   const structuredContent = document?.structured_content ?? null;
   const fallbackContent = document?.original_text ?? "";
   const sourceUrl = document?.metadata_dict?.url ?? null;
   const markdownContent = document?.original_text ?? null;
-  const estimated_ms = documentBlocks.reduce((sum, b) => sum + (b.est_duration_ms || 0), 0);
 
-  // --- Playback engine ---
-  const { snapshot, engine, ws, serverTTS, browserTTS } = usePlaybackEngine(
+  // --- Playback engine (no snapshot subscription — that lives in PlaybackOverlay) ---
+  const { engine, ws, getServerTTSStatus, getBrowserTTSStatus } = usePlaybackEngine(
     documentId,
     documentBlocks,
     voiceSelection,
     sections,
     expandedSections,
   );
-
-  const isPlaying = snapshot.status === "playing";
-  const isBuffering = snapshot.status === "buffering";
-  const currentBlock = snapshot.currentBlock;
 
   // Sync playback speed and volume into engine/audio
   useEffect(() => {
@@ -144,67 +123,11 @@ const PlaybackPage = () => {
     engine.setVolume(volume / 100);
   }, [volume, engine]);
 
-  // --- DOM highlighting (imperative, no React state) ---
+  // --- Ref bridges (overlay writes, shell reads) ---
 
-  const currentBlockRef = useRef(currentBlock);
-  currentBlockRef.current = currentBlock;
-  const prevBlockIdxRef = useRef<number>(-1);
-  const hoveredBlockRef = useRef<number | null>(null);
-  const isDraggingProgressBarRef = useRef(false);
-  const lastHoverScrollTimeRef = useRef<number>(0);
-
-  const findElementsByAudioIdx = useCallback((idx: number) => {
-    const innerSpans = window.document.querySelectorAll(`[data-audio-idx="${idx}"]`);
-    if (innerSpans.length > 0) return innerSpans;
-    return window.document.querySelectorAll(`[data-audio-block-idx="${idx}"]`);
-  }, []);
-
-  useLayoutEffect(() => {
-    const ACTIVE_BLOCK_CLASS = "audio-block-active";
-    if (prevBlockIdxRef.current >= 0) {
-      findElementsByAudioIdx(prevBlockIdxRef.current).forEach(el => el.classList.remove(ACTIVE_BLOCK_CLASS));
-    }
-    if (currentBlock >= 0) {
-      findElementsByAudioIdx(currentBlock).forEach(el => el.classList.add(ACTIVE_BLOCK_CLASS));
-    }
-    prevBlockIdxRef.current = currentBlock;
-  }, [currentBlock, findElementsByAudioIdx]);
-
-  const handleBlockHover = useCallback((idx: number | null, isDragging: boolean) => {
-    const prevHovered = hoveredBlockRef.current;
-    hoveredBlockRef.current = idx;
-    isDraggingProgressBarRef.current = isDragging;
-    const HOVER_BLOCK_CLASS = "audio-block-hovered";
-
-    if (prevHovered !== null && prevHovered !== idx) {
-      findElementsByAudioIdx(prevHovered).forEach(el => el.classList.remove(HOVER_BLOCK_CLASS));
-    }
-    if (idx !== null && idx !== currentBlock) {
-      findElementsByAudioIdx(idx).forEach(el => el.classList.add(HOVER_BLOCK_CLASS));
-    }
-    if (idx === null || idx === currentBlock) {
-      if (prevHovered !== null) {
-        findElementsByAudioIdx(prevHovered).forEach(el => el.classList.remove(HOVER_BLOCK_CLASS));
-      }
-    }
-
-    if (isDragging && idx !== null && idx !== currentBlock) {
-      const SCROLL_THROTTLE_MS = 500;
-      const now = Date.now();
-      if (now - lastHoverScrollTimeRef.current >= SCROLL_THROTTLE_MS) {
-        const element = findElementsByAudioIdx(idx)[0];
-        if (element) {
-          const rect = element.getBoundingClientRect();
-          const margin = 50;
-          const isVisible = rect.top >= margin && rect.bottom <= window.innerHeight - margin;
-          if (!isVisible) {
-            element.scrollIntoView({ behavior: "auto", block: "center" });
-            lastHoverScrollTimeRef.current = now;
-          }
-        }
-      }
-    }
-  }, [findElementsByAudioIdx, currentBlock]);
+  const currentBlockRef = useRef(-1);
+  const scrollToBlockRef = useRef<(blockIdx: number, behavior?: ScrollBehavior) => void>(() => {});
+  const handleBackToReadingRef = useRef(() => {});
 
   // --- Document fetching ---
 
@@ -262,7 +185,7 @@ const PlaybackPage = () => {
     fetchData();
   }, [documentId, api, isAuthReady]);
 
-  // --- Position persistence ---
+  // --- Position restore (mount-only, reads from localStorage/server) ---
 
   useEffect(() => {
     if (!documentId || documentBlocks.length === 0 || !document) return;
@@ -296,95 +219,16 @@ const PlaybackPage = () => {
     }
   }, [documentId, documentBlocks, document, isAnonymous, settings.scrollOnRestore, engine]);
 
-  const documentIdRef = useRef(documentId);
-  documentIdRef.current = documentId;
-  const isAnonymousRef = useRef(isAnonymous);
-  isAnonymousRef.current = isAnonymous;
+  // --- Keyboard handler (reads everything from refs — never re-created on snapshot changes) ---
 
-  useEffect(() => {
-    if (!documentIdRef.current || currentBlock < 0) return;
-    setPlaybackPosition(documentIdRef.current, {
-      block: currentBlock,
-      progressMs: engine.getBlockStartTime(),
-    });
-    if (!isAnonymousRef.current) {
-      api.patch(`/v1/documents/${documentIdRef.current}/position`, {
-        block_idx: currentBlock,
-      }).catch(() => {});
-    }
-  }, [currentBlock, api, engine]);
-
-  // --- Scroll handling ---
-
-  const scrollToBlock = useCallback((blockIdx: number, behavior: ScrollBehavior = "smooth") => {
-    if (blockIdx < 0) return;
-    scrollCooldownRef.current = true;
-    if (scrollCooldownTimerRef.current) clearTimeout(scrollCooldownTimerRef.current);
-    const element = findElementsByAudioIdx(blockIdx)[0];
-    if (element) element.scrollIntoView({ behavior, block: scrollBlockPosition });
-    scrollCooldownTimerRef.current = setTimeout(() => { scrollCooldownRef.current = false; }, 1200);
-  }, [findElementsByAudioIdx, scrollBlockPosition]);
-
-  // Preview scroll position change immediately
-  useEffect(() => {
-    if (currentBlock >= 0) scrollToBlock(currentBlock);
-  }, [scrollBlockPosition]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    if (currentBlock < 0 || !isPlaying) return;
-    if (!settings.liveScrollTracking || isScrollDetached) return;
-    if (scrollCooldownRef.current) return;
-    scrollToBlock(currentBlock);
-  }, [currentBlock, settings.liveScrollTracking, isScrollDetached, scrollToBlock, isPlaying]);
-
-  useEffect(() => {
-    if (!isPlaying || !settings.liveScrollTracking || isScrollDetached || currentBlock < 0) return;
-    if (scrollCooldownRef.current) return;
-    scrollToBlock(currentBlock);
-  }, [isPlaying, settings.liveScrollTracking, isScrollDetached, currentBlock, scrollToBlock]);
-
-  useEffect(() => {
-    const handleScroll = () => {
-      if (scrollCooldownRef.current) return;
-      if (!isPlaying || !settings.liveScrollTracking) return;
-      if (isScrollDetached) return;
-      setIsScrollDetached(true);
-      setBackToReadingDismissed(false);
-    };
-    window.addEventListener('scroll', handleScroll, { passive: true });
-    return () => window.removeEventListener('scroll', handleScroll);
-  }, [settings.liveScrollTracking, isScrollDetached, isPlaying]);
-
-  useEffect(() => {
-    if (isPlaying && isScrollDetached) {
-      setIsScrollDetached(false);
-      scrollToBlock(currentBlock);
-    }
-  }, [isPlaying]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const handleBackToReading = useCallback(() => {
-    setIsScrollDetached(false);
-    scrollToBlock(currentBlock, "smooth");
-  }, [currentBlock, scrollToBlock]);
-
-  // --- Keyboard and MediaSession ---
-
-  const isPlayingRef = useRef(isPlaying);
-  isPlayingRef.current = isPlaying;
   const speedRef = useRef(playbackSpeed);
   speedRef.current = playbackSpeed;
   const volumeRef = useRef(volume);
   volumeRef.current = volume;
   const prevVolumeRef = useRef(volume || 50);
   if (volume > 0) prevVolumeRef.current = volume;
-  const scrollToBlockRef = useRef(scrollToBlock);
-  scrollToBlockRef.current = scrollToBlock;
   const showKeybindingsRef = useRef(false);
   showKeybindingsRef.current = showKeybindings;
-  const handleBackToReadingRef = useRef(handleBackToReading);
-  handleBackToReadingRef.current = handleBackToReading;
-  const toggleSidebarRef = useRef(sidebar.toggleSidebar);
-  toggleSidebarRef.current = sidebar.toggleSidebar;
   const toggleOutlinerRef = useRef(outliner.toggleOutliner);
   toggleOutlinerRef.current = outliner.toggleOutliner;
 
@@ -395,17 +239,17 @@ const PlaybackPage = () => {
       switch (e.key) {
         case " ":
           e.preventDefault();
-          if (isPlayingRef.current) engine.pause(); else engine.play();
+          if (engine.getSnapshot().status === "playing") engine.pause(); else engine.play();
           break;
         case "j": case "ArrowDown":
           e.preventDefault();
           engine.skipForward();
-          scrollToBlockRef.current(engine.getSnapshot().currentBlock);
+          scrollToBlockRef.current(engine.getSnapshot().currentBlock, "auto");
           break;
         case "k": case "ArrowUp":
           e.preventDefault();
           engine.skipBack();
-          scrollToBlockRef.current(engine.getSnapshot().currentBlock);
+          scrollToBlockRef.current(engine.getSnapshot().currentBlock, "auto");
           break;
         case "l": case "ArrowRight":
           e.preventDefault();
@@ -451,6 +295,8 @@ const PlaybackPage = () => {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [engine, setPlaybackSpeed, setVolume]);
 
+  // --- MediaSession ---
+
   useEffect(() => {
     if (!("mediaSession" in navigator)) return;
     const handlers: [MediaSessionAction, MediaSessionActionHandler][] = [
@@ -473,7 +319,6 @@ const PlaybackPage = () => {
     };
   }, [engine]);
 
-  // MediaSession metadata — shows title/artwork in OS media controls (lock screen, dynamic island, etc.)
   useEffect(() => {
     if (!("mediaSession" in navigator)) return;
     navigator.mediaSession.metadata = new MediaMetadata({
@@ -485,23 +330,6 @@ const PlaybackPage = () => {
       ],
     });
   }, [documentTitle]);
-
-  // MediaSession playback state + position — enables progress bar and play/pause icon in OS controls
-  useEffect(() => {
-    if (!("mediaSession" in navigator)) return;
-    navigator.mediaSession.playbackState = isPlaying ? "playing" : "paused";
-    if (snapshot.totalDuration > 0) {
-      try {
-        const durationSec = snapshot.totalDuration / 1000;
-        const positionSec = Math.min(snapshot.audioProgress / 1000, durationSec);
-        navigator.mediaSession.setPositionState({
-          duration: durationSec,
-          playbackRate: playbackSpeed,
-          position: positionSec,
-        });
-      } catch { /* setPositionState can throw on invalid values */ }
-    }
-  }, [isPlaying, snapshot.audioProgress, snapshot.totalDuration, playbackSpeed]);
 
   // --- Outliner ---
 
@@ -556,20 +384,10 @@ const PlaybackPage = () => {
   }, [sections]);
 
   const handleCollapseAllSections = useCallback(() => {
-    const currentSection = currentBlock >= 0 ? findSectionForBlock(sections, currentBlock) : null;
+    const cb = currentBlockRef.current;
+    const currentSection = cb >= 0 ? findSectionForBlock(sections, cb) : null;
     setExpandedSections(currentSection ? new Set([currentSection.id]) : new Set());
-  }, [sections, currentBlock]);
-
-  const handleOutlinerNavigate = useCallback((blockIdx: number) => {
-    engine.seekToBlock(blockIdx);
-    scrollToBlock(blockIdx);
-    const section = sections.find(s => s.startBlockIdx === blockIdx)
-      ?? sections.flatMap(s => s.subsections).find(s => s.blockIdx === blockIdx);
-    const slug = section ? slugMap.get(section.id) : undefined;
-    if (slug) {
-      history.replaceState(null, "", `#${slug}`);
-    }
-  }, [engine, scrollToBlock, sections, slugMap]);
+  }, [sections]);
 
   const shouldShowOutliner = sections.length > 0 && documentBlocks.length >= 30;
 
@@ -578,55 +396,17 @@ const PlaybackPage = () => {
     return () => outliner.setEnabled(false);
   }, [shouldShowOutliner, outliner]);
 
-  // --- Progress bar values ---
-
-  const handleBlockChange = useCallback((newBlock: number) => {
-    engine.seekToBlock(newBlock);
-  }, [engine]);
+  // --- Stable callbacks for StructuredDocumentView ---
 
   const handleDocumentBlockClick = useCallback((audioBlockIdx: number) => {
     engine.seekToBlock(audioBlockIdx);
   }, [engine]);
 
-  // Stable callback — reads currentBlock from ref at click-time, not render-time.
-  // This avoids re-rendering StructuredDocumentView on every cursor change.
   const canCollapseSection = useCallback((section: Section) => {
     const idx = currentBlockRef.current;
     if (idx < 0) return true;
     return !(idx >= section.startBlockIdx && idx <= section.endBlockIdx);
   }, []);
-
-  const filteredPlayback = useFilteredPlayback(
-    documentBlocks,
-    sections,
-    expandedSections,
-    snapshot.blockStates,
-    currentBlock,
-  );
-
-  const progressBarValues = useMemo(() => {
-    if (shouldShowOutliner) {
-      return {
-        estimated_ms: filteredPlayback.filteredDuration,
-        numberOfBlocks: filteredPlayback.filteredBlockCount,
-        currentBlock: filteredPlayback.visualCurrentBlock ?? 0,
-        setCurrentBlock: handleBlockChange,
-        onBlockHover: handleBlockHover,
-        audioProgress: filteredPlayback.filteredElapsedMs,
-        blockStates: filteredPlayback.filteredBlockStates,
-        visualToAbsolute: filteredPlayback.visualToAbsolute,
-      };
-    }
-    return {
-      estimated_ms: snapshot.totalDuration > 0 ? snapshot.totalDuration : estimated_ms,
-      numberOfBlocks: documentBlocks.length,
-      currentBlock: currentBlock >= 0 ? currentBlock : 0,
-      setCurrentBlock: handleBlockChange,
-      onBlockHover: handleBlockHover,
-      audioProgress: snapshot.audioProgress,
-      blockStates: snapshot.blockStates,
-    };
-  }, [shouldShowOutliner, filteredPlayback, snapshot, estimated_ms, documentBlocks.length, currentBlock, handleBlockChange, handleBlockHover]);
 
   // --- Title / Import ---
 
@@ -753,62 +533,32 @@ const PlaybackPage = () => {
           onSectionExpand={shouldShowOutliner ? handleSectionToggle : undefined}
           canCollapseSection={shouldShowOutliner ? canCollapseSection : undefined}
         />
-        {isPlaying && isScrollDetached && !backToReadingDismissed && (
-          <div
-            className="fixed z-50 flex justify-center pointer-events-none transition-[left,right] duration-200 ease-linear"
-            style={{
-              bottom: "calc(var(--playbar-height, 120px) + 80px)",
-              left: sidebar.isMobile || sidebar.state === "collapsed" ? 0 : "var(--sidebar-width)",
-              right: sidebar.isMobile || outliner.state !== "expanded" ? 0 : OUTLINER_WIDTH,
-            }}
-          >
-            <div className="flex items-center gap-2 bg-background/95 backdrop-blur-sm border border-border rounded-full px-4 py-2 shadow-lg pointer-events-auto">
-              <button onClick={handleBackToReading} className="flex items-center gap-2 text-sm font-medium text-foreground hover:text-primary transition-colors">
-                <AudioLines className="h-4 w-4 text-primary" />
-                Back to Reading
-              </button>
-              <button onClick={() => setBackToReadingDismissed(true)} className="p-1 text-muted-foreground hover:text-foreground transition-colors" aria-label="Dismiss">
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-          </div>
-        )}
-        <SoundControl
-          isPlaying={isPlaying}
-          isBuffering={isBuffering}
-          isSynthesizing={snapshot.isSynthesizingCurrent}
-          isReconnecting={ws.isReconnecting}
-          connectionError={ws.connectionError}
-          onPlay={() => engine.play()}
-          onPause={() => engine.pause()}
-          onCancelSynthesis={() => engine.stop()}
-          onSkipBack={() => { engine.skipBack(); scrollToBlockRef.current(engine.getSnapshot().currentBlock); }}
-          onSkipForward={() => { engine.skipForward(); scrollToBlockRef.current(engine.getSnapshot().currentBlock); }}
-          progressBarValues={progressBarValues}
+        <PlaybackOverlay
+          engine={engine}
+          documentBlocks={documentBlocks}
+          sections={sections}
+          expandedSections={expandedSections}
+          shouldShowOutliner={shouldShowOutliner}
+          scrollBlockPosition={scrollBlockPosition}
+          documentId={documentId}
           volume={volume}
           onVolumeChange={setVolume}
           playbackSpeed={playbackSpeed}
           onSpeedChange={setPlaybackSpeed}
           voiceSelection={voiceSelection}
           onVoiceChange={setVoiceSelection}
-          serverTTSError={serverTTS.error}
-          serverTTSRecoverable={serverTTS.recoverable}
-          browserTTSError={browserTTS.error}
-          browserTTSDevice={browserTTS.device}
+          liveScrollTracking={settings.liveScrollTracking}
+          ws={ws}
+          getServerTTSStatus={getServerTTSStatus}
+          getBrowserTTSStatus={getBrowserTTSStatus}
+          onSectionToggle={handleSectionToggle}
+          onExpandAll={handleExpandAllSections}
+          onCollapseAll={handleCollapseAllSections}
+          slugMap={slugMap}
+          scrollToBlockRef={scrollToBlockRef}
+          currentBlockRef={currentBlockRef}
+          handleBackToReadingRef={handleBackToReadingRef}
         />
-        {shouldShowOutliner && (
-          <OutlinerSidebar>
-            <DocumentOutliner
-              sections={sections}
-              expandedSections={expandedSections}
-              currentBlockIdx={currentBlock}
-              onSectionToggle={handleSectionToggle}
-              onExpandAll={handleExpandAllSections}
-              onCollapseAll={handleCollapseAllSections}
-              onNavigate={handleOutlinerNavigate}
-            />
-          </OutlinerSidebar>
-        )}
       </div>
 
       {showKeybindings && (
