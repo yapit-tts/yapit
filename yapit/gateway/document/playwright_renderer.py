@@ -8,7 +8,8 @@ from yapit.gateway.metrics import log_event
 _browser = None
 _playwright = None
 _lock = asyncio.Lock()
-_semaphore = asyncio.Semaphore(100)
+_MAX_CONCURRENT_RENDERS = 50
+_semaphore = asyncio.Semaphore(_MAX_CONCURRENT_RENDERS)
 
 
 async def _get_browser():
@@ -39,7 +40,7 @@ async def render_with_js(url: str, timeout_ms: int = 30000) -> str:
         Rendered HTML content
     """
     if _semaphore.locked():
-        logger.warning(f"Playwright semaphore full (100 concurrent), queuing render for {url}")
+        logger.warning(f"Playwright semaphore full ({_MAX_CONCURRENT_RENDERS} concurrent), queuing render for {url}")
 
     async with _semaphore:
         browser = await _get_browser()
