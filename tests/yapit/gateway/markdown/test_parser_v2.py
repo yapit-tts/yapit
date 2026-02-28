@@ -17,6 +17,8 @@ from yapit.gateway.markdown.models import (
     MathBlock,
 )
 
+from .conftest import ast_contains, ast_text
+
 # === TEST DEFAULTS (production values come from env vars) ===
 
 DEFAULT_MAX_BLOCK_CHARS = 250
@@ -35,18 +37,17 @@ def transform(ast, **kwargs):
 # === HELPER FUNCTIONS ===
 
 
-def get_display_and_tts(markdown: str, **kwargs) -> tuple[str, str]:
-    """Transform markdown and return (first block's html, first block's TTS text)."""
-    ast = parse_markdown(markdown)
-    doc = transform(ast, **kwargs)
+def get_display_and_tts(markdown: str, **kwargs) -> tuple[list, str]:
+    """Transform markdown and return (first block's ast, first block's TTS text)."""
+    md_ast = parse_markdown(markdown)
+    doc = transform(md_ast, **kwargs)
     block = doc.blocks[0]
-    html = getattr(block, "html", "") or ""
-    # For unified model: concatenate all audio chunk texts
+    block_ast = getattr(block, "ast", []) or []
     if hasattr(block, "audio_chunks") and block.audio_chunks:
         tts = " ".join(chunk.text for chunk in block.audio_chunks)
     else:
-        tts = getattr(block, "plain_text", "") or ""
-    return html, tts
+        tts = ""
+    return block_ast, tts
 
 
 def get_audio_texts(markdown: str, **kwargs) -> list[str]:
@@ -87,8 +88,8 @@ class TestMathAlwaysSilent:
 
     def test_inline_math_displayed(self):
         """Inline math is displayed even without yap-speak."""
-        html, _ = get_display_and_tts(r"Value is $x^2$ here.")
-        assert "x^2" in html or "math-inline" in html
+        display, _ = get_display_and_tts(r"Value is $x^2$ here.")
+        assert ast_contains(display, "math_inline")
 
     def test_display_math_no_tts(self):
         """Display math without yap-speak produces no TTS."""
@@ -114,31 +115,30 @@ class TestYapSpeak:
 
     def test_standalone_yap_speak(self):
         """Standalone yap-speak: spoken but not displayed."""
-        html, tts = get_display_and_tts("Text <yap-speak>spoken</yap-speak> more.")
-        assert "spoken" not in html
+        display, tts = get_display_and_tts("Text <yap-speak>spoken</yap-speak> more.")
+        display_text = ast_text(display)
+        assert "spoken" not in display_text
         assert "spoken" in tts
-        assert "Text" in html and "more" in html
+        assert "Text" in display_text and "more" in display_text
         assert "Text" in tts and "more" in tts
 
     def test_yap_speak_after_math(self):
         """yap-speak after math provides pronunciation."""
-        html, tts = get_display_and_tts(r"The $\alpha$<yap-speak>alpha</yap-speak> value.")
-        # Display: shows math
-        assert "alpha" in html or "math-inline" in html
-        # TTS: uses yap-speak content
+        display, tts = get_display_and_tts(r"The $\alpha$<yap-speak>alpha</yap-speak> value.")
+        assert ast_contains(display, "math_inline")
         assert "alpha" in tts
         assert "The" in tts and "value" in tts
 
     def test_multiple_yap_speak_in_paragraph(self):
         """Multiple yap-speak tags accumulate in TTS."""
-        html, tts = get_display_and_tts(r"$\alpha$<yap-speak>alpha</yap-speak> and $\beta$<yap-speak>beta</yap-speak>")
+        _, tts = get_display_and_tts(r"$\alpha$<yap-speak>alpha</yap-speak> and $\beta$<yap-speak>beta</yap-speak>")
         assert "alpha" in tts
         assert "beta" in tts
         assert "and" in tts
 
     def test_yap_speak_empty(self):
         """Empty yap-speak is valid (contributes nothing)."""
-        html, tts = get_display_and_tts("Text <yap-speak></yap-speak> more.")
+        _, tts = get_display_and_tts("Text <yap-speak></yap-speak> more.")
         assert "Text" in tts
         assert "more" in tts
 
@@ -157,41 +157,38 @@ class TestYapShow:
 
     def test_standalone_yap_show(self):
         """Standalone yap-show: displayed but not spoken."""
-        html, tts = get_display_and_tts("Text <yap-show>[1, 2]</yap-show> more.")
-        assert "[1, 2]" in html
+        display, tts = get_display_and_tts("Text <yap-show>[1, 2]</yap-show> more.")
+        assert "[1, 2]" in ast_text(display)
         assert "[1, 2]" not in tts
         assert "Text" in tts and "more" in tts
 
     def test_yap_show_with_following_yap_speak(self):
         """yap-show followed by yap-speak: display X, speak Y."""
-        html, tts = get_display_and_tts(
+        display, tts = get_display_and_tts(
             "As <yap-show>(Smith et al.)</yap-show><yap-speak>Smith and colleagues</yap-speak> showed."
         )
-        assert "(Smith et al.)" in html
+        assert "(Smith et al.)" in ast_text(display)
         assert "Smith and colleagues" in tts
         assert "(Smith et al.)" not in tts
 
     def test_yap_show_creates_display_only_zone(self):
         """Content inside yap-show is excluded from TTS, including nested yap-speak."""
-        html, tts = get_display_and_tts("<yap-show>visible <yap-speak>inner</yap-speak></yap-show>")
-        # Display shows the visible content
-        assert "visible" in html
-        # TTS gets nothing from inside yap-show (inner yap-speak is suppressed)
+        display, tts = get_display_and_tts("<yap-show>visible <yap-speak>inner</yap-speak></yap-show>")
+        assert "visible" in ast_text(display)
         assert "inner" not in tts
         assert "visible" not in tts
 
     def test_yap_show_with_math_inside(self):
         """Math inside yap-show is displayed but not spoken."""
-        html, tts = get_display_and_tts(r"<yap-show>see $\alpha$</yap-show>")
-        # Display shows math
-        assert "alpha" in html or "math-inline" in html
-        # TTS is empty (or just whitespace)
+        display, tts = get_display_and_tts(r"<yap-show>see $\alpha$</yap-show>")
+        assert ast_contains(display, "show")
         assert not tts.strip() or "alpha" not in tts
 
     def test_yap_show_with_links(self):
         """yap-show supports links inside."""
-        html, tts = get_display_and_tts("Check <yap-show>[the docs](http://example.com)</yap-show> for details.")
-        assert "the docs" in html or "example.com" in html
+        display, tts = get_display_and_tts("Check <yap-show>[the docs](http://example.com)</yap-show> for details.")
+        display_text = ast_text(display)
+        assert "the docs" in display_text or "example.com" in display_text
         assert "the docs" not in tts
         assert "Check" in tts and "details" in tts
 
@@ -268,7 +265,8 @@ class TestYapCap:
         doc = transform(ast)
         block = doc.blocks[0]
         assert isinstance(block, ImageBlock)
-        assert block.caption == "Figure 1 caption"
+        audio = doc.get_audio_blocks()
+        assert audio and "Figure 1 caption" in audio[0]
 
     def test_caption_used_for_tts(self):
         """Caption is used for TTS (not alt text when caption present)."""
@@ -285,9 +283,9 @@ class TestYapCap:
         doc = transform(ast)
         block = doc.blocks[0]
         assert isinstance(block, ImageBlock)
-        # Display caption includes math
-        assert r"$\beta$" in block.caption or "beta" in block.caption
-        # TTS uses yap-speak
+        # AST has math node
+        chunk_ast = [n for c in block.audio_chunks for n in c.ast]
+        assert ast_contains(chunk_ast, "math_inline")
         audio = doc.get_audio_blocks()
         assert audio and "beta" in audio[0]
 
@@ -297,9 +295,9 @@ class TestYapCap:
         ast = parse_markdown(md)
         doc = transform(ast)
         block = doc.blocks[0]
-        # Display caption includes [1]
-        assert "[1]" in block.caption
-        # TTS excludes [1]
+        # [1] is in AST (ShowContent) but not in TTS
+        chunk_ast = [n for c in block.audio_chunks for n in c.ast]
+        assert "[1]" in ast_text(chunk_ast)
         audio = doc.get_audio_blocks()
         assert audio and "[1]" not in audio[0]
         assert "Result" in audio[0] and "analysis" in audio[0]
@@ -310,9 +308,8 @@ class TestYapCap:
         ast = parse_markdown(md)
         doc = transform(ast)
         block = doc.blocks[0]
-        # Display: "From (Smith, 2020)"
-        assert "(Smith, 2020)" in block.caption
-        # TTS: "From Smith"
+        chunk_ast = [n for c in block.audio_chunks for n in c.ast]
+        assert "(Smith, 2020)" in ast_text(chunk_ast)
         audio = doc.get_audio_blocks()
         assert audio and "Smith" in audio[0]
         assert "(Smith, 2020)" not in audio[0]
@@ -326,19 +323,19 @@ class TestTagComposition:
 
     def test_show_speak_adjacent(self):
         """Adjacent yap-show and yap-speak produce display/speak split."""
-        html, tts = get_display_and_tts("<yap-show>DISPLAY</yap-show><yap-speak>SPEAK</yap-speak>")
-        assert "DISPLAY" in html
+        display, tts = get_display_and_tts("<yap-show>DISPLAY</yap-show><yap-speak>SPEAK</yap-speak>")
+        display_text = ast_text(display)
+        assert "DISPLAY" in display_text
         assert "DISPLAY" not in tts
         assert "SPEAK" in tts
-        assert "SPEAK" not in html
+        assert "SPEAK" not in display_text
 
     def test_math_show_speak_chain(self):
         """Complex: math followed by show+speak."""
         md = r"$x$<yap-show>=$y$</yap-show><yap-speak>x equals y</yap-speak>"
-        html, tts = get_display_and_tts(md)
-        # Display: x = y (as math)
-        assert "=" in html or "y" in html
-        # TTS: "x equals y"
+        display, tts = get_display_and_tts(md)
+        display_text = ast_text(display)
+        assert "=" in display_text or "y" in display_text
         assert "x equals y" in tts
 
     def test_nested_in_caption(self):
@@ -347,8 +344,10 @@ class TestTagComposition:
         ast = parse_markdown(md)
         doc = transform(ast)
         block = doc.blocks[0]
-        # Caption display includes math and [1]
-        assert "[1]" in block.caption
+        # Caption AST includes math and [1]
+        chunk_ast = [n for c in block.audio_chunks for n in c.ast]
+        assert ast_contains(chunk_ast, "math_inline")
+        assert "[1]" in ast_text(chunk_ast)
         # TTS: "Fig 1: alpha" (no [1], math replaced)
         audio = doc.get_audio_blocks()
         assert audio
@@ -425,15 +424,6 @@ class TestUniversalSplitting:
         para_blocks = [b for b in doc.blocks if b.type == "paragraph"]
         assert len(para_blocks) == 1
 
-    def test_split_paragraph_html_has_span_wrappers(self):
-        """Split paragraph HTML contains span wrappers with audio indices."""
-        text = "First sentence here. Second sentence here. Third sentence here."
-        ast = parse_markdown(text)
-        doc = transform(ast, max_block_chars=30)
-        block = doc.blocks[0]
-        # HTML should have data-audio-idx spans
-        assert "data-audio-idx" in block.html or "data-audio-block-idx" in block.html
-
     def test_list_item_splits(self):
         """Long list item splits into multiple audio chunks."""
         md = "- This is a very long list item. It contains multiple sentences. And should split."
@@ -467,9 +457,8 @@ class TestUniversalSplitting:
         ast = parse_markdown(text)
         doc = transform(ast, max_block_chars=40)
         block = doc.blocks[0]
-        # If split, check that HTML still has strong tags
         if len(block.audio_chunks) > 1:
-            assert "<strong>" in block.html
+            assert any(ast_contains(chunk.ast, "strong") for chunk in block.audio_chunks)
 
 
 # === 8. EDGE CASES & MALFORMED INPUT ===
@@ -480,15 +469,13 @@ class TestEdgeCases:
 
     def test_unclosed_yap_speak(self):
         """Unclosed yap-speak is treated as text."""
-        html, tts = get_display_and_tts("Text <yap-speak>unclosed")
-        # Should not crash
-        assert "Text" in tts or "Text" in html
+        display, tts = get_display_and_tts("Text <yap-speak>unclosed")
+        assert "Text" in tts or "Text" in ast_text(display)
 
     def test_unclosed_yap_show(self):
         """Unclosed yap-show is treated as text."""
-        html, tts = get_display_and_tts("Text <yap-show>unclosed")
-        # Should not crash
-        assert "Text" in tts or "Text" in html
+        display, tts = get_display_and_tts("Text <yap-show>unclosed")
+        assert "Text" in tts or "Text" in ast_text(display)
 
     def test_unclosed_yap_cap(self):
         """Unclosed yap-cap is treated as text."""
@@ -500,21 +487,15 @@ class TestEdgeCases:
 
     def test_nested_same_tags(self):
         """Nested same tags treated as text (undefined behavior)."""
-        html, tts = get_display_and_tts("<yap-show><yap-show>x</yap-show></yap-show>")
-        # Should not crash, exact behavior undefined
-        assert True  # Just verify no exception
+        get_display_and_tts("<yap-show><yap-show>x</yap-show></yap-show>")
 
     def test_empty_tags(self):
         """Empty tags are valid."""
-        html, tts = get_display_and_tts("<yap-show></yap-show><yap-speak></yap-speak>")
-        # Should produce empty or minimal output
-        assert True  # No crash
+        get_display_and_tts("<yap-show></yap-show><yap-speak></yap-speak>")
 
     def test_tags_with_only_whitespace(self):
         """Tags with only whitespace inside."""
-        html, tts = get_display_and_tts("<yap-show>   </yap-show>")
-        # Whitespace in display
-        assert True  # No crash
+        get_display_and_tts("<yap-show>   </yap-show>")
 
     def test_double_spaces_normalized(self):
         """Double spaces from tag removal are normalized (if implemented)."""
@@ -633,15 +614,15 @@ class TestBasicBlockTypes:
 
     def test_bold_italic_in_paragraph(self):
         """Formatting in paragraph preserved in display, stripped for TTS."""
-        html, tts = get_display_and_tts("This is **bold** and *italic* text.")
-        assert "<strong>bold</strong>" in html
-        assert "<em>italic</em>" in html
+        display, tts = get_display_and_tts("This is **bold** and *italic* text.")
+        assert ast_contains(display, "strong")
+        assert ast_contains(display, "emphasis")
         assert tts == "This is bold and italic text."
 
     def test_link_in_paragraph(self):
         """Links preserved in display, text used for TTS."""
-        html, tts = get_display_and_tts("Visit [Google](https://google.com) now.")
-        assert "href=" in html
+        display, tts = get_display_and_tts("Visit [Google](https://google.com) now.")
+        assert ast_contains(display, "link")
         assert tts == "Visit Google now."
 
 
@@ -658,11 +639,10 @@ class TestFullDocument:
             "the value $\\alpha$<yap-speak>alpha</yap-speak> is crucial "
             "<yap-show>[1, 2]</yap-show>."
         )
-        html, tts = get_display_and_tts(md)
-        # Display has citations
-        assert "(Smith, 2020)" in html
-        assert "[1, 2]" in html
-        # TTS is clean
+        display, tts = get_display_and_tts(md)
+        display_text = ast_text(display)
+        assert "(Smith, 2020)" in display_text
+        assert "[1, 2]" in display_text
         assert "Smith" in tts
         assert "alpha" in tts
         assert "[1, 2]" not in tts
@@ -680,10 +660,10 @@ class TestFullDocument:
         doc = transform(ast)
         block = doc.blocks[0]
         assert isinstance(block, ImageBlock)
-        # Caption has everything
-        assert "Figure 1" in block.caption
-        assert "[3]" in block.caption
-        # TTS is clean
+        # Caption AST has everything
+        chunk_ast = [n for c in block.audio_chunks for n in c.ast]
+        assert "Figure 1" in ast_text(chunk_ast)
+        assert "(cf. [3])" in ast_text(chunk_ast)
         audio = doc.get_audio_blocks()
         assert audio
         assert "lambda" in audio[0]
@@ -867,8 +847,8 @@ class TestFootnotes:
         assert footnotes.items[0].label == "1"
         assert footnotes.items[0].has_ref is True
 
-    def test_footnote_ref_in_paragraph_html(self):
-        """Footnote ref renders as superscript in HTML."""
+    def test_footnote_ref_in_paragraph_ast(self):
+        """Footnote ref appears in paragraph AST."""
         md = """Text with[^1] footnote.
 
 [^1]: Content.
@@ -876,8 +856,7 @@ class TestFootnotes:
         ast = parse_markdown(md)
         doc = transform(ast)
         para = doc.blocks[0]
-        assert "footnote-ref" in para.html
-        assert "[1]" in para.html
+        assert ast_contains(para.ast, "footnote_ref")
 
     def test_footnote_ref_silent_in_tts(self):
         """Footnote ref does not contribute to TTS."""
@@ -960,8 +939,7 @@ class TestFootnotes:
         ast = parse_markdown(md)
         doc = transform(ast)
         para = doc.blocks[0]
-        # Should be literal text, not a footnote ref
-        assert "[^missing]" in para.html
+        assert "[^missing]" in ast_text(para.ast)
         # No footnotes block (no valid footnotes)
         assert len(doc.blocks) == 1
 
@@ -1049,9 +1027,9 @@ class TestZeroLengthAtBoundaries:
         # Paragraph should be split
         assert len(para.audio_chunks) > 1, "Paragraph should split into multiple chunks"
 
-        # Footnote ref must appear in HTML
-        assert "footnote-ref" in para.html, "Footnote ref missing from split paragraph"
-        assert 'href="#fn-1"' in para.html, "Footnote link missing"
+        # Footnote ref must appear in some chunk's AST
+        all_chunk_ast = [node for chunk in para.audio_chunks for node in chunk.ast]
+        assert ast_contains(all_chunk_ast, "footnote_ref"), "Footnote ref missing from split paragraph"
 
     def test_footnote_ref_at_start_of_paragraph(self):
         """Footnote ref at the very start of a paragraph is preserved."""
@@ -1062,7 +1040,7 @@ class TestZeroLengthAtBoundaries:
         ast = parse_markdown(md)
         doc = transform(ast)
         para = doc.blocks[0]
-        assert "footnote-ref" in para.html
+        assert ast_contains(para.ast, "footnote_ref")
 
     def test_math_at_end_of_split_paragraph(self):
         """Math at the end of a split paragraph is preserved."""
@@ -1073,8 +1051,8 @@ class TestZeroLengthAtBoundaries:
         para = doc.blocks[0]
 
         assert len(para.audio_chunks) > 1, "Paragraph should split"
-        # Math should be in HTML (as KaTeX or raw)
-        assert "x^2" in para.html or "katex" in para.html.lower()
+        all_chunk_ast = [node for chunk in para.audio_chunks for node in chunk.ast]
+        assert ast_contains(all_chunk_ast, "math_inline")
 
     def test_math_at_start_of_split_paragraph(self):
         """Math at the start of a split paragraph is preserved."""
@@ -1085,7 +1063,8 @@ class TestZeroLengthAtBoundaries:
         para = doc.blocks[0]
 
         assert len(para.audio_chunks) > 1, "Paragraph should split"
-        assert "x^2" in para.html or "katex" in para.html.lower()
+        all_chunk_ast = [node for chunk in para.audio_chunks for node in chunk.ast]
+        assert ast_contains(all_chunk_ast, "math_inline")
 
     def test_multiple_footnotes_in_split_paragraph(self):
         """Multiple footnotes across a split paragraph are all preserved."""
@@ -1102,8 +1081,10 @@ class TestZeroLengthAtBoundaries:
         doc = transform(ast, max_block_chars=100)
         para = doc.blocks[0]
 
-        # All three footnote refs should be in HTML
-        assert para.html.count("footnote-ref") == 3, f"Expected 3 footnote refs, got {para.html.count('footnote-ref')}"
+        # All three footnote refs should be across chunk ASTs
+        all_chunk_ast = [node for chunk in para.audio_chunks for node in chunk.ast]
+        ref_count = sum(1 for node in all_chunk_ast if hasattr(node, "type") and node.type == "footnote_ref")
+        assert ref_count == 3, f"Expected 3 footnote refs, got {ref_count}"
 
     def test_footnote_ref_between_chunks(self):
         """Footnote ref exactly at a chunk boundary (between words) is preserved."""
@@ -1117,7 +1098,8 @@ class TestZeroLengthAtBoundaries:
         ast = parse_markdown(md)
         doc = transform(ast, max_block_chars=130)
         para = doc.blocks[0]
-        assert "footnote-ref" in para.html
+        all_chunk_ast = [node for chunk in para.audio_chunks for node in chunk.ast]
+        assert ast_contains(all_chunk_ast, "footnote_ref")
 
     def test_math_with_yap_speak_at_boundary(self):
         """Math followed by yap-speak at chunk boundary works correctly."""
@@ -1127,8 +1109,7 @@ class TestZeroLengthAtBoundaries:
         doc = transform(ast, max_block_chars=160)
         para = doc.blocks[0]
 
-        # Math should be displayed, speak text should be in TTS
-        assert "E=mc^2" in para.html or "mc" in para.html
+        assert ast_contains(para.ast, "math_inline")
         tts_text = " ".join(c.text for c in para.audio_chunks)
         assert "E equals m c squared" in tts_text
 
@@ -1146,11 +1127,13 @@ More text[^1][^2] here.
 
         # First paragraph should have all three math elements
         para1 = doc.blocks[0]
-        assert "a" in para1.html and "b" in para1.html and "c" in para1.html
+        math_nodes = [n for n in para1.ast if hasattr(n, "type") and n.type == "math_inline"]
+        assert len(math_nodes) == 3
 
         # Second paragraph should have both footnote refs
         para2 = doc.blocks[1]
-        assert para2.html.count("footnote-ref") == 2
+        ref_nodes = [n for n in para2.ast if hasattr(n, "type") and n.type == "footnote_ref"]
+        assert len(ref_nodes) == 2
 
     def test_yap_show_at_end_of_split_paragraph(self):
         """yap-show content at end of split paragraph is preserved.
@@ -1165,12 +1148,12 @@ More text[^1][^2] here.
         ast = parse_markdown(md)
         doc = transform(ast, max_block_chars=200)
 
-        # Find the block containing "Project website"
         para = doc.blocks[0]
-        assert "Project website" in para.html
+        assert "Project website" in ast_text(para.ast)
 
-        # Link should be present in HTML (display)
-        assert 'href="https://example.com"' in para.html, "yap-show link should be displayed"
+        # ShowContent with link should be in AST
+        all_chunk_ast = [node for chunk in para.audio_chunks for node in chunk.ast]
+        assert ast_contains(all_chunk_ast, "show"), "yap-show content should be in chunk AST"
 
         # Link should NOT be in TTS
         tts_text = " ".join(c.text for c in para.audio_chunks)
@@ -1198,10 +1181,10 @@ class TestKnownLimitations:
         """
         md = "[click <yap-speak>here for more</yap-speak>](https://example.com)"
         display, tts = get_display_and_tts(md)
+        display_text = ast_text(display)
 
-        # Expected: display shows "click", TTS says "click here for more"
-        assert "here for more" not in display, "yap-speak content should not display"
-        assert "click" in display
+        assert "here for more" not in display_text, "yap-speak content should not display"
+        assert "click" in display_text
         assert "click here for more" in tts
 
     @pytest.mark.xfail(reason="yap-tags inside nested inline elements not supported")
@@ -1212,9 +1195,9 @@ class TestKnownLimitations:
         """
         md = "[visible <yap-show>(ref)</yap-show>](url)"
         display, tts = get_display_and_tts(md)
+        display_text = ast_text(display)
 
-        # Expected: display shows "visible (ref)", TTS says "visible"
-        assert "(ref)" in display
+        assert "(ref)" in display_text
         assert "(ref)" not in tts, "yap-show content should not be in TTS"
 
     @pytest.mark.xfail(reason="yap-tags inside nested inline elements not supported")
@@ -1225,8 +1208,9 @@ class TestKnownLimitations:
         """
         md = "[**bold <yap-speak>spoken</yap-speak>**](url)"
         display, tts = get_display_and_tts(md)
+        display_text = ast_text(display)
 
-        assert "spoken" not in display, "yap-speak content should not display"
+        assert "spoken" not in display_text, "yap-speak content should not display"
         assert "bold spoken" in tts
 
     @pytest.mark.xfail(reason="callout titles are plain strings, footnote refs get stripped")

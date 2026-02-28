@@ -105,7 +105,6 @@ type InlineContent =
   | { type: "list"; ordered: boolean; start?: number; items: InlineContent[][] };  // Nested list
 
 interface ListItem {
-  html: string;
   ast: InlineContent[];
   audio_chunks: AudioChunk[];
 }
@@ -114,7 +113,6 @@ interface HeadingBlock {
   type: "heading";
   id: string;
   level: 1 | 2 | 3 | 4 | 5 | 6;
-  html: string;
   ast: InlineContent[];
   audio_chunks: AudioChunk[];
 }
@@ -122,7 +120,6 @@ interface HeadingBlock {
 interface ParagraphBlock {
   type: "paragraph";
   id: string;
-  html: string;  // Contains <span data-audio-idx="N"> wrappers if split
   ast: InlineContent[];
   audio_chunks: AudioChunk[];
 }
@@ -178,8 +175,6 @@ interface ImageBlock {
   id: string;
   src: string;
   alt: string;
-  caption?: string;  // Display caption (with LaTeX)
-  caption_html?: string;  // Caption with span wrappers if split
   title?: string;
   width_pct?: number;  // Figure width as % of page (from YOLO detection)
   row_group?: string;  // "row0", "row1", etc. - figures in same row are side-by-side

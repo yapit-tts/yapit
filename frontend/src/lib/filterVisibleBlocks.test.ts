@@ -14,7 +14,6 @@ function makeHeading(
     type: "heading",
     id,
     level,
-    html: id,
     ast: [{ type: "text", content: id }],
     audio_chunks: [{ text: id, audio_block_idx: audioIdx }],
   } as ContentBlock;
@@ -24,7 +23,6 @@ function makeParagraph(id: string, audioIdx: number): ContentBlock {
   return {
     type: "paragraph",
     id,
-    html: "text",
     ast: [{ type: "text", content: "text" }],
     audio_chunks: [{ text: "text", audio_block_idx: audioIdx }],
   } as ContentBlock;
@@ -34,7 +32,6 @@ function makeDisplayOnly(id: string, type: string = "paragraph"): ContentBlock {
   return {
     type,
     id,
-    html: "display-only",
     ast: [{ type: "text", content: "display-only" }],
     audio_chunks: [],
   } as ContentBlock;

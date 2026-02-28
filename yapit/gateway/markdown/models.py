@@ -143,7 +143,6 @@ class HeadingBlock(BaseModel):
     type: Literal["heading"] = "heading"
     id: str
     level: Literal[1, 2, 3, 4, 5, 6]
-    html: str
     ast: list[InlineContent]
     audio_chunks: list[AudioChunk] = Field(default_factory=list)
 
@@ -151,7 +150,6 @@ class HeadingBlock(BaseModel):
 class ParagraphBlock(BaseModel):
     type: Literal["paragraph"] = "paragraph"
     id: str
-    html: str  # Contains <span data-audio-idx="N"> wrappers if split
     ast: list[InlineContent]
     audio_chunks: list[AudioChunk] = Field(default_factory=list)
 
@@ -173,7 +171,6 @@ class MathBlock(BaseModel):
 
 
 class TableCell(BaseModel):
-    html: str
     ast: list["InlineContent"] = Field(default_factory=list)
 
 
@@ -192,7 +189,6 @@ class ThematicBreak(BaseModel):
 
 
 class ListItem(BaseModel):
-    html: str  # Contains <span data-audio-idx="N"> wrappers if split
     ast: list[InlineContent]
     audio_chunks: list[AudioChunk] = Field(default_factory=list)
 
@@ -211,8 +207,6 @@ class ImageBlock(BaseModel):
     id: str
     src: str
     alt: str
-    caption: str | None = None  # Display caption (with LaTeX)
-    caption_html: str | None = None  # Caption with span wrappers if split
     title: str | None = None
     width_pct: float | None = None
     row_group: str | None = None

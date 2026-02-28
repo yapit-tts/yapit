@@ -7,7 +7,6 @@ Core concepts:
 - Math: display only (silent unless followed by yap-speak)
 
 All audio content respects max_block_chars splitting.
-Split content gets <span data-audio-idx="N"> wrappers in HTML.
 """
 
 import re
@@ -77,23 +76,22 @@ def _node_contains_inline_tag(node: SyntaxTreeNode, tag: str) -> bool:
 
 
 class InlineProcessor:
-    """Processes inline content to produce display HTML and TTS text.
+    """Extracts TTS text from inline content.
 
-    Handles yap-show (display only), yap-speak (TTS only), and math (display only).
+    Handles yap-show (display only — skipped for TTS), yap-speak (TTS only),
+    and math (display only — silent).
     """
 
     def __init__(self) -> None:
-        self.display_parts: list[str] = []
         self.tts_parts: list[str] = []
         self.in_show: int = 0  # Depth counter for nested show tags
 
-    def process(self, nodes: list[SyntaxTreeNode]) -> tuple[str, str]:
-        """Process nodes and return (display_html, tts_text)."""
-        self.display_parts = []
+    def process(self, nodes: list[SyntaxTreeNode]) -> str:
+        """Process nodes and return TTS text."""
         self.tts_parts = []
         self.in_show = 0
         self._process_nodes(nodes)
-        return "".join(self.display_parts), "".join(self.tts_parts)
+        return "".join(self.tts_parts)
 
     def _process_nodes(self, nodes: list[SyntaxTreeNode]) -> None:
         """Walk through nodes, routing content appropriately."""
@@ -137,63 +135,9 @@ class InlineProcessor:
             i += 1
 
     def _process_node(self, node: SyntaxTreeNode) -> None:
-        """Process a single node, adding to display and/or TTS."""
-        display_html = self._node_to_html(node)
-        tts_text = self._node_to_tts(node)
-
-        # Always add to display
-        self.display_parts.append(display_html)
-
-        # Only add to TTS if not in show zone
+        """Process a single node, adding to TTS if not in show zone."""
         if self.in_show == 0:
-            self.tts_parts.append(tts_text)
-
-    def _node_to_html(self, node: SyntaxTreeNode) -> str:
-        """Convert node to HTML string."""
-        if node.type == "text":
-            return node.content or ""
-        elif node.type == "strong":
-            inner = "".join(self._node_to_html(c) for c in node.children)
-            return f"<strong>{inner}</strong>"
-        elif node.type == "em":
-            inner = "".join(self._node_to_html(c) for c in node.children)
-            return f"<em>{inner}</em>"
-        elif node.type == "s":
-            inner = "".join(self._node_to_html(c) for c in node.children)
-            return f"<s>{inner}</s>"
-        elif node.type == "code_inline":
-            return f"<code>{node.content or ''}</code>"
-        elif node.type == "link":
-            href = node.attrs.get("href", "")
-            title = node.attrs.get("title", "")
-            inner = "".join(self._node_to_html(c) for c in node.children)
-            title_attr = f' title="{title}"' if title else ""
-            return f'<a href="{href}"{title_attr}>{inner}</a>'
-        elif node.type == "image":
-            src = node.attrs.get("src", "")
-            alt = node.content or ""
-            title = node.attrs.get("title", "")
-            title_attr = f' title="{title}"' if title else ""
-            return f'<img src="{src}" alt="{alt}"{title_attr} />'
-        elif node.type == "softbreak":
-            return " "
-        elif node.type == "hardbreak":
-            return "<br />"
-        elif node.type == "math_inline":
-            return f'<span class="math-inline">{node.content or ""}</span>'
-        elif node.type == "html_inline":
-            # Yap tags are handled by the caller (_process_nodes); any html_inline
-            # reaching here is raw user HTML — drop it to prevent XSS.
-            return ""
-        elif node.type == "footnote_ref":
-            # Footnote reference - render as superscript link
-            label = node.meta.get("label", "") if node.meta else ""
-            return f'<sup class="footnote-ref"><a href="#fn-{label}" id="fnref-{label}">[{label}]</a></sup>'
-        elif node.type == "footnote_anchor":
-            # Back-link anchor in footnote content - skip in HTML
-            return ""
-        else:
-            return node.content or ""
+            self.tts_parts.append(self._node_to_tts(node))
 
     def _node_to_tts(self, node: SyntaxTreeNode) -> str:
         """Extract TTS text from node. Math and footnote refs are silent."""
@@ -245,8 +189,8 @@ class InlineProcessor:
 # === CAPTION PROCESSING ===
 
 
-def process_caption(nodes: list[SyntaxTreeNode]) -> tuple[str, str]:
-    """Process caption nodes to get (display_caption, tts_caption).
+def process_caption(nodes: list[SyntaxTreeNode]) -> str:
+    """Process caption nodes to get TTS text.
 
     Captions support full inline markdown including yap-show and yap-speak.
     """
@@ -575,33 +519,28 @@ class TextSplitter:
 
 def split_with_spans(
     text: str,
-    html: str,
     ast: list[InlineContent],
     splitter: TextSplitter,
     start_idx: int,
-) -> tuple[str, list[AudioChunk]]:
-    """Split text and wrap HTML in span tags, preserving formatting.
+) -> list[AudioChunk]:
+    """Split text into audio chunks, slicing AST for each chunk.
 
-    Returns (html_with_spans, audio_chunks).
-    If text doesn't need splitting, returns original HTML (no spans).
+    Returns audio_chunks with per-chunk AST slices.
     """
     text = text.strip()
     if not text:
-        return html, []
+        return []
 
     chunk_ranges = splitter.get_chunk_ranges(text)
 
     if len(chunk_ranges) <= 1:
-        # No splitting needed
-        return html, [AudioChunk(text=text, audio_block_idx=start_idx, ast=ast)]
+        return [AudioChunk(text=text, audio_block_idx=start_idx, ast=ast)]
 
     # AST may have trailing 0-length nodes (math, footnote refs) past the stripped text length.
     # Extend last chunk's end to include them.
     ast_len = sum(get_inline_length(n) for n in ast)
 
-    # Slice AST for each chunk and render to HTML with span wrappers
     audio_chunks: list[AudioChunk] = []
-    html_parts: list[str] = []
 
     for i, (chunk_start, chunk_end) in enumerate(chunk_ranges):
         chunk_text = text[chunk_start:chunk_end].strip()
@@ -611,14 +550,10 @@ def split_with_spans(
         is_last = i == len(chunk_ranges) - 1
         ast_end = max(chunk_end, ast_len) if is_last else chunk_end
 
-        # Slice AST and render to HTML
         sliced_ast = slice_ast(ast, chunk_start, ast_end)
-        chunk_html = render_ast_to_html(sliced_ast)
-
-        html_parts.append(f'<span data-audio-idx="{idx}">{chunk_html}</span>')
         audio_chunks.append(AudioChunk(text=chunk_text, audio_block_idx=idx, ast=sliced_ast))
 
-    return " ".join(html_parts), audio_chunks
+    return audio_chunks
 
 
 # === AST SLICING ===
@@ -742,55 +677,6 @@ def get_inline_length(node: InlineContent) -> int:
             item_lengths = [sum(get_inline_length(child) for child in item) for item in node.items]
             return sum(item_lengths) + max(0, len(node.items) - 1)
     return 0
-
-
-def render_ast_to_html(ast: list[InlineContent]) -> str:
-    """Render our InlineContent AST back to HTML."""
-    return "".join(render_inline_content_html(node) for node in ast)
-
-
-def render_inline_content_html(node: InlineContent) -> str:
-    """Render a single InlineContent node to HTML."""
-    match node:
-        case TextContent():
-            return node.content
-        case CodeSpanContent():
-            return f"<code>{node.content}</code>"
-        case StrongContent():
-            return f"<strong>{render_ast_to_html(node.content)}</strong>"
-        case EmphasisContent():
-            return f"<em>{render_ast_to_html(node.content)}</em>"
-        case StrikethroughContent():
-            return f"<s>{render_ast_to_html(node.content)}</s>"
-        case LinkContent():
-            inner = render_ast_to_html(node.content)
-            title_attr = f' title="{node.title}"' if node.title else ""
-            return f'<a href="{node.href}"{title_attr}>{inner}</a>'
-        case InlineImageContent():
-            return f'<img src="{node.src}" alt="{node.alt}" />'
-        case MathInlineContent():
-            return f'<span class="math-inline">{node.content}</span>'
-        case SpeakContent():
-            # Speak content is TTS-only, doesn't render to display HTML
-            return ""
-        case HardbreakContent():
-            return "<br />"
-        case FootnoteRefContent():
-            # Render as superscript link to footnote, with id for back-navigation
-            if node.has_content:
-                return f'<sup class="footnote-ref"><a href="#fn-{node.label}" id="fnref-{node.label}">[{node.label}]</a></sup>'
-            else:
-                # No matching footnote - render as plain text (no link)
-                return f'<sup class="footnote-ref-orphan">[{node.label}]</sup>'
-        case ShowContent():
-            # ShowContent renders its inner content (display-only)
-            return render_ast_to_html(node.content)
-        case ListContent():
-            tag = "ol" if node.ordered else "ul"
-            start_attr = f' start="{node.start}"' if node.ordered and node.start else ""
-            items_html = "".join(f"<li>{render_ast_to_html(item)}</li>" for item in node.items)
-            return f"<{tag}{start_attr}>{items_html}</{tag}>"
-    return ""
 
 
 # === DOCUMENT TRANSFORMER ===
@@ -1077,19 +963,18 @@ class DocumentTransformer:
         children = inline.children if inline else []
 
         processor = InlineProcessor()
-        html, tts_text = processor.process(children)
+        tts_text = processor.process(children)
         ast = transform_inline_to_ast(children)
 
         audio_chunks: list[AudioChunk] = []
         if tts_text.strip():
-            html, audio_chunks = split_with_spans(tts_text, html, ast, self.splitter, self._audio_idx_counter)
+            audio_chunks = split_with_spans(tts_text, ast, self.splitter, self._audio_idx_counter)
             self._audio_idx_counter += len(audio_chunks)
 
         return [
             HeadingBlock(
                 id=self._next_block_id(),
                 level=level,
-                html=html,
                 ast=ast,
                 audio_chunks=audio_chunks,
             )
@@ -1105,18 +990,17 @@ class DocumentTransformer:
             return [self._create_image_block(children)]
 
         processor = InlineProcessor()
-        html, tts_text = processor.process(children)
+        tts_text = processor.process(children)
         ast = transform_inline_to_ast(children)
 
         audio_chunks: list[AudioChunk] = []
         if tts_text.strip():
-            html, audio_chunks = split_with_spans(tts_text, html, ast, self.splitter, self._audio_idx_counter)
+            audio_chunks = split_with_spans(tts_text, ast, self.splitter, self._audio_idx_counter)
             self._audio_idx_counter += len(audio_chunks)
 
         return [
             ParagraphBlock(
                 id=self._next_block_id(),
-                html=html,
                 ast=ast,
                 audio_chunks=audio_chunks,
             )
@@ -1166,34 +1050,26 @@ class DocumentTransformer:
 
         # Extract caption
         caption_nodes, _ = extract_caption_nodes(children, img_idx + 1)
-        caption = ""
-        caption_html = ""
         caption_ast: list[InlineContent] = []
         tts_text = ""
 
         if caption_nodes:
-            caption, tts_text = process_caption(caption_nodes)
-            caption_html = caption  # Will be updated if splitting needed
+            tts_text = process_caption(caption_nodes)
             caption_ast = transform_inline_to_ast(caption_nodes)
         else:
             tts_text = alt  # Fall back to alt text
-            # For plain alt text, create simple text AST
             caption_ast = [TextContent(content=alt)] if alt else []
 
         # Create audio chunks
         audio_chunks: list[AudioChunk] = []
         if tts_text.strip():
-            caption_html, audio_chunks = split_with_spans(
-                tts_text, caption_html or tts_text, caption_ast, self.splitter, self._audio_idx_counter
-            )
+            audio_chunks = split_with_spans(tts_text, caption_ast, self.splitter, self._audio_idx_counter)
             self._audio_idx_counter += len(audio_chunks)
 
         return ImageBlock(
             id=self._next_block_id(),
             src=clean_src,
             alt=alt,
-            caption=caption if caption else None,
-            caption_html=caption_html if caption_nodes and len(audio_chunks) > 1 else None,
             title=title,
             width_pct=width_pct,
             row_group=row_group,
@@ -1223,8 +1099,8 @@ class DocumentTransformer:
         items: list[ListItem] = []
 
         for list_item in node.children:
-            # Collect segments in document order: (is_list, html, tts, ast)
-            segments: list[tuple[bool, str, str, list[InlineContent]]] = []
+            # Collect segments in document order: (is_list, tts, ast)
+            segments: list[tuple[bool, str, list[InlineContent]]] = []
             item_ast: list[InlineContent] = []
             has_nested = False
 
@@ -1234,46 +1110,39 @@ class DocumentTransformer:
                     children = inline.children if inline else []
 
                     processor = InlineProcessor()
-                    html, tts = processor.process(children)
-                    segments.append((False, html, tts, transform_inline_to_ast(children)))
+                    tts = processor.process(children)
+                    segments.append((False, tts, transform_inline_to_ast(children)))
                     item_ast.extend(transform_inline_to_ast(children))
 
                 elif child.type in ("bullet_list", "ordered_list"):
                     has_nested = True
-                    nested_html, nested_tts = self._render_nested_list(child)
+                    nested_tts = self._render_nested_list(child)
                     nested_ast_node = self._build_nested_list_ast(child)
-                    segments.append((True, nested_html, nested_tts, [nested_ast_node]))
+                    segments.append((True, nested_tts, [nested_ast_node]))
                     if item_ast:
                         item_ast.append(TextContent(content=" "))
                     item_ast.append(nested_ast_node)
 
-            full_html = " ".join(seg_html for _, seg_html, _, _ in segments)
-
             if not has_nested:
                 # No nested lists: combine and split as one (existing behavior)
-                full_tts = " ".join(seg_tts for _, _, seg_tts, _ in segments)
+                full_tts = " ".join(seg_tts for _, seg_tts, _ in segments)
                 audio_chunks: list[AudioChunk] = []
                 if full_tts.strip():
-                    full_html, audio_chunks = split_with_spans(
-                        full_tts, full_html, item_ast, self.splitter, self._audio_idx_counter
-                    )
+                    audio_chunks = split_with_spans(full_tts, item_ast, self.splitter, self._audio_idx_counter)
                     self._audio_idx_counter += len(audio_chunks)
             else:
                 # Has nested lists: split each segment independently so chunk
                 # boundaries align with the paragraph→nested-list visual boundary.
                 # Prevents the "highlight 1 behind" bug where a chunk straddles both.
                 audio_chunks = []
-                for _, seg_html, seg_tts, seg_ast in segments:
+                for _, seg_tts, seg_ast in segments:
                     if seg_tts.strip():
-                        _, seg_chunks = split_with_spans(
-                            seg_tts, seg_html, seg_ast, self.splitter, self._audio_idx_counter
-                        )
+                        seg_chunks = split_with_spans(seg_tts, seg_ast, self.splitter, self._audio_idx_counter)
                         self._audio_idx_counter += len(seg_chunks)
                         audio_chunks.extend(seg_chunks)
 
             items.append(
                 ListItem(
-                    html=full_html,
                     ast=item_ast,
                     audio_chunks=audio_chunks,
                 )
@@ -1288,17 +1157,11 @@ class DocumentTransformer:
             )
         ]
 
-    def _render_nested_list(self, node: SyntaxTreeNode) -> tuple[str, str]:
-        """Render nested list to HTML and TTS text."""
-        ordered = node.type == "ordered_list"
-        tag = "ol" if ordered else "ul"
-        start_attr = f' start="{node.attrs.get("start")}"' if ordered and node.attrs.get("start") else ""
-
-        html_parts: list[str] = []
+    def _render_nested_list(self, node: SyntaxTreeNode) -> str:
+        """Extract TTS text from nested list."""
         tts_parts: list[str] = []
 
         for list_item in node.children:
-            item_html: list[str] = []
             item_tts: list[str] = []
 
             for child in list_item.children:
@@ -1306,20 +1169,15 @@ class DocumentTransformer:
                     inline = child.children[0] if child.children else None
                     children = inline.children if inline else []
                     processor = InlineProcessor()
-                    html, tts = processor.process(children)
-                    item_html.append(html)
+                    tts = processor.process(children)
                     item_tts.append(tts)
                 elif child.type in ("bullet_list", "ordered_list"):
-                    nested_html, nested_tts = self._render_nested_list(child)
-                    item_html.append(nested_html)
+                    nested_tts = self._render_nested_list(child)
                     item_tts.append(nested_tts)
 
-            html_parts.append(f"<li>{' '.join(item_html)}</li>")
             tts_parts.append(" ".join(item_tts))
 
-        html = f"<{tag}{start_attr}>{''.join(html_parts)}</{tag}>"
-        tts = " ".join(tts_parts)
-        return html, tts
+        return " ".join(tts_parts)
 
     def _build_nested_list_ast(self, node: SyntaxTreeNode) -> ListContent:
         """Build a ListContent AST node from a nested list syntax tree node.
@@ -1394,18 +1252,17 @@ class DocumentTransformer:
         # If there's content after the callout marker line in first paragraph, transform it
         if first_para_content_nodes:
             processor = InlineProcessor()
-            html, tts_text = processor.process(first_para_content_nodes)
+            tts_text = processor.process(first_para_content_nodes)
             ast = transform_inline_to_ast(first_para_content_nodes)
 
             audio_chunks: list[AudioChunk] = []
             if tts_text.strip():
-                html, audio_chunks = split_with_spans(tts_text, html, ast, self.splitter, self._audio_idx_counter)
+                audio_chunks = split_with_spans(tts_text, ast, self.splitter, self._audio_idx_counter)
                 self._audio_idx_counter += len(audio_chunks)
 
             blocks.append(
                 ParagraphBlock(
                     id=self._next_block_id(),
-                    html=html,
                     ast=ast,
                     audio_chunks=audio_chunks,
                 )
@@ -1569,7 +1426,7 @@ class DocumentTransformer:
         audio_chunks: list[AudioChunk] = []
         if tts_text.strip():
             ast = [TextContent(content=tts_text.strip())]
-            _, audio_chunks = split_with_spans(tts_text, "", ast, self.splitter, self._audio_idx_counter)
+            audio_chunks = split_with_spans(tts_text, ast, self.splitter, self._audio_idx_counter)
             self._audio_idx_counter += len(audio_chunks)
 
         return [
@@ -1592,20 +1449,16 @@ class DocumentTransformer:
                     for th in tr.children:
                         inline = th.children[0] if th.children else None
                         children = inline.children if inline else []
-                        processor = InlineProcessor()
-                        html, _ = processor.process(children)
                         ast = transform_inline_to_ast(children)
-                        headers.append(TableCell(html=html, ast=ast))
+                        headers.append(TableCell(ast=ast))
             elif child.type == "tbody":
                 for tr in child.children:
                     row: list[TableCell] = []
                     for td in tr.children:
                         inline = td.children[0] if td.children else None
                         children = inline.children if inline else []
-                        processor = InlineProcessor()
-                        html, _ = processor.process(children)
                         ast = transform_inline_to_ast(children)
-                        row.append(TableCell(html=html, ast=ast))
+                        row.append(TableCell(ast=ast))
                     rows.append(row)
 
         return [

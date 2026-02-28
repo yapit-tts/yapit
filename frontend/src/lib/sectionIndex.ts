@@ -8,7 +8,6 @@ interface HeadingBlock {
   type: "heading";
   id: string;
   level: 1 | 2 | 3 | 4 | 5 | 6;
-  html: string;
   ast: InlineContent[];
   audio_chunks: AudioChunk[];
 }
