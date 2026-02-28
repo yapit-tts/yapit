@@ -100,7 +100,7 @@ async def _process_result(redis: Redis, result: WorkerResult) -> None:
             document_id=str(result.document_id),
             block_idx=result.block_idx,
         )
-        await _notify_subscribers(redis, result, status="error", error=f"Internal error: {e}")
+        await _notify_subscribers(redis, result, status="error", error="Synthesis failed")
 
 
 async def _handle_success(redis: Redis, result: WorkerResult) -> None:

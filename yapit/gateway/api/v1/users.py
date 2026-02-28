@@ -3,11 +3,12 @@ import hashlib
 import hmac
 import uuid
 from datetime import datetime
+from typing import Annotated
 
 import stripe
 from fastapi import APIRouter, Header, HTTPException, Request, status
 from loguru import logger
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy import func, update
 from sqlmodel import col, delete, select
 
@@ -109,8 +110,11 @@ class PreferencesResponse(BaseModel):
     default_documents_public: bool
 
 
+VoiceSlug = Annotated[str, StringConstraints(max_length=64)]
+
+
 class PreferencesUpdate(BaseModel):
-    pinned_voices: list[str] | None = None
+    pinned_voices: list[VoiceSlug] | None = Field(None, max_length=500)
     auto_import_shared_documents: bool | None = None
     default_documents_public: bool | None = None
 

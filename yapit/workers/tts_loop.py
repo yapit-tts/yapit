@@ -104,7 +104,7 @@ async def run_tts_worker(redis_url: str, model: str, adapter: SynthAdapter, work
                     worker_id=worker_id,
                     processing_time_ms=processing_time_ms,
                     queue_wait_ms=queue_wait_ms,
-                    error=str(e),
+                    error="Synthesis failed",
                 )
 
             finally:
@@ -196,7 +196,7 @@ async def run_api_tts_dispatcher(redis_url: str, model: str, adapter: SynthAdapt
                 worker_id=worker_id,
                 processing_time_ms=processing_time_ms,
                 queue_wait_ms=queue_wait_ms,
-                error=str(e),
+                error="Synthesis failed",
             )
 
         await client.lpush(TTS_RESULTS, worker_result.model_dump_json())

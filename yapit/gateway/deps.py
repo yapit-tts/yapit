@@ -7,7 +7,7 @@ from uuid import UUID
 import stripe
 from fastapi import Depends, HTTPException, Request, status
 from redis.asyncio import Redis
-from sqlmodel import select
+from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from yapit.gateway.auth import authenticate
@@ -99,7 +99,9 @@ async def get_model(
     db: DbSession,
     model_slug: str,
 ) -> TTSModel:
-    model = (await db.exec(select(TTSModel).where(TTSModel.slug == model_slug))).first()
+    model = (
+        await db.exec(select(TTSModel).where(TTSModel.slug == model_slug, col(TTSModel.is_active).is_(True)))
+    ).first()
     if not model:
         raise ResourceNotFoundError(TTSModel.__name__, model_slug)
     return model
@@ -114,7 +116,11 @@ async def get_voice(
     voice_slug: str,
 ) -> Voice:
     voice: Voice | None = (
-        await db.exec(select(Voice).join(TTSModel).where(Voice.slug == voice_slug, TTSModel.slug == model_slug))
+        await db.exec(
+            select(Voice)
+            .join(TTSModel)
+            .where(Voice.slug == voice_slug, TTSModel.slug == model_slug, col(Voice.is_active).is_(True))
+        )
     ).first()
     if not voice:
         raise ResourceNotFoundError(
