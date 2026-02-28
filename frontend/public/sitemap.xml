@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/xmlschema/sitemap">
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
     <loc>https://yapit.md/</loc>
   </url>
@@ -11,6 +11,9 @@
   </url>
   <url>
     <loc>https://yapit.md/terms</loc>
+  </url>
+  <url>
+    <loc>https://yapit.md/subscription</loc>
   </url>
   <url>
     <loc>https://yapit.md/privacy</loc>
