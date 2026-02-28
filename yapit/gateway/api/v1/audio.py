@@ -26,4 +26,5 @@ async def get_audio(
     return Response(
         content=audio_data,
         media_type="audio/ogg",
+        headers={"Cache-Control": "public, s-maxage=31536000, max-age=0"},
     )
