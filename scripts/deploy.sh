@@ -12,7 +12,7 @@
 #   6. Send ntfy notification
 #
 # Config via .env (from sops):
-#   VPS_HOST          - SSH host (default: root@yapit-prod via Tailscale)
+#   VPS_HOST          - SSH host (e.g. yapit-prod)
 #   NTFY_DEPLOY_TOPIC - ntfy topic for deploy notifications (optional)
 #
 # Environment variables:
@@ -41,17 +41,16 @@ die() {
   exit 1
 }
 
-# --- Load .env ---
-[ -f .env ] || die ".env not found — run 'make prod-env' first"
-set -a; source .env; set +a
-[[ "${ENV_MARKER:-}" == "prod" ]] || die ".env is not prod — run 'make prod-env' first"
-
-VPS_HOST="${VPS_HOST:-root@yapit-prod}"
+GIT_COMMIT="${GIT_COMMIT:-$(git rev-parse HEAD)}"
 DEPLOY_DIR="/opt/yapit/deploy"
 STACK_NAME="yapit"
 PROD_URL="https://yapit.md"
 TIMEOUT="${TIMEOUT:-120}"
-GIT_COMMIT="${GIT_COMMIT:-$(git rev-parse HEAD)}"
+
+# --- Load .env ---
+[ -f .env ] || die ".env not found — run 'make prod-env' first"
+set -a; source .env; set +a
+[[ "${ENV_MARKER:-}" == "prod" ]] || die ".env is not prod — run 'make prod-env' first"
 
 # --- Sync files to VPS ---
 log "Syncing files to VPS..."

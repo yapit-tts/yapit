@@ -11,7 +11,7 @@ Usage:
   uv run scripts/document_storage.py --all --summary
   uv run scripts/document_storage.py --id <uuid> --json
 
-Requires VPS_HOST env var (e.g., root@46.224.195.97) when running locally.
+Requires VPS_HOST env var (e.g., yapit-prod) when running locally.
 """
 
 import argparse
@@ -243,7 +243,7 @@ def main():
     # Otherwise, SSH to VPS and run there
     vps_host = os.environ.get("VPS_HOST")
     if not vps_host:
-        print("Error: VPS_HOST not set (e.g., root@46.224.195.97)", file=sys.stderr)
+        print("Error: VPS_HOST not set (e.g., yapit-prod)", file=sys.stderr)
         return 1
 
     # Rebuild args for remote execution

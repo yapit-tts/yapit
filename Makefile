@@ -1,4 +1,6 @@
 
+-include .env
+
 DEV_COMPOSE = docker compose -p yapit-dev --env-file .env --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml
 SELFHOST_COMPOSE = docker compose --env-file .env.selfhost -f docker-compose.yml -f docker-compose.selfhost.yml
 
@@ -130,14 +132,13 @@ check-frontend:
 deploy:
 	./scripts/deploy.sh
 
-PROD_HOST := root@yapit-prod
 PROD_GATEWAY = $$(docker ps -qf name=yapit_gateway)
 
 warm-cache:
 	@echo "Starting warm-cache in tmux session on prod..."
-	@ssh $(PROD_HOST) 'tmux kill-session -t warm-cache 2>/dev/null; tmux new-session -d -s warm-cache "docker exec $(PROD_GATEWAY) python -m yapit.gateway.warm_cache 2>&1 | tee /tmp/warm-cache.log; echo DONE; sleep 86400"'
+	@ssh $(VPS_HOST) 'tmux kill-session -t warm-cache 2>/dev/null; tmux new-session -d -s warm-cache "docker exec $(PROD_GATEWAY) python -m yapit.gateway.warm_cache 2>&1 | tee /tmp/warm-cache.log; echo DONE; sleep 86400"'
 	@echo "Attaching to tmux session..."
-	@ssh -t $(PROD_HOST) 'tmux attach -t warm-cache'
+	@ssh -t $(VPS_HOST) 'tmux attach -t warm-cache'
 
 # Metrics
 
@@ -145,15 +146,15 @@ warm-cache:
 sync-metrics:
 	@mkdir -p data
 	@echo "Exporting metrics from prod..."
-	@ssh $(PROD_HOST) 'docker exec $$(docker ps -qf name=metrics-db) \
+	@ssh $(VPS_HOST) 'docker exec $$(docker ps -qf name=metrics-db) \
 		psql -U metrics -d metrics -c "COPY (SELECT * FROM metrics_event ORDER BY timestamp) TO STDOUT WITH CSV HEADER"' \
 		> data/metrics_raw.csv
 	@echo "Exporting hourly aggregates..."
-	@ssh $(PROD_HOST) 'docker exec $$(docker ps -qf name=metrics-db) \
+	@ssh $(VPS_HOST) 'docker exec $$(docker ps -qf name=metrics-db) \
 		psql -U metrics -d metrics -c "COPY (SELECT * FROM metrics_hourly ORDER BY bucket DESC) TO STDOUT WITH CSV HEADER"' \
 		> data/metrics_hourly.csv
 	@echo "Exporting daily aggregates..."
-	@ssh $(PROD_HOST) 'docker exec $$(docker ps -qf name=metrics-db) \
+	@ssh $(VPS_HOST) 'docker exec $$(docker ps -qf name=metrics-db) \
 		psql -U metrics -d metrics -c "COPY (SELECT * FROM metrics_daily ORDER BY bucket DESC) TO STDOUT WITH CSV HEADER"' \
 		> data/metrics_daily.csv
 	@echo "Converting to DuckDB..."
@@ -175,7 +176,7 @@ conn.close()"
 sync-logs:
 	@echo "Syncing logs from prod..."
 	@mkdir -p data/logs
-	@rsync -avz --progress $(PROD_HOST):/var/lib/docker/volumes/yapit_gateway-data/_data/logs/*.jsonl* data/logs/
+	@rsync -avz --progress $(VPS_HOST):/var/lib/docker/volumes/yapit_gateway-data/_data/logs/*.jsonl* data/logs/
 	@echo "Decompressing logs..."
 	@gunzip -f data/logs/*.jsonl.gz 2>/dev/null || true
 	@echo "✓ Logs synced to data/logs/"
