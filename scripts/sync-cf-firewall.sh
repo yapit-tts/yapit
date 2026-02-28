@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
 # Sync Cloudflare IP ranges to Hetzner Cloud Firewall.
-# Restricts ports 80/443 to Cloudflare IPs only. SSH + ICMP remain open.
+# Restricts ports 80/443 to Cloudflare IPs only. ICMP open. SSH via Tailscale only.
 # Run hourly via cron. Alerts via ntfy on failure.
 #
 # Requires: curl, jq, hcloud (authenticated via HCLOUD_TOKEN or hcloud context)
 # Environment: HCLOUD_FIREWALL (name or ID), NTFY_TOPIC (optional)
+# Usage: sync-cf-firewall.sh [env-file]
 set -euo pipefail
+
+# Source env file if provided (for cron — cron doesn't inherit environment)
+if [[ -n "${1:-}" && -f "$1" ]]; then
+    set -a; source "$1"; set +a
+fi
 
 LOCKFILE="/tmp/sync-cf-firewall.lock"
 FIREWALL="${HCLOUD_FIREWALL:?Set HCLOUD_FIREWALL to the firewall name or ID}"
@@ -37,11 +43,10 @@ if (( count < 10 || count > 100 )); then
     alert "Unexpected CIDR count: $count (expected 10-100)"
 fi
 
-# Build rules: HTTP+HTTPS from CF, SSH+ICMP from anywhere
+# Build rules: HTTP+HTTPS from CF, ICMP from anywhere. SSH via Tailscale only.
 rules=$(jq -n --argjson cf "$all_cidrs" '[
   { direction:"in", protocol:"tcp", port:"80",  source_ips:$cf,                  description:"HTTP from Cloudflare" },
   { direction:"in", protocol:"tcp", port:"443", source_ips:$cf,                  description:"HTTPS from Cloudflare" },
-  { direction:"in", protocol:"tcp", port:"22",  source_ips:["0.0.0.0/0","::/0"], description:"SSH" },
   { direction:"in", protocol:"icmp",            source_ips:["0.0.0.0/0","::/0"], description:"Ping" }
 ]')
 

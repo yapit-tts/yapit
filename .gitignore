@@ -215,3 +215,4 @@ scripts/prompt_eval/runs
 .env.selfhost
 scripts/stress_test_results
 /gateway/
+.deploys.log

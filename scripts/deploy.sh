@@ -60,6 +60,7 @@ scp .env "$VPS_HOST:$DEPLOY_DIR/.env"
 scp .env.prod "$VPS_HOST:$DEPLOY_DIR/"
 ssh "$VPS_HOST" "mkdir -p $DEPLOY_DIR/docker"
 scp docker/metrics-init.sql "$VPS_HOST:$DEPLOY_DIR/docker/"
+scp scripts/sync-cf-firewall.sh "$VPS_HOST:/opt/yapit/sync-cf-firewall.sh"
 
 # --- Deploy stack ---
 log "Deploying stack for commit: ${GIT_COMMIT:0:12}"
@@ -124,13 +125,12 @@ if ! curl -sf "$PROD_URL" > /dev/null; then
 fi
 echo "  ✓ Frontend OK"
 
-RUNNING_COMMIT=$(curl -sf "https://yapit.md/api/version" 2>/dev/null | grep -oP '"commit":\s*"\K[^"]+' || echo "")
-if [ -n "$RUNNING_COMMIT" ] && [ "$RUNNING_COMMIT" != "$GIT_COMMIT" ] && [ "$RUNNING_COMMIT" != "unknown" ]; then
-  echo "  ⚠ Gateway reports ${RUNNING_COMMIT:0:12}, expected ${GIT_COMMIT:0:12} (gateway image may not have been rebuilt)"
-fi
+RUNNING_COMMIT=$(curl -sf "https://yapit.md/api/version" 2>/dev/null | grep -oP '"commit":\s*"\K[^"]+' || echo "unknown")
+echo "  Gateway image: ${RUNNING_COMMIT:0:12}"
 
 log "Deploy complete"
 COMMIT_MSG=$(git log -1 --format=%s "$GIT_COMMIT" 2>/dev/null || echo "")
+echo "$(date -Iseconds)  ${RUNNING_COMMIT:0:12}  $COMMIT_MSG" >> .deploys.log
 notify "✅" "default" "$COMMIT_MSG"
 
 # Clean up old images. `docker image prune` doesn't work in Swarm — all `:latest` duplicates
