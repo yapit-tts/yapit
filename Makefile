@@ -120,6 +120,10 @@ prod-env:
 	@echo "⚠️  Created .env with PROD keys - run 'make dev-env' when done!"
 	@echo "You can now run: uv run --env-file=.env python scripts/stripe_setup.py --prod"
 
+format:
+	uv run ruff check --fix .
+	uv run ruff format .
+
 check: check-backend check-frontend
 
 check-backend:
