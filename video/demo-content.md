@@ -22,23 +22,8 @@ where $\eta$ is the learning rate — too large and you overshoot, too small and
 | Adam | Yes | $O(2n)$ | General default |
 | LBFGS | Yes | $O(mn)$ | Small models |
 
-**Adam**[^2] adapts the learning rate per parameter using running averages of the first and second moments:
-
-$$\hat{m}_t = \frac{m_t}{1 - \beta_1^t}, \quad \hat{v}_t = \frac{v_t}{1 - \beta_2^t}, \quad \theta_t = \theta_{t-1} - \frac{\eta \hat{m}_t}{\sqrt{\hat{v}_t} + \epsilon}$$
-
-> [!GREEN] Why Adam Dominates
-> It handles sparse gradients, non-stationary objectives, and requires almost no tuning. Start with $\eta = 3 \times 10^{-4}$ and only switch if you have a reason to.
-
 > [!PURPLE] Common Pitfall
 > ~~Setting the learning rate by gut feeling.~~ Use a learning rate finder: sweep $\eta$ from $10^{-7}$ to $1$, plot the loss, pick the steepest descent point.
 
-## What Can Go Wrong
-
-- **Vanishing gradients** in deep networks — solved by residual connections and careful initialization
-- **Saddle points** in high dimensions — less of a problem than local minima, despite the intuition
-- **Learning rate too high** — loss explodes. ~~Too low — training stalls forever.~~ Too low — training stalls, but at least it doesn't diverge
-
-The surprising thing about modern optimization: simple methods, applied at scale, tend to win.
-
 [^1]: A loss function measures how wrong the model's predictions are. Lower is better.
-[^2]: Kingma & Ba, "Adam: A Method for Stochastic Optimization", 2015.
+

@@ -216,3 +216,4 @@ scripts/prompt_eval/runs
 scripts/stress_test_results
 /gateway/
 .deploys.log
+test_logs
