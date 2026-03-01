@@ -241,7 +241,7 @@ services:
   kokoro-cpu:
     init: true
     image: ghcr.io/yapit-tts/kokoro-cpu:latest
-    command: python -m yapit.workers.kokoro
+    command: uv run python -m yapit.workers.kokoro
     cap_drop: [ALL]
     environment:
       REDIS_URL: redis://redis:6379
@@ -258,7 +258,7 @@ services:
   yolo-cpu:
     init: true
     image: ghcr.io/yapit-tts/yolo-cpu:latest
-    command: python -m yapit.workers.yolo
+    command: uv run python -m yapit.workers.yolo
     cap_drop: [ALL]
     environment:
       REDIS_URL: redis://redis:6379

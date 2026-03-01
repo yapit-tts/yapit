@@ -6,24 +6,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
-WORKDIR /app
+RUN useradd -m -u 1000 appuser && mkdir -p /models /app && chown appuser:appuser /models /app
 
-COPY yapit/workers/kokoro/pyproject.gpu.toml ./pyproject.toml
+WORKDIR /app
+USER appuser
+
+COPY --chown=appuser:appuser yapit/workers/kokoro/pyproject.gpu.toml ./pyproject.toml
 RUN uv sync
 
 ENV HF_HOME=/models
 RUN uv run python -c "from huggingface_hub import snapshot_download; snapshot_download('hexgrad/Kokoro-82M');"
 
-COPY yapit/workers/kokoro/voices.json /app/yapit/workers/kokoro/voices.json
+COPY --chown=appuser:appuser yapit/workers/kokoro/voices.json /app/yapit/workers/kokoro/voices.json
 RUN uv run python -c "import json; from huggingface_hub import hf_hub_download; \
     voices = json.load(open('/app/yapit/workers/kokoro/voices.json')); \
     [hf_hub_download('hexgrad/Kokoro-82M', f'voices/{v[\"index\"]}.pt') for v in voices]"
 
-COPY yapit/ /app/yapit
+COPY --chown=appuser:appuser yapit/ /app/yapit
 
-RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /models /app
-
-USER appuser
 ENV HF_HUB_OFFLINE=1
 ENV PYTHONUNBUFFERED=1
 ENV DEVICE=cuda

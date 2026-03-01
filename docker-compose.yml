@@ -176,7 +176,7 @@ services:
     build:
       context: .
       dockerfile: yapit/workers/kokoro/Dockerfile.cpu
-    command: python -m yapit.workers.kokoro
+    command: uv run python -m yapit.workers.kokoro
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     environment:
@@ -191,7 +191,7 @@ services:
     build:
       context: .
       dockerfile: yapit/workers/yolo/Dockerfile.cpu
-    command: python -m yapit.workers.yolo
+    command: uv run python -m yapit.workers.yolo
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     environment:

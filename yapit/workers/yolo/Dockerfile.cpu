@@ -4,22 +4,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1 libglib2.0-0 libjemalloc2 \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
-COPY yapit/workers/yolo/pyproject.cpu.toml ./pyproject.toml
-RUN pip install uv --no-cache-dir && uv pip install . --no-cache-dir --system
+RUN useradd -m -u 1000 appuser && mkdir -p /models /app && chown appuser:appuser /models /app
+
+WORKDIR /app
+USER appuser
+
+COPY --chown=appuser:appuser yapit/workers/yolo/pyproject.cpu.toml ./pyproject.toml
+RUN uv sync
 
 ENV HF_HOME=/models
-RUN python -c "from huggingface_hub import hf_hub_download; hf_hub_download('juliozhao/DocLayout-YOLO-DocStructBench', 'doclayout_yolo_docstructbench_imgsz1024.pt')"
+RUN uv run python -c "from huggingface_hub import hf_hub_download; hf_hub_download('juliozhao/DocLayout-YOLO-DocStructBench', 'doclayout_yolo_docstructbench_imgsz1024.pt')"
 
-COPY yapit/ /app/yapit
+COPY --chown=appuser:appuser yapit/ /app/yapit
 
-RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /models /app
-
-USER appuser
 ENV HF_HUB_OFFLINE=1
 ENV PYTHONUNBUFFERED=1
 ENV LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so.2
 ENV MALLOC_CONF=background_thread:true,dirty_decay_ms:1000,muzzy_decay_ms:1000
 
-CMD ["python", "-m", "yapit.workers.yolo"]
+CMD ["uv", "run", "python", "-m", "yapit.workers.yolo"]
