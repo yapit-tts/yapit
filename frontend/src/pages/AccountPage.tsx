@@ -68,6 +68,7 @@ const AccountPage = () => {
   const [bulkDeleteDays, setBulkDeleteDays] = useState<number | null>(null);
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
   const [bulkDeleteDropdownOpen, setBulkDeleteDropdownOpen] = useState(false);
+  const [expandedModels, setExpandedModels] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (!isAuthReady) return;
@@ -112,6 +113,7 @@ const AccountPage = () => {
       await api.delete<{ deleted_count: number }>(`/v1/documents/bulk${params}`);
       const r = await api.get<EngagementStats>("/v1/users/me/engagement");
       setEngagement(r.data);
+      window.dispatchEvent(new CustomEvent("documents-changed"));
       setBulkDeleteDialogOpen(false);
       setBulkDeleteDays(null);
     } catch (error) {
@@ -156,6 +158,7 @@ const AccountPage = () => {
   const hasEngagement = engagement && engagement.total_synths > 0;
   const maxVoiceDuration = engagement?.voices[0]?.total_duration_ms ?? 0;
   const multipleModels = voicesByModel.size > 1;
+  const VOICE_PREVIEW_COUNT = 5;
 
   return (
     <div className="container max-w-4xl mx-auto py-8 px-6">
@@ -193,33 +196,53 @@ const AccountPage = () => {
           {voicesByModel.size > 0 && (
             <Card className="mb-10">
               <CardContent className="pt-6">
-                {[...voicesByModel.entries()].map(([modelSlug, voices]) => (
-                  <div key={modelSlug} className={multipleModels ? "mb-6 last:mb-0" : ""}>
-                    {multipleModels && (
-                      <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-3">
-                        {modelSlug}
-                      </div>
-                    )}
-                    <div className="space-y-2.5">
-                      {voices.map((v) => (
-                        <div key={v.voice_slug} className="flex items-center gap-3">
-                          <span className="w-20 shrink-0 text-sm font-medium truncate">
-                            {v.voice_name ?? v.voice_slug}
-                          </span>
-                          <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
-                            <div
-                              className="h-full bg-primary rounded-full transition-all"
-                              style={{ width: `${(v.total_duration_ms / maxVoiceDuration) * 100}%` }}
-                            />
-                          </div>
-                          <span className="text-xs text-muted-foreground w-16 text-right shrink-0">
-                            {formatDuration(v.total_duration_ms)}
-                          </span>
+                {[...voicesByModel.entries()].map(([modelSlug, voices]) => {
+                  const isExpanded = expandedModels.has(modelSlug);
+                  const hasMore = voices.length > VOICE_PREVIEW_COUNT;
+                  const visible = hasMore && !isExpanded ? voices.slice(0, VOICE_PREVIEW_COUNT) : voices;
+                  const hiddenCount = voices.length - VOICE_PREVIEW_COUNT;
+
+                  return (
+                    <div key={modelSlug} className={multipleModels ? "mb-6 last:mb-0" : ""}>
+                      {multipleModels && (
+                        <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-3">
+                          {modelSlug}
                         </div>
-                      ))}
+                      )}
+                      <div className="space-y-2.5">
+                        {visible.map((v) => (
+                          <div key={v.voice_slug} className="flex items-center gap-3">
+                            <span className="w-20 shrink-0 text-sm font-medium truncate">
+                              {v.voice_name ?? v.voice_slug}
+                            </span>
+                            <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
+                              <div
+                                className="h-full bg-primary rounded-full transition-all"
+                                style={{ width: `${(v.total_duration_ms / maxVoiceDuration) * 100}%` }}
+                              />
+                            </div>
+                            <span className="text-xs text-muted-foreground w-16 text-right shrink-0">
+                              {formatDuration(v.total_duration_ms)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                      {hasMore && (
+                        <button
+                          onClick={() => setExpandedModels((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(modelSlug)) next.delete(modelSlug);
+                            else next.add(modelSlug);
+                            return next;
+                          })}
+                          className="text-xs text-muted-foreground hover:text-foreground mt-2 cursor-pointer transition-colors"
+                        >
+                          {isExpanded ? "Show less" : `Show ${hiddenCount} more`}
+                        </button>
+                      )}
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </CardContent>
             </Card>
           )}
@@ -448,21 +471,23 @@ const AccountPage = () => {
               <AlertTriangle className="h-5 w-5" />
               Delete Account
             </DialogTitle>
-            <DialogDescription className="pt-4 space-y-3">
-              <p>This action is irreversible. The following will be permanently deleted:</p>
-              <ul className="list-disc list-inside space-y-1 text-sm">
-                <li>All your documents and their audio</li>
-                <li>Your preferences and settings</li>
-              </ul>
-              {engagement && engagement.document_count > 0 && (
-                <p className="font-medium">
-                  You have {engagement.document_count} document{engagement.document_count !== 1 ? "s" : ""} that will be
-                  deleted.
+            <DialogDescription asChild>
+              <div className="text-muted-foreground text-sm pt-4 space-y-3">
+                <p>This action is irreversible. The following will be permanently deleted:</p>
+                <ul className="list-disc list-inside space-y-1 text-sm">
+                  <li>All your documents and their audio</li>
+                  <li>Your preferences and settings</li>
+                </ul>
+                {engagement && engagement.document_count > 0 && (
+                  <p className="font-medium">
+                    You have {engagement.document_count} document{engagement.document_count !== 1 ? "s" : ""} that will be
+                    deleted.
+                  </p>
+                )}
+                <p className="text-sm">
+                  If you have an active subscription, you will lose access immediately (even if your billing period hasn't ended).
                 </p>
-              )}
-              <p className="text-sm">
-                If you have an active subscription, you will lose access immediately (even if your billing period hasn't ended).
-              </p>
+              </div>
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="gap-2">
@@ -491,13 +516,15 @@ const AccountPage = () => {
               <AlertTriangle className="h-5 w-5" />
               Delete Documents
             </DialogTitle>
-            <DialogDescription className="pt-4 space-y-3">
-              <p>
-                {bulkDeleteDays
-                  ? `This will permanently delete all documents older than ${bulkDeleteDays} days.`
-                  : "This will permanently delete all your documents."}
-              </p>
-              <p className="text-sm">This action cannot be undone.</p>
+            <DialogDescription asChild>
+              <div className="text-muted-foreground text-sm pt-4 space-y-3">
+                <p>
+                  {bulkDeleteDays
+                    ? `This will permanently delete all documents older than ${bulkDeleteDays} days.`
+                    : "This will permanently delete all your documents."}
+                </p>
+                <p className="text-sm">This action cannot be undone.</p>
+              </div>
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="gap-2">

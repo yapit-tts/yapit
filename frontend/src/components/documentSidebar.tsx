@@ -137,6 +137,17 @@ function DocumentSidebar() {
     return () => window.removeEventListener('document-title-changed', handleTitleChanged);
   }, []);
 
+  // Listen for bulk document changes (e.g. bulk delete from AccountPage)
+  useEffect(() => {
+    const refetch = () => {
+      api.get<DocumentItem[]>("/v1/documents")
+        .then((r) => setDocuments(r.data))
+        .catch(console.error);
+    };
+    window.addEventListener("documents-changed", refetch);
+    return () => window.removeEventListener("documents-changed", refetch);
+  }, [api]);
+
   const handleDeleteDocument = async (e: React.MouseEvent, docId: string) => {
     e.stopPropagation();
     try {
