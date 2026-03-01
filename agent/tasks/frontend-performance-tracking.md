@@ -61,22 +61,78 @@ The engine's audio progress callback called `notify()` on every audio player tic
 
 | Metric | Before split | After split |
 |---|---|---|
-| JS processing per j/k | ~15ms | **2.5ms** |
 | PlaybackPage re-renders per j/k | 1 | **0** |
 | PlaybackOverlay re-renders per j/k | n/a | 1 |
 | Re-renders during playback (idle) | ~30-60/sec | **0** (progress tick removed) |
 
-Total interaction time (through paint) is ~193ms on the 48k-node document, but ~190ms of that is browser layout/paint — not JS.
+## Deep Profiling: Where the Time Actually Goes
+
+Previous sessions reported "2.5ms JS processing" per j/k. This was wrong — it only measured the synchronous event handler. A thorough decomposition (2026-02-27) revealed the true breakdown on `[perf] dense 10000b` (12k blocks, 48k DOM):
+
+### Methodology
+
+1. **2×rAF total cost**: dispatch keydown → `requestAnimationFrame` × 2 → `performance.now()` delta. Captures everything: JS, React render, effects, browser style recalc, layout, paint.
+2. **Component render timing**: `performance.now()` at start/end of PlaybackOverlay, SoundControl, SmoothProgressBar function bodies. Captures hook evaluation + JSX creation for each component.
+3. **Effect timing**: `performance.now()` around the classList toggle `useLayoutEffect`.
+4. **Isolation tests**: monkey-patched `Element.prototype.scrollIntoView`, `DOMTokenList.prototype.add/remove` to no-ops to isolate specific costs.
+5. **CSS experiments**: injected `<style>` to test `transition: none`, `contain: layout style paint`, `:has()` rule removal.
+
+Previous agents used only method 1 and misattributed the cost. The 2×rAF measurement mixes JS, React, and browser paint into one number. Methods 2-5 decompose it.
+
+### Results
+
+| Layer | Cost | Method |
+|---|---|---|
+| Overlay render (all hooks + JSX) | **0.1ms** | Component timing |
+| SoundControl render (memo'd, all hooks) | **0ms** | Component timing |
+| SmoothProgressBar render + gradient | **0ms** | Component timing (gradient useMemo holds — blockStates ref is stable during j/k) |
+| classList highlight effect | **3ms** | Effect timing |
+| scrollIntoView | **~25ms** | Isolation (median 102→76 without it) |
+| **Total JS** | **~3ms** | Sum of component + effect timing |
+| **Total interaction (2×rAF)** | **75ms median** | 2×rAF measurement |
+| **Browser style recalc + paint** | **~72ms** | Total minus JS |
+| Periodic spikes (GC/compositor) | **~300ms** | Observed in ~30% of presses, consistent across all configurations |
+
+### Key finding: React is already free
+
+The previous plan to optimize React reconciliation (decouple gradient from currentBlock, memo DocumentOutliner, split useFilteredPlayback) was targeting <1ms of total cost. All React render functions complete in <0.1ms:
+
+- The SmoothProgressBar gradient useMemo's deps are `[blockStates, currentBlock, numBlocks]`, but `blockStates` is reference-stable during j/k (engine caches the array via `blockStatesVersion`). The gradient only rebuilds when synthesis state changes, not on cursor moves. The `currentBlock` dep causes a new gradient string, but the computation is fast for this doc size.
+- SoundControl's memo is technically busted (new `progressBarValues` object each render), but its render is 0ms — all hooks return cached values.
+- useFilteredPlayback recomputes on `currentBlock` change, but its `perfMonitor` instrumentation showed ~0ms.
+
+### CSS experiments: no help
+
+| Configuration | Median | Notes |
+|---|---|---|
+| Baseline | 77ms | |
+| `transition: none !important` on all blocks | 76ms | No effect — transitions only on color, not geometry |
+| `+ contain: layout style paint` on container | 75ms | Negligible — the container is the full page |
+| `+ :has()` rules removed | Similar | `:has(.audio-block-active)` invalidation cost is minimal |
+| No classList toggle at all | 67ms | Only ~10ms from the class toggle itself |
+| No scrollIntoView at all | 76ms (from 102) | scrollIntoView forces synchronous layout |
+| No classList AND no scrollIntoView | 67ms | Irreducible: React commit + browser frame |
+| No interaction (pure rAF baseline) | 16ms | Normal 60fps frame |
+
+The ~50ms above the 16ms rAF baseline, even with all DOM mutations disabled, is React's commit phase (fiber tree walk, effect scheduling, DOM reconciliation for the overlay's ~300 nodes) plus browser frame overhead on a 48k-node page.
 
 ## Remaining: Browser Layout/Paint Cost
 
-On 48k DOM node documents, the browser's style recalc + paint from the `classList` toggle dominates (~190ms). This is not a React problem.
+The 75ms median (spikes to 300ms) is dominated by browser work on 48k DOM nodes. This is not a JS or React problem — it's the cost of the browser processing a huge DOM tree.
 
-Potential approaches (not yet attempted):
-1. **`content-visibility: auto`** — CSS property to skip rendering off-screen elements. Biggest potential win, no React changes.
-2. **Replace `querySelectorAll` with element index** — `findElementsByAudioIdx` scans 48k nodes per call. A `Map<number, Element>` built during render would be O(1).
-3. **CSS `contain`** on section containers — limits style recalc scope.
-4. **Virtualization** — only render visible blocks. Hard due to variable-height blocks (20-376px). Last resort.
+### Attempted and rejected
+
+- **CSS `content-visibility: auto`** on blocks — made things worse (523ms). Browser's visibility recalculation when toggling classes on `content-visibility: auto` elements is more expensive than the baseline.
+- **CSS `contain: layout style paint`** — <5ms improvement, not meaningful.
+- **`querySelectorAll` → Map lookup** — saves ~2.4ms, but adds complexity (Map must stay in sync with section collapse/expand). Not worth it for the savings.
+- **Removing CSS transitions** — no effect (transitions are color-only, not geometry).
+- **React optimizations (gradient, memo, hook splitting)** — would save <1ms. React render is already 0.1ms.
+
+### Path forward: virtualization
+
+The only approach that can meaningfully reduce the 75ms is rendering fewer DOM nodes. Options:
+1. **Windowed rendering** — only render blocks within/near the viewport. Would reduce 48k nodes to ~100-200. Major architectural change. Hard problem: variable-height blocks (20-376px) make scroll position estimation imprecise.
+2. **Section-level lazy rendering** — collapsed sections already don't render their blocks. Could extend this to off-screen sections. Simpler than full virtualization but coarser-grained.
 
 ## Open: Initial Load / Tab Switch
 
