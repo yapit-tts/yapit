@@ -22,11 +22,11 @@ export function GettingStarted() {
   }
 
   return (
-    <div className="mt-4 flex items-center justify-center gap-2 text-sm text-muted-foreground">
+    <div className="mt-4 flex items-center justify-center gap-2 text-md text-muted-foreground">
       <span>Try:</span>
       {SHOWCASE_DOCS.map((doc, i) => (
         <span key={doc.id}>
-          <Link to={`/listen/${doc.id}`} className="text-foreground hover:underline">
+          <Link to={`/listen/${doc.id}${doc.hash ? `#${doc.hash}` : ""}`} className="text-foreground hover:underline">
             {doc.title}
           </Link>
           {i < SHOWCASE_DOCS.length - 1 && <span className="ml-2">·</span>}

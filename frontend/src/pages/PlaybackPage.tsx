@@ -1,5 +1,4 @@
 import { StructuredDocumentView } from '@/components/structuredDocument';
-import { WebGPUWarningBanner } from '@/components/webGPUWarningBanner';
 import { PlaybackOverlay } from '@/components/playbackOverlay';
 import { useOutliner } from '@/hooks/useOutliner';
 import { usePlaybackEngine, type Block } from '@/hooks/usePlaybackEngine';
@@ -471,8 +470,6 @@ const PlaybackPage = () => {
 
   return (
     <div className="flex grow flex-col">
-      <WebGPUWarningBanner />
-
       {isPublicView && showImportBanner && (
         <div className="flex items-center justify-between gap-4 bg-muted px-4 py-2 border-b border-border">
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
