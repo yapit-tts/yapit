@@ -61,6 +61,11 @@ ssh "$VPS_HOST" "mkdir -p $DEPLOY_DIR/docker"
 scp docker/metrics-init.sql "$VPS_HOST:$DEPLOY_DIR/docker/"
 scp scripts/sync-cf-firewall.sh "$VPS_HOST:/opt/yapit/sync-cf-firewall.sh"
 
+# Snapshot gateway UpdateStatus before deploy so we can detect new updates vs stale state.
+# UpdateStatus.CompletedAt persists from previous deploys — comparing lets us distinguish
+# "completed from last time" vs "completed just now" vs "never updated" (null).
+GW_PRE_DEPLOY=$(ssh "$VPS_HOST" "docker service inspect ${STACK_NAME}_gateway --format '{{json .UpdateStatus}}'") || die "Failed to snapshot gateway state (SSH/inspect error)"
+
 # --- Deploy stack ---
 log "Deploying stack for commit: ${GIT_COMMIT:0:12}"
 ssh "$VPS_HOST" "cd $DEPLOY_DIR && set -a && source .env && source .env.prod && set +a && GIT_COMMIT=${GIT_COMMIT} docker stack deploy -c docker-compose.prod.yml $STACK_NAME --with-registry-auth"
@@ -72,29 +77,50 @@ if [ "${SKIP_VERIFY:-0}" = "1" ]; then
   exit 0
 fi
 
-log "Waiting for gateway update to complete (timeout: ${TIMEOUT}s)..."
+log "Waiting for gateway convergence (timeout: ${TIMEOUT}s)..."
 UPDATE_ELAPSED=0
 while [ "$UPDATE_ELAPSED" -lt "$TIMEOUT" ]; do
-  GW_STATE=$(ssh "$VPS_HOST" "docker service inspect ${STACK_NAME}_gateway --format '{{.UpdateStatus.State}}'" 2>/dev/null || echo "")
-  case "$GW_STATE" in
+  GW_STATE=$(ssh "$VPS_HOST" "docker service inspect ${STACK_NAME}_gateway --format '{{json .UpdateStatus}}'") || die "Failed to check gateway state (SSH/inspect error)"
+
+  # No update status = service was never updated or no update needed
+  if [ "$GW_STATE" = "null" ] || [ -z "$GW_STATE" ]; then
+    echo "  ✓ Gateway not updated (no config change)"
+    break
+  fi
+
+  GW_UPDATE_STATE=$(echo "$GW_STATE" | grep -oP '"State":\s*"\K[^"]+' || echo "")
+
+  case "$GW_UPDATE_STATE" in
     completed)
-      echo "  ✓ Gateway update completed after ${UPDATE_ELAPSED}s"
+      # If state is same as before deploy, no new update happened
+      if [ "$GW_STATE" = "$GW_PRE_DEPLOY" ]; then
+        echo "  ✓ Gateway not updated (no config change)"
+      else
+        echo "  ✓ Gateway update completed after ${UPDATE_ELAPSED}s"
+      fi
       break
       ;;
     rollback_completed)
-      echo "  ✗ Gateway rolled back after ${UPDATE_ELAPSED}s"
-      die "Gateway rolled back! Check: docker service ps ${STACK_NAME}_gateway --no-trunc"
+      if [ "$GW_STATE" != "$GW_PRE_DEPLOY" ]; then
+        echo "  ✗ Gateway rolled back after ${UPDATE_ELAPSED}s"
+        die "Gateway rolled back! Check: docker service ps ${STACK_NAME}_gateway --no-trunc"
+      fi
+      echo "  ✓ Gateway not updated (no config change)"
+      break
+      ;;
+    paused|rollback_paused)
+      die "Gateway update ${GW_UPDATE_STATE}! Manual intervention needed: docker service update ${STACK_NAME}_gateway"
       ;;
     *)
       sleep 5
       UPDATE_ELAPSED=$((UPDATE_ELAPSED + 5))
-      echo "  ... gateway update in progress (${UPDATE_ELAPSED}s, state: ${GW_STATE:-empty})"
+      echo "  ... gateway update in progress (${UPDATE_ELAPSED}s, state: ${GW_UPDATE_STATE:-unknown})"
       ;;
   esac
 done
 
 if [ "$UPDATE_ELAPSED" -ge "$TIMEOUT" ]; then
-  die "Gateway update timed out after ${TIMEOUT}s. State: ${GW_STATE:-unknown}"
+  die "Gateway update timed out after ${TIMEOUT}s. State: $(echo "$GW_STATE" | grep -oP '"State":\s*"\K[^"]+' || echo unknown)"
 fi
 
 log "Checking other services..."
