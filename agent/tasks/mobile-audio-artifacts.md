@@ -1,7 +1,9 @@
 ---
-status: active
+status: done
 started: 2026-01-03
 ---
+
+No longer reproducible as of March 2026. Likely resolved by earlier silence padding fix (936d740) or subsequent audio pipeline changes.
 
 # Task: Mobile Audio Artifacts at Block Boundaries
 

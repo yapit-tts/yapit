@@ -1,7 +1,9 @@
 ---
-status: active
+status: done
 started: 2026-02-09
 ---
+
+Superseded by [[2026-02-21-content-security-policy]] which has the validated, ready-to-deploy policy.
 
 # Task: Add Content Security Policy (CSP) Header
 

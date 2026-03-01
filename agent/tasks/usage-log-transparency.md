@@ -1,7 +1,9 @@
 ---
-status: active
+status: done
 started: 2026-01-24
 ---
+
+Implemented and shipped.
 
 # Task: Usage Log Transparency
 

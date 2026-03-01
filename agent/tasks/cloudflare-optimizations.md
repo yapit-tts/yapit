@@ -1,7 +1,9 @@
 ---
-status: active
+status: done
 started: 2026-01-03
 ---
+
+Done.
 
 # Task: Cloudflare Optimizations
 
