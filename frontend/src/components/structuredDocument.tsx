@@ -1,5 +1,6 @@
 import { Component, memo, useCallback, useEffect, useMemo, useRef, useState, type ErrorInfo, type ReactNode } from "react";
 import katex from "katex";
+import "katex/dist/katex.min.css";
 import { Copy, Download, Music, Check, ChevronRight, FileDown, FileCode2 } from "lucide-react";
 import { InlineContentRenderer } from "./inlineContent";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";

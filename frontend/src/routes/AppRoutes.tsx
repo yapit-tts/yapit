@@ -1,36 +1,64 @@
+import { lazy, Suspense } from "react";
 import { Routes, Route, useLocation } from "react-router";
+import { Loader2 } from "lucide-react";
 import MainLayout from "../layouts/MainLayout";
-import PlaybackPage from "../pages/PlaybackPage";
 import TextInputPage from "@/pages/TextInputPage";
-import SubscriptionPage from "@/pages/SubscriptionPage";
-import TipsPage from "@/pages/TipsPage";
-import AccountPage from "@/pages/AccountPage";
-import AccountSettingsPage from "@/pages/AccountSettingsPage";
-import AboutPage from "@/pages/AboutPage";
-import CheckoutSuccessPage from "@/pages/CheckoutSuccessPage";
-import CheckoutCancelPage from "@/pages/CheckoutCancelPage";
-import TermsPage from "@/pages/TermsPage";
-import PrivacyPage from "@/pages/PrivacyPage";
-import BatchStatusPage from "@/pages/BatchStatusPage";
 import UrlCatchAllPage from "@/pages/UrlCatchAllPage";
-import SignInPage from "@/pages/auth/SignInPage";
-import SignUpPage from "@/pages/auth/SignUpPage";
 import { stackClientApp } from "@/auth";
-import { StackHandler } from "@stackframe/react";
-import { FC } from "react";
+import { ChunkErrorBoundary } from "@/components/ChunkErrorBoundary";
 
-const AuthRoutes: FC = () => {
+const PlaybackPage = lazy(() => import("@/pages/PlaybackPage"));
+const SubscriptionPage = lazy(() => import("@/pages/SubscriptionPage"));
+const TipsPage = lazy(() => import("@/pages/TipsPage"));
+const AccountPage = lazy(() => import("@/pages/AccountPage"));
+const AccountSettingsPage = lazy(() => import("@/pages/AccountSettingsPage"));
+const AboutPage = lazy(() => import("@/pages/AboutPage"));
+const CheckoutSuccessPage = lazy(() => import("@/pages/CheckoutSuccessPage"));
+const CheckoutCancelPage = lazy(() => import("@/pages/CheckoutCancelPage"));
+const TermsPage = lazy(() => import("@/pages/TermsPage"));
+const PrivacyPage = lazy(() => import("@/pages/PrivacyPage"));
+const BatchStatusPage = lazy(() => import("@/pages/BatchStatusPage"));
+const SignInPage = lazy(() => import("@/pages/auth/SignInPage"));
+const SignUpPage = lazy(() => import("@/pages/auth/SignUpPage"));
+
+const LazyStackHandler = lazy(() =>
+	import("@stackframe/react").then((m) => ({ default: m.StackHandler })),
+);
+
+function Loading() {
+	return (
+		<div className="flex items-center justify-center min-h-[50vh]">
+			<Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+		</div>
+	);
+}
+
+function Lazy({ children }: { children: React.ReactNode }) {
+	return (
+		<ChunkErrorBoundary>
+			<Suspense fallback={<Loading />}>{children}</Suspense>
+		</ChunkErrorBoundary>
+	);
+}
+
+const AuthRoutes = () => {
 	const location = useLocation();
 
 	return (
-		<StackHandler app={stackClientApp} location={location.pathname} fullPage />
+		<Lazy>
+			<LazyStackHandler
+				app={stackClientApp}
+				location={location.pathname}
+				fullPage
+			/>
+		</Lazy>
 	);
 };
 
 const AppRoutes = () => (
 	<Routes>
-		<Route path="/handler/sign-in" element={<SignInPage />} />
-		<Route path="/handler/sign-up" element={<SignUpPage />} />
+		<Route path="/handler/sign-in" element={<Lazy><SignInPage /></Lazy>} />
+		<Route path="/handler/sign-up" element={<Lazy><SignUpPage /></Lazy>} />
 		<Route path="/handler/*" element={<AuthRoutes />} />
 		<Route
 			path="/"
@@ -44,7 +72,7 @@ const AppRoutes = () => (
 			path="/listen/:documentId"
 			element={
 				<MainLayout>
-					<PlaybackPage />
+					<Lazy><PlaybackPage /></Lazy>
 				</MainLayout>
 			}
 		/>
@@ -52,7 +80,7 @@ const AppRoutes = () => (
 			path="/batch/:contentHash"
 			element={
 				<MainLayout>
-					<BatchStatusPage />
+					<Lazy><BatchStatusPage /></Lazy>
 				</MainLayout>
 			}
 		/>
@@ -60,7 +88,7 @@ const AppRoutes = () => (
 			path="/subscription"
 			element={
 				<MainLayout>
-					<SubscriptionPage />
+					<Lazy><SubscriptionPage /></Lazy>
 				</MainLayout>
 			}
 		/>
@@ -68,7 +96,7 @@ const AppRoutes = () => (
 			path="/tips"
 			element={
 				<MainLayout>
-					<TipsPage />
+					<Lazy><TipsPage /></Lazy>
 				</MainLayout>
 			}
 		/>
@@ -76,7 +104,7 @@ const AppRoutes = () => (
 			path="/account"
 			element={
 				<MainLayout>
-					<AccountPage />
+					<Lazy><AccountPage /></Lazy>
 				</MainLayout>
 			}
 		/>
@@ -84,7 +112,7 @@ const AppRoutes = () => (
 			path="/account/settings"
 			element={
 				<MainLayout>
-					<AccountSettingsPage />
+					<Lazy><AccountSettingsPage /></Lazy>
 				</MainLayout>
 			}
 		/>
@@ -92,7 +120,7 @@ const AppRoutes = () => (
 			path="/about"
 			element={
 				<MainLayout>
-					<AboutPage />
+					<Lazy><AboutPage /></Lazy>
 				</MainLayout>
 			}
 		/>
@@ -100,7 +128,7 @@ const AppRoutes = () => (
 			path="/checkout/success"
 			element={
 				<MainLayout>
-					<CheckoutSuccessPage />
+					<Lazy><CheckoutSuccessPage /></Lazy>
 				</MainLayout>
 			}
 		/>
@@ -108,12 +136,12 @@ const AppRoutes = () => (
 			path="/checkout/cancel"
 			element={
 				<MainLayout>
-					<CheckoutCancelPage />
+					<Lazy><CheckoutCancelPage /></Lazy>
 				</MainLayout>
 			}
 		/>
-		<Route path="/terms" element={<TermsPage />} />
-		<Route path="/privacy" element={<PrivacyPage />} />
+		<Route path="/terms" element={<Lazy><TermsPage /></Lazy>} />
+		<Route path="/privacy" element={<Lazy><PrivacyPage /></Lazy>} />
 		<Route path="*" element={<UrlCatchAllPage />} />
 	</Routes>
 );
