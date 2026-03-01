@@ -1160,11 +1160,11 @@ async def list_documents(
     offset: int = 0,
     limit: int = Query(default=50, le=100),
 ) -> list[DocumentListItem]:
-    """List user's documents, most recent first."""
+    """List user's documents, most recently accessed first."""
     result = await db.exec(
         select(Document)
         .where(Document.user_id == user.id)
-        .order_by(col(Document.created).desc())
+        .order_by(func.coalesce(Document.last_played_at, Document.created).desc())
         .offset(offset)
         .limit(limit)
     )
