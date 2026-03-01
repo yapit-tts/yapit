@@ -550,6 +550,7 @@ export function UnifiedInput() {
             type="button"
             variant="ghost"
             size="icon"
+            aria-label="Attach file"
             onClick={() => fileInputRef.current?.click()}
             disabled={isCreating || isLoadingUrl || !formatsLoaded}
             className="h-10 w-10"
