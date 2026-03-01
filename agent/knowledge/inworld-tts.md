@@ -8,6 +8,10 @@ Premium TTS provider. REST streaming API, 113 voices across 15 languages (73 Eng
 
 **Voice listing endpoint is deprecated (July 2026):** `GET /tts/v1/voices` still works with the synthesis API key as of 2026-02. The voices themselves and the synthesis API are NOT deprecated — only the listing endpoint. Voice data is canonical in `yapit/data/inworld/voices.json`; no need to call the API at runtime.
 
+**Voices can disappear without notice:** In Feb 2026, Inworld silently removed 3 voices (Grant, Jake, Kayla) during a DB migration, then restored them after we reported it on Discord. Voice sync now runs on every gateway startup (`sync_inworld_voices` in `seed.py`, called from `prepare_database`) — adds missing and removes stale voices based on `voices.json`. To update the voice catalog: re-fetch from the API, update `voices.json`, deploy.
+
+**Testing the Inworld API locally:** Each bash invocation is a fresh shell — `source .env` doesn't persist across calls. Always chain: `export $(grep INWORLD_API_KEY .env | head -1) && curl ...`
+
 **Streaming vs non-streaming are not acoustically equivalent at block start:** In local testing, non-streaming (`/tts/v1/voice`) produced noticeably higher first 10-20ms energy than streaming (`/tts/v1/voice:stream`) for the same text/voice/model/codec. This was audible as a startup artifact in Firefox. Streaming removed the artifact.
 
 **Use the right payload shape per endpoint:**
@@ -65,9 +69,7 @@ Benchmark: `experiments/benchmark_inworld_speaking_rate.py`
 
 113 voices across 15 languages. Canonical source: `yapit/data/inworld/voices.json` (fetched from `GET /tts/v1/voices`). Same voices are shared between both inworld-1.5 and inworld-1.5-max models.
 
-**Adding voices:** Update `voices.json` from the API, then:
-- Dev/self-host: seed script auto-syncs missing voices on startup (`_sync_inworld_voices` in `seed.py`)
-- Prod: direct SQL INSERT (see pattern in git history: `231922c`), then `make warm-cache`
+**Adding voices:** Update `voices.json` from the API, then deploy. `sync_inworld_voices` runs on every gateway startup — adds missing and removes stale voices. Then `make warm-cache` for showcase content.
 
 **Voice picker** has search (name + description substring match) in the Inworld tab. With 73 EN voices, search is essential.
 

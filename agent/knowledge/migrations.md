@@ -37,6 +37,7 @@ make migration-new MSG="description"
 | Enum changes broken | Autogenerate doesn't detect enum value changes | See "Enum gotcha" below |
 | Column constraint fails on prod | Existing data may violate new constraint | Check prod data first: `SELECT ... WHERE length(col) > N` |
 | NOT NULL column on existing table | Prod has rows, can't add NOT NULL without default | Use `server_default=sa.false()` then `op.alter_column(..., server_default=None)` |
+| Constraint name is `None` | Autogenerate uses `None` for unnamed constraints; ty rejects it | Look up actual name from Postgres (`pg_constraint`) and hardcode it |
 
 After generating: `make dev-cpu` to restart and apply.
 

@@ -93,7 +93,7 @@ Pops from `tts:results`, spawns a task per result. No Postgres, no SQLite.
 1. Atomically claim result (inflight key dedup)
 2. Redis SET audio (`tts:audio:{hash}`, 300s TTL) — sub-ms
 3. Notify subscribers via Redis pubsub (user sees audio here)
-4. Push `BillingEvent` to `tts:billing` Redis list
+4. XADD `BillingEvent` to `tts:billing:stream` (Redis Stream)
 5. Push variant_hash to `tts:persist` for background SQLite persistence
 
 **Cache persister** — `yapit/gateway/cache_persister.py`
@@ -102,10 +102,12 @@ Drain-on-wake from `tts:persist` (same pattern as billing consumer). MGET audio 
 
 **Billing consumer (cold path)** — `yapit/gateway/billing_consumer.py`
 
-Drain-on-wake from `tts:billing`. Own Postgres connection pool (2 connections), isolated from request path.
-1. Update BlockVariant metadata (duration_ms)
-2. Record usage via `record_usage()` (waterfall billing)
-3. Upsert engagement stats (UserVoiceStats)
+Redis Streams consumer group on `tts:billing:stream`. At-least-once delivery: events stay pending until XACK after Postgres commit. Own Postgres connection pool (2 connections), isolated from request path.
+1. On startup: create consumer group (idempotent), recover unacked events from previous crashes
+2. XREADGROUP to collect batches (block 5s, up to 200)
+3. Update BlockVariant metadata (duration_ms) — one transaction for batch
+4. Per-user transaction: `record_usage()` with idempotency via `event_id` (dedup on `UsageLog.event_id` UNIQUE constraint, keyed on `job_id`), then upsert `UserVoiceStats` only if not a duplicate
+5. XACK + XDEL after Postgres commit
 
 **Why three paths:** Fast GPU workers can dump 40+ results in seconds. The hot path must be sub-ms so users get audio immediately. SQLite's single writer + fsync-per-COMMIT serializes concurrent writes — 40 results × ~1s/fsync under VPS I/O load = 42s avg finalize time. Redis SET is sub-ms regardless of concurrency. The persister batches SQLite writes (N rows, 1 fsync) for throughput. Billing uses its own Postgres pool so it can never starve the request path.
 
@@ -116,10 +118,7 @@ Drain-on-wake from `tts:billing`. Own Postgres connection pool (2 connections), 
 - Scanner runs every 15s, re-queues jobs stuck > 20s (constants in `gateway/__init__.py`)
 - Retry count increments; jobs exceeding max retries → DLQ
 
-**Overflow scanner** (`yapit/gateway/overflow_scanner.py`):
-- Native async (`AsyncioEndpoint`), claims all stale jobs per cycle
-- Polls outstanding RunPod handles across cycles
-- Failures requeue with retry; at max retries → DLQ + error result to `tts:results`
+**Overflow scanner** (`yapit/gateway/overflow_scanner.py`) — **disabled.** RunPod serverless cold starts too slow without dedicated workers. Code retained but not started.
 
 **Dead letter queue:** `tts:dlq:{model}` (per-model). DLQ entries push error results so result_consumer cleans up.
 
@@ -137,6 +136,8 @@ Frontend fetches via HTTP:
 - `yapit/gateway/api/v1/audio.py` — GET `/v1/audio/{variant_hash}`
 - Checks Redis first (hot cache), falls back to SQLite (cold cache)
 - Returns cached bytes directly (`audio/ogg` media type)
+
+**CDN caching:** Response includes `Cache-Control: public, s-maxage=31536000, max-age=0` — Cloudflare edge caches audio indefinitely, browsers don't (the playback engine manages its own buffer). Requires a Cloudflare Cache Rule matching `/api/v1/audio/*` with "Eligible for cache" since the URL has no file extension. Content is hash-addressed and immutable, so edge caching is safe without purging.
 
 ## Browser-Side Synthesis
 
@@ -170,21 +171,22 @@ Current models: kokoro, inworld-1.5, inworld-1.5-max. Model/voice definitions in
 | `workers/adapters/*.py` | Model-specific synthesis |
 | `contracts.py` | Shared types for gateway↔worker |
 | `gateway/cache.py` | SQLite audio cache (async) |
-| `gateway/domain_models.py` | Block, BlockVariant models |
+| `gateway/domain_models.py` | Document, BlockVariant models |
 
 ## Gotchas
 
-- **Billing is async, not in result_consumer:** `ws.py` checks usage limits (gating). Result consumer handles cache + notification only. Actual billing (`record_usage`) happens in `billing_consumer.py` via the `tts:billing` Redis queue. Billing is eventually consistent — a few seconds of delay is normal.
+- **Billing is async, not in result_consumer:** `ws.py` checks usage limits (gating). Result consumer handles cache + notification only. Actual billing (`record_usage`) happens in `billing_consumer.py` via the `tts:billing:stream` Redis Stream. Billing is eventually consistent — a few seconds of delay is normal. At-least-once delivery with idempotent `record_usage` (dedup via `UsageLog.event_id`).
 - **Per-block vs document-level errors:** Document-level errors use `error` message type (see table above). Per-block errors (usage limit exceeded) use `status` message type with `status="error"` field. Tests must check the correct message type.
 - **Eviction timing:** Pending check happens at dequeue time, not enqueue. Jobs can sit in queue, then get skipped if cursor moved.
 - **Variant sharing:** Two users requesting same text+model+voice share the cached audio. Good for efficiency, but means cache eviction affects everyone.
 - **Empty audio / per-block failures:** Some blocks produce empty audio (whitespace-only text, garbage markup from extraction). Marked as "skipped" or "error" with `recoverable: true`. Frontend tracks these in a `resolvedEmpty` set so buffer readiness checks still work, and auto-advances past them. Only session-level errors (`recoverable: false`, e.g. usage limit) stop playback.
 - **Usage multiplier:** Different models have different character costs. `TTSModel.usage_multiplier` in database. Passed in job to avoid DB query on finalization.
 - **Voice change race condition:** WebSocket status messages include `model_slug` and `voice_slug` to prevent stale cache hits when user changes voice mid-playback. Without this, status messages from old voice arriving after reset would incorrectly mark blocks as cached.
-- **Double billing prevention:** Inflight key deletion happens at START of result processing. First result atomically deletes key and proceeds; duplicates (from visibility timeout requeue + original completion) see delete() return 0 and skip.
+- **Double synthesis prevention:** Inflight key deletion happens at START of result processing. First result atomically deletes key and proceeds; duplicates (from visibility timeout requeue + original completion) see delete() return 0 and skip. This prevents duplicate BillingEvents from being produced. On the consumer side, `record_usage` has its own idempotency via `UsageLog.event_id` (keyed on `job_id`) as a second line of defense.
 - **Cache warming:** `yapit/gateway/warm_cache.py` is a one-shot CLI (not a background task). Run via `make warm-cache` when voices or showcase content change. Pinned entries are exempt from LRU eviction. See [[inworld-tts]] for details.
 - **Inworld duration is estimated:** Calculated from OGG Opus file size (~14.5KB/sec assumption in adapter). Frontend uses decoded AudioBuffer for accurate playback timing.
 - **Codec is not part of variant hash:** In normal dev flow, `make dev-cpu` clears cache (`down -v`). If you run experiments without full teardown, stale cached blobs can make codec/endpoint A/B tests invalid.
 - **Per-document pubsub channels:** Pubsub scoped to `tts:done:{user_id}:{document_id}` — prevents cross-tab contamination.
 - **Eviction orphaning:** Inflight key stores `job_id`. On eviction, inflight key is conditionally deleted only if its value matches the evicted job — prevents orphaned semaphores from blocking future requests.
 - **WS reconnect resilience:** `ServerSynthesizer` retries pending blocks on reconnect. `useTTSWebSocket` queues messages while disconnected, drains on connect.
+- **Out-of-order block notifications:** Blocks are enqueued and processed in index order, but `result_consumer.py` spawns a concurrent task per result. Two tasks racing through their Redis calls can cause notifications to reach the frontend out of order. Cosmetic only (progress bar), playback is unaffected. Serializing the consumer would fix it but kill throughput for the parallel API dispatcher.

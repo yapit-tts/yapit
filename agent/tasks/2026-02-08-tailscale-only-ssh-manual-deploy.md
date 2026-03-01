@@ -1,6 +1,7 @@
 ---
-status: active
+status: done
 started: 2026-02-08
+refs: [e4bc1f6, 87fc197]
 ---
 
 # Task: Restrict SSH to Tailscale, switch to manual deploys

@@ -7,8 +7,10 @@ Fresh VPS setup for Yapit production. No Dokploy - Docker Swarm + Traefik + Clou
 ```
 GitHub Actions (CI)
     ↓ build + push images to ghcr.io
-    ↓ ssh to VPS
-    ↓ docker stack deploy
+
+Local (deploy)
+    ↓ make prod-env && make deploy
+    ↓ SSH via Tailscale → docker stack deploy
 
 Cloudflare (edge SSL)
     ↓ proxies traffic
@@ -193,17 +195,25 @@ Key-only auth. X11 forwarding disabled (headless server, no GUI needed).
 
 **Two layers:** Hetzner Cloud Firewall (edge) + UFW (host).
 
-Hetzner allows: 22 (SSH), 80 (HTTP), 443 (HTTPS), ICMP.
+**Hetzner Cloud Firewall (`firewall-1`)** — managed automatically by `scripts/sync-cf-firewall.sh` (hourly cron). Do not hand-edit rules in Console — next cron run overwrites them.
 
-UFW mirrors this:
-```bash
-ufw default deny incoming
-ufw default allow outgoing
-ufw allow 22/tcp
-ufw allow 80/tcp
-ufw allow 443/tcp
-ufw enable
-```
+| Port | Source | Description |
+|------|--------|-------------|
+| 80 | Cloudflare IPs only | HTTP |
+| 443 | Cloudflare IPs only | HTTPS |
+| ICMP | 0.0.0.0/0 | Ping |
+
+SSH is Tailscale-only — no public port 22. Hetzner emergency console is the fallback if Tailscale goes down.
+
+Script: fetches CF IPs from `api.cloudflare.com/client/v4/ips`, validates, atomic replace via `hcloud`. Alerts via ntfy on failure.
+
+VPS paths:
+- Script: `/opt/yapit/sync-cf-firewall.sh` (synced automatically by `deploy.sh`)
+- Env (token, firewall name, ntfy topic): `/opt/yapit/.env.firewall` (mode 600)
+- Log: `/var/log/cf-firewall-sync.log`
+- Cron: `0 * * * *` (hourly)
+
+**UFW:** No rules (SSH removed). Hetzner firewall is the real gate, Docker bypasses UFW anyway.
 
 Tailscale traffic bypasses UFW (uses its own tun interface + routing rules).
 
@@ -218,9 +228,15 @@ Code defines routes as `/v1/...` but in prod they're served at `/api/v1/...`:
 
 This is handled by `VITE_API_BASE_URL=/api` in `frontend/.env.production`. When scripting against prod, always include the `/api` prefix.
 
-### Nginx reverse proxy handles both HTTP and WebSocket
+### Nginx reverse proxy: separate blocks for HTTP and WebSocket
 
-Frontend nginx (`frontend/nginx.conf`) reverse-proxies `/api/*` to the gateway. The WebSocket path (`/api/v1/ws/tts`) matches the `/api/` location block — nginx prefix matching means a `location /api/ws` would NOT catch it. The `map $http_upgrade` pattern conditionally sets Connection headers for keepalive (HTTP) vs upgrade (WebSocket) in the same block. Read `frontend/nginx.conf` before touching proxy routing.
+Frontend nginx (`frontend/nginx.conf`) has two `/api` location blocks:
+- `location /api/v1/ws/` — WebSocket proxy. `proxy_pass http://gateway/v1/ws/;` (the `/v1/ws/` suffix is required for correct path stripping). Hardcoded `Connection "upgrade"`, `proxy_buffering off`, 300s read/send timeout.
+- `location /api/` — HTTP API proxy. `Connection ""` for upstream keepalive, 90s read timeout.
+
+nginx longest-prefix matching means `/api/v1/ws/tts` hits the WS block (12 chars) over the HTTP block (5 chars). Read `frontend/nginx.conf` before touching proxy routing.
+
+**uvicorn keepalive:** `--timeout-keep-alive 65` in `gateway/Dockerfile` must exceed nginx's upstream `keepalive_timeout` (60s default). If uvicorn's timeout is shorter, nginx reuses dead connections → intermittent 502s.
 
 ### Stack Auth user IDs aren't directly queryable
 
@@ -264,13 +280,9 @@ docker service update --env-add VAR_NAME=new_value service_name
 
 Or remove and redeploy the entire stack.
 
-### GitHub Actions environment vs repo secrets
+### Swarm image pruning
 
-Deploy workflow uses `environment: production`. Secrets set at repo level (`gh secret set X --repo ...`) are NOT used — must use environment-level secrets:
-
-```bash
-gh secret set VPS_SSH_KEY --repo yapit-tts/yapit --env production < ~/.ssh/yapit-deploy-ci
-```
+`docker image prune -af` doesn't work in Swarm — all pulled `:latest` digests are considered "in use" by service specs. Deploy script compares each image ID against running container image IDs and removes non-matching ones.
 
 ## Cloudflare Zone
 
@@ -281,20 +293,6 @@ gh secret set VPS_SSH_KEY --repo yapit-tts/yapit --env production < ~/.ssh/yapit
 Create A records pointing to VPS IP (proxied):
 - `yapit.md` → `46.224.195.97`
 - `auth.yapit.md` → `46.224.195.97`
-
-## CI SSH Key
-
-```bash
-# On local machine
-ssh-keygen -t ed25519 -f ~/.ssh/yapit-deploy -N ""
-
-# Add to VPS
-ssh root@<VPS_IP> "cat >> ~/.ssh/authorized_keys" < ~/.ssh/yapit-deploy.pub
-
-# Add private key to GitHub secrets as VPS_SSH_KEY
-# IMPORTANT: Deploy uses `environment: production`, so set the ENVIRONMENT secret, not repo secret!
-gh secret set VPS_SSH_KEY --repo yapit-tts/yapit --env production < ~/.ssh/yapit-deploy-ci
-```
 
 ## Docker Compose Labels
 
@@ -313,27 +311,9 @@ Without `tls=true`, the router won't match HTTPS requests.
 
 ## Database Seeding (One-Time)
 
-After first deploy, tables exist but are empty. Run once:
+After first deploy, run `seed_database()` once via `docker exec` on the gateway container. See `yapit/gateway/seed.py` for the function and `yapit/gateway/db.py` for session creation.
 
-```bash
-ssh root@46.224.195.97 'docker exec $(docker ps -qf "name=yapit_gateway") python -c "
-import asyncio
-from yapit.gateway.seed import seed_database
-from yapit.gateway.db import create_session
-from yapit.gateway.config import Settings
-
-async def seed():
-    settings = Settings()
-    async for db in create_session(settings):
-        await seed_database(db, settings)
-        print(\"Seeded!\")
-        break
-
-asyncio.run(seed())
-"'
-```
-
-This seeds: TTS models, voices, document processors, subscription plans.
+Seeds: TTS models, voices, document processors, subscription plans. Voice sync runs automatically on every startup — no need to re-seed for voice changes.
 
 ## Stack Auth Setup
 
@@ -373,9 +353,9 @@ After initial setup:
 ### Service status
 
 ```bash
-ssh root@46.224.195.97 "docker service ls"
-ssh root@46.224.195.97 "docker service ps yapit_gateway --no-trunc"
-ssh root@46.224.195.97 "docker service logs yapit_gateway --tail 100"
+ssh root@yapit-prod "docker service ls"
+ssh root@yapit-prod "docker service ps yapit_gateway --no-trunc"
+ssh root@yapit-prod "docker service logs yapit_gateway --tail 100"
 ```
 
 ### Database access
@@ -384,17 +364,17 @@ ssh root@46.224.195.97 "docker service logs yapit_gateway --tail 100"
 
 ```bash
 # Interactive psql
-ssh root@46.224.195.97 'docker exec -it $(docker ps -qf "name=yapit_postgres") psql -U yapit_prod yapit_prod'
+ssh root@yapit-prod 'docker exec -it $(docker ps -qf "name=yapit_postgres") psql -U yapit_prod yapit_prod'
 
 # One-off query
-ssh root@46.224.195.97 'docker exec $(docker ps -qf "name=yapit_postgres") psql -U yapit_prod yapit_prod -c "SELECT count(*) FROM document;"'
+ssh root@yapit-prod 'docker exec $(docker ps -qf "name=yapit_postgres") psql -U yapit_prod yapit_prod -c "SELECT count(*) FROM document;"'
 ```
 
 ### Rollback
 
 ```bash
 # Quick rollback
-ssh root@46.224.195.97 "docker service rollback yapit_gateway"
+ssh root@yapit-prod "docker service rollback yapit_gateway"
 
 # Rollback to specific commit
 GIT_COMMIT=<old_sha> ./scripts/deploy.sh
@@ -439,7 +419,7 @@ curl http://localhost:8080/api/http/routers
 | File | Purpose |
 |------|---------|
 | `docker-compose.prod.yml` | Stack definition with Traefik labels |
-| `scripts/deploy.sh` | Deploy to VPS via SSH |
+| `scripts/deploy.sh` | Deploy to VPS via Tailscale SSH |
 | `.env.prod` | Non-sensitive config (committed) |
 | `.env.sops` | Encrypted secrets |
 | `/opt/yapit/traefik/traefik.yml` | Traefik config (on VPS) |

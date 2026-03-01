@@ -30,7 +30,8 @@ Yapit TTS - Open-source text-to-speech platform for reading documents, web pages
 
 ### Other domains
 
-- [[auth]] — Stack Auth integration, token handling.
+- [[stack-auth]] — Self-hosted auth provider: architecture, self-hosted gotchas, dev setup, upgrade pitfalls. Read for any Stack Auth work.
+- [[auth]] — Gateway-level auth modes, anonymous flow, account deletion.
 - [[stripe-integration]] — Token-based billing, waterfall consumption, Stripe SDK gotchas, webhook handling. Read for billing bugs, subscription issues.
 - [[security]] — SSRF (Smokescreen proxy), auth trust boundaries, anonymous sessions, frontend XSS architecture, infrastructure hardening, billing security. Read for any security-related work.
 - [[licensing]] — Dependency license checking.
@@ -67,7 +68,7 @@ Do NOT assume approval from vague statements like "fix it" or "go ahead". Prod i
 
 ## Branch Strategy
 
-- `main` - production (deploys on push)
+- `main` - production (CI builds images on push, deploy is manual via `make deploy`)
 - `dev` - for batching changes before deploy
 - Feature branches for larger isolated work
 

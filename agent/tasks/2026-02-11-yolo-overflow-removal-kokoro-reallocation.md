@@ -1,6 +1,7 @@
 ---
-status: active
+status: done
 started: 2026-02-11
+refs: [834485b]
 ---
 
 # Task: Remove YOLO RunPod Overflow, Reallocate to Kokoro

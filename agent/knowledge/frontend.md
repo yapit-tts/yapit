@@ -1,6 +1,6 @@
 # Frontend
 
-React SPA with Vite, shadcn/ui components, Tailwind CSS.
+React SPA with Vite, shadcn/ui components, Tailwind CSS. See [[frontend-performance]] for large-document optimization patterns and measurement techniques.
 
 ## Playback Engine
 
@@ -8,13 +8,15 @@ Standalone state machine that owns all playback logic. Extracted from PlaybackPa
 
 **Key files:**
 - `frontend/src/lib/playbackEngine.ts` — state machine (play, pause, skip, seek, prefetch, cache)
-- `frontend/src/hooks/usePlaybackEngine.ts` — React bridge via `useSyncExternalStore`
+- `frontend/src/hooks/usePlaybackEngine.ts` — React bridge: creates engine, synthesizers, WS. Does NOT subscribe to snapshots.
+- `frontend/src/components/playbackOverlay.tsx` — sole snapshot subscriber via `useSyncExternalStore`. Owns DOM highlighting, scroll tracking, position save, progress bar, SoundControl, DocumentOutliner.
+- `frontend/src/pages/PlaybackPage.tsx` — static shell: doc fetching, settings, keyboard handler, StructuredDocumentView. Never re-renders on cursor changes.
 - `frontend/src/lib/synthesizer.ts` — `Synthesizer` interface (browser vs server)
 - `frontend/src/lib/browserSynthesizer.ts` — Kokoro.js Web Worker path
 - `frontend/src/lib/serverSynthesizer.ts` — WebSocket path
 - `frontend/src/lib/playbackEngine.test.ts` — unit tests (vitest)
 
-**Architecture:** The engine exposes a `PlaybackEngine` interface (play/pause/stop/skip/seek/setVoice etc.) and a `subscribe`/`getSnapshot` pair for React integration. All I/O is injected via `PlaybackEngineDeps` (audio player, synthesizer), making the engine fully testable without DOM or network.
+**Architecture:** The engine exposes a `PlaybackEngine` interface (play/pause/stop/skip/seek/setVoice etc.) and a `subscribe`/`getSnapshot` pair for React integration. All I/O is injected via `PlaybackEngineDeps` (audio player, synthesizer), making the engine fully testable without DOM or network. PlaybackOverlay is the only snapshot consumer — PlaybackPage communicates with it via ref bridges (`scrollToBlockRef`, `currentBlockRef`, `handleBackToReadingRef`).
 
 **Variant-keyed cache:** Audio is cached by `{blockIdx}:{model}:{voice}`. Changing voice invalidates entries. Changing document clears the entire cache (document identity is implicit).
 
@@ -35,19 +37,24 @@ Standalone state machine that owns all playback logic. Extracted from PlaybackPa
 Right sidebar for navigating large documents. Shows section index from H1/H2 headings.
 
 **Key features:**
-- Collapse/expand sections — hides content in document view
-- Skip sections — exclude from playback entirely (right-click/long-press)
+- Collapse/expand sections — single toggle that hides content AND skips playback
+- Collapsed sections show grayed heading with expand chevron, content hidden
+- Footnotes get a synthetic "Footnotes" section (not a heading — uses `type: "footnotes"` block)
 - Filtered playback — progress bar scoped to expanded sections only
-- Per-document section state (expanded/skipped sections) persisted to localStorage in PlaybackPage
+- `expandedSections` is the single source of truth for visibility and playback
+- Per-document section state persisted to localStorage (`{ expanded: [...] }`)
 - Outliner panel open/closed state persisted to cookie via `useOutliner`
 
 **Key files:**
-- `frontend/src/components/documentOutliner.tsx` — section tree with collapse/skip controls
+- `frontend/src/components/documentOutliner.tsx` — section tree with collapse toggle
 - `frontend/src/hooks/useOutliner.tsx` — outliner panel toggle state
 - `frontend/src/hooks/useFilteredPlayback.ts` — maps visual↔absolute block indices
 - `frontend/src/lib/sectionIndex.ts` — builds section tree from structured content
+- `frontend/src/lib/filterVisibleBlocks.ts` — filters document blocks by section state
 
-**Design:** H1/H2 are "major headings" that create collapsible sections. H3+ are styled headings within sections but don't create nesting. Binary classification (major vs minor) is more robust than requiring consistent H1/H2/H3/H4 hierarchy across independently-processed pages.
+**Design:** H1/H2 are "major headings" that create collapsible sections. H3+ are styled headings within sections but don't create nesting. Binary classification (major vs minor) is more robust than requiring consistent H1/H2/H3/H4 hierarchy across independently-processed pages. Footnotes blocks are detected post-hoc and split into their own section — audio chunks live on nested `item.blocks[].audio_chunks`, not on `item.audio_chunks` or the block itself.
+
+**Gotcha — footnotes audio chunk nesting:** The `footnotes` block has `audio_chunks: []` (always empty). The actual audio indices are on `footnotesBlock.items[].blocks[].audio_chunks`. This bit us when building the synthetic footnotes section.
 
 **Gotcha — `data-audio-block-idx` dependency:**
 Outliner navigation uses `scrollToBlock` → `findElementsByAudioIdx` which queries DOM for `[data-audio-block-idx="N"]`. If a block doesn't have this attribute, navigation silently fails (no scroll) but `currentBlock` still changes (buttons appear disabled). Don't remove this attribute to fix visual issues — find the actual root cause.
@@ -63,6 +70,7 @@ Use Chrome DevTools MCP to visually verify changes, test user flows, and debug i
 **Dev account:** `dev@example.com` / `dev-password-123` (from `scripts/create_user.py`)
 - MCP browser has separate session - login required on first use
 - Login: navigate to localhost:5173 → click Login → fill form → Sign In
+- If the browser is stale ("already running" error), ask the user to close it — don't try to pkill it yourself
 
 **Key commands:**
 - `take_screenshot` — see rendered UI

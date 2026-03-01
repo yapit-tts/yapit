@@ -12,7 +12,7 @@ Three ways content enters the system:
 | `POST /v1/documents/website` | URL | See below* |
 | `POST /v1/documents/document` | File upload | See format routing table |
 
-*Website flow branches: arXiv URLs → markxiv (sidecar) → cleanup → Parse. Other URLs → `extract_website_content` in `website.py`: JS framework detection → optional Playwright → trafilatura (+ html2text fallback) → Parse.
+*Website flow branches: arXiv URLs (abs, pdf, alphaxiv, ar5iv) → rewritten to PDF URL in `prepare` so they flow through the document path (surfacing the free vs AI toggle). Other URLs → `extract_website_content` in `website.py`: JS framework detection → optional Playwright → trafilatura (+ html2text fallback) → Parse.
 
 ### Format Routing
 
@@ -58,10 +58,13 @@ arXiv URLs (arxiv.org, alphaxiv.org, ar5iv) are routed to markxiv — a Docker s
 
 **`extract_website_content(content, url, markxiv_url) → (markdown, extraction_method)`** — orchestrates the full pipeline for both URL-based websites and HTML file uploads.
 
-1. **JS framework detection** — fast pre-check; if detected, Playwright renders first
-2. **Trafilatura** (primary) — article extraction with boilerplate removal
-3. **Playwright retry** — if trafilatura returns None and Playwright wasn't already used
-4. **html2text** (fallback) — when trafilatura returns None after all attempts. Metric `html_fallback_triggered` + URL logged.
+1. **Markdown source detection** — pages that fetch `.md` files client-side (e.g. `marked.parse` + `fetch('file.md')`) short-circuit Playwright by fetching the `.md` source directly
+2. **JS framework detection** — fast pre-check; if detected, Playwright renders first
+3. **Layout table fix** — old-school sites (e.g. paulgraham.com) using `<table>` layout with `<br><br>` paragraph breaks: detects layout cells (≥10 `<p>` children), unwraps content, re-serializes. Falls back to standard trafilatura for normal sites.
+4. **Trafilatura** (primary) — article extraction with boilerplate removal
+5. **Playwright retry** — if trafilatura returns None and Playwright wasn't already used
+6. **html2text** (fallback) — when trafilatura returns None after all attempts. Metric `html_fallback_triggered` + URL logged.
+7. **HTML `<img>` → markdown** — `resolve_relative_urls` converts `<img>` tags to `![alt](url)` syntax since the parser handles markdown images but not raw HTML.
 
 `used_playwright` flag prevents redundant re-renders across the JS-detection and post-trafilatura paths.
 
@@ -69,7 +72,7 @@ arXiv URLs (arxiv.org, alphaxiv.org, ar5iv) are routed to markxiv — a Docker s
 
 - Lazy-loaded on first use to avoid import cost for static pages
 - Browser pooling: single Chromium instance, new page per request
-- Semaphore at 100 concurrent renders (defense in depth)
+- Semaphore at 50 concurrent renders (~7.5GB memory cap)
 - Falls back gracefully if rendering fails
 
 ## Free PDF Extraction
@@ -159,7 +162,7 @@ Returns a `SyntaxTreeNode` AST.
 
 `yapit/gateway/markdown/transformer.py`
 
-The `DocumentTransformer` walks the AST and produces `StructuredDocument`:
+`DocumentTransformer` is created once at startup (injected via FastAPI DI) and walks the AST to produce `StructuredDocument`:
 
 **Blocks with audio** (have non-empty `audio_chunks`):
 - heading, paragraph, list items, blockquote (callout titles), footnote items, images (captions)
@@ -169,7 +172,6 @@ The `DocumentTransformer` walks the AST and produces `StructuredDocument`:
 
 Each block gets:
 - `id` — Unique block ID (`b0`, `b1`, ...)
-- `html` — Rendered HTML (may contain `<span data-audio-idx="N">` wrappers for split content). **Not used by frontend** — the frontend renders from AST. Kept because `split_with_spans` generates it as part of the splitting logic, and removing it would require refactoring that function. Harmless dead weight in the JSON/DB.
 - `ast` — `InlineContent[]` — the full block's inline AST
 - `audio_chunks` — `AudioChunk(text, audio_block_idx, ast)` — each chunk carries its own sliced AST
 
@@ -234,9 +236,9 @@ if len(tts_text) > max_block_chars:
             hard split at word boundaries
 ```
 
-Split content gets multiple `AudioChunk` entries with consecutive `audio_block_idx` values. The HTML contains `<span data-audio-idx="N">` wrappers so frontend can highlight the currently-playing chunk.
+Split content gets multiple `AudioChunk` entries with consecutive `audio_block_idx` values. Frontend wraps each chunk's AST in `<span data-audio-idx="N">` for playback highlighting.
 
-**AST slicing:** When splitting, the transformer slices the inline AST to preserve formatting. A bold phrase split across chunks becomes two separate `<strong>` tags.
+**AST slicing:** When splitting, the transformer slices the inline AST to preserve formatting. A bold phrase split across chunks gets separate `StrongContent` nodes in each chunk's AST.
 
 ## Structured Content Format
 
@@ -250,14 +252,12 @@ Split content gets multiple `AudioChunk` entries with consecutive `audio_block_i
       "type": "heading",
       "id": "b0",
       "level": 1,
-      "html": "<strong>Title</strong>",
       "ast": [{"type": "strong", "content": [{"type": "text", "content": "Title"}]}],
       "audio_chunks": [{"text": "Title", "audio_block_idx": 0, "ast": [{"type": "strong", "content": [{"type": "text", "content": "Title"}]}]}]
     },
     {
       "type": "paragraph",
       "id": "b1",
-      "html": "<span data-audio-idx=\"1\">First sentence.</span> <span data-audio-idx=\"2\">Second sentence.</span>",
       "ast": [{"type": "text", "content": "First sentence. Second sentence."}],
       "audio_chunks": [
         {"text": "First sentence.", "audio_block_idx": 1, "ast": [{"type": "text", "content": "First sentence."}]},
@@ -278,15 +278,14 @@ Stored as JSON in `Document.structured_content`.
 
 **Document:**
 - `original_text` — Raw input markdown
-- `structured_content` — JSON StructuredDocument
-- `blocks` — Relationship to Block records
+- `structured_content` — JSON StructuredDocument (single source of truth for block data)
+- `audio_characters` — Precomputed `sum(len(t) for t in get_audio_blocks())`, used for stats
+- `audio_texts` — Cached property: `get_audio_blocks()` result derived from `structured_content`
+- `from_content()` — Class method for creating documents
 
-**Block:**
-- `idx` — Position in document (matches `audio_block_idx`)
-- `text` — Plain text for TTS
-- `est_duration_ms` — Estimated duration at 1x speed
+All block data is derived from `structured_content` via `Document.audio_texts`. There is no Block table.
 
-**BlockVariant:** Links Block to synthesized audio. See [[tts-flow]] for variant caching.
+**BlockVariant:** Links a content hash to synthesized audio. See [[tts-flow]] for variant caching.
 
 ## Frontend Consumption
 
@@ -320,7 +319,7 @@ Processors extract file content into markdown pages via `process_with_billing`. 
 
 To add a new format: create `processors/<format>.py` with config + extract(), add entry to `/supported-formats`.
 
-**CPU-bound work** uses a dedicated `ThreadPoolExecutor` (`processing.cpu_executor`) so heavy PDF processing doesn't starve quick `to_thread` calls. `process_pages_to_document` also runs on this executor.
+**CPU-bound work** uses a dedicated `ThreadPoolExecutor` (`processing.cpu_executor`) so heavy PDF processing doesn't starve quick `to_thread` calls. `process_pages_to_document` and `estimate_document_tokens` run on this executor to avoid blocking the event loop.
 
 ## Key Files
 

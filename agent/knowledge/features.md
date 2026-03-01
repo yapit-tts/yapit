@@ -28,3 +28,5 @@ User-facing capabilities. Links to task files (for simpler features) or dedicate
 - Lifetime engagement stats (per-voice listening time, survives document deletion) on account page
 - Usage breakdown — expandable per-voice and per-document breakdowns on subscription page
 - Section URL sharing — outliner clicks update URL hash
+- Footnotes section — footnotes split into their own outliner section, independently collapsible/skippable
+- Local TTS capability detection — `useCanUseLocalTTS` disables local TTS on mobile/no-WebGPU devices with explanatory UI

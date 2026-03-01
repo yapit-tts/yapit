@@ -1,5 +1,5 @@
 ---
-status: active
+status: done
 refs:
   - "[[2026-02-21-red-team-security-audit]]"
   - "[[security]]"
@@ -10,26 +10,36 @@ refs:
 
 ## Intent
 
-`proxy_read_timeout 86400` (24 hours) is set on the entire `/api/` location block. This is needed for WebSocket connections (long-lived), but also applies to regular HTTP API requests. A stalled HTTP request holds an nginx worker connection open for 24 hours, enabling slowloris-style connection exhaustion.
+`proxy_read_timeout 86400` (24 hours) was set on the entire `/api/` location block. Needed for WebSocket but also applied to regular HTTP API requests — a stalled HTTP request held an nginx worker connection for 24 hours.
 
-## Approach
+## What we did
 
-Split `/api/` into two location blocks: one for WS with the long timeout, one for HTTP with a normal timeout.
+Split `/api/` into `location /api/v1/ws/` (WebSocket) and `location /api/` (HTTP API) with separate timeouts and headers.
 
-**Needs careful research first** — nginx location matching, the WebSocket upgrade map, and how proxy headers interact have caused regressions before (see [[security]] nginx gotchas). Test thoroughly in dev before deploying.
+**nginx changes (`frontend/nginx.conf`):**
+- WS block: `proxy_read_timeout 300s`, `proxy_send_timeout 300s`, `proxy_buffering off`, hardcoded `Connection "upgrade"`, `proxy_pass http://gateway/v1/ws/;` (path stripping requires the `/v1/ws/` suffix)
+- HTTP block: `proxy_read_timeout 90s`, `Connection ""` (upstream keepalive), `proxy_pass http://gateway/;`
+- Both: `proxy_connect_timeout 10s` (was 75s — connects to local Docker container in microseconds)
+- Removed dead `map $http_upgrade $connection_upgrade` (no longer referenced after split)
+- Fixed `X-Real-IP` to use `$real_client_ip` instead of `$remote_addr` (was sending Traefik's Docker IP)
 
-Key questions:
-- Does `location /api/v1/ws/` match correctly alongside `location /api/`? (nginx longest-prefix matching should handle this)
-- Does the WebSocket upgrade map (`$connection_upgrade`) need to move to the WS-specific block?
-- What's the right timeout for regular HTTP? 60s should be plenty — the longest legitimate HTTP operation is document extraction which runs async.
+**Backend fixes (discovered during audit):**
+- `estimate_document_tokens` → `run_in_executor(cpu_executor, ...)` at both call sites (`documents.py:_billing_precheck`, `processing.py:process_with_billing`). Was blocking event loop for 50ms–5s during PDF page iteration.
+- `html2text` fallback → `asyncio.to_thread()` in `website.py`. Inconsistent with the `trafilatura` path right above it.
+- `markxiv.py` fetch timeout 120s → 45s (was the binding constraint for the HTTP timeout; p99 well under 45s).
+- `gateway/Dockerfile`: added `--timeout-keep-alive 65` to uvicorn. Default was 5s while nginx upstream keepalive is 60s — nginx would reuse connections uvicorn already closed → intermittent 502s.
+
+**Frontend fix:**
+- `useTTSWebSocket.ts`: infinite retry with capped 30s backoff instead of giving up after 5 attempts. Fixed catch block in `connect()` that silently swallowed failures without scheduling retry.
 
 ## Research
 
 - [[2026-02-21-nginx-proxy-timeout-split]] — location matching, proxy_pass path stripping, timeout safety analysis
+- [[2026-02-21-sync-blocking-audit]] — event loop blocking audit, async patterns inventory
 
 ## Done When
 
-- WebSocket location has 24h timeout
-- HTTP API location has ~60s timeout
-- Existing WebSocket behavior unchanged (test reconnect, synthesis flow)
-- No regressions in API proxy (test document creation, extraction, billing)
+- ~~WebSocket location has long timeout~~ 300s ✓
+- ~~HTTP API location has bounded timeout~~ 90s ✓
+- ~~Existing WebSocket behavior unchanged~~ tested: WS connects, audio streams ✓
+- ~~No regressions in API proxy~~ tested: document creation, markxiv, playback ✓
