@@ -2,16 +2,16 @@
 
 [sourcegraph]
 url = "https://sourcegraph.com/blog/revenge-of-the-junior-developer"
-notes = ""
+notes = "trafilatura cleaned non-main-content icons"
 
 [muzero]
 url = "https://www.julian.ac/blog/2020/12/22/muzero-intuition/"
-notes = ""
+notes = "didnt work without trafilatura. with trafilatur it works but footnotes are still broken"
 
 [vienna]
 url = "https://ludwigabap.com/posts/on-my-trip-to-vienna/"
-notes = ""
+notes = "footnotes/*sidenotes*"
 
 [antikythera]
 url = "https://whatisintelligence.antikythera.org/chapter-01/"
-notes = ""
+notes = "images, videos, nasty citations (fixed partly by trafilatura, but not fully - like it does properly place all the content at the bottom as footntte contents, but it doesn't properly generate the footnote refs!"

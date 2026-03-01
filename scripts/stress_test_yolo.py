@@ -69,7 +69,7 @@ class YoloTestResult:
     pages: int
     concurrent_docs: int
     ai_transform: bool
-    upload_times_ms: list[float]
+    prepare_times_ms: list[float]
     processing_times_ms: list[float]
     failed_pages: list[list[int]]
     errors: list[str]
@@ -81,7 +81,7 @@ class YoloTestResult:
             "pages": self.pages,
             "concurrent_docs": self.concurrent_docs,
             "ai_transform": self.ai_transform,
-            "upload_times_ms": self.upload_times_ms,
+            "prepare_times_ms": self.prepare_times_ms,
             "processing_times_ms": self.processing_times_ms,
             "failed_pages": self.failed_pages,
             "errors": self.errors,
@@ -119,45 +119,62 @@ async def upload_and_process(
     pdf_bytes: bytes,
     doc_idx: int,
     ai_transform: bool,
+    console: Console,
 ) -> tuple[float, float, list[int], str | None]:
     auth = {"Authorization": f"Bearer {token}"}
     json_auth = {**auth, "Content-Type": "application/json"}
-    error = None
-    failed_pages: list[int] = []
+    prepare_ms = 0.0
+    processing_ms = 0.0
 
-    try:
-        async with httpx.AsyncClient(timeout=600) as client:
-            upload_start = time.time()
-            files = {"file": (f"stress_test_{doc_idx}.pdf", pdf_bytes, "application/pdf")}
+    async with httpx.AsyncClient(timeout=600) as client:
+        # Step 1: prepare/upload
+        prepare_start = time.time()
+        try:
             resp = await client.post(
                 f"{base_url}/api/v1/documents/prepare/upload",
                 headers=auth,
-                files=files,
+                files={"file": (f"stress_test_{doc_idx}.pdf", pdf_bytes, "application/pdf")},
             )
             resp.raise_for_status()
-            prepare_data = resp.json()
-            file_hash = prepare_data["hash"]
-            total_pages = prepare_data["metadata"]["total_pages"]
-            upload_ms = (time.time() - upload_start) * 1000
+        except Exception as e:
+            prepare_ms = (time.time() - prepare_start) * 1000
+            return prepare_ms, 0.0, [], f"[prepare] {e}"
 
-            # Step 2: create document — returns 202 with extraction_id
-            process_start = time.time()
+        prepare_data = resp.json()
+        file_hash = prepare_data["hash"]
+        total_pages = prepare_data["metadata"]["total_pages"]
+        prepare_ms = (time.time() - prepare_start) * 1000
+        console.print(f"  [dim]Doc {doc_idx}: prepared in {prepare_ms:.0f}ms ({total_pages} pages)[/dim]")
+
+        # Step 2: create document — returns 202 with extraction_id
+        process_start = time.time()
+        try:
             resp = await client.post(
                 f"{base_url}/api/v1/documents/document",
                 headers=json_auth,
                 json={"hash": file_hash, "ai_transform": ai_transform},
             )
             resp.raise_for_status()
-            accepted = resp.json()
-            extraction_id = accepted["extraction_id"]
-            content_hash = accepted["content_hash"]
-            processor_slug = "gemini" if ai_transform else "markitdown"
-            all_pages = list(range(total_pages))
+        except Exception as e:
+            processing_ms = (time.time() - process_start) * 1000
+            return prepare_ms, processing_ms, [], f"[create] {e}"
 
-            # Step 3: poll until extraction completes
-            poll_interval = 1.0
-            while True:
-                await asyncio.sleep(poll_interval)
+        accepted = resp.json()
+        extraction_id = accepted["extraction_id"]
+        content_hash = accepted["content_hash"]
+        processor_slug = "gemini" if ai_transform else "markitdown"
+        all_pages = list(range(total_pages))
+        create_ms = (time.time() - process_start) * 1000
+        console.print(f"  [dim]Doc {doc_idx}: extraction accepted in {create_ms:.0f}ms (id={extraction_id[:8]})[/dim]")
+
+        # Step 3: poll until extraction completes
+        poll_interval = 1.0
+        poll_count = 0
+        last_completed = 0
+        while True:
+            await asyncio.sleep(poll_interval)
+            poll_count += 1
+            try:
                 resp = await client.post(
                     f"{base_url}/api/v1/documents/extraction/status",
                     headers=json_auth,
@@ -169,28 +186,31 @@ async def upload_and_process(
                     },
                 )
                 resp.raise_for_status()
-                status_data = resp.json()
+            except Exception as e:
+                processing_ms = (time.time() - process_start) * 1000
+                return prepare_ms, processing_ms, [], f"[poll #{poll_count} after {processing_ms:.0f}ms] {e}"
 
-                if status_data.get("error"):
-                    error = status_data["error"]
-                    processing_ms = (time.time() - process_start) * 1000
-                    break
+            status_data = resp.json()
+            completed = len(status_data.get("completed_pages", []))
+            if completed != last_completed:
+                console.print(
+                    f"  [dim]Doc {doc_idx}: {completed}/{total_pages} pages extracted (poll #{poll_count})[/dim]"
+                )
+                last_completed = completed
 
-                if status_data.get("document_id"):
-                    doc_id = status_data["document_id"]
-                    failed_pages = status_data.get("failed_pages", [])
-                    processing_ms = (time.time() - process_start) * 1000
-                    await client.delete(f"{base_url}/api/v1/documents/{doc_id}", headers=auth)
-                    break
+            if status_data.get("error"):
+                processing_ms = (time.time() - process_start) * 1000
+                return prepare_ms, processing_ms, [], f"[extraction] {status_data['error']}"
 
-                poll_interval = min(poll_interval * 1.5, 5.0)
+            if status_data.get("document_id"):
+                doc_id = status_data["document_id"]
+                failed_pages = status_data.get("failed_pages", [])
+                processing_ms = (time.time() - process_start) * 1000
+                console.print(f"  [dim]Doc {doc_idx}: complete, deleting...[/dim]")
+                await client.delete(f"{base_url}/api/v1/documents/{doc_id}", headers=auth)
+                return prepare_ms, processing_ms, failed_pages, None
 
-    except Exception as e:
-        upload_ms = (time.time() - upload_start) * 1000
-        processing_ms = 0
-        error = str(e)
-
-    return upload_ms, processing_ms, failed_pages, error
+            poll_interval = min(poll_interval * 1.5, 5.0)
 
 
 async def run_yolo_test(
@@ -205,7 +225,7 @@ async def run_yolo_test(
         pages=pages,
         concurrent_docs=concurrent,
         ai_transform=ai_transform,
-        upload_times_ms=[],
+        prepare_times_ms=[],
         processing_times_ms=[],
         failed_pages=[],
         errors=[],
@@ -218,11 +238,11 @@ async def run_yolo_test(
     console.print(f"[dim]PDF size: {len(pdf_bytes) / 1024:.1f} KB[/dim]")
 
     console.print(f"[dim]Uploading {concurrent} documents concurrently...[/dim]")
-    tasks = [upload_and_process(base_url, token, pdf_bytes, i, ai_transform) for i in range(concurrent)]
+    tasks = [upload_and_process(base_url, token, pdf_bytes, i, ai_transform, console) for i in range(concurrent)]
     results = await asyncio.gather(*tasks)
 
-    for upload_ms, processing_ms, failed, error in results:
-        result.upload_times_ms.append(upload_ms)
+    for prepare_ms, processing_ms, failed, error in results:
+        result.prepare_times_ms.append(prepare_ms)
         result.processing_times_ms.append(processing_ms)
         result.failed_pages.append(failed)
         if error:
@@ -276,8 +296,8 @@ def main(
     result = asyncio.run(run_yolo_test(base_url, token, pages, concurrent, ai_transform, console))
 
     console.print()
-    if result.upload_times_ms:
-        console.print(f"Upload times: {[f'{t:.0f}ms' for t in result.upload_times_ms]}")
+    if result.prepare_times_ms:
+        console.print(f"Prepare times: {[f'{t:.0f}ms' for t in result.prepare_times_ms]}")
     if result.processing_times_ms:
         console.print(f"Processing times: {[f'{t:.0f}ms' for t in result.processing_times_ms]}")
     total_failed = sum(len(fp) for fp in result.failed_pages)
