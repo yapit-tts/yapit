@@ -1,4 +1,4 @@
-FROM stackauth/server:3ef9cb3
+FROM stackauth/server:53c1c9e
 
 USER root
 

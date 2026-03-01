@@ -2,6 +2,7 @@ volumes:
   pgdata:
   metricsdata:
   markxiv-cache:
+  clickhouse-data:
 
 services:
   # -------- database
@@ -91,6 +92,33 @@ services:
       timeout: 5s
       retries: 10
 
+  # -------- analytics (required by stack-auth migration runner, see github.com/stack-auth/stack-auth/issues/1228)
+  clickhouse:
+    init: true
+    image: clickhouse/clickhouse-server:25.10-alpine
+    restart: unless-stopped
+    cap_drop: [ALL]
+    cap_add: [SYS_NICE, NET_BIND_SERVICE, CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID, KILL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      CLICKHOUSE_DB: analytics
+      CLICKHOUSE_USER: stackframe
+      CLICKHOUSE_PASSWORD: clickhouse-dev
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse-client --query 'SELECT 1'"]
+      start_period: 10s
+      start_interval: 1s
+      interval: 30s
+      timeout: 3s
+      retries: 5
+
   # -------- auth
   stack-auth:
     init: true
@@ -101,6 +129,8 @@ services:
     security_opt: ["no-new-privileges:true"]
     depends_on:
       postgres:
+        condition: service_healthy
+      clickhouse:
         condition: service_healthy
     healthcheck:
        test: ["CMD-SHELL",

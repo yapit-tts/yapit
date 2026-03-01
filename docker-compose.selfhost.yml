@@ -5,6 +5,7 @@ volumes:
   extraction-cache:
   gateway-data:
   images:
+  clickhouse-data:
 
 services:
   frontend:
