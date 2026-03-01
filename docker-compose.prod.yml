@@ -169,6 +169,9 @@ services:
       retries: 5
     deploy:
       replicas: 1
+      resources:
+        limits:
+          cpus: '0.50'
       update_config:
         order: stop-first
 
