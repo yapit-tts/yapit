@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Yapit — Back Shortly</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: system-ui, -apple-system, sans-serif;
+    background: oklch(0.96 0.0267 97.61);
+    color: oklch(0.35 0.0355 43.21);
+  }
+  @media (prefers-color-scheme: dark) {
+    body {
+      background: oklch(0.13 0.006 70);
+      color: oklch(0.92 0.025 80);
+    }
+    .subtext { color: oklch(0.65 0.012 70); }
+  }
+  .container {
+    text-align: center;
+    padding: 2rem;
+  }
+  .logo {
+    width: 64px;
+    height: 64px;
+    margin-bottom: 1.5rem;
+  }
+  h1 {
+    font-size: 1.5rem;
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+  }
+  .subtext {
+    font-size: 1rem;
+    color: oklch(0.556 0 0);
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <svg class="logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+    <defs>
+      <linearGradient id="treeGrad" x1="0" y1="1" x2="0" y2="0">
+        <stop offset="0%" stop-color="#5c4a3a"/>
+        <stop offset="40%" stop-color="#4a6840"/>
+        <stop offset="100%" stop-color="#3a8a4d"/>
+      </linearGradient>
+    </defs>
+    <path d="M2 2 L9 14 L9 29 L15 29 L15 14 L22 2 L17 2 L12 10 L7 2 Z" fill="url(#treeGrad)"/>
+    <path d="M20 11 Q23 13 23 16 Q23 19 20 21" fill="none" stroke="#3a8a4d" stroke-width="2.5" stroke-linecap="round"/>
+    <path d="M24 9 Q28 12 28 16 Q28 20 24 23" fill="none" stroke="#5aa86a" stroke-width="2" stroke-linecap="round" opacity="0.55"/>
+  </svg>
+  <h1>We'll be back shortly</h1>
+  <p class="subtext">Yapit is briefly unavailable. Please try again in a moment.</p>
+</div>
+</body>
+</html>
