@@ -278,10 +278,6 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
   function engineStop() {
     setStatus("stopped", "engineStop");
     isSynthesizingCurrent = false;
-
-    currentBlock = -1;
-    audioProgress = 0;
-    blockStartTime = 0;
     notify();
   }
 

@@ -36,6 +36,7 @@ export const ApiProvider: FC<PropsWithChildren> = ({ children }) => {
 	const userRef = useRef<typeof user>(undefined);
 	const [isAuthReady, setIsAuthReady] = useState(false);
 	const [isAnonymous, setIsAnonymous] = useState(true);
+	const [authTrigger, setAuthTrigger] = useState(0);
 	const claimAttempted = useRef(false);
 	const user = useUser();
 
@@ -43,6 +44,20 @@ export const ApiProvider: FC<PropsWithChildren> = ({ children }) => {
 	useEffect(() => {
 		userRef.current = user;
 	}, [user]);
+
+	// Re-trigger auth resolution on network recovery / tab focus
+	useEffect(() => {
+		const bump = () => setAuthTrigger((c) => c + 1);
+		const onVisible = () => {
+			if (document.visibilityState === "visible") bump();
+		};
+		window.addEventListener("online", bump);
+		document.addEventListener("visibilitychange", onVisible);
+		return () => {
+			window.removeEventListener("online", bump);
+			document.removeEventListener("visibilitychange", onVisible);
+		};
+	}, []);
 
 	// Create axios instance once with interceptor that fetches fresh token per request
 	const api = useMemo(() => {
@@ -91,30 +106,30 @@ export const ApiProvider: FC<PropsWithChildren> = ({ children }) => {
 	}, []);
 
 	useEffect(() => {
-		// user === undefined means Stack Auth is still loading
-		// user === null means user is not logged in (auth resolved, no user)
-		// user object present means user is logged in
-		if (user === undefined) {
-			// Still loading, don't set isAuthReady yet
-			return;
-		}
+		if (user === undefined) return;
 
 		if (user === null || !user.currentSession) {
-			// No user or no session - anonymous mode
 			setIsAnonymous(true);
 			setIsAuthReady(true);
 			return;
 		}
 
-		// User is logged in - verify we can get a token
-		user.currentSession
-			.getTokens()
-			.then(async ({ accessToken }) => {
+		let cancelled = false;
+		const MAX_RETRIES = 3;
+
+		async function resolveAuth(attempt = 0) {
+			try {
+				const { accessToken } =
+					await user!.currentSession!.getTokens();
+				if (cancelled) return;
 				setIsAnonymous(!accessToken);
 				setIsAuthReady(true);
 
-				// Claim anonymous data if user just logged in and has anonymous ID
-				if (accessToken && hasAnonymousId() && !claimAttempted.current) {
+				if (
+					accessToken &&
+					hasAnonymousId() &&
+					!claimAttempted.current
+				) {
 					claimAttempted.current = true;
 					const anonId = await getOrCreateAnonymousId();
 					const anonToken = getAnonymousToken();
@@ -129,13 +144,28 @@ export const ApiProvider: FC<PropsWithChildren> = ({ children }) => {
 						console.error("Failed to claim anonymous data:", err);
 					}
 				}
-			})
-			.catch((err) => {
-				console.error("api provider: failed to get access token:", err);
+			} catch (err) {
+				if (cancelled) return;
+				if (attempt < MAX_RETRIES) {
+					await new Promise((r) =>
+						setTimeout(r, 1000 * 2 ** attempt),
+					);
+					if (!cancelled) return resolveAuth(attempt + 1);
+				}
+				console.error(
+					`api provider: failed to get access token after ${attempt + 1} attempts:`,
+					err,
+				);
 				setIsAnonymous(true);
 				setIsAuthReady(true);
-			});
-	}, [user, api]);
+			}
+		}
+
+		resolveAuth();
+		return () => {
+			cancelled = true;
+		};
+	}, [user, api, authTrigger]);
 
 	return (
 		<ApiContext.Provider value={{ api, isAuthReady, isAnonymous }}>
