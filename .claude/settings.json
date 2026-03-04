@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(duckdb *)",
+      "Bash(make test-unit *)",
+      "Bash(make test-local *)",
+      "Bash(make check *)",
+      "Bash(make sync-logs *)",
+      "Bash(make sync-metrics *)",
+      "Bash(make dev-env *)"
+    ]
+  }
+}
