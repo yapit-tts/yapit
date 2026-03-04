@@ -155,6 +155,8 @@ export function PlaybackOverlay({
   documentIdRef.current = documentId;
   const isAnonymousRef = useRef(isAnonymous);
   isAnonymousRef.current = isAnonymous;
+  const isPlayingRef = useRef(isPlaying);
+  isPlayingRef.current = isPlaying;
 
   useEffect(() => {
     if (!documentIdRef.current || currentBlock < 0) return;
@@ -165,6 +167,7 @@ export function PlaybackOverlay({
     if (!isAnonymousRef.current) {
       api.patch(`/v1/documents/${documentIdRef.current}/position`, {
         block_idx: currentBlock,
+        playing: isPlayingRef.current,
       }).catch(() => {});
     }
   }, [currentBlock, api, engine]);
@@ -291,14 +294,21 @@ export function PlaybackOverlay({
 
   const handleOutlinerNavigate = useCallback((blockIdx: number) => {
     engine.seekToBlock(blockIdx);
-    scrollToBlock(blockIdx);
     const section = sections.find(s => s.startBlockIdx === blockIdx)
       ?? sections.flatMap(s => s.subsections).find(s => s.blockIdx === blockIdx);
     const slug = section ? slugMap.get(section.id) : undefined;
     if (slug) {
       history.replaceState(null, "", `#${slug}`);
     }
-  }, [engine, scrollToBlock, sections, slugMap]);
+    if (outliner.isMobile) {
+      outliner.setOpenMobile(false);
+      // iOS Safari blocks scrollIntoView while a modal Sheet is open.
+      // Defer until the sheet close animation (300ms) completes.
+      setTimeout(() => scrollToBlock(blockIdx), 350);
+    } else {
+      scrollToBlock(blockIdx);
+    }
+  }, [engine, scrollToBlock, sections, slugMap, outliner]);
 
   // --- Render ---
 

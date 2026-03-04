@@ -1286,6 +1286,7 @@ async def get_document_blocks(document: CurrentDoc) -> list[AudioBlock]:
 
 class PositionUpdate(BaseModel):
     block_idx: int
+    playing: bool = False
 
 
 @router.patch("/{document_id}/position")
@@ -1296,7 +1297,8 @@ async def update_position(
 ) -> dict:
     """Update playback position for cross-device sync."""
     document.last_block_idx = body.block_idx
-    document.last_played_at = datetime.now(tz=dt.UTC)
+    if body.playing:
+        document.last_played_at = datetime.now(tz=dt.UTC)
     await db.commit()
     return {"ok": True}
 

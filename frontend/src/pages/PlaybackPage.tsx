@@ -388,7 +388,7 @@ const PlaybackPage = () => {
     setExpandedSections(currentSection ? new Set([currentSection.id]) : new Set());
   }, [sections]);
 
-  const shouldShowOutliner = sections.length > 0 && documentBlocks.length >= 30;
+  const shouldShowOutliner = sections.length > 0;
 
   useEffect(() => {
     outliner.setEnabled(shouldShowOutliner);

@@ -261,15 +261,23 @@ async def test_update_position(client, as_test_user):
     assert r.status_code == 201
     doc = DocumentCreateResponse.model_validate(r.json())
 
-    # Update position
+    # Update position without playing — should NOT set last_played_at
     r = await client.patch(f"/v1/documents/{doc.id}/position", json={"block_idx": 5})
     assert r.status_code == 200
     assert r.json() == {"ok": True}
 
-    # Verify position was saved
     r = await client.get(f"/v1/documents/{doc.id}")
     assert r.status_code == 200
     assert r.json()["last_block_idx"] == 5
+    assert r.json()["last_played_at"] is None
+
+    # Update position while playing — should set last_played_at
+    r = await client.patch(f"/v1/documents/{doc.id}/position", json={"block_idx": 7, "playing": True})
+    assert r.status_code == 200
+
+    r = await client.get(f"/v1/documents/{doc.id}")
+    assert r.status_code == 200
+    assert r.json()["last_block_idx"] == 7
     assert r.json()["last_played_at"] is not None
 
 
