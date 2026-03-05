@@ -38,20 +38,55 @@ Open [http://localhost](http://localhost) and create an account. Data persists a
 
 `.env.selfhost` is self-documenting — see the comments for optional features (Gemini extraction, Inworld voices, RunPod overflow).
 
-**Scaling workers:** Workers are pull-based — any machine with Redis access can run them, no gateway config needed. Connect from the local network or via Tailscale, for example.
+**Multi-worker GPU setup:** 
+
+Workers are pull-based — any machine with Redis access can run them. Connect from the local network or via Tailscale, for example. GPU and CPU workers run side-by-side; faster workers naturally pull more jobs. Scale by running more containers on any machine that can reach Redis.
+
+Prereq: Docker 25+, [nvidia-container-toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) with [CDI enabled](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/cdi-support.html), network access to the Redis instance.
 
 ```bash
-# Kokoro TTS (GPU)
-docker run --gpus all -e REDIS_URL=redis://<host>:6379 ghcr.io/yapit-tts/kokoro-gpu:latest
-# Kokoro TTS (CPU)
-docker run -e REDIS_URL=redis://<host>:6379 ghcr.io/yapit-tts/kokoro-cpu:latest
-# YOLO figure detection (GPU)
-docker run --gpus all -e REDIS_URL=redis://<host>:6379 ghcr.io/yapit-tts/yolo-gpu:latest
-# YOLO figure detection (CPU)
-docker run -e REDIS_URL=redis://<host>:6379 ghcr.io/yapit-tts/yolo-cpu:latest
+# One-time GPU setup: generate CDI spec + enable CDI in Docker
+sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
+# Add {"features": {"cdi": true}} to /etc/docker/daemon.json, then:
+sudo systemctl restart docker
+
+git clone --depth 1 https://github.com/yapit-tts/yapit.git && cd yapit
+
+# Pull only the images you need
+docker compose -f docker-compose.worker.yml pull kokoro-gpu yolo-gpu
+
+# Start 2 Kokoro + 1 YOLO worker
+REDIS_URL=redis://<host>:6379/0 docker compose -f docker-compose.worker.yml up -d \
+  --scale kokoro-gpu=2 --scale yolo-gpu=1 kokoro-gpu yolo-gpu
 ```
 
-GPU and CPU workers run side-by-side; faster workers naturally pull more jobs. Scale by running more containers on any machine that can reach Redis.
+Adjust `--scale` to your GPU. A 4GB card fits 2 Kokoro + 1 YOLO comfortably.
+
+<details>
+<summary>NVIDIA MPS (recommended for multiple workers per GPU)</summary>
+
+[MPS](https://docs.nvidia.com/deploy/mps/) lets multiple workers share one GPU context — less VRAM overhead, no context switching. Without MPS, each worker gets its own CUDA context (~300MB each). The compose file mounts the MPS pipe automatically; just start the daemon.
+
+```bash
+sudo tee /etc/systemd/system/nvidia-mps.service > /dev/null <<'EOF'
+[Unit]
+Description=NVIDIA Multi-Process Service (MPS)
+After=nvidia-persistenced.service
+
+[Service]
+Type=forking
+ExecStart=/usr/bin/nvidia-cuda-mps-control -d
+ExecStop=/bin/sh -c 'echo quit | /usr/bin/nvidia-cuda-mps-control'
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+EOF
+sudo systemctl daemon-reload
+sudo systemctl enable --now nvidia-mps
+```
+
+</details>
 
 To stop: `make self-host-down`.
 
@@ -65,9 +100,12 @@ Next:
 - Support uploading images, EPUB.
 - Support AI-transform for websites.
 - Support exporting audio as MP3.
+- Replace trafilatura with https://github.com/kepano/defuddle for better free website -> md.
 
 Later:
 - Better support for self-hosting (better modularity for adding voices, extraction methods, documentation)
+- Support thinking parameter for Gemini
+- Support temperature parameter for Inworld
 
 
 ## Development
