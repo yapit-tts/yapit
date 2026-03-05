@@ -137,7 +137,9 @@ Frontend fetches via HTTP:
 - Checks Redis first (hot cache), falls back to SQLite (cold cache)
 - Returns cached bytes directly (`audio/ogg` media type)
 
-**CDN caching:** Response includes `Cache-Control: public, s-maxage=31536000, max-age=0` — Cloudflare edge caches audio indefinitely, browsers don't (the playback engine manages its own buffer). Requires a Cloudflare Cache Rule matching `/api/v1/audio/*` with "Eligible for cache" since the URL has no file extension. Content is hash-addressed and immutable, so edge caching is safe without purging.
+**CDN caching:** Response includes `Cache-Control: public, s-maxage=31536000, max-age=0` — Cloudflare edge caches audio indefinitely, browsers don't (the playback engine manages its own buffer). Content is hash-addressed and immutable, so edge caching is safe without purging. See [[infrastructure]] for the Cache Rule config and zone settings.
+
+**Cache Rule details:** A CF Cache Rule matches `https://yapit.md/api/v1/audio/*` with `cache: true` (required since the URL has no file extension). Edge TTL mode is `bypass_by_default` (respects origin `s-maxage`). Browser TTL mode is `respect_origin` (passes through origin `max-age=0`). Without the explicit `browser_ttl: respect_origin`, CF's zone-level `browser_cache_ttl` (14400s) overrides `max-age=0`.
 
 ## Browser-Side Synthesis
 

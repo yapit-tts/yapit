@@ -42,9 +42,43 @@ Extracted images (from Gemini+YOLO) stored via `ImageStorage` abstraction (`yapi
 
 Images keyed by document `content_hash`. Deleted when last document with that hash is deleted.
 
-## Cloudflare Zone Settings
+## Cloudflare
 
-Zone: `yapit.md`. Free plan. DNS Setup: Full (Cloudflare nameservers).
+Zone: `yapit.md` (ID: `e307c22342c2d1dada1d4d45da3e1bce`). Free plan. DNS Setup: Full (Cloudflare nameservers).
+
+### API Access
+
+`CLOUDFLARE_API_TOKEN` in `.env.prod` (sops-encrypted). Bearer token with "Read all resources" + explicit "Zone → Cache Rules → Read". Available after `make prod-env`.
+
+**Analytics:** CF deprecated the REST analytics endpoint; all analytics go through the GraphQL API (`https://api.cloudflare.com/client/v4/graphql`). Run `uv run scripts/cf_analytics.py` for a dashboard summary (traffic, cache, errors, paths, countries, DNS, hourly). Supports `--hours`, `--section`, `--json`.
+
+**Free plan GraphQL limitations:** `edgeResponseContentTypeName`, `firewallEventsAdaptiveGroups`, and `coloCode` require a paid plan. The content type breakdown and per-datacenter breakdowns visible in the CF dashboard are not available via API on free. `httpRequestsAdaptiveGroups` queries are limited to 24h windows.
+
+**Dataset discrepancy:** `httpRequests1dGroups` and `httpRequestsAdaptiveGroups` can disagree on status code counts. For Mar 4 2026, `1dGroups` reported 0 x 504 while `adaptiveGroups` reported 91. Always use `adaptiveGroups` for accurate status code analysis — `1dGroups` is the legacy sampled dataset.
+
+### Cache Rules
+
+One rule: matches `https://yapit.md/api/v1/audio/*` with `cache: true`, `edge_ttl: bypass_by_default` (respects origin `s-maxage`), `browser_ttl: respect_origin` (passes through origin `max-age`). See [[tts-flow]] for audio caching details.
+
+**Gotcha — zone-level `browser_cache_ttl`:** Set to 14400 (4h). When a cache rule does NOT set its own `browser_ttl`, CF rewrites the origin's `max-age` to this zone default. This silently changes `max-age=0` to `max-age=14400`. Always set `browser_ttl: respect_origin` on cache rules where origin headers matter.
+
+### 504 Background Radiation
+
+As of Mar 2026, ~10-12% of daily requests show as 504 in CF analytics. All have `originResponseStatus: 0` (CF couldn't connect to origin), but Traefik logs show zero 504s — requests never reach origin. Origin is healthy (uptime, load, container health all normal). Hetzner firewall has correct CF CIDRs.
+
+**Diagnosis:** Likely transient network path issues between CF edge and Hetzner. The 504s cluster during active usage hours (more requests = more failures visible). All affected client IPs are real users, not bots. Key diagnostic: `originResponseStatus: 0` confirms CF-generated, not origin-generated.
+
+**Monitoring:** `cf_analytics.py --section 504` shows the full breakdown (origin status, by host/path, by client IP, hourly). The overview section also flags 504s. If the rate increases significantly or `originResponseStatus` shows non-zero values, it's an origin problem worth investigating.
+
+### Observability Gaps
+
+**Stack Auth:** No metrics pipeline. Container logs are the only diagnostic — access via `docker logs <container>` on prod. Logs include response times in `[    RES]` lines. No alerting on errors or latency.
+
+**Traefik:** JSON access logs available via `docker logs traefik`. Fields: `DownstreamStatus`, `Duration` (ns), `OriginDuration`, `ServiceName`, `RequestPath`. Not exported or aggregated — must query ad-hoc on the VPS.
+
+**CF ↔ origin connectivity:** No direct probe. The Hetzner firewall blocks non-CF traffic on 80/443, so external uptime monitors (UptimeRobot etc.) only test the CF path, not origin directly. The `originResponseStatus` field in CF GraphQL is the best proxy for now.
+
+### Zone Settings
 
 **Enabled:** Always use HTTPS, TLS 1.3, 0-RTT Connection Resumption, Automatic HTTPS Rewrites, Opportunistic Encryption, HTTP/2, HTTP/3, HTTP/2 to Origin, Web Analytics (RUM).
 
@@ -77,14 +111,18 @@ When **adding or removing** config files or Settings fields, check ALL of these:
 
 **Operations:**
 - `disk-usage.sh` — Comprehensive disk report (volumes, caches, DBs, logs). Appends history to VPS.
-- `document_storage.py` — Per-document storage (DB + images). Flags: `--id`, `--all`, `--summary`, `--json`, `-v`
-- `report.sh` — Daily health diagnostics agent. Syncs prod data, runs Claude analysis, posts to ntfy. Flags: `--after-deploy`
+- `document_storage.py` — Per-document storage breakdown (DB + images)
+- `report.sh` — Daily health diagnostics agent. Syncs prod data, runs Claude analysis, posts to ntfy.
 
 **Billing:**
-- `stripe_setup.py` — Stripe IaC (products, prices, coupons, portal). Flags: `--test`, `--prod`
-- `margin_calculator.py` — Profitability analysis. Flags: `--plain`
-- `test_clock_setup.py` — Stripe test clock for billing tests. Flags: `--tier`, `--usage-tokens`, `--advance-days`, `--cleanup`
+- `stripe_setup.py` — Stripe IaC (products, prices, coupons, portal)
+- `margin_calculator.py` — Profitability analysis
+- `test_clock_setup.py` — Stripe test clock for billing tests
+
+**Monitoring:**
+- `cf_analytics.py` — Cloudflare analytics via GraphQL (traffic, cache, errors, DNS, hourly, 504 diagnostics)
+- `proxy_diagnostics.py` — Stack Auth + Traefik diagnostics from VPS container logs (latency, errors, slow requests)
 
 **Stress testing:**
-- `stress_test.py` — TTS stress testing. Run: `uv run scripts/stress_test.py --help`
-- `stress_test_yolo.py` — YOLO overflow testing with synthetic PDFs. Run: `uv run scripts/stress_test_yolo.py --help`
+- `stress_test.py` — TTS stress testing
+- `stress_test_yolo.py` — YOLO overflow testing with synthetic PDFs

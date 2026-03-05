@@ -45,6 +45,14 @@ DISK_REPORT=$("$SCRIPT_DIR/disk-usage.sh" 2>&1 || echo "(disk-usage.sh failed)")
 echo "Fetching disk history..."
 DISK_HISTORY=$(ssh "$VPS_HOST" "tail -50 /var/log/yapit-disk-history.log 2>/dev/null" || echo "(no history yet)")
 
+# Capture Cloudflare analytics (edge traffic, cache, errors, 504 diagnostics)
+echo "Gathering Cloudflare analytics..."
+CF_REPORT=$(uv run "$SCRIPT_DIR/cf_analytics.py" --plain 2>&1 || echo "(cf_analytics.py failed — is CLOUDFLARE_API_TOKEN set?)")
+
+# Capture proxy diagnostics (Stack Auth + Traefik from VPS container logs)
+echo "Gathering proxy diagnostics..."
+PROXY_REPORT=$(uv run "$SCRIPT_DIR/proxy_diagnostics.py" 2>&1 || echo "(proxy_diagnostics.py failed — is VPS_HOST set and SSH working?)")
+
 # Build context
 if $AFTER_DEPLOY; then
     BASE_CONTEXT="CONTEXT: You were triggered shortly after a deploy. Focus on: Are there new errors since the deploy? Any anomalies compared to before?"
@@ -67,7 +75,15 @@ $DISK_REPORT
 
 ## DISK_HISTORY (last 50 entries)
 
-$DISK_HISTORY"
+$DISK_HISTORY
+
+## CLOUDFLARE ANALYTICS (edge traffic, cache, errors, 504 diagnostics)
+
+$CF_REPORT
+
+## PROXY DIAGNOSTICS (Stack Auth + Traefik from VPS container logs)
+
+$PROXY_REPORT"
 
 # The analysis prompt
 read -r -d '' PROMPT << 'EOF' || true
@@ -223,6 +239,18 @@ This is the most important section. Don't just count errors — read the actual 
 
 - "vacuum" events. Are they running? Are they effective? Do they take too long?
 
+### Cloudflare Edge (see CLOUDFLARE ANALYTICS section)
+- **504 errors**: Check total count, origin response status, and affected hosts/IPs.
+  - `origin_unreachable` (originResponseStatus=0) means CF couldn't reach origin — this is a CF/network issue, not an origin bug.
+  - Non-zero originResponseStatus means origin responded with an error — investigate origin.
+- **Cache hit ratio**: Low by design — most requests are unique text×voice×model. Hits only on shared/preview docs or replayed blocks. Ratio <1% would suggest the cache rule is broken.
+- **5xx by hour**: Correlate spikes with deploy log times and metrics events.
+- **Background 504 rate ~10-12%** is a known baseline (CF edge ↔ Hetzner transient path issues). Flag if significantly higher.
+
+### Proxy Diagnostics (see PROXY DIAGNOSTICS section)
+- **Stack Auth:** Response time distribution and status codes. Baseline (Mar 2026): p50 ~90ms, p99 ~600ms, all 200s. Watch for: non-200 status codes, p99 >2s sustained. Error lines: "S3 is not configured" and "Missing environment variable: STACK_VERCEL_SANDBOX_TOKEN" are known-benign (unused features). Only flag *new* error patterns.
+- **Traefik:** Per-service latency breakdown. WebSocket connections (status 0) are excluded from latency stats. Note that Traefik logs upstream 5xx — a 500 on an API path is a gateway bug, while a 502 on any path means Traefik couldn't reach the upstream service. Slow static asset requests (JS/CSS) are usually slow client connections, not server issues.
+
 ## What's Normal vs Concerning
 
 | Metric | Normal | Concerning |
@@ -238,6 +266,8 @@ This is the most important section. Don't just count errors — read the actual 
 | Overflow usage | Occasional spikes | Constant (capacity issue) |
 | Billing sync drift | 0 | Any (check which webhooks are being missed) |
 | Billing reconciliation delta | <10 | >50 sustained (lost events) |
+| CF 504 rate | <15% | >20% or originResponseStatus != 0 |
+| CF cache hit ratio | Low (unique content) | <1% sustained (cache rule broken) |
 
 Events older than 3-7 days can be ignored unless part of a larger pattern / investigation.
 E.g. items on the DLQ from >7 days ago are almost certainly already taken care of.
