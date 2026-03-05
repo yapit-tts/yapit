@@ -435,9 +435,30 @@ const SoundControl = memo(function SoundControl({
   }, [isBuffering, isSynthesizing]);
   const handleSpinnerMouseLeave = useCallback(() => setIsHoveringSpinner(false), []);
 
+  const interpolatedProgressRef = useRef(0);
+  const lastTickTimeRef = useRef(performance.now());
+
+  // Sync to real engine progress on block transitions
   useEffect(() => {
+    interpolatedProgressRef.current = audioProgress;
+    lastTickTimeRef.current = performance.now();
     setProgressDisplay(msToTime(audioProgress));
   }, [audioProgress]);
+
+  // While audio is actively playing, tick the display forward every second
+  useEffect(() => {
+    if (!isPlaying || isSynthesizing) return;
+    interpolatedProgressRef.current = audioProgress;
+    lastTickTimeRef.current = performance.now();
+    const interval = setInterval(() => {
+      const now = performance.now();
+      const elapsed = now - lastTickTimeRef.current;
+      lastTickTimeRef.current = now;
+      interpolatedProgressRef.current += elapsed * playbackSpeed;
+      setProgressDisplay(msToTime(interpolatedProgressRef.current));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [isPlaying, isSynthesizing, playbackSpeed]);
 
   useEffect(() => {
     setDurationDisplay(msToTime(estimated_ms));
