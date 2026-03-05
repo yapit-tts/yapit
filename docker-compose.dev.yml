@@ -37,6 +37,10 @@ services:
     ports:
       - "5433:5432"
 
+  defuddle:
+    ports:
+      - "8085:8080"
+
   kokoro-cpu:
     environment:
       WORKER_ID: dev-kokoro-cpu

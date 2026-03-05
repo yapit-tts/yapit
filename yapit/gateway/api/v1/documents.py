@@ -558,6 +558,7 @@ async def create_website_document(
     file_cache: DocumentCache,
     transformer: DocumentTransformerDep,
     user: AuthenticatedUser,
+    settings: SettingsDep,
 ) -> DocumentCreateResponse:
     """Create a document from a live website."""
     await check_storage_limit(user.id, user.is_anonymous, db)
@@ -581,7 +582,9 @@ async def create_website_document(
             detail="Cached document has no content. This should not happen.",
         )
 
-    markdown, extraction_method = await extract_website_content(cached_doc.content, cached_doc.metadata.url)
+    markdown, extraction_method = await extract_website_content(
+        cached_doc.content, cached_doc.metadata.url, settings.defuddle_url
+    )
 
     processed = await asyncio.get_running_loop().run_in_executor(
         cpu_executor,

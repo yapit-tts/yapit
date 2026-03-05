@@ -493,7 +493,8 @@ async def run_web_extraction(
         await download_file(url, html_path)
         content = html_path.read_bytes()
 
-        markdown, method = await extract_website_content(content, url)
+        defuddle_url = os.environ.get("DEFUDDLE_URL", "http://localhost:8085")
+        markdown, method = await extract_website_content(content, url, defuddle_url)
         print(f"  Method: {method}, {len(markdown)} chars")
 
         (run_dir / f"{name}.md").write_text(markdown)

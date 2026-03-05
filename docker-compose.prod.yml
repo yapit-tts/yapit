@@ -238,6 +238,26 @@ services:
         order: start-first
         failure_action: rollback
 
+  defuddle:
+    init: true
+    image: ghcr.io/yapit-tts/defuddle:latest
+    cap_drop: [ALL]
+    environment:
+      PORT: "8080"
+    networks:
+      - yapit-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      start_period: 10s
+      interval: 30s
+      timeout: 3s
+      retries: 3
+    deploy:
+      replicas: 1
+      update_config:
+        order: start-first
+        failure_action: rollback
+
   kokoro-cpu:
     init: true
     image: ghcr.io/yapit-tts/kokoro-cpu:latest

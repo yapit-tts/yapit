@@ -49,6 +49,7 @@ class Settings(BaseSettings):
     r2_public_url: str | None = None
 
     markxiv_url: str | None = None
+    defuddle_url: str | None = None
 
     # Worker replica counts (for queue semaphore sizing)
     kokoro_cpu_replicas: int
