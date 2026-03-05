@@ -15,9 +15,9 @@ Track workarounds applied during the March 2026 upgrade that can be reverted.
 
 **Workaround:** ClickHouse container in all compose files (`clickhouse/clickhouse-server:25.10-alpine`), env vars `STACK_CLICKHOUSE_*` in `.env.dev`/`.env.prod`/`.env.selfhost`.
 
-Since `484c3a63` (Jan 28), migration runner unconditionally calls `runClickhouseMigrations()`. Self-hosted deployments don't use ClickHouse analytics. ~200MB container, minimal runtime overhead, sits idle.
+Since `484c3a63` (Jan 28), migration runner unconditionally calls `runClickhouseMigrations()`. Self-hosted deployments don't use ClickHouse analytics. The container pre-allocates ~1.1GB RAM and 729 threads regardless of workload. CPU throttled to 0.5 cores via compose resource limits (`66e3fae`). The only writes are async fire-and-forget `$token-refresh` events (~20/hour at 9 users, ~1200/hour at 300 sessions) — if ClickHouse is down or slow, auth is unaffected. Powers two dashboard widgets (DAU chart, country globe) that we don't rely on.
 
-**When fixed:** Remove ClickHouse service from compose files, `clickhouse-data` volume, `STACK_CLICKHOUSE_*` env vars, `SYS_KILL` cap.
+**When fixed:** Remove ClickHouse service from compose files, `clickhouse-data` volume, `STACK_CLICKHOUSE_*` env vars, `SYS_NICE`/`NET_BIND_SERVICE` caps, CPU limits.
 
 ### 2. Internal dashboard keys pinned (low priority cleanup)
 
