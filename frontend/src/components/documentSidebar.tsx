@@ -12,6 +12,7 @@ import {
   SidebarMenuAction,
   SidebarHeader,
   SidebarFooter,
+  useSidebar,
 } from "@/components/ui/sidebar";
 import {
   DropdownMenu,
@@ -98,6 +99,8 @@ function DocumentSidebar() {
   const location = useLocation();
   const user = useUser();
   const isMobile = useIsMobile();
+  const { setOpenMobile } = useSidebar();
+  const closeMobileSheet = () => { if (isMobile) setOpenMobile(false); };
 
   useEffect(() => {
     if (!isAuthReady) return;
@@ -217,6 +220,7 @@ function DocumentSidebar() {
             <SidebarMenuButton
               size="lg"
               onClick={() => {
+                closeMobileSheet();
                 if (location.pathname === "/") {
                   window.dispatchEvent(new CustomEvent("reset-input"));
                 } else {
@@ -255,7 +259,7 @@ function DocumentSidebar() {
                       isActive={documentId === doc.id}
                       size="lg"
                     >
-                      <Link to={`/listen/${doc.id}`} state={{ documentTitle: doc.title }}>
+                      <Link to={`/listen/${doc.id}`} state={{ documentTitle: doc.title }} onClick={closeMobileSheet}>
                         <FileText className="shrink-0" />
                         <span className="truncate" title={doc.title || "Untitled"}>
                           {doc.title || "Untitled"}
@@ -320,7 +324,7 @@ function DocumentSidebar() {
             <Tooltip>
               <TooltipTrigger asChild>
                 <SidebarMenuButton asChild size="lg" className="h-auto py-3">
-                  <Link to="/subscription">
+                  <Link to="/subscription" onClick={closeMobileSheet}>
                     <div className="flex flex-col w-full gap-1">
                       <div className="flex items-center gap-2">
                         <CreditCard className="h-4 w-4 text-primary shrink-0" />
@@ -379,7 +383,7 @@ function DocumentSidebar() {
           {/* Tips button */}
           <SidebarMenuItem>
             <SidebarMenuButton asChild size="lg">
-              <Link to="/tips">
+              <Link to="/tips" onClick={closeMobileSheet}>
                 <Lightbulb className="h-4 w-4 text-muted-foreground" />
                 <span>Tips</span>
               </Link>
@@ -406,12 +410,12 @@ function DocumentSidebar() {
                 className="min-w-[var(--radix-popper-anchor-width)]"
               >
                 {user && (
-                  <DropdownMenuItem onClick={() => navigate("/account")}>
+                  <DropdownMenuItem onClick={() => { closeMobileSheet(); navigate("/account"); }}>
                     <Settings className="mr-2 h-4 w-4" />
                     Account
                   </DropdownMenuItem>
                 )}
-                <DropdownMenuItem onClick={() => navigate("/about")}>
+                <DropdownMenuItem onClick={() => { closeMobileSheet(); navigate("/about"); }}>
                   <Info className="mr-2 h-4 w-4" />
                   About
                 </DropdownMenuItem>
