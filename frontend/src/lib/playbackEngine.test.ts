@@ -356,12 +356,12 @@ describe("createPlaybackEngine", () => {
   });
 
   describe("restorePosition", () => {
-    it("sets block and progress", () => {
+    it("sets block and computes progress from estimates", () => {
       engine.setDocument("doc-1", makeBlocks(5));
-      engine.restorePosition(3, 4500);
+      engine.restorePosition(3);
       const snap = engine.getSnapshot();
       expect(snap.currentBlock).toBe(3);
-      expect(snap.audioProgress).toBe(4500);
+      expect(snap.audioProgress).toBe(3000); // 3 blocks × 1000ms
     });
   });
 

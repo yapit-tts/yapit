@@ -12,7 +12,6 @@ import type { PlaybackEngine, Block } from '@/lib/playbackEngine';
 import type { VoiceSelection } from '@/lib/voiceSelection';
 import type { UsePlaybackEngineReturn } from '@/hooks/usePlaybackEngine';
 
-const POSITION_KEY_PREFIX = "yapit_playback_position_";
 
 interface PlaybackOverlayProps {
   engine: PlaybackEngine;
@@ -69,7 +68,7 @@ export function PlaybackOverlay({
   handleBackToReadingRef,
 }: PlaybackOverlayProps) {
   const snapshot = useSyncExternalStore(engine.subscribe, engine.getSnapshot);
-  const { api, isAnonymous } = useApi();
+  const { api } = useApi();
   const sidebar = useSidebar();
   const outliner = useOutliner();
 
@@ -153,24 +152,13 @@ export function PlaybackOverlay({
 
   const documentIdRef = useRef(documentId);
   documentIdRef.current = documentId;
-  const isAnonymousRef = useRef(isAnonymous);
-  isAnonymousRef.current = isAnonymous;
-  const isPlayingRef = useRef(isPlaying);
-  isPlayingRef.current = isPlaying;
-
   useEffect(() => {
     if (!documentIdRef.current || currentBlock < 0) return;
-    localStorage.setItem(
-      POSITION_KEY_PREFIX + documentIdRef.current,
-      JSON.stringify({ block: currentBlock, progressMs: engine.getBlockStartTime() }),
-    );
-    if (!isAnonymousRef.current) {
-      api.patch(`/v1/documents/${documentIdRef.current}/position`, {
-        block_idx: currentBlock,
-        playing: isPlayingRef.current,
-      }).catch(() => {});
-    }
-  }, [currentBlock, api, engine]);
+    api.patch(`/v1/documents/${documentIdRef.current}/position`, {
+      block_idx: currentBlock,
+      playing: isPlaying,
+    }).catch(() => {});
+  }, [currentBlock, isPlaying, api]);
 
   // --- Scroll handling ---
 

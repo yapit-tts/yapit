@@ -13,21 +13,7 @@ import { type VoiceSelection, getVoiceSelection, getPlaybackSpeed, setPlaybackSp
 import { useSettings } from '@/hooks/useSettings';
 import { useUserPreferences } from '@/hooks/useUserPreferences';
 
-const POSITION_KEY_PREFIX = "yapit_playback_position_";
 const OUTLINER_STATE_KEY_PREFIX = "yapit_outliner_state_";
-
-interface PlaybackPosition {
-  block: number;
-  progressMs: number;
-}
-
-function getPlaybackPosition(documentId: string): PlaybackPosition | null {
-  try {
-    const stored = localStorage.getItem(POSITION_KEY_PREFIX + documentId);
-    if (stored) return JSON.parse(stored);
-  } catch { /* ignore */ }
-  return null;
-}
 
 interface DocumentMetadata {
   content_type?: string;
@@ -63,7 +49,7 @@ const PlaybackPage = () => {
   const initialTitle: string | undefined = state?.documentTitle;
   const failedPages: number[] | undefined = state?.failedPages;
 
-  const { api, isAuthReady, isAnonymous } = useApi();
+  const { api, isAuthReady } = useApi();
   const { settings } = useSettings();
   const { autoImportSharedDocuments } = useUserPreferences();
   const scrollBlockPosition: ScrollLogicalPosition = settings.scrollPosition === "top" ? "start"
@@ -184,39 +170,24 @@ const PlaybackPage = () => {
     fetchData();
   }, [documentId, api, isAuthReady]);
 
-  // --- Position restore (mount-only, reads from localStorage/server) ---
+  // --- Position restore (mount-only, reads from server) ---
 
   useEffect(() => {
     if (!documentId || documentBlocks.length === 0 || !document) return;
 
-    const serverBlock = document.last_block_idx;
-    const localSaved = getPlaybackPosition(documentId);
+    const restoreBlock = document.last_block_idx;
+    if (restoreBlock === null || restoreBlock < 0 || restoreBlock >= documentBlocks.length) return;
 
-    let restoreBlock: number | null = null;
-    let restoreProgressMs = 0;
+    engine.restorePosition(restoreBlock);
 
-    if (!isAnonymous && serverBlock !== null && serverBlock >= 0 && serverBlock < documentBlocks.length) {
-      restoreBlock = serverBlock;
-      for (let i = 0; i < serverBlock; i++) {
-        restoreProgressMs += documentBlocks[i].est_duration_ms || 0;
-      }
-    } else if (localSaved && localSaved.block >= 0 && localSaved.block < documentBlocks.length) {
-      restoreBlock = localSaved.block;
-      restoreProgressMs = localSaved.progressMs;
+    if (settings.scrollOnRestore) {
+      setTimeout(() => {
+        const blockElement = window.document.querySelector(`[data-audio-idx="${restoreBlock}"]`)
+          || window.document.querySelector(`[data-audio-block-idx="${restoreBlock}"]`);
+        if (blockElement) blockElement.scrollIntoView({ behavior: "smooth", block: scrollBlockPosition });
+      }, 100);
     }
-
-    if (restoreBlock !== null) {
-      engine.restorePosition(restoreBlock, restoreProgressMs);
-
-      if (settings.scrollOnRestore) {
-        setTimeout(() => {
-          const blockElement = window.document.querySelector(`[data-audio-idx="${restoreBlock}"]`)
-            || window.document.querySelector(`[data-audio-block-idx="${restoreBlock}"]`);
-          if (blockElement) blockElement.scrollIntoView({ behavior: "smooth", block: scrollBlockPosition });
-        }, 100);
-      }
-    }
-  }, [documentId, documentBlocks, document, isAnonymous, settings.scrollOnRestore, engine]);
+  }, [documentId, documentBlocks, document, settings.scrollOnRestore, engine]);
 
   // --- Keyboard handler (reads everything from refs — never re-created on snapshot changes) ---
 

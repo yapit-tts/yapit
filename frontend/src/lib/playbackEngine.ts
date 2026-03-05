@@ -71,8 +71,7 @@ export interface PlaybackEngine {
   setSynthesizer(synthesizer: Synthesizer): void;
   subscribe(listener: () => void): () => void;
   getSnapshot(): PlaybackSnapshot;
-  getBlockStartTime(): number;
-  restorePosition(block: number, progressMs: number): void;
+  restorePosition(block: number): void;
   destroy(): void;
 }
 
@@ -615,10 +614,10 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
     synthesizer = newSynthesizer;
   }
 
-  function restorePosition(block: number, progressMs: number) {
+  function restorePosition(block: number) {
     currentBlock = block;
-    blockStartTime = progressMs;
-    audioProgress = progressMs;
+    blockStartTime = calcProgressToBlock(block);
+    audioProgress = blockStartTime;
     notify();
   }
 
@@ -670,7 +669,6 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
     setSynthesizer: setSynthesizer_,
     subscribe,
     getSnapshot,
-    getBlockStartTime: () => blockStartTime,
     restorePosition,
     destroy,
   };

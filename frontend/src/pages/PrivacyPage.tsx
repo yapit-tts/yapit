@@ -56,7 +56,6 @@ const PrivacyPage = () => {
 
           <h3 className="text-lg font-medium mt-4 mb-2">Browser storage (not cookies)</h3>
           <ul className="list-disc pl-6 space-y-1">
-            <li>Playback positions (localStorage)</li>
             <li>User preferences (speed, voice settings)</li>
             <li>These stay on your device</li>
           </ul>
