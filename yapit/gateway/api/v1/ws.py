@@ -186,7 +186,16 @@ async def _handle_synthesize(
             await ws.send_json({"type": "error", "error": str(e)})
             return
 
-        audio_texts = doc.audio_texts
+        try:
+            audio_texts = doc.audio_texts
+        except ValidationError:
+            await ws.send_json(
+                {
+                    "type": "error",
+                    "error": "This document was created with an older version and is no longer compatible. Please re-upload it.",
+                }
+            )
+            return
 
         for idx in msg.block_indices:
             if idx < 0 or idx >= len(audio_texts):

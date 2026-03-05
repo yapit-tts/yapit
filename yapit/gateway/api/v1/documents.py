@@ -16,7 +16,7 @@ import pymupdf
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import HTMLResponse
 from loguru import logger
-from pydantic import BaseModel, Field, HttpUrl, StringConstraints
+from pydantic import BaseModel, Field, HttpUrl, StringConstraints, ValidationError
 from sqlmodel import col, func, select
 
 from yapit.contracts import (
@@ -1274,9 +1274,14 @@ class AudioBlock(BaseModel):
 
 
 def _get_audio_blocks(doc: Document) -> list[AudioBlock]:
-    return [
-        AudioBlock(idx=i, text=t, est_duration_ms=estimate_duration_ms(len(t))) for i, t in enumerate(doc.audio_texts)
-    ]
+    try:
+        texts = doc.audio_texts
+    except ValidationError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="This document was created with an older version and is no longer compatible. Please re-upload it.",
+        )
+    return [AudioBlock(idx=i, text=t, est_duration_ms=estimate_duration_ms(len(t))) for i, t in enumerate(texts)]
 
 
 @router.get("/{document_id}/blocks")
