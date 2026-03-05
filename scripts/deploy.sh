@@ -13,7 +13,7 @@
 #
 # Config via .env (from sops):
 #   VPS_HOST          - SSH host (e.g. yapit-prod)
-#   NTFY_DEPLOY_TOPIC - ntfy topic for deploy notifications (optional)
+#   NTFY_TOPIC - ntfy topic for deploy notifications (optional)
 #
 # Environment variables:
 #   SKIP_VERIFY       - Set to 1 to skip post-deploy verification
@@ -25,14 +25,14 @@ cd "$(dirname "$0")/.."
 log() { echo "==> $*"; }
 
 notify() {
-  [ -z "${NTFY_DEPLOY_TOPIC:-}" ] && return
+  [ -z "${NTFY_TOPIC:-}" ] && return
   local icon="$1" priority="$2" body="$3"
   printf '%s' "$body" | curl -s \
     -H "Title: ${icon} yapit deploy: ${GIT_COMMIT:0:12}" \
     -H "Priority: ${priority}" \
     -H "Tags: rocket" \
     -d @- \
-    "https://ntfy.sh/${NTFY_DEPLOY_TOPIC}" > /dev/null
+    "https://ntfy.sh/${NTFY_TOPIC}" > /dev/null
 }
 
 die() {

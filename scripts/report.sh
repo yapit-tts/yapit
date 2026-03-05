@@ -27,9 +27,12 @@ done
 echo "Syncing data from prod..."
 make sync-data
 
-# Load VPS_HOST from .env if not set
-if [[ -z "${VPS_HOST:-}" ]] && [[ -f "$PROJECT_DIR/.env" ]]; then
-    VPS_HOST=$(grep -E '^VPS_HOST=' "$PROJECT_DIR/.env" | cut -d'=' -f2 | tr -d '"' | tr -d "'")
+# Load env vars from .env (VPS_HOST, NTFY_TOPIC, CLOUDFLARE_API_TOKEN, etc.)
+# Only sets vars not already in environment.
+if [[ -f "$PROJECT_DIR/.env" ]]; then
+    set -a
+    source "$PROJECT_DIR/.env"
+    set +a
 fi
 
 if [[ -z "${VPS_HOST:-}" ]]; then
@@ -67,7 +70,12 @@ EXTRA_CONTEXT="$BASE_CONTEXT
 ## AVAILABLE TOOLS
 
 $ALLOWED_TOOLS
-Use commands directly (e.g. \`duckdb ...\`, not \`bash -c 'duckdb ...'\`).
+
+**CRITICAL: Do NOT use pipes (|) in commands.** Piped commands will be blocked by the permission system. Run each tool separately — write intermediate results to /tmp files if needed. For example:
+- WRONG: \`jq 'select(...)' file.jsonl | tail -50\`
+- RIGHT: \`jq 'select(...)' file.jsonl > /tmp/errors.json\` then \`tail -50 /tmp/errors.json\`
+- WRONG: \`grep ERROR file | wc -l\`
+- RIGHT: \`grep -c ERROR file\`
 
 ## DISK_USAGE (current snapshot)
 
