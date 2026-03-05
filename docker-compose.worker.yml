@@ -1,6 +1,11 @@
 # External worker compose file - connect GPU/CPU machines via Tailscale
 #
-# Prerequisites: Docker + nvidia-container-toolkit, Tailscale connected, REDIS_URL set
+# Prerequisites: Docker 25+ with CDI enabled, nvidia-container-toolkit, Tailscale connected, REDIS_URL set
+#
+# GPU setup (one-time):
+#   sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
+#   Add {"features": {"cdi": true}} to /etc/docker/daemon.json, restart dockerd
+#   (NixOS: hardware.nvidia-container-toolkit.enable + virtualisation.docker.daemon.settings.features.cdi handle this)
 #
 # MPS (optional, one-time): sudo nvidia-cuda-mps-control -d
 #
@@ -14,16 +19,21 @@ services:
     image: ghcr.io/yapit-tts/kokoro-gpu:latest
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
+    ipc: host
     environment:
       REDIS_URL: ${REDIS_URL}
       WORKER_ID: ${HOSTNAME:-worker}-kokoro-gpu
       DEVICE: cuda
+      CUDA_MPS_PIPE_DIRECTORY: /tmp/nvidia-mps
+    volumes:
+      - /tmp/nvidia-mps:/tmp/nvidia-mps
     deploy:
       resources:
         reservations:
           devices:
-            - driver: nvidia
-              capabilities: [gpu]
+            - driver: cdi
+              device_ids:
+                - nvidia.com/gpu=all
     restart: unless-stopped
 
   kokoro-cpu:
@@ -43,16 +53,21 @@ services:
     image: ghcr.io/yapit-tts/yolo-gpu:latest
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
+    ipc: host
     environment:
       REDIS_URL: ${REDIS_URL}
       WORKER_ID: ${HOSTNAME:-worker}-yolo-gpu
       DEVICE: cuda
+      CUDA_MPS_PIPE_DIRECTORY: /tmp/nvidia-mps
+    volumes:
+      - /tmp/nvidia-mps:/tmp/nvidia-mps
     deploy:
       resources:
         reservations:
           devices:
-            - driver: nvidia
-              capabilities: [gpu]
+            - driver: cdi
+              device_ids:
+                - nvidia.com/gpu=all
     restart: unless-stopped
 
   yolo-cpu:
