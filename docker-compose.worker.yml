@@ -32,6 +32,7 @@ services:
         reservations:
           devices:
             - driver: cdi
+              capabilities: [gpu]
               device_ids:
                 - nvidia.com/gpu=all
     restart: unless-stopped
@@ -66,6 +67,7 @@ services:
         reservations:
           devices:
             - driver: cdi
+              capabilities: [gpu]
               device_ids:
                 - nvidia.com/gpu=all
     restart: unless-stopped
