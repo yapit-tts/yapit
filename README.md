@@ -16,6 +16,8 @@
 
 </div>
 
+<img width="3840" height="2880" alt="image" src="https://github.com/user-attachments/assets/706fcf0d-896b-4bae-b826-0d1e49262383" />
+
 ---
 
 Paste a URL or upload a PDF. Yapit renders the document and reads it aloud.
