@@ -81,6 +81,7 @@ class GeminiExtractor:
         model: str = "gemini-3-flash-preview",
         resolution: str = "high",
         media_first: bool = False,
+        thinking_level: types.ThinkingLevel = types.ThinkingLevel.MINIMAL,
     ):
         self._redis = redis
         self._client = genai.Client(api_key=api_key)
@@ -89,6 +90,7 @@ class GeminiExtractor:
         self._prompt = prompt_path.read_text().strip()
         self._image_storage = image_storage
         self._media_first = media_first
+        self._thinking_level = thinking_level
 
     async def extract(
         self,
@@ -113,7 +115,7 @@ class GeminiExtractor:
         """Extract text from a single image."""
         config = types.GenerateContentConfig(
             media_resolution=self._resolution,
-            thinking_config=types.ThinkingConfig(thinking_level=types.ThinkingLevel.MINIMAL),
+            thinking_config=types.ThinkingConfig(thinking_level=self._thinking_level),
         )
         media_part = types.Part.from_bytes(data=content, mime_type=content_type)
         contents = [media_part, self._prompt] if self._media_first else [self._prompt, media_part]
@@ -260,7 +262,7 @@ class GeminiExtractor:
         prompt = build_figure_prompt(self._prompt, page.figures)
         config = types.GenerateContentConfig(
             media_resolution=self._resolution,
-            thinking_config=types.ThinkingConfig(thinking_level=types.ThinkingLevel.MINIMAL),
+            thinking_config=types.ThinkingConfig(thinking_level=self._thinking_level),
         )
         media_part = types.Part.from_bytes(data=page.page_bytes, mime_type="application/pdf")
         contents = [media_part, prompt] if self._media_first else [prompt, media_part]

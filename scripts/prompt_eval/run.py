@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import os
 import subprocess
 import sys
@@ -46,10 +47,13 @@ from typing import Annotated, Literal
 
 import httpx
 import tyro
+from dotenv import load_dotenv
+from google.genai import types
 from redis.asyncio import Redis
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
+load_dotenv(PROJECT_ROOT / ".env")
 
 from yapit.gateway.document.extraction import deduplicate_footnotes, stitch_pages  # noqa: E402
 from yapit.gateway.document.processors.gemini import GeminiExtractor  # noqa: E402
@@ -73,6 +77,11 @@ TRACK_CONFIG = {
 # -- CLI -------------------------------------------------------------------
 
 
+THINKING_LEVELS = Literal["minimal", "low", "medium", "high"]
+
+DEFAULT_MODEL = "gemini-3-flash-preview"
+
+
 @dataclass
 class Pdf:
     """Run PDF extraction. Auto-extends matching runs; only extracts new docs.
@@ -93,9 +102,15 @@ class Pdf:
     ordering: Literal["media-first", "prompt-first"] = "prompt-first"
     """Content ordering sent to Gemini. Different ordering = separate run."""
 
+    model: str = DEFAULT_MODEL
+    """Gemini model to use."""
+
+    thinking_level: THINKING_LEVELS = "minimal"
+    """Thinking level for the model."""
+
     extend: str | None = None
     """Extend a specific existing run (e.g. 'v001'). Uses that run's frozen
-    config; --ordering and --prompt are ignored."""
+    config; --ordering, --prompt, --model, --thinking-level are ignored."""
 
 
 @dataclass
@@ -111,9 +126,15 @@ class Web:
     ordering: Literal["media-first", "prompt-first"] = "prompt-first"
     """Content ordering sent to Gemini. Different ordering = separate run."""
 
+    model: str = DEFAULT_MODEL
+    """Gemini model to use."""
+
+    thinking_level: THINKING_LEVELS = "minimal"
+    """Thinking level for the model."""
+
     extend: str | None = None
     """Extend a specific existing run (e.g. 'v001'). Uses that run's frozen
-    config; --ordering and --prompt are ignored."""
+    config; --ordering, --prompt, --model, --thinking-level are ignored."""
 
 
 @dataclass
@@ -205,15 +226,15 @@ def toml_value(v: object) -> str:
     return repr(v)
 
 
-def compute_run_id(prompt_path: Path, media_first: bool) -> str:
-    """Run identity = prompt content + content ordering."""
+def compute_run_id(prompt_path: Path, media_first: bool, model: str, thinking_level: str) -> str:
+    """Run identity = prompt content + content ordering + model + thinking."""
     prompt_hash = hashlib.sha256(prompt_path.read_bytes()).hexdigest()[:8]
     order = "media" if media_first else "prompt"
-    return f"{prompt_hash}_{order}"
+    return f"{prompt_hash}_{order}_{model}_{thinking_level}"
 
 
-def find_run(track: str, prompt_content: str, media_first: bool) -> Path | None:
-    """Find existing run matching config (frozen prompt content + media_first)."""
+def find_run(track: str, prompt_content: str, media_first: bool, model: str, thinking_level: str) -> Path | None:
+    """Find existing run matching config."""
     track_dir = RUNS_DIR / track
     if not track_dir.exists():
         return None
@@ -223,7 +244,12 @@ def find_run(track: str, prompt_content: str, media_first: bool) -> Path | None:
         if not prompt_file.exists() or not meta_file.exists():
             continue
         meta = read_meta(meta_file)
-        if meta.get("media_first") == media_first and prompt_file.read_text() == prompt_content:
+        if (
+            meta.get("media_first") == media_first
+            and meta.get("model", DEFAULT_MODEL) == model
+            and meta.get("thinking_level", "minimal") == thinking_level
+            and prompt_file.read_text() == prompt_content
+        ):
             return run_dir
     return None
 
@@ -248,7 +274,9 @@ def create_run_dir(track: str) -> Path:
     return run_dir
 
 
-def write_meta(run_dir: Path, track: str, prompt_path: Path, media_first: bool) -> None:
+def write_meta(
+    run_dir: Path, track: str, prompt_path: Path, media_first: bool, model: str, thinking_level: str
+) -> None:
     """Write/update meta.toml — documents list derived from filesystem."""
     meta_file = run_dir / "meta.toml"
     existing = read_meta(meta_file) if meta_file.exists() else {}
@@ -258,9 +286,11 @@ def write_meta(run_dir: Path, track: str, prompt_path: Path, media_first: bool) 
         "git_hash": get_git_hash(),
         "prompt_path": existing.get("prompt_path", str(prompt_path)),
         "media_first": media_first,
+        "model": model,
+        "thinking_level": thinking_level,
         "track": track,
         "documents": list_docs(run_dir, track),
-        "run_id": compute_run_id(prompt_path, media_first),
+        "run_id": compute_run_id(prompt_path, media_first, model, thinking_level),
     }
     if desc := existing.get("description"):
         meta["description"] = desc
@@ -273,6 +303,8 @@ def prepare_run(
     only: list[str] | None,
     prompt_path: Path,
     media_first: bool,
+    model: str,
+    thinking_level: str,
     extend_dir: Path | None = None,
 ) -> tuple[Path, dict]:
     """Find/create run, freeze prompt, filter to un-extracted docs.
@@ -289,7 +321,7 @@ def prepare_run(
         print(f"Extending: {track}/{run_dir.name}")
     else:
         prompt_content = prompt_path.read_text()
-        run_dir = find_run(track, prompt_content, media_first)
+        run_dir = find_run(track, prompt_content, media_first, model, thinking_level)
         if run_dir:
             print(f"Extending: {track}/{run_dir.name}")
         else:
@@ -317,6 +349,8 @@ async def run_pdf_extraction(
     only: list[str] | None,
     prompt_path: Path,
     media_first: bool,
+    model: str,
+    thinking_level: str,
     extend_dir: Path | None = None,
 ) -> Path:
     api_key = os.environ.get("GOOGLE_API_KEY")
@@ -325,11 +359,11 @@ async def run_pdf_extraction(
     corpus = {k: v for k, v in corpus.items() if v.get("pages")}
     assert corpus, "No documents with pages defined"
 
-    run_dir, to_extract = prepare_run("pdf", corpus, only, prompt_path, media_first, extend_dir)
+    run_dir, to_extract = prepare_run("pdf", corpus, only, prompt_path, media_first, model, thinking_level, extend_dir)
 
     if not to_extract:
         print("All documents already extracted.")
-        write_meta(run_dir, "pdf", prompt_path, media_first)
+        write_meta(run_dir, "pdf", prompt_path, media_first, model, thinking_level)
         return run_dir
 
     redis = Redis.from_url("redis://localhost:6379")
@@ -341,15 +375,20 @@ async def run_pdf_extraction(
         async def exists(self, content_hash):
             return False
 
+    thinking_level_enum = types.ThinkingLevel[thinking_level.upper()]
     extractor = GeminiExtractor(
         api_key=api_key,
         redis=redis,
         image_storage=DummyImageStorage(),
         prompt_path=prompt_path,
         media_first=media_first,
+        model=model,
+        thinking_level=thinking_level_enum,
     )
 
-    total_cost = 0.0
+    total_input = 0
+    total_output = 0
+    total_thinking = 0
     total_pages = 0
 
     for name, doc in to_extract.items():
@@ -368,6 +407,7 @@ async def run_pdf_extraction(
         doc_dir.mkdir(exist_ok=True)
 
         page_results: dict[int, str] = {}
+        page_tokens: dict[str, dict[str, int]] = {}
         async for result in extractor.extract(
             content=content,
             content_type="application/pdf",
@@ -379,13 +419,21 @@ async def run_pdf_extraction(
                 continue
 
             page_results[result.page_idx] = result.page.markdown
+            page_tokens[str(result.page_idx)] = {
+                "input": result.input_tokens,
+                "output": result.output_tokens,
+                "thinking": result.thoughts_tokens,
+            }
 
-            token_equiv = result.input_tokens + (result.output_tokens + result.thoughts_tokens) * 6
-            cost = token_equiv * 0.5 / 1_000_000
-            total_cost += cost
+            total_input += result.input_tokens
+            total_output += result.output_tokens
+            total_thinking += result.thoughts_tokens
             total_pages += 1
 
-            print(f"  Page {result.page_idx}: {len(result.page.markdown)} chars, ${cost:.4f}")
+            print(
+                f"  Page {result.page_idx}: {len(result.page.markdown)} chars, "
+                f"tokens: {result.input_tokens}in/{result.output_tokens}out/{result.thoughts_tokens}think"
+            )
 
         if page_results:
             deduped = deduplicate_footnotes(page_results)
@@ -393,11 +441,20 @@ async def run_pdf_extraction(
             stitched = stitch_pages(ordered)
             (doc_dir / "stitched.md").write_text(stitched)
 
+        if page_tokens:
+            tokens_data = {
+                "model": model,
+                "thinking_level": thinking_level,
+                "pages": page_tokens,
+            }
+            (doc_dir / "tokens.json").write_text(json.dumps(tokens_data, indent=2))
+
     await redis.aclose()
-    write_meta(run_dir, "pdf", prompt_path, media_first)
+    write_meta(run_dir, "pdf", prompt_path, media_first, model, thinking_level)
 
     print(f"\n{'=' * 50}")
-    print(f"Extracted: {total_pages} pages, ${total_cost:.4f}")
+    print(f"Extracted: {total_pages} pages")
+    print(f"Tokens: {total_input} input, {total_output} output, {total_thinking} thinking")
     print(f"Output: {run_dir}")
 
     return run_dir
@@ -411,13 +468,15 @@ async def run_web_extraction(
     only: list[str] | None,
     prompt_path: Path,
     media_first: bool,
+    model: str,
+    thinking_level: str,
     extend_dir: Path | None = None,
 ) -> Path:
-    run_dir, to_extract = prepare_run("web", corpus, only, prompt_path, media_first, extend_dir)
+    run_dir, to_extract = prepare_run("web", corpus, only, prompt_path, media_first, model, thinking_level, extend_dir)
 
     if not to_extract:
         print("All documents already extracted.")
-        write_meta(run_dir, "web", prompt_path, media_first)
+        write_meta(run_dir, "web", prompt_path, media_first, model, thinking_level)
         return run_dir
 
     from yapit.gateway.document.website import extract_website_content
@@ -439,7 +498,7 @@ async def run_web_extraction(
 
         (run_dir / f"{name}.md").write_text(markdown)
 
-    write_meta(run_dir, "web", prompt_path, media_first)
+    write_meta(run_dir, "web", prompt_path, media_first, model, thinking_level)
 
     print(f"\n{'=' * 50}")
     print(f"Output: {run_dir}")
@@ -527,9 +586,11 @@ def print_runs_list() -> None:
             for name, meta, _ in group_list:
                 docs = meta.get("documents", [])
                 order = "media-first" if meta.get("media_first", True) else "prompt-first"
+                model = meta.get("model", DEFAULT_MODEL)
+                thinking = meta.get("thinking_level", "minimal")
                 desc = meta.get("description", "")
                 desc_str = f'  "{desc}"' if desc else ""
-                print(f"    {name}  {order:>12}  {len(docs)} docs{desc_str}")
+                print(f"    {name}  {order:>12}  {model} think={thinking}  {len(docs)} docs{desc_str}")
 
 
 # -- Main ------------------------------------------------------------------
@@ -546,8 +607,8 @@ Cmd = (
 def resolve_extraction_config(
     cmd: Pdf | Web,
     track: str,
-) -> tuple[dict, list[str] | None, Path, bool, Path | None]:
-    """Resolve CLI flags to (corpus, only, prompt_path, media_first, extend_dir)."""
+) -> tuple[dict, list[str] | None, Path, bool, str, str, Path | None]:
+    """Resolve CLI flags to (corpus, only, prompt_path, media_first, model, thinking_level, extend_dir)."""
     cfg = TRACK_CONFIG[track]
     corpus_file = cfg["corpus"]
     assert corpus_file.exists(), f"{corpus_file} not found"
@@ -561,14 +622,21 @@ def resolve_extraction_config(
         meta = read_meta(run_dir / "meta.toml")
         prompt_path = run_dir / "prompt.txt"
         media_first = meta["media_first"]
-        if cmd.prompt or cmd.ordering != "prompt-first":
-            print(f"Note: --extend uses frozen config from {cmd.extend}; ignoring --ordering/--prompt")
-        return corpus, only, prompt_path, media_first, run_dir
+        model = meta.get("model", DEFAULT_MODEL)
+        thinking_level = meta.get("thinking_level", "minimal")
+        if (
+            cmd.prompt
+            or cmd.ordering != "prompt-first"
+            or cmd.model != DEFAULT_MODEL
+            or cmd.thinking_level != "minimal"
+        ):
+            print(f"Note: --extend uses frozen config from {cmd.extend}; ignoring other flags")
+        return corpus, only, prompt_path, media_first, model, thinking_level, run_dir
 
     prompt_path = cmd.prompt or cfg["default_prompt"]
     assert prompt_path.exists(), f"Prompt not found: {prompt_path}"
     media_first = cmd.ordering == "media-first"
-    return corpus, only, prompt_path, media_first, None
+    return corpus, only, prompt_path, media_first, cmd.model, cmd.thinking_level, None
 
 
 def main() -> None:
@@ -576,7 +644,9 @@ def main() -> None:
 
     if isinstance(cmd, (Pdf, Web)):
         track = "pdf" if isinstance(cmd, Pdf) else "web"
-        corpus, only, prompt_path, media_first, extend_dir = resolve_extraction_config(cmd, track)
+        corpus, only, prompt_path, media_first, model, thinking_level, extend_dir = resolve_extraction_config(
+            cmd, track
+        )
         extract_fn = run_pdf_extraction if track == "pdf" else run_web_extraction
         asyncio.run(
             extract_fn(
@@ -584,6 +654,8 @@ def main() -> None:
                 only=only,
                 prompt_path=prompt_path,
                 media_first=media_first,
+                model=model,
+                thinking_level=thinking_level,
                 extend_dir=extend_dir,
             )
         )
