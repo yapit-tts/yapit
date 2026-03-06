@@ -80,8 +80,6 @@ services:
         condition: service_started
       markxiv:
         condition: service_healthy
-      defuddle:
-        condition: service_healthy
     restart: unless-stopped
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
@@ -172,23 +170,6 @@ services:
       timeout: 3s
       retries: 3
 
-  # -------- website content extractor
-  defuddle:
-    init: true
-    build:
-      context: .
-      dockerfile: ./docker/Dockerfile.defuddle
-    restart: unless-stopped
-    cap_drop: [ALL]
-    security_opt: ["no-new-privileges:true"]
-    environment:
-      PORT: "8080"
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      start_period: 10s
-      interval: 30s
-      timeout: 3s
-      retries: 3
 
   # -------- workers
   kokoro-cpu:
