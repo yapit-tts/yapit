@@ -1,4 +1,5 @@
 import Fastify from "fastify";
+import { JSDOM, VirtualConsole } from "jsdom";
 import { Defuddle } from "defuddle/node";
 
 const app = Fastify({ bodyLimit: 50 * 1024 * 1024 });
@@ -11,7 +12,16 @@ app.post("/extract", async (request, reply) => {
     return reply.code(400).send({ error: "html field required" });
   }
 
-  const result = await Defuddle(html, url || undefined, { markdown: true });
+  // Build our own JSDOM instance without resources: 'usable' to avoid
+  // fetching external stylesheets (causes timeouts on pages with slow CDNs).
+  const dom = new JSDOM(html, {
+    url: url || undefined,
+    pretendToBeVisual: true,
+    includeNodeLocations: true,
+    virtualConsole: new VirtualConsole().sendTo(console, { omitJSDOMErrors: true }),
+  });
+
+  const result = await Defuddle(dom, url || undefined, { markdown: true });
 
   return {
     markdown: result.content,
