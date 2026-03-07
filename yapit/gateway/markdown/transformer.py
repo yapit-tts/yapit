@@ -1425,7 +1425,7 @@ class DocumentTransformer:
 
         audio_chunks: list[AudioChunk] = []
         if tts_text.strip():
-            ast = [TextContent(content=tts_text.strip())]
+            ast: list[InlineContent] = [TextContent(content=tts_text.strip())]
             audio_chunks = split_with_spans(tts_text, ast, self.splitter, self._audio_idx_counter)
             self._audio_idx_counter += len(audio_chunks)
 
