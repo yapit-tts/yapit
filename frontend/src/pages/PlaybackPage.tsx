@@ -214,12 +214,12 @@ const PlaybackPage = () => {
         case "j": case "ArrowDown":
           e.preventDefault();
           engine.skipForward();
-          scrollToBlockRef.current(engine.getSnapshot().currentBlock, "auto");
+          scrollToBlockRef.current(engine.getSnapshot().currentBlock, e.repeat ? "auto" : "smooth");
           break;
         case "k": case "ArrowUp":
           e.preventDefault();
           engine.skipBack();
-          scrollToBlockRef.current(engine.getSnapshot().currentBlock, "auto");
+          scrollToBlockRef.current(engine.getSnapshot().currentBlock, e.repeat ? "auto" : "smooth");
           break;
         case "l": case "ArrowRight":
           e.preventDefault();

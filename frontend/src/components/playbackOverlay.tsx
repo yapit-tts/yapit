@@ -331,8 +331,8 @@ export function PlaybackOverlay({
         onPlay={() => engine.play()}
         onPause={() => engine.pause()}
         onCancelSynthesis={() => engine.stop()}
-        onSkipBack={() => { engine.skipBack(); scrollToBlockRef.current(engine.getSnapshot().currentBlock, "auto"); }}
-        onSkipForward={() => { engine.skipForward(); scrollToBlockRef.current(engine.getSnapshot().currentBlock, "auto"); }}
+        onSkipBack={() => { engine.skipBack(); scrollToBlockRef.current(engine.getSnapshot().currentBlock, "smooth"); }}
+        onSkipForward={() => { engine.skipForward(); scrollToBlockRef.current(engine.getSnapshot().currentBlock, "smooth"); }}
         progressBarValues={progressBarValues}
         volume={volume}
         onVolumeChange={onVolumeChange}
