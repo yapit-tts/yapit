@@ -12,7 +12,7 @@ Three ways content enters the system:
 | `POST /v1/documents/website` | URL | See below* |
 | `POST /v1/documents/document` | File upload | See format routing table |
 
-*Website flow branches: arXiv URLs (abs, pdf, alphaxiv, ar5iv) → rewritten to PDF URL in `prepare` so they flow through the document path (surfacing the free vs AI toggle). Other URLs → `extract_website_content` in `website.py`: JS framework detection → optional Playwright → trafilatura (+ html2text fallback) → Parse.
+*Website flow branches: arXiv URLs (abs, pdf, alphaxiv, ar5iv) → rewritten to PDF URL in `prepare` so they flow through the document path (surfacing the free vs AI toggle). Other URLs → `extract_website_content` in `website.py`: Playwright navigates to URL, injects defuddle bundle into browser DOM, extracts markdown.
 
 ### Format Routing
 
@@ -21,8 +21,8 @@ Three ways content enters the system:
 | PDF | PyMuPDF `get_text()` via `processors/pdf.py` | Gemini via `processors/gemini.py` |
 | Images | — (AI only) | Gemini |
 | Text/Markdown | Passthrough (parse directly) | — |
-| HTML (file upload) | trafilatura via `extract_website_content()` | — (future: Gemini) |
-| HTML (URL) | trafilatura via `extract_website_content()` | — (future: Gemini) |
+| HTML (file upload) | Playwright+defuddle via `extract_website_content()` | — (future: Gemini) |
+| HTML (URL) | Playwright+defuddle via `extract_website_content()` | — (future: Gemini) |
 
 `GET /v1/documents/supported-formats` (public, no auth) returns format capabilities (free/ai/has_pages/batch per MIME type). Frontend fetches once per session via `useSupportedFormats` hook and derives UI from it (toggle visibility, metadata banner, accepted file types).
 
@@ -46,34 +46,30 @@ Document creation returns **202 Accepted**. Extraction runs in a background task
 
 For large documents (auto-toggled at >100 pages), extraction uses the Gemini Batch API: JSONL upload → background poller → document creation on completion. Frontend shows `/batch/:contentHash` status page.
 
-### arXiv URLs (markxiv)
+### arXiv URLs
 
-`yapit/gateway/document/markxiv.py`
-
-arXiv URLs (arxiv.org, alphaxiv.org, ar5iv) are routed to markxiv — a Docker sidecar that extracts papers from LaTeX source via pandoc. Strips pandoc cruft like `{#sec:foo}` anchors, `{reference-type="..."}` attributes, citations `[@author]`, and orphan label refs `[fig:X]`.
+arXiv URLs (arxiv.org, alphaxiv.org, ar5iv) are detected in `documents.py` via `_detect_arxiv_id()`. In `prepare`, the URL is rewritten to `arxiv.org/pdf/{id}` so it downloads as a PDF (surfacing the free vs AI toggle). On the free path, `_run_extraction` tries `arxiv.org/html/{id}` via Playwright+defuddle first. If the HTML version doesn't exist (HTTP ≥400), falls back to pymupdf on the downloaded PDF.
 
 ## Website Extraction
 
 `yapit/gateway/document/website.py`
 
-**`extract_website_content(content, url, markxiv_url) → (markdown, extraction_method)`** — orchestrates the full pipeline for both URL-based websites and HTML file uploads.
-
-1. **Markdown source detection** — pages that fetch `.md` files client-side (e.g. `marked.parse` + `fetch('file.md')`) short-circuit Playwright by fetching the `.md` source directly
-2. **JS framework detection** — fast pre-check; if detected, Playwright renders first
-3. **Layout table fix** — old-school sites (e.g. paulgraham.com) using `<table>` layout with `<br><br>` paragraph breaks: detects layout cells (≥10 `<p>` children), unwraps content, re-serializes. Falls back to standard trafilatura for normal sites.
-4. **Trafilatura** (primary) — article extraction with boilerplate removal
-5. **Playwright retry** — if trafilatura returns None and Playwright wasn't already used
-6. **html2text** (fallback) — when trafilatura returns None after all attempts. Metric `html_fallback_triggered` + URL logged.
-7. **HTML `<img>` → markdown** — `resolve_relative_urls` converts `<img>` tags to `![alt](url)` syntax since the parser handles markdown images but not raw HTML.
-
-`used_playwright` flag prevents redundant re-renders across the JS-detection and post-trafilatura paths.
+**`extract_website_content(url) → (markdown, extraction_method)`** — thin wrapper around Playwright+defuddle. Resolves relative image URLs after extraction.
 
 `yapit/gateway/document/playwright_renderer.py`
 
-- Lazy-loaded on first use to avoid import cost for static pages
-- Browser pooling: single Chromium instance, new page per request
-- Semaphore at 50 concurrent renders (~7.5GB memory cap)
-- Falls back gracefully if rendering fails
+**`extract_website(url, timeout_ms) → (markdown, title)`** — the core extraction:
+
+1. Playwright navigates to URL (through Smokescreen SSRF proxy) with `wait_until="networkidle"`
+2. Checks HTTP status — returns empty on ≥400
+3. Injects defuddle browser bundle via `context.add_init_script()`
+4. defuddle extracts markdown from the real browser DOM (with full computed styles for clutter detection)
+5. `resolve_relative_urls` converts `<img>` tags to `![alt](url)` syntax
+
+- Single Chromium instance, new context+page per request
+- Semaphore at 50 concurrent extractions
+- defuddle bundle loaded lazily from Docker build stage (`/app/defuddle_bundle.js`) or local `node_modules`
+- Duration logged and emitted as `website_extraction` metric event
 
 ## Free PDF Extraction
 
@@ -332,7 +328,7 @@ To add a new format: create `processors/<format>.py` with config + extract(), ad
 | `gateway/document/processors/gemini.py` | Gemini AI extraction with YOLO |
 | `gateway/document/processors/pdf.py` | Free PDF extraction (PyMuPDF) |
 | `gateway/document/processing.py` | ProcessorConfig, process_with_billing, cpu_executor |
-| `gateway/document/website.py` | Website extraction (trafilatura + html2text) |
+| `gateway/document/website.py` | Website extraction (Playwright+defuddle) |
 | `gateway/document/yolo_client.py` | YOLO queue client |
 | `gateway/document/extraction.py` | PDF/image utilities |
 | `gateway/cache.py` | Cache ABC + SqliteCache (includes batch_exists, batch_retrieve) |

@@ -2,69 +2,40 @@
 status: active
 refs:
   - "[[2026-03-05-defuddle-evaluation]]"
+  - "[[2026-03-06-defuddle-arxiv-quality]]"
 ---
 
-# Replace trafilatura with defuddle for website extraction
+# Unified content extraction via Playwright+defuddle
 
 ## Intent
 
-Swap the primary website content extractor from trafilatura (Python) to defuddle (TypeScript) via an HTTP sidecar, following the markxiv pattern.
+Replace trafilatura (websites) and markxiv (arXiv) with a single extraction approach: Playwright navigates to the URL, injects defuddle as a bundle into the browser DOM, extracts markdown. No separate services.
 
-Defuddle produces meaningfully better output for TTS:
-- Preserves list structure (trafilatura collapses bullet lists into paragraphs)
-- Standardizes footnotes/sidenotes into `[^N]` markdown (trafilatura dumps sidenote content inline, breaking reading flow)
-- Resolves image URLs to absolute
-- Preserves `<video>` elements (trafilatura strips them)
-- Extracts more content on citation-heavy pages
+Eliminates two containers, their Dockerfiles, CI jobs, and all the complexity around JSDOM event loop blocking, sidecar concurrency, and LaTeX→pandoc pipelines.
 
-Develop on a feature branch. Don't ship until validated on broader traffic.
+**arXiv free path:** tries `arxiv.org/html/{id}` via Playwright+defuddle, falls back to pymupdf if no HTML version exists (~26% of papers). Paid path (Gemini via PDF) unchanged.
 
-## Approach
-
-**Sidecar service** accepting HTML + URL, returning markdown + metadata. Same pattern as markxiv.
-
-Current pipeline:
-```
-HTML → JS detection → Playwright? → trafilatura → html2text fallback → resolve_relative_urls
-```
-
-New pipeline:
-```
-HTML → JS detection → Playwright? → defuddle sidecar → done
-```
-
-Things that stay unchanged:
-- JS framework detection + Playwright rendering (defuddle operates on static HTML, same as trafilatura)
-- `.md` source detection shortcut
-- arXiv/markxiv path
-
-Things defuddle replaces:
-- `trafilatura.extract()` / `bare_extraction()`
-- Layout table detection hack (`_LAYOUT_TABLE_THRESHOLD`, cell unwrapping)
-- `html2text` fallback
-- `resolve_relative_urls` (defuddle handles this internally)
+Branch: `defuddle-sidecar`.
 
 ## Assumptions
 
-- Defuddle's Obsidian-flavored markdown (`> [!NOTE]` callouts, `[^N]` footnotes) is compatible with our markdown parser and block splitter. We use Obsidian conventions ourselves, so this should be fine — but needs verification against the actual block splitting code.
-- The sidecar latency (~200-1000ms) is acceptable. Trafilatura is 10-50x faster, but extraction runs once on document creation, and Playwright already adds seconds when needed.
-- Defuddle handles the broad range of sites users submit, not just the 4 test corpus URLs. The 30+ test fixtures in defuddle's repo (Wikipedia, Substack, Reddit, LessWrong, etc.) suggest good coverage, but needs validation against a larger test corpus and real-world latency before merging.
-- We maintain a fork or pin a specific version. Defuddle is v0.x with active development — upstream breaking changes are possible. The fork also gives us the option to patch the footnote inline ref detection ourselves (phase 1→2 join) if the upstream issue doesn't get traction.
+- Playwright Chromium is already in the gateway image — no new dependency.
+- `networkidle` wait strategy is acceptable. Slow pages (4-5s) are mostly analytics scripts loading, not extraction time.
+- defuddle upstream continues improving — kepano fixed 4 issues in <24h.
+- Gateway memory stays manageable with every website extraction using a Chromium tab (semaphore caps at 50).
+- Prod compose network allows gateway → smokescreen for Playwright proxy.
 
-## Research
+## Done when
 
-- [[2026-03-05-defuddle-evaluation]] — source analysis, comparative test results on 4 corpus URLs, integration options, stability assessment
-- Upstream issue filed for footnote inline ref detection improvement (phase 1→2 join)
+- [ ] Docs/knowledge updated to reflect new architecture
+- [ ] Branch merged to main and deployed
+- [ ] Old markxiv container + volume cleaned up on prod
 
-## Done When
+ArXiv output quality tracked separately in [[2026-03-06-defuddle-arxiv-quality]].
 
-- [ ] Defuddle sidecar service (Dockerfile, HTTP endpoint accepting HTML+URL, returning markdown+metadata)
-- [ ] Added to docker-compose (dev + prod)
-- [ ] `website.py` calls defuddle sidecar instead of trafilatura
-- [ ] Layout table hack and html2text fallback removed
-- [ ] Validated on all 4 web corpus URLs + a broader sample from real traffic
-- [ ] Feature branch merged to main
+## Considered & rejected
 
-## Considered & Rejected
-
-- **Subprocess call to defuddle CLI** — Node.js cold start per call (~200-400ms overhead). Sidecar is warmer and consistent with markxiv.
+- **JSDOM sidecar** — implemented first, abandoned. Single-threaded Node.js couldn't handle math-heavy pages (event loop blocking). Added infra complexity for a worse result than injecting defuddle into Playwright's real browser DOM.
+- **Subprocess call to defuddle CLI** — Node.js cold start per call (~200-400ms).
+- **Keeping markxiv for arXiv, defuddle only for websites** — unnecessary complexity. Playwright+defuddle handles arXiv HTML well, pymupdf handles the rest.
+- **Conditional page selector UI for arXiv free path** — not worth the frontend complexity. Page selector shows but defuddle extracts the full paper regardless. If pymupdf fallback triggers, pages work correctly.
