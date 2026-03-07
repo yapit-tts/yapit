@@ -26,7 +26,7 @@ Paste a URL or upload a PDF. Yapit renders the document and reads it aloud.
 - 170+ voices across 15 languages. Premium voices or free local synthesis that runs entirely in your browser, no account needed.
 - Vim-style keyboard shortcuts, document outliner, media key support, adjustable speed, dark mode, share by link.
 
-Powered by [Gemini](https://ai.google.dev/gemini-api), [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M), [Inworld TTS](https://inworld.ai), [DocLayout-YOLO](https://huggingface.co/juliozhao/DocLayout-YOLO-DocStructBench), [Markxiv](https://github.com/tonydavis629/markxiv).
+Powered by [Gemini](https://ai.google.dev/gemini-api), [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M), [Inworld TTS](https://inworld.ai), [DocLayout-YOLO](https://huggingface.co/juliozhao/DocLayout-YOLO-DocStructBench), [defuddle](https://github.com/kepano/defuddle).
 
 ## Self-hosting
 
@@ -102,7 +102,7 @@ Next:
 - Support uploading images, EPUB.
 - Support AI-transform for websites.
 - Support exporting audio as MP3.
-- Replace trafilatura with https://github.com/kepano/defuddle for better free website -> md.
+
 
 Later:
 - Better support for self-hosting (better modularity for adding voices, extraction methods, documentation)

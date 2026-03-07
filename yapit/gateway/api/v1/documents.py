@@ -83,6 +83,7 @@ def _detect_arxiv_id(url: str) -> str | None:
             return match.group(1)
     return None
 
+
 _background_tasks: set[asyncio.Task] = set()
 
 
@@ -888,9 +889,7 @@ async def _run_extraction(
 
     cancel_key = f"extraction:cancel:{extraction_id}"
 
-    method = "ai" if ai_transform else "free"
-    if arxiv_id:
-        method = "arxiv-defuddle"
+    method = "ai" if ai_transform else "arxiv" if arxiv_id else "free"
     ext_log.info(f"Extraction starting: {method}, {total_pages} pages")
 
     try:
