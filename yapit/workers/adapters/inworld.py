@@ -28,7 +28,9 @@ class InworldAdapter(SynthAdapter):
         self._client: httpx.AsyncClient | None = None
 
     async def initialize(self) -> None:
-        self._client = httpx.AsyncClient(timeout=60.0)
+        self._client = httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=5.0, read=8.0, write=5.0, pool=5.0),
+        )
 
     async def synthesize(self, text: str, **kwargs) -> bytes:
         if not self._client:
@@ -80,7 +82,7 @@ class InworldAdapter(SynthAdapter):
                     jitter = random.uniform(0, delay * 0.5)
                     wait_time = delay + jitter
                     logger.bind(model_id=self._model_id, voice_id=voice_id).warning(
-                        f"Inworld connection error: {e}, "
+                        f"Inworld {type(e).__name__}: {e or '(no details)'}, "
                         f"attempt {attempt + 1}/{MAX_RETRIES}, retrying in {wait_time:.1f}s"
                     )
                     await asyncio.sleep(wait_time)
