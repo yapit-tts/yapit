@@ -47,7 +47,6 @@ from yapit.gateway.document.batch import BatchJobInfo, BatchJobStatus, get_batch
 from yapit.gateway.document.batch_poller import create_document_from_batch
 from yapit.gateway.document.extraction import PER_PAGE_TOLERANCE, estimate_document_tokens
 from yapit.gateway.document.http import download_document
-from yapit.gateway.document.markxiv import detect_arxiv_url, fetch_from_markxiv
 from yapit.gateway.document.processing import (
     CachedDocument,
     DocumentExtractionResult,
@@ -69,6 +68,20 @@ from yapit.gateway.usage import check_usage_limit
 
 router = APIRouter(prefix="/v1/documents", tags=["Documents"], dependencies=[Depends(authenticate)])
 public_router = APIRouter(prefix="/v1/documents", tags=["Documents"])
+
+_ARXIV_PATTERNS = [
+    re.compile(r"(?:www\.)?arxiv\.org/(?:abs|pdf|html)/([\d.]+v?\d*)"),
+    re.compile(r"(?:www\.)?alphaxiv\.org/(?:abs|pdf)/([\d.]+v?\d*)"),
+    re.compile(r"ar5iv\.labs\.google\.com/abs/([\d.]+v?\d*)"),
+]
+
+
+def _detect_arxiv_id(url: str) -> str | None:
+    """Extract arXiv paper ID from URL, or None."""
+    for pattern in _ARXIV_PATTERNS:
+        if match := pattern.search(url):
+            return match.group(1)
+    return None
 
 _background_tasks: set[asyncio.Task] = set()
 
@@ -382,11 +395,8 @@ async def prepare_document(
     """Prepare a document from URL for creation."""
     url = str(body.url)
 
-    # arXiv URLs → rewrite to PDF so they flow through the document path
-    # (banner with free/AI transform choice, markxiv handled by /document endpoint)
-    arxiv_match = detect_arxiv_url(url)
-    if arxiv_match:
-        arxiv_id, _ = arxiv_match
+    arxiv_id = _detect_arxiv_id(url)
+    if arxiv_id:
         url = f"https://arxiv.org/pdf/{arxiv_id}"
 
     url_hash = hashlib.sha256(url.encode()).hexdigest()
@@ -858,7 +868,6 @@ async def _run_extraction(
     file_size: int,
     ai_transform: bool,
     arxiv_id: str | None,
-    markxiv_url: str | None,
     billing_enabled: bool,
     title: str | None,
     pages: list[int] | None,
@@ -881,16 +890,35 @@ async def _run_extraction(
 
     method = "ai" if ai_transform else "free"
     if arxiv_id:
-        method = "markxiv"
+        method = "arxiv-defuddle"
     ext_log.info(f"Extraction starting: {method}, {total_pages} pages")
 
     try:
-        if arxiv_id and markxiv_url:
-            markdown = await fetch_from_markxiv(markxiv_url, arxiv_id)
-            extraction_result = DocumentExtractionResult(
-                pages={0: ExtractedPage(markdown=markdown, images=[])},
-                extraction_method="markxiv",
-            )
+        if arxiv_id and not ai_transform:
+            arxiv_html_url = f"https://arxiv.org/html/{arxiv_id}"
+            markdown, _ = await extract_website_content(arxiv_html_url)
+            if markdown:
+                extraction_result = DocumentExtractionResult(
+                    pages={0: ExtractedPage(markdown=markdown, images=[])},
+                    extraction_method="defuddle",
+                )
+            else:
+                ext_log.info(f"No HTML version for {arxiv_id}, falling back to pymupdf")
+                extraction_result = await process_with_billing(
+                    config=pdf.config,
+                    extractor=pdf.extract(content, pages),
+                    user_id=user_id,
+                    content=content,
+                    content_type=content_type,
+                    content_hash=content_hash,
+                    total_pages=total_pages,
+                    extraction_cache=extraction_cache,
+                    image_storage=image_storage,
+                    redis=redis,
+                    billing_enabled=billing_enabled,
+                    file_size=file_size,
+                    pages=pages,
+                )
         elif content_type.startswith("text/") and not ai_transform:
             extraction_result = DocumentExtractionResult(
                 pages={0: ExtractedPage(markdown=content.decode("utf-8", errors="ignore"), images=[])},
@@ -1104,8 +1132,7 @@ async def create_document(
             redis=redis,
         )
 
-    arxiv_match = detect_arxiv_url(cached_doc.metadata.url) if cached_doc.metadata.url else None
-    arxiv_id = arxiv_match[0] if arxiv_match and settings.markxiv_url and not req.ai_transform else None
+    arxiv_id = _detect_arxiv_id(cached_doc.metadata.url) if cached_doc.metadata.url else None
 
     extraction_id = str(uuid4())
 
@@ -1119,7 +1146,6 @@ async def create_document(
             file_size=cached_doc.metadata.file_size or len(cached_doc.content),
             ai_transform=req.ai_transform,
             arxiv_id=arxiv_id,
-            markxiv_url=settings.markxiv_url,
             billing_enabled=settings.billing_enabled,
             title=cached_doc.metadata.title or req.title or cached_doc.metadata.file_name,
             pages=req.pages,

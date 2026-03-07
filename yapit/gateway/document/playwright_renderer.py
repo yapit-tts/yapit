@@ -76,7 +76,11 @@ async def extract_website(url: str, timeout_ms: int = 30_000) -> tuple[str, str 
         await context.add_init_script(bundle)
         page = await context.new_page()
         try:
-            await page.goto(url, wait_until="networkidle", timeout=timeout_ms)
+            response = await page.goto(url, wait_until="networkidle", timeout=timeout_ms)
+            if response and response.status >= 400:
+                duration_ms = int((time.monotonic() - t0) * 1000)
+                logger.info(f"HTTP {response.status} for {url} ({duration_ms}ms)")
+                return "", None
 
             result = await page.evaluate(
                 """async (url) => {
