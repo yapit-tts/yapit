@@ -1,3 +1,8 @@
+FROM node:22-slim AS defuddle-bundle
+WORKDIR /tmp/defuddle
+COPY docker/defuddle/package*.json ./
+RUN npm ci --omit=dev
+
 FROM python:3.12-slim
 
 RUN rm -rf /var/lib/apt/lists/*
@@ -9,6 +14,7 @@ RUN pip install uv --no-cache-dir && uv pip install ".[gateway]" --no-cache-dir 
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
 RUN playwright install --with-deps chromium
 
+COPY --from=defuddle-bundle /tmp/defuddle/node_modules/defuddle/dist/index.full.js /app/defuddle_bundle.js
 COPY yapit/ /app/yapit
 
 ARG GIT_COMMIT=unknown

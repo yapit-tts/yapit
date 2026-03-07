@@ -22,7 +22,6 @@ flowchart TD
         GW --> TS[(TimescaleDB)]
 
         GW --> Smoke["Smokescreen (SSRF proxy)"]
-        GW --> Markxiv["Markxiv"]
 
         Redis -->|pull jobs| Kokoro["Kokoro TTS Workers"]
         Redis -->|pull jobs| YOLO["YOLO Figure Workers"]
@@ -71,17 +70,17 @@ flowchart TD
     P1 & P2 --> META["Return hash + metadata<br/>(page count, title, cost estimate)"]
 
     META --> W{"Content type?"}
-    W -->|HTML| WS_AX{"arXiv URL?"}
-    WS_AX -->|Yes| MX["Markxiv sidecar<br/>(LaTeX → markdown)"]
-    WS_AX -->|No| WS["POST /website<br/>(trafilatura + fallbacks)"]
+    W -->|HTML| WS["POST /website<br/>(Playwright+defuddle)"]
 
     W -->|PDF / image| DOC_AX{"arXiv URL?<br/>(and not ai_transform)"}
-    DOC_AX -->|Yes| MX
+    DOC_AX -->|Yes| AX_HTML{"HTML version<br/>available?"}
+    AX_HTML -->|Yes| DEFUDDLE["Playwright+defuddle<br/>(arxiv.org/html/)"]
+    AX_HTML -->|No| PYMUPDF["PyMuPDF<br/>(free PDF fallback)"]
     DOC_AX -->|No| AI{"AI extraction?"}
     AI -->|Yes| GEM["Gemini<br/>(vision-based, paid)"]
-    AI -->|No| MIT["MarkItDown<br/>(free, simple)"]
+    AI -->|No| PYMUPDF
 
-    TEXT & WS & MX & GEM & MIT --> MD["Markdown"]
+    TEXT & WS & DEFUDDLE & PYMUPDF & GEM --> MD["Markdown"]
     MD --> PARSE["Parse + Transform → blocks"]
 ```
 
@@ -93,17 +92,12 @@ this to the user, then calls the create endpoint with the cache key.
 
 ```mermaid
 flowchart TD
-    URL["URL"] --> AX{"arXiv?<br/>(arxiv.org, alphaxiv, ar5iv)"}
-    AX -->|Yes| MX["Markxiv sidecar<br/>LaTeX source → pandoc → markdown"]
-    AX -->|No| DL["Download HTML via httpx<br/>(through Smokescreen SSRF proxy)"]
-    DL --> TRAF["Extract with trafilatura"]
-    TRAF --> EMPTY{"Extraction<br/>empty?"}
-    EMPTY -->|Yes| FALLBACK["MarkItDown fallback"]
-    EMPTY -->|No| JS{"JS-rendered page?<br/>(React/Vue patterns, or<br/>large HTML → tiny markdown)"}
-    JS -->|Yes| PW["Playwright render<br/>(browser pool)"]
-    PW --> RESOLVE
-    JS -->|No| RESOLVE["Resolve relative URLs<br/>to absolute"]
-    FALLBACK --> RESOLVE
+    URL["URL"] --> PW["Playwright navigates to URL<br/>(through Smokescreen SSRF proxy)"]
+    PW --> STATUS{"HTTP status?"}
+    STATUS -->|≥400| EMPTY["Return empty"]
+    STATUS -->|OK| INJECT["Inject defuddle bundle<br/>into browser DOM"]
+    INJECT --> EXTRACT["defuddle extracts markdown<br/>(real DOM, computed styles)"]
+    EXTRACT --> RESOLVE["Resolve relative URLs<br/>to absolute"]
 ```
 
 ### AI extraction

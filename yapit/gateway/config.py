@@ -48,8 +48,6 @@ class Settings(BaseSettings):
     r2_bucket_name: str | None = None
     r2_public_url: str | None = None
 
-    markxiv_url: str | None = None
-
     # Worker replica counts (for queue semaphore sizing)
     kokoro_cpu_replicas: int
     yolo_cpu_replicas: int

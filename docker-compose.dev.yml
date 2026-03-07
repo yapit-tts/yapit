@@ -37,6 +37,7 @@ services:
     ports:
       - "5433:5432"
 
+
   kokoro-cpu:
     environment:
       WORKER_ID: dev-kokoro-cpu

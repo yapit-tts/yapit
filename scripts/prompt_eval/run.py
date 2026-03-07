@@ -489,11 +489,7 @@ async def run_web_extraction(
         if notes:
             print(f"  ({notes})")
 
-        html_path = DOCS_DIR / f"{name}.html"
-        await download_file(url, html_path)
-        content = html_path.read_bytes()
-
-        markdown, method = await extract_website_content(content, url)
+        markdown, method = await extract_website_content(url)
         print(f"  Method: {method}, {len(markdown)} chars")
 
         (run_dir / f"{name}.md").write_text(markdown)
