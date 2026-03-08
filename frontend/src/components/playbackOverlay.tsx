@@ -86,7 +86,7 @@ export function PlaybackOverlay({
 
   // --- Ref bridges (shell's keyboard handler reads these) ---
 
-  currentBlockRef.current = currentBlock;
+  useLayoutEffect(() => { currentBlockRef.current = currentBlock; }, [currentBlock, currentBlockRef]);
 
   // --- DOM highlighting (imperative, no React state) ---
 

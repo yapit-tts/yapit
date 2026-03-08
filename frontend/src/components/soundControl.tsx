@@ -76,7 +76,7 @@ function useRepeatOnHold(callback: () => void, disabled?: boolean) {
     startRepeating();
   }, [disabled, startRepeating]);
 
-  const handleTouchStart = useCallback((_e: React.TouchEvent) => {
+  const handleTouchStart = useCallback(() => {
     if (disabled) return;
     lastTouchTimeRef.current = Date.now();
     isActiveRef.current = true;
