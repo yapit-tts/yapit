@@ -3,6 +3,12 @@ volumes:
   metricsdata:
   clickhouse-data:
 
+networks:
+  browser-net:
+    driver: bridge
+  worker-net:
+    driver: bridge
+
 services:
   # -------- database
   postgres:
@@ -51,6 +57,9 @@ services:
     restart: unless-stopped
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
+    networks:
+      - default
+      - worker-net
 
   smokescreen:
     init: true
@@ -59,6 +68,34 @@ services:
     restart: unless-stopped
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
+    networks:
+      - default
+      - browser-net
+
+  # -------- browser extraction (isolated: no credentials, no access to internal services)
+  defuddle:
+    init: true
+    build:
+      context: .
+      dockerfile: docker/defuddle/Dockerfile
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks:
+      - browser-net
+    environment:
+      PROXY_URL: http://smokescreen:4750
+    expose: ["8001"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health').read()"]
+      start_period: 30s
+      start_interval: 1s
+      interval: 30s
+      timeout: 5s
+      retries: 10
+    depends_on:
+      smokescreen:
+        condition: service_started
+    restart: unless-stopped
 
   # -------- api-gateway
   gateway:
@@ -77,9 +114,15 @@ services:
         condition: service_started
       smokescreen:
         condition: service_started
+      defuddle:
+        condition: service_healthy
     restart: unless-stopped
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
+    networks:
+      - default
+      - browser-net
+      - worker-net
     expose: ["8000"]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()"]
@@ -154,6 +197,8 @@ services:
     command: uv run python -m yapit.workers.kokoro
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
+    networks:
+      - worker-net
     environment:
       REDIS_URL: redis://redis:6379
       OMP_NUM_THREADS: ${OMP_NUM_THREADS}
@@ -169,6 +214,8 @@ services:
     command: uv run python -m yapit.workers.yolo
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
+    networks:
+      - worker-net
     environment:
       REDIS_URL: redis://redis:6379
       OMP_NUM_THREADS: ${OMP_NUM_THREADS}

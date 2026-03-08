@@ -36,7 +36,6 @@ dependencies = [
   "stripe~=14.2",
   "loguru~=0.7.3",
   "google-genai~=1.59.0",
-  "playwright~=1.57",
   "pillow~=12.1",
   "aiosqlite~=0.22.1",
   "aioboto3>=15.5.0",

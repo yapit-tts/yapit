@@ -10,6 +10,10 @@ volumes:
 networks:
   yapit-network:
     external: true
+  browser-net:
+    driver: overlay
+  worker-net:
+    driver: overlay
 
 services:
   frontend:
@@ -69,6 +73,7 @@ services:
     # Hetzner firewall + UFW. Tailscale workers connect via VPN (bypasses UFW).
     networks:
       - yapit-network
+      - worker-net
     deploy:
       replicas: 1
       update_config:
@@ -80,6 +85,31 @@ services:
     cap_drop: [ALL]
     networks:
       - yapit-network
+      - browser-net
+    deploy:
+      replicas: 1
+      update_config:
+        order: start-first
+        failure_action: rollback
+
+  defuddle:
+    init: true
+    image: ghcr.io/yapit-tts/defuddle:latest
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks:
+      - browser-net
+    environment:
+      PROXY_URL: http://smokescreen:4750
+    expose:
+      - "8001"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health').read()"]
+      start_period: 30s
+      start_interval: 1s
+      interval: 30s
+      timeout: 5s
+      retries: 10
     deploy:
       replicas: 1
       update_config:
@@ -126,6 +156,8 @@ services:
       - gateway-data:/data/gateway
     networks:
       - yapit-network
+      - browser-net
+      - worker-net
     expose:
       - "8000"
     healthcheck:
@@ -222,7 +254,7 @@ services:
       WORKER_ID: swarm-kokoro-cpu-{{.Task.Slot}}
       OMP_NUM_THREADS: ${OMP_NUM_THREADS}
     networks:
-      - yapit-network
+      - worker-net
     deploy:
       replicas: ${KOKORO_CPU_REPLICAS}
       update_config:
@@ -239,7 +271,7 @@ services:
       WORKER_ID: swarm-yolo-cpu-{{.Task.Slot}}
       OMP_NUM_THREADS: ${OMP_NUM_THREADS}
     networks:
-      - yapit-network
+      - worker-net
     deploy:
       replicas: ${YOLO_CPU_REPLICAS}
       update_config:
