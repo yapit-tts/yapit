@@ -66,28 +66,6 @@ Ask explicitly: "I need to run `[exact command]` on prod. This will [effect]. Ty
 
 Do NOT assume approval from vague statements like "fix it" or "go ahead". Prod is prod.
 
-## Branch Strategy
-
-- `main` - production (CI builds images on push, deploy is manual via `make deploy`)
-- `dev` - for batching changes before deploy
-- Feature branches for larger isolated work
-
-**When to use feature branches:** Multi-commit refactors, breaking changes, anything that shouldn't go to prod incrementally. Squash-merge when done.
-
-**When to commit directly to main:** Small self-contained changes (assets, config, typo fixes, isolated bug fixes) that don't interfere with ongoing branch work.
-
-**Committing to main while on a feature branch:** Use an ephemeral worktree — no stashing, no branch switching, current directory untouched:
-```bash
-git worktree add ../yapit-main main
-cd ../yapit-main && # commit, push
-git worktree remove ../yapit-main
-```
-
-**If branches diverge** (ff-only fails): Use `git cherry-pick <commit>` to move commits to main. Then sync:
-```bash
-git checkout dev && git merge main  # brings dev up to date with main
-```
-
 ## Codebase Orientation
 
 `tre` for code structure, `mx` for knowledge navigation — don't mix them.
@@ -114,7 +92,7 @@ Don't delegate reading knowledge files.
 - Test API assumptions before implementing features that depend on them.
 - **Before updating dependencies**, read [[dependency-updates]] — there are version constraints and gotchas that will break prod if ignored.
 - Never use git add -u or git add . — we work with many parallel agents in the same repo.
-- include "[skip tests]" anywhere (at the end) of your commit message to avoid running tests in ci (takes 10mins) if your changes don't interfere with code that's covered by tests. You don't need to add this for doc changes.
+- "[skip tests]" anywhere in the commit message can be included to avoid running tests in ci (takes 10mins). use it *only* if something needs to be pushed quickly.
 
 ## Legacy Workflow Notes
 

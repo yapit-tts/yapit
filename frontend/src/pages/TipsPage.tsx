@@ -248,8 +248,8 @@ const TipsPage = () => {
         <h2 className="text-2xl font-semibold mb-4">Premium voices</h2>
         <p className="text-muted-foreground mb-3">
           Premium voices are powered by {extLink("https://inworld.ai/tts", "Inworld TTS 1.5")},
-          with 65 voices across 15 languages. They run server-side and sound more natural
-          than local synthesis. Available on Plus and Max plans.
+          with voices across 15+ languages. They sound more natural
+          than Kokoro. Available on Plus and Max plans.
         </p>
         <p className="text-muted-foreground mb-3">
           Usage is measured in voice characters (the text sent for synthesis).
@@ -272,13 +272,10 @@ const TipsPage = () => {
           for reading and listening. How that happens depends on the input.
         </p>
         <p className="text-muted-foreground mb-3">
-          Website URLs are converted
-          with {extLink("https://github.com/adbar/trafilatura", "trafilatura")}.
-          If the page requires JavaScript to render, Yapit automatically re-fetches it
-          with a {extLink("https://playwright.dev/", "headless browser")} for better extraction.
-          arXiv links get special treatment
-          via {extLink("https://github.com/tonydavis629/markxiv", "markxiv")}, which converts papers
-          directly from their LaTeX source for better fidelity.
+          Website URLs are rendered in
+          a {extLink("https://playwright.dev/", "headless browser")} and converted to clean markdown
+          by {extLink("https://github.com/nichochar/defuddle", "defuddle")}, stripping away navigation, ads, and other clutter.
+          arXiv links are detected automatically and extracted from their HTML version when available.
           PDFs without AI transform are extracted
           with {extLink("https://pymupdf.readthedocs.io/", "PyMuPDF")}.
         </p>
@@ -286,7 +283,7 @@ const TipsPage = () => {
         <h3 id="ai-transform" className="text-xl font-semibold mb-3 mt-6 scroll-mt-24">AI transform</h3>
         <p className="text-muted-foreground mb-3">
           With AI transform enabled, PDFs are run
-          through {extLink("https://ai.google.dev/gemini-api", "Gemini 3.5 Flash")} for
+          through {extLink("https://ai.google.dev/gemini-api", "Gemini 3 Flash")} for
           page-by-page text extraction
           and {extLink("https://github.com/opendatalab/DocLayout-YOLO", "DocLayout-YOLO")} for
           figure detection. This handles complex layouts, tables, and math much
@@ -298,9 +295,31 @@ const TipsPage = () => {
           tables or many figures may use more.
         </p>
         <p className="text-muted-foreground mb-3">
+          For large documents, you can enable <strong className="text-foreground">batch mode</strong> — extraction
+          runs in the background at half the token cost and can take up to 24 hours.
+          You can close the tab; the document appears in your library when it's done.
+        </p>
+        <p className="text-muted-foreground mb-3">
           Pages that finished extracting are <strong className="text-foreground">cached</strong>.
           If you re-process a document or accidentally close the tab mid-extraction, already-finished pages
           load instantly and won't count toward your usage again.
+        </p>
+
+        <h3 className="text-xl font-semibold mb-3 mt-6 scroll-mt-24">Workarounds</h3>
+        <p className="text-muted-foreground mb-3">
+          If a page is behind a paywall or login, Yapit can't access it directly.
+          You can use {extLink("https://obsidian.md/clipper", "Obsidian Web Clipper")} to
+          grab the content from the page while you're logged in, then paste the
+          markdown into Yapit.
+        </p>
+        <p className="text-muted-foreground mb-3">
+          Our AI extraction handles the vast majority of documents well, but some
+          challenging layouts or dense papers may benefit from a more capable model
+          than we can offer cost-effectively. You can run your own model on a PDF or
+          clipped page using the <a href="#extraction-prompt" className="text-primary hover:underline">extraction prompt below</a> —
+          it adds spoken-only pronunciations for math, marks citations as display-only,
+          and other tweaks that improve the listening experience. Paste the result
+          straight into Yapit.
         </p>
 
         <h3 id="extraction-prompt" className="text-xl font-semibold mb-3 mt-6 scroll-mt-24">Extraction prompt</h3>
