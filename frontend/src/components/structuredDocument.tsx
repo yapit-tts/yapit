@@ -969,7 +969,7 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
     }
   }, [markdownContent]);
 
-  const sanitizedTitle = (title || "document").replace(/[^a-z0-9]/gi, "_").toLowerCase();
+  const sanitizedTitle = (title || "document").replace(/[^a-z0-9]+/gi, "_").replace(/^_|_$/g, "").toLowerCase();
 
   const handleDownloadMarkdown = useCallback((preserveAnnotations = false) => {
     if (!markdownContent) return;
