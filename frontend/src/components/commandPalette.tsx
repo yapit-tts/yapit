@@ -63,7 +63,7 @@ export function CommandPalette() {
         <CommandEmpty>No results found.</CommandEmpty>
         <CommandGroup heading="Documents">
           {documents.map((doc) => (
-            <CommandItem key={doc.id} value={doc.title || "Untitled"} onSelect={() => go(`/listen/${doc.id}`)}>
+            <CommandItem key={doc.id} value={doc.id} keywords={[doc.title || "Untitled"]} onSelect={() => go(`/listen/${doc.id}`)}>
               <FileText />
               <span className="truncate">{doc.title || "Untitled"}</span>
             </CommandItem>
