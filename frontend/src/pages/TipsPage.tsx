@@ -179,6 +179,7 @@ const TipsPage = () => {
             ["s", "Toggle sidebar"],
             ["o", "Toggle outliner"],
             ["r", "Back to reading"],
+            ["⌘K", "Search documents"],
           ] as const).map(([keys, action]) => (
             <div key={keys} className="contents">
               <kbd className={kbdClass} style={codeStyle}>{keys}</kbd>

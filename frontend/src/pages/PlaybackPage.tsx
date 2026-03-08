@@ -550,6 +550,7 @@ const PlaybackPage = () => {
                 ["o", "Toggle outliner"],
                 ["r", "Back to reading"],
                 ["?", "This dialog"],
+                ["⌘K", "Search documents"],
               ] as const).map(([keys, action]) => (
                 <div key={keys} className="contents">
                   <kbd className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded text-center">{keys}</kbd>

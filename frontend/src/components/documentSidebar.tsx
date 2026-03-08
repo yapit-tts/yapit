@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate, useParams, useLocation } from "react-router";
+import { Link, useNavigate, useParams } from "react-router";
 import {
   Sidebar,
   SidebarContent,
@@ -37,6 +37,7 @@ import { useApi } from "@/api";
 import { useUser } from "@stackframe/react";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useSettings, useIsDark } from "@/hooks/useSettings";
+import { useDocuments, type DocumentItem } from "@/hooks/useDocuments";
 
 const formatCompact = (n: number): string => {
   const abs = Math.abs(n);
@@ -45,13 +46,6 @@ const formatCompact = (n: number): string => {
   if (abs >= 1_000) return sign + `${Math.round(abs / 1_000)}K`;
   return n.toString();
 };
-
-interface DocumentItem {
-  id: string;
-  title: string | null;
-  created: string;
-  is_public: boolean;
-}
 
 interface SubscriptionSummary {
   plan: { tier: string; name: string };
@@ -86,8 +80,7 @@ function ThemeToggle() {
 }
 
 function DocumentSidebar() {
-  const [documents, setDocuments] = useState<DocumentItem[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const { documents, setDocuments, isLoading } = useDocuments();
   const [renameDoc, setRenameDoc] = useState<DocumentItem | null>(null);
   const [newTitle, setNewTitle] = useState("");
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
@@ -96,60 +89,18 @@ function DocumentSidebar() {
   const { api, isAuthReady, isAnonymous } = useApi();
   const navigate = useNavigate();
   const { documentId } = useParams();
-  const location = useLocation();
   const user = useUser();
   const isMobile = useIsMobile();
   const { setOpenMobile } = useSidebar();
   const closeMobileSheet = () => { if (isMobile) setOpenMobile(false); };
 
   useEffect(() => {
-    if (!isAuthReady) return;
+    if (!isAuthReady || isAnonymous) return;
 
-    const fetchDocuments = async () => {
-      try {
-        const response = await api.get<DocumentItem[]>("/v1/documents");
-        setDocuments(response.data);
-      } catch (error) {
-        console.error("Failed to fetch documents:", error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    const fetchSubscription = async () => {
-      if (isAnonymous) return;
-      try {
-        const response = await api.get<SubscriptionSummary>("/v1/users/me/subscription");
-        setSubscription(response.data);
-      } catch {
-        // Subscription not available
-      }
-    };
-
-    fetchDocuments();
-    fetchSubscription();
-  }, [api, isAuthReady, isAnonymous, user, location.pathname]);
-
-  // Listen for title changes from PlaybackPage
-  useEffect(() => {
-    const handleTitleChanged = (e: Event) => {
-      const { documentId: docId, title } = (e as CustomEvent).detail;
-      setDocuments(prev => prev.map(d => d.id === docId ? { ...d, title } : d));
-    };
-    window.addEventListener('document-title-changed', handleTitleChanged);
-    return () => window.removeEventListener('document-title-changed', handleTitleChanged);
-  }, []);
-
-  // Listen for bulk document changes (e.g. bulk delete from AccountPage)
-  useEffect(() => {
-    const refetch = () => {
-      api.get<DocumentItem[]>("/v1/documents")
-        .then((r) => setDocuments(r.data))
-        .catch(console.error);
-    };
-    window.addEventListener("documents-changed", refetch);
-    return () => window.removeEventListener("documents-changed", refetch);
-  }, [api]);
+    api.get<SubscriptionSummary>("/v1/users/me/subscription")
+      .then((r) => setSubscription(r.data))
+      .catch(() => {});
+  }, [api, isAuthReady, isAnonymous, user]);
 
   const handleDeleteDocument = async (e: React.MouseEvent, docId: string) => {
     e.stopPropagation();
