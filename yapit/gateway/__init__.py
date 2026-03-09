@@ -7,7 +7,7 @@ from pathlib import Path
 import redis.asyncio as redis
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, ORJSONResponse, PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from loguru import logger
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
@@ -291,7 +291,6 @@ def create_app(
     app = FastAPI(
         title="Yapit Gateway",
         version="0.1.0",
-        default_response_class=ORJSONResponse,
         lifespan=lifespan,
     )
     app.state.limiter = limiter
