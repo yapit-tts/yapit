@@ -37,6 +37,8 @@ notify() {
 
 die() {
   echo "ERROR: $*" >&2
+  local msg=$(git log -1 --format=%s "$GIT_COMMIT" 2>/dev/null || echo "")
+  echo "$(date -Iseconds)  ${GIT_COMMIT:0:12}  FAILED: $msg" >> .deploys.log
   notify "❌" "high" "$*"
   exit 1
 }
@@ -140,9 +142,16 @@ fi
 echo "  ✓ All services OK"
 
 log "Verifying endpoints..."
-if ! curl -sf "https://yapit.md/api/health" > /dev/null 2>&1; then
-  die "API health check failed after update completed"
-fi
+HEALTH_OK=0
+for i in 1 2 3 4 5; do
+  if curl -sf "https://yapit.md/api/health" > /dev/null 2>&1; then
+    HEALTH_OK=1
+    break
+  fi
+  echo "  ... API not ready (attempt $i/5)"
+  sleep 3
+done
+[ "$HEALTH_OK" = "1" ] || die "API health check failed after 5 attempts"
 echo "  ✓ API healthy"
 
 if ! curl -sf "$PROD_URL" > /dev/null; then
