@@ -37,7 +37,6 @@ interface PlaybackOverlayProps {
   slugMap: Map<string, string>;
   // Ref bridges: overlay writes, shell reads
   scrollToBlockRef: React.MutableRefObject<(blockIdx: number, behavior?: ScrollBehavior) => void>;
-  currentBlockRef: React.MutableRefObject<number>;
   handleBackToReadingRef: React.MutableRefObject<() => void>;
 }
 
@@ -64,7 +63,6 @@ export function PlaybackOverlay({
   onCollapseAll,
   slugMap,
   scrollToBlockRef,
-  currentBlockRef,
   handleBackToReadingRef,
 }: PlaybackOverlayProps) {
   const snapshot = useSyncExternalStore(engine.subscribe, engine.getSnapshot);
@@ -83,10 +81,6 @@ export function PlaybackOverlay({
     () => documentBlocks.reduce((sum, b) => sum + (b.est_duration_ms || 0), 0),
     [documentBlocks],
   );
-
-  // --- Ref bridges (shell's keyboard handler reads these) ---
-
-  useLayoutEffect(() => { currentBlockRef.current = currentBlock; }, [currentBlock, currentBlockRef]);
 
   // --- DOM highlighting (imperative, no React state) ---
 

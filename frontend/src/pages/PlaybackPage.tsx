@@ -110,7 +110,6 @@ const PlaybackPage = () => {
 
   // --- Ref bridges (overlay writes, shell reads) ---
 
-  const currentBlockRef = useRef(-1);
   const scrollToBlockRef = useRef<(blockIdx: number, behavior?: ScrollBehavior) => void>(() => {});
   const handleBackToReadingRef = useRef(() => {});
 
@@ -354,7 +353,7 @@ const PlaybackPage = () => {
   }, [sections]);
 
   const handleCollapseAllSections = useCallback(() => {
-    const cb = currentBlockRef.current;
+    const cb = engine.getSnapshot().currentBlock;
     const currentSection = cb >= 0 ? findSectionForBlock(sections, cb) : null;
     setExpandedSections(currentSection ? new Set([currentSection.id]) : new Set());
   }, [sections]);
@@ -373,7 +372,7 @@ const PlaybackPage = () => {
   }, [engine]);
 
   const canCollapseSection = useCallback((section: Section) => {
-    const idx = currentBlockRef.current;
+    const idx = engine.getSnapshot().currentBlock;
     if (idx < 0) return true;
     return !(idx >= section.startBlockIdx && idx <= section.endBlockIdx);
   }, []);
@@ -524,7 +523,6 @@ const PlaybackPage = () => {
           onCollapseAll={handleCollapseAllSections}
           slugMap={slugMap}
           scrollToBlockRef={scrollToBlockRef}
-          currentBlockRef={currentBlockRef}
           handleBackToReadingRef={handleBackToReadingRef}
         />
       </div>
