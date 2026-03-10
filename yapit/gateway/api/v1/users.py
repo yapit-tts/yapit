@@ -49,7 +49,7 @@ async def get_my_subscription(
                 stripe_sub = await stripe_client.v1.subscriptions.retrieve_async(sub.stripe_subscription_id)
                 schedule_pending = stripe_sub.schedule is not None
             except Exception:
-                pass
+                logger.bind(user_id=auth_user.id).warning("Failed to check Stripe schedule status")
 
     summary["schedule_pending"] = schedule_pending
     return summary

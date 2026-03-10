@@ -505,7 +505,7 @@ async def _handle_subscription_updated(
         log.bind(current_sub=subscription.stripe_subscription_id).info("Skipping event for replaced subscription")
         return
 
-    # Row exists and matches — apply updates with grace period logic
+    # Row exists and matches — apply updates
     old_status = subscription.status
     new_status = SubscriptionStatus.from_stripe(stripe_sub.status)
 

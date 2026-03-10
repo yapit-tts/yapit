@@ -74,18 +74,16 @@ async def get_or_create_usage_period(
     user_id: str,
     subscription: UserSubscription,
     db: AsyncSession,
-    *,
-    plan_id: int | None = None,
 ) -> UsagePeriod:
     """Get or create the current usage period using atomic upsert."""
     period_start = subscription.current_period_start
     period_end = subscription.current_period_end
 
-    # Atomic upsert prevents race condition on concurrent requests
-    values: dict = dict(user_id=user_id, period_start=period_start, period_end=period_end)
-    if plan_id is not None:
-        values["plan_id"] = plan_id
-    stmt = pg_insert(UsagePeriod).values(**values)
+    # Atomic upsert prevents race condition on concurrent requests.
+    # Always includes plan_id so even the lazy-create path records which plan governs this period.
+    stmt = pg_insert(UsagePeriod).values(
+        user_id=user_id, period_start=period_start, period_end=period_end, plan_id=subscription.plan_id
+    )
     stmt = stmt.on_conflict_do_nothing(index_elements=["user_id", "period_start"])
     await db.exec(stmt)
     await db.flush()
