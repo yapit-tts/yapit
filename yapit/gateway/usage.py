@@ -64,20 +64,9 @@ async def get_user_subscription(user_id: str, db: AsyncSession, *, for_update: b
 
 
 async def get_effective_plan(subscription: UserSubscription | None, db: AsyncSession) -> Plan:
-    """Get the effective plan for a user, considering grace period after downgrade."""
+    """Get the effective plan for a user. Stripe handles downgrade deferral natively."""
     if not subscription or subscription.status not in ENTITLED_STATUSES:
         return FREE_PLAN
-
-    # Check if user has grace period access to a higher tier
-    if subscription.grace_tier and subscription.grace_until:
-        now = datetime.now(tz=dt.UTC)
-        if subscription.grace_until > now:
-            # Grace period active - use the higher tier's limits
-            result = await db.exec(select(Plan).where(Plan.tier == subscription.grace_tier))
-            grace_plan = result.first()
-            if grace_plan:
-                return grace_plan
-
     return subscription.plan
 
 
@@ -85,17 +74,18 @@ async def get_or_create_usage_period(
     user_id: str,
     subscription: UserSubscription,
     db: AsyncSession,
+    *,
+    plan_id: int | None = None,
 ) -> UsagePeriod:
     """Get or create the current usage period using atomic upsert."""
     period_start = subscription.current_period_start
     period_end = subscription.current_period_end
 
     # Atomic upsert prevents race condition on concurrent requests
-    stmt = pg_insert(UsagePeriod).values(
-        user_id=user_id,
-        period_start=period_start,
-        period_end=period_end,
-    )
+    values: dict = dict(user_id=user_id, period_start=period_start, period_end=period_end)
+    if plan_id is not None:
+        values["plan_id"] = plan_id
+    stmt = pg_insert(UsagePeriod).values(**values)
     stmt = stmt.on_conflict_do_nothing(index_elements=["user_id", "period_start"])
     await db.exec(stmt)
     await db.flush()
@@ -415,8 +405,6 @@ async def get_usage_summary(
             "cancel_at_period_end": subscription.cancel_at_period_end,
             "cancel_at": subscription.cancel_at.isoformat() if subscription.cancel_at else None,
             "is_canceling": subscription.is_canceling,
-            "grace_tier": subscription.grace_tier,
-            "grace_until": subscription.grace_until.isoformat() if subscription.grace_until else None,
         }
         if subscription
         else None,

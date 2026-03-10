@@ -11,11 +11,11 @@ from datetime import datetime
 import stripe
 from loguru import logger
 from redis.asyncio import Redis
-from sqlmodel import col, select
+from sqlmodel import col, select, update
 
 from yapit.gateway.billing_ops import apply_plan_change
 from yapit.gateway.db import create_session
-from yapit.gateway.domain_models import Plan, SubscriptionStatus, UserSubscription
+from yapit.gateway.domain_models import Plan, SubscriptionStatus, UsagePeriod, UserSubscription
 from yapit.gateway.metrics import log_event
 
 
@@ -108,7 +108,16 @@ async def sync_subscription(
             )
             plan = plan_result.first()
             if plan and plan.id and plan.id != subscription.plan_id:
-                apply_plan_change(subscription, plan, old_status, log)
+                apply_plan_change(subscription, plan, log)
+                # Update current usage period's plan_id to match
+                await db.exec(
+                    update(UsagePeriod)
+                    .where(
+                        col(UsagePeriod.user_id) == subscription.user_id,
+                        col(UsagePeriod.period_start) == subscription.current_period_start,
+                    )
+                    .values(plan_id=plan.id)
+                )
 
         if subscription.status == SubscriptionStatus.active and not subscription.ever_paid:
             subscription.ever_paid = True

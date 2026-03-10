@@ -341,8 +341,8 @@ async def test_period_drift_corrected(session):
 
 
 @pytest.mark.asyncio
-async def test_sync_downgrade_sets_grace_period(session):
-    """Sync detects Plus->Basic drift: should set grace_tier=Plus, grace_until=period_end."""
+async def test_sync_plan_drift_updates_plan(session):
+    """Sync detects Plus->Basic drift: should update plan_id."""
     now = datetime.now(tz=dt.UTC).replace(microsecond=0)
     period_end = now + timedelta(days=30)
 
@@ -386,57 +386,3 @@ async def test_sync_downgrade_sets_grace_period(session):
     sub = await _reload_sub("user-sync-downgrade")
     assert sub is not None
     assert sub.plan_id == basic.id
-    assert sub.grace_tier == PlanTier.plus
-    assert sub.grace_until == period_end
-
-
-@pytest.mark.asyncio
-async def test_sync_upgrade_clears_grace(session):
-    """Sync detects Basic->Plus drift while grace_tier=Plus: should clear grace."""
-    now = datetime.now(tz=dt.UTC).replace(microsecond=0)
-    period_end = now + timedelta(days=30)
-
-    basic = await ensure_plan(
-        session,
-        tier=PlanTier.basic,
-        monthly_price_id="price_sync_ungrace_basic_m",
-        yearly_price_id="price_sync_ungrace_basic_y",
-    )
-    plus = await ensure_plan(
-        session,
-        tier=PlanTier.plus,
-        monthly_price_id="price_sync_ungrace_plus_m",
-        yearly_price_id="price_sync_ungrace_plus_y",
-    )
-
-    await create_subscription(
-        session,
-        user_id="user-sync-upgrade",
-        plan_id=basic.id,
-        stripe_subscription_id="sub_sync_upgrade",
-        status=SubscriptionStatus.active,
-        current_period_start=now,
-        current_period_end=period_end,
-        stripe_customer_id="cus_sync_ungrace",
-        ever_paid=True,
-        grace_tier=PlanTier.plus,
-        grace_until=period_end,
-    )
-
-    stripe_sub = make_stripe_subscription(
-        sub_id="sub_sync_upgrade",
-        user_id="user-sync-upgrade",
-        price_id=plus.stripe_price_id_monthly,
-        status="active",
-        period_start=now,
-        period_end=period_end,
-        customer="cus_sync_ungrace",
-    )
-    client = _make_client(stripe_sub)
-
-    assert await sync_subscription("user-sync-upgrade", "sub_sync_upgrade", client) is True
-    sub = await _reload_sub("user-sync-upgrade")
-    assert sub is not None
-    assert sub.plan_id == plus.id
-    assert sub.grace_tier is None
-    assert sub.grace_until is None

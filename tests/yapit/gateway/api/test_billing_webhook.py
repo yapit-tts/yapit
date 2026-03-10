@@ -180,8 +180,6 @@ async def create_subscription(
     canceled_at: datetime | None = None,
     cancel_at: datetime | None = None,
     cancel_at_period_end: bool = False,
-    grace_tier: PlanTier | None = None,
-    grace_until: datetime | None = None,
     ever_paid: bool = False,
     highest_tier_subscribed: PlanTier | None = None,
 ) -> UserSubscription:
@@ -196,8 +194,6 @@ async def create_subscription(
         cancel_at_period_end=cancel_at_period_end,
         cancel_at=cancel_at,
         canceled_at=canceled_at,
-        grace_tier=grace_tier,
-        grace_until=grace_until,
         ever_paid=ever_paid,
         highest_tier_subscribed=highest_tier_subscribed,
     )
@@ -574,14 +570,13 @@ async def test_invoice_paid_subscription_cycle_updates_period_and_clears_grace(s
         status=SubscriptionStatus.active,
         current_period_start=old_start,
         current_period_end=old_end,
-        grace_tier=PlanTier.max,
-        grace_until=old_end,
         ever_paid=False,
     )
 
     session.add(
         UsagePeriod(
             user_id="user-invoice-cycle",
+            plan_id=plan.id,
             period_start=old_start,
             period_end=old_end,
             ocr_tokens=2_000,
@@ -607,8 +602,6 @@ async def test_invoice_paid_subscription_cycle_updates_period_and_clears_grace(s
     assert refreshed.ever_paid is True
     assert refreshed.current_period_start == new_start
     assert refreshed.current_period_end == new_end
-    assert refreshed.grace_tier is None
-    assert refreshed.grace_until is None
 
     new_period = (
         await session.exec(
@@ -619,6 +612,7 @@ async def test_invoice_paid_subscription_cycle_updates_period_and_clears_grace(s
         )
     ).first()
     assert new_period is not None
+    assert new_period.plan_id == plan.id
 
 
 @pytest.mark.asyncio
@@ -1444,67 +1438,13 @@ async def test_resubscribe_after_cancel_full_sequence(session):
     assert sub.ever_paid is True
 
 
-# --- Proration tests ---
+# --- Invoice failure tests ---
 
 
 @pytest.mark.asyncio
-async def test_upgrade_proration_success_clears_previous_plan(session):
-    """Upgrade via portal → proration invoice paid → previous_plan_id cleared."""
+async def test_failed_proration_invoice_sets_past_due_keeps_plan(session):
+    """Failed upgrade proration marks past_due but doesn't revert the plan (Stripe dunning handles recovery)."""
     now = datetime.now(tz=dt.UTC).replace(microsecond=0)
-    basic = await ensure_plan(
-        session, tier=PlanTier.basic, monthly_price_id="price_basic_m_pror", yearly_price_id="price_basic_y_pror"
-    )
-    plus = await ensure_plan(
-        session, tier=PlanTier.plus, monthly_price_id="price_plus_m_pror", yearly_price_id="price_plus_y_pror"
-    )
-
-    await create_subscription(
-        session,
-        user_id="user-pror-success",
-        plan_id=basic.id,
-        stripe_subscription_id="sub_pror_success",
-        status=SubscriptionStatus.active,
-        current_period_start=now,
-        current_period_end=now + timedelta(days=30),
-    )
-
-    # Step 1: subscription.updated — upgrade Basic→Plus
-    stripe_sub = make_stripe_subscription(
-        sub_id="sub_pror_success",
-        user_id="user-pror-success",
-        price_id=plus.stripe_price_id_monthly,
-        period_start=now,
-        period_end=now + timedelta(days=30),
-        status="active",
-    )
-    await billing_api._handle_subscription_updated(stripe_sub, make_stripe_client(stripe_sub), session)
-
-    sub = await session.get(UserSubscription, "user-pror-success")
-    assert sub.plan_id == plus.id
-    assert sub.previous_plan_id == basic.id
-
-    # Step 2: invoice.payment_succeeded (subscription_update proration)
-    invoice = make_invoice(
-        subscription_id="sub_pror_success",
-        billing_reason="subscription_update",
-        period_start=now,
-        period_end=now + timedelta(days=30),
-        invoice_id="in_pror_success",
-    )
-    await billing_api._handle_invoice_paid(invoice, session)
-
-    await session.refresh(sub)
-    assert sub.plan_id == plus.id
-    assert sub.previous_plan_id is None
-
-
-@pytest.mark.asyncio
-async def test_upgrade_proration_failure_reverts_plan(session):
-    """Upgrade via portal → proration invoice fails → plan reverted to previous."""
-    now = datetime.now(tz=dt.UTC).replace(microsecond=0)
-    basic = await ensure_plan(
-        session, tier=PlanTier.basic, monthly_price_id="price_basic_m_revert", yearly_price_id="price_basic_y_revert"
-    )
     plus = await ensure_plan(
         session, tier=PlanTier.plus, monthly_price_id="price_plus_m_revert", yearly_price_id="price_plus_y_revert"
     )
@@ -1512,29 +1452,13 @@ async def test_upgrade_proration_failure_reverts_plan(session):
     await create_subscription(
         session,
         user_id="user-pror-fail",
-        plan_id=basic.id,
+        plan_id=plus.id,
         stripe_subscription_id="sub_pror_fail",
         status=SubscriptionStatus.active,
         current_period_start=now,
         current_period_end=now + timedelta(days=30),
     )
 
-    # Step 1: subscription.updated — upgrade Basic→Plus
-    stripe_sub = make_stripe_subscription(
-        sub_id="sub_pror_fail",
-        user_id="user-pror-fail",
-        price_id=plus.stripe_price_id_monthly,
-        period_start=now,
-        period_end=now + timedelta(days=30),
-        status="active",
-    )
-    await billing_api._handle_subscription_updated(stripe_sub, make_stripe_client(stripe_sub), session)
-
-    sub = await session.get(UserSubscription, "user-pror-fail")
-    assert sub.plan_id == plus.id
-    assert sub.previous_plan_id == basic.id
-
-    # Step 2: invoice.payment_failed (proration charge declined)
     invoice = make_invoice(
         subscription_id="sub_pror_fail",
         billing_reason="subscription_update",
@@ -1544,15 +1468,14 @@ async def test_upgrade_proration_failure_reverts_plan(session):
     )
     await billing_api._handle_invoice_failed(invoice, session)
 
-    await session.refresh(sub)
+    sub = await session.get(UserSubscription, "user-pror-fail")
     assert sub.status == SubscriptionStatus.past_due
-    assert sub.plan_id == basic.id
-    assert sub.previous_plan_id is None
+    assert sub.plan_id == plus.id
 
 
 @pytest.mark.asyncio
-async def test_rollover_uses_grace_plan_limits(session):
-    """Rollover during grace period uses the higher (grace) plan's limits, not the current plan."""
+async def test_rollover_respects_ending_period_plan(session):
+    """After a scheduled downgrade transitions, rollover uses the plan that governed the ending period."""
     now = datetime.now(tz=dt.UTC).replace(microsecond=0)
     old_start = now - timedelta(days=30)
 
@@ -1563,7 +1486,7 @@ async def test_rollover_uses_grace_plan_limits(session):
         yearly_price_id="price_basic_y_grace_roll",
         ocr_tokens=50_000,
     )
-    await ensure_plan(
+    plus = await ensure_plan(
         session,
         tier=PlanTier.plus,
         monthly_price_id="price_plus_m_grace_roll",
@@ -1571,24 +1494,23 @@ async def test_rollover_uses_grace_plan_limits(session):
         ocr_tokens=100_000,
     )
 
-    # User downgraded Plus→Basic mid-cycle, has grace_tier=Plus
+    # User was on Plus during the ending period, now on Basic (scheduled downgrade transitioned)
     await create_subscription(
         session,
-        user_id="user-grace-rollover",
+        user_id="user-period-plan-rollover",
         plan_id=basic.id,
-        stripe_subscription_id="sub_grace_rollover",
+        stripe_subscription_id="sub_period_plan_rollover",
         status=SubscriptionStatus.active,
         current_period_start=old_start,
         current_period_end=now,
-        grace_tier=PlanTier.plus,
-        grace_until=now,
         ever_paid=True,
     )
 
-    # User consumed 80K tokens (within Plus's 100K, but over Basic's 50K)
+    # Usage period records Plus as the governing plan
     session.add(
         UsagePeriod(
-            user_id="user-grace-rollover",
+            user_id="user-period-plan-rollover",
+            plan_id=plus.id,
             period_start=old_start,
             period_end=now,
             ocr_tokens=80_000,
@@ -1596,24 +1518,22 @@ async def test_rollover_uses_grace_plan_limits(session):
     )
     await session.commit()
 
-    # Renewal invoice
     new_end = now + timedelta(days=30)
     invoice = make_invoice(
-        subscription_id="sub_grace_rollover",
+        subscription_id="sub_period_plan_rollover",
         billing_reason="subscription_cycle",
         period_start=old_start,
         period_end=now,
-        invoice_id="in_grace_rollover",
+        invoice_id="in_period_plan_rollover",
         line_period_start=now,
         line_period_end=new_end,
     )
     await billing_api._handle_invoice_paid(invoice, session)
 
-    sub = await session.get(UserSubscription, "user-grace-rollover")
+    sub = await session.get(UserSubscription, "user-period-plan-rollover")
     # Rollover should use Plus limits (100K): 100K - 80K = 20K rollover
     # NOT Basic limits (50K): max(0, 50K - 80K) = 0 rollover
     assert sub.rollover_tokens == 20_000
-    assert sub.grace_tier is None  # cleared on renewal
 
 
 @pytest.mark.asyncio
@@ -1650,7 +1570,4 @@ async def test_interval_change_no_plan_change(session):
 
     sub = await session.get(UserSubscription, "user-interval")
     assert sub.plan_id == plus.id  # unchanged
-    assert sub.grace_tier is None
-    assert sub.previous_plan_id is None
-    # Period updated to yearly
     assert sub.current_period_end == now + timedelta(days=365)

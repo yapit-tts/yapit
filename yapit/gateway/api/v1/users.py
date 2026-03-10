@@ -14,7 +14,7 @@ from sqlmodel import col, delete, select
 
 from yapit.gateway.auth import ANONYMOUS_ID_PREFIX, verify_anonymous_token
 from yapit.gateway.constants import estimate_duration_ms
-from yapit.gateway.deps import AuthenticatedUser, DbSession, SettingsDep
+from yapit.gateway.deps import AuthenticatedUser, DbSession, SettingsDep, StripeClient
 from yapit.gateway.domain_models import (
     Document,
     SubscriptionStatus,
@@ -35,9 +35,24 @@ router = APIRouter(prefix="/v1/users", tags=["Users"])
 async def get_my_subscription(
     db: DbSession,
     auth_user: AuthenticatedUser,
+    stripe_client: StripeClient,
 ) -> dict:
     """Get current user's subscription and usage summary."""
-    return await get_usage_summary(auth_user.id, db)
+    summary = await get_usage_summary(auth_user.id, db)
+
+    # Check Stripe directly for pending schedule (e.g., deferred downgrade)
+    schedule_pending = False
+    if summary.get("subscription") and stripe_client:
+        sub = await get_user_subscription(auth_user.id, db)
+        if sub and sub.stripe_subscription_id:
+            try:
+                stripe_sub = await stripe_client.v1.subscriptions.retrieve_async(sub.stripe_subscription_id)
+                schedule_pending = stripe_sub.schedule is not None
+            except Exception:
+                pass
+
+    summary["schedule_pending"] = schedule_pending
+    return summary
 
 
 class VoiceUsageItem(BaseModel):

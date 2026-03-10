@@ -289,11 +289,10 @@ class UserSubscription(SQLModel, table=True):
 
     ever_paid: bool = Field(default=False)
 
-    # Grace period: higher-tier access after downgrade (until period ends)
+    # Legacy columns — kept for phase 1 migration (code no longer reads/writes these).
+    # Phase 2 migration will drop them after all active grace periods have expired.
     grace_tier: PlanTier | None = Field(default=None)
     grace_until: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
-
-    # Previous plan: set on plan change, used to revert on failed upgrade proration
     previous_plan_id: int | None = Field(default=None)
 
     # Rollover: unused subscription tokens/chars carried forward (capped)
@@ -322,6 +321,7 @@ class UsagePeriod(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     user_id: str = Field(index=True)
+    plan_id: int | None = Field(default=None, foreign_key="plan.id")
 
     period_start: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
     period_end: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))

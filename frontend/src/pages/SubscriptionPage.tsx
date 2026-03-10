@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { cn } from "@/lib/utils";
 import { useNavigate } from "react-router";
 import { useApi } from "@/api";
 import { Button } from "@/components/ui/button";
@@ -35,8 +36,6 @@ interface SubscriptionInfo {
   cancel_at_period_end: boolean;
   cancel_at: string | null;
   is_canceling: boolean;
-  grace_tier: PlanTier | null;
-  grace_until: string | null;
 }
 
 interface UsageSummary {
@@ -60,6 +59,7 @@ interface UsageSummary {
     purchased_voice_chars: number;
   };
   period: { start: string; end: string } | null;
+  schedule_pending: boolean;
 }
 
 const TIER_ORDER: PlanTier[] = ["free", "basic", "plus", "max"];
@@ -175,8 +175,7 @@ const SubscriptionPage = () => {
   const isTrialing = subscription?.subscription?.status === "trialing";
   const isCanceling = subscription?.subscription?.is_canceling && !isCanceled;
   const cancelAt = subscription?.subscription?.cancel_at;
-  const graceTier = subscription?.subscription?.grace_tier;
-  const graceUntil = subscription?.subscription?.grace_until;
+  const schedulePending = subscription?.schedule_pending && !isCanceling && !isCanceled;
 
   if (isLoading) {
     return (
@@ -216,20 +215,20 @@ const SubscriptionPage = () => {
                       {isCanceled ? "Canceled" : "Canceling"}
                     </span>
                   )}
-                  {graceTier && !isCanceling && !isCanceled && (
-                    <span className="text-sm font-normal text-amber-600 bg-amber-100 dark:bg-amber-900/30 dark:text-amber-400 px-2 py-0.5 rounded-full flex items-center gap-1">
+                  {schedulePending && (
+                    <span className="text-sm font-normal text-amber-600 bg-amber-500/10 px-2 py-0.5 rounded-full flex items-center gap-1">
                       <Clock className="h-3 w-3" />
-                      {graceTier.charAt(0).toUpperCase() + graceTier.slice(1)} access
+                      Plan change scheduled
                     </span>
                   )}
                 </CardTitle>
                 <CardDescription>
                   {isCanceling
                     ? `Access until ${new Date(cancelAt || subscription.subscription!.current_period_end).toLocaleDateString()}`
+                    : schedulePending
+                    ? `Plan change takes effect ${new Date(subscription.subscription!.current_period_end).toLocaleDateString()} · Manage in billing portal`
                     : isTrialing
                     ? `Trial ends in ${getDaysRemaining(subscription.subscription!.current_period_end)} days`
-                    : graceTier && graceUntil
-                    ? `${graceTier.charAt(0).toUpperCase() + graceTier.slice(1)} access until ${new Date(graceUntil).toLocaleDateString()}`
                     : `Renews ${new Date(subscription.subscription!.current_period_end).toLocaleDateString()}`}
                 </CardDescription>
               </div>
@@ -335,16 +334,16 @@ const SubscriptionPage = () => {
 
               <CardFooter>
                 {plan.tier === "free" ? (
-                  <Button variant="outline" className="w-full" disabled>
+                  <Button variant="outline" className="w-full dark:border-muted-foreground/25" disabled>
                     {isCurrent ? "Current Plan" : "Free"}
                   </Button>
                 ) : isCurrent ? (
-                  <Button variant="outline" className="w-full" disabled>
+                  <Button variant="outline" className="w-full dark:border-muted-foreground/25" disabled>
                     Current Plan
                   </Button>
                 ) : (
                   <Button
-                    className="w-full"
+                    className={cn("w-full", !isUpgrade && "dark:border-muted-foreground/25 dark:hover:bg-muted-foreground/10")}
                     variant={isUpgrade ? "default" : "outline"}
                     onClick={() => {
                       if (!isSubscribed) {

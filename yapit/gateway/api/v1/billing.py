@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException, Request, status
 from loguru import logger
 from pydantic import BaseModel
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlmodel import col, select
+from sqlmodel import col, select, update
 from stripe.params.checkout._session_create_params import SessionCreateParams
 
 from yapit.gateway.billing_ops import apply_plan_change
@@ -399,6 +399,7 @@ async def _handle_checkout_completed(
     # Create initial usage period so get_or_create becomes just "get" in normal flow
     usage_stmt = pg_insert(UsagePeriod).values(
         user_id=user_id,
+        plan_id=plan.id,
         period_start=period_start,
         period_end=period_end,
     )
@@ -523,7 +524,16 @@ async def _handle_subscription_updated(
         )
         new_plan = plan_result.first()
         if new_plan and new_plan.id and new_plan.id != subscription.plan_id:
-            apply_plan_change(subscription, new_plan, old_status, log)
+            apply_plan_change(subscription, new_plan, log)
+            # Update current usage period's plan_id (mid-cycle upgrade)
+            await db.exec(
+                update(UsagePeriod)
+                .where(
+                    col(UsagePeriod.user_id) == subscription.user_id,
+                    col(UsagePeriod.period_start) == subscription.current_period_start,
+                )
+                .values(plan_id=new_plan.id)
+            )
 
     subscription.updated = now
     await db.commit()
@@ -635,6 +645,7 @@ async def _handle_invoice_paid(invoice: stripe.Invoice, db: DbSession) -> None:
 
             stmt = pg_insert(UsagePeriod).values(
                 user_id=subscription.user_id,
+                plan_id=subscription.plan_id,
                 period_start=subscription.current_period_start,
                 period_end=subscription.current_period_end,
             )
@@ -647,9 +658,6 @@ async def _handle_invoice_paid(invoice: stripe.Invoice, db: DbSession) -> None:
                 ).info("New usage period created")
 
     if invoice.billing_reason != "subscription_cycle":
-        if invoice.billing_reason == "subscription_update" and subscription.previous_plan_id:
-            subscription.previous_plan_id = None
-            log.info("Cleared previous_plan_id after successful proration")
         await db.commit()
         return
 
@@ -679,10 +687,10 @@ async def _handle_invoice_paid(invoice: stripe.Invoice, db: DbSession) -> None:
             period_start=invoice_period_start,
             period_end=datetime.fromtimestamp(invoice.period_end, tz=dt.UTC),
         )
-    # Use grace plan limits if active — user had higher-tier access during the ending period
-    if subscription.grace_tier:
-        grace_result = await db.exec(select(Plan).where(Plan.tier == subscription.grace_tier))
-        plan = grace_result.first() or subscription.plan
+    # Use the plan that governed the ending period (stored on UsagePeriod)
+    if old_period.plan_id:
+        plan_result = await db.exec(select(Plan).where(Plan.id == old_period.plan_id))
+        plan = plan_result.first() or subscription.plan
     else:
         plan = subscription.plan
 
@@ -712,15 +720,6 @@ async def _handle_invoice_paid(invoice: stripe.Invoice, db: DbSession) -> None:
         subscription.rollover_voice_chars = new_rollover
 
     subscription.last_rollover_invoice_id = invoice.id
-
-    # New billing cycle: clear transient state from previous cycle
-    if subscription.grace_tier:
-        log.bind(grace_tier=subscription.grace_tier).info("Clearing grace period on renewal")
-        subscription.grace_tier = None
-        subscription.grace_until = None
-    if subscription.previous_plan_id:
-        subscription.previous_plan_id = None
-
     await db.commit()
 
 
@@ -746,16 +745,5 @@ async def _handle_invoice_failed(invoice: stripe.Invoice, db: DbSession) -> None
 
     subscription.status = SubscriptionStatus.past_due
     subscription.updated = datetime.now(tz=dt.UTC)
-
-    # Revert plan on failed upgrade proration — user should keep their old plan, not get the upgrade for free
-    if invoice.billing_reason == "subscription_update" and subscription.previous_plan_id:
-        log.bind(
-            user_id=subscription.user_id,
-            reverted_from=subscription.plan_id,
-            reverted_to=subscription.previous_plan_id,
-        ).info("Reverting plan after failed upgrade proration")
-        subscription.plan_id = subscription.previous_plan_id
-        subscription.previous_plan_id = None
-
     await db.commit()
     log.bind(user_id=subscription.user_id).info("Subscription marked past_due")

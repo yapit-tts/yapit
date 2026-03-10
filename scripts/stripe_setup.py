@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.12"
-# dependencies = ["stripe", "requests"]
+# dependencies = ["stripe", "python-dotenv"]
 # ///
 """Stripe Infrastructure as Code - Products, Prices, Coupons, Promos, Portal.
 
@@ -13,10 +13,10 @@ a free year. Amount-off caps the discount regardless of interval.
 
 USAGE:
     # Test mode (reads STRIPE_SECRET_KEY from .env after make dev-env)
-    uv run --env-file=.env scripts/stripe_setup.py --test
+    uv run scripts/stripe_setup.py --test
 
-    # Production (decrypt sops first)
-    SOPS_AGE_KEY_FILE=... sops exec-env .env.sops 'uv run scripts/stripe_setup.py --prod'
+    # Production (run make prod-env first to decrypt .env)
+    uv run scripts/stripe_setup.py --prod
 
 WHAT THIS SCRIPT DOES:
     1. VALIDATES config against Stripe (fails if immutable fields differ)
@@ -52,17 +52,18 @@ ADDING NEW COUPONS/PROMOS:
     3. Run: uv run --env-file=.env scripts/stripe_setup.py --test
 
 PORTAL DOWNGRADES:
-    Portal is configured with "immediately" for downgrades (not "schedule at period end").
-    This works with Managed Payments. Our webhook handler detects the downgrade and sets
-    grace_tier + grace_until so users keep higher-tier access until their paid period ends.
+    Downgrades are deferred to period end via schedule_at_period_end. Stripe
+    natively keeps the user on the higher plan until their billing cycle ends,
+    then switches. No proration credit, no grace period logic needed.
+    Upgrades remain immediate with always_invoice proration.
 """
 
 import argparse
 import os
 import sys
 
-import requests
 import stripe
+from dotenv import load_dotenv
 
 # =============================================================================
 # CONFIGURATION - Edit these to change Stripe resources
@@ -177,11 +178,13 @@ PORTAL_CONFIG = {
         "subscription_update": {
             "enabled": True,
             "default_allowed_updates": ["price"],
-            # Important: always_invoice charges immediately for upgrades, whereas "create_prorations" defers to next invoice — exploitable for yearly!
             "proration_behavior": "always_invoice",
-            # Note: schedule_at_period_end is cleared separately via raw HTTP
-            # because the Python SDK doesn't support clearing arrays properly.
-            # See _clear_portal_schedule_conditions() below.
+            "schedule_at_period_end": {
+                "conditions": [
+                    {"type": "decreasing_item_amount"},
+                    {"type": "shortening_interval"},
+                ]
+            },
             # products array is populated dynamically after creating prices
         },
     },
@@ -444,23 +447,7 @@ def upsert_promo_code(client: stripe.StripeClient, promo: dict) -> str | None:
     return result.id
 
 
-def _clear_portal_schedule_conditions(config_id: str, api_key: str) -> None:
-    """Clear schedule_at_period_end conditions so downgrades apply immediately.
-
-    The Stripe Python SDK doesn't support clearing arrays (empty [] is ignored).
-    We use raw HTTP to send the form-encoded empty value that Stripe expects.
-    """
-    response = requests.post(
-        f"https://api.stripe.com/v1/billing_portal/configurations/{config_id}",
-        auth=(api_key, ""),
-        data={"features[subscription_update][schedule_at_period_end][conditions]": ""},
-    )
-    response.raise_for_status()
-
-
-def upsert_portal_config(
-    client: stripe.StripeClient, config: dict, price_ids: dict[str, str], api_key: str
-) -> str | None:
+def upsert_portal_config(client: stripe.StripeClient, config: dict, price_ids: dict[str, str]) -> str | None:
     """Create or update portal configuration. Returns config ID."""
     # Build products array for subscription_update
     products_config = []
@@ -499,13 +486,11 @@ def upsert_portal_config(
 
     if existing:
         client.v1.billing_portal.configurations.update(existing.id, portal_config)
-        _clear_portal_schedule_conditions(existing.id, api_key)
-        print(f"  Updated portal config: {existing.id} (downgrades: immediate)")
+        print(f"  Updated portal config: {existing.id} (downgrades: deferred to period end)")
         return existing.id
     else:
         result = client.v1.billing_portal.configurations.create(portal_config)
-        _clear_portal_schedule_conditions(result.id, api_key)
-        print(f"  Created portal config: {result.id} (downgrades: immediate)")
+        print(f"  Created portal config: {result.id} (downgrades: deferred to period end)")
         return result.id
 
 
@@ -559,11 +544,12 @@ def main():
     group.add_argument("--prod", action="store_true", help="Use production mode (run `make prod-env` first)")
     args = parser.parse_args()
 
+    load_dotenv()
     secret_key = os.environ.get("STRIPE_SECRET_KEY")
 
     if not secret_key:
         print("Error: STRIPE_SECRET_KEY not set")
-        print("\nUsage: uv run --env-file=.env scripts/stripe_setup.py --test")
+        print("\nUsage: uv run scripts/stripe_setup.py --test")
         sys.exit(1)
 
     is_test_key = secret_key.startswith("sk_test_")
@@ -623,7 +609,7 @@ def main():
         upsert_promo_code(client, promo)
 
     print("\n\nPortal Configuration:")
-    upsert_portal_config(client, PORTAL_CONFIG, price_ids, secret_key)
+    upsert_portal_config(client, PORTAL_CONFIG, price_ids)
 
     if args.prod:
         print("\n\nWebhook Endpoint:")

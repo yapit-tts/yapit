@@ -1,24 +1,23 @@
-"""Grace period matrix tests for _handle_subscription_updated.
+"""Plan change matrix tests for _handle_subscription_updated.
 
-Tests the downgrade/upgrade grace period logic:
-- Paid downgrade sets grace, trial downgrade skips grace
-- Multi-downgrade preserves highest grace tier
-- Upgrade below grace tier preserves grace, upgrade >= clears it
+Tests upgrade/downgrade behavior now that grace periods are removed
+and downgrades are deferred to period end by Stripe natively.
 """
 
 import datetime as dt
 from datetime import datetime, timedelta
 
 import pytest
+from sqlmodel import select
 
 from yapit.gateway.api.v1 import billing as billing_api
-from yapit.gateway.domain_models import PlanTier, SubscriptionStatus, UserSubscription
+from yapit.gateway.domain_models import PlanTier, SubscriptionStatus, UsagePeriod, UserSubscription
 
 from .test_billing_webhook import create_subscription, ensure_plan, make_stripe_client, make_stripe_subscription
 
 
 async def _setup_tiers(session):
-    """Create basic/plus/max plans for grace period testing."""
+    """Create basic/plus/max plans for testing."""
     basic = await ensure_plan(
         session,
         tier=PlanTier.basic,
@@ -40,12 +39,12 @@ async def _setup_tiers(session):
     return basic, plus, maxx
 
 
-class TestDowngradeGrace:
-    """HU-103: Downgrade grace period behavior."""
+class TestPlanChange:
+    """Plan changes update the plan and track highest tier."""
 
     @pytest.mark.asyncio
-    async def test_paid_downgrade_sets_grace(self, session):
-        """Downgrading from active (paid) subscription sets grace tier + grace_until."""
+    async def test_downgrade_updates_plan(self, session):
+        """Downgrade from Plus to Basic updates plan_id (Stripe defers the actual switch)."""
         now = datetime.now(tz=dt.UTC).replace(microsecond=0)
         basic, plus, _ = await _setup_tiers(session)
 
@@ -59,7 +58,6 @@ class TestDowngradeGrace:
             current_period_end=now + timedelta(days=30),
         )
 
-        # Stripe says: plan changed to basic
         stripe_sub = make_stripe_subscription(
             sub_id="sub_paid_downgrade",
             user_id="user-paid-downgrade",
@@ -73,128 +71,37 @@ class TestDowngradeGrace:
 
         refreshed = await session.get(UserSubscription, "user-paid-downgrade")
         assert refreshed.plan_id == basic.id
-        assert refreshed.grace_tier == PlanTier.plus
-        assert refreshed.grace_until == now + timedelta(days=30)
 
     @pytest.mark.asyncio
-    async def test_trial_downgrade_skips_grace(self, session):
-        """Downgrading from trial → no grace (user never paid for higher tier)."""
+    async def test_upgrade_updates_plan_and_usage_period(self, session):
+        """Upgrade from Basic to Plus updates plan_id and current usage period's plan_id."""
         now = datetime.now(tz=dt.UTC).replace(microsecond=0)
         basic, plus, _ = await _setup_tiers(session)
 
         await create_subscription(
             session,
-            user_id="user-trial-downgrade",
-            plan_id=plus.id,
-            stripe_subscription_id="sub_trial_downgrade",
-            status=SubscriptionStatus.trialing,
-            current_period_start=now,
-            current_period_end=now + timedelta(days=30),
-        )
-
-        stripe_sub = make_stripe_subscription(
-            sub_id="sub_trial_downgrade",
-            user_id="user-trial-downgrade",
-            price_id=basic.stripe_price_id_monthly,
-            period_start=now,
-            period_end=now + timedelta(days=30),
-            status="trialing",
-        )
-
-        await billing_api._handle_subscription_updated(stripe_sub, make_stripe_client(stripe_sub), session)
-
-        refreshed = await session.get(UserSubscription, "user-trial-downgrade")
-        assert refreshed.plan_id == basic.id
-        assert refreshed.grace_tier is None
-        assert refreshed.grace_until is None
-
-
-class TestMultiDowngradePreservation:
-    """HU-104: Multi-step downgrade preserves highest grace tier."""
-
-    @pytest.mark.asyncio
-    async def test_max_to_plus_to_basic_preserves_max_grace(self, session):
-        """Max→Plus→Basic: grace_tier stays Max (highest seen)."""
-        now = datetime.now(tz=dt.UTC).replace(microsecond=0)
-        basic, plus, maxx = await _setup_tiers(session)
-
-        # Start at Max, active
-        await create_subscription(
-            session,
-            user_id="user-multi-downgrade",
-            plan_id=maxx.id,
-            stripe_subscription_id="sub_multi_downgrade",
-            status=SubscriptionStatus.active,
-            current_period_start=now,
-            current_period_end=now + timedelta(days=30),
-        )
-
-        # Step 1: Max → Plus
-        stripe_sub_to_plus = make_stripe_subscription(
-            sub_id="sub_multi_downgrade",
-            user_id="user-multi-downgrade",
-            price_id=plus.stripe_price_id_monthly,
-            period_start=now,
-            period_end=now + timedelta(days=30),
-            status="active",
-        )
-        await billing_api._handle_subscription_updated(
-            stripe_sub_to_plus, make_stripe_client(stripe_sub_to_plus), session
-        )
-
-        mid = await session.get(UserSubscription, "user-multi-downgrade")
-        assert mid.grace_tier == PlanTier.max
-        assert mid.plan_id == plus.id
-
-        # Step 2: Plus → Basic (grace should stay Max, not downgrade to Plus)
-        stripe_sub_to_basic = make_stripe_subscription(
-            sub_id="sub_multi_downgrade",
-            user_id="user-multi-downgrade",
-            price_id=basic.stripe_price_id_monthly,
-            period_start=now,
-            period_end=now + timedelta(days=30),
-            status="active",
-        )
-        await billing_api._handle_subscription_updated(
-            stripe_sub_to_basic, make_stripe_client(stripe_sub_to_basic), session
-        )
-
-        final = await session.get(UserSubscription, "user-multi-downgrade")
-        assert final.plan_id == basic.id
-        assert final.grace_tier == PlanTier.max
-
-
-class TestUpgradeGraceClearing:
-    """HU-105: Upgrade behavior relative to grace tier."""
-
-    @pytest.mark.asyncio
-    async def test_upgrade_below_grace_preserves_grace(self, session):
-        """Basic→Plus with Max grace: Plus < Max, so grace persists."""
-        now = datetime.now(tz=dt.UTC).replace(microsecond=0)
-        _, plus, maxx = await _setup_tiers(session)
-
-        basic = await ensure_plan(
-            session,
-            tier=PlanTier.basic,
-            monthly_price_id="price_basic_monthly_grace",
-            yearly_price_id="price_basic_yearly_grace",
-        )
-
-        await create_subscription(
-            session,
-            user_id="user-upgrade-below",
+            user_id="user-upgrade",
             plan_id=basic.id,
-            stripe_subscription_id="sub_upgrade_below",
+            stripe_subscription_id="sub_upgrade",
             status=SubscriptionStatus.active,
             current_period_start=now,
             current_period_end=now + timedelta(days=30),
-            grace_tier=PlanTier.max,
-            grace_until=now + timedelta(days=30),
         )
 
+        # Create a usage period for the current cycle
+        session.add(
+            UsagePeriod(
+                user_id="user-upgrade",
+                plan_id=basic.id,
+                period_start=now,
+                period_end=now + timedelta(days=30),
+            )
+        )
+        await session.commit()
+
         stripe_sub = make_stripe_subscription(
-            sub_id="sub_upgrade_below",
-            user_id="user-upgrade-below",
+            sub_id="sub_upgrade",
+            user_id="user-upgrade",
             price_id=plus.stripe_price_id_monthly,
             period_start=now,
             period_end=now + timedelta(days=30),
@@ -203,75 +110,61 @@ class TestUpgradeGraceClearing:
 
         await billing_api._handle_subscription_updated(stripe_sub, make_stripe_client(stripe_sub), session)
 
-        refreshed = await session.get(UserSubscription, "user-upgrade-below")
+        refreshed = await session.get(UserSubscription, "user-upgrade")
         assert refreshed.plan_id == plus.id
-        assert refreshed.grace_tier == PlanTier.max
-        assert refreshed.grace_until is not None
+
+        # Usage period's plan_id should be updated to match the upgrade
+        period = (
+            await session.exec(
+                select(UsagePeriod).where(
+                    UsagePeriod.user_id == "user-upgrade",
+                    UsagePeriod.period_start == now,
+                )
+            )
+        ).first()
+        assert period.plan_id == plus.id
 
     @pytest.mark.asyncio
-    async def test_upgrade_to_grace_tier_clears_grace(self, session):
-        """Basic→Plus with Plus grace: upgrade matches grace tier → grace cleared."""
+    async def test_highest_tier_tracks_max_seen(self, session):
+        """Multi-step: Basic→Max→Basic — highest_tier_subscribed stays Max."""
         now = datetime.now(tz=dt.UTC).replace(microsecond=0)
-        basic, plus, _ = await _setup_tiers(session)
+        basic, _, maxx = await _setup_tiers(session)
 
         await create_subscription(
             session,
-            user_id="user-upgrade-match",
+            user_id="user-highest",
             plan_id=basic.id,
-            stripe_subscription_id="sub_upgrade_match",
+            stripe_subscription_id="sub_highest",
             status=SubscriptionStatus.active,
             current_period_start=now,
             current_period_end=now + timedelta(days=30),
-            grace_tier=PlanTier.plus,
-            grace_until=now + timedelta(days=30),
         )
 
+        # Upgrade to Max
         stripe_sub = make_stripe_subscription(
-            sub_id="sub_upgrade_match",
-            user_id="user-upgrade-match",
-            price_id=plus.stripe_price_id_monthly,
-            period_start=now,
-            period_end=now + timedelta(days=30),
-            status="active",
-        )
-
-        await billing_api._handle_subscription_updated(stripe_sub, make_stripe_client(stripe_sub), session)
-
-        refreshed = await session.get(UserSubscription, "user-upgrade-match")
-        assert refreshed.plan_id == plus.id
-        assert refreshed.grace_tier is None
-        assert refreshed.grace_until is None
-
-    @pytest.mark.asyncio
-    async def test_upgrade_above_grace_tier_clears_grace(self, session):
-        """Basic→Max with Plus grace: Max > Plus → grace cleared."""
-        now = datetime.now(tz=dt.UTC).replace(microsecond=0)
-        basic, plus, maxx = await _setup_tiers(session)
-
-        await create_subscription(
-            session,
-            user_id="user-upgrade-above",
-            plan_id=basic.id,
-            stripe_subscription_id="sub_upgrade_above",
-            status=SubscriptionStatus.active,
-            current_period_start=now,
-            current_period_end=now + timedelta(days=30),
-            grace_tier=PlanTier.plus,
-            grace_until=now + timedelta(days=30),
-        )
-
-        stripe_sub = make_stripe_subscription(
-            sub_id="sub_upgrade_above",
-            user_id="user-upgrade-above",
+            sub_id="sub_highest",
+            user_id="user-highest",
             price_id=maxx.stripe_price_id_monthly,
             period_start=now,
             period_end=now + timedelta(days=30),
             status="active",
         )
-
         await billing_api._handle_subscription_updated(stripe_sub, make_stripe_client(stripe_sub), session)
 
-        refreshed = await session.get(UserSubscription, "user-upgrade-above")
-        assert refreshed.plan_id == maxx.id
-        assert refreshed.grace_tier is None
-        assert refreshed.grace_until is None
+        mid = await session.get(UserSubscription, "user-highest")
+        assert mid.highest_tier_subscribed == PlanTier.max
+
+        # Downgrade back to Basic
+        stripe_sub_basic = make_stripe_subscription(
+            sub_id="sub_highest",
+            user_id="user-highest",
+            price_id=basic.stripe_price_id_monthly,
+            period_start=now,
+            period_end=now + timedelta(days=30),
+            status="active",
+        )
+        await billing_api._handle_subscription_updated(stripe_sub_basic, make_stripe_client(stripe_sub_basic), session)
+
+        final = await session.get(UserSubscription, "user-highest")
+        assert final.plan_id == basic.id
+        assert final.highest_tier_subscribed == PlanTier.max

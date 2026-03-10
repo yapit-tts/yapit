@@ -1,7 +1,7 @@
 """Tests for /v1/users/me/subscription endpoint (usage summary).
 
 Verifies that subscription state is correctly reflected in the API response,
-including cancellation flags and grace period tier reporting.
+including cancellation flags.
 """
 
 import datetime as dt
@@ -48,49 +48,6 @@ async def test_trial_cancel_at_shows_is_canceling(client, app, as_test_user, ses
     assert response.status_code == 200
     data = response.json()
     assert data["subscription"]["is_canceling"] is True
-
-
-@pytest.mark.asyncio
-async def test_grace_active_shows_grace_tier_in_plan(client, app, as_test_user, session):
-    """SUM-002: During grace period, plan.tier reflects grace tier, subscribed_tier reflects billed tier."""
-    now = datetime.now(tz=dt.UTC).replace(microsecond=0)
-
-    basic = await ensure_plan(
-        session,
-        tier=PlanTier.basic,
-        monthly_price_id="price_basic_monthly_grace_sum",
-        yearly_price_id="price_basic_yearly_grace_sum",
-    )
-    await ensure_plan(
-        session,
-        tier=PlanTier.plus,
-        monthly_price_id="price_plus_monthly_grace_sum",
-        yearly_price_id="price_plus_yearly_grace_sum",
-    )
-
-    # User downgraded from Plus to Basic, grace period active
-    await create_subscription(
-        session,
-        user_id=as_test_user.id,
-        plan_id=basic.id,
-        stripe_subscription_id="sub_grace_summary",
-        status=SubscriptionStatus.active,
-        current_period_start=now,
-        current_period_end=now + timedelta(days=30),
-        grace_tier=PlanTier.plus,
-        grace_until=now + timedelta(days=30),
-    )
-
-    response = await client.get("/v1/users/me/subscription")
-
-    assert response.status_code == 200
-    data = response.json()
-    # plan.tier should be the grace tier (Plus) — the effective plan
-    assert data["plan"]["tier"] == PlanTier.plus
-    # subscribed_tier should be the billed tier (Basic)
-    assert data["subscribed_tier"] == PlanTier.basic
-    # Grace info should be visible
-    assert data["subscription"]["grace_tier"] == PlanTier.plus
 
 
 @pytest.mark.asyncio
