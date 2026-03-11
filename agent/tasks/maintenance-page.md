@@ -1,5 +1,5 @@
 ---
-status: active
+status: done
 ---
 
 # Maintenance page for downtime

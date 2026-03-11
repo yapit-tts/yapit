@@ -1,5 +1,5 @@
 ---
-status: active
+status: done
 started: 2026-02-10
 ---
 
@@ -105,7 +105,7 @@ Tested gateway/infrastructure scaling using Inworld TTS (external API, no local 
 | 10 | 200 | 200 | 2.3s | 0 | 0 |
 | 20 | 400 | 139 | 4.7s | 0 | 20 (Inworld rate limit) |
 
-Gateway scales linearly to 10 concurrent users with zero issues. At 20u, the Inworld API rate limit (100 RPS default) is the bottleneck — 20 users × 8-block initial burst = 160 requests in ~1s. Requested increase to 1000 RPS.
+Gateway scales linearly to 10 concurrent users with zero issues. At 20u, the Inworld API rate limit (100 RPS default) is the bottleneck — 20 users × 8-block initial burst = 160 requests in ~1s. Rate limit increase requested.
 
 ## Sources
 
@@ -135,10 +135,9 @@ Gateway scales linearly to 10 concurrent users with zero issues. At 20u, the Inw
 - [x] Collect baseline measurements on cost-optimized VPS
 - [x] Benchmark with GPU workers — required fixing two gateway bottlenecks first (pool starvation, cache.store fsync)
 - [x] Compare baselines on regular perf VPS after upgrade — modest 5-20% improvement, not dramatic
-- [ ] Decide if OMP_NUM_THREADS experiment is worth pursuing
-- [ ] Re-test 30 concurrent Inworld users once rate limit increase (1000 RPS) is approved
-- [ ] Test MPS (Multi-Process Service) on single laptop GPU — how many Kokoro workers can one GPU serve?
-- [ ] Test multiple laptops as GPU workers — what's the max Kokoro parallelism we can reach?
+- [x] Test MPS on single GPU — GTX 1650: 2 workers optimal, MPS saves ~900MB VRAM
+- [x] Multi-machine GPU workers — PC (GTX 1650, 2 Kokoro + 1 YOLO via MPS) + laptop (3070 Ti, 2 Kokoro) + VPS (4 CPU) = 15 concurrent users smooth
+- [ ] Re-test 30 concurrent Inworld users once rate limit increase is approved
 
 ## Benchmarking Plan
 
@@ -187,33 +186,21 @@ uv run scripts/stress_test.py --users 1 --blocks 20 --speed 3 --varied-lengths
 | Feb 20 19:38-19:50 | evening | 1u×3,3u×3,5u×3 | **GPU+VPS post-fix statistical validation.** 3 runs per scenario. |
 | Feb 20 22:49-23:36 | night | 1u×3,3u×3,5u×3 | **Regular perf VPS (post-upgrade).** Modest improvement over cost-optimized. |
 | Feb 21 00:13-00:15 | night | 5u,10u,20u (inworld) | **Gateway concurrency test.** 10u clean, 20u hit Inworld rate limit (100 RPS). |
+| Mar 05 15:07-15:12 | afternoon | 1u,3u,5u,10u | **PC GTX 1650 only (2 GPU + MPS + 4 CPU).** 10u: 7 underruns, 19.9s RT avg. |
+| Mar 05 23:45-23:49 | night | 5u,10u,15u,20u | **Full fleet (PC + laptop 3070 Ti + VPS CPU).** 15u smooth (3 underruns), 20u hit per-user rate limiter. |
 
 **Next steps:**
-1. ~~Connect PC as remote GPU worker~~ — Done (Feb 19). 2× RTX 3070 Ti Laptop GPU workers via Tailscale (no MPS).
+1. ~~Connect PC as remote GPU worker~~ — Done (Feb 19, redone Mar 05 on NixOS).
 2. ~~Statistical validation~~ — Done (Feb 20). 3 runs per scenario, both configs. Results consistent.
 3. ~~Upgrade VPS to regular perf tier~~ — Done (Feb 20). CPX62 regular performance.
 4. ~~Re-run benchmark suite on new VPS~~ — Done (Feb 20). ~5-20% improvement depending on scenario.
 5. ~~Gateway concurrency test~~ — Done (Feb 21). Gateway not the bottleneck, scales linearly to 10u+.
-6. Re-test 30 concurrent Inworld users after rate limit increase (requested 1000 RPS).
+6. ~~Multi-machine GPU fleet~~ — Done (Mar 05). PC (GTX 1650 MPS) + laptop (3070 Ti) + VPS = 15u smooth.
+7. Re-test 30 concurrent Inworld users after rate limit increase (requested 1000 RPS).
 
-## Future: OMP_NUM_THREADS Experiment
+## Considered & Deferred: OMP_NUM_THREADS Experiment
 
-Currently: `OMP_NUM_THREADS=2` with 4 Kokoro replicas (8 threads total on 16 vCPU).
-
-**Hypothesis:** `OMP_NUM_THREADS=1` with more replicas could improve aggregate throughput under load. PyTorch uses OpenMP for intra-op parallelism (matrix multiplications). With `OMP_NUM_THREADS=2`, each worker has 2 threads coordinating via shared memory. Under 4+ concurrent workers, memory bus bandwidth contention degrades per-worker throughput.
-
-With `OMP_NUM_THREADS=1` and more workers: each worker is single-threaded (no intra-op parallelism), but more independent workers. Intra-op parallelism has diminishing returns on Kokoro-82M (tiny matrices). Trade-off: slightly slower per-block synthesis (~800ms vs ~650ms?) but better aggregate throughput under contention.
-
-**RAM constraint:** Each Kokoro worker uses ~2-2.5GB RSS (with jemalloc settling ~1.1GB hopefully). 8 workers = ~9-10GB just for Kokoro. Plus YOLO workers (~600MB × 4 = 2.4GB), gateway, Postgres, Redis. On a 30GB box: tight but feasible.
-
-**Experiment plan:**
-1. Establish baseline: current config (OMP=2, 4 replicas), multi-user stress tests
-2. Change `.env.prod`: `OMP_NUM_THREADS=1`, `KOKORO_CPU_REPLICAS=6` (or 8 if RAM allows)
-3. Same stress tests, compare
-4. Key metrics: per-block synthesis time, aggregate throughput, underrun rate at 5-10 users
-5. Monitor RSS to confirm jemalloc keeps memory in check with more workers
-
-**Not urgent.** Current 4-worker setup handles 1-5 users fine. This matters when scaling to 8+ concurrent users without RunPod overflow.
+Hypothesis was that `OMP_NUM_THREADS=1` with more CPU replicas could improve aggregate throughput. Deprioritized — GPU workers handle the scaling need, and CPU worker tuning becomes irrelevant once stable GPU capacity is available.
 
 ## Considered & Rejected
 

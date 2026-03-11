@@ -1,5 +1,5 @@
 ---
-status: active
+status: done
 refs:
   - "[[2026-03-05-defuddle-website-extraction]]"
   - "[[2026-03-06-defuddle-arxiv-issues]]"

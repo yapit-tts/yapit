@@ -1,5 +1,5 @@
 ---
-status: active
+status: done
 refs:
   - agent/tasks/frontend-performance-tracking.md
 ---

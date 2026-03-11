@@ -22,7 +22,7 @@ Production-ready Stripe Managed Payments integration with:
 3. **Relevant subtask sources** — listed in each subtask's MUST READ section
 
 **After completing work:**
-- If you changed billing logic, run `make test-unit` — the 77 deterministic billing tests catch most regressions
+- If you changed billing logic, run `make test-unit` — deterministic billing tests catch most regressions
 - If you added a feature or changed behavior, check whether it needs new deterministic tests AND/OR E2E validation per [[stripe-e2e-testing]]
 - Update this file's "Completed Work" section
 
@@ -69,21 +69,31 @@ Production-ready Stripe Managed Payments integration with:
 
 ## Key Decisions
 
-### Why Grace Period Instead of Subscription Schedules
+### Portal Downgrades — Deferred via Subscription Schedules (2026-03)
 
-**Subscription schedules don't work with Managed Payments.** Stripe confirmed this limitation and said they're working on it (no ETA). We implemented our own grace period approach:
-- Downgrade updates Stripe immediately (`proration_behavior: none`)
-- We track `grace_tier` + `grace_until` in DB
-- User keeps higher-tier access until period ends
-- Grace clears on `invoice.payment_succeeded`
+**As of Feb 9, 2026, Managed Payments supports subscription schedules.** This removed the blocker that forced the grace period workaround.
 
-### Portal Downgrades — Needs E2E Test
+Portal config uses `schedule_at_period_end` with two conditions (OR'd):
+- `decreasing_item_amount` — downgrades (e.g., Max → Plus)
+- `shortening_interval` — e.g., yearly → monthly
 
-Portal is now configured with "immediately" for downgrades (not "schedule at period end"). In theory, this bypasses the subscription schedule limitation and our webhook handler should set grace period automatically.
+Upgrades remain immediate with `always_invoice` proration. Stripe natively keeps the user on the higher plan until period end — no proration credit, no custom logic.
 
-**E2E test needed:** Verify portal downgrade triggers webhook → grace period set → user keeps access until period end. If this works, we can delete the custom `/v1/billing/downgrade` endpoint.
+**Grace period fields** (`grace_tier`, `grace_until`, `previous_plan_id`) are no longer read/written by code. Columns kept temporarily for phase 2 migration (drop after all existing grace periods expire).
 
-The custom endpoint was built when we thought ALL portal downgrades don't work, but it's specifically the "schedule at period end" option that requires subscription schedules.
+### UsagePeriod.plan_id — Correct Rollover After Plan Changes
+
+Each `UsagePeriod` records which plan governed it (`plan_id` FK). This matters for rollover: when a period ends, unused capacity must be calculated against the plan that was active during that period, not the subscription's current plan (which may have just changed).
+
+- Set on creation (checkout handler, invoice handler, and lazy-create path in `get_or_create_usage_period`)
+- Updated on mid-cycle upgrade (`_handle_subscription_updated`, `billing_sync`)
+- Rollover falls back to `subscription.plan` if NULL (old periods from before migration)
+
+### Display-Only State: Stripe API vs Local DB
+
+**Hot path** (every request): read from local DB — plan, status, usage limits. Synced via webhooks + hourly `billing_sync`.
+
+**Cold path** (rare page loads like /subscription): fetch directly from Stripe API for display-only fields. Example: `subscription.schedule` to show "Plan change scheduled" badge. No new DB field, always correct, no sync needed.
 
 ### Token-Based Billing Model (2026-01)
 
@@ -136,10 +146,10 @@ Best handled by one agent sequentially (all touch `stripe_setup.py`, share conte
 1. **Deterministic unit/API-integration tests** (77 tests, no live Stripe calls):
    - `tests/yapit/gateway/api/test_billing_webhook.py` — Webhook handler logic, stale guards, invoice period handling
    - `tests/yapit/gateway/api/test_billing_endpoints.py` — Origin validation, "No such customer" retry, plan validation, trial eligibility
-   - `tests/yapit/gateway/api/test_billing_handlers_matrix.py` — Grace period matrix (downgrade, multi-downgrade, upgrade during grace)
+   - `tests/yapit/gateway/api/test_billing_handlers_matrix.py` — Plan change matrix (downgrade updates plan, upgrade updates plan + usage period, highest tier tracking)
    - `tests/yapit/gateway/api/test_billing_ordering.py` — Handler ordering convergence, idempotency (duplicate checkout/invoice), stale replay
    - `tests/yapit/gateway/api/test_billing_sync.py` — `sync_subscription` drift detection/correction, "subscription gone" path
-   - `tests/yapit/gateway/api/test_users_subscription_summary.py` — Cancellation flags (`cancel_at`, `cancel_at_period_end`), grace in summary
+   - `tests/yapit/gateway/api/test_users_subscription_summary.py` — Cancellation flags (`cancel_at`, `cancel_at_period_end`)
    - `tests/yapit/gateway/api/test_usage.py` — Waterfall consumption, debt blocking, redis reservations, effective plan fallback
 
    Conventions: shared factories in `test_billing_webhook.py`, `sync_subscription` monkeypatched in endpoint tests (testing gate logic not sync), testcontainers Postgres+Redis.
@@ -250,14 +260,14 @@ Fix: With Issue 1 fixed, script now reaches product updates. Re-run `stripe_setu
 
 ## Open Questions
 
-- **Subscription schedules ETA** — Stripe is working on it. Check changelog periodically. But is it worth switching?
+- **Subscription schedule webhook sequence** — When a portal downgrade creates a schedule, it's unclear whether `customer.subscription.updated` fires (with `schedule` field set). We work around this by checking `subscription.schedule` directly from the Stripe API on page load. If we ever need real-time schedule awareness, listen for `subscription_schedule.created`/`released` events.
 
 ## Gotchas (High-Level)
 
 ### Stripe API / SDK Quirks
 - **Python SDK v14 dict method shadowing** — Stripe objects inherit from dict, so `.items`, `.keys`, `.values`, `.get`, `.update` etc. are dict methods, not API fields. Use bracket notation: `subscription["items"]` not `subscription.items`. The latter returns `dict.items()` builtin method.
 - **Coupon `applies_to` is write-only** — Set on create, but NOT returned in retrieve/list responses. Can't validate via API. Verify in Dashboard if needed.
-- **Python SDK ignores empty arrays** — `{"conditions": []}` doesn't clear existing conditions. Must use raw HTTP with form-encoded empty value: `data={'field[nested][array]': ''}`. See `_clear_portal_schedule_conditions()` in `stripe_setup.py`. Source: discovered via testing, confirmed by [SDK releases](https://github.com/stripe/stripe-python/releases) mentioning "emptyable" array types.
+- **Python SDK ignores empty arrays** — `{"conditions": []}` doesn't clear existing conditions. Must use raw HTTP with form-encoded empty value. No longer relevant since we set conditions (not clear them), but worth knowing if you ever need to empty an array via the SDK.
 - **Promo code API structure** — Creating promo codes requires `{"promotion": {"type": "coupon", "coupon": "coupon_id"}}`, not top-level `coupon` field. Retrieving uses `promotion.coupon` not `coupon.id`.
 - **Invoice subscription ID moved** — API 2025-03-31 changed `invoice.subscription` to `invoice.parent.subscription_details.subscription`
 - **Managed Payments changelog requires login** — can't fetch via WebFetch
@@ -265,9 +275,10 @@ Fix: With Issue 1 fixed, script now reaches product updates. Re-run `stripe_setu
 - **Webhook URL change = new endpoint + new signing secret** — `upsert_webhook` in `stripe_setup.py` matches by URL. Changing the URL creates a new webhook endpoint with a fresh signing secret (printed on creation). Must update `STRIPE_WEBHOOK_SECRET` in `.env.sops` and delete the old endpoint from Stripe.
 
 ### Portal Configuration
-- **Portal downgrades with "schedule at period end"** — uses subscription schedules, which don't work with Managed Payments. We set `schedule_at_period_end.conditions` to empty array for immediate downgrades.
-- **Verify portal config via CLI** — Dashboard may cache old values. Use `stripe billing_portal configurations retrieve <id> | jq '.features.subscription_update.schedule_at_period_end'` to confirm.
-- (TODO) **Interval switching (Monthly ↔ Yearly)** — Portal does support inteveral switch, you simply pay yearly from the start of the next period, or from TODAY (at least in the trial that was the behavior). Need to verify behavior outside of trial, but either way prlly fine, since worst case you just cancel or wait until the end of your billing period to switch. But it's not as clean as idk, prorating the difference immediately. Hmm.
+- **`schedule_at_period_end` conditions are OR'd** — if ANY condition matches, the change is deferred. Both `decreasing_item_amount` and `shortening_interval` can match on the same change (e.g., Max yearly → Plus monthly).
+- **Verify portal config** — Use `scripts/stripe_inspect.py` (read-only, loads `.env` automatically) to dump portal config. Dashboard may cache old values.
+- **Adaptive pricing is automatic with Managed Payments** — don't pass `adaptive_pricing` param to checkout sessions, Stripe rejects it with a clear error.
+- (TODO) **Interval switching (Monthly ↔ Yearly)** — Portal supports interval switch. Lengthening (monthly→yearly) is immediate. Shortening (yearly→monthly) is deferred via `shortening_interval` condition.
 
 ### Trial Cancellation
 - **`cancel_at` vs `cancel_at_period_end`** — Stripe uses `cancel_at` (timestamp) for trial cancellations via portal, not `cancel_at_period_end`. Both must be checked. `UserSubscription.is_canceling` property handles this.
@@ -294,8 +305,8 @@ Fix: With Issue 1 fixed, script now reaches product updates. Re-run `stripe_setu
 - **subscription.deleted not found** — If the subscription row doesn't exist yet (checkout.completed hasn't committed), we raise an exception to return 500, triggering Stripe retry.
 
 ### Assumptions / Corners Cut
-- Portal config `schedule_at_period_end` clearing uses raw HTTP instead of SDK — workaround for SDK limitation
 - Didn't implement `--dry-run` flag — upsert pattern is safe enough, validation catches immutable drift
+- `scripts/stripe_inspect.py` exists for read-only pre/post verification of Stripe config changes
 
 ## Related
 

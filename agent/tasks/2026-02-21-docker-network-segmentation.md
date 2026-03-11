@@ -1,5 +1,5 @@
 ---
-status: backlog
+status: done
 refs:
   - "[[2026-02-21-red-team-security-audit]]"
   - "[[security]]"
