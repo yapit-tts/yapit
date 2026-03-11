@@ -22,7 +22,7 @@ Yapit TTS - Open-source text-to-speech platform for reading documents, web pages
 - [[ci]] — GitHub Actions pipeline (~10 min), integration test setup, workflow dispatch options, debugging failures. Read when CI breaks or when changes might affect it (Dockerfiles, compose, Makefile, env files, project structure, test setup).
 - [[env-config]] — Secrets management, .env files, sops encryption.
 - [[dev-setup]] — **READ BEFORE TESTING.** Test commands, fixture gotchas, uv/pyproject structure. Tests WILL fail without proper env setup.
-- [[dependency-updates]] — Version-specific gotchas, license checking. Read before updating/adding dependencies.
+- [[dependency-updates]] — Version-specific gotchas, license checking. Always read before updating/adding any dependencies.
 - [[metrics]] — TimescaleDB pipeline, event types, dashboard, health reports. Read when adding/modifying metrics.
 - [[logging]] — Loguru JSON logging configuration.
 

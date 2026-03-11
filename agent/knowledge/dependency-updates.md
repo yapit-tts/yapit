@@ -68,6 +68,15 @@ See [[stack-auth]] for the full file reference. Critical ones for upgrades:
 | `frontend/src/pages/AccountSettingsPage.tsx` | CSS selector hack to verify |
 | `dev/init-db.sql` | Regenerate after major upgrades |
 
+## Defuddle Update Guide
+
+npm package in `docker/defuddle/`. Dockerfile uses `npm ci`, so the lockfile must match package.json.
+
+1. Bump version in `docker/defuddle/package.json`
+2. Regenerate lockfile: `npm install --prefix /tmp/defuddle-lock --package-lock-only` (copy package.json there first, copy lockfile back)
+3. Check for API changes — JS surface is in `docker/defuddle/app.py`: `new Defuddle(document, { url, markdown: true })` → `parseAsync()` → `{ content, title }`
+4. `make dev-cpu` to rebuild, test website extraction
+
 ## Adding New Dependencies
 
 When adding new packages, verify license compatibility with AGPL-3.0. See [[licensing]] for verification commands and compatible licenses.

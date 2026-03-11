@@ -3,6 +3,6 @@
   "version": "1.0.0",
   "private": true,
   "dependencies": {
-    "defuddle": "0.10.0"
+    "defuddle": "0.12.0"
   }
 }
