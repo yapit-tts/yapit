@@ -50,6 +50,15 @@ from yapit.gateway.markdown.models import (
 )
 from yapit.gateway.markdown.parser import parse_markdown
 
+
+def _footnote_sort_key(label: str) -> tuple[int, str]:
+    """Sort footnotes numerically when possible, alphabetically otherwise."""
+    try:
+        return (0, str(int(label)).zfill(20))
+    except ValueError:
+        return (1, label)
+
+
 # === TAG CONSTANTS ===
 
 YAP_SHOW_OPEN = "<yap-show>"
@@ -745,6 +754,12 @@ class DocumentTransformer:
             elif isinstance(block, BlockquoteBlock):
                 for nested in block.blocks:
                     collect_refs_from_block(nested)
+            elif isinstance(block, TableBlock):
+                for cell in block.headers:
+                    collect_refs_from_ast(cell.ast)
+                for row in block.rows:
+                    for cell in row:
+                        collect_refs_from_ast(cell.ast)
             elif isinstance(block, FootnotesBlock):
                 footnote_items.extend(block.items)
 
@@ -1388,6 +1403,8 @@ class DocumentTransformer:
 
         if not items:
             return []
+
+        items.sort(key=lambda x: _footnote_sort_key(x.label))
 
         return [
             FootnotesBlock(
