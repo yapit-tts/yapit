@@ -1,6 +1,8 @@
-import { useEffect, useRef } from "react";
+import { useContext, useEffect, useRef } from "react";
 import katex from "katex";
 import type { InlineContent } from "./structuredDocument";
+import { FootnoteContext } from "./footnoteContext";
+import { HoverCard, HoverCardTrigger, HoverCardContent } from "@/components/ui/hover-card";
 
 function InlineMath({ content }: { content: string }) {
   const ref = useRef<HTMLSpanElement>(null);
@@ -78,15 +80,7 @@ function renderNode(node: InlineContent, key: number): React.ReactNode {
         </span>
       );
     case "footnote_ref":
-      return (
-        <sup key={key} id={`fnref-${node.label}`}>
-          {node.has_content ? (
-            <a href={`#fn-${node.label}`}>[{node.label}]</a>
-          ) : (
-            `[^${node.label}]`
-          )}
-        </sup>
-      );
+      return <FootnoteRef key={key} label={node.label} hasContent={node.has_content} />;
     case "list":
       // Rendered at block level (e.g. ListBlockView), not inside inline spans.
       // Rendering <ul>/<ol> inside <span> is invalid HTML and causes browser quirks.
@@ -94,6 +88,38 @@ function renderNode(node: InlineContent, key: number): React.ReactNode {
     default:
       return null;
   }
+}
+
+function FootnoteRef({ label, hasContent }: { label: string; hasContent: boolean }) {
+  const footnotes = useContext(FootnoteContext);
+
+  if (!hasContent) {
+    return <sup>[^{label}]</sup>;
+  }
+
+  const anchor = (
+    <sup id={`fnref-${label}`}>
+      <a href={`#fn-${label}`}>[{label}]</a>
+    </sup>
+  );
+
+  const paragraphs = footnotes.get(label);
+  if (!paragraphs) return anchor;
+
+  return (
+    <HoverCard openDelay={300} closeDelay={150}>
+      <HoverCardTrigger asChild>
+        {anchor}
+      </HoverCardTrigger>
+      <HoverCardContent side="top" className="w-auto max-w-sm">
+        <div className="space-y-1.5 text-sm max-h-48 overflow-y-auto">
+          {paragraphs.map((ast, i) => (
+            <p key={i}><InlineContentRenderer nodes={ast} /></p>
+          ))}
+        </div>
+      </HoverCardContent>
+    </HoverCard>
+  );
 }
 
 export function InlineContentRenderer({

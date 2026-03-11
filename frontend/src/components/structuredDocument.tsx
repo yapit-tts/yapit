@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import type { Section } from "@/lib/sectionIndex";
 import { filterVisibleBlocks } from "@/lib/filterVisibleBlocks";
 import { useSettings, type ContentWidth } from "@/hooks/useSettings";
+import { FootnoteContext } from "./footnoteContext";
 import "./structuredDocument.css";
 
 const contentWidthClasses: Record<ContentWidth, string> = {
@@ -16,6 +17,8 @@ const contentWidthClasses: Record<ContentWidth, string> = {
   wide: "max-w-6xl",    // 1152px
   full: "",             // no limit
 };
+
+const EMPTY_FOOTNOTE_MAP: ReadonlyMap<string, InlineContent[][]> = new Map();
 
 export function stripYapTags(markdown: string): string {
   return markdown
@@ -1032,6 +1035,21 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
     return buildSlugMap(doc.blocks);
   }, [doc]);
 
+  // Pre-extract footnote paragraph ASTs for hover previews
+  const footnoteMap = useMemo(() => {
+    if (!doc?.blocks) return EMPTY_FOOTNOTE_MAP;
+    const fb = doc.blocks.find((b): b is FootnotesBlock => b.type === "footnotes");
+    if (!fb) return EMPTY_FOOTNOTE_MAP;
+    const map = new Map<string, InlineContent[][]>();
+    for (const item of fb.items) {
+      const paragraphs = item.blocks
+        .filter((b): b is ParagraphBlock => b.type === "paragraph")
+        .map(b => b.ast);
+      if (paragraphs.length > 0) map.set(item.label, paragraphs);
+    }
+    return map;
+  }, [doc]);
+
   // Mark dead anchor links (no matching heading)
   useEffect(() => {
     if (!contentRef.current) return;
@@ -1184,6 +1202,7 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
   const groupedBlocks = groupBlocks(visibleBlocks);
 
   return (
+    <FootnoteContext.Provider value={footnoteMap}>
     <article className={cn(containerClass, "prose-container")}>
       {title && !isEditingTitle ? (
         <div
@@ -1322,6 +1341,7 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
       </div>
 
     </article>
+    </FootnoteContext.Provider>
   );
 });
 
