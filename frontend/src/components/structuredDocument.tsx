@@ -957,6 +957,7 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
   canCollapseSection,
 }: StructuredDocumentViewProps) {
   const contentRef = useRef<HTMLDivElement>(null);
+  const titleRef = useRef<HTMLHeadingElement>(null);
   const [copied, setCopied] = useState(false);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editedTitle, setEditedTitle] = useState("");
@@ -1006,17 +1007,43 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
   }, [title, onTitleChange]);
 
   const saveTitle = useCallback(() => {
-    if (editedTitle.trim() && onTitleChange) {
-      onTitleChange(editedTitle.trim());
+    const text = title
+      ? (titleRef.current?.textContent ?? "").trim()
+      : editedTitle.trim();
+    if (text && onTitleChange) {
+      onTitleChange(text);
     }
     setIsEditingTitle(false);
     setEditedTitle("");
-  }, [editedTitle, onTitleChange]);
+  }, [title, editedTitle, onTitleChange]);
 
   const cancelEditingTitle = useCallback(() => {
+    if (titleRef.current && title) {
+      titleRef.current.textContent = title;
+    }
     setIsEditingTitle(false);
     setEditedTitle("");
+  }, [title]);
+
+  const handleTitlePaste = useCallback((e: React.ClipboardEvent) => {
+    e.preventDefault();
+    const text = e.clipboardData.getData("text/plain");
+    document.execCommand("insertText", false, text);
   }, []);
+
+  // Place cursor at end of contentEditable element
+  useEffect(() => {
+    if (isEditingTitle && title && titleRef.current) {
+      const el = titleRef.current;
+      el.focus();
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      range.collapse(false);
+      const sel = window.getSelection();
+      sel?.removeAllRanges();
+      sel?.addRange(range);
+    }
+  }, [isEditingTitle, title]);
 
   // Parse structured content
   const doc = useMemo(() => {
@@ -1204,16 +1231,30 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
   return (
     <FootnoteContext.Provider value={footnoteMap}>
     <article className={cn(containerClass, "prose-container")}>
-      {title && !isEditingTitle ? (
+      {title ? (
         <div
           className={cn(
             "flex flex-col sm:flex-row sm:items-center sm:justify-between mb-6 pb-2 border-b border-b-border overflow-hidden",
-            onTitleChange && "cursor-text"
+            onTitleChange && !isEditingTitle && "cursor-text"
           )}
-          onClick={onTitleChange ? () => { setEditedTitle(title); setIsEditingTitle(true); } : undefined}
+          onClick={!isEditingTitle && onTitleChange ? () => setIsEditingTitle(true) : undefined}
         >
-          <h1 className="text-4xl font-bold sm:mr-4 break-words min-w-0 flex-1">
-            {sourceUrl ? (
+          <h1
+            ref={titleRef}
+            className={cn(
+              "text-4xl font-bold sm:mr-4 break-words min-w-0 flex-1",
+              isEditingTitle && "outline-none"
+            )}
+            contentEditable={isEditingTitle}
+            suppressContentEditableWarning
+            onKeyDown={isEditingTitle ? (e) => {
+              if (e.key === "Enter") { e.preventDefault(); saveTitle(); }
+              if (e.key === "Escape") cancelEditingTitle();
+            } : undefined}
+            onBlur={isEditingTitle ? saveTitle : undefined}
+            onPaste={isEditingTitle ? handleTitlePaste : undefined}
+          >
+            {sourceUrl && !isEditingTitle ? (
               <a
                 href={sourceUrl}
                 target="_blank"
@@ -1228,25 +1269,6 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
             )}
           </h1>
           <div className="flex justify-end mt-2 sm:mt-0 shrink-0" onClick={(e) => e.stopPropagation()}>
-            <ActionButtons copied={copied} hasContent={!!markdownContent} onCopy={handleCopyMarkdown} onDownload={handleDownloadMarkdown} />
-          </div>
-        </div>
-      ) : title && isEditingTitle ? (
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-6 pb-2 border-b border-b-border">
-          <input
-            type="text"
-            value={editedTitle}
-            onChange={(e) => setEditedTitle(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") saveTitle();
-              if (e.key === "Escape") cancelEditingTitle();
-            }}
-            onBlur={saveTitle}
-            autoFocus
-            maxLength={500}
-            className="flex-1 text-4xl font-bold bg-transparent border-none outline-none sm:mr-4"
-          />
-          <div className="flex justify-end mt-2 sm:mt-0">
             <ActionButtons copied={copied} hasContent={!!markdownContent} onCopy={handleCopyMarkdown} onDownload={handleDownloadMarkdown} />
           </div>
         </div>
