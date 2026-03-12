@@ -124,7 +124,8 @@ Yapit is a text-to-speech platform with these components:
 - `kokoro` — local Kokoro TTS, has overflow to RunPod serverless
 - `inworld` — Inworld external API, NO overflow. Jobs dispatched in parallel (no semaphore).
   - Queue wait should be <1s (parallel dispatch). High queue wait = bug.
-  - Processing time >5s is unusual. Watch for rate limit errors.
+  - `inworld-1.5-max` worker latency varies widely by text length: avg ~6s, p95 ~25s is normal for real documents. Only flag if synthesis_error events appear or rate limit (429) events spike.
+  - ReadTimeout warnings (attempt N/6) are transient Inworld API slowness — only concerning if retries exhaust all 6 attempts (= synthesis_error).
 - YOLO — local object detection, has overflow to RunPod serverless
 
 ## Data Locations
@@ -207,7 +208,8 @@ This is the most important section. Don't just count errors — read the actual 
 - `job_requeued` — occasional is fine (transient), sustained pattern = worker issues.
 
 **Log file errors (data/logs/*.jsonl):**
-- Scan ALL log files for ERROR and WARNING level entries. Don't skip this even if metrics look clean — some errors only appear in logs.
+- **IMPORTANT: Check the time range of gateway.jsonl first** (first and last entry timestamps). The file can span weeks. Start analysis with the last 24-48h — filter by `.record.time.repr > "YYYY-MM-DD"`. Total error counts across the whole file are misleading without date context. Older entries are useful for establishing baselines or investigating trends when something looks suspicious.
+- Scan for ERROR and WARNING level entries within the recent window. Don't skip this even if metrics look clean — some errors only appear in logs.
 - For each distinct error, report: the error message, count, and time range.
 - ERROR level in logs — stack traces, exceptions (include request context: method, path, user_id, request_id)
 
@@ -234,6 +236,7 @@ This is the most important section. Don't just count errors — read the actual 
 ### Extraction (Gemini)
 - `page_extraction_error` — rate limit (429), server errors (5xx)?
 - Token counts — unusual spikes?
+- **Batch poller 503s:** The Gemini batch GET endpoint intermittently returns 503 UNAVAILABLE (Google-side capacity issues, well-documented on their forums). The poller retries every 15s automatically. Only flag if a batch has been stuck for >24h — check time since `batch_job_submitted` event.
 
 ### Billing Health
 - Reconciliation: compare count(synthesis_complete) vs sum(data->>'events_count') from billing_processed.
@@ -245,7 +248,7 @@ This is the most important section. Don't just count errors — read the actual 
 
 ### Cache
 
-- "vacuum" events. Are they running? Are they effective? Do they take too long?
+- Vacuum runs as a background task in the gateway, checking every 24h. It only vacuums if `bloat_ratio` (file_size / data_size) exceeds 2.0x. **No vacuum events = bloat is under threshold = healthy.** This is not a missing cron. SQLite WAL mode with steady insert/delete keeps fragmentation low naturally.
 
 ### Cloudflare Edge (see CLOUDFLARE ANALYTICS section)
 - **504 errors**: Check total count, origin response status, and affected hosts/IPs.
