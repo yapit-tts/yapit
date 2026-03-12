@@ -2,12 +2,48 @@
   "permissions": {
     "allow": [
       "Bash(duckdb *)",
-      "Bash(make test-unit *)",
-      "Bash(make test-local *)",
+      "Bash(gh run watch *)",
       "Bash(make check *)",
+      "Bash(make check-backend *)",
+      "Bash(make check-frontend *)",
+      "Bash(make dev-env *)",
+      "Bash(make migration-new *)",
+      "Bash(make prod-env *)",
+      "Bash(make sync-data *)",
       "Bash(make sync-logs *)",
       "Bash(make sync-metrics *)",
-      "Bash(make dev-env *)"
-    ]
-  }
+      "Bash(make test-frontend *)",
+      "Bash(make test-integration-local *)",
+      "Bash(make test-local *)",
+      "Bash(make test-unit *)",
+      "Bash(make token *)",
+      "Bash(npx eslint *)",
+      "Bash(npx remotion *)",
+      "Bash(npx vite build *)",
+      "Bash(npx vitest run *)",
+      "Bash(stripe --help *)",
+      "Bash(stripe * list)",
+      "Bash(stripe * list *)",
+      "Bash(stripe * retrieve)",
+      "Bash(stripe * retrieve *)",
+      "Bash(stripe config *)",
+      "Bash(stripe get *)",
+      "mcp__chrome-devtools__*",
+      "mcp__stripe__*",
+      "Skill(dependabot-triage)",
+      "Skill(mx:learnings)",
+      "Skill(mx:pickup)",
+      "Skill(mx:session-name)",
+      "Skill(mx:task)",
+      "Skill(task)"
+    ],
+    "ask": []
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "chrome-devtools"
+  ],
+  "enabledPlugins": {},
+  "outputStyle": "Analytical",
+  "spinnerTipsEnabled": false
 }
