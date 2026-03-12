@@ -565,7 +565,9 @@ async def _handle_subscription_deleted(stripe_sub: stripe.Subscription, db: DbSe
 
     now = datetime.now(tz=dt.UTC)
     subscription.status = SubscriptionStatus.canceled
-    subscription.canceled_at = now
+    subscription.canceled_at = (
+        datetime.fromtimestamp(stripe_sub.canceled_at, tz=dt.UTC) if stripe_sub.canceled_at else now
+    )
     subscription.updated = now
 
     await db.commit()
@@ -659,6 +661,7 @@ async def _handle_invoice_paid(invoice: stripe.Invoice, db: DbSession) -> None:
 
     if invoice.billing_reason != "subscription_cycle":
         await db.commit()
+        log.info("Non-cycle invoice processed (no period/rollover update)")
         return
 
     if not invoice.period_start or not invoice.period_end:
