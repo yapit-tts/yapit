@@ -1,5 +1,5 @@
 ---
-name: Defuddle Investigation
+name: defuddle-investigation
 description: This skill should be used when the user asks to "investigate defuddle", "test defuddle on a site", "file a defuddle issue", "check defuddle output", "run a page through defuddle", or mentions extraction problems with a specific website URL that should work with the yapit TTS pipeline.
 ---
 
@@ -107,6 +107,9 @@ Each issue is a separate markdown file in the repo root: `defuddle-issue-{short-
 - Over-explain how defuddle's internals work
 - Combine multiple issues into one file
 - Write unverified root causes
+- Quantify occurrences ("99 links on this page") or editorialize ("prose becomes unreadable") — the example speaks for itself
+- Use `WebFetch` to check defuddle.md — it summarizes instead of returning raw output. Use `curl` instead.
+- Frame issues around one site when the fix is general — if the bug affects any site with links inside inline code, say that in the title, not "Verso inline code links"
 
 ## Yapit Pipeline Context
 
