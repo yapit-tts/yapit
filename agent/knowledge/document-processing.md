@@ -12,7 +12,7 @@ Three ways content enters the system:
 | `POST /v1/documents/website` | URL | See below* |
 | `POST /v1/documents/document` | File upload | See format routing table |
 
-*Website flow branches: arXiv URLs (abs, pdf, alphaxiv, ar5iv) → rewritten to PDF URL in `prepare` so they flow through the document path (surfacing the free vs AI toggle). Other URLs → `extract_website_content` in `website.py`: Playwright navigates to URL, injects defuddle bundle into browser DOM, extracts markdown.
+*Website flow branches: arXiv URLs (abs, pdf, alphaxiv, ar5iv) → rewritten to PDF URL in `prepare` so they flow through the document path (surfacing the free vs AI toggle). Other URLs → `extract_website_content` in `website.py`: defuddle service extracts markdown via static fetch + linkedom (Playwright fallback for JS-rendered SPAs).
 
 ### Format Routing
 
@@ -21,8 +21,8 @@ Three ways content enters the system:
 | PDF | PyMuPDF `get_text()` via `processors/pdf.py` | Gemini via `processors/gemini.py` |
 | Images | — (AI only) | Gemini |
 | Text/Markdown | Passthrough (parse directly) | — |
-| HTML (file upload) | Playwright+defuddle via `extract_website_content()` | — (future: Gemini) |
-| HTML (URL) | Playwright+defuddle via `extract_website_content()` | — (future: Gemini) |
+| HTML (file upload) | Defuddle (static+linkedom, Playwright fallback) via `extract_website_content()` | — (future: Gemini on top of defuddle output) |
+| HTML (URL) | Defuddle (static+linkedom, Playwright fallback) via `extract_website_content()` | — (future: Gemini on top of defuddle output) |
 
 `GET /v1/documents/supported-formats` (public, no auth) returns format capabilities (free/ai/has_pages/batch per MIME type). Frontend fetches once per session via `useSupportedFormats` hook and derives UI from it (toggle visibility, metadata banner, accepted file types).
 
@@ -54,22 +54,24 @@ arXiv URLs (arxiv.org, alphaxiv.org, ar5iv) are detected in `documents.py` via `
 
 `yapit/gateway/document/website.py`
 
-**`extract_website_content(url) → (markdown, extraction_method)`** — thin wrapper around Playwright+defuddle. Resolves relative image URLs after extraction.
+**`extract_website_content(url) → (markdown, title)`** — calls the defuddle service, resolves relative image URLs, raises HTTPException if no content extracted.
 
-`yapit/gateway/document/playwright_renderer.py`
+`yapit/gateway/document/defuddle_client.py`
 
-**`extract_website(url, timeout_ms) → (markdown, title)`** — the core extraction:
+**`extract_website(url, timeout_ms) → (markdown, title)`** — HTTP client to the defuddle container (`docker/defuddle/app.js`). Raises HTTPException on 503 (capacity), lets other errors propagate.
 
-1. Playwright navigates to URL (through Smokescreen SSRF proxy) with `wait_until="networkidle"`
-2. Checks HTTP status — returns empty on ≥400
-3. Injects defuddle browser bundle via `context.add_init_script()`
-4. defuddle extracts markdown from the real browser DOM (with full computed styles for clutter detection)
-5. `resolve_relative_urls` converts `<img>` tags to `![alt](url)` syntax
+**Defuddle service cascade** (`docker/defuddle/app.js`, Node.js container):
 
-- Single Chromium instance, new context+page per request
-- Semaphore at 50 concurrent extractions
-- defuddle bundle loaded lazily from Docker build stage (`/app/defuddle_bundle.js`) or local `node_modules`
-- Duration logged and emitted as `website_extraction` metric event
+1. **Static fetch** (normal UA) → linkedom → defuddle Node API → return if wordCount > 0
+2. **Static fetch** (bot UA) → linkedom → defuddle Node API → return if wordCount > 0
+3. **Playwright fallback** → Chromium navigates to URL via Smokescreen, `networkidle`, injects defuddle browser bundle, extracts from rendered DOM
+
+- Static path handles most content sites; Playwright reserved for JS-rendered SPAs
+- All fetches go through Smokescreen SSRF proxy
+- Shared time budget: total never exceeds caller's `timeout_ms` (default 30s)
+- Playwright: single Chromium instance, new context+page per request, 50 concurrent cap
+- `extraction_method` logged in metrics (`static`, `static-bot`, `playwright`)
+- `resolve_relative_urls` converts `<img>` tags to `![alt](url)` syntax
 
 ## Free PDF Extraction
 
@@ -328,7 +330,8 @@ To add a new format: create `processors/<format>.py` with config + extract(), ad
 | `gateway/document/processors/gemini.py` | Gemini AI extraction with YOLO |
 | `gateway/document/processors/pdf.py` | Free PDF extraction (PyMuPDF) |
 | `gateway/document/processing.py` | ProcessorConfig, process_with_billing, cpu_executor |
-| `gateway/document/website.py` | Website extraction (Playwright+defuddle) |
+| `gateway/document/website.py` | Website extraction (defuddle service client wrapper) |
+| `gateway/document/defuddle_client.py` | HTTP client to defuddle container |
 | `gateway/document/yolo_client.py` | YOLO queue client |
 | `gateway/document/extraction.py` | PDF/image utilities |
 | `gateway/cache.py` | Cache ABC + SqliteCache (includes batch_exists, batch_retrieve) |

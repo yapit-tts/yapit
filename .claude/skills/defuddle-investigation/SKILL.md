@@ -113,6 +113,12 @@ Each issue is a separate markdown file in the repo root: `defuddle-issue-{short-
 
 ## Yapit Pipeline Context
 
-Yapit runs defuddle in a Playwright browser container (`docker/defuddle/app.py`). The browser bundle is injected via `context.add_init_script()`, then `Defuddle(document, { url, markdown: true }).parseAsync()` runs in-page. Despite being a real browser, the `cloneNode` limitation still applies — stylesheet-hidden elements leak in the yapit pipeline too.
+Yapit runs defuddle in an isolated Node.js container (`docker/defuddle/app.js`) with a three-step cascade:
 
-To see yapit pipeline output for a URL, check the dashboard or process a document through the app.
+1. **Static fetch + linkedom** (default) — `Defuddle(html, url, { markdown: true })` via the `defuddle/node` API. No browser, no JS execution. Handles most content sites.
+2. **Bot UA retry** — same as above but with a bot user agent. Some sites serve pre-rendered content to bots.
+3. **Playwright fallback** — real Chromium browser, defuddle browser bundle injected via `context.addInitScript()`, `Defuddle(document, { url, markdown: true }).parseAsync()` in-page. Reserved for JS-rendered SPAs.
+
+The `cloneNode` limitation applies to both static (linkedom) and Playwright paths — stylesheet-hidden elements leak regardless.
+
+When investigating extraction issues, first check which path was used (container logs show `static:`, `static-bot:`, or `playwright:` prefix). If defuddle.md produces better output than yapit, the issue is likely in which extraction path was taken, not in defuddle itself.

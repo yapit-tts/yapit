@@ -593,7 +593,7 @@ async def create_website_document(
         )
 
     assert cached_doc.metadata.url, "Website document must have a URL"
-    markdown, defuddle_title, extraction_method = await extract_website_content(cached_doc.metadata.url)
+    markdown, defuddle_title = await extract_website_content(cached_doc.metadata.url)
 
     processed = await asyncio.get_running_loop().run_in_executor(
         cpu_executor,
@@ -608,7 +608,7 @@ async def create_website_document(
         original_text=processed.extracted_text,
         structured_content=processed.structured_content,
         metadata=cached_doc.metadata,
-        extraction_method=extraction_method,
+        extraction_method="defuddle",
         is_public=prefs.default_documents_public if prefs else False,
     )
     db.add(doc)
@@ -895,7 +895,7 @@ async def _run_extraction(
     try:
         if arxiv_id and not ai_transform:
             arxiv_html_url = f"https://arxiv.org/html/{arxiv_id}"
-            markdown, _, _ = await extract_website_content(arxiv_html_url)
+            markdown, _ = await extract_website_content(arxiv_html_url)
             if markdown:
                 extraction_result = DocumentExtractionResult(
                     pages={0: ExtractedPage(markdown=markdown, images=[])},

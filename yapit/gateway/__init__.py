@@ -33,7 +33,7 @@ from yapit.gateway.config import Settings, get_settings
 from yapit.gateway.db import close_db, create_session, init_db, prepare_database
 from yapit.gateway.deps import create_cache, create_image_storage
 from yapit.gateway.document.batch_poller import BatchPoller
-from yapit.gateway.document.playwright_renderer import init_defuddle_client
+from yapit.gateway.document.defuddle_client import init_defuddle_client
 from yapit.gateway.document.processors.gemini import GeminiExtractor, create_gemini_config
 from yapit.gateway.domain_models import UsageLog
 from yapit.gateway.exceptions import APIError

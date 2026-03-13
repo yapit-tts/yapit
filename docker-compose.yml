@@ -72,7 +72,7 @@ services:
       - default
       - browser-net
 
-  # -------- browser extraction (isolated: no credentials, no access to internal services)
+  # -------- content extraction (isolated: no credentials, no access to internal services)
   defuddle:
     init: true
     build:
@@ -86,7 +86,7 @@ services:
       PROXY_URL: http://smokescreen:4750
     expose: ["8001"]
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health').read()"]
+      test: ["CMD", "node", "-e", "fetch('http://localhost:8001/health').then(r => { if (!r.ok) process.exit(1) })"]
       start_period: 30s
       start_interval: 1s
       interval: 30s

@@ -15,3 +15,11 @@ notes = "footnotes/*sidenotes*"
 [antikythera]
 url = "https://whatisintelligence.antikythera.org/chapter-01/"
 notes = "images, videos, nasty citations (fixed partly by trafilatura, but not fully - like it does properly place all the content at the bottom as footntte contents, but it doesn't properly generate the footnote refs!"
+
+[earendil]
+url = "https://earendil.com/purpose/"
+notes = "WebGL/3D site — JS execution destroys extractable content, Playwright sees FPS counter instead of text"
+
+[wikipedia_ww2]
+url = "https://en.wikipedia.org/wiki/World_War_II"
+notes = "Large, well-structured page with TOC, tables, images, citations, footnotes"

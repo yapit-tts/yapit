@@ -73,8 +73,10 @@ See [[stack-auth]] for the full file reference. Critical ones for upgrades:
 npm package in `docker/defuddle/`. Dockerfile uses `npm ci`, so the lockfile must match package.json.
 
 1. Bump version in `docker/defuddle/package.json`
-2. Regenerate lockfile: `npm install --prefix /tmp/defuddle-lock --package-lock-only` (copy package.json there first, copy lockfile back)
-3. Check for API changes — JS surface is in `docker/defuddle/app.py`: `new Defuddle(document, { url, markdown: true })` → `parseAsync()` → `{ content, title }`
+2. Regenerate lockfile: `cd docker/defuddle && npm install --package-lock-only`
+3. Check for API changes — two surfaces in `docker/defuddle/app.js`:
+   - Static path: `Defuddle(html, url, { markdown: true })` (Node API via `defuddle/node`, returns `{ content, title, wordCount }`)
+   - Playwright path: `new Defuddle(document, { url, markdown: true }).parseAsync()` (browser bundle injected via `addInitScript`, returns `{ content, title }`)
 4. `make dev-cpu` to rebuild, test website extraction
 
 ## Adding New Dependencies

@@ -1,14 +1,23 @@
-"""Website content extraction via Playwright + defuddle."""
+"""Website content extraction via defuddle service."""
 
+from fastapi import HTTPException, status
+
+from yapit.gateway.document.defuddle_client import extract_website
 from yapit.gateway.document.http import resolve_relative_urls
-from yapit.gateway.document.playwright_renderer import extract_website
 
 
-async def extract_website_content(url: str) -> tuple[str, str | None, str]:
-    """Extract markdown from a website URL. Returns (markdown, title, extraction_method)."""
+async def extract_website_content(url: str) -> tuple[str, str | None]:
+    """Extract markdown from a website URL. Returns (markdown, title).
+
+    Raises HTTPException if extraction produces no content.
+    """
     markdown, title = await extract_website(url)
 
-    if url and markdown:
-        markdown = resolve_relative_urls(markdown, url)
+    if not markdown.strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Could not extract readable content from this page",
+        )
 
-    return markdown, title, "defuddle"
+    markdown = resolve_relative_urls(markdown, url)
+    return markdown, title

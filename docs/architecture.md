@@ -70,11 +70,11 @@ flowchart TD
     P1 & P2 --> META["Return hash + metadata<br/>(page count, title, cost estimate)"]
 
     META --> W{"Content type?"}
-    W -->|HTML| WS["POST /website<br/>(Playwright+defuddle)"]
+    W -->|HTML| WS["POST /website<br/>(defuddle service)"]
 
     W -->|PDF / image| DOC_AX{"arXiv URL?<br/>(and not ai_transform)"}
     DOC_AX -->|Yes| AX_HTML{"HTML version<br/>available?"}
-    AX_HTML -->|Yes| DEFUDDLE["Playwright+defuddle<br/>(arxiv.org/html/)"]
+    AX_HTML -->|Yes| DEFUDDLE["defuddle service<br/>(arxiv.org/html/)"]
     AX_HTML -->|No| PYMUPDF["PyMuPDF<br/>(free PDF fallback)"]
     DOC_AX -->|No| AI{"AI extraction?"}
     AI -->|Yes| GEM["Gemini<br/>(vision-based, paid)"]
@@ -92,13 +92,18 @@ this to the user, then calls the create endpoint with the cache key.
 
 ```mermaid
 flowchart TD
-    URL["URL"] --> PW["Playwright navigates to URL<br/>(through Smokescreen SSRF proxy)"]
-    PW --> STATUS{"HTTP status?"}
-    STATUS -->|≥400| EMPTY["Return empty"]
-    STATUS -->|OK| INJECT["Inject defuddle bundle<br/>into browser DOM"]
-    INJECT --> EXTRACT["defuddle extracts markdown<br/>(real DOM, computed styles)"]
-    EXTRACT --> RESOLVE["Resolve relative URLs<br/>to absolute"]
+    URL["URL"] --> S1["Static fetch (normal UA)<br/>linkedom + defuddle"]
+    S1 --> C1{"wordCount > 0?"}
+    C1 -->|Yes| RESOLVE["Resolve relative URLs"]
+    C1 -->|No| S2["Static fetch (bot UA)<br/>linkedom + defuddle"]
+    S2 --> C2{"wordCount > 0?"}
+    C2 -->|Yes| RESOLVE
+    C2 -->|No| PW["Playwright (Chromium)<br/>networkidle + defuddle bundle"]
+    PW --> RESOLVE
 ```
+
+All fetches go through Smokescreen SSRF proxy. Static path handles most content sites.
+Playwright fallback reserved for JS-rendered SPAs where HTML is an empty shell.
 
 ### AI extraction
 
