@@ -29,17 +29,32 @@ async def extract_website(url: str, timeout_ms: int = 30_000) -> tuple[str, str 
     assert _client is not None, "Call init_defuddle_client() during app startup"
 
     t0 = time.monotonic()
-    resp = await _client.post(
-        "/extract",
-        json={"url": url, "timeout_ms": timeout_ms},
-        timeout=timeout_ms / 1000 + 5,
-    )
+    try:
+        resp = await _client.post(
+            "/extract",
+            json={"url": url, "timeout_ms": timeout_ms},
+            timeout=timeout_ms / 1000 + 5,
+        )
+    except Exception as e:
+        duration_ms = int((time.monotonic() - t0) * 1000)
+        logger.error(f"Defuddle service unreachable for {url} after {duration_ms}ms: {e}")
+        await log_event("website_extraction_error", data={"url": url, "error": str(e), "duration_ms": duration_ms})
+        raise
+
     if resp.status_code == 503:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Content extraction service is busy — please try again in a moment",
         )
-    resp.raise_for_status()
+    if not resp.is_success:
+        duration_ms = int((time.monotonic() - t0) * 1000)
+        logger.error(f"Defuddle service returned {resp.status_code} for {url} after {duration_ms}ms")
+        await log_event(
+            "website_extraction_error",
+            data={"url": url, "error": f"HTTP {resp.status_code}", "duration_ms": duration_ms},
+        )
+        resp.raise_for_status()
+
     data = resp.json()
     markdown = data.get("markdown", "")
     title = data.get("title")

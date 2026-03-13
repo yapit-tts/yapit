@@ -45,8 +45,9 @@ from yapit.gateway.deps import (
 )
 from yapit.gateway.document.batch import BatchJobInfo, BatchJobStatus, get_batch_job, save_batch_job, submit_batch_job
 from yapit.gateway.document.batch_poller import create_document_from_batch
+from yapit.gateway.document.defuddle_client import extract_website
 from yapit.gateway.document.extraction import PER_PAGE_TOLERANCE, estimate_document_tokens
-from yapit.gateway.document.http import download_document
+from yapit.gateway.document.http import download_document, resolve_relative_urls
 from yapit.gateway.document.processing import (
     CachedDocument,
     DocumentExtractionResult,
@@ -895,8 +896,9 @@ async def _run_extraction(
     try:
         if arxiv_id and not ai_transform:
             arxiv_html_url = f"https://arxiv.org/html/{arxiv_id}"
-            markdown, _ = await extract_website_content(arxiv_html_url)
-            if markdown:
+            markdown, _ = await extract_website(arxiv_html_url)
+            if markdown.strip():
+                markdown = resolve_relative_urls(markdown, arxiv_html_url)
                 extraction_result = DocumentExtractionResult(
                     pages={0: ExtractedPage(markdown=markdown, images=[])},
                     extraction_method="defuddle",

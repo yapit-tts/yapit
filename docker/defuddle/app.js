@@ -119,7 +119,10 @@ async function extractPlaywright(url, timeoutMs) {
 			waitUntil: "networkidle",
 			timeout: timeoutMs,
 		});
-		if (resp && resp.status() >= 400) return { markdown: "", title: null };
+		if (resp && resp.status() >= 400) {
+			console.log(`Playwright got HTTP ${resp.status()} for ${url}`);
+			return { markdown: "", title: null };
+		}
 
 		return await page.evaluate(async (u) => {
 			const d = new Defuddle(document, { url: u, markdown: true });
