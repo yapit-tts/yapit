@@ -622,7 +622,7 @@ function TableBlockView({ block }: BlockProps & { block: TableBlock }) {
             {block.headers.map((header, idx) => (
               <th
                 key={idx}
-                className="border border-border px-3 py-2 text-left font-medium"
+                className="border border-border px-3 py-2 text-left font-medium [overflow-wrap:anywhere]"
               >
                 <InlineContentRenderer nodes={header.ast} />
               </th>
@@ -635,7 +635,7 @@ function TableBlockView({ block }: BlockProps & { block: TableBlock }) {
               {row.map((cell, cellIdx) => (
                 <td
                   key={cellIdx}
-                  className="border border-border px-3 py-2"
+                  className="border border-border px-3 py-2 [overflow-wrap:anywhere]"
                 >
                   <InlineContentRenderer nodes={cell.ast} />
                 </td>
