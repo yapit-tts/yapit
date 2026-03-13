@@ -112,7 +112,8 @@ function SidebarProvider({
         event.preventDefault()
         toggleSidebar()
       }
-      if (event.key === "s" && !["INPUT", "TEXTAREA", "SELECT"].includes((event.target as HTMLElement).tagName) && !event.metaKey && !event.ctrlKey) {
+      const el = event.target as HTMLElement;
+      if (event.key === "s" && !["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName) && !el.isContentEditable && !event.metaKey && !event.ctrlKey) {
         event.preventDefault()
         toggleSidebar()
       }
