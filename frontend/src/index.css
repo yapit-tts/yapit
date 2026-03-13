@@ -233,10 +233,16 @@
     @apply border-border outline-ring/50;
   }
   html {
-    /* Prevent layout shift when overlay scrollbar appears/disappears (macOS) */
-    scrollbar-gutter: stable;
+    /* Prevent Chrome mobile from expanding layout viewport when content overflows */
+    overflow-x: hidden;
     /* Prevent horizontal rubber-band bouncing on iOS Safari */
     overscroll-behavior-x: none;
+  }
+  /* Reserve scrollbar space only on desktop (mobile uses overlay scrollbars) */
+  @media (pointer: fine) {
+    html {
+      scrollbar-gutter: stable;
+    }
   }
   body {
     @apply bg-background text-foreground overflow-x-hidden;

@@ -615,8 +615,8 @@ function MathBlockView({ block }: BlockProps & { block: MathBlock }) {
 
 function TableBlockView({ block }: BlockProps & { block: TableBlock }) {
   return (
-    <div className="my-4 overflow-x-auto">
-      <table className="w-full border-collapse border border-border text-sm">
+    <div className="my-4 max-w-full overflow-x-auto">
+      <table className="w-max min-w-full border-collapse border border-border text-sm">
         <thead>
           <tr className="bg-muted-brown">
             {block.headers.map((header, idx) => (
@@ -1159,7 +1159,7 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
   // Content width is user-configurable; when constrained, use fixed padding instead of percentage
   const hasMaxWidth = settings.contentWidth !== "full";
   const containerClass = cn(
-    "w-full flex flex-col overflow-y-auto pt-4 sm:pt-[4%] pb-52",
+    "w-full min-w-0 flex flex-col overflow-y-auto pt-4 sm:pt-[4%] pb-52",
     hasMaxWidth ? "px-4 sm:px-6 mx-auto" : "px-4 sm:px-[8%] md:px-[10%]",
     contentWidthClasses[settings.contentWidth]
   );
