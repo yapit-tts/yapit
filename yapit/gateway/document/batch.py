@@ -74,18 +74,18 @@ async def save_batch_job(redis: Redis, job: BatchJobInfo) -> None:
     await redis.set(key, job.model_dump_json(), ex=BATCH_JOB_TTL_SECONDS)
 
 
-async def _add_to_active_set(redis: Redis, content_hash: str) -> None:
+async def add_to_active_set(redis: Redis, content_hash: str) -> None:
     await redis.sadd(ACTIVE_BATCH_JOBS_KEY, content_hash)
 
 
-async def _remove_from_active_set(redis: Redis, content_hash: str) -> None:
+async def remove_from_active_set(redis: Redis, content_hash: str) -> None:
     await redis.srem(ACTIVE_BATCH_JOBS_KEY, content_hash)
 
 
 async def delete_batch_job(redis: Redis, content_hash: str) -> None:
     key = _batch_job_key(content_hash)
     await redis.delete(key)
-    await _remove_from_active_set(redis, content_hash)
+    await remove_from_active_set(redis, content_hash)
 
 
 async def list_pending_batch_jobs(redis: Redis) -> list[BatchJobInfo]:
@@ -99,7 +99,7 @@ async def list_pending_batch_jobs(redis: Redis) -> list[BatchJobInfo]:
             jobs.append(job)
         elif job is None:
             # Stale entry — job expired via TTL but Set wasn't cleaned
-            await _remove_from_active_set(redis, content_hash)
+            await remove_from_active_set(redis, content_hash)
     return jobs
 
 
@@ -197,7 +197,7 @@ async def submit_batch_job(
     )
 
     await save_batch_job(redis, job_info)
-    await _add_to_active_set(redis, content_hash)
+    await add_to_active_set(redis, content_hash)
 
     logger.info(f"Batch job submitted: {job_info.job_name} ({job_info.total_pages} pages)")
     await log_event(
@@ -231,10 +231,6 @@ async def poll_batch_job(
     job.poll_count += 1
 
     await save_batch_job(redis, job)
-
-    # Remove from active set when no longer pollable
-    if job.status not in (BatchJobStatus.PENDING, BatchJobStatus.RUNNING):
-        await _remove_from_active_set(redis, job.content_hash)
 
     if job.status != old_status:
         logger.info(f"Batch job {job.job_name}: {old_status} → {job.status} (poll #{job.poll_count})")

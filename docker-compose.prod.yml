@@ -144,6 +144,7 @@ services:
 
   gateway:
     init: true
+    stop_grace_period: 3m
     image: ghcr.io/yapit-tts/gateway:latest
     cap_drop: [ALL]
     env_file:

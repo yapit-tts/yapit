@@ -17,6 +17,7 @@ from yapit.gateway.document.batch import (
     get_batch_results,
     list_pending_batch_jobs,
     poll_batch_job,
+    remove_from_active_set,
     save_batch_job,
 )
 from yapit.gateway.document.extraction import substitute_image_placeholders
@@ -203,6 +204,7 @@ async def handle_batch_failure(
 
     job.error = error or f"Job ended with status: {job.status}"
     await save_batch_job(redis, job)
+    await remove_from_active_set(redis, job.content_hash)
 
     await log_event(
         "batch_job_failed",
@@ -315,6 +317,8 @@ class BatchPoller:
                 doc = await create_document_from_batch(job, pages, self._transformer)
                 job.document_id = str(doc.id)
                 await save_batch_job(self._redis, job)
+
+            await remove_from_active_set(self._redis, job.content_hash)
 
         elif job.status in (BatchJobStatus.FAILED, BatchJobStatus.EXPIRED):
             await handle_batch_failure(job, self._redis)
