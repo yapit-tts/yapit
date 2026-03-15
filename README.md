@@ -113,9 +113,12 @@ Later:
 ## Development
 
 ```bash
-make dev-cpu    # start backend services (Docker Compose)
-cd frontend && npm run dev  # start frontend
-make test-local # run tests
+uv sync                              # install Python dependencies
+npm install --prefix frontend        # install frontend dependencies
+make dev-env 2>/dev/null || touch .env  # decrypt secrets, or create empty .env
+make dev-cpu                         # start backend services (Docker Compose)
+cd frontend && npm run dev           # start frontend
+make test-local                      # run tests
 ```
 
 See [agent/knowledge/dev-setup.md](agent/knowledge/dev-setup.md) for full setup instructions.
