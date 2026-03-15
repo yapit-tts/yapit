@@ -189,9 +189,12 @@ class TestRetryBehavior:
         mock_usage.thoughts_token_count = 10
         mock_usage.total_token_count = 160
 
+        mock_candidate = Mock()
+        mock_candidate.finish_reason = "STOP"
         mock_response = Mock()
         mock_response.text = "Extracted text"
         mock_response.usage_metadata = mock_usage
+        mock_response.candidates = [mock_candidate]
 
         mock_extractor._client.aio.models.generate_content = AsyncMock(
             side_effect=[
@@ -222,9 +225,12 @@ class TestRetryBehavior:
         mock_usage.thoughts_token_count = 10
         mock_usage.total_token_count = 160
 
+        mock_candidate = Mock()
+        mock_candidate.finish_reason = "STOP"
         mock_response = Mock()
         mock_response.text = "Success after errors"
         mock_response.usage_metadata = mock_usage
+        mock_response.candidates = [mock_candidate]
 
         for error_code in [500, 503, 504]:
             mock_extractor._client.aio.models.generate_content = AsyncMock(
@@ -317,9 +323,12 @@ class TestRetryBehavior:
         mock_usage.thoughts_token_count = 10
         mock_usage.total_token_count = 160
 
+        mock_candidate = Mock()
+        mock_candidate.finish_reason = "STOP"
         mock_response = Mock()
         mock_response.text = "Success"
         mock_response.usage_metadata = mock_usage
+        mock_response.candidates = [mock_candidate]
 
         mock_extractor._client.aio.models.generate_content = AsyncMock(
             side_effect=[
