@@ -64,6 +64,7 @@ function mockSynthesizer(): Synthesizer & { onSynthesize: SynthesizeHandler; can
     onCursorMove: vi.fn(),
     getError: () => null,
     isRecoverable: () => true,
+    clearError: vi.fn(),
     destroy: vi.fn(),
   };
   return synth;

@@ -461,6 +461,8 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
     if (status === "playing" || status === "buffering") return;
     if (!blocks.length) return;
 
+    synthesizer.clearError();
+
     let startBlock = currentBlock;
     if (currentBlock === -1) {
       startBlock = findNextPlayable(0);

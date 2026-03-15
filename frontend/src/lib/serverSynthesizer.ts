@@ -283,6 +283,7 @@ export function createServerSynthesizer(deps: ServerSynthesizerDeps): Synthesize
     retryAllPending,
     getError: () => lastError,
     isRecoverable: () => lastErrorRecoverable,
+    clearError: () => { lastError = null; lastErrorRecoverable = true; },
     destroy: cancelAll,
   };
 }

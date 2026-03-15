@@ -16,5 +16,6 @@ export interface Synthesizer {
 
   getError(): string | null;
   isRecoverable(): boolean;
+  clearError(): void;
   destroy(): void;
 }
