@@ -219,3 +219,4 @@ scripts/stress_test_results
 test_logs
 video/.claude
 TODO
+docker/defuddle/experiments
