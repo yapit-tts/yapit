@@ -34,6 +34,16 @@ RESOLUTION_MAP = {
     "high": types.MediaResolution.MEDIA_RESOLUTION_HIGH,
 }
 
+SAFETY_OFF = [
+    types.SafetySetting(category=cat, threshold=types.HarmBlockThreshold.OFF)
+    for cat in [
+        types.HarmCategory.HARM_CATEGORY_HARASSMENT,
+        types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+        types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+        types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+    ]
+]
+
 RETRYABLE_STATUS_CODES = {429, 500, 503, 504}
 MAX_RETRIES = 6
 BASE_DELAY_SECONDS = 1.0
@@ -117,6 +127,7 @@ class GeminiExtractor:
         config = types.GenerateContentConfig(
             media_resolution=self._resolution,
             thinking_config=types.ThinkingConfig(thinking_level=self._thinking_level),
+            safety_settings=SAFETY_OFF,
         )
         media_part = types.Part.from_bytes(data=content, mime_type=content_type)
         contents = [media_part, self._prompt] if self._media_first else [self._prompt, media_part]
@@ -271,6 +282,7 @@ class GeminiExtractor:
         config = types.GenerateContentConfig(
             media_resolution=self._resolution,
             thinking_config=types.ThinkingConfig(thinking_level=self._thinking_level),
+            safety_settings=SAFETY_OFF,
         )
         media_part = types.Part.from_bytes(data=page.page_bytes, mime_type="application/pdf")
         contents = [media_part, prompt] if self._media_first else [prompt, media_part]
@@ -307,6 +319,8 @@ class GeminiExtractor:
         log.info(f"Gemini: page {page_idx + 1} completed in {duration_ms}ms, finish_reason={finish_reason}")
         if not text:
             log.warning(f"Gemini: page {page_idx + 1} returned empty text (finish_reason={finish_reason})")
+            if finish_reason and finish_reason != types.FinishReason.STOP:
+                text = f"[Page {page_idx + 1} blocked by Google: {finish_reason.name}]"
 
         placeholder_count = len(IMAGE_PLACEHOLDER_PATTERN.findall(text))
         yolo_count = len(page.figure_urls)
