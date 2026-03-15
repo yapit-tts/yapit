@@ -306,6 +306,17 @@ const TipsPage = () => {
           load instantly and won't count toward your usage again.
         </p>
 
+        <h3 id="markdown-export" className="text-xl font-semibold mb-3 mt-6 scroll-mt-24">Markdown export</h3>
+        <p className="text-muted-foreground mb-3">
+          You can download a document's markdown from the UI, or fetch it
+          via <code className={codeClass} style={codeStyle}>curl</code> by
+          appending <code className={codeClass} style={codeStyle}>/md</code> to
+          any document URL. Use <code className={codeClass} style={codeStyle}>/md-annotated</code> to
+          include TTS annotations (<code className={codeClass} style={codeStyle}>&lt;yap-speak&gt;</code>,{" "}
+          <code className={codeClass} style={codeStyle}>&lt;yap-show&gt;</code> tags).
+          Works for shared documents without authentication.
+        </p>
+
         <h3 className="text-xl font-semibold mb-3 mt-6 scroll-mt-24">Workarounds</h3>
         <p className="text-muted-foreground mb-3">
           If a page is behind a paywall or login, Yapit can't access it directly.
@@ -314,10 +325,10 @@ const TipsPage = () => {
           markdown into Yapit.
         </p>
         <p className="text-muted-foreground mb-3">
-          Our AI extraction handles the vast majority of documents well, but some
+          Our AI transformation handles the vast majority of documents well, but some
           challenging layouts or dense papers may benefit from a more capable model
           than we can offer cost-effectively. You can run your own model on a PDF or
-          clipped page using the <a href="#extraction-prompt" className="text-primary hover:underline">extraction prompt below</a> —
+          clipped page using the <a href="#extraction-prompt" className="text-primary hover:underline">prompt below</a> —
           it adds spoken-only pronunciations for math, marks citations as display-only,
           and other tweaks that improve the listening experience. Paste the result
           straight into Yapit.

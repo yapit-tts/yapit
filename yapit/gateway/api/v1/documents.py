@@ -13,7 +13,7 @@ from typing import Annotated, Literal
 from uuid import UUID, uuid4
 
 import pymupdf
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.responses import HTMLResponse
 from loguru import logger
 from pydantic import BaseModel, Field, HttpUrl, StringConstraints, ValidationError
@@ -1384,6 +1384,62 @@ async def get_public_document_blocks(
     if not document:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
     return _get_audio_blocks(document)
+
+
+def _strip_yap_tags(markdown: str) -> str:
+    """Remove TTS annotation tags, keeping display content."""
+    # Remove speak tags and collapse the space they leave behind
+    markdown = re.sub(
+        r" ?<yap-speak>[\s\S]*?</yap-speak> ?",
+        lambda m: " " if m.group()[0] == " " and m.group()[-1] == " " else "",
+        markdown,
+    )
+    markdown = re.sub(r"<yap-show>([\s\S]*?)</yap-show>", r"\1", markdown)
+    return re.sub(r"<yap-cap>([\s\S]*?)</yap-cap>", r"\1", markdown)
+
+
+def _markdown_response(document: Document, annotated: bool) -> Response:
+    content = document.original_text if annotated else _strip_yap_tags(document.original_text)
+    filename = (document.title or "document").replace('"', "'")
+    if annotated:
+        filename += " (annotated)"
+    return Response(
+        content=content,
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'inline; filename="{filename}.md"'},
+    )
+
+
+@public_router.get("/{document_id}/md")
+async def get_public_document_md(document_id: UUID, db: DbSession) -> Response:
+    """Get markdown of a public document (TTS annotations stripped)."""
+    result = await db.exec(select(Document).where(Document.id == document_id, col(Document.is_public).is_(True)))
+    document = result.first()
+    if not document:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+    return _markdown_response(document, annotated=False)
+
+
+@public_router.get("/{document_id}/md-annotated")
+async def get_public_document_md_annotated(document_id: UUID, db: DbSession) -> Response:
+    """Get markdown of a public document with TTS annotations preserved."""
+    result = await db.exec(select(Document).where(Document.id == document_id, col(Document.is_public).is_(True)))
+    document = result.first()
+    if not document:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+    return _markdown_response(document, annotated=True)
+
+
+@router.get("/{document_id}/md")
+async def get_document_md(doc: CurrentDoc) -> Response:
+    """Get markdown of an authenticated user's document (TTS annotations stripped)."""
+    return _markdown_response(doc, annotated=False)
+
+
+@router.get("/{document_id}/md-annotated")
+async def get_document_md_annotated(doc: CurrentDoc) -> Response:
+    """Get markdown of an authenticated user's document with TTS annotations preserved."""
+    return _markdown_response(doc, annotated=True)
 
 
 @public_router.get("/{document_id}/og-preview", response_class=HTMLResponse)

@@ -25,6 +25,7 @@ Paste a URL or upload a PDF. Yapit renders the document and reads it aloud.
 - Handles the documents other TTS tools can't: academic papers with math, citations, figures, tables, messy formatting. Equations get spoken descriptions, citations become prose, page noise is skipped. The original content displays faithfully.
 - 170+ voices across 15 languages. Premium voices or free local synthesis that runs entirely in your browser, no account needed.
 - Vim-style keyboard shortcuts, document outliner, media key support, adjustable speed, dark mode, share by link.
+- Markdown export: append `/md` to any document URL to get clean markdown via curl. `/md-annotated` includes TTS annotations.
 
 Powered by [Gemini](https://ai.google.dev/gemini-api), [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M), [Inworld TTS](https://inworld.ai), [DocLayout-YOLO](https://huggingface.co/juliozhao/DocLayout-YOLO-DocStructBench), [defuddle](https://github.com/kepano/defuddle).
 
