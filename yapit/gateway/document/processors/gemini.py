@@ -113,6 +113,7 @@ class GeminiExtractor:
         self, content: bytes, content_type: str, content_hash: str, user_id: str | None
     ) -> PageResult:
         """Extract text from a single image."""
+        log = logger.bind(content_hash=content_hash, user_id=user_id)
         config = types.GenerateContentConfig(
             media_resolution=self._resolution,
             thinking_config=types.ThinkingConfig(thinking_level=self._thinking_level),
@@ -125,7 +126,7 @@ class GeminiExtractor:
             response = await self._call_gemini_with_retry(contents, config, context="image")
         except Exception as e:
             duration_ms = int((time.monotonic() - start_time) * 1000)
-            logger.error(f"Gemini image extraction failed after retries: {e}")
+            log.error(f"Gemini image extraction failed after retries: {e}")
             await log_event(
                 "page_extraction_error",
                 processor_slug=self._model,
@@ -146,12 +147,19 @@ class GeminiExtractor:
             )
 
         duration_ms = int((time.monotonic() - start_time) * 1000)
+        finish_reason = response.candidates[0].finish_reason if response.candidates else None
+        log.info(f"Gemini image extraction: {duration_ms}ms, finish_reason={finish_reason}")
+
+        text = (response.text or "").strip()
+        if not text:
+            log.warning(f"Gemini image extraction returned empty text (finish_reason={finish_reason})")
+
         input_tokens, output_tokens, thoughts_tokens, cached_tokens, is_fallback = self._extract_token_usage(
             response.usage_metadata, context="image"
         )
 
         if response.usage_metadata:
-            logger.info(f"Gemini image extraction: {duration_ms}ms, usage={response.usage_metadata.model_dump()}")
+            log.info(f"Gemini image extraction usage: {response.usage_metadata.model_dump()}")
         await log_event(
             "page_extraction_complete",
             processor_slug=self._model,
@@ -166,7 +174,6 @@ class GeminiExtractor:
             data={"content_hash": content_hash},
         )
 
-        text = (response.text or "").strip()
         return PageResult(
             page_idx=0,
             page=ExtractedPage(markdown=text, images=[]),
@@ -259,6 +266,7 @@ class GeminiExtractor:
     ) -> PageResult:
         """Call Gemini API to extract text from a prepared page."""
         page_idx = page.page_idx
+        log = logger.bind(page_idx=page_idx, content_hash=content_hash, user_id=user_id)
         prompt = build_figure_prompt(self._prompt, page.figures)
         config = types.GenerateContentConfig(
             media_resolution=self._resolution,
@@ -272,7 +280,7 @@ class GeminiExtractor:
             response = await self._call_gemini_with_retry(contents, config, context=f"page {page_idx + 1}")
         except Exception as e:
             duration_ms = int((time.monotonic() - start_time) * 1000)
-            logger.error(f"Gemini: page {page_idx + 1} failed after retries: {e}")
+            log.error(f"Gemini: page {page_idx + 1} failed after retries: {e}")
             await log_event(
                 "page_extraction_error",
                 processor_slug=self._model,
@@ -293,15 +301,19 @@ class GeminiExtractor:
             )
 
         duration_ms = int((time.monotonic() - start_time) * 1000)
+        finish_reason = response.candidates[0].finish_reason if response.candidates else None
         text = (response.text or "").strip()
+
+        log.info(f"Gemini: page {page_idx + 1} completed in {duration_ms}ms, finish_reason={finish_reason}")
+        if not text:
+            log.warning(f"Gemini: page {page_idx + 1} returned empty text (finish_reason={finish_reason})")
 
         placeholder_count = len(IMAGE_PLACEHOLDER_PATTERN.findall(text))
         yolo_count = len(page.figure_urls)
         if placeholder_count != yolo_count:
-            logger.warning(
+            log.warning(
                 f"Figure count mismatch on page {page_idx + 1}: "
-                f"YOLO detected {yolo_count}, Gemini output {placeholder_count} placeholders "
-                f"(content_hash={content_hash}, user_id={user_id})"
+                f"YOLO detected {yolo_count}, Gemini output {placeholder_count} placeholders"
             )
             await log_event(
                 "figure_count_mismatch",
@@ -323,9 +335,7 @@ class GeminiExtractor:
         )
 
         if response.usage_metadata:
-            logger.info(
-                f"Gemini: page {page_idx + 1} completed in {duration_ms}ms, usage={response.usage_metadata.model_dump()}"
-            )
+            log.info(f"Gemini: page {page_idx + 1} usage: {response.usage_metadata.model_dump()}")
         await log_event(
             "page_extraction_complete",
             processor_slug=self._model,
