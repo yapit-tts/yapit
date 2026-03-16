@@ -14,7 +14,7 @@ from testcontainers.postgres import PostgresContainer
 from testcontainers.redis import RedisContainer
 
 from yapit.gateway import create_app
-from yapit.gateway.auth import authenticate
+from yapit.gateway.auth import authenticate, authenticate_optional
 from yapit.gateway.cache import CacheConfig
 from yapit.gateway.config import Settings
 from yapit.gateway.db import close_db, create_session, get_engine, init_db
@@ -125,6 +125,7 @@ async def _shared_app(_create_schema, _test_settings) -> FastAPI:
     app = create_app(settings)
     app.router.lifespan_context = _test_lifespan
     app.dependency_overrides[authenticate] = lambda: DEFAULT_TEST_USER
+    app.dependency_overrides[authenticate_optional] = lambda: DEFAULT_TEST_USER
 
     async with app.router.lifespan_context(app):
         yield app
@@ -170,8 +171,10 @@ def test_user():
 @pytest.fixture
 def as_test_user(app, test_user):
     app.dependency_overrides[authenticate] = lambda: test_user
+    app.dependency_overrides[authenticate_optional] = lambda: test_user
     yield test_user
     app.dependency_overrides[authenticate] = lambda: DEFAULT_TEST_USER
+    app.dependency_overrides[authenticate_optional] = lambda: DEFAULT_TEST_USER
 
 
 @pytest_asyncio.fixture

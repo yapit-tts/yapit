@@ -31,15 +31,8 @@ interface DocumentResponse {
   structured_content: string | null;
   metadata_dict: DocumentMetadata | null;
   last_block_idx: number | null;
-}
-
-interface PublicDocumentResponse {
-  id: string;
-  title: string | null;
-  original_text: string;
-  structured_content: string;
-  metadata_dict: DocumentMetadata | null;
-  block_count: number;
+  is_public: boolean;
+  is_owner: boolean;
 }
 
 const PlaybackPage = () => {
@@ -134,30 +127,11 @@ const PlaybackPage = () => {
         loadedDocumentIdRef.current = documentId;
         setDocument(docResponse.data);
         setDocumentBlocks(blocksResponse.data);
-        setIsPublicView(false);
+        const publicView = !docResponse.data.is_owner;
+        setIsPublicView(publicView);
+        if (publicView) setShowImportBanner(true);
       } catch (err) {
-        if (err instanceof AxiosError && err.response?.status === 403) {
-          try {
-            const [publicDocResponse, publicBlocksResponse] = await Promise.all([
-              api.get<PublicDocumentResponse>(`/v1/documents/${documentId}/public`),
-              api.get<Block[]>(`/v1/documents/${documentId}/public/blocks`),
-            ]);
-            loadedDocumentIdRef.current = documentId;
-            setDocument({
-              id: publicDocResponse.data.id,
-              title: publicDocResponse.data.title,
-              original_text: publicDocResponse.data.original_text,
-              structured_content: publicDocResponse.data.structured_content,
-              metadata_dict: publicDocResponse.data.metadata_dict,
-              last_block_idx: null,
-            });
-            setDocumentBlocks(publicBlocksResponse.data);
-            setIsPublicView(true);
-            setShowImportBanner(true);
-          } catch {
-            setError("not_found");
-          }
-        } else if (err instanceof AxiosError && (err.response?.status === 404 || err.response?.status === 422)) {
+        if (err instanceof AxiosError && (err.response?.status === 404 || err.response?.status === 422)) {
           setError("not_found");
         } else {
           setError(err instanceof Error ? err.message : "Failed to fetch document");

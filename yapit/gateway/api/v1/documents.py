@@ -1232,9 +1232,47 @@ async def list_documents(
     ]
 
 
-@router.get("/{document_id}")
-async def get_document(document: CurrentDoc) -> Document:
-    return document
+class DocumentDetailResponse(BaseModel):
+    id: UUID
+    title: str | None
+    original_text: str
+    structured_content: str | None
+    metadata_dict: dict | None
+    last_block_idx: int | None
+    last_played_at: str | None
+    is_public: bool
+    is_owner: bool
+
+
+async def _get_document_with_optional_auth(document_id: UUID, db: DbSession, user: User | None) -> Document:
+    """Fetch document: public docs for anyone, private docs for owner only."""
+    result = await db.exec(select(Document).where(Document.id == document_id))
+    document = result.first()
+    if not document:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+    if document.is_public:
+        return document
+    if user and document.user_id == user.id:
+        return document
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+
+@public_router.get("/{document_id}", response_model=DocumentDetailResponse)
+async def get_document(document_id: UUID, db: DbSession, user: OptionalUser) -> DocumentDetailResponse:
+    """Get a document. Public docs need no auth; private docs require ownership."""
+    document = await _get_document_with_optional_auth(document_id, db, user)
+    is_owner = user is not None and document.user_id == user.id
+    return DocumentDetailResponse(
+        id=document.id,
+        title=document.title,
+        original_text=document.original_text,
+        structured_content=document.structured_content,
+        metadata_dict=document.metadata_dict,
+        last_block_idx=document.last_block_idx if is_owner else None,
+        last_played_at=document.last_played_at.isoformat() if is_owner and document.last_played_at else None,
+        is_public=document.is_public,
+        is_owner=is_owner,
+    )
 
 
 class DocumentUpdateRequest(BaseModel):
@@ -1342,8 +1380,10 @@ def _get_audio_blocks(doc: Document) -> list[AudioBlock]:
     return [AudioBlock(idx=i, text=t, est_duration_ms=estimate_duration_ms(len(t))) for i, t in enumerate(texts)]
 
 
-@router.get("/{document_id}/blocks")
-async def get_document_blocks(document: CurrentDoc) -> list[AudioBlock]:
+@public_router.get("/{document_id}/blocks")
+async def get_document_blocks(document_id: UUID, db: DbSession, user: OptionalUser) -> list[AudioBlock]:
+    """Get audio blocks. Public docs need no auth; private docs require ownership."""
+    document = await _get_document_with_optional_auth(document_id, db, user)
     return _get_audio_blocks(document)
 
 
@@ -1364,56 +1404,6 @@ async def update_position(
         document.last_played_at = datetime.now(tz=dt.UTC)
     await db.commit()
     return {"ok": True}
-
-
-# Public document access (no auth required)
-
-
-class PublicDocumentResponse(BaseModel):
-    """Public document data for viewing shared documents."""
-
-    id: UUID
-    title: str | None
-    structured_content: str
-    original_text: str
-    metadata_dict: dict | None
-    block_count: int
-
-
-@public_router.get("/{document_id}/public", response_model=PublicDocumentResponse)
-async def get_public_document(
-    document_id: UUID,
-    db: DbSession,
-) -> PublicDocumentResponse:
-    """Get a public document without authentication.
-
-    Returns document data if is_public=True, otherwise 404.
-    """
-    result = await db.exec(select(Document).where(Document.id == document_id, col(Document.is_public).is_(True)))
-    document = result.first()
-    if not document:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
-
-    return PublicDocumentResponse(
-        id=document.id,
-        title=document.title,
-        structured_content=document.structured_content,
-        original_text=document.original_text,
-        metadata_dict=document.metadata_dict,
-        block_count=len(_get_audio_blocks(document)),
-    )
-
-
-@public_router.get("/{document_id}/public/blocks")
-async def get_public_document_blocks(
-    document_id: UUID,
-    db: DbSession,
-) -> list[AudioBlock]:
-    result = await db.exec(select(Document).where(Document.id == document_id, col(Document.is_public).is_(True)))
-    document = result.first()
-    if not document:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
-    return _get_audio_blocks(document)
 
 
 def _strip_yap_tags(markdown: str) -> str:
@@ -1442,30 +1432,17 @@ def _markdown_response(document: Document, annotated: bool) -> Response:
     )
 
 
-async def _get_document_for_md(document_id: UUID, db: DbSession, user: User | None) -> Document:
-    """Fetch document for /md endpoints: public docs for anyone, private docs for owner."""
-    result = await db.exec(select(Document).where(Document.id == document_id))
-    document = result.first()
-    if not document:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
-    if document.is_public:
-        return document
-    if user and document.user_id == user.id:
-        return document
-    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
-
-
 @public_router.get("/{document_id}/md")
 async def get_document_md(document_id: UUID, db: DbSession, user: OptionalUser) -> Response:
     """Get document markdown (TTS annotations stripped). Public docs need no auth; private docs require ownership."""
-    document = await _get_document_for_md(document_id, db, user)
+    document = await _get_document_with_optional_auth(document_id, db, user)
     return _markdown_response(document, annotated=False)
 
 
 @public_router.get("/{document_id}/md-annotated")
 async def get_document_md_annotated(document_id: UUID, db: DbSession, user: OptionalUser) -> Response:
     """Get document markdown with TTS annotations. Public docs need no auth; private docs require ownership."""
-    document = await _get_document_for_md(document_id, db, user)
+    document = await _get_document_with_optional_auth(document_id, db, user)
     return _markdown_response(document, annotated=True)
 
 

@@ -11,6 +11,7 @@ from yapit.gateway.api.v1.documents import (
     ExtractionStatusResponse,
     _get_endpoint_type_from_content_type,
 )
+from yapit.gateway.auth import authenticate_optional
 
 FIXTURES_DIR = Path("tests/fixtures/documents")
 
@@ -289,3 +290,54 @@ async def test_update_position_not_found(client, as_test_user):
         json={"block_idx": 0},
     )
     assert r.status_code == 404
+
+
+# --- Public/shared document access ---
+
+
+@pytest.mark.asyncio
+async def test_public_document_accessible_without_auth(client, app, as_test_user):
+    """Shared documents are accessible without authentication."""
+    r = await client.post("/v1/documents/text", json={"content": "Public content"})
+    doc_id = r.json()["id"]
+    await client.patch(f"/v1/documents/{doc_id}", json={"is_public": True})
+
+    # Switch to anonymous
+    app.dependency_overrides[authenticate_optional] = lambda: None
+    r = await client.get(f"/v1/documents/{doc_id}")
+    assert r.status_code == 200
+    assert r.json()["original_text"] == "Public content"
+    assert r.json()["is_owner"] is False
+    assert r.json()["last_block_idx"] is None
+
+    r = await client.get(f"/v1/documents/{doc_id}/blocks")
+    assert r.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_private_document_404_without_auth(client, app, as_test_user):
+    """Private documents return 404 without authentication."""
+    r = await client.post("/v1/documents/text", json={"content": "Private content"})
+    doc_id = r.json()["id"]
+
+    # Switch to anonymous
+    app.dependency_overrides[authenticate_optional] = lambda: None
+    r = await client.get(f"/v1/documents/{doc_id}")
+    assert r.status_code == 404
+
+    r = await client.get(f"/v1/documents/{doc_id}/blocks")
+    assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_owner_sees_full_document(client, as_test_user):
+    """Owner gets is_owner=True and last_block_idx."""
+    r = await client.post("/v1/documents/text", json={"content": "My content"})
+    doc_id = r.json()["id"]
+
+    await client.patch(f"/v1/documents/{doc_id}/position", json={"block_idx": 3})
+
+    r = await client.get(f"/v1/documents/{doc_id}")
+    assert r.status_code == 200
+    assert r.json()["is_owner"] is True
+    assert r.json()["last_block_idx"] == 3
