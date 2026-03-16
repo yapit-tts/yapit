@@ -11,7 +11,9 @@ from html import unescape as html_unescape
 from pathlib import Path
 from typing import Annotated, Literal
 from uuid import UUID, uuid4
+from xml.etree import ElementTree as ET
 
+import httpx
 import pymupdf
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.responses import HTMLResponse
@@ -84,6 +86,30 @@ def _detect_arxiv_id(url: str) -> str | None:
     for pattern in _ARXIV_PATTERNS:
         if match := pattern.search(url):
             return match.group(1)
+    return None
+
+
+def _parse_arxiv_title(xml: str) -> str | None:
+    """Extract paper title from arxiv Atom API response."""
+    ns = {"atom": "http://www.w3.org/2005/Atom"}
+    root = ET.fromstring(xml)
+    entry = root.find("atom:entry", ns)
+    if entry is not None:
+        title_el = entry.find("atom:title", ns)
+        if title_el is not None and title_el.text:
+            return title_el.text.strip()
+    return None
+
+
+async def _fetch_arxiv_title(arxiv_id: str) -> str | None:
+    """Fetch paper title from the arxiv Atom API. Returns None on failure."""
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(f"https://export.arxiv.org/api/query?id_list={arxiv_id}")
+            resp.raise_for_status()
+        return _parse_arxiv_title(resp.text)
+    except Exception:
+        logger.warning("Failed to fetch arxiv title", arxiv_id=arxiv_id)
     return None
 
 
@@ -433,6 +459,8 @@ async def prepare_document(
     content, content_type = await download_document(HttpUrl(url), settings.document_max_download_size)
 
     page_count, title = await asyncio.to_thread(_extract_document_info, content, content_type)
+    if arxiv_id:
+        title = await _fetch_arxiv_title(arxiv_id) or title
     metadata = DocumentMetadata(
         content_type=content_type,
         total_pages=page_count,
