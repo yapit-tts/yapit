@@ -928,7 +928,7 @@ async def _run_extraction(
             arxiv_html_url = f"https://arxiv.org/html/{arxiv_id}"
             markdown, _ = await extract_website(arxiv_html_url)
             if markdown.strip():
-                markdown = resolve_relative_urls(markdown, arxiv_html_url)
+                markdown = resolve_relative_urls(markdown, arxiv_html_url + "/")
                 extraction_result = DocumentExtractionResult(
                     pages={0: ExtractedPage(markdown=markdown, images=[])},
                     extraction_method="defuddle",

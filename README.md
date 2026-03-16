@@ -6,7 +6,7 @@
 
 <h3>
 
-[Website](https://yapit.md) | [Self-Host](#self-hosting) | [Architecture](docs/architecture.md)
+[Website](https://yapit.md) | [CLI](https://github.com/yapit-tts/yapit-cli) | [Self-Host](#self-hosting) | [Architecture](docs/architecture.md)
 
 </h3>
 
