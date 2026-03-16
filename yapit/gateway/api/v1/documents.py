@@ -1400,13 +1400,15 @@ def _strip_yap_tags(markdown: str) -> str:
 
 def _markdown_response(document: Document, annotated: bool) -> Response:
     content = document.original_text if annotated else _strip_yap_tags(document.original_text)
-    filename = (document.title or "document").replace('"', "'")
+    title = document.title or "document"
+    # ASCII-safe filename for Content-Disposition header
+    ascii_filename = title.encode("ascii", errors="replace").decode().replace('"', "'")
     if annotated:
-        filename += " (annotated)"
+        ascii_filename += " (annotated)"
     return Response(
         content=content,
         media_type="text/markdown; charset=utf-8",
-        headers={"Content-Disposition": f'inline; filename="{filename}.md"'},
+        headers={"Content-Disposition": f'inline; filename="{ascii_filename}.md"'},
     )
 
 
