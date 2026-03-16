@@ -68,6 +68,33 @@ async def authenticate(
     )
 
 
+async def authenticate_optional(
+    settings: Annotated[Settings, Depends(get_settings)],
+    creds: HTTPAuthorizationCredentials | None = Security(bearer),
+    x_anonymous_id: str | None = Header(None, alias="X-Anonymous-ID"),
+    x_anonymous_token: str | None = Header(None, alias="X-Anonymous-Token"),
+) -> User | None:
+    """Like authenticate(), but returns None instead of 401 when no credentials are provided."""
+    if creds is not None:
+        user = await get_me(settings, access_token=creds.credentials)
+        if user is not None:
+            return user
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="invalid or expired token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    if x_anonymous_id is not None:
+        if not x_anonymous_token or not verify_anonymous_token(
+            x_anonymous_id, x_anonymous_token, settings.anonymous_session_secret
+        ):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid anonymous session")
+        return create_anonymous_user(x_anonymous_id)
+
+    return None
+
+
 async def authenticate_ws(
     websocket: WebSocket,
     settings: Annotated[Settings, Depends(get_settings)],

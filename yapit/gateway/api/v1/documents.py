@@ -40,6 +40,7 @@ from yapit.gateway.deps import (
     DocumentTransformerDep,
     ExtractionCache,
     ImageStorageDep,
+    OptionalUser,
     RedisClient,
     SettingsDep,
 )
@@ -64,6 +65,7 @@ from yapit.gateway.exceptions import ResourceNotFoundError
 from yapit.gateway.metrics import log_error, log_event
 from yapit.gateway.rate_limit import limiter
 from yapit.gateway.reservations import create_reservation, release_reservation
+from yapit.gateway.stack_auth.users import User
 from yapit.gateway.storage import ImageStorage
 from yapit.gateway.usage import check_usage_limit
 
@@ -1412,36 +1414,31 @@ def _markdown_response(document: Document, annotated: bool) -> Response:
     )
 
 
-@public_router.get("/{document_id}/md")
-async def get_public_document_md(document_id: UUID, db: DbSession) -> Response:
-    """Get markdown of a public document (TTS annotations stripped)."""
-    result = await db.exec(select(Document).where(Document.id == document_id, col(Document.is_public).is_(True)))
+async def _get_document_for_md(document_id: UUID, db: DbSession, user: User | None) -> Document:
+    """Fetch document for /md endpoints: public docs for anyone, private docs for owner."""
+    result = await db.exec(select(Document).where(Document.id == document_id))
     document = result.first()
     if not document:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+    if document.is_public:
+        return document
+    if user and document.user_id == user.id:
+        return document
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+
+@public_router.get("/{document_id}/md")
+async def get_document_md(document_id: UUID, db: DbSession, user: OptionalUser) -> Response:
+    """Get document markdown (TTS annotations stripped). Public docs need no auth; private docs require ownership."""
+    document = await _get_document_for_md(document_id, db, user)
     return _markdown_response(document, annotated=False)
 
 
 @public_router.get("/{document_id}/md-annotated")
-async def get_public_document_md_annotated(document_id: UUID, db: DbSession) -> Response:
-    """Get markdown of a public document with TTS annotations preserved."""
-    result = await db.exec(select(Document).where(Document.id == document_id, col(Document.is_public).is_(True)))
-    document = result.first()
-    if not document:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+async def get_document_md_annotated(document_id: UUID, db: DbSession, user: OptionalUser) -> Response:
+    """Get document markdown with TTS annotations. Public docs need no auth; private docs require ownership."""
+    document = await _get_document_for_md(document_id, db, user)
     return _markdown_response(document, annotated=True)
-
-
-@router.get("/{document_id}/md")
-async def get_document_md(doc: CurrentDoc) -> Response:
-    """Get markdown of an authenticated user's document (TTS annotations stripped)."""
-    return _markdown_response(doc, annotated=False)
-
-
-@router.get("/{document_id}/md-annotated")
-async def get_document_md_annotated(doc: CurrentDoc) -> Response:
-    """Get markdown of an authenticated user's document with TTS annotations preserved."""
-    return _markdown_response(doc, annotated=True)
 
 
 @public_router.get("/{document_id}/og-preview", response_class=HTMLResponse)
