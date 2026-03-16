@@ -317,7 +317,10 @@ def create_app(
 
     @app.exception_handler(APIError)
     async def api_error_handler(request: Request, exc: APIError):
-        logger.exception(f"API error: {exc}")
+        if exc.status_code >= 500:
+            logger.exception(f"API error: {exc}")
+        else:
+            logger.warning(f"API error: {exc}")
         return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
 
     app.add_exception_handler(Exception, unhandled_exception_handler)
