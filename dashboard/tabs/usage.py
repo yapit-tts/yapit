@@ -387,7 +387,7 @@ def _top_users_by_rate(df: pd.DataFrame):
         }
     )
 
-    st.dataframe(display_df, hide_index=True, use_container_width=True)
+    st.dataframe(display_df, hide_index=True, width="stretch")
 
 
 def _chars_per_user_by_model(df: pd.DataFrame) -> go.Figure | None:
@@ -647,7 +647,7 @@ def render(df: pd.DataFrame):
     with col1:
         fig = _request_rate_distribution(df)
         if fig:
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
         else:
             st.caption("No request rate data")
 
@@ -662,7 +662,7 @@ def render(df: pd.DataFrame):
 
     fig = _monthly_usage_trends(df)
     if fig:
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
     else:
         st.caption("No monthly data")
 
@@ -673,13 +673,13 @@ def render(df: pd.DataFrame):
 
     fig = _chars_per_user_by_model(df)
     if fig:
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
     else:
         st.caption("No character usage data")
 
     fig = _pages_per_user_distribution(df)
     if fig:
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
     else:
         st.caption("No page extraction data")
 
@@ -691,21 +691,21 @@ def render(df: pd.DataFrame):
     # Model usage over time (shows volume breakdown by model)
     fig = _model_usage_over_time(df)
     if fig:
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
     # Row 3: Heatmap + unique users
     col1, col2 = st.columns(2)
     with col1:
         fig = _usage_heatmap(df)
         if fig:
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
         else:
             st.caption("Not enough data for heatmap")
 
     with col2:
         fig = _unique_users_over_time(df)
         if fig:
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
         else:
             st.caption("No user data")
 
@@ -714,18 +714,18 @@ def render(df: pd.DataFrame):
     with col1:
         fig = _model_popularity(df)
         if fig:
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
         else:
             st.caption("No model data")
 
     with col2:
         fig = _voice_popularity(df)
         if fig:
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
         else:
             st.caption("No voice data")
 
     # Row 5: User distribution
     fig = _user_distribution_chart(df)
     if fig:
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")

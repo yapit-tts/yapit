@@ -60,7 +60,7 @@ def _worker_stats_table(df: pd.DataFrame):
         }
     )
 
-    st.dataframe(display_df, hide_index=True, use_container_width=True)
+    st.dataframe(display_df, hide_index=True, width="stretch")
 
 
 def _latency_stats_table(df: pd.DataFrame):
@@ -95,7 +95,7 @@ def _latency_stats_table(df: pd.DataFrame):
         )
 
     if rows:
-        st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+        st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
 
 
 def _cache_stats(df: pd.DataFrame):
@@ -544,7 +544,7 @@ def _billing_section(df: pd.DataFrame):
     if not billing.empty:
         fig = _billing_processing_chart(billing)
         if fig:
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
 
 
 def _billing_processing_chart(billing: pd.DataFrame) -> go.Figure | None:
@@ -581,6 +581,32 @@ def _billing_processing_chart(billing: pd.DataFrame) -> go.Figure | None:
     return fig
 
 
+def _cache_persister_section(df: pd.DataFrame):
+    """Cache persister health: Redis→SQLite batch writes."""
+    persisted = get_events(df, "cache_persisted")
+
+    section_header("Cache Persister", "Redis → SQLite batch persistence")
+
+    if persisted.empty:
+        st.caption("No cache_persisted events")
+        return
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Batches Written", format_number(len(persisted)))
+    with col2:
+        batch_sizes = persisted["data"].apply(lambda d: d.get("batch_size", 0) if isinstance(d, dict) else 0)
+        total_persisted = batch_sizes.sum()
+        st.metric("Total Variants Persisted", format_number(total_persisted))
+    with col3:
+        durations = persisted["duration_ms"].dropna()
+        if not durations.empty:
+            st.metric("P50 Batch Time", format_duration(durations.median()))
+            st.caption(f"P95: {format_duration(durations.quantile(0.95))}")
+        else:
+            st.metric("P50 Batch Time", "-")
+
+
 def render(df: pd.DataFrame):
     """Render the TTS tab."""
     if df.empty:
@@ -611,31 +637,31 @@ def render(df: pd.DataFrame):
     # Row 1: Latency scatter
     fig = _latency_scatter(df)
     if fig:
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
     # Row 2: Realtime ratio
     fig = _realtime_ratio_chart(df)
     if fig:
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
     # Row 3: Characters per second
     fig = _cps_chart(df)
     if fig:
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
     # Row 4: Queue depth + wait distribution
     col1, col2 = st.columns(2)
     with col1:
         fig = _queue_depth_chart(df)
         if fig:
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
         else:
             st.caption("No queue depth data")
 
     with col2:
         fig = _queue_wait_histogram(df)
         if fig:
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
         else:
             st.caption("No queue wait data")
 
@@ -644,17 +670,21 @@ def render(df: pd.DataFrame):
     with col1:
         fig = _latency_breakdown_chart(df)
         if fig:
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
         else:
             st.caption("No latency breakdown data")
 
     with col2:
         fig = _text_length_vs_latency(df)
         if fig:
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
         else:
             st.caption("No text length data")
 
     # Billing consumer health
     st.divider()
     _billing_section(df)
+
+    # Cache persister health
+    st.divider()
+    _cache_persister_section(df)

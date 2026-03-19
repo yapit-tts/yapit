@@ -79,7 +79,7 @@ def metric_with_sparkline(
     if sparkline_data is not None and not sparkline_data.empty:
         fig = sparkline(sparkline_data, time_col, value_col, color)
         if fig:
-            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+            st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
 
 def section_header(title: str, subtitle: str | None = None):
@@ -191,31 +191,9 @@ def delta_str(current: float, previous: float, format_fn=None, invert: bool = Fa
         formatted = f"{abs(pct):.1f}%"
 
     if diff > 0:
-        return f"↑ {formatted}" if not invert else f"↑ {formatted}"
+        arrow = "↑" if not invert else "↓"
     elif diff < 0:
-        return f"↓ {formatted}"
-    return None
-
-
-def worker_stats_table(df: pd.DataFrame, latency_col: str = "worker_latency_ms"):
-    """Display per-worker statistics table."""
-    if df.empty or "worker_id" not in df.columns:
-        empty_state("No worker data available")
-        return
-
-    workers = (
-        df.groupby("worker_id")
-        .agg(
-            count=(latency_col, "count"),
-            p50=(latency_col, lambda x: x.quantile(0.5)),
-            p95=(latency_col, lambda x: x.quantile(0.95)),
-            errors=("event_type", lambda x: (x == "synthesis_error").sum() if "synthesis_error" in x.values else 0),
-        )
-        .reset_index()
-    )
-
-    workers.columns = ["Worker", "Jobs", "P50", "P95", "Errors"]
-    workers["P50"] = workers["P50"].apply(format_duration)
-    workers["P95"] = workers["P95"].apply(format_duration)
-
-    st.dataframe(workers, hide_index=True, use_container_width=True)
+        arrow = "↓" if not invert else "↑"
+    else:
+        return None
+    return f"{arrow} {formatted}"

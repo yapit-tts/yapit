@@ -1,4 +1,4 @@
-"""Reliability tab - Retries, DLQ, overflow, incomplete jobs."""
+"""Reliability tab — retries, DLQ, webhooks, rate limits, sessions, errors."""
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -10,30 +10,125 @@ from dashboard.components import (
     format_percent,
     section_header,
 )
-from dashboard.data import bin_by_time, calculate_rate, get_events
+from dashboard.data import bin_by_time, get_events
 from dashboard.theme import COLORS, apply_plotly_theme
 
-# === Stripe Webhook Functions ===
+# ── Summary ───────────────────────────────────────────────────────────────────
+
+
+def _summary_stats(df: pd.DataFrame):
+    requeued = get_events(df, "job_requeued")
+    dlq = get_events(df, "job_dlq")
+    rate_limits = get_events(df, "api_rate_limit")
+    errors = get_events(df, "error")
+    warnings = get_events(df, "warning")
+
+    # Incomplete jobs
+    queued_hashes = set(get_events(df, "synthesis_queued")["variant_hash"].dropna())
+    completed_hashes = set(get_events(df, "synthesis_complete")["variant_hash"].dropna())
+    errored_hashes = set(get_events(df, "synthesis_error")["variant_hash"].dropna())
+    incomplete = queued_hashes - completed_hashes - errored_hashes
+
+    col1, col2, col3, col4, col5, col6 = st.columns(6)
+    with col1:
+        st.metric("Requeued Jobs", format_number(len(requeued)), help="Visibility timeout requeues")
+    with col2:
+        st.metric("Dead Letter Queue", format_number(len(dlq)), help="Max retries exceeded")
+    with col3:
+        st.metric("Incomplete Jobs", format_number(len(incomplete)), help="Queued but never finished")
+    with col4:
+        rl_by_api = rate_limits["data"].apply(
+            lambda d: d.get("api_name", "unknown") if isinstance(d, dict) else "unknown"
+        )
+        rl_breakdown = rl_by_api.value_counts().to_dict() if not rate_limits.empty else {}
+        help_parts = [f"{name}: {count}" for name, count in rl_breakdown.items()]
+        st.metric(
+            "API Rate Limits",
+            format_number(len(rate_limits)),
+            help=", ".join(help_parts) if help_parts else "429 responses from APIs",
+        )
+    with col5:
+        st.metric("Gateway Errors", format_number(len(errors)), help="Internal gateway errors")
+    with col6:
+        st.metric("Warnings", format_number(len(warnings)))
+
+
+# ── WebSocket Sessions ────────────────────────────────────────────────────────
+
+
+def _websocket_sessions(df: pd.DataFrame):
+    connects = get_events(df, "ws_connect")
+    disconnects = get_events(df, "ws_disconnect")
+
+    if connects.empty and disconnects.empty:
+        st.caption("No WebSocket session data")
+        return
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Connections", format_number(len(connects)))
+    with col2:
+        st.metric("Disconnections", format_number(len(disconnects)))
+    with col3:
+        if not disconnects.empty:
+            durations = (
+                disconnects["data"]
+                .apply(lambda d: d.get("session_duration_ms") if isinstance(d, dict) else None)
+                .dropna()
+            )
+            if not durations.empty:
+                durations = pd.to_numeric(durations, errors="coerce").dropna()
+                st.metric("Median Session", format_duration(durations.median()))
+                st.caption(f"P95: {format_duration(durations.quantile(0.95))}")
+            else:
+                st.metric("Median Session", "-")
+        else:
+            st.metric("Median Session", "-")
+
+    # Sessions over time
+    if not connects.empty:
+        connects_binned = bin_by_time(connects, "1h")
+        hourly = connects_binned.groupby("time_bin").size().reset_index(name="count")
+
+        fig = go.Figure()
+        fig.add_trace(
+            go.Scatter(
+                x=hourly["time_bin"],
+                y=hourly["count"],
+                mode="lines+markers",
+                line=dict(color=COLORS["accent_cyan"], width=2),
+                marker=dict(size=4),
+                fill="tozeroy",
+                fillcolor="rgba(86, 212, 221, 0.15)",
+                hovertemplate="%{y} connections<extra></extra>",
+            )
+        )
+        fig.update_layout(
+            title="WebSocket Connections (hourly)", height=250, xaxis_title="Time", yaxis_title="Connections"
+        )
+        apply_plotly_theme(fig)
+        st.plotly_chart(fig, width="stretch")
+
+
+# ── Stripe Webhooks ───────────────────────────────────────────────────────────
 
 
 def _webhook_stats(df: pd.DataFrame):
-    """Display Stripe webhook summary stats."""
     webhooks = get_events(df, "stripe_webhook")
     if webhooks.empty:
-        st.caption("No Stripe webhook events logged yet")
+        st.caption("No Stripe webhook events")
         return
 
-    # Extract data from blob
     webhooks = webhooks.copy()
-    webhooks["duration_ms"] = webhooks["data"].apply(lambda d: d.get("duration_ms") if isinstance(d, dict) else None)
-    webhooks["event_type"] = webhooks["data"].apply(lambda d: d.get("event_type") if isinstance(d, dict) else None)
+    webhooks["wh_duration_ms"] = webhooks["data"].apply(lambda d: d.get("duration_ms") if isinstance(d, dict) else None)
+    webhooks["wh_event_type"] = webhooks["data"].apply(lambda d: d.get("event_type") if isinstance(d, dict) else None)
     webhooks["has_error"] = webhooks["data"].apply(lambda d: "error" in d if isinstance(d, dict) else False)
 
     total = len(webhooks)
     errors = webhooks["has_error"].sum()
     error_rate = errors / total * 100 if total > 0 else 0
 
-    latencies = webhooks["duration_ms"].dropna()
+    latencies = pd.to_numeric(webhooks["wh_duration_ms"], errors="coerce").dropna()
     p50 = latencies.quantile(0.5) if not latencies.empty else 0
     p95 = latencies.quantile(0.95) if not latencies.empty else 0
 
@@ -49,357 +144,156 @@ def _webhook_stats(df: pd.DataFrame):
     with col5:
         st.metric("P95 Latency", format_duration(p95))
         if p95 > 10000:
-            st.caption("⚠️ >10s (Stripe times out at 20s)")
+            st.caption(">10s (Stripe times out at 20s)")
 
-
-def _webhook_latency_chart(df: pd.DataFrame) -> go.Figure | None:
-    """Webhook latency histogram."""
-    webhooks = get_events(df, "stripe_webhook")
-    if webhooks.empty:
-        return None
-
-    webhooks = webhooks.copy()
-    webhooks["duration_ms"] = webhooks["data"].apply(lambda d: d.get("duration_ms") if isinstance(d, dict) else None)
-    latencies = webhooks["duration_ms"].dropna()
-
-    if latencies.empty:
-        return None
-
-    fig = go.Figure()
-    fig.add_trace(
-        go.Histogram(
-            x=latencies,
-            nbinsx=30,
-            marker=dict(color=COLORS["accent_blue"], line=dict(width=1, color=COLORS["border"])),
-            hovertemplate="Latency: %{x:.0f}ms<br>Count: %{y}<extra></extra>",
+    # Latency histogram
+    if not latencies.empty:
+        fig = go.Figure()
+        fig.add_trace(
+            go.Histogram(
+                x=latencies,
+                nbinsx=30,
+                marker=dict(color=COLORS["accent_blue"], line=dict(width=1, color=COLORS["border"])),
+                hovertemplate="Latency: %{x:.0f}ms<br>Count: %{y}<extra></extra>",
+            )
         )
-    )
-
-    # Add warning line at 10s
-    fig.add_vline(
-        x=10000,
-        line_dash="dash",
-        line_color=COLORS["warning"],
-        annotation_text="10s",
-        annotation_position="top right",
-    )
-
-    # Add danger line at 20s (Stripe timeout)
-    fig.add_vline(
-        x=20000,
-        line_dash="dash",
-        line_color=COLORS["error"],
-        annotation_text="20s (timeout)",
-        annotation_position="top right",
-    )
-
-    fig.update_layout(
-        title="Webhook Handler Latency",
-        height=300,
-        xaxis_title="Latency (ms)",
-        yaxis_title="Count",
-    )
-    apply_plotly_theme(fig)
-    return fig
-
-
-def _webhook_errors_chart(df: pd.DataFrame) -> go.Figure | None:
-    """Webhook errors over time."""
-    webhooks = get_events(df, "stripe_webhook")
-    if webhooks.empty:
-        return None
-
-    webhooks = webhooks.copy()
-    webhooks["has_error"] = webhooks["data"].apply(lambda d: "error" in d if isinstance(d, dict) else False)
-
-    errors = webhooks[webhooks["has_error"]]
-    if errors.empty:
-        return None
-
-    errors = bin_by_time(errors, "1h")
-    hourly = errors.groupby("time_bin").size().reset_index(name="count")
-
-    fig = go.Figure()
-    fig.add_trace(
-        go.Scatter(
-            x=hourly["time_bin"],
-            y=hourly["count"],
-            mode="lines+markers",
-            line=dict(color=COLORS["error"], width=2),
-            marker=dict(size=6),
-            fill="tozeroy",
-            fillcolor="rgba(248, 81, 73, 0.15)",
-            hovertemplate="%{y} errors<extra></extra>",
+        fig.add_vline(
+            x=10000,
+            line_dash="dash",
+            line_color=COLORS["warning"],
+            annotation_text="10s",
+            annotation_position="top right",
         )
-    )
+        fig.add_vline(
+            x=20000,
+            line_dash="dash",
+            line_color=COLORS["error"],
+            annotation_text="20s (timeout)",
+            annotation_position="top right",
+        )
+        fig.update_layout(title="Webhook Latency", height=280, xaxis_title="Latency (ms)", yaxis_title="Count")
+        apply_plotly_theme(fig)
+        st.plotly_chart(fig, width="stretch")
 
-    fig.update_layout(
-        title="Webhook Errors Over Time (hourly)",
-        height=300,
-        xaxis_title="Time",
-        yaxis_title="Errors",
-    )
-    apply_plotly_theme(fig)
-    return fig
+
+# ── Gateway Errors ────────────────────────────────────────────────────────────
 
 
-def _summary_stats(df: pd.DataFrame):
-    """Display reliability summary."""
-    requeued = get_events(df, "job_requeued")
-    dlq = get_events(df, "job_dlq")
-    overflow = get_events(df, "job_overflow")
-    overflow_complete = get_events(df, "overflow_complete")
-    overflow_error = get_events(df, "overflow_error")
-    rate_limits = get_events(df, "api_rate_limit")
+def _gateway_errors(df: pd.DataFrame):
+    errors = get_events(df, "error")
+    warnings = get_events(df, "warning")
 
-    # Calculate incomplete jobs (synthesis only for now)
-    queued_hashes = set(get_events(df, "synthesis_queued")["variant_hash"].dropna())
-    completed_hashes = set(get_events(df, "synthesis_complete")["variant_hash"].dropna())
-    errored_hashes = set(get_events(df, "synthesis_error")["variant_hash"].dropna())
-    finished_hashes = completed_hashes | errored_hashes
-    incomplete = queued_hashes - finished_hashes
+    if errors.empty and warnings.empty:
+        st.caption("No gateway error/warning events")
+        return
 
-    col1, col2, col3, col4, col5, col6 = st.columns(6)
+    col1, col2 = st.columns(2)
     with col1:
-        st.metric("Requeued Jobs", format_number(len(requeued)), help="Jobs requeued due to visibility timeout")
+        st.metric("Errors", format_number(len(errors)))
     with col2:
-        st.metric("Dead Letter Queue", format_number(len(dlq)), help="Jobs that exceeded max retries")
-    with col3:
-        st.metric("Overflow Jobs", format_number(len(overflow)), help="Jobs sent to serverless")
-    with col4:
-        overflow_total = len(overflow_complete) + len(overflow_error)
-        overflow_success = calculate_rate(len(overflow_complete), len(overflow_error)) if overflow_total > 0 else 100
-        st.metric("Overflow Success", format_percent(overflow_success))
-    with col5:
-        st.metric("Incomplete Jobs", format_number(len(incomplete)), help="Queued but never finished")
-    with col6:
-        rl_by_api = rate_limits["data"].apply(
-            lambda d: d.get("api_name", "unknown") if isinstance(d, dict) else "unknown"
+        st.metric("Warnings", format_number(len(warnings)))
+
+    # Show top error messages (truncated), full list in expander
+    if not errors.empty:
+        messages = errors["data"].apply(lambda d: d.get("message", "unknown") if isinstance(d, dict) else "unknown")
+        msg_counts = messages.value_counts()
+        # Show top 5 truncated
+        for msg, count in msg_counts.head(5).items():
+            truncated = msg[:120] + "..." if len(str(msg)) > 120 else msg
+            st.caption(f"`{count}x` {truncated}")
+        if len(msg_counts) > 5:
+            with st.expander(f"All {len(msg_counts)} distinct error messages"):
+                for msg, count in msg_counts.items():
+                    truncated = msg[:200] + "..." if len(str(msg)) > 200 else msg
+                    st.caption(f"`{count}x` {truncated}")
+
+    if not warnings.empty:
+        messages = warnings["data"].apply(lambda d: d.get("message", "unknown") if isinstance(d, dict) else "unknown")
+        msg_counts = messages.value_counts()
+        for msg, count in msg_counts.head(3).items():
+            truncated = msg[:120] + "..." if len(str(msg)) > 120 else msg
+            st.caption(f"`{count}x` {truncated}")
+
+    # Error timeline
+    all_errors = pd.concat([errors, warnings], ignore_index=True)
+    if len(all_errors) > 1:
+        all_errors = bin_by_time(all_errors, "1h")
+        hourly = all_errors.groupby(["time_bin", "event_type"]).size().reset_index(name="count")
+
+        fig = go.Figure()
+        for etype, color in [("error", COLORS["error"]), ("warning", COLORS["warning"])]:
+            data = hourly[hourly["event_type"] == etype]
+            if not data.empty:
+                fig.add_trace(
+                    go.Bar(
+                        x=data["time_bin"],
+                        y=data["count"],
+                        name=etype.title(),
+                        marker_color=color,
+                        hovertemplate=f"{etype}: %{{y}}<extra></extra>",
+                    )
+                )
+        fig.update_layout(
+            title="Gateway Errors & Warnings (hourly)",
+            height=250,
+            barmode="stack",
+            xaxis_title="Time",
+            yaxis_title="Count",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02),
         )
-        rl_breakdown = rl_by_api.value_counts().to_dict() if not rate_limits.empty else {}
-        help_parts = [f"{name}: {count}" for name, count in rl_breakdown.items()]
-        st.metric(
-            "API Rate Limits",
-            format_number(len(rate_limits)),
-            help=", ".join(help_parts) if help_parts else "429 responses from Gemini/Inworld",
+        apply_plotly_theme(fig)
+        st.plotly_chart(fig, width="stretch")
+
+
+# ── Billing Sync Drift ────────────────────────────────────────────────────────
+
+
+def _billing_drift(df: pd.DataFrame):
+    drift = get_events(df, "billing_sync_drift")
+    if drift.empty:
+        st.caption("No billing sync drift events (webhooks working correctly)")
+        return
+
+    st.metric("Drift Events", format_number(len(drift)))
+    for _, row in drift.iterrows():
+        data = row.get("data", {})
+        if isinstance(data, dict):
+            user = data.get("user_id", "?")
+            drift_info = data.get("drift", data.get("drifted", "?"))
+            st.caption(f"User `{user[:8]}...`: {drift_info}")
+
+
+# ── Cache Evictions ───────────────────────────────────────────────────────────
+
+
+def _cache_evictions(df: pd.DataFrame):
+    evictions = get_events(df, "eviction_triggered")
+    if evictions.empty:
+        st.caption("No cache eviction events")
+        return
+
+    st.metric("Evictions", format_number(len(evictions)))
+    if len(evictions) > 1:
+        evictions = bin_by_time(evictions, "1h")
+        hourly = evictions.groupby("time_bin").size().reset_index(name="count")
+        fig = go.Figure()
+        fig.add_trace(
+            go.Bar(
+                x=hourly["time_bin"],
+                y=hourly["count"],
+                marker_color=COLORS["warning"],
+                hovertemplate="%{y} evictions<extra></extra>",
+            )
         )
+        fig.update_layout(title="Cache Evictions (hourly)", height=200, xaxis_title="Time", yaxis_title="Count")
+        apply_plotly_theme(fig)
+        st.plotly_chart(fig, width="stretch")
 
 
-def _retry_timeline(df: pd.DataFrame) -> go.Figure | None:
-    """Retry events over time."""
-    requeued = get_events(df, "job_requeued")
-    if requeued.empty:
-        return None
-
-    requeued = bin_by_time(requeued, "1h")
-    hourly = requeued.groupby("time_bin").size().reset_index(name="count")
-
-    fig = go.Figure()
-    fig.add_trace(
-        go.Scatter(
-            x=hourly["time_bin"],
-            y=hourly["count"],
-            mode="lines+markers",
-            line=dict(color=COLORS["warning"], width=2),
-            marker=dict(size=6),
-            fill="tozeroy",
-            fillcolor="rgba(210, 153, 34, 0.15)",
-            hovertemplate="%{y} requeued<extra></extra>",
-        )
-    )
-
-    fig.update_layout(
-        title="Job Requeues Over Time (hourly)",
-        height=300,
-        xaxis_title="Time",
-        yaxis_title="Requeued Jobs",
-    )
-    apply_plotly_theme(fig)
-    return fig
-
-
-def _dlq_timeline(df: pd.DataFrame) -> go.Figure | None:
-    """DLQ events over time."""
-    dlq = get_events(df, "job_dlq")
-    if dlq.empty:
-        return None
-
-    dlq = bin_by_time(dlq, "1h")
-    hourly = dlq.groupby("time_bin").size().reset_index(name="count")
-
-    fig = go.Figure()
-    fig.add_trace(
-        go.Scatter(
-            x=hourly["time_bin"],
-            y=hourly["count"],
-            mode="lines+markers",
-            line=dict(color=COLORS["error"], width=2),
-            marker=dict(size=8),
-            fill="tozeroy",
-            fillcolor="rgba(248, 81, 73, 0.15)",
-            hovertemplate="%{y} to DLQ<extra></extra>",
-        )
-    )
-
-    fig.update_layout(
-        title="Dead Letter Queue Events (hourly) - Should Be Zero!",
-        height=300,
-        xaxis_title="Time",
-        yaxis_title="DLQ Jobs",
-    )
-    apply_plotly_theme(fig)
-    return fig
-
-
-def _retry_count_histogram(df: pd.DataFrame) -> go.Figure | None:
-    """Distribution of retry counts."""
-    requeued = get_events(df, "job_requeued")
-    dlq = get_events(df, "job_dlq")
-
-    events = pd.concat([requeued, dlq], ignore_index=True)
-    if events.empty or "retry_count" not in events.columns:
-        return None
-
-    retry_counts = events["retry_count"].dropna()
-    if retry_counts.empty:
-        return None
-
-    fig = go.Figure()
-    fig.add_trace(
-        go.Histogram(
-            x=retry_counts,
-            nbinsx=int(retry_counts.max()) + 1 if not retry_counts.empty else 5,
-            marker=dict(color=COLORS["warning"], line=dict(width=1, color=COLORS["border"])),
-            hovertemplate="Retry #%{x}<br>Count: %{y}<extra></extra>",
-        )
-    )
-
-    fig.update_layout(
-        title="Retry Count Distribution",
-        height=300,
-        xaxis_title="Retry Count",
-        yaxis_title="Jobs",
-    )
-    apply_plotly_theme(fig)
-    return fig
-
-
-def _overflow_comparison(df: pd.DataFrame) -> go.Figure | None:
-    """Overflow vs local processing comparison."""
-    # Get synthesis events
-    synthesis = get_events(df, "synthesis_complete")
-    overflow_complete = get_events(df, "overflow_complete")
-
-    if synthesis.empty and overflow_complete.empty:
-        return None
-
-    # Count by queue_type or other indicator
-    local_count = len(synthesis)  # Simplified - actual distinction may need different logic
-    overflow_count = len(get_events(df, "job_overflow"))
-
-    total = local_count + overflow_count
-    if total == 0:
-        return None
-
-    fig = go.Figure()
-    fig.add_trace(
-        go.Pie(
-            labels=["Local", "Overflow"],
-            values=[local_count, overflow_count],
-            marker=dict(colors=[COLORS["accent_teal"], COLORS["accent_coral"]]),
-            hole=0.4,
-            textinfo="label+percent",
-            hovertemplate="%{label}: %{value:,}<extra></extra>",
-        )
-    )
-
-    fig.update_layout(
-        title="Local vs Overflow Processing",
-        height=300,
-        showlegend=False,
-    )
-    apply_plotly_theme(fig)
-    return fig
-
-
-def _overflow_timeline(df: pd.DataFrame) -> go.Figure | None:
-    """Overflow events over time."""
-    overflow = get_events(df, "job_overflow")
-    if overflow.empty:
-        return None
-
-    overflow = bin_by_time(overflow, "1h")
-    hourly = overflow.groupby("time_bin").size().reset_index(name="sent")
-
-    fig = go.Figure()
-    fig.add_trace(
-        go.Bar(
-            x=hourly["time_bin"],
-            y=hourly["sent"],
-            name="Sent to Overflow",
-            marker_color=COLORS["accent_coral"],
-            hovertemplate="%{y} jobs<extra></extra>",
-        )
-    )
-
-    fig.update_layout(
-        title="Overflow Usage Over Time (hourly)",
-        height=300,
-        xaxis_title="Time",
-        yaxis_title="Jobs",
-    )
-    apply_plotly_theme(fig)
-    return fig
-
-
-def _incomplete_jobs_chart(df: pd.DataFrame) -> go.Figure | None:
-    """Incomplete jobs over time."""
-    queued = get_events(df, "synthesis_queued").copy()
-    completed = get_events(df, "synthesis_complete")
-    errored = get_events(df, "synthesis_error")
-
-    if queued.empty:
-        return None
-
-    completed_hashes = set(completed["variant_hash"].dropna())
-    errored_hashes = set(errored["variant_hash"].dropna())
-    finished_hashes = completed_hashes | errored_hashes
-
-    queued["incomplete"] = ~queued["variant_hash"].isin(finished_hashes)
-    incomplete = queued[queued["incomplete"]]
-
-    if incomplete.empty:
-        return None
-
-    incomplete = bin_by_time(incomplete, "1h")
-    hourly = incomplete.groupby("time_bin").size().reset_index(name="count")
-
-    fig = go.Figure()
-    fig.add_trace(
-        go.Scatter(
-            x=hourly["time_bin"],
-            y=hourly["count"],
-            mode="lines+markers",
-            line=dict(color=COLORS["text_muted"], width=2),
-            marker=dict(size=6),
-            fill="tozeroy",
-            fillcolor="rgba(110, 118, 129, 0.15)",
-            hovertemplate="%{y} incomplete<extra></extra>",
-        )
-    )
-
-    fig.update_layout(
-        title="Incomplete Jobs Over Time (queued but never finished)",
-        height=300,
-        xaxis_title="Time",
-        yaxis_title="Incomplete Jobs",
-    )
-    apply_plotly_theme(fig)
-    return fig
+# ── API Rate Limits ───────────────────────────────────────────────────────────
 
 
 def _rate_limit_timeline(df: pd.DataFrame) -> go.Figure | None:
-    """API rate limit (429) events over time, by API."""
     rate_limits = get_events(df, "api_rate_limit")
     if rate_limits.empty:
         return None
@@ -422,23 +316,113 @@ def _rate_limit_timeline(df: pd.DataFrame) -> go.Figure | None:
                 y=hourly["count"],
                 name=api_name,
                 marker_color=api_colors.get(api_name, COLORS["text_muted"]),
-                hovertemplate=f"{api_name}: %{{y}} rate limits<extra></extra>",
+                hovertemplate=f"{api_name}: %{{y}}<extra></extra>",
             )
         )
 
     fig.update_layout(
-        title="API Rate Limits Over Time (hourly)",
-        height=300,
+        title="API Rate Limits (hourly)",
+        height=280,
+        barmode="stack",
         xaxis_title="Time",
         yaxis_title="429 Responses",
-        barmode="stack",
     )
     apply_plotly_theme(fig)
     return fig
 
 
+# ── Retries & DLQ ─────────────────────────────────────────────────────────────
+
+
+def _retry_timeline(df: pd.DataFrame) -> go.Figure | None:
+    requeued = get_events(df, "job_requeued")
+    if requeued.empty:
+        return None
+
+    requeued = bin_by_time(requeued, "1h")
+    hourly = requeued.groupby("time_bin").size().reset_index(name="count")
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=hourly["time_bin"],
+            y=hourly["count"],
+            mode="lines+markers",
+            line=dict(color=COLORS["warning"], width=2),
+            marker=dict(size=5),
+            fill="tozeroy",
+            fillcolor="rgba(210, 153, 34, 0.15)",
+            hovertemplate="%{y} requeued<extra></extra>",
+        )
+    )
+    fig.update_layout(title="Job Requeues (hourly)", height=280, xaxis_title="Time", yaxis_title="Requeued Jobs")
+    apply_plotly_theme(fig)
+    return fig
+
+
+def _dlq_timeline(df: pd.DataFrame) -> go.Figure | None:
+    dlq = get_events(df, "job_dlq")
+    if dlq.empty:
+        return None
+
+    dlq = bin_by_time(dlq, "1h")
+    hourly = dlq.groupby("time_bin").size().reset_index(name="count")
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=hourly["time_bin"],
+            y=hourly["count"],
+            mode="lines+markers",
+            line=dict(color=COLORS["error"], width=2),
+            marker=dict(size=6),
+            fill="tozeroy",
+            fillcolor="rgba(248, 81, 73, 0.15)",
+            hovertemplate="%{y} to DLQ<extra></extra>",
+        )
+    )
+    fig.update_layout(title="Dead Letter Queue (hourly)", height=280, xaxis_title="Time", yaxis_title="DLQ Jobs")
+    apply_plotly_theme(fig)
+    return fig
+
+
+def _incomplete_jobs_chart(df: pd.DataFrame) -> go.Figure | None:
+    queued = get_events(df, "synthesis_queued").copy()
+    completed = get_events(df, "synthesis_complete")
+    errored = get_events(df, "synthesis_error")
+
+    if queued.empty:
+        return None
+
+    finished_hashes = set(completed["variant_hash"].dropna()) | set(errored["variant_hash"].dropna())
+    queued["incomplete"] = ~queued["variant_hash"].isin(finished_hashes)
+    incomplete = queued[queued["incomplete"]]
+
+    if incomplete.empty:
+        return None
+
+    incomplete = bin_by_time(incomplete, "1h")
+    hourly = incomplete.groupby("time_bin").size().reset_index(name="count")
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=hourly["time_bin"],
+            y=hourly["count"],
+            mode="lines+markers",
+            line=dict(color=COLORS["text_muted"], width=2),
+            marker=dict(size=5),
+            fill="tozeroy",
+            fillcolor="rgba(110, 118, 129, 0.15)",
+            hovertemplate="%{y} incomplete<extra></extra>",
+        )
+    )
+    fig.update_layout(title="Incomplete Jobs (hourly)", height=280, xaxis_title="Time", yaxis_title="Jobs")
+    apply_plotly_theme(fig)
+    return fig
+
+
 def _reliability_by_queue(df: pd.DataFrame):
-    """Reliability stats by queue type."""
     requeued = get_events(df, "job_requeued")
     dlq = get_events(df, "job_dlq")
 
@@ -463,15 +447,28 @@ def _reliability_by_queue(df: pd.DataFrame):
             "DLQ": stats["dlq"],
         }
     )
+    st.dataframe(display_df, hide_index=True, width="stretch")
 
-    st.dataframe(display_df, hide_index=True, use_container_width=True)
+
+# ── Main Render ───────────────────────────────────────────────────────────────
 
 
 def render(df: pd.DataFrame):
     """Render the Reliability tab."""
-    # Summary stats (always show - even if zeros)
     section_header("Summary", "Reliability metrics")
     _summary_stats(df)
+
+    st.divider()
+
+    # WebSocket sessions
+    section_header("WebSocket Sessions", "Connection lifecycle")
+    _websocket_sessions(df)
+
+    st.divider()
+
+    # Gateway errors
+    section_header("Gateway Errors", "Internal error and warning events")
+    _gateway_errors(df)
 
     st.divider()
 
@@ -479,85 +476,54 @@ def render(df: pd.DataFrame):
     section_header("Stripe Webhooks", "Webhook processing health")
     _webhook_stats(df)
 
-    col1, col2 = st.columns(2)
-    with col1:
-        fig = _webhook_latency_chart(df)
-        if fig:
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.caption("No webhook latency data")
-    with col2:
-        fig = _webhook_errors_chart(df)
-        if fig:
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.caption("No webhook errors (great!)")
-
     st.divider()
 
     # API rate limits
     section_header("API Rate Limits", "429 responses from external APIs")
     fig = _rate_limit_timeline(df)
     if fig:
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
     else:
-        st.caption("No rate limit events (great!)")
+        st.caption("No rate limit events")
+
+    st.divider()
+
+    # Billing sync drift
+    section_header("Billing Sync", "Subscription drift detection")
+    _billing_drift(df)
+
+    st.divider()
+
+    # Cache evictions
+    section_header("Cache Evictions", "Audio cache LRU evictions")
+    _cache_evictions(df)
 
     st.divider()
 
     # By queue type
-    section_header("By Queue Type", "Reliability breakdown")
+    section_header("By Queue Type")
     _reliability_by_queue(df)
 
     st.divider()
 
-    # Charts
-    section_header("Job Processing Charts")
-
-    # Row 1: Retry + DLQ timelines
+    # Job processing charts
+    section_header("Job Processing")
     col1, col2 = st.columns(2)
     with col1:
         fig = _retry_timeline(df)
         if fig:
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
         else:
-            st.caption("No retry events (great!)")
-
+            st.caption("No retry events")
     with col2:
         fig = _dlq_timeline(df)
         if fig:
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
         else:
-            st.caption("No DLQ events (great!)")
+            st.caption("No DLQ events")
 
-    # Row 2: Retry distribution + overflow comparison
-    col1, col2 = st.columns(2)
-    with col1:
-        fig = _retry_count_histogram(df)
-        if fig:
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.caption("No retry count data")
-
-    with col2:
-        fig = _overflow_comparison(df)
-        if fig:
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.caption("No overflow data")
-
-    # Row 3: Overflow timeline + incomplete jobs
-    col1, col2 = st.columns(2)
-    with col1:
-        fig = _overflow_timeline(df)
-        if fig:
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.caption("No overflow usage")
-
-    with col2:
-        fig = _incomplete_jobs_chart(df)
-        if fig:
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.caption("No incomplete jobs (great!)")
+    fig = _incomplete_jobs_chart(df)
+    if fig:
+        st.plotly_chart(fig, width="stretch")
+    else:
+        st.caption("No incomplete jobs")

@@ -2,7 +2,7 @@
 
 import json
 import os
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 import duckdb
@@ -12,10 +12,13 @@ import streamlit as st
 # Default path - synced from prod via make sync-metrics
 DEFAULT_DB_PATH = Path(os.environ.get("METRICS_DB", "data/metrics.duckdb"))
 
+# Quick toggle presets (days back from max date)
+QUICK_RANGES = {"7d": 7, "14d": 14, "30d": 30}
+
 
 @st.cache_data(ttl=60)
 def load_data(db_path: str) -> tuple[pd.DataFrame, str]:
-    """Load all metrics data from DuckDB.
+    """Load all raw metrics events from DuckDB.
 
     Returns:
         Tuple of (dataframe, load_timestamp_string)
@@ -30,10 +33,8 @@ def load_data(db_path: str) -> tuple[pd.DataFrame, str]:
 
     if not df.empty:
         df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
-        # Convert to local timezone for display
         local_tz = datetime.now().astimezone().tzinfo
         df["local_time"] = df["timestamp"].dt.tz_convert(local_tz).dt.tz_localize(None)
-        # Parse JSON data column
         df["data"] = df["data"].apply(lambda x: json.loads(x) if isinstance(x, str) and x else {})
 
         # DuckDB auto_detect infers all-NULL columns as VARCHAR from CSV.
@@ -64,6 +65,33 @@ def load_data(db_path: str) -> tuple[pd.DataFrame, str]:
     return df, loaded_at
 
 
+@st.cache_data(ttl=60)
+def load_daily(db_path: str) -> pd.DataFrame:
+    """Load daily aggregate data from DuckDB.
+
+    Returns daily aggregates with columns: bucket, event_type, model_slug,
+    event_count, latency stats, cache stats, volume stats, unique_users.
+    """
+    path = Path(db_path)
+    if not path.exists():
+        return pd.DataFrame()
+
+    conn = duckdb.connect(str(path), read_only=True)
+    try:
+        df = conn.execute("SELECT * FROM metrics_daily ORDER BY bucket").fetchdf()
+    except duckdb.CatalogException:
+        return pd.DataFrame()
+    finally:
+        conn.close()
+
+    if not df.empty:
+        df["bucket"] = pd.to_datetime(df["bucket"], utc=True)
+        local_tz = datetime.now().astimezone().tzinfo
+        df["local_date"] = df["bucket"].dt.tz_convert(local_tz).dt.tz_localize(None)
+
+    return df
+
+
 def get_db_info(db_path: Path) -> dict:
     """Get database file info."""
     if not db_path.exists():
@@ -90,7 +118,6 @@ def filter_by_models(df: pd.DataFrame, models: list[str]) -> pd.DataFrame:
     """Filter dataframe to selected models. 'All' = no filter."""
     if df.empty or not models or "All" in models:
         return df
-    # Include rows with matching model_slug OR null model_slug (non-model events)
     mask = df["model_slug"].isin(models) | df["model_slug"].isna()
     return df[mask]
 
@@ -114,6 +141,27 @@ def get_events(df: pd.DataFrame, event_type: str) -> pd.DataFrame:
 def get_events_multi(df: pd.DataFrame, event_types: list[str]) -> pd.DataFrame:
     """Get events matching any of the given types."""
     return df[df["event_type"].isin(event_types)]
+
+
+# === Gemini cost calculation ===
+
+# Gemini 3 Flash Preview pricing
+GEMINI_INPUT_COST_PER_M = 0.50
+GEMINI_OUTPUT_COST_PER_M = 3.00
+
+
+def calculate_gemini_cost(extraction_df: pd.DataFrame) -> float:
+    """Calculate total Gemini API cost from page_extraction_complete events.
+
+    Pass the pre-filtered DataFrame (already filtered to page_extraction_complete).
+    """
+    if extraction_df.empty:
+        return 0.0
+    prompt = extraction_df["prompt_token_count"].fillna(0).sum()
+    output = (
+        extraction_df["candidates_token_count"].fillna(0).sum() + extraction_df["thoughts_token_count"].fillna(0).sum()
+    )
+    return (prompt / 1e6) * GEMINI_INPUT_COST_PER_M + (output / 1e6) * GEMINI_OUTPUT_COST_PER_M
 
 
 # === Aggregation helpers ===
@@ -144,22 +192,4 @@ def get_time_range_info(df: pd.DataFrame) -> dict:
         "min": min_time,
         "max": max_time,
         "span": max_time - min_time,
-    }
-
-
-def get_comparison_periods(df: pd.DataFrame, current_start, current_end):
-    """Get data for comparison periods (yesterday, last week)."""
-    current_span = current_end - current_start
-
-    # Yesterday (same duration, shifted back)
-    yesterday_end = current_start
-    yesterday_start = yesterday_end - current_span - timedelta(days=1)
-
-    # Last week (same duration, shifted back 7 days)
-    last_week_end = current_start - timedelta(days=6)
-    last_week_start = last_week_end - current_span - timedelta(days=1)
-
-    return {
-        "yesterday": filter_by_date_range(df, yesterday_start, yesterday_end),
-        "last_week": filter_by_date_range(df, last_week_start, last_week_end),
     }
