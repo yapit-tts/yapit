@@ -4,7 +4,6 @@ import asyncio
 import random
 import time
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
 from pathlib import Path
 
 import pymupdf
@@ -14,17 +13,15 @@ from google.genai import types
 from loguru import logger
 from redis.asyncio import Redis
 
-from yapit.contracts import DetectedFigure
 from yapit.gateway.document.batch import BatchPageRequest
 from yapit.gateway.document.extraction import (
     IMAGE_PLACEHOLDER_PATTERN,
+    PreparedPage,
     build_figure_prompt,
-    extract_single_page_pdf,
-    store_figure,
+    prepare_page,
     substitute_image_placeholders,
 )
-from yapit.gateway.document.processing import ExtractedPage, PageResult, ProcessorConfig, cpu_executor
-from yapit.gateway.document.yolo_client import enqueue_detection, wait_for_result
+from yapit.gateway.document.processing import ExtractedPage, PageResult, ProcessorConfig
 from yapit.gateway.metrics import log_event
 from yapit.gateway.storage import ImageStorage
 
@@ -54,16 +51,6 @@ FALLBACK_INPUT_TOKENS_PER_PAGE = 2500
 FALLBACK_OUTPUT_TOKENS_PER_PAGE = 1000
 
 
-@dataclass
-class PreparedPage:
-    """A page with YOLO detection complete, ready for Gemini extraction."""
-
-    page_idx: int
-    page_bytes: bytes
-    figures: list[DetectedFigure]
-    figure_urls: list[str]
-
-
 def create_gemini_config(
     resolution: str = "high",
     prompt_version: str = "v11",  # bump for prompt/processing changes to invalidate cached extractions
@@ -76,6 +63,7 @@ def create_gemini_config(
         is_paid=True,
         output_token_multiplier=6,  # Output costs 6× input
         extraction_cache_prefix=f"gemini:{resolution}:{prompt_version}",
+        supports_batch=True,
     )
 
 
@@ -241,7 +229,7 @@ class GeminiExtractor:
             )
 
         try:
-            page = await self._prepare_page(content, page_idx, content_hash)
+            page = await prepare_page(content, page_idx, content_hash, self._redis, self._image_storage)
 
             if cancel_key and await self._redis.exists(cancel_key):
                 logger.info(f"Page {page_idx + 1} cancelled after YOLO, before Gemini")
@@ -453,37 +441,6 @@ class GeminiExtractor:
 
         return input_tokens, output_tokens, thoughts_tokens, cached_tokens, False
 
-    async def _prepare_page(
-        self,
-        content: bytes,
-        page_idx: int,
-        content_hash: str,
-    ) -> PreparedPage:
-        """Run YOLO detection and store figures for a single page."""
-        page_bytes = await asyncio.get_running_loop().run_in_executor(
-            cpu_executor, extract_single_page_pdf, content, page_idx
-        )
-
-        job_id = await enqueue_detection(self._redis, page_bytes)
-        yolo_result = await wait_for_result(self._redis, job_id)
-
-        if yolo_result.error:
-            logger.warning(f"YOLO page {page_idx + 1}: {yolo_result.error}")
-
-        figure_urls = [
-            await store_figure(self._image_storage, fig, content_hash, page_idx, idx)
-            for idx, fig in enumerate(yolo_result.figures)
-        ]
-
-        logger.info(f"YOLO page {page_idx + 1}: {len(yolo_result.figures)} figures")
-
-        return PreparedPage(
-            page_idx=page_idx,
-            page_bytes=page_bytes,
-            figures=yolo_result.figures,
-            figure_urls=figure_urls,
-        )
-
     async def prepare_for_batch(
         self,
         content: bytes,
@@ -501,7 +458,10 @@ class GeminiExtractor:
 
         logger.info(f"Preparing {len(pages_to_process)} pages for batch (PDF has {total_pages} total)")
 
-        tasks = [self._prepare_page(content, page_idx, content_hash) for page_idx in pages_to_process]
+        tasks = [
+            prepare_page(content, page_idx, content_hash, self._redis, self._image_storage)
+            for page_idx in pages_to_process
+        ]
         prepared = await asyncio.gather(*tasks)
 
         batch_requests = [

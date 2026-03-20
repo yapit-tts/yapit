@@ -34,7 +34,9 @@ from yapit.gateway.db import close_db, create_session, init_db, prepare_database
 from yapit.gateway.deps import create_cache, create_image_storage
 from yapit.gateway.document.batch_poller import BatchPoller
 from yapit.gateway.document.defuddle_client import init_defuddle_client
+from yapit.gateway.document.processing import BatchExtractor
 from yapit.gateway.document.processors.gemini import GeminiExtractor, create_gemini_config
+from yapit.gateway.document.processors.openai_compat import OpenAIExtractor, create_openai_config
 from yapit.gateway.domain_models import UsageLog
 from yapit.gateway.exceptions import APIError
 from yapit.gateway.logging_config import (
@@ -97,6 +99,20 @@ async def lifespan(app: FastAPI):
             prompt_path=EXTRACTION_PROMPT_PATH,
         )
         logger.info("AI extractor: gemini")
+    elif settings.ai_processor == "openai":
+        assert settings.ai_processor_base_url, "AI_PROCESSOR_BASE_URL required for openai processor"
+        assert settings.ai_processor_api_key, "AI_PROCESSOR_API_KEY required for openai processor"
+        assert settings.ai_processor_model, "AI_PROCESSOR_MODEL required for openai processor"
+        app.state.ai_extractor_config = create_openai_config(settings.ai_processor_model)
+        app.state.ai_extractor = OpenAIExtractor(
+            base_url=settings.ai_processor_base_url,
+            api_key=settings.ai_processor_api_key,
+            model=settings.ai_processor_model,
+            prompt_path=EXTRACTION_PROMPT_PATH,
+            redis=app.state.redis_client,
+            image_storage=app.state.image_storage,
+        )
+        logger.info(f"AI extractor: openai ({settings.ai_processor_model} @ {settings.ai_processor_base_url})")
     else:
         app.state.ai_extractor_config = None
         app.state.ai_extractor = None
@@ -218,9 +234,9 @@ async def lifespan(app: FastAPI):
             asyncio.create_task(run_billing_sync_loop(settings.stripe_secret_key, app.state.redis_client))
         )
 
-    # Batch extraction poller
+    # Batch extraction poller (only for extractors that support batch)
     batch_poller = None
-    if app.state.ai_extractor:
+    if isinstance(app.state.ai_extractor, BatchExtractor):
         config = app.state.ai_extractor_config
         assert config is not None and config.extraction_cache_prefix is not None
         batch_poller = BatchPoller(

@@ -7,7 +7,8 @@ from collections.abc import AsyncIterator
 import pymupdf
 from loguru import logger
 
-from yapit.gateway.document.processing import ExtractedPage, PageResult, ProcessorConfig, cpu_executor
+from yapit.gateway.document.extraction import cpu_executor
+from yapit.gateway.document.processing import ExtractedPage, PageResult, ProcessorConfig
 
 config = ProcessorConfig(
     slug="pymupdf",

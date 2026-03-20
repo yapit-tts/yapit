@@ -14,8 +14,7 @@ from yapit.gateway.auth import authenticate, authenticate_optional
 from yapit.gateway.cache import Cache, CacheConfig, Caches, SqliteCache
 from yapit.gateway.config import Settings, get_settings
 from yapit.gateway.db import create_session, get_or_404
-from yapit.gateway.document.processing import ProcessorConfig
-from yapit.gateway.document.processors.gemini import GeminiExtractor
+from yapit.gateway.document.processing import Extractor, ProcessorConfig
 from yapit.gateway.domain_models import (
     BlockVariant,
     Document,
@@ -144,7 +143,7 @@ async def get_ai_extractor_config(request: Request) -> ProcessorConfig | None:
     return request.app.state.ai_extractor_config
 
 
-async def get_ai_extractor(request: Request) -> GeminiExtractor | None:
+async def get_ai_extractor(request: Request) -> Extractor | None:
     return request.app.state.ai_extractor
 
 
@@ -161,7 +160,7 @@ def get_stripe_client(settings: SettingsDep) -> stripe.StripeClient | None:
 
 RedisClient = Annotated[Redis, Depends(get_redis_client)]
 AiExtractorConfigDep = Annotated[ProcessorConfig | None, Depends(get_ai_extractor_config)]
-AiExtractorDep = Annotated[GeminiExtractor | None, Depends(get_ai_extractor)]
+AiExtractorDep = Annotated[Extractor | None, Depends(get_ai_extractor)]
 AudioCache = Annotated[Cache, Depends(get_audio_cache)]
 DocumentCache = Annotated[Cache, Depends(get_document_cache)]
 ExtractionCache = Annotated[Cache, Depends(get_extraction_cache)]

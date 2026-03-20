@@ -1,10 +1,9 @@
 """Document extraction models, billing orchestration, and token estimation."""
 
 import asyncio
-import os
 from collections.abc import AsyncIterator
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from typing import Any, Protocol, runtime_checkable
 
 from loguru import logger
 from pydantic import BaseModel, ConfigDict
@@ -12,7 +11,12 @@ from redis.asyncio import Redis
 
 from yapit.gateway.cache import Cache
 from yapit.gateway.db import create_session
-from yapit.gateway.document.extraction import PER_PAGE_TOLERANCE, deduplicate_footnotes, estimate_document_tokens
+from yapit.gateway.document.extraction import (
+    PER_PAGE_TOLERANCE,
+    cpu_executor,
+    deduplicate_footnotes,
+    estimate_document_tokens,
+)
 from yapit.gateway.domain_models import DocumentMetadata, UsageType
 from yapit.gateway.exceptions import ValidationError
 from yapit.gateway.markdown import parse_markdown
@@ -21,10 +25,6 @@ from yapit.gateway.metrics import log_event
 from yapit.gateway.reservations import create_reservation, release_reservation
 from yapit.gateway.storage import ImageStorage
 from yapit.gateway.usage import check_usage_limit, record_usage
-
-# Dedicated thread pool for CPU-bound work (PDF processing, markdown parsing).
-# Separate from the default pool so heavy work doesn't starve quick to_thread calls.
-cpu_executor = ThreadPoolExecutor(max_workers=os.cpu_count() or 8, thread_name_prefix="cpu-bound")
 
 
 class ExtractedPage(BaseModel):
@@ -82,6 +82,7 @@ class ProcessorConfig:
     is_paid: bool
     output_token_multiplier: int
     extraction_cache_prefix: str | None
+    supports_batch: bool = False
 
     def is_supported(self, mime_type: str) -> bool:
         base_type = mime_type.split(";")[0].strip()
@@ -91,12 +92,42 @@ class ProcessorConfig:
         return f"{content_hash}:{self.extraction_cache_prefix}:{page_idx}"
 
 
-type Extractor = AsyncIterator[PageResult]
+@runtime_checkable
+class Extractor(Protocol):
+    """Protocol for AI document extraction backends (Gemini, OpenAI-compatible, etc.)."""
+
+    def extract(
+        self,
+        content: bytes,
+        content_type: str,
+        content_hash: str,
+        pages: list[int] | None = None,
+        user_id: str | None = None,
+        cancel_key: str | None = None,
+    ) -> AsyncIterator[PageResult]: ...
+
+    @property
+    def model(self) -> str: ...
+
+
+@runtime_checkable
+class BatchExtractor(Extractor, Protocol):
+    """Extractor that also supports async batch submission (e.g. Gemini Batch API)."""
+
+    async def prepare_for_batch(
+        self,
+        content: bytes,
+        content_hash: str,
+        pages: list[int] | None = None,
+    ) -> tuple[list, dict[int, list[str]]]: ...
+
+    @property
+    def client(self) -> Any: ...
 
 
 async def process_with_billing(
     config: ProcessorConfig,
-    extractor: Extractor,
+    extractor: AsyncIterator[PageResult],
     user_id: str,
     content: bytes,
     content_type: str,

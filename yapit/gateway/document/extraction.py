@@ -1,12 +1,22 @@
+import asyncio
 import base64
 import io
+import os
 import re
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 import pymupdf
+from loguru import logger
+from redis.asyncio import Redis
 
 from yapit.contracts import DetectedFigure
+from yapit.gateway.document.yolo_client import enqueue_detection, wait_for_result
 from yapit.gateway.storage import ImageStorage
+
+# Dedicated thread pool for CPU-bound work (PDF processing, markdown parsing).
+# Separate from the default pool so heavy work doesn't starve quick to_thread calls.
+cpu_executor = ThreadPoolExecutor(max_workers=os.cpu_count() or 8, thread_name_prefix="cpu-bound")
 
 # For prompt instructions - tells model what to output
 IMAGE_PLACEHOLDER = "![alt](detected-image)<yap-cap>caption</yap-cap>"
@@ -89,6 +99,49 @@ def extract_single_page_pdf(content: bytes, page_idx: int) -> bytes:
     doc.close()
     src.close()
     return result
+
+
+@dataclass
+class PreparedPage:
+    """A page with YOLO detection complete, ready for LLM extraction."""
+
+    page_idx: int
+    page_bytes: bytes
+    figures: list[DetectedFigure]
+    figure_urls: list[str]
+
+
+async def prepare_page(
+    content: bytes,
+    page_idx: int,
+    content_hash: str,
+    redis: Redis,
+    image_storage: ImageStorage,
+) -> PreparedPage:
+    """Extract single page PDF, run YOLO detection, store figures."""
+    page_bytes = await asyncio.get_running_loop().run_in_executor(
+        cpu_executor, extract_single_page_pdf, content, page_idx
+    )
+
+    job_id = await enqueue_detection(redis, page_bytes)
+    yolo_result = await wait_for_result(redis, job_id)
+
+    if yolo_result.error:
+        logger.warning(f"YOLO page {page_idx + 1}: {yolo_result.error}")
+
+    figure_urls = [
+        await store_figure(image_storage, fig, content_hash, page_idx, idx)
+        for idx, fig in enumerate(yolo_result.figures)
+    ]
+
+    logger.info(f"YOLO page {page_idx + 1}: {len(yolo_result.figures)} figures")
+
+    return PreparedPage(
+        page_idx=page_idx,
+        page_bytes=page_bytes,
+        figures=yolo_result.figures,
+        figure_urls=figure_urls,
+    )
 
 
 def extract_images_from_page(doc: pymupdf.Document, page_idx: int) -> list[ExtractedImage]:

@@ -42,6 +42,10 @@ dependencies = [
 
 [project.optional-dependencies]
 
+openai = [
+  "openai>=2.0.0",
+]
+
 test = [
   "pytest~=8.3.5",
   "pytest-asyncio==1.0.0",

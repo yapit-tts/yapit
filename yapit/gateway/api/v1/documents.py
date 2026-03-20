@@ -49,14 +49,14 @@ from yapit.gateway.deps import (
 from yapit.gateway.document.batch import BatchJobInfo, BatchJobStatus, get_batch_job, save_batch_job, submit_batch_job
 from yapit.gateway.document.batch_poller import create_document_from_batch
 from yapit.gateway.document.defuddle_client import extract_website
-from yapit.gateway.document.extraction import PER_PAGE_TOLERANCE, estimate_document_tokens
+from yapit.gateway.document.extraction import PER_PAGE_TOLERANCE, cpu_executor, estimate_document_tokens
 from yapit.gateway.document.http import download_document, resolve_relative_urls
 from yapit.gateway.document.processing import (
+    BatchExtractor,
     CachedDocument,
     DocumentExtractionResult,
     ExtractedPage,
     ProcessorConfig,
-    cpu_executor,
     process_pages_to_document,
     process_with_billing,
 )
@@ -147,8 +147,9 @@ MIME_EXTENSIONS: dict[str, list[str]] = {
 
 @public_router.get("/supported-formats")
 async def get_supported_formats(ai_config: AiExtractorConfigDep) -> SupportedFormatsResponse:
+    batch = ai_config.supports_batch if ai_config else False
     formats: dict[str, FormatInfo] = {
-        "application/pdf": FormatInfo(free=True, ai=True, has_pages=True, batch=True),
+        "application/pdf": FormatInfo(free=True, ai=True, has_pages=True, batch=batch),
         "application/epub+zip": FormatInfo(free=True, ai=False, has_pages=False, batch=False),
         "text/html": FormatInfo(free=True, ai=False, has_pages=False, batch=False),
         "text/plain": FormatInfo(free=True, ai=False, has_pages=False, batch=False),
@@ -158,7 +159,7 @@ async def get_supported_formats(ai_config: AiExtractorConfigDep) -> SupportedFor
     if ai_config:
         for mime_type in ai_config.supported_mime_types:
             if mime_type not in formats:
-                formats[mime_type] = FormatInfo(free=False, ai=True, has_pages=False, batch=True)
+                formats[mime_type] = FormatInfo(free=False, ai=True, has_pages=False, batch=batch)
 
     all_mimes = sorted(formats)
     all_exts = sorted({ext for m in formats for ext in MIME_EXTENSIONS.get(m, [])})
@@ -749,9 +750,9 @@ async def _submit_batch_extraction(
     extraction_cache: ExtractionCache,
     image_storage: ImageStorageDep,
 ) -> BatchSubmittedResponse:
-    """Submit document for batch extraction via Gemini Batch API.
+    """Submit document for batch extraction.
 
-    Checks the extraction cache first — only uncached pages are sent to Gemini.
+    Checks the extraction cache first — only uncached pages are sent to the batch backend.
     If all pages are cached, creates the document immediately.
     """
     if not ai_extractor or not ai_extractor_config:
@@ -759,6 +760,7 @@ async def _submit_batch_extraction(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="AI transform not configured on this server",
         )
+    assert isinstance(ai_extractor, BatchExtractor), "batch_mode requires a BatchExtractor"
 
     pages_requested = list(range(total_pages)) if pages is None else pages
     submitted_at = datetime.now(tz=dt.UTC).isoformat()
@@ -868,8 +870,8 @@ async def _prepare_and_submit_batch(
     pages_requested: list[int],
     pages_submitted: list[int],
 ) -> None:
-    """Background task: run YOLO detection + submit batch to Gemini."""
-    assert ai_extractor is not None
+    """Background task: run YOLO detection + submit batch."""
+    assert isinstance(ai_extractor, BatchExtractor)
     try:
         batch_requests, figure_urls_by_page = await ai_extractor.prepare_for_batch(
             content,
@@ -1172,6 +1174,12 @@ async def create_document(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="batch_mode requires ai_transform=true",
+        )
+
+    if req.batch_mode and (not ai_extractor_config or not ai_extractor_config.supports_batch):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Batch mode is not supported by the configured AI processor",
         )
 
     if req.batch_mode:
