@@ -49,18 +49,19 @@ from yapit.gateway.deps import (
 from yapit.gateway.document.batch import BatchJobInfo, BatchJobStatus, get_batch_job, save_batch_job, submit_batch_job
 from yapit.gateway.document.batch_poller import create_document_from_batch
 from yapit.gateway.document.defuddle_client import extract_website
-from yapit.gateway.document.extraction import PER_PAGE_TOLERANCE, cpu_executor, estimate_document_tokens
 from yapit.gateway.document.http import download_document, resolve_relative_urls
-from yapit.gateway.document.processing import (
+from yapit.gateway.document.orchestration import process_pages_to_document, process_with_billing
+from yapit.gateway.document.pdf import PER_PAGE_TOLERANCE, estimate_document_tokens
+from yapit.gateway.document.processors import epub
+from yapit.gateway.document.processors import free_pdf as pdf
+from yapit.gateway.document.types import (
     BatchExtractor,
     CachedDocument,
     DocumentExtractionResult,
     ExtractedPage,
     ProcessorConfig,
-    process_pages_to_document,
-    process_with_billing,
+    cpu_executor,
 )
-from yapit.gateway.document.processors import epub, pdf
 from yapit.gateway.document.website import extract_website_content
 from yapit.gateway.domain_models import Document, DocumentMetadata, UsageType, UserPreferences, UserSubscription
 from yapit.gateway.exceptions import ResourceNotFoundError

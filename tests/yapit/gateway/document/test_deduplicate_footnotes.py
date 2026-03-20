@@ -1,6 +1,6 @@
 """Tests for footnote deduplication across independently-extracted pages."""
 
-from yapit.gateway.document.extraction import deduplicate_footnotes
+from yapit.gateway.document.orchestration import deduplicate_footnotes
 
 
 class TestDeduplicateFootnotes:

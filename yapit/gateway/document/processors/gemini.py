@@ -14,14 +14,13 @@ from loguru import logger
 from redis.asyncio import Redis
 
 from yapit.gateway.document.batch import BatchPageRequest
-from yapit.gateway.document.extraction import (
+from yapit.gateway.document.figures import (
     IMAGE_PLACEHOLDER_PATTERN,
-    PreparedPage,
     build_figure_prompt,
     prepare_page,
     substitute_image_placeholders,
 )
-from yapit.gateway.document.processing import ExtractedPage, PageResult, ProcessorConfig
+from yapit.gateway.document.types import ExtractedPage, PageResult, PreparedPage, ProcessorConfig
 from yapit.gateway.metrics import log_event
 from yapit.gateway.storage import ImageStorage
 

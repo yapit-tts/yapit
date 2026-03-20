@@ -14,7 +14,7 @@ from yapit.gateway.auth import authenticate, authenticate_optional
 from yapit.gateway.cache import Cache, CacheConfig, Caches, SqliteCache
 from yapit.gateway.config import Settings, get_settings
 from yapit.gateway.db import create_session, get_or_404
-from yapit.gateway.document.processing import Extractor, ProcessorConfig
+from yapit.gateway.document.types import Extractor, ProcessorConfig
 from yapit.gateway.domain_models import (
     BlockVariant,
     Document,

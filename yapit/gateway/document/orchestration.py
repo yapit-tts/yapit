@@ -1,23 +1,24 @@
-"""Document extraction models, billing orchestration, and token estimation."""
+"""Document extraction orchestration: billing, caching, and page assembly."""
 
 import asyncio
+import re
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
-from typing import Any, Protocol, runtime_checkable
 
 from loguru import logger
-from pydantic import BaseModel, ConfigDict
 from redis.asyncio import Redis
 
 from yapit.gateway.cache import Cache
 from yapit.gateway.db import create_session
-from yapit.gateway.document.extraction import (
-    PER_PAGE_TOLERANCE,
+from yapit.gateway.document.pdf import PER_PAGE_TOLERANCE, estimate_document_tokens
+from yapit.gateway.document.types import (
+    DocumentExtractionResult,
+    ExtractedPage,
+    PageResult,
+    ProcessedDocument,
+    ProcessorConfig,
     cpu_executor,
-    deduplicate_footnotes,
-    estimate_document_tokens,
 )
-from yapit.gateway.domain_models import DocumentMetadata, UsageType
+from yapit.gateway.domain_models import UsageType
 from yapit.gateway.exceptions import ValidationError
 from yapit.gateway.markdown import parse_markdown
 from yapit.gateway.markdown.transformer import DocumentTransformer
@@ -25,104 +26,6 @@ from yapit.gateway.metrics import log_event
 from yapit.gateway.reservations import create_reservation, release_reservation
 from yapit.gateway.storage import ImageStorage
 from yapit.gateway.usage import check_usage_limit, record_usage
-
-
-class ExtractedPage(BaseModel):
-    """Single page extraction result."""
-
-    markdown: str
-    images: list[str]  # URLs to stored images (e.g., /images/{hash}/0.png)
-
-
-class DocumentExtractionResult(BaseModel):
-    """Unified extraction result from any processor."""
-
-    pages: dict[int, ExtractedPage]
-    extraction_method: str
-    failed_pages: list[int] = []  # Pages that failed after all retries
-
-
-class CachedDocument(BaseModel):
-    """Structure stored in cache for documents."""
-
-    metadata: DocumentMetadata
-    content: bytes | None = None  # file content (if not webpage or plain text)
-    extraction: DocumentExtractionResult | None = None
-
-    model_config = ConfigDict(
-        ser_json_bytes="base64",
-        val_json_bytes="base64",
-    )
-
-
-@dataclass
-class PageResult:
-    """Result of processing a single page, yielded by extractors."""
-
-    page_idx: int
-    page: ExtractedPage | None  # None if extraction failed
-    input_tokens: int
-    output_tokens: int
-    thoughts_tokens: int
-    is_fallback: bool
-    cancelled: bool
-
-
-@dataclass(frozen=True)
-class ProcessorConfig:
-    """Configuration for a document processor.
-
-    Separates static config (what a processor can do) from runtime behavior (extraction).
-    """
-
-    slug: str
-    supported_mime_types: frozenset[str]
-    max_pages: int
-    max_file_size: int
-    is_paid: bool
-    output_token_multiplier: int
-    extraction_cache_prefix: str | None
-    supports_batch: bool = False
-
-    def is_supported(self, mime_type: str) -> bool:
-        base_type = mime_type.split(";")[0].strip()
-        return base_type in self.supported_mime_types
-
-    def extraction_cache_key(self, content_hash: str, page_idx: int) -> str:
-        return f"{content_hash}:{self.extraction_cache_prefix}:{page_idx}"
-
-
-@runtime_checkable
-class Extractor(Protocol):
-    """Protocol for AI document extraction backends (Gemini, OpenAI-compatible, etc.)."""
-
-    def extract(
-        self,
-        content: bytes,
-        content_type: str,
-        content_hash: str,
-        pages: list[int] | None = None,
-        user_id: str | None = None,
-        cancel_key: str | None = None,
-    ) -> AsyncIterator[PageResult]: ...
-
-    @property
-    def model(self) -> str: ...
-
-
-@runtime_checkable
-class BatchExtractor(Extractor, Protocol):
-    """Extractor that also supports async batch submission (e.g. Gemini Batch API)."""
-
-    async def prepare_for_batch(
-        self,
-        content: bytes,
-        content_hash: str,
-        pages: list[int] | None = None,
-    ) -> tuple[list, dict[int, list[str]]]: ...
-
-    @property
-    def client(self) -> Any: ...
 
 
 async def process_with_billing(
@@ -177,7 +80,6 @@ async def process_with_billing(
             await log_event("extraction_cache_hit", processor_slug=config.slug, page_idx=page_idx, user_id=user_id)
         uncached_pages = requested_pages - set(cached_pages.keys())
 
-        # Invalidate cache if images were deleted (e.g., after document deletion)
         has_cached_images = any(page.images for page in cached_pages.values())
         if has_cached_images and not await image_storage.exists(content_hash):
             logger.info(f"Images missing for {content_hash}, invalidating extraction cache")
@@ -232,8 +134,7 @@ async def process_with_billing(
 
         await create_reservation(redis, user_id, content_hash, estimated_tokens)
 
-    # 4. Extract and cache pages (no DB session held — extraction involves
-    # YOLO detection, Gemini API calls, etc. that can take minutes)
+    # 4. Extract and cache pages
     fresh_pages: dict[int, ExtractedPage] = {}
     failed_pages: list[int] = []
     billing_records: list[dict] = []
@@ -305,14 +206,6 @@ async def process_with_billing(
     )
 
 
-@dataclass
-class ProcessedDocument:
-    """Result of processing extracted pages into a structured document."""
-
-    extracted_text: str
-    structured_content: str
-
-
 def process_pages_to_document(
     pages: dict[int, ExtractedPage],
     transformer: DocumentTransformer,
@@ -339,3 +232,86 @@ def process_pages_to_document(
         extracted_text=extracted_text,
         structured_content=structured_doc.model_dump_json(),
     )
+
+
+def stitch_pages(page_texts: list[str]) -> str:
+    """Stitch page outputs into coherent document.
+
+    Heuristic: if page N ends without sentence-ending punctuation and page N+1
+    starts with lowercase, join with space (likely continuation). Otherwise
+    join with double newline.
+    """
+    if not page_texts:
+        return ""
+
+    sentence_enders = re.compile(r'[.!?:;"\'\)\]]$')
+    starts_lowercase = re.compile(r"^[a-z]")
+
+    result = [page_texts[0]]
+
+    for i in range(1, len(page_texts)):
+        prev_text = page_texts[i - 1].rstrip()
+        curr_text = page_texts[i].lstrip()
+
+        if prev_text and curr_text:
+            prev_ends_sentence = bool(sentence_enders.search(prev_text))
+            curr_starts_lower = bool(starts_lowercase.match(curr_text))
+
+            if not prev_ends_sentence and curr_starts_lower:
+                result.append(" ")
+            else:
+                result.append("\n\n")
+        else:
+            result.append("\n\n")
+
+        result.append(curr_text)
+
+    return "".join(result)
+
+
+_FOOTNOTE_REF_PATTERN = re.compile(r"\[\^([^\]]+)\](?!:)")
+_FOOTNOTE_DEF_PATTERN = re.compile(r"^\[\^([^\]]+)\]:", re.MULTILINE)
+
+
+def deduplicate_footnotes(pages: dict[int, str]) -> dict[int, str]:
+    """Deduplicate footnote labels across pages to prevent collisions."""
+    if len(pages) <= 1:
+        return pages
+
+    page_def_labels: dict[int, set[str]] = {}
+    for page_idx, markdown in pages.items():
+        page_def_labels[page_idx] = set(_FOOTNOTE_DEF_PATTERN.findall(markdown))
+
+    label_pages: dict[str, list[int]] = {}
+    for page_idx, labels in page_def_labels.items():
+        for label in labels:
+            label_pages.setdefault(label, []).append(page_idx)
+
+    colliding_labels = {label for label, pgs in label_pages.items() if len(pgs) > 1}
+    if not colliding_labels:
+        return pages
+
+    result: dict[int, str] = {}
+    for page_idx, markdown in pages.items():
+        to_rename = page_def_labels.get(page_idx, set()) & colliding_labels
+        if not to_rename:
+            result[page_idx] = markdown
+            continue
+
+        renamed = markdown
+        for label in to_rename:
+            new_label = f"p{page_idx}-{label}"
+            renamed = re.sub(
+                rf"\[\^{re.escape(label)}\](?!:)",
+                f"[^{new_label}]",
+                renamed,
+            )
+            renamed = re.sub(
+                rf"^\[\^{re.escape(label)}\]:",
+                f"[^{new_label}]:",
+                renamed,
+                flags=re.MULTILINE,
+            )
+        result[page_idx] = renamed
+
+    return result

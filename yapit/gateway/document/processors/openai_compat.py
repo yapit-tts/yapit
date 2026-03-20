@@ -17,8 +17,8 @@ import openai.types.chat
 from loguru import logger
 from redis.asyncio import Redis
 
-from yapit.gateway.document.extraction import PreparedPage, prepare_page
-from yapit.gateway.document.processing import PageResult, ProcessorConfig
+from yapit.gateway.document.figures import prepare_page
+from yapit.gateway.document.types import PageResult, PreparedPage, ProcessorConfig
 from yapit.gateway.metrics import log_event
 from yapit.gateway.storage import ImageStorage
 
