@@ -80,13 +80,56 @@ def _clean_pandoc_output(markdown: str) -> str:
 # EPUB3: <a href="#notes.xhtml_note_N" class="noteref" role="doc-noteref">N</a>
 _FOOTNOTE_SUP_REF = re.compile(r'<sup><a\s+href="#([^"]+)"[^>]*>\s*(\d+)\s*</a></sup>')
 _FOOTNOTE_NOTEREF = re.compile(r'<a\s+[^>]*href="#([^"]+)"[^>]*role="doc-noteref"[^>]*>\s*(\d+)\s*</a>')
-# Old-style definition in pandoc output: <a href="#backref" id="TARGET">N.</a> text
-_FOOTNOTE_DEF_HTML = re.compile(r'<a\s+href="[^"]*"\s+id="[^"]*">\s*\d+\.\s*</a>\s*')
+# Third pattern: pandoc converts <a>[N]</a> to markdown link [\[N\]](#target) inside <sup>
+_FOOTNOTE_SUP_MDLINK = re.compile(r"<sup>\[?\\\[(\d+)\\\]\]?\(#([^)]+)\)</sup>")
 
 
 def _get_text_content(el: ET.Element) -> str:
     """Get all text content from an XML element, stripping tags."""
     return "".join(el.itertext()).strip()
+
+
+def _extract_epub3_notes(root: ET.Element, notes: dict[str, str]) -> None:
+    """Extract notes from EPUB3 endnotes sections (<section type="endnotes"> with <li> items)."""
+    for section in root.iter():
+        etype = section.get("type", "")
+        role = section.get("role", "")
+        if "endnotes" not in etype and "footnotes" not in etype and role != "doc-endnotes":
+            continue
+        for li in section.iter("li"):
+            for el in li.iter():
+                note_id = el.get("id")
+                if not note_id:
+                    continue
+                text = re.sub(r"^\d+\.?\s*", "", _get_text_content(li)).strip()
+                if text:
+                    notes[note_id] = text
+                break
+
+
+def _extract_old_style_notes(root: ET.Element, notes: dict[str, str]) -> None:
+    """Extract notes from old-style HTML: <p><a id="NOTE_ID">N.</a> text</p>."""
+    for p in root.iter("p"):
+        for a in p.iter("a"):
+            note_id = a.get("id")
+            a_text = (a.text or "").strip()
+            if note_id and re.match(r"^\d+\.$", a_text):
+                text = re.sub(r"^\d+\.\s*", "", _get_text_content(p)).strip()
+                if text:
+                    notes[note_id] = text
+
+
+def _extract_div_footnotes(root: ET.Element, notes: dict[str, str]) -> None:
+    """Extract notes from individual <div type="footnote"> elements (InDesign-style EPUBs)."""
+    for div in root.iter("div"):
+        if "footnote" not in div.get("type", ""):
+            continue
+        note_id = div.get("id")
+        if not note_id:
+            continue
+        text = re.sub(r"^\[?\d+\]?\s*", "", _get_text_content(div)).strip()
+        if text:
+            notes[note_id] = text
 
 
 def extract_footnotes_from_zip(content: bytes) -> dict[str, str]:
@@ -96,64 +139,29 @@ def extract_footnotes_from_zip(content: bytes) -> dict[str, str]:
     note ID → text mappings. Handles both EPUB3 semantic markup
     (epub:type="endnotes") and old-style HTML patterns.
     """
-    try:
-        with zipfile.ZipFile(BytesIO(content)) as zf:
-            notes: dict[str, str] = {}
-            for name in zf.namelist():
-                if not name.endswith((".xhtml", ".html")):
-                    continue
-                try:
-                    xhtml = zf.read(name).decode("utf-8", errors="ignore")
-                except Exception:
-                    continue
-
-                # Strip all XML namespace declarations so ET gives us clean tag names
+    with zipfile.ZipFile(BytesIO(content)) as zf:
+        notes: dict[str, str] = {}
+        for name in zf.namelist():
+            if not name.endswith((".xhtml", ".html")):
+                continue
+            try:
+                xhtml = zf.read(name).decode("utf-8", errors="ignore")
+                # Strip XML namespace declarations so ET gives us clean tag names
                 xhtml = re.sub(r'\s+xmlns(?::\w+)?="[^"]*"', "", xhtml)
                 xhtml = re.sub(r"\bepub:", "", xhtml)
+                root = ET.fromstring(xhtml)
+            except (ET.ParseError, KeyError):
+                continue
 
-                try:
-                    root = ET.fromstring(xhtml)
-                except ET.ParseError:
-                    continue
+            _extract_epub3_notes(root, notes)
+            _extract_div_footnotes(root, notes)
+            if not notes:
+                _extract_old_style_notes(root, notes)
 
-                # Pattern 1: EPUB3 — <section type="endnotes"> with <li> items
-                for section in root.iter():
-                    etype = section.get("type", "")
-                    role = section.get("role", "")
-                    if "endnotes" in etype or "footnotes" in etype or role == "doc-endnotes":
-                        for li in section.iter("li"):
-                            # Find the span/element with the note ID
-                            for el in li.iter():
-                                note_id = el.get("id")
-                                if not note_id:
-                                    continue
-                                text = _get_text_content(li)
-                                # Strip leading "N " or "N. " (the backlink number)
-                                text = re.sub(r"^\d+\.?\s*", "", text).strip()
-                                if text:
-                                    notes[note_id] = text
-                                    break
-
-                # Pattern 2: Old-style — <a href="#backref" id="NOTE_ID">N.</a> text in <p>
-                if not notes:
-                    for p in root.iter("p"):
-                        for a in p.iter("a"):
-                            note_id = a.get("id")
-                            a_text = (a.text or "").strip()
-                            if note_id and re.match(r"^\d+\.$", a_text):
-                                # Get full paragraph text after the <a> element
-                                full_text = _get_text_content(p)
-                                # Strip the "N. " prefix
-                                text = re.sub(r"^\d+\.\s*", "", full_text).strip()
-                                if text:
-                                    notes[note_id] = text
-
-            return notes
-    except Exception:
-        return {}
+        return notes
 
 
-def convert_footnotes(markdown: str, notes: dict[str, str], notes_filename: str = "") -> str:
+def convert_footnotes(markdown: str, notes: dict[str, str]) -> str:
     """Convert inline footnote refs to markdown [^N] syntax.
 
     Matches refs in the pandoc output to definitions extracted from the ZIP.
@@ -192,15 +200,32 @@ def convert_footnotes(markdown: str, notes: dict[str, str], notes_filename: str 
 
         return f"[^{ref_to_label[target_id]}]"
 
+    def replace_mdlink_ref(match: re.Match) -> str:
+        """Handle markdown link pattern where groups are (number, target) not (target, number)."""
+        nonlocal label_counter
+        target_id = match.group(2)
+
+        note_id = find_note(target_id)
+        if note_id is None:
+            return match.group(0)
+
+        if target_id not in ref_to_label:
+            label_counter += 1
+            ref_to_label[target_id] = label_counter
+            used_notes.append((label_counter, notes[note_id]))
+
+        return f"[^{ref_to_label[target_id]}]"
+
     markdown = _FOOTNOTE_SUP_REF.sub(replace_ref, markdown)
     markdown = _FOOTNOTE_NOTEREF.sub(replace_ref, markdown)
+    markdown = _FOOTNOTE_SUP_MDLINK.sub(replace_mdlink_ref, markdown)
 
     if not used_notes:
         return markdown
 
-    # Remove the original notes section from the body
+    # Remove the original notes section (stop at any next heading — notes sections are flat)
     markdown = re.sub(
-        r"\n#{1,2}\s+(?:Notes(?:\s+and\s+References)?|ENDNOTES)\s*\n.*",
+        r"\n#{1,2}\s+(?:Notes(?:\s+and\s+References)?|ENDNOTES)\s*\n(?:(?!\n#).)*",
         "",
         markdown,
         flags=re.DOTALL,

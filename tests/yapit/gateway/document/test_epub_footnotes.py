@@ -15,6 +15,8 @@ Two patterns exist in the wild:
 Both patterns are converted to markdown footnotes: [^N] / [^N]: text
 """
 
+import pytest
+
 from yapit.gateway.document.processors.epub import convert_footnotes, extract_footnotes_from_zip
 
 
@@ -77,10 +79,31 @@ class TestExtractFootnotesFromZip:
         assert result["nts1"] == "John Kenneth Galbraith, letter to JFK."
         assert "Paul Valéry" in result["nts2"]
 
-    def test_returns_empty_when_no_notes(self):
-        content = b"not a zip"
-        result = extract_footnotes_from_zip(content)
-        assert result == {}
+    def test_raises_on_invalid_zip(self):
+        import zipfile
+
+        with pytest.raises(zipfile.BadZipFile):
+            extract_footnotes_from_zip(b"not a zip")
+
+    def test_extracts_div_footnotes(self):
+        """InDesign-style: per-chapter <div epub:type="footnote"> elements."""
+        notes_xhtml = """<?xml version="1.0" encoding="UTF-8"?>
+        <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+        <body>
+        <p>Chapter text.</p>
+        <div class="_idFootnotes">
+        <div id="footnote-008" class="_idFootnote" epub:type="footnote">
+        <p class="small"><a href="#footnote-008-backlink">[1]</a> Gibbon, The Decline and Fall.</p>
+        </div>
+        <div id="footnote-007" class="_idFootnote" epub:type="footnote">
+        <p class="small"><a href="#footnote-007-backlink">[2]</a> Aristotle, Metaphysics.</p>
+        </div>
+        </div>
+        </body></html>"""
+
+        result = extract_footnotes_from_zip(self._make_epub_zip(notes_xhtml))
+        assert result["footnote-008"] == "Gibbon, The Decline and Fall."
+        assert result["footnote-007"] == "Aristotle, Metaphysics."
 
     def test_returns_empty_for_epub_without_notes(self):
         no_notes_xhtml = """<?xml version="1.0" encoding="UTF-8"?>
@@ -94,12 +117,22 @@ class TestExtractFootnotesFromZip:
 class TestConvertFootnotes:
     """Convert inline footnote refs + definitions to markdown [^N] syntax."""
 
+    def test_converts_sup_mdlink_refs(self):
+        r"""InDesign-style: <sup>[\[N\]](#target)</sup> → [^N]"""
+        md = r"Some text<sup>\[1\](#c0_Intro.xhtml_footnote-008)</sup> more text."
+        notes = {"footnote-008": "Gibbon, The Decline and Fall."}
+
+        result = convert_footnotes(md, notes)
+        assert "[^1]" in result
+        assert "[^1]: Gibbon, The Decline and Fall." in result
+        assert "<sup>" not in result
+
     def test_converts_sup_a_refs(self):
         """Old-style: <sup><a href="#target">N</a></sup> → [^N]"""
         md = 'Some text<sup><a href="#notes.xhtml_nts1" id="ch01_nts1a">1</a></sup> more text.'
         notes = {"nts1": "The source reference."}
 
-        result = convert_footnotes(md, notes, "notes.xhtml")
+        result = convert_footnotes(md, notes)
         assert "[^1]" in result
         assert "[^1]: The source reference." in result
         assert "<sup>" not in result
@@ -109,7 +142,7 @@ class TestConvertFootnotes:
         md = 'Some text<a href="#notes.xhtml_note_1" class="noteref" role="doc-noteref">1</a> more text.'
         notes = {"note_1": "Gates (2017)"}
 
-        result = convert_footnotes(md, notes, "notes.xhtml")
+        result = convert_footnotes(md, notes)
         assert "[^1]" in result
         assert "[^1]: Gates (2017)" in result
         assert "<a " not in result
@@ -121,7 +154,7 @@ class TestConvertFootnotes:
         )
         notes = {"n1": "Note one.", "n2": "Note two."}
 
-        result = convert_footnotes(md, notes, "notes.xhtml")
+        result = convert_footnotes(md, notes)
         assert "[^1]" in result
         assert "[^2]" in result
         assert "[^1]: Note one." in result
@@ -135,7 +168,7 @@ class TestConvertFootnotes:
         )
         notes = {"c01_n1": "Chapter 1 note.", "c02_n1": "Chapter 2 note."}
 
-        result = convert_footnotes(md, notes, "notes.xhtml")
+        result = convert_footnotes(md, notes)
         assert "[^1]" in result
         assert "[^2]" in result
         assert "[^1]: Chapter 1 note." in result
@@ -143,7 +176,7 @@ class TestConvertFootnotes:
 
     def test_no_conversion_when_no_notes(self):
         md = "Plain text without any footnotes."
-        result = convert_footnotes(md, {}, "notes.xhtml")
+        result = convert_footnotes(md, {})
         assert result == md
 
     def test_unmatched_refs_left_as_is(self):
@@ -151,7 +184,7 @@ class TestConvertFootnotes:
         md = 'Text<sup><a href="#notes.xhtml_unknown">1</a></sup> more.'
         notes = {"other_id": "Some note."}
 
-        result = convert_footnotes(md, notes, "notes.xhtml")
+        result = convert_footnotes(md, notes)
         assert "<sup>" in result  # left as-is
 
     def test_strips_notes_section_from_body(self):
@@ -166,17 +199,15 @@ class TestConvertFootnotes:
         )
         notes = {"n1": "The note text.", "n2": "Another note."}
 
-        result = convert_footnotes(md, notes, "notes.xhtml")
+        result = convert_footnotes(md, notes)
         assert "# Notes and References" not in result
         assert "[^1]: The note text." in result
 
-    def test_handles_notes_filename_prefix(self):
-        """Pandoc prefixes IDs with the source filename. The notes_filename
-        parameter tells us what prefix to strip when matching.
-        """
-        md = 'Text<sup><a href="#endnotes.xhtml_fn42">1</a></sup>.'
+    def test_suffix_matching_handles_any_filename_prefix(self):
+        """Pandoc prefixes IDs with the source filename. Suffix matching handles this."""
+        md = 'Text<sup><a href="#some_long_prefix.xhtml_fn42">1</a></sup>.'
         notes = {"fn42": "A footnote."}
 
-        result = convert_footnotes(md, notes, "endnotes.xhtml")
+        result = convert_footnotes(md, notes)
         assert "[^1]" in result
         assert "[^1]: A footnote." in result
