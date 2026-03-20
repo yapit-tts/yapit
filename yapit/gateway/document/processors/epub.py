@@ -48,6 +48,8 @@ _SMALLCAPS_SPAN = re.compile(r'<span\s+class="smallcaps">([^<]*)</span>')
 _DECORATIVE_WRAPPER = re.compile(r'<span\s+class="(?:figure_dingbat|break)">([\s\S]*?)</span>')
 _ARIA_HIDDEN = re.compile(r'<span\s+aria-hidden="true">[^<]*</span>')
 _REMAINING_SPAN = re.compile(r"</?span[^>]*>")
+_PRESENTATION_IMG = re.compile(r'<img\s[^>]*role="presentation"[^>]*/?\s*>')
+_TOC_SECTION = re.compile(r"\n#{1,2}\s+(?:Contents|Table of Contents)\s*\n(?:(?!\n#).)*", re.DOTALL)
 _BLANK_LINES = re.compile(r"\n{3,}")
 
 
@@ -60,6 +62,22 @@ class ExtractedImage:
     mime: str
 
 
+def _dedup_images(markdown: str) -> str:
+    """Remove <img> tags whose src duplicates a nearby ![](src) markdown image.
+
+    Pandoc outputs covers as both ![](path) and <img src="path">, causing duplicates.
+    """
+    md_images = set(re.findall(r"!\[[^\]]*\]\(([^)]+)\)", markdown))
+    if not md_images:
+        return markdown
+
+    def remove_dup_img(match: re.Match) -> str:
+        src = match.group(1) or match.group(2) or match.group(3)
+        return "" if src in md_images else match.group(0)
+
+    return _IMG_TAG_PATTERN.sub(remove_dup_img, markdown)
+
+
 def _clean_pandoc_output(markdown: str) -> str:
     """Strip EPUB-specific HTML cruft that pandoc passes through."""
     markdown = _EMPTY_ANCHOR_SPAN.sub("", markdown)
@@ -69,8 +87,10 @@ def _clean_pandoc_output(markdown: str) -> str:
     markdown = _SMALLCAPS_SPAN.sub(lambda m: m.group(1).upper(), markdown)
     markdown = _DECORATIVE_WRAPPER.sub(lambda m: m.group(1), markdown)
     markdown = _ARIA_HIDDEN.sub("", markdown)
-    # Strip all remaining span tags (keep inner content — just removes the wrapper)
+    markdown = _PRESENTATION_IMG.sub("", markdown)
     markdown = _REMAINING_SPAN.sub("", markdown)
+    markdown = _TOC_SECTION.sub("", markdown)
+    markdown = _dedup_images(markdown)
     markdown = _BLANK_LINES.sub("\n\n", markdown)
     return markdown.strip()
 
