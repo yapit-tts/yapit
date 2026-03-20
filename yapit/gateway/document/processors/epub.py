@@ -63,19 +63,35 @@ class ExtractedImage:
 
 
 def _dedup_images(markdown: str) -> str:
-    """Remove <img> tags whose src duplicates a nearby ![](src) markdown image.
-
-    Pandoc outputs covers as both ![](path) and <img src="path">, causing duplicates.
+    """Remove duplicate images. Pandoc can output the same image as both
+    ![](path) and <img src="path">, or as two ![](path) with different alt text.
     """
+    # Remove <img> tags whose src duplicates an existing markdown image
     md_images = set(re.findall(r"!\[[^\]]*\]\(([^)]+)\)", markdown))
-    if not md_images:
-        return markdown
+    if md_images:
 
-    def remove_dup_img(match: re.Match) -> str:
-        src = match.group(1) or match.group(2) or match.group(3)
-        return "" if src in md_images else match.group(0)
+        def remove_dup_img(match: re.Match) -> str:
+            src = match.group(1) or match.group(2) or match.group(3)
+            return "" if src in md_images else match.group(0)
 
-    return _IMG_TAG_PATTERN.sub(remove_dup_img, markdown)
+        markdown = _IMG_TAG_PATTERN.sub(remove_dup_img, markdown)
+
+    # Deduplicate images only in the front matter (before the first heading)
+    lines = markdown.split("\n")
+    seen_urls: set[str] = set()
+    result = []
+    in_front_matter = True
+    for line in lines:
+        if in_front_matter and line.startswith("#"):
+            in_front_matter = False
+        if in_front_matter:
+            m = re.match(r"^\s*!\[[^\]]*\]\(([^)]+)\)\s*$", line)
+            if m and m.group(1) in seen_urls:
+                continue
+            if m:
+                seen_urls.add(m.group(1))
+        result.append(line)
+    return "\n".join(result)
 
 
 def _clean_pandoc_output(markdown: str) -> str:
