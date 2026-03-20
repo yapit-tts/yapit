@@ -753,17 +753,51 @@ class TestCallouts:
         # Content still present
         assert len(block.blocks) == 1
 
-    def test_callout_invalid_color(self):
-        """Invalid color is not recognized as callout."""
-        md = """> [!ORANGE] Not a valid color
+    def test_callout_unknown_type_defaults_to_blue(self):
+        """Unknown callout type defaults to BLUE (matches Obsidian behavior)."""
+        md = """> [!ORANGE] Not a standard type
 > Content
 """
         ast = parse_markdown(md)
         doc = transform(ast)
         block = doc.blocks[0]
-        # Should be regular blockquote
-        assert block.callout_type is None
-        assert block.callout_title is None
+        assert block.callout_type == "BLUE"
+        assert block.callout_title == "Not a standard type"
+
+    def test_callout_obsidian_semantic_types(self):
+        """Obsidian semantic callout types map to correct colors."""
+        cases = {
+            "note": "BLUE",
+            "info": "BLUE",
+            "todo": "BLUE",
+            "tip": "TEAL",
+            "hint": "TEAL",
+            "important": "TEAL",
+            "abstract": "TEAL",
+            "summary": "TEAL",
+            "tldr": "TEAL",
+            "success": "GREEN",
+            "check": "GREEN",
+            "done": "GREEN",
+            "question": "YELLOW",
+            "warning": "YELLOW",
+            "caution": "YELLOW",
+            "failure": "RED",
+            "danger": "RED",
+            "error": "RED",
+            "bug": "RED",
+            "example": "PURPLE",
+            "quote": "GRAY",
+            "cite": "GRAY",
+        }
+        for semantic_type, expected_color in cases.items():
+            md = f"> [!{semantic_type}] Title\n> Content"
+            ast = parse_markdown(md)
+            doc = transform(ast)
+            block = doc.blocks[0]
+            assert block.callout_type == expected_color, (
+                f"[!{semantic_type}] → expected {expected_color}, got {block.callout_type}"
+            )
 
     def test_regular_blockquote_unchanged(self):
         """Regular blockquote without callout marker."""

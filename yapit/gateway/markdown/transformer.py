@@ -50,6 +50,66 @@ from yapit.gateway.markdown.models import (
 )
 from yapit.gateway.markdown.parser import parse_markdown
 
+# Obsidian callout types → yapit color palette.
+# Colors verified against Obsidian's computed --callout-color CSS values.
+# Our own color names (BLUE, GREEN, etc.) pass through unchanged.
+_CALLOUT_COLORS = {"BLUE", "GREEN", "PURPLE", "RED", "YELLOW", "TEAL", "GRAY"}
+_CALLOUT_TYPE_MAP: dict[str, str] = {
+    # Obsidian: rgb(2, 122, 255) — blue
+    "NOTE": "BLUE",
+    "INFO": "BLUE",
+    "TODO": "BLUE",
+    # Obsidian: rgb(83, 223, 221) — teal
+    "ABSTRACT": "TEAL",
+    "SUMMARY": "TEAL",
+    "TLDR": "TEAL",
+    "TIP": "TEAL",
+    "HINT": "TEAL",
+    "IMPORTANT": "TEAL",
+    # Obsidian: rgb(68, 207, 110) — green
+    "SUCCESS": "GREEN",
+    "CHECK": "GREEN",
+    "DONE": "GREEN",
+    # Obsidian: rgb(233, 151, 63) — orange/yellow
+    "QUESTION": "YELLOW",
+    "HELP": "YELLOW",
+    "FAQ": "YELLOW",
+    "WARNING": "YELLOW",
+    "CAUTION": "YELLOW",
+    "ATTENTION": "YELLOW",
+    # Obsidian: rgb(251, 70, 76) — red
+    "FAILURE": "RED",
+    "FAIL": "RED",
+    "MISSING": "RED",
+    "DANGER": "RED",
+    "ERROR": "RED",
+    "BUG": "RED",
+    # Obsidian: rgb(168, 130, 255) — purple
+    "EXAMPLE": "PURPLE",
+    # Obsidian: rgb(158, 158, 158) — gray
+    "QUOTE": "GRAY",
+    "CITE": "GRAY",
+    # Aliases
+    "GREY": "GRAY",
+    # Bootstrap alert types
+    "PRIMARY": "BLUE",
+    "SECONDARY": "GRAY",
+    "LIGHT": "GRAY",
+    "DARK": "GRAY",
+}
+
+
+def _resolve_callout_type(raw: str) -> str:
+    """Map a callout type identifier to a yapit color.
+
+    Accepts our own color names (BLUE, RED, ...), Obsidian semantic types
+    (note, tip, warning, ...), and Bootstrap alert types. Unknown types
+    default to BLUE, matching Obsidian's behavior.
+    """
+    if raw in _CALLOUT_COLORS:
+        return raw
+    return _CALLOUT_TYPE_MAP.get(raw, "BLUE")
+
 
 def _footnote_sort_key(label: str) -> tuple[int, str]:
     """Sort footnotes numerically when possible, alphabetically otherwise."""
@@ -1331,12 +1391,7 @@ class DocumentTransformer:
         if not match:
             return None
 
-        callout_type = match.group(1).upper()
-        if callout_type == "GREY":
-            callout_type = "GRAY"
-        valid_colors = {"BLUE", "GREEN", "PURPLE", "RED", "YELLOW", "TEAL", "GRAY"}
-        if callout_type not in valid_colors:
-            return None
+        callout_type = _resolve_callout_type(match.group(1).upper())
 
         # Find softbreak to separate title from content
         # Everything before softbreak = title line
