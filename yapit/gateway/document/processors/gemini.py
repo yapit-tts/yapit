@@ -3,7 +3,6 @@
 import asyncio
 import random
 import time
-from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pymupdf
@@ -20,6 +19,7 @@ from yapit.gateway.document.figures import (
     prepare_page,
     substitute_image_placeholders,
 )
+from yapit.gateway.document.processors.base import VisionExtractor
 from yapit.gateway.document.types import ExtractedPage, PageResult, PreparedPage, ProcessorConfig
 from yapit.gateway.metrics import log_event
 from yapit.gateway.storage import ImageStorage
@@ -43,9 +43,8 @@ SAFETY_OFF = [
 RETRYABLE_STATUS_CODES = {429, 500, 503, 504}
 MAX_RETRIES = 6
 BASE_DELAY_SECONDS = 1.0
-MAX_DELAY_SECONDS = 30.0  # Total retry time ~61s (1+2+4+8+16+30) to handle rate limit windows
+MAX_DELAY_SECONDS = 30.0
 
-# Fallback estimates when usage_metadata is None
 FALLBACK_INPUT_TOKENS_PER_PAGE = 2500
 FALLBACK_OUTPUT_TOKENS_PER_PAGE = 1000
 
@@ -58,15 +57,15 @@ def create_gemini_config(
         slug="gemini",
         supported_mime_types=frozenset({"application/pdf"}),
         max_pages=10000,
-        max_file_size=100 * 1024 * 1024,  # 100MB
+        max_file_size=100 * 1024 * 1024,
         is_paid=True,
-        output_token_multiplier=6,  # Output costs 6× input
+        output_token_multiplier=6,
         extraction_cache_prefix=f"gemini:{resolution}:{prompt_version}",
         supports_batch=True,
     )
 
 
-class GeminiExtractor:
+class GeminiExtractor(VisionExtractor):
     """Extracts document content using Gemini API with YOLO figure detection."""
 
     def __init__(
@@ -80,48 +79,30 @@ class GeminiExtractor:
         media_first: bool = False,
         thinking_level: types.ThinkingLevel = types.ThinkingLevel.MINIMAL,
     ):
-        self._redis = redis
+        super().__init__(model=model, prompt_path=prompt_path, redis=redis, image_storage=image_storage)
         self._client = genai.Client(api_key=api_key)
-        self._model = model
         self._resolution = RESOLUTION_MAP[resolution]
-        self._prompt = prompt_path.read_text().strip()
-        self._image_storage = image_storage
         self._media_first = media_first
         self._thinking_level = thinking_level
 
-    async def extract(
-        self,
-        content: bytes,
-        content_type: str,
-        content_hash: str,
-        pages: list[int] | None = None,
-        user_id: str | None = None,
-        cancel_key: str | None = None,
-    ) -> AsyncIterator[PageResult]:
-        """Extract pages, yielding results as each completes (parallel execution)."""
-        if content_type.startswith("image/"):
-            yield await self._extract_image(content, content_type, content_hash, user_id)
-            return
-
-        async for result in self._extract_pdf(content, content_hash, pages, user_id, cancel_key):
-            yield result
-
-    async def _extract_image(
-        self, content: bytes, content_type: str, content_hash: str, user_id: str | None
-    ) -> PageResult:
-        """Extract text from a single image."""
-        log = logger.bind(content_hash=content_hash, user_id=user_id)
-        config = types.GenerateContentConfig(
+    def _make_config(self) -> types.GenerateContentConfig:
+        return types.GenerateContentConfig(
             media_resolution=self._resolution,
             thinking_config=types.ThinkingConfig(thinking_level=self._thinking_level),
             safety_settings=SAFETY_OFF,
         )
+
+    async def _extract_image(
+        self, content: bytes, content_type: str, content_hash: str, user_id: str | None
+    ) -> PageResult:
+        log = logger.bind(content_hash=content_hash, user_id=user_id)
+        config = self._make_config()
         media_part = types.Part.from_bytes(data=content, mime_type=content_type)
         contents = [media_part, self._prompt] if self._media_first else [self._prompt, media_part]
         start_time = time.monotonic()
 
         try:
-            response = await self._call_gemini_with_retry(contents, config, context="image")
+            response = await self._call_with_retry(contents, config, context="image")
         except Exception as e:
             duration_ms = int((time.monotonic() - start_time) * 1000)
             log.error(f"Gemini image extraction failed after retries: {e}")
@@ -182,101 +163,17 @@ class GeminiExtractor:
             cancelled=False,
         )
 
-    async def _extract_pdf(
-        self,
-        content: bytes,
-        content_hash: str,
-        pages: list[int] | None,
-        user_id: str | None,
-        cancel_key: str | None,
-    ) -> AsyncIterator[PageResult]:
-        """Extract text from PDF, yielding pages as they complete."""
-        with pymupdf.open(stream=content, filetype="pdf") as doc:
-            total_pages = len(doc)
-        pages_to_process = sorted(set(pages) if pages else set(range(total_pages)))
-
-        logger.info(f"Extraction: starting {len(pages_to_process)} pages (PDF has {total_pages} total)")
-
-        tasks = {
-            asyncio.create_task(self._process_page(content, page_idx, content_hash, cancel_key, user_id)): page_idx
-            for page_idx in pages_to_process
-        }
-
-        # Yield results as each completes
-        for coro in asyncio.as_completed(tasks.keys()):
-            yield await coro
-
-    async def _process_page(
-        self,
-        content: bytes,
-        page_idx: int,
-        content_hash: str,
-        cancel_key: str | None,
-        user_id: str | None,
-    ) -> PageResult:
-        """Process a single page: YOLO detection → figure storage → Gemini extraction."""
-        if cancel_key and await self._redis.exists(cancel_key):
-            logger.info(f"Page {page_idx + 1} cancelled before processing")
-            return PageResult(
-                page_idx=page_idx,
-                page=None,
-                input_tokens=0,
-                output_tokens=0,
-                thoughts_tokens=0,
-                is_fallback=False,
-                cancelled=True,
-            )
-
-        try:
-            page = await prepare_page(content, page_idx, content_hash, self._redis, self._image_storage)
-
-            if cancel_key and await self._redis.exists(cancel_key):
-                logger.info(f"Page {page_idx + 1} cancelled after YOLO, before Gemini")
-                return PageResult(
-                    page_idx=page_idx,
-                    page=None,
-                    input_tokens=0,
-                    output_tokens=0,
-                    thoughts_tokens=0,
-                    is_fallback=False,
-                    cancelled=True,
-                )
-
-            return await self._call_gemini_for_page(page, content_hash, user_id)
-
-        except Exception as e:
-            logger.error(f"Page {page_idx + 1} processing failed: {e}")
-            return PageResult(
-                page_idx=page_idx,
-                page=None,
-                input_tokens=0,
-                output_tokens=0,
-                thoughts_tokens=0,
-                is_fallback=False,
-                cancelled=False,
-            )
-
-    async def _call_gemini_for_page(
-        self,
-        page: PreparedPage,
-        content_hash: str,
-        user_id: str | None,
-    ) -> PageResult:
-        """Call Gemini API to extract text from a prepared page."""
+    async def _call_for_page(self, page: PreparedPage, content_hash: str, user_id: str | None) -> PageResult:
         page_idx = page.page_idx
         log = logger.bind(page_idx=page_idx, content_hash=content_hash, user_id=user_id)
         prompt = build_figure_prompt(self._prompt, page.figures)
-        config = types.GenerateContentConfig(
-            media_resolution=self._resolution,
-            thinking_config=types.ThinkingConfig(thinking_level=self._thinking_level),
-            safety_settings=SAFETY_OFF,
-        )
+        config = self._make_config()
         media_part = types.Part.from_bytes(data=page.page_bytes, mime_type="application/pdf")
         contents = [media_part, prompt] if self._media_first else [prompt, media_part]
 
         start_time = time.monotonic()
         try:
-            response = await self._call_gemini_with_retry(contents, config, context=f"page {page_idx + 1}")
+            response = await self._call_with_retry(contents, config, context=f"page {page_idx + 1}")
         except Exception as e:
             duration_ms = int((time.monotonic() - start_time) * 1000)
             log.error(f"Gemini: page {page_idx + 1} failed after retries: {e}")
@@ -361,13 +258,12 @@ class GeminiExtractor:
             cancelled=False,
         )
 
-    async def _call_gemini_with_retry(
+    async def _call_with_retry(
         self,
         contents: list,
         config: types.GenerateContentConfig,
         context: str,
     ) -> types.GenerateContentResponse:
-        """Call Gemini API with exponential backoff retry for transient errors."""
         last_error: Exception | None = None
         for attempt in range(MAX_RETRIES):
             try:
@@ -419,7 +315,6 @@ class GeminiExtractor:
         usage_metadata: types.GenerateContentResponseUsageMetadata | None,
         context: str,
     ) -> tuple[int, int, int, int, bool]:
-        """Extract token counts from Gemini response. Returns (input, output, thoughts, cached, is_fallback)."""
         if usage_metadata is None:
             logger.error(f"Gemini {context}: usage_metadata is None, using fallback estimates")
             return (FALLBACK_INPUT_TOKENS_PER_PAGE, FALLBACK_OUTPUT_TOKENS_PER_PAGE, 0, 0, True)
@@ -440,17 +335,14 @@ class GeminiExtractor:
 
         return input_tokens, output_tokens, thoughts_tokens, cached_tokens, False
 
+    # --- Batch support (Gemini-specific, not part of base class) ---
+
     async def prepare_for_batch(
         self,
         content: bytes,
         content_hash: str,
         pages: list[int] | None = None,
     ) -> tuple[list[BatchPageRequest], dict[int, list[str]]]:
-        """Prepare all pages for batch submission.
-
-        Returns:
-            (batch_requests, figure_urls_by_page)
-        """
         with pymupdf.open(stream=content, filetype="pdf") as doc:
             total_pages = len(doc)
         pages_to_process = sorted(set(pages) if pages else set(range(total_pages)))
@@ -475,10 +367,6 @@ class GeminiExtractor:
         figure_urls_by_page = {p.page_idx: p.figure_urls for p in prepared}
 
         return batch_requests, figure_urls_by_page
-
-    @property
-    def model(self) -> str:
-        return self._model
 
     @property
     def client(self) -> genai.Client:

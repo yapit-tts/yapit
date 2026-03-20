@@ -35,7 +35,6 @@ from yapit.gateway.deps import create_cache, create_image_storage
 from yapit.gateway.document.batch_poller import BatchPoller
 from yapit.gateway.document.defuddle_client import init_defuddle_client
 from yapit.gateway.document.processors.gemini import GeminiExtractor, create_gemini_config
-from yapit.gateway.document.processors.openai_compat import OpenAIExtractor, create_openai_config
 from yapit.gateway.document.types import BatchExtractor
 from yapit.gateway.domain_models import UsageLog
 from yapit.gateway.exceptions import APIError
@@ -100,6 +99,8 @@ async def lifespan(app: FastAPI):
         )
         logger.info("AI extractor: gemini")
     elif settings.ai_processor == "openai":
+        from yapit.gateway.document.processors.openai_compat import OpenAIExtractor, create_openai_config
+
         assert settings.ai_processor_base_url, "AI_PROCESSOR_BASE_URL required for openai processor"
         assert settings.ai_processor_api_key, "AI_PROCESSOR_API_KEY required for openai processor"
         assert settings.ai_processor_model, "AI_PROCESSOR_MODEL required for openai processor"
