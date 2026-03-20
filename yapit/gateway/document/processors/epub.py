@@ -76,23 +76,24 @@ def _clean_pandoc_output(markdown: str) -> str:
 
 
 def extract_document_info(content: bytes) -> tuple[int, str | None]:
-    """Extract title from EPUB metadata via OPF. Returns (total_pages=1, title)."""
-    try:
-        with zipfile.ZipFile(BytesIO(content)) as zf:
-            container = ET.fromstring(zf.read("META-INF/container.xml"))
-            ns = {"c": "urn:oasis:names:tc:opendocument:xmlns:container"}
-            rootfile = container.find(".//c:rootfile", ns)
-            if rootfile is None:
-                return 1, None
+    """Extract title from EPUB metadata via OPF.
 
-            opf = ET.fromstring(zf.read(rootfile.get("full-path", "")))
+    Raises on corrupt/invalid EPUBs (bad ZIP, missing container.xml).
+    Returns (1, None) only when the EPUB is valid but has no title element.
+    """
+    with zipfile.ZipFile(BytesIO(content)) as zf:
+        container = ET.fromstring(zf.read("META-INF/container.xml"))
+        ns = {"c": "urn:oasis:names:tc:opendocument:xmlns:container"}
+        rootfile = container.find(".//c:rootfile", ns)
+        if rootfile is None:
+            return 1, None
 
-            for ns_uri in ["http://purl.org/dc/elements/1.1/", "http://purl.org/dc/terms/"]:
-                title_el = opf.find(f".//{{{ns_uri}}}title")
-                if title_el is not None and title_el.text:
-                    return 1, title_el.text.strip()
-    except Exception:
-        logger.debug("Failed to extract EPUB metadata")
+        opf = ET.fromstring(zf.read(rootfile.get("full-path", "")))
+
+        for ns_uri in ["http://purl.org/dc/elements/1.1/", "http://purl.org/dc/terms/"]:
+            title_el = opf.find(f".//{{{ns_uri}}}title")
+            if title_el is not None and title_el.text:
+                return 1, title_el.text.strip()
 
     return 1, None
 

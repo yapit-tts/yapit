@@ -60,7 +60,7 @@ from yapit.gateway.document.processing import (
     process_pages_to_document,
     process_with_billing,
 )
-from yapit.gateway.document.processors import pdf
+from yapit.gateway.document.processors import epub, pdf
 from yapit.gateway.document.website import extract_website_content
 from yapit.gateway.domain_models import Document, DocumentMetadata, UsageType, UserPreferences, UserSubscription
 from yapit.gateway.exceptions import ResourceNotFoundError
@@ -633,13 +633,23 @@ async def create_website_document(
         )
 
     assert cached_doc.metadata.url, "Website document must have a URL"
-    markdown, defuddle_title = await extract_website_content(cached_doc.metadata.url)
+    t0 = time.monotonic()
+    markdown, defuddle_title, defuddle_method = await extract_website_content(cached_doc.metadata.url)
 
     processed = await asyncio.get_running_loop().run_in_executor(
         cpu_executor,
         process_pages_to_document,
         {0: ExtractedPage(markdown=markdown, images=[])},
         transformer,
+    )
+
+    duration_ms = int((time.monotonic() - t0) * 1000)
+    await log_event(
+        "document_extraction_complete",
+        processor_slug=f"defuddle:{defuddle_method}",
+        duration_ms=duration_ms,
+        user_id=user.id,
+        data={"content_type": "text/html", "chars": len(markdown), "images": 0, "pages": 1},
     )
 
     doc = Document.from_content(
@@ -932,16 +942,19 @@ async def _run_extraction(
     method = "ai" if ai_transform else "arxiv" if arxiv_id else "free"
     ext_log.info(f"Extraction starting: {method}, {total_pages} pages")
 
+    processor_slug = "unknown"
+    t0 = time.monotonic()
     try:
         if arxiv_id and not ai_transform:
             arxiv_html_url = f"https://arxiv.org/html/{arxiv_id}"
-            markdown, _ = await extract_website(arxiv_html_url)
+            markdown, _, defuddle_method = await extract_website(arxiv_html_url)
             if markdown.strip():
                 markdown = resolve_relative_urls(markdown, arxiv_html_url)
                 extraction_result = DocumentExtractionResult(
                     pages={0: ExtractedPage(markdown=markdown, images=[])},
                     extraction_method="defuddle",
                 )
+                processor_slug = f"defuddle:{defuddle_method}"
             else:
                 ext_log.info(f"No HTML version for {arxiv_id}, falling back to pymupdf")
                 extraction_result = await process_with_billing(
@@ -959,9 +972,8 @@ async def _run_extraction(
                     file_size=file_size,
                     pages=pages,
                 )
+                processor_slug = "pymupdf"
         elif content_type == "application/epub+zip" and not ai_transform:
-            from yapit.gateway.document.processors import epub
-
             extraction_result = await process_with_billing(
                 config=epub.config,
                 extractor=epub.extract(content, pages, image_storage, content_hash),
@@ -977,11 +989,13 @@ async def _run_extraction(
                 file_size=file_size,
                 pages=pages,
             )
+            processor_slug = "epub"
         elif content_type.startswith("text/") and not ai_transform:
             extraction_result = DocumentExtractionResult(
                 pages={0: ExtractedPage(markdown=content.decode("utf-8", errors="ignore"), images=[])},
                 extraction_method="passthrough",
             )
+            processor_slug = "passthrough"
         else:
             if ai_transform:
                 assert ai_extractor is not None and ai_extractor_config is not None
@@ -1014,9 +1028,26 @@ async def _run_extraction(
                 file_size=file_size,
                 pages=pages,
             )
+            processor_slug = config.slug
             ext_log.info(
                 f"Extraction done, {len(extraction_result.pages)} pages, {len(extraction_result.failed_pages)} failed"
             )
+
+        duration_ms = int((time.monotonic() - t0) * 1000)
+        total_chars = sum(len(p.markdown) for p in extraction_result.pages.values())
+        total_images = sum(len(p.images) for p in extraction_result.pages.values())
+        await log_event(
+            "document_extraction_complete",
+            processor_slug=processor_slug,
+            duration_ms=duration_ms,
+            user_id=user_id,
+            data={
+                "content_type": content_type,
+                "chars": total_chars,
+                "images": total_images,
+                "pages": len(extraction_result.pages),
+            },
+        )
 
         if await redis.exists(cancel_key):
             ext_log.info("Extraction cancelled, skipping document creation")
@@ -1063,6 +1094,14 @@ async def _run_extraction(
     except Exception as e:
         ext_log.exception("Async extraction failed")
         await log_error(f"Async extraction failed: {e}", content_hash=content_hash, user_id=user_id)
+        duration_ms = int((time.monotonic() - t0) * 1000)
+        await log_event(
+            "document_extraction_error",
+            processor_slug=processor_slug,
+            duration_ms=duration_ms,
+            user_id=user_id,
+            data={"error": str(e)[:500], "content_type": content_type},
+        )
         try:
             await redis.set(
                 result_key,
@@ -1567,9 +1606,13 @@ def _extract_document_info(content: bytes, content_type: str) -> tuple[int, str 
             if pdf.metadata and pdf.metadata.get("title"):
                 title = pdf.metadata["title"]
     elif content_type.lower() == "application/epub+zip":
-        from yapit.gateway.document.processors.epub import extract_document_info
-
-        total_pages, title = extract_document_info(content)
+        try:
+            total_pages, title = epub.extract_document_info(content)
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"Invalid EPUB file: {e}",
+            ) from e
     elif content_type.lower().startswith("image/"):
         total_pages = 1
     elif _get_endpoint_type_from_content_type(content_type) == "website":

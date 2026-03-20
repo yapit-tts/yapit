@@ -21,18 +21,33 @@ class TestExtractDocumentInfo:
         assert title == "Test EPUB Document"
         assert pages == 1
 
-    def test_invalid_epub_returns_defaults(self):
-        pages, title = extract_document_info(b"not an epub")
-        assert title is None
-        assert pages == 1
+    def test_invalid_epub_raises(self):
+        with pytest.raises(zipfile.BadZipFile):
+            extract_document_info(b"not an epub")
 
-    def test_empty_zip_returns_defaults(self):
+    def test_empty_zip_raises(self):
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w"):
             pass
+        with pytest.raises(KeyError):
+            extract_document_info(buf.getvalue())
+
+    def test_valid_epub_without_title(self):
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr(
+                "META-INF/container.xml",
+                '<?xml version="1.0"?>'
+                '<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0">'
+                '<rootfiles><rootfile full-path="content.opf"/></rootfiles></container>',
+            )
+            zf.writestr(
+                "content.opf",
+                '<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf"><metadata/></package>',
+            )
         pages, title = extract_document_info(buf.getvalue())
-        assert title is None
         assert pages == 1
+        assert title is None
 
 
 class TestCleanPandocOutput:

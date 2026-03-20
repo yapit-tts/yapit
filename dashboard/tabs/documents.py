@@ -27,28 +27,32 @@ from dashboard.theme import COLORS, apply_plotly_theme
 
 def _summary_kpis(df: pd.DataFrame):
     """Top-level document pipeline KPIs."""
-    ext_complete = get_events(df, "page_extraction_complete")
-    ext_errors = get_events(df, "page_extraction_error")
+    doc_complete = get_events(df, "document_extraction_complete")
+    doc_errors = get_events(df, "document_extraction_error")
     det_complete = get_events(df, "detection_complete")
     det_errors = get_events(df, "detection_error")
-    website = get_events(df, "website_extraction")
+    ext_complete = get_events(df, "page_extraction_complete")
     batch_submitted = get_events(df, "batch_job_submitted")
 
     gemini_cost = calculate_gemini_cost(ext_complete)
 
     col1, col2, col3, col4, col5, col6 = st.columns(6)
     with col1:
-        st.metric("Pages Extracted", format_number(len(ext_complete)))
+        st.metric("Doc Extractions", format_number(len(doc_complete)))
     with col2:
-        st.metric("Extraction Errors", format_number(len(ext_errors)))
+        st.metric("Extraction Errors", format_number(len(doc_errors)))
     with col3:
         st.metric("Detection Jobs", format_number(len(det_complete) + len(det_errors)))
     with col4:
-        st.metric("Website Extractions", format_number(len(website)))
-    with col5:
         st.metric("Batch Jobs", format_number(len(batch_submitted)))
-    with col6:
+    with col5:
         st.metric("Gemini Cost", format_cost(gemini_cost))
+    with col6:
+        if not doc_complete.empty:
+            dur = doc_complete["duration_ms"].dropna()
+            st.metric("P50 Duration", format_duration(dur.median()) if not dur.empty else "-")
+        else:
+            st.metric("P50 Duration", "-")
 
 
 # ── Extraction (Gemini) ──────────────────────────────────────────────────────
@@ -714,42 +718,86 @@ def _figure_mismatch_chart(df: pd.DataFrame) -> go.Figure | None:
     return fig
 
 
-# ── Website & URL Fetching ────────────────────────────────────────────────────
+# ── Document Processing (all extraction paths) ───────────────────────────────
 
 
-def _website_fetching_section(df: pd.DataFrame):
-    """Website extraction, URL fetch, and Playwright stats."""
-    website = get_events(df, "website_extraction")
-    url_fetch = get_events(df, "url_fetch")
-    playwright = get_events(df, "playwright_fetch")
-    markxiv = get_events(df, "markxiv_error")
-    fallback = get_events(df, "html_fallback_triggered")
+def _document_processing_section(df: pd.DataFrame):
+    """Document extraction volume by processor, duration, and errors."""
+    complete = get_events(df, "document_extraction_complete")
+    errors = get_events(df, "document_extraction_error")
 
-    col1, col2, col3, col4, col5 = st.columns(5)
-    with col1:
-        st.metric("Website Extractions", format_number(len(website)))
-        if not website.empty and "duration_ms" in website.columns:
-            dur = website["duration_ms"].dropna()
-            if not dur.empty:
-                st.caption(f"P50: {format_duration(dur.median())}")
-    with col2:
-        st.metric("URL Fetches", format_number(len(url_fetch)))
-        if not url_fetch.empty:
-            url_errors = len(
-                url_fetch[url_fetch["data"].apply(lambda d: "error" in d if isinstance(d, dict) else False)]
+    if complete.empty and errors.empty:
+        st.caption("No document extraction events")
+        return
+
+    # Group processors: defuddle:* → "defuddle", others as-is
+    if not complete.empty:
+        complete = complete.copy()
+        complete["processor_group"] = complete["processor_slug"].apply(
+            lambda s: s.split(":")[0] if isinstance(s, str) and ":" in s else s
+        )
+
+    # KPIs per processor group
+    if not complete.empty:
+        group_counts = complete["processor_group"].value_counts()
+        cols = st.columns(min(len(group_counts) + 1, 6))
+        with cols[0]:
+            st.metric("Total", format_number(len(complete)))
+            if not errors.empty:
+                st.caption(f"{len(errors)} errors")
+        for i, (group, count) in enumerate(group_counts.items()):
+            if i + 1 >= len(cols):
+                break
+            with cols[i + 1]:
+                group_data = complete[complete["processor_group"] == group]
+                st.metric(str(group).title(), format_number(count))
+                dur = group_data["duration_ms"].dropna()
+                if not dur.empty:
+                    st.caption(f"P50: {format_duration(dur.median())}")
+
+    # Hourly volume chart stacked by processor group
+    if not complete.empty and len(complete) > 1:
+        binned = bin_by_time(complete, "1h")
+        hourly = binned.groupby(["time_bin", "processor_group"]).size().reset_index(name="count")
+
+        fig = go.Figure()
+        group_colors = {
+            "defuddle": COLORS["accent_blue"],
+            "pymupdf": COLORS["accent_teal"],
+            "epub": COLORS["accent_purple"],
+            "passthrough": COLORS["text_muted"],
+            "gemini": COLORS["accent_coral"],
+        }
+        for group in sorted(hourly["processor_group"].unique()):
+            group_data = hourly[hourly["processor_group"] == group]
+            fig.add_trace(
+                go.Bar(
+                    x=group_data["time_bin"],
+                    y=group_data["count"],
+                    name=str(group).title(),
+                    marker_color=group_colors.get(str(group), COLORS["accent_cyan"]),
+                    hovertemplate=f"{group}: %{{y}}<extra></extra>",
+                )
             )
-            st.caption(f"{url_errors} errors")
-    with col3:
-        st.metric("Playwright (JS)", format_number(len(playwright)))
-        if not playwright.empty:
-            pw_errors = len(
-                playwright[playwright["data"].apply(lambda d: "error" in d if isinstance(d, dict) else False)]
+        fig.update_layout(
+            title="Document Extractions (hourly)",
+            height=280,
+            barmode="stack",
+            xaxis_title="Time",
+            yaxis_title="Extractions",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02),
+        )
+        apply_plotly_theme(fig)
+        st.plotly_chart(fig, width="stretch")
+
+    # Defuddle sub-method breakdown (static vs bot vs playwright)
+    if not complete.empty:
+        defuddle_events = complete[complete["processor_group"] == "defuddle"]
+        if not defuddle_events.empty and len(defuddle_events) > 1:
+            sub_counts = defuddle_events["processor_slug"].value_counts()
+            st.caption(
+                "Defuddle cascade: " + ", ".join(f"{slug.split(':')[-1]}={count}" for slug, count in sub_counts.items())
             )
-            st.caption(f"{pw_errors} errors")
-    with col4:
-        st.metric("HTML Fallbacks", format_number(len(fallback)))
-    with col5:
-        st.metric("arXiv Errors", format_number(len(markxiv)))
 
 
 # ── Batch Jobs ────────────────────────────────────────────────────────────────
@@ -806,13 +854,16 @@ def _batch_jobs_section(df: pd.DataFrame):
 
 def render(df: pd.DataFrame):
     """Render the Documents tab."""
-    has_extraction = (
+    has_doc_extraction = (
+        not get_events(df, "document_extraction_complete").empty
+        or not get_events(df, "document_extraction_error").empty
+    )
+    has_gemini = (
         not get_events(df, "page_extraction_complete").empty or not get_events(df, "page_extraction_error").empty
     )
     has_detection = not get_events(df, "detection_queued").empty or not get_events(df, "detection_complete").empty
-    has_website = not get_events(df, "website_extraction").empty or not get_events(df, "url_fetch").empty
 
-    if not has_extraction and not has_detection and not has_website:
+    if not has_doc_extraction and not has_gemini and not has_detection:
         empty_state("No document processing data available", icon="📄")
         return
 
@@ -822,8 +873,15 @@ def render(df: pd.DataFrame):
 
     st.divider()
 
+    # ── Document Processing (all paths) ──
+    if has_doc_extraction:
+        section_header("Document Processing", "Extraction volume by processor")
+        _document_processing_section(df)
+
+        st.divider()
+
     # ── Extraction (Gemini) ──
-    if has_extraction:
+    if has_gemini:
         section_header("Extraction (Gemini)", "AI page extraction")
         _extraction_summary(df)
 
@@ -907,12 +965,6 @@ def render(df: pd.DataFrame):
             st.plotly_chart(fig, width="stretch")
 
         st.divider()
-
-    # ── Website & URL ──
-    section_header("Website & URL Fetching", "Content download pipeline")
-    _website_fetching_section(df)
-
-    st.divider()
 
     # ── Batch Jobs ──
     section_header("Batch Jobs", "Gemini batch extraction (large documents)")

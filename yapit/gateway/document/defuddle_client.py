@@ -5,13 +5,9 @@ static fetch + linkedom → bot UA retry → Playwright browser fallback.
 The gateway calls it over HTTP — the cascade is handled internally.
 """
 
-import time
-
 import httpx
 from fastapi import HTTPException, status
 from loguru import logger
-
-from yapit.gateway.metrics import log_event
 
 _client: httpx.AsyncClient | None = None
 
@@ -21,14 +17,13 @@ def init_defuddle_client(base_url: str) -> None:
     _client = httpx.AsyncClient(base_url=base_url)
 
 
-async def extract_website(url: str, timeout_ms: int = 30_000) -> tuple[str, str | None]:
+async def extract_website(url: str, timeout_ms: int = 30_000) -> tuple[str, str | None, str]:
     """Extract markdown from a URL via the defuddle service.
 
-    Returns (markdown, title). Raises HTTPException on service errors.
+    Third return value is the cascade step (static, static-bot, playwright).
     """
     assert _client is not None, "Call init_defuddle_client() during app startup"
 
-    t0 = time.monotonic()
     try:
         resp = await _client.post(
             "/extract",
@@ -36,9 +31,7 @@ async def extract_website(url: str, timeout_ms: int = 30_000) -> tuple[str, str 
             timeout=timeout_ms / 1000 + 5,
         )
     except Exception as e:
-        duration_ms = int((time.monotonic() - t0) * 1000)
-        logger.error(f"Defuddle service unreachable for {url} after {duration_ms}ms: {e}")
-        await log_event("website_extraction_error", data={"url": url, "error": str(e), "duration_ms": duration_ms})
+        logger.error(f"Defuddle service unreachable for {url}: {e}")
         raise
 
     if resp.status_code == 503:
@@ -47,12 +40,7 @@ async def extract_website(url: str, timeout_ms: int = 30_000) -> tuple[str, str 
             detail="Content extraction service is busy — please try again in a moment",
         )
     if not resp.is_success:
-        duration_ms = int((time.monotonic() - t0) * 1000)
-        logger.error(f"Defuddle service returned {resp.status_code} for {url} after {duration_ms}ms")
-        await log_event(
-            "website_extraction_error",
-            data={"url": url, "error": f"HTTP {resp.status_code}", "duration_ms": duration_ms},
-        )
+        logger.error(f"Defuddle service returned {resp.status_code} for {url}")
         resp.raise_for_status()
 
     data = resp.json()
@@ -60,9 +48,5 @@ async def extract_website(url: str, timeout_ms: int = 30_000) -> tuple[str, str 
     title = data.get("title")
     method = data.get("extraction_method", "unknown")
 
-    duration_ms = int((time.monotonic() - t0) * 1000)
-    logger.info(f"Extracted {url} via {method} in {duration_ms}ms ({len(markdown)} chars)")
-    await log_event(
-        "website_extraction", data={"url": url, "chars": len(markdown), "duration_ms": duration_ms, "method": method}
-    )
-    return markdown, title
+    logger.info(f"Extracted {url} via {method} ({len(markdown)} chars)")
+    return markdown, title, method

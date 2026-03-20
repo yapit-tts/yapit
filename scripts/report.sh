@@ -157,9 +157,15 @@ Yapit is a text-to-speech platform with these components:
 - `job_overflow` — job sent to RunPod serverless due to queue backup
 - `overflow_complete`, `overflow_error` — RunPod result
 
-**Extraction:**
-- `extraction_estimate` — pre-check token estimate (compare with actual for tuning)
-- `page_extraction_complete`, `page_extraction_error` — Gemini API calls
+**Document extraction:**
+- `document_extraction_complete` — emitted for every document extraction (all paths)
+  - `processor_slug` — which method: pymupdf, epub, passthrough, defuddle:static, defuddle:static-bot, defuddle:playwright, gemini
+  - `duration_ms` — wall time
+  - `data.chars`, `data.images`, `data.pages` — output stats
+- `document_extraction_error` — extraction failed
+  - `processor_slug`, `data.error`, `data.content_type`
+- `extraction_estimate` — pre-check token estimate
+- `page_extraction_complete`, `page_extraction_error` — per-page Gemini API calls (incl. token counts)
 
 **API rate limits:**
 - `api_rate_limit` — emitted on every 429 response from external APIs before retry
@@ -188,12 +194,10 @@ Yapit is a text-to-speech platform with these components:
   - `data.events_count` — number of synthesis events in the batch
   - `data.users_count` — unique users in the batch
 
-**URL/Document fetching:**
+**URL fetching (transport-level):**
 - `url_fetch` — document URL downloads
   - `duration_ms`, `data.content_type`, `data.size_bytes` on success
   - `data.error` on failure (http_status or request_error)
-- `playwright_fetch` — JS rendering fallback (lower volume, expensive path)
-  - `duration_ms` on success, `data.error` on failure
 
 ## What to Analyze
 
@@ -232,6 +236,11 @@ This is the most important section. Don't just count errors — read the actual 
 ### Overflow Usage
 - `job_overflow` count — occasional during spikes is fine
 - `overflow_error` — RunPod failures, concerning if frequent
+
+### Document Processing
+- `document_extraction_complete` — volume by `processor_slug` (pymupdf, epub, passthrough, defuddle:*, gemini)
+- `document_extraction_error` — any errors? Check `data.error` for each. Group by processor.
+- Duration outliers per processor — compare against typical ranges
 
 ### Extraction (Gemini)
 - `page_extraction_error` — rate limit (429), server errors (5xx)?
@@ -279,6 +288,7 @@ This is the most important section. Don't just count errors — read the actual 
 | Billing reconciliation delta | <10 | >50 sustained (lost events) |
 | CF 504 rate | <15% | >20% or originResponseStatus != 0 |
 | CF cache hit ratio | Low (unique content) | <1% sustained (cache rule broken) |
+| Doc extraction errors | 0 | Any (check processor_slug + data.error) |
 
 Events older than 3-7 days can be ignored unless part of a larger pattern / investigation.
 E.g. items on the DLQ from >7 days ago are almost certainly already taken care of.

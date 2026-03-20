@@ -6,12 +6,9 @@ from yapit.gateway.document.defuddle_client import extract_website
 from yapit.gateway.document.http import resolve_relative_urls
 
 
-async def extract_website_content(url: str) -> tuple[str, str | None]:
-    """Extract markdown from a website URL. Returns (markdown, title).
-
-    Raises HTTPException if extraction produces no content.
-    """
-    markdown, title = await extract_website(url)
+async def extract_website_content(url: str) -> tuple[str, str | None, str]:
+    """Extract markdown from a website URL. Raises HTTPException if no content."""
+    markdown, title, method = await extract_website(url)
 
     if not markdown.strip():
         raise HTTPException(
@@ -20,4 +17,4 @@ async def extract_website_content(url: str) -> tuple[str, str | None]:
         )
 
     markdown = resolve_relative_urls(markdown, url)
-    return markdown, title
+    return markdown, title, method
