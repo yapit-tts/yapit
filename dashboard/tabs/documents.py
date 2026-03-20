@@ -457,6 +457,99 @@ def _estimate_section(df: pd.DataFrame):
     with col4:
         st.metric("Avg Est. Tokens", format_number(estimates["estimated_tokens"].mean()))
 
+    # Estimate vs actual accuracy
+    fig, stats = _estimate_accuracy_chart(df)
+    if fig and stats:
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            st.plotly_chart(fig, width="stretch")
+        with col2:
+            st.metric("Mean % Off", f"{stats['mean_pct_off']:.1f}%")
+            st.metric("Median % Off", f"{stats['median_pct_off']:.1f}%")
+            st.caption(f"{stats['underestimate_count']} under / {stats['overestimate_count']} over")
+
+
+def _estimate_accuracy_chart(df: pd.DataFrame) -> tuple[go.Figure | None, dict | None]:
+    """Scatter plot: estimated vs actual tokens per document."""
+    estimates = get_events(df, "extraction_estimate")
+    complete = get_events(df, "page_extraction_complete")
+    if estimates.empty or complete.empty:
+        return None, None
+
+    estimates = estimates.copy()
+    estimates["content_hash"] = estimates["data"].apply(
+        lambda d: d.get("content_hash") if isinstance(d, dict) else None
+    )
+    estimates["estimated"] = estimates["data"].apply(
+        lambda d: d.get("estimated_tokens", 0) if isinstance(d, dict) else 0
+    )
+    estimates = estimates[["content_hash", "estimated"]].dropna(subset=["content_hash"])
+    estimates = estimates.drop_duplicates(subset=["content_hash"], keep="first")
+
+    complete = complete.copy()
+    complete["content_hash"] = complete["data"].apply(lambda d: d.get("content_hash") if isinstance(d, dict) else None)
+    complete = complete.dropna(subset=["content_hash"])
+    complete = complete.drop_duplicates(subset=["content_hash", "page_idx"], keep="first")
+
+    actuals = complete.groupby("content_hash")["total_token_count"].sum().reset_index()
+    actuals.columns = ["content_hash", "actual"]
+
+    merged = estimates.merge(actuals, on="content_hash", how="inner")
+    if merged.empty:
+        return None, None
+
+    merged["variance"] = merged["actual"] - merged["estimated"]
+    merged["pct_off"] = (merged["variance"] / merged["estimated"] * 100).round(1)
+
+    stats = {
+        "mean_pct_off": merged["pct_off"].mean(),
+        "median_pct_off": merged["pct_off"].median(),
+        "underestimate_count": int((merged["variance"] > 0).sum()),
+        "overestimate_count": int((merged["variance"] < 0).sum()),
+    }
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=merged["estimated"],
+            y=merged["actual"],
+            mode="markers",
+            marker=dict(
+                size=10,
+                color=merged["pct_off"],
+                colorscale="RdYlGn_r",
+                cmin=-50,
+                cmax=50,
+                colorbar=dict(title="% Off"),
+                line=dict(width=1, color=COLORS["border"]),
+            ),
+            hovertemplate="Est: %{x:,.0f}<br>Actual: %{y:,.0f}<br>Off: %{customdata:.1f}%<extra></extra>",
+            customdata=merged["pct_off"],
+        )
+    )
+
+    max_val = max(merged["estimated"].max(), merged["actual"].max())
+    fig.add_trace(
+        go.Scatter(
+            x=[0, max_val],
+            y=[0, max_val],
+            mode="lines",
+            line=dict(color=COLORS["text_muted"], dash="dash", width=1),
+            showlegend=False,
+            hoverinfo="skip",
+        )
+    )
+
+    fig.update_layout(
+        title="Estimate vs Actual Tokens",
+        height=350,
+        xaxis_title="Estimated Tokens",
+        yaxis_title="Actual Tokens",
+        showlegend=False,
+    )
+    apply_plotly_theme(fig)
+    return fig, stats
+
 
 def _processor_stats(df: pd.DataFrame):
     complete = get_events(df, "page_extraction_complete")
@@ -755,28 +848,30 @@ def _document_processing_section(df: pd.DataFrame):
                 if not dur.empty:
                     st.caption(f"P50: {format_duration(dur.median())}")
 
-    # Hourly volume chart stacked by processor group
+    # Hourly volume chart stacked by full processor_slug
     if not complete.empty and len(complete) > 1:
         binned = bin_by_time(complete, "1h")
-        hourly = binned.groupby(["time_bin", "processor_group"]).size().reset_index(name="count")
+        hourly = binned.groupby(["time_bin", "processor_slug"]).size().reset_index(name="count")
 
         fig = go.Figure()
-        group_colors = {
-            "defuddle": COLORS["accent_blue"],
+        slug_colors = {
+            "defuddle:static": COLORS["accent_blue"],
+            "defuddle:static-bot": "rgba(88, 166, 255, 0.5)",
+            "defuddle:playwright": COLORS["accent_cyan"],
             "pymupdf": COLORS["accent_teal"],
             "epub": COLORS["accent_purple"],
             "passthrough": COLORS["text_muted"],
             "gemini": COLORS["accent_coral"],
         }
-        for group in sorted(hourly["processor_group"].unique()):
-            group_data = hourly[hourly["processor_group"] == group]
+        for slug in sorted(hourly["processor_slug"].dropna().unique()):
+            slug_data = hourly[hourly["processor_slug"] == slug]
             fig.add_trace(
                 go.Bar(
-                    x=group_data["time_bin"],
-                    y=group_data["count"],
-                    name=str(group).title(),
-                    marker_color=group_colors.get(str(group), COLORS["accent_cyan"]),
-                    hovertemplate=f"{group}: %{{y}}<extra></extra>",
+                    x=slug_data["time_bin"],
+                    y=slug_data["count"],
+                    name=str(slug),
+                    marker_color=slug_colors.get(str(slug), COLORS["accent_cyan"]),
+                    hovertemplate=f"{slug}: %{{y}}<extra></extra>",
                 )
             )
         fig.update_layout(
@@ -789,15 +884,6 @@ def _document_processing_section(df: pd.DataFrame):
         )
         apply_plotly_theme(fig)
         st.plotly_chart(fig, width="stretch")
-
-    # Defuddle sub-method breakdown (static vs bot vs playwright)
-    if not complete.empty:
-        defuddle_events = complete[complete["processor_group"] == "defuddle"]
-        if not defuddle_events.empty and len(defuddle_events) > 1:
-            sub_counts = defuddle_events["processor_slug"].value_counts()
-            st.caption(
-                "Defuddle cascade: " + ", ".join(f"{slug.split(':')[-1]}={count}" for slug, count in sub_counts.items())
-            )
 
 
 # ── Batch Jobs ────────────────────────────────────────────────────────────────

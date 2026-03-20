@@ -380,6 +380,52 @@ def _trends_tokens(daily_df: pd.DataFrame) -> go.Figure | None:
     return fig
 
 
+def _trends_doc_extraction(daily_df: pd.DataFrame) -> go.Figure | None:
+    """Daily document extraction volume by processor_slug from aggregates."""
+    doc = daily_df[daily_df["event_type"] == "document_extraction_complete"].copy()
+    if doc.empty or "processor_slug" not in doc.columns:
+        return None
+
+    slug_colors = {
+        "defuddle:static": COLORS["accent_blue"],
+        "defuddle:static-bot": "rgba(88, 166, 255, 0.5)",
+        "defuddle:playwright": COLORS["accent_cyan"],
+        "pymupdf": COLORS["accent_teal"],
+        "epub": COLORS["accent_purple"],
+        "passthrough": COLORS["text_muted"],
+        "gemini": COLORS["accent_coral"],
+    }
+
+    fig = go.Figure()
+    for slug in sorted(doc["processor_slug"].dropna().unique()):
+        slug_data = doc[doc["processor_slug"] == slug].groupby("local_date")["event_count"].sum().reset_index()
+        if slug_data.empty:
+            continue
+        fig.add_trace(
+            go.Bar(
+                x=slug_data["local_date"],
+                y=slug_data["event_count"],
+                name=str(slug),
+                marker_color=slug_colors.get(str(slug), COLORS["accent_cyan"]),
+                hovertemplate=f"{slug}: %{{y}}<extra></extra>",
+            )
+        )
+
+    if not fig.data:
+        return None
+
+    fig.update_layout(
+        title="Daily Document Extractions",
+        height=220,
+        barmode="stack",
+        xaxis_title=None,
+        yaxis_title="Extractions",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+    )
+    apply_plotly_theme(fig)
+    return fig
+
+
 # ── Main Render ───────────────────────────────────────────────────────────────
 
 
@@ -453,5 +499,11 @@ def render(df: pd.DataFrame, daily_df: pd.DataFrame | None = None):
                 st.plotly_chart(fig, width="stretch")
         with col2:
             fig = _trends_tokens(daily_df)
+            if fig:
+                st.plotly_chart(fig, width="stretch")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            fig = _trends_doc_extraction(daily_df)
             if fig:
                 st.plotly_chart(fig, width="stretch")
