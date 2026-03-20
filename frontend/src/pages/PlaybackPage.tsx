@@ -37,7 +37,7 @@ interface DocumentResponse {
 
 const PlaybackPage = () => {
   const { documentId } = useParams<{ documentId: string }>();
-  const { state } = useLocation();
+  const { state, hash } = useLocation();
   const navigate = useNavigate();
   const initialTitle: string | undefined = state?.documentTitle;
   const failedPages: number[] | undefined = state?.failedPages;
@@ -313,6 +313,16 @@ const PlaybackPage = () => {
       expanded: Array.from(expandedSections),
     }));
   }, [documentId, sections.length, expandedSections]);
+
+  // Scroll to hash anchor on initial load
+  useEffect(() => {
+    if (!hash || slugMap.size === 0) return;
+    const fragment = hash.slice(1);
+    const el = window.document.getElementById(fragment);
+    if (el) {
+      setTimeout(() => el.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
+    }
+  }, [hash, slugMap]);
 
   const handleSectionToggle = useCallback((sectionId: string) => {
     setExpandedSections(prev => {
