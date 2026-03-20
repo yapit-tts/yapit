@@ -4,6 +4,7 @@
 Yapit TTS - Open-source text-to-speech platform for reading documents, web pages, and text.
 
 **GitHub**: https://github.com/yapit-tts/yapit (public)
+**CLI**: `../yapit-cli/` ([GitHub](https://github.com/yapit-tts/yapit-cli), [PyPI](https://pypi.org/project/yapit/)) — `uvx yapit` for markdown export, document creation from URLs/files
 
 ### Core
 

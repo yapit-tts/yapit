@@ -3,7 +3,7 @@
     "chrome-devtools": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "chrome-devtools-mcp@latest"],
+      "args": ["-y", "chrome-devtools-mcp@latest", "--executablePath", "/home/max/.nix-profile/bin/chromium", "--isolated"],
       "env": {}
     }
   }
