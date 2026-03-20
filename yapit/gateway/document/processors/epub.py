@@ -75,6 +75,141 @@ def _clean_pandoc_output(markdown: str) -> str:
     return markdown.strip()
 
 
+# Footnote ref patterns in pandoc output (after span cleanup)
+# Old-style: <sup><a href="#notes.xhtml_ntsN" id="backref">N</a></sup>
+# EPUB3: <a href="#notes.xhtml_note_N" class="noteref" role="doc-noteref">N</a>
+_FOOTNOTE_SUP_REF = re.compile(r'<sup><a\s+href="#([^"]+)"[^>]*>\s*(\d+)\s*</a></sup>')
+_FOOTNOTE_NOTEREF = re.compile(r'<a\s+[^>]*href="#([^"]+)"[^>]*role="doc-noteref"[^>]*>\s*(\d+)\s*</a>')
+# Old-style definition in pandoc output: <a href="#backref" id="TARGET">N.</a> text
+_FOOTNOTE_DEF_HTML = re.compile(r'<a\s+href="[^"]*"\s+id="[^"]*">\s*\d+\.\s*</a>\s*')
+
+
+def _get_text_content(el: ET.Element) -> str:
+    """Get all text content from an XML element, stripping tags."""
+    return "".join(el.itertext()).strip()
+
+
+def extract_footnotes_from_zip(content: bytes) -> dict[str, str]:
+    """Extract footnote definitions from EPUB ZIP.
+
+    Scans all XHTML files for endnote/footnote sections and extracts
+    note ID → text mappings. Handles both EPUB3 semantic markup
+    (epub:type="endnotes") and old-style HTML patterns.
+    """
+    try:
+        with zipfile.ZipFile(BytesIO(content)) as zf:
+            notes: dict[str, str] = {}
+            for name in zf.namelist():
+                if not name.endswith((".xhtml", ".html")):
+                    continue
+                try:
+                    xhtml = zf.read(name).decode("utf-8", errors="ignore")
+                except Exception:
+                    continue
+
+                # Strip all XML namespace declarations so ET gives us clean tag names
+                xhtml = re.sub(r'\s+xmlns(?::\w+)?="[^"]*"', "", xhtml)
+                xhtml = re.sub(r"\bepub:", "", xhtml)
+
+                try:
+                    root = ET.fromstring(xhtml)
+                except ET.ParseError:
+                    continue
+
+                # Pattern 1: EPUB3 — <section type="endnotes"> with <li> items
+                for section in root.iter():
+                    etype = section.get("type", "")
+                    role = section.get("role", "")
+                    if "endnotes" in etype or "footnotes" in etype or role == "doc-endnotes":
+                        for li in section.iter("li"):
+                            # Find the span/element with the note ID
+                            for el in li.iter():
+                                note_id = el.get("id")
+                                if not note_id:
+                                    continue
+                                text = _get_text_content(li)
+                                # Strip leading "N " or "N. " (the backlink number)
+                                text = re.sub(r"^\d+\.?\s*", "", text).strip()
+                                if text:
+                                    notes[note_id] = text
+                                    break
+
+                # Pattern 2: Old-style — <a href="#backref" id="NOTE_ID">N.</a> text in <p>
+                if not notes:
+                    for p in root.iter("p"):
+                        for a in p.iter("a"):
+                            note_id = a.get("id")
+                            a_text = (a.text or "").strip()
+                            if note_id and re.match(r"^\d+\.$", a_text):
+                                # Get full paragraph text after the <a> element
+                                full_text = _get_text_content(p)
+                                # Strip the "N. " prefix
+                                text = re.sub(r"^\d+\.\s*", "", full_text).strip()
+                                if text:
+                                    notes[note_id] = text
+
+            return notes
+    except Exception:
+        return {}
+
+
+def convert_footnotes(markdown: str, notes: dict[str, str], notes_filename: str = "") -> str:
+    """Convert inline footnote refs to markdown [^N] syntax.
+
+    Matches refs in the pandoc output to definitions extracted from the ZIP.
+    Pandoc prefixes IDs with the source filename (e.g., "nts_r1.xhtml_c01_nts1"),
+    so we match by suffix: for href target "prefix_c01_nts1", we look for note
+    ID "c01_nts1" in the notes dict.
+    """
+    if not notes:
+        return markdown
+
+    # Build suffix lookup: for each note ID, any href ending with _ID or equal to ID matches
+    def find_note(target_id: str) -> str | None:
+        if target_id in notes:
+            return target_id
+        for note_id in notes:
+            if target_id.endswith(f"_{note_id}"):
+                return note_id
+        return None
+
+    label_counter = 0
+    ref_to_label: dict[str, int] = {}
+    used_notes: list[tuple[int, str]] = []
+
+    def replace_ref(match: re.Match) -> str:
+        nonlocal label_counter
+        target_id = match.group(1)
+
+        note_id = find_note(target_id)
+        if note_id is None:
+            return match.group(0)
+
+        if target_id not in ref_to_label:
+            label_counter += 1
+            ref_to_label[target_id] = label_counter
+            used_notes.append((label_counter, notes[note_id]))
+
+        return f"[^{ref_to_label[target_id]}]"
+
+    markdown = _FOOTNOTE_SUP_REF.sub(replace_ref, markdown)
+    markdown = _FOOTNOTE_NOTEREF.sub(replace_ref, markdown)
+
+    if not used_notes:
+        return markdown
+
+    # Remove the original notes section from the body
+    markdown = re.sub(
+        r"\n#{1,2}\s+(?:Notes(?:\s+and\s+References)?|ENDNOTES)\s*\n.*",
+        "",
+        markdown,
+        flags=re.DOTALL,
+    )
+
+    definitions = "\n".join(f"[^{label}]: {text}" for label, text in used_notes)
+    return f"{markdown.rstrip()}\n\n{definitions}\n"
+
+
 def extract_document_info(content: bytes) -> tuple[int, str | None]:
     """Extract title from EPUB metadata via OPF.
 
@@ -178,7 +313,16 @@ async def extract(
 ) -> AsyncIterator[PageResult]:
     """Extract text from EPUB via pandoc. Yields a single PageResult."""
     log = logger.bind(content_hash=content_hash)
+
+    # Extract footnotes from ZIP before pandoc (pandoc drops cross-file EPUB3 notes — #5531)
+    footnotes = await asyncio.get_running_loop().run_in_executor(cpu_executor, extract_footnotes_from_zip, content)
+    if footnotes:
+        log.info("Extracted {count} footnotes from EPUB ZIP", count=len(footnotes))
+
     markdown, images = await asyncio.get_running_loop().run_in_executor(cpu_executor, _run_pandoc, content)
+
+    if footnotes:
+        markdown = convert_footnotes(markdown, footnotes)
 
     image_urls: list[str] = []
     if images and image_storage and content_hash:
