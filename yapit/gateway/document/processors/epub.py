@@ -39,6 +39,17 @@ PANDOC_OUTPUT_FORMAT = "markdown_strict+pipe_tables+strikeout+tex_math_dollars"
 _IMAGE_REF_PATTERN = re.compile(r'!\[([^\]]*)\]\(([^)"]+)(?:\s+"[^"]*")?\)')
 _IMG_TAG_PATTERN = re.compile(r'<img\s[^>]*?src=(?:"([^"]+)"|\'([^\']+)\'|([^\s>]+))[^>]*?>')
 
+# HTML cruft patterns pandoc passes through from EPUB XHTML
+_EMPTY_ANCHOR_SPAN = re.compile(r'<span\s+id="[^"]*">\s*</span>')
+_PAGEBREAK_SPAN = re.compile(r'<span[^>]*class="pagebreak"[^>]*>\s*</span>')
+_EMPTY_SPAN = re.compile(r"<span>\s*</span>")
+_SVG_BLOCK = re.compile(r"<svg\b[^>]*>[\s\S]*?</svg>", re.IGNORECASE)
+_SMALLCAPS_SPAN = re.compile(r'<span\s+class="smallcaps">([^<]*)</span>')
+_DECORATIVE_WRAPPER = re.compile(r'<span\s+class="(?:figure_dingbat|break)">([\s\S]*?)</span>')
+_ARIA_HIDDEN = re.compile(r'<span\s+aria-hidden="true">[^<]*</span>')
+_REMAINING_SPAN = re.compile(r"</?span[^>]*>")
+_BLANK_LINES = re.compile(r"\n{3,}")
+
 
 @dataclass
 class ExtractedImage:
@@ -47,6 +58,21 @@ class ExtractedImage:
     abs_path: str
     data: bytes
     mime: str
+
+
+def _clean_pandoc_output(markdown: str) -> str:
+    """Strip EPUB-specific HTML cruft that pandoc passes through."""
+    markdown = _EMPTY_ANCHOR_SPAN.sub("", markdown)
+    markdown = _PAGEBREAK_SPAN.sub("", markdown)
+    markdown = _EMPTY_SPAN.sub("", markdown)
+    markdown = _SVG_BLOCK.sub("", markdown)
+    markdown = _SMALLCAPS_SPAN.sub(lambda m: m.group(1).upper(), markdown)
+    markdown = _DECORATIVE_WRAPPER.sub(lambda m: m.group(1), markdown)
+    markdown = _ARIA_HIDDEN.sub("", markdown)
+    # Strip all remaining span tags (keep inner content — just removes the wrapper)
+    markdown = _REMAINING_SPAN.sub("", markdown)
+    markdown = _BLANK_LINES.sub("\n\n", markdown)
+    return markdown.strip()
 
 
 def extract_document_info(content: bytes) -> tuple[int, str | None]:
@@ -103,7 +129,7 @@ def _run_pandoc(content: bytes) -> tuple[str, list[ExtractedImage]]:
                 continue
             images.append(ExtractedImage(abs_path=str(img_path), data=img_path.read_bytes(), mime=mime))
 
-        return result.stdout, images
+        return _clean_pandoc_output(result.stdout), images
 
 
 async def _store_images_and_rewrite(
