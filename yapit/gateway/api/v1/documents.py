@@ -131,6 +131,7 @@ class SupportedFormatsResponse(BaseModel):
 # For the <input accept=""> attribute — browsers need both MIME types and extensions
 MIME_EXTENSIONS: dict[str, list[str]] = {
     "application/pdf": [".pdf"],
+    "application/epub+zip": [".epub"],
     "text/html": [".html", ".htm"],
     "text/plain": [".txt"],
     "text/markdown": [".md", ".markdown"],
@@ -148,6 +149,7 @@ MIME_EXTENSIONS: dict[str, list[str]] = {
 async def get_supported_formats(ai_config: AiExtractorConfigDep) -> SupportedFormatsResponse:
     formats: dict[str, FormatInfo] = {
         "application/pdf": FormatInfo(free=True, ai=True, has_pages=True, batch=True),
+        "application/epub+zip": FormatInfo(free=True, ai=False, has_pages=False, batch=False),
         "text/html": FormatInfo(free=True, ai=False, has_pages=False, batch=False),
         "text/plain": FormatInfo(free=True, ai=False, has_pages=False, batch=False),
         "text/markdown": FormatInfo(free=True, ai=False, has_pages=False, batch=False),
@@ -525,6 +527,13 @@ async def prepare_document_upload(
         )
 
     content_type = file.content_type or "application/octet-stream"
+    if content_type in ("application/octet-stream", "application/zip"):
+        from yapit.gateway.document.http import sniff_content_type
+
+        content_type = sniff_content_type(content) or content_type
+    if content_type == "application/octet-stream" and file.filename and file.filename.lower().endswith(".epub"):
+        logger.warning("EPUB detected by extension only (sniffing failed), filename={name}", name=file.filename)
+        content_type = "application/epub+zip"
 
     total_pages, title = await asyncio.to_thread(_extract_document_info, content, content_type)
     metadata = DocumentMetadata(
@@ -950,6 +959,24 @@ async def _run_extraction(
                     file_size=file_size,
                     pages=pages,
                 )
+        elif content_type == "application/epub+zip" and not ai_transform:
+            from yapit.gateway.document.processors import epub
+
+            extraction_result = await process_with_billing(
+                config=epub.config,
+                extractor=epub.extract(content, pages, image_storage, content_hash),
+                user_id=user_id,
+                content=content,
+                content_type=content_type,
+                content_hash=content_hash,
+                total_pages=total_pages,
+                extraction_cache=extraction_cache,
+                image_storage=image_storage,
+                redis=redis,
+                billing_enabled=billing_enabled,
+                file_size=file_size,
+                pages=pages,
+            )
         elif content_type.startswith("text/") and not ai_transform:
             extraction_result = DocumentExtractionResult(
                 pages={0: ExtractedPage(markdown=content.decode("utf-8", errors="ignore"), images=[])},
@@ -1129,12 +1156,17 @@ async def create_document(
             image_storage=image_storage,
         )
 
-    # AI extraction requires extractor to be configured
+    # AI extraction requires extractor configured + content type supported
     if req.ai_transform:
         if not ai_extractor or not ai_extractor_config:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="AI transform not configured on this server",
+            )
+        if not ai_extractor_config.is_supported(cached_doc.metadata.content_type):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"AI transform not supported for {cached_doc.metadata.content_type}",
             )
 
     # Rate limit (sync — returns 429 immediately)
@@ -1534,6 +1566,10 @@ def _extract_document_info(content: bytes, content_type: str) -> tuple[int, str 
             total_pages = len(pdf)
             if pdf.metadata and pdf.metadata.get("title"):
                 title = pdf.metadata["title"]
+    elif content_type.lower() == "application/epub+zip":
+        from yapit.gateway.document.processors.epub import extract_document_info
+
+        total_pages, title = extract_document_info(content)
     elif content_type.lower().startswith("image/"):
         total_pages = 1
     elif _get_endpoint_type_from_content_type(content_type) == "website":

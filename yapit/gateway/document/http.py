@@ -87,6 +87,9 @@ async def download_document(url: HttpUrl, max_size: int) -> tuple[bytes, str]:
 
 def sniff_content_type(content: bytes) -> str | None:
     """Detect content type from magic bytes. Returns None if unknown."""
+    # EPUB: ZIP with uncompressed mimetype file containing "application/epub+zip" per spec
+    if content[:2] == b"PK" and b"application/epub+zip" in content[:100]:
+        return "application/epub+zip"
     if content.startswith(b"%PDF"):
         return "application/pdf"
     if content.startswith(b"\x89PNG\r\n\x1a\n"):

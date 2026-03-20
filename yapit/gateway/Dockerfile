@@ -1,5 +1,10 @@
 FROM python:3.12-slim
 
+RUN apt-get update && apt-get install -y --no-install-recommends wget && rm -rf /var/lib/apt/lists/* \
+    && wget -q https://github.com/jgm/pandoc/releases/download/3.9.0.2/pandoc-3.9.0.2-1-amd64.deb \
+    && dpkg -i pandoc-3.9.0.2-1-amd64.deb \
+    && rm pandoc-3.9.0.2-1-amd64.deb
+
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 WORKDIR /app
