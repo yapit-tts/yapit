@@ -19,6 +19,7 @@ Three ways content enters the system:
 | Format | Free Path | AI Path |
 |--------|-----------|---------|
 | PDF | PyMuPDF `get_text()` via `processors/pdf.py` | Gemini via `processors/gemini.py` |
+| EPUB | Pandoc via `processors/epub.py` | — (not yet) |
 | Images | — (AI only) | Gemini |
 | Text/Markdown | Passthrough (parse directly) | — |
 | HTML (file upload) | Defuddle (static+linkedom, Playwright fallback) via `extract_website_content()` | — (future: Gemini on top of defuddle output) |
@@ -80,6 +81,16 @@ arXiv URLs (arxiv.org, alphaxiv.org, ar5iv) are detected in `documents.py` via `
 PyMuPDF `get_text("dict")` per page — uses dict mode for structured data with direction vectors to filter rotated text (axis labels, watermarks). Fast (<1s for 714-page textbooks), releases GIL (C extension), not cached.
 
 **Gotcha:** `get_text("text")` extracts all text indiscriminately — body text, figure labels, annotations. Papers with embedded text in figures (e.g., attention heatmaps) produce garbage. See task `2026-02-12-pymupdf-free-extraction-quality` for improvement investigation.
+
+## EPUB Extraction
+
+`yapit/gateway/document/processors/epub.py`
+
+Pandoc (system binary, installed in gateway Dockerfile) converts EPUB→markdown including MathML→LaTeX. Significant post-processing needed because pandoc passes through a lot of EPUB-specific HTML cruft and has a known bug with cross-file footnotes ([[pandoc-epub-footnotes-bug]], [#5531](https://github.com/jgm/pandoc/issues/5531)). Footnotes are extracted directly from the EPUB ZIP and matched to inline refs by suffix ID matching. Three footnote patterns handled (old-style HTML, EPUB3 semantic, InDesign per-chapter).
+
+**Known limitations:** `<sub>`/`<sup>` not rendered (task `2026-03-20-sub-sup-ast-support`), no AI path, publisher metadata not hidden.
+
+**Learnings:** Pandoc's `markdown_strict` output is essential — default `markdown` includes extensions (div fences, bracketed spans) our parser can't handle. EPUB footnote markup varies wildly across publishers (3 different patterns in 4 test books). When the renderer doesn't support an HTML element, fix the AST/renderer — don't hack conversions in the processor.
 
 ## AI PDF Extraction (Gemini)
 
@@ -313,6 +324,7 @@ The `StructuredDocumentView` component:
 Processors extract file content into markdown pages via `process_with_billing`. Each has a `ProcessorConfig` and an `extract()` async iterator. `_run_extraction` in `documents.py` routes to the right one based on `ai_transform` flag.
 
 - `processors/pdf.py` — free PDF extraction (PyMuPDF), module-level `config` + `extract()`
+- `processors/epub.py` — EPUB extraction (pandoc subprocess), footnote conversion from ZIP
 - `processors/gemini.py` — AI extraction, stateful `GeminiExtractor` managed via FastAPI DI
 
 To add a new format: create `processors/<format>.py` with config + extract(), add entry to `/supported-formats`.

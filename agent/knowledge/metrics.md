@@ -74,7 +74,11 @@ Compression kicks in at 7 days (segmented by event_type, model_slug).
 init.sql only runs on first container start. For existing databases:
 
 1. Write migration in `docker/metrics-migrations/NNN_description.sql`
-2. Apply manually: `ssh prod 'docker exec $(docker ps -qf name=metrics-db) psql -U metrics -d metrics' < docker/metrics-migrations/NNN_description.sql`
+2. Apply manually — **the `-i` flag on `docker exec` is required** for stdin piping:
+   ```
+   cat docker/metrics-migrations/NNN.sql | ssh yapit-prod 'docker exec -i $(docker ps -qf name=metrics-db) psql -U metrics -d metrics'
+   ```
+   Without `-i`, docker exec doesn't attach stdin — psql sees EOF and exits silently with no error, no SQL executed.
 3. Update init.sql to reflect current full schema (for fresh deploys)
 
 During development: just nuke the volume (`docker volume rm yapit_metricsdata`) and redeploy.
