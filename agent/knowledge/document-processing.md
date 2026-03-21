@@ -18,12 +18,12 @@ Three ways content enters the system:
 
 | Format | Free Path | AI Path |
 |--------|-----------|---------|
-| PDF | PyMuPDF `get_text()` via `processors/pdf.py` | Gemini via `processors/gemini.py` |
+| PDF | PyMuPDF `get_text()` via `processors/free_pdf.py` | Gemini or OpenAI-compatible via `processors/gemini.py` / `processors/openai_compat.py` |
 | EPUB | Pandoc via `processors/epub.py` | — (not yet) |
-| Images | — (AI only) | Gemini |
+| Images | — (AI only) | Gemini or OpenAI-compatible |
 | Text/Markdown | Passthrough (parse directly) | — |
-| HTML (file upload) | Defuddle (static+linkedom, Playwright fallback) via `extract_website_content()` | — (future: Gemini on top of defuddle output) |
-| HTML (URL) | Defuddle (static+linkedom, Playwright fallback) via `extract_website_content()` | — (future: Gemini on top of defuddle output) |
+| HTML (file upload) | Defuddle (static+linkedom, Playwright fallback) via `extract_website_content()` | — (future: AI on top of defuddle output) |
+| HTML (URL) | Defuddle (static+linkedom, Playwright fallback) via `extract_website_content()` | — (future: AI on top of defuddle output) |
 
 `GET /v1/documents/supported-formats` (public, no auth) returns format capabilities (free/ai/has_pages/batch per MIME type). Frontend fetches once per session via `useSupportedFormats` hook and derives UI from it (toggle visibility, metadata banner, accepted file types).
 
@@ -35,17 +35,17 @@ For URLs and files, there's a **prepare → create** pattern:
 
 This allows showing page count, title, cached AI pages before committing. Text/markdown file uploads skip prepare (frontend-enforced) — frontend reads the file client-side and POSTs to `/text` directly.
 
-**Caching:** Free extraction is not cached (fast enough to re-run). AI extraction (Gemini) is cached per-page by content hash + prompt version. `uncached_pages` in prepare response shows which pages still need AI extraction.
+**Caching:** Free extraction is not cached (fast enough to re-run). AI extraction is cached per-page by content hash + processor-specific cache prefix (e.g., `gemini:high:v11`, `openai:qwen/qwen3-vl-235b:v1`). `uncached_pages` in prepare response shows which pages still need AI extraction. Switching models automatically uses a different cache key.
 
 ### Async Extraction
 
 Document creation returns **202 Accepted**. Extraction runs in a background task keyed by `extraction_id`, result delivered via polling. Cancellable via `POST /v1/documents/extraction/cancel`.
 
-### Gemini Batch Mode
+### Batch Mode
 
 `yapit/gateway/document/batch.py` + `yapit/gateway/document/batch_poller.py`
 
-For large documents (auto-toggled at >100 pages), extraction uses the Gemini Batch API: JSONL upload → background poller → document creation on completion. Frontend shows `/batch/:contentHash` status page.
+For large documents (auto-toggled at >100 pages), extraction uses the Gemini Batch API: JSONL upload → background poller → document creation on completion. Frontend shows `/batch/:contentHash` status page. Batch is a per-processor capability (`ProcessorConfig.supports_batch`) — currently only Gemini supports it. The batch toggle is hidden in the frontend when the configured extractor doesn't support batch (`FormatInfo.batch`).
 
 ### arXiv URLs
 
@@ -76,7 +76,7 @@ arXiv URLs (arxiv.org, alphaxiv.org, ar5iv) are detected in `documents.py` via `
 
 ## Free PDF Extraction
 
-`yapit/gateway/document/processors/pdf.py`
+`yapit/gateway/document/processors/free_pdf.py`
 
 PyMuPDF `get_text("dict")` per page — uses dict mode for structured data with direction vectors to filter rotated text (axis labels, watermarks). Fast (<1s for 714-page textbooks), releases GIL (C extension), not cached.
 
@@ -92,16 +92,24 @@ Pandoc (system binary, installed in gateway Dockerfile) converts EPUB→markdown
 
 **Learnings:** Pandoc's `markdown_strict` output is essential — default `markdown` includes extensions (div fences, bracketed spans) our parser can't handle. EPUB footnote markup varies wildly across publishers (3 different patterns in 4 test books). When the renderer doesn't support an HTML element, fix the AST/renderer — don't hack conversions in the processor.
 
-## AI PDF Extraction (Gemini)
+## AI PDF Extraction
 
-`yapit/gateway/document/processors/gemini.py`
+`yapit/gateway/document/processors/base.py` — `VisionExtractor` base class
+`yapit/gateway/document/processors/gemini.py` — `GeminiExtractor` (sends native PDF)
+`yapit/gateway/document/processors/openai_compat.py` — `OpenAIExtractor` (renders PDF→PNG at 200 DPI)
 
-Uses Gemini with vision for PDF extraction:
+AI extraction uses a pluggable backend controlled by `AI_PROCESSOR` env var (`gemini` or `openai`). Both share the same flow via `VisionExtractor`:
 
 1. **Figure detection:** YOLO detects figure bounding boxes (see below)
-2. **Gemini extraction:** Each page sent with figure placeholders
+2. **API call:** Each page sent to the configured vision model with figure placeholders
 3. **Placeholder substitution:** `![](detected-image)` → actual image URLs
-4. **Caching:** Extractions cached per-page by content hash + prompt version
+4. **Caching:** Extractions cached per-page by content hash + processor-specific cache prefix
+
+The `VisionExtractor` base class owns: dispatch (image vs PDF), parallel page processing, cancellation, YOLO preparation via `prepare_page()`, timing, error handling, figure placeholder substitution, and metrics logging. Subclasses implement only `_call_api_for_page` and `_call_api_for_image` — the narrow hooks that encode content and call the specific API.
+
+**Gemini** sends native PDF bytes via `Part.from_bytes()`. Has Gemini-specific config (media_resolution, thinking_level, safety settings) and batch support.
+
+**OpenAI-compatible** renders PDF pages to 200 DPI PNG and sends as base64 `image_url`. Works with any OpenAI-compatible endpoint: vLLM, Ollama, LiteLLM, OpenRouter, etc. Tested with Qwen3-VL-235B, Qwen2.5-VL-7B, Kimi K2.5, Claude Sonnet. No batch support.
 
 ### Figure Detection (YOLO)
 
@@ -151,9 +159,9 @@ Cache key format: `{slug}:{resolution}:{prompt_version}`
 
 5. **Balance specificity.** Too general → model doesn't know what to do. Too specific → doesn't generalize to similar cases.
 
-### Gemini Retry Logic
+### Retry Logic
 
-Exponential backoff for transient errors (429/500/503/504). Fails immediately on 400/403/404. Failed pages tracked and surfaced to user.
+Both backends use exponential backoff for transient errors (429/500/503/504). Fails immediately on 400/403/404. Failed pages tracked and surfaced to user. Retry constants shared from `processors/base.py`.
 
 ## Markdown Parsing
 
@@ -323,13 +331,16 @@ The `StructuredDocumentView` component:
 
 Processors extract file content into markdown pages via `process_with_billing`. Each has a `ProcessorConfig` and an `extract()` async iterator. `_run_extraction` in `documents.py` routes to the right one based on `ai_transform` flag.
 
-- `processors/pdf.py` — free PDF extraction (PyMuPDF), module-level `config` + `extract()`
+- `processors/base.py` — `VisionExtractor` base class with shared extraction flow
+- `processors/free_pdf.py` — free PDF extraction (PyMuPDF), module-level `config` + `extract()`
 - `processors/epub.py` — EPUB extraction (pandoc subprocess), footnote conversion from ZIP
-- `processors/gemini.py` — AI extraction, stateful `GeminiExtractor` managed via FastAPI DI
+- `processors/gemini.py` — `GeminiExtractor(VisionExtractor)`, Gemini-specific API + batch support
+- `processors/openai_compat.py` — `OpenAIExtractor(VisionExtractor)`, OpenAI-compatible API, renders PDF→PNG
 
 To add a new format: create `processors/<format>.py` with config + extract(), add entry to `/supported-formats`.
+To add a new AI backend: subclass `VisionExtractor`, implement `_call_api_for_page` and `_call_api_for_image`.
 
-**CPU-bound work** uses a dedicated `ThreadPoolExecutor` (`processing.cpu_executor`) so heavy PDF processing doesn't starve quick `to_thread` calls. `process_pages_to_document` and `estimate_document_tokens` run on this executor to avoid blocking the event loop.
+**CPU-bound work** uses a dedicated `ThreadPoolExecutor` (`types.cpu_executor`) so heavy PDF processing doesn't starve quick `to_thread` calls. `process_pages_to_document` and `estimate_document_tokens` run on this executor to avoid blocking the event loop.
 
 ## Key Files
 
@@ -339,13 +350,17 @@ To add a new format: create `processors/<format>.py` with config + extract(), ad
 | `gateway/markdown/parser.py` | markdown-it-py wrapper |
 | `gateway/markdown/transformer.py` | AST → StructuredDocument |
 | `gateway/markdown/models.py` | Block type definitions |
-| `gateway/document/processors/gemini.py` | Gemini AI extraction with YOLO |
-| `gateway/document/processors/pdf.py` | Free PDF extraction (PyMuPDF) |
-| `gateway/document/processing.py` | ProcessorConfig, process_with_billing, cpu_executor |
+| `gateway/document/types.py` | Data classes, protocols (`Extractor`, `BatchExtractor`), `ProcessorConfig`, `cpu_executor` |
+| `gateway/document/pdf.py` | PyMuPDF operations, token estimation |
+| `gateway/document/figures.py` | YOLO detection, figure storage, placeholder substitution, `prepare_page` |
+| `gateway/document/orchestration.py` | `process_with_billing`, `process_pages_to_document`, text post-processing |
+| `gateway/document/processors/base.py` | `VisionExtractor` base class with shared extraction flow |
+| `gateway/document/processors/gemini.py` | `GeminiExtractor` — Gemini API + batch support |
+| `gateway/document/processors/openai_compat.py` | `OpenAIExtractor` — OpenAI-compatible API, PDF→PNG rendering |
+| `gateway/document/processors/free_pdf.py` | Free PDF extraction (PyMuPDF) |
 | `gateway/document/website.py` | Website extraction (defuddle service client wrapper) |
 | `gateway/document/defuddle_client.py` | HTTP client to defuddle container |
 | `gateway/document/yolo_client.py` | YOLO queue client |
-| `gateway/document/extraction.py` | PDF/image utilities |
 | `gateway/cache.py` | Cache ABC + SqliteCache (includes batch_exists, batch_retrieve) |
 | `workers/yolo/` | YOLO detection worker |
 | `frontend/src/components/unifiedInput.tsx` | Upload flow, format-driven UI, race condition handling |
