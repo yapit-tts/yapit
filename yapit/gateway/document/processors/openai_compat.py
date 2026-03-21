@@ -63,9 +63,11 @@ class OpenAIExtractor(VisionExtractor):
         prompt_path: Path,
         redis: Redis,
         image_storage: ImageStorage,
+        max_tokens: int = 8192,
     ):
         super().__init__(model=model, prompt_path=prompt_path, redis=redis, image_storage=image_storage)
         self._client = openai.AsyncOpenAI(base_url=base_url, api_key=api_key)
+        self._max_tokens = max_tokens
 
     async def _call_api_for_image(
         self,
@@ -129,7 +131,7 @@ class OpenAIExtractor(VisionExtractor):
                 return await self._client.chat.completions.create(
                     model=self._model,
                     messages=messages,
-                    max_tokens=4096,
+                    max_tokens=self._max_tokens,
                 )
             except openai.APIStatusError as e:
                 last_error = e

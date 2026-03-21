@@ -1,6 +1,7 @@
 """Gemini-based document extraction with YOLO figure detection."""
 
 import asyncio
+import random
 from pathlib import Path
 
 import pymupdf
@@ -158,6 +159,7 @@ class GeminiExtractor(VisionExtractor):
         input_tokens = usage.prompt_token_count or 0
         output_tokens = usage.candidates_token_count or 0
         thoughts_tokens = usage.thoughts_token_count or 0
+        cached_tokens = usage.cached_content_token_count or 0
 
         expected_total = input_tokens + output_tokens + thoughts_tokens
         actual_total = usage.total_token_count or 0
@@ -173,6 +175,7 @@ class GeminiExtractor(VisionExtractor):
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             thoughts_tokens=thoughts_tokens,
+            cached_tokens=cached_tokens,
         )
 
     async def _call_with_retry(
@@ -204,7 +207,7 @@ class GeminiExtractor(VisionExtractor):
 
                 if attempt < MAX_RETRIES - 1:
                     delay = min(BASE_DELAY_SECONDS * (2**attempt), MAX_DELAY_SECONDS)
-                    jitter = __import__("random").uniform(0, delay * 0.5)
+                    jitter = random.uniform(0, delay * 0.5)
                     logger.warning(
                         f"Gemini {context}: attempt {attempt + 1}/{MAX_RETRIES} "
                         f"failed ({e.code}), retrying in {delay + jitter:.1f}s"
@@ -215,7 +218,7 @@ class GeminiExtractor(VisionExtractor):
                 last_error = e
                 if attempt < MAX_RETRIES - 1:
                     delay = min(BASE_DELAY_SECONDS * (2**attempt), MAX_DELAY_SECONDS)
-                    jitter = __import__("random").uniform(0, delay * 0.5)
+                    jitter = random.uniform(0, delay * 0.5)
                     logger.warning(
                         f"Gemini {context}: attempt {attempt + 1}/{MAX_RETRIES} "
                         f"failed ({e}), retrying in {delay + jitter:.1f}s"

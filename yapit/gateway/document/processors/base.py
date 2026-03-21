@@ -35,6 +35,7 @@ class VisionCallResult:
     input_tokens: int
     output_tokens: int
     thoughts_tokens: int = 0
+    cached_tokens: int = 0
     is_fallback: bool = False
 
 
@@ -144,6 +145,7 @@ class VisionExtractor(ABC):
             prompt_token_count=result.input_tokens,
             candidates_token_count=result.output_tokens,
             thoughts_token_count=result.thoughts_tokens,
+            cached_content_token_count=result.cached_tokens,
             total_token_count=result.input_tokens + result.output_tokens + result.thoughts_tokens,
             user_id=user_id,
             data={"content_hash": content_hash},
@@ -290,6 +292,7 @@ class VisionExtractor(ABC):
             prompt_token_count=result.input_tokens,
             candidates_token_count=result.output_tokens,
             thoughts_token_count=result.thoughts_tokens,
+            cached_content_token_count=result.cached_tokens,
             total_token_count=result.input_tokens + result.output_tokens + result.thoughts_tokens,
             user_id=user_id,
             data={"content_hash": content_hash},
