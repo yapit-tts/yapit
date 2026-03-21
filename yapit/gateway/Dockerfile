@@ -9,7 +9,7 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 WORKDIR /app
 COPY pyproject.toml README.md ./
-RUN uv pip install ".[gateway]" --no-cache-dir --system
+RUN uv pip install ".[openai]" --no-cache-dir --system
 
 COPY yapit/ /app/yapit
 
