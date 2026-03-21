@@ -677,8 +677,8 @@ def _figure_mismatch_chart(df: pd.DataFrame) -> go.Figure | None:
 
     mismatches = mismatches.copy()
     mismatches["yolo_count"] = mismatches["data"].apply(lambda d: d.get("yolo_count", 0) if isinstance(d, dict) else 0)
-    mismatches["gemini_count"] = mismatches["data"].apply(
-        lambda d: d.get("gemini_count", 0) if isinstance(d, dict) else 0
+    mismatches["model_count"] = mismatches["data"].apply(
+        lambda d: d.get("model_count", d.get("gemini_count", 0)) if isinstance(d, dict) else 0
     )
     mismatches["delta"] = mismatches["data"].apply(lambda d: d.get("delta", 0) if isinstance(d, dict) else 0)
 
@@ -688,15 +688,15 @@ def _figure_mismatch_chart(df: pd.DataFrame) -> go.Figure | None:
     fig.add_trace(
         go.Scatter(
             x=mismatches["yolo_count"],
-            y=mismatches["gemini_count"],
+            y=mismatches["model_count"],
             mode="markers",
             marker=dict(size=10, color=colors, opacity=0.7, line=dict(width=1, color=COLORS["border"])),
-            hovertemplate="YOLO: %{x}<br>Gemini: %{y}<br>Delta: %{customdata}<extra></extra>",
+            hovertemplate="YOLO: %{x}<br>Model: %{y}<br>Delta: %{customdata}<extra></extra>",
             customdata=mismatches["delta"],
         )
     )
 
-    max_val = max(mismatches["yolo_count"].max(), mismatches["gemini_count"].max(), 1) + 1
+    max_val = max(mismatches["yolo_count"].max(), mismatches["model_count"].max(), 1) + 1
     fig.add_trace(
         go.Scatter(
             x=[0, max_val],
