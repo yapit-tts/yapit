@@ -73,8 +73,8 @@ Requires GPU. The default stage config assumes >=16GB VRAM. For 8GB cards (e.g.,
 ```bash
 pip install vllm-omni
 vllm-omni serve Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice \
-    --stage-configs-path /path/to/stage_configs.yaml \
-    --omni --port 8091 --trust-remote-code --enforce-eager
+    --omni --port 8091 --trust-remote-code --enforce-eager \
+    --stage-configs-path /path/to/stage_configs.yaml # if you have low VRAM. `max_model_len: 1024` should work on 8GB
 ```
 
 Then configure yapit:
@@ -98,7 +98,7 @@ AI_PROCESSOR_API_KEY=your-key
 AI_PROCESSOR_MODEL=qwen/qwen3-vl-235b-a22b-instruct  # any vision-capable model
 ```
 
-Or use Google Gemini directly: `AI_PROCESSOR=gemini` + `GOOGLE_API_KEY=your-key`.
+Or use Google Gemini directly (with batch-mode support): `AI_PROCESSOR=gemini` + `GOOGLE_API_KEY=your-key`.
 
 <details>
 <summary><strong>GPU worker scaling (Kokoro TTS + YOLO figure detection)</strong></summary>
