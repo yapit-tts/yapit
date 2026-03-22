@@ -109,11 +109,18 @@ def _get_duration_ms(audio_bytes: bytes) -> int:
 
 def _transcode_to_ogg_opus(audio_bytes: bytes) -> bytes:
     """Transcode any audio format (mp3, wav, opus, etc.) to OGG Opus."""
-    inp = av.open(io.BytesIO(audio_bytes), "r")
+    try:
+        inp = av.open(io.BytesIO(audio_bytes), "r")
+    except Exception as e:
+        raise RuntimeError(
+            f"TTS server returned audio that couldn't be decoded ({len(audio_bytes)} bytes, "
+            f"magic: {audio_bytes[:4]!r}): {e}"
+        ) from e
+
     buf = io.BytesIO()
     out = av.open(buf, "w", format="ogg")
     stream = out.add_stream("libopus", rate=48_000)
-    stream.bit_rate = 48_000
+    stream.bit_rate = 96_000
 
     for frame in inp.decode(audio=0):
         frame.pts = None
