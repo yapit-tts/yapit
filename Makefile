@@ -162,17 +162,7 @@ sync-metrics:
 		psql -U metrics -d metrics -c "COPY (SELECT * FROM metrics_daily ORDER BY bucket DESC) TO STDOUT WITH CSV HEADER"' \
 		> data/metrics_daily.csv
 	@echo "Converting to DuckDB..."
-	@uv run --with duckdb python -c "\
-import duckdb; \
-conn = duckdb.connect('data/metrics.duckdb'); \
-conn.execute('DROP TABLE IF EXISTS metrics_event'); \
-conn.execute('DROP TABLE IF EXISTS metrics_hourly'); \
-conn.execute('DROP TABLE IF EXISTS metrics_daily'); \
-conn.execute(\"CREATE TABLE metrics_event AS SELECT * FROM read_csv('data/metrics_raw.csv', auto_detect=true)\"); \
-conn.execute(\"CREATE TABLE metrics_hourly AS SELECT * FROM read_csv('data/metrics_hourly.csv', auto_detect=true)\"); \
-conn.execute(\"CREATE TABLE metrics_daily AS SELECT * FROM read_csv('data/metrics_daily.csv', auto_detect=true)\"); \
-print(f'Synced: {conn.execute(\"SELECT COUNT(*) FROM metrics_event\").fetchone()[0]} raw events'); \
-conn.close()"
+	@uv run --with duckdb python scripts/csv_to_duckdb.py
 	@rm -f data/metrics_raw.csv data/metrics_hourly.csv data/metrics_daily.csv
 	@echo "✓ Metrics synced to data/metrics.duckdb"
 
