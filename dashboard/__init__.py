@@ -15,6 +15,8 @@ import streamlit as st
 from dashboard.data import (
     DEFAULT_DB_PATH,
     QUICK_RANGES,
+    USER_TYPE_ALL,
+    USER_TYPES,
     filter_data,
     get_db_info,
     get_time_range_info,
@@ -105,17 +107,22 @@ def main():
             else:
                 start_date = end_date = date_range
 
-        # Model filter
+        # Filters
         st.divider()
         st.markdown("### Filters")
+
+        selected_user_type = st.radio("User Type", USER_TYPES, index=0, horizontal=True)
+
         models = ["All"] + sorted(df["model_slug"].dropna().unique().tolist())
         selected_models = st.multiselect("Models", models, default=["All"])
 
         st.divider()
 
-        filtered = filter_data(df, (start_date, end_date), selected_models)
+        filtered = filter_data(df, (start_date, end_date), selected_models, selected_user_type)
         st.caption(f"**{len(filtered):,}** events in range")
         st.caption(f"{start_date} to {end_date}")
+        if selected_user_type != USER_TYPE_ALL:
+            st.caption(f"Showing: **{selected_user_type}** users only")
         if not filtered.empty:
             span = filtered["local_time"].max() - filtered["local_time"].min()
             st.caption(f"Span: {span}")

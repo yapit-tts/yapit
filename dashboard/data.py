@@ -122,11 +122,30 @@ def filter_by_models(df: pd.DataFrame, models: list[str]) -> pd.DataFrame:
     return df[mask]
 
 
-def filter_data(df: pd.DataFrame, date_range: tuple, models: list[str]) -> pd.DataFrame:
+ANONYMOUS_PREFIX = "anon-"
+
+USER_TYPE_ALL = "All"
+USER_TYPE_GUEST = "Guest"
+USER_TYPE_REGISTERED = "Registered"
+USER_TYPES = [USER_TYPE_ALL, USER_TYPE_GUEST, USER_TYPE_REGISTERED]
+
+
+def filter_by_user_type(df: pd.DataFrame, user_type: str) -> pd.DataFrame:
+    """Filter by user type. Guest = anon-* user_ids, Registered = everything else."""
+    if df.empty or user_type == USER_TYPE_ALL or "user_id" not in df.columns:
+        return df
+    is_guest = df["user_id"].fillna("").str.startswith(ANONYMOUS_PREFIX)
+    if user_type == USER_TYPE_GUEST:
+        return df[is_guest]
+    return df[~is_guest]
+
+
+def filter_data(df: pd.DataFrame, date_range: tuple, models: list[str], user_type: str = USER_TYPE_ALL) -> pd.DataFrame:
     """Apply all filters."""
     start, end = date_range
     filtered = filter_by_date_range(df, start, end)
     filtered = filter_by_models(filtered, models)
+    filtered = filter_by_user_type(filtered, user_type)
     return filtered
 
 
