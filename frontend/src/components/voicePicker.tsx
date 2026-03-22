@@ -30,7 +30,7 @@ import {
   getKokoroSelection,
   getInworldSelection,
 } from "@/lib/voiceSelection";
-import { useInworldVoices } from "@/hooks/useInworldVoices";
+import { usePremiumModel } from "@/hooks/usePremiumModel";
 
 import { useUserPreferences } from "@/hooks/useUserPreferences";
 
@@ -63,8 +63,10 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
   const valueRef = useRef(value);
   valueRef.current = value;
 
-  // Fetch Inworld voices from API
-  const { voices: inworldVoices, isLoading: inworldLoading } = useInworldVoices();
+  // Fetch premium model (Inworld on hosted, OpenAI TTS for self-hosters, etc.)
+  const { model: premiumModel, isLoading: premiumLoading } = usePremiumModel();
+  const premiumVoices = premiumModel?.voices ?? [];
+  const isPremiumInworld = premiumModel?.isInworld ?? false;
 
   // Use synced preferences (cross-device sync for authenticated users)
   const { pinnedVoices, togglePinnedVoice } = useUserPreferences();
@@ -160,7 +162,8 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
   const isKokoroServer = value.model === KOKORO_SLUG;
   const isKokoroModelSelected = isKokoroModel(value.model);
   const isInworldMax = value.model === INWORLD_MAX_SLUG;
-  const activeTab = isKokoroModelSelected ? "kokoro" : "inworld";
+  const activeTab = isKokoroModelSelected ? "kokoro" : "premium";
+  const premiumSlug = premiumModel?.slug ?? "";
 
   const handleVoiceSelect = (voiceSlug: string) => {
     const current = valueRef.current;
@@ -179,10 +182,11 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
       newSelection = getKokoroSelection() ?? { model: KOKORO_SLUG, voiceSlug: "af_heart" };
     } else {
       const saved = getInworldSelection();
-      const voiceExists = saved && inworldVoices.some(v => v.slug === saved.voiceSlug);
-      newSelection = voiceExists
-        ? saved
-        : { model: saved?.model ?? INWORLD_SLUG, voiceSlug: inworldVoices[0]?.slug ?? "" };
+      const voiceExists = saved && premiumVoices.some(v => v.slug === saved.voiceSlug);
+      newSelection = {
+        model: premiumSlug,
+        voiceSlug: voiceExists ? saved!.voiceSlug : premiumVoices[0]?.slug ?? "",
+      };
     }
     onChange(newSelection);
     setVoiceSelection(newSelection);
@@ -222,14 +226,16 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
   if (isKokoroModelSelected) {
     currentVoiceName = KOKORO_VOICES.find(v => v.index === value.voiceSlug)?.name ?? value.voiceSlug;
   } else {
-    currentVoiceName = inworldVoices.find(v => v.slug === value.voiceSlug)?.name ?? value.voiceSlug;
+    currentVoiceName = premiumVoices.find(v => v.slug === value.voiceSlug)?.name ?? value.voiceSlug;
   }
 
   let modelLabel: string;
   if (isKokoroModelSelected) {
     modelLabel = `Kokoro${isKokoroServer ? "" : " (Local)"}`;
+  } else if (isInworldMax) {
+    modelLabel = "Inworld Max";
   } else {
-    modelLabel = isInworldMax ? "Inworld Max" : "Inworld";
+    modelLabel = premiumModel?.name ?? "Server";
   }
 
   // Local mode only supports English (browser WASM limitation)
@@ -238,21 +244,21 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
 
   // Memoize computed values to prevent unnecessary re-renders
   const kokoroVoiceGroups = useMemo(() => groupKokoroVoicesByLanguage(KOKORO_VOICES), []);
-  const inworldVoiceGroups = useMemo(() => groupInworldVoicesByLanguage(inworldVoices), [inworldVoices]);
+  const inworldVoiceGroups = useMemo(() => isPremiumInworld ? groupInworldVoicesByLanguage(premiumVoices) : [], [premiumVoices, isPremiumInworld]);
 
   // Pinned voices filtered for Local mode
   const pinnedKokoro = useMemo(
     () => KOKORO_VOICES.filter(v => pinnedVoices.includes(v.index) && (!englishOnly || isEnglishLang(v.language))),
     [pinnedVoices, englishOnly]
   );
-  const pinnedInworld = useMemo(() => inworldVoices.filter(v => pinnedVoices.includes(v.slug)), [inworldVoices, pinnedVoices]);
+  const pinnedPremium = useMemo(() => premiumVoices.filter(v => pinnedVoices.includes(v.slug)), [premiumVoices, pinnedVoices]);
 
   const inworldSearchLower = inworldSearch.toLowerCase();
   const filteredInworldVoices = useMemo(
     () => inworldSearchLower
-      ? inworldVoices.filter(v => v.name.toLowerCase().includes(inworldSearchLower) || (v.description ?? "").toLowerCase().includes(inworldSearchLower))
+      ? premiumVoices.filter(v => v.name.toLowerCase().includes(inworldSearchLower) || (v.description ?? "").toLowerCase().includes(inworldSearchLower))
       : null,
-    [inworldVoices, inworldSearchLower],
+    [premiumVoices, inworldSearchLower],
   );
 
   const triggerButton = (
@@ -268,7 +274,7 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
     <Tabs value={activeTab} onValueChange={handleModelChange}>
       <TabsList className="w-full h-11 rounded-none border-b">
         <TabsTrigger value="kokoro" className="flex-1 text-sm py-2.5">Kokoro</TabsTrigger>
-        <TabsTrigger value="inworld" className="flex-1 text-sm py-2.5">Inworld</TabsTrigger>
+        {premiumModel && <TabsTrigger value="premium" className="flex-1 text-sm py-2.5">{premiumModel.name}</TabsTrigger>}
       </TabsList>
 
       <TabsContent value="kokoro" className="m-0 max-h-[60vh] sm:max-h-[28rem] overflow-y-auto">
@@ -376,130 +382,168 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
         ))}
       </TabsContent>
 
-      <TabsContent value="inworld" className="m-0 max-h-[60vh] sm:max-h-[28rem] overflow-y-auto">
-        {/* Model toggle: TTS-1.5 vs TTS-1.5-Max */}
-        <div className="flex items-center justify-between px-4 py-3 border-b bg-muted/30">
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="text-sm text-muted-foreground">Quality</span>
-            <InfoTip isMobile={isMobile}>
-              <p>TTS-1.5-Max uses a larger model for more natural speech and better multilingual pronunciation. Uses 2× your voice quota.</p>
-            </InfoTip>
-          </div>
-          <div className="flex rounded-md border bg-background">
-            <button
-              onClick={() => isInworldMax && handleInworldModelToggle()}
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-l-md transition-colors ${
-                !isInworldMax ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              TTS-1.5
-            </button>
-            <button
-              onClick={() => !isInworldMax && handleInworldModelToggle()}
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-r-md transition-colors ${
-                isInworldMax ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              TTS-1.5-Max
-            </button>
-          </div>
-        </div>
-
-        {/* Search */}
-        <div className="relative border-b">
-          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <input
-            type="text"
-            value={inworldSearch}
-            onChange={e => setInworldSearch(e.target.value)}
-            placeholder="Search voices..."
-            className="w-full pl-9 pr-8 py-2.5 text-base sm:text-sm bg-transparent outline-none placeholder:text-muted-foreground"
-          />
-          {inworldSearch && (
-            <button onClick={() => setInworldSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
-              <X className="h-4 w-4" />
-            </button>
-          )}
-        </div>
-
-        {inworldLoading ? (
-          <div className="flex items-center justify-center py-8 text-muted-foreground">
-            <Loader2 className="h-5 w-5 animate-spin mr-2" />
-            <span className="text-sm">Loading voices...</span>
-          </div>
-        ) : filteredInworldVoices ? (
-          /* Flat filtered list when searching */
-          filteredInworldVoices.length === 0 ? (
-            <div className="px-4 py-8 text-center text-sm text-muted-foreground">No voices match "{inworldSearch}"</div>
-          ) : (
-            filteredInworldVoices.map(voice => (
-              <VoiceRow
-                key={voice.slug}
-                name={voice.name}
-                flag={INWORLD_LANGUAGE_INFO[voice.lang]?.flag}
-                detail={voice.description ?? undefined}
-                isPinned={pinnedVoices.includes(voice.slug)}
-                isSelected={value.voiceSlug === voice.slug}
-                isPlaying={previewingVoice === `${INWORLD_SLUG}:${voice.slug}`}
-                onSelect={() => handleVoiceSelect(voice.slug)}
-                onPinToggle={() => togglePinnedVoice(voice.slug)}
-                onPreviewClick={() => playPreview(INWORLD_SLUG, voice.slug)}
-              />
-            ))
-          )
-        ) : (
+      <TabsContent value="premium" className="m-0 max-h-[60vh] sm:max-h-[28rem] overflow-y-auto">
+        {isPremiumInworld ? (
+          /* Inworld-specific UI: quality toggle, search, language groups */
           <>
-            {/* Starred section */}
-            {pinnedInworld.length > 0 && (
-              <div className="border-b">
-                <div className="px-4 py-2 text-sm font-medium text-muted-foreground">Starred</div>
-                {pinnedInworld.map(voice => (
+            <div className="flex items-center justify-between px-4 py-3 border-b bg-muted/30">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-sm text-muted-foreground">Quality</span>
+                <InfoTip isMobile={isMobile}>
+                  <p>TTS-1.5-Max uses a larger model for more natural speech and better multilingual pronunciation. Uses 2× your voice quota.</p>
+                </InfoTip>
+              </div>
+              <div className="flex rounded-md border bg-background">
+                <button
+                  onClick={() => isInworldMax && handleInworldModelToggle()}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-l-md transition-colors ${
+                    !isInworldMax ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  TTS-1.5
+                </button>
+                <button
+                  onClick={() => !isInworldMax && handleInworldModelToggle()}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-r-md transition-colors ${
+                    isInworldMax ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  TTS-1.5-Max
+                </button>
+              </div>
+            </div>
+
+            <div className="relative border-b">
+              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <input
+                type="text"
+                value={inworldSearch}
+                onChange={e => setInworldSearch(e.target.value)}
+                placeholder="Search voices..."
+                className="w-full pl-9 pr-8 py-2.5 text-base sm:text-sm bg-transparent outline-none placeholder:text-muted-foreground"
+              />
+              {inworldSearch && (
+                <button onClick={() => setInworldSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                  <X className="h-4 w-4" />
+                </button>
+              )}
+            </div>
+
+            {premiumLoading ? (
+              <div className="flex items-center justify-center py-8 text-muted-foreground">
+                <Loader2 className="h-5 w-5 animate-spin mr-2" />
+                <span className="text-sm">Loading voices...</span>
+              </div>
+            ) : filteredInworldVoices ? (
+              filteredInworldVoices.length === 0 ? (
+                <div className="px-4 py-8 text-center text-sm text-muted-foreground">No voices match &ldquo;{inworldSearch}&rdquo;</div>
+              ) : (
+                filteredInworldVoices.map(voice => (
                   <VoiceRow
                     key={voice.slug}
                     name={voice.name}
                     flag={INWORLD_LANGUAGE_INFO[voice.lang]?.flag}
                     detail={voice.description ?? undefined}
-                    isPinned={true}
+                    isPinned={pinnedVoices.includes(voice.slug)}
                     isSelected={value.voiceSlug === voice.slug}
-                    isPlaying={previewingVoice === `${INWORLD_SLUG}:${voice.slug}`}
+                    isPlaying={previewingVoice === `${premiumSlug}:${voice.slug}`}
                     onSelect={() => handleVoiceSelect(voice.slug)}
                     onPinToggle={() => togglePinnedVoice(voice.slug)}
-                    onPreviewClick={() => playPreview(INWORLD_SLUG, voice.slug)}
+                    onPreviewClick={() => playPreview(premiumSlug, voice.slug)}
+                  />
+                ))
+              )
+            ) : (
+              <>
+                {pinnedPremium.length > 0 && (
+                  <div className="border-b">
+                    <div className="px-4 py-2 text-sm font-medium text-muted-foreground">Starred</div>
+                    {pinnedPremium.map(voice => (
+                      <VoiceRow
+                        key={voice.slug}
+                        name={voice.name}
+                        flag={INWORLD_LANGUAGE_INFO[voice.lang]?.flag}
+                        detail={voice.description ?? undefined}
+                        isPinned={true}
+                        isSelected={value.voiceSlug === voice.slug}
+                        isPlaying={previewingVoice === `${premiumSlug}:${voice.slug}`}
+                        onSelect={() => handleVoiceSelect(voice.slug)}
+                        onPinToggle={() => togglePinnedVoice(voice.slug)}
+                        onPreviewClick={() => playPreview(premiumSlug, voice.slug)}
+                      />
+                    ))}
+                  </div>
+                )}
+
+                {inworldVoiceGroups.map(group => (
+                  <Collapsible
+                    key={group.language}
+                    open={expandedInworldLangs.has(group.language)}
+                    onOpenChange={() => toggleInworldLangExpanded(group.language)}
+                    className="border-b last:border-b-0"
+                  >
+                    <CollapsibleTrigger className="flex w-full items-center gap-2 px-4 py-2.5 text-sm font-medium hover:bg-accent">
+                      <ChevronRight className={`h-4 w-4 transition-transform ${expandedInworldLangs.has(group.language) ? "rotate-90" : ""}`} />
+                      <span>{group.flag}</span>
+                      <span className="flex-1 text-left">{group.label}</span>
+                      <span className="text-muted-foreground">({group.voices.length})</span>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent>
+                      {group.voices.map(voice => (
+                        <VoiceRow
+                          key={voice.slug}
+                          name={voice.name}
+                          detail={voice.description ?? undefined}
+                          isPinned={pinnedVoices.includes(voice.slug)}
+                          isSelected={value.voiceSlug === voice.slug}
+                          isPlaying={previewingVoice === `${premiumSlug}:${voice.slug}`}
+                          onSelect={() => handleVoiceSelect(voice.slug)}
+                          onPinToggle={() => togglePinnedVoice(voice.slug)}
+                          onPreviewClick={() => playPreview(premiumSlug, voice.slug)}
+                        />
+                      ))}
+                    </CollapsibleContent>
+                  </Collapsible>
+                ))}
+              </>
+            )}
+          </>
+        ) : premiumLoading ? (
+          <div className="flex items-center justify-center py-8 text-muted-foreground">
+            <Loader2 className="h-5 w-5 animate-spin mr-2" />
+            <span className="text-sm">Loading voices...</span>
+          </div>
+        ) : (
+          /* Generic voice list (OpenAI TTS, etc.) */
+          <>
+            {pinnedPremium.length > 0 && (
+              <div className="border-b">
+                <div className="px-4 py-2 text-sm font-medium text-muted-foreground">Starred</div>
+                {pinnedPremium.map(voice => (
+                  <VoiceRow
+                    key={voice.slug}
+                    name={voice.name}
+                    isPinned={true}
+                    isSelected={value.voiceSlug === voice.slug}
+                    isPlaying={previewingVoice === `${premiumSlug}:${voice.slug}`}
+                    onSelect={() => handleVoiceSelect(voice.slug)}
+                    onPinToggle={() => togglePinnedVoice(voice.slug)}
+                    onPreviewClick={() => playPreview(premiumSlug, voice.slug)}
                   />
                 ))}
               </div>
             )}
-
-            {/* Language sections */}
-            {inworldVoiceGroups.map(group => (
-              <Collapsible
-                key={group.language}
-                open={expandedInworldLangs.has(group.language)}
-                onOpenChange={() => toggleInworldLangExpanded(group.language)}
-                className="border-b last:border-b-0"
-              >
-                <CollapsibleTrigger className="flex w-full items-center gap-2 px-4 py-2.5 text-sm font-medium hover:bg-accent">
-                  <ChevronRight className={`h-4 w-4 transition-transform ${expandedInworldLangs.has(group.language) ? "rotate-90" : ""}`} />
-                  <span>{group.flag}</span>
-                  <span className="flex-1 text-left">{group.label}</span>
-                  <span className="text-muted-foreground">({group.voices.length})</span>
-                </CollapsibleTrigger>
-                <CollapsibleContent>
-                  {group.voices.map(voice => (
-                    <VoiceRow
-                      key={voice.slug}
-                      name={voice.name}
-                      detail={voice.description ?? undefined}
-                      isPinned={pinnedVoices.includes(voice.slug)}
-                      isSelected={value.voiceSlug === voice.slug}
-                      isPlaying={previewingVoice === `${INWORLD_SLUG}:${voice.slug}`}
-                      onSelect={() => handleVoiceSelect(voice.slug)}
-                      onPinToggle={() => togglePinnedVoice(voice.slug)}
-                      onPreviewClick={() => playPreview(INWORLD_SLUG, voice.slug)}
-                    />
-                  ))}
-                </CollapsibleContent>
-              </Collapsible>
+            {premiumVoices.filter(v => !pinnedVoices.includes(v.slug)).map(voice => (
+              <VoiceRow
+                key={voice.slug}
+                name={voice.name}
+                isPinned={false}
+                isSelected={value.voiceSlug === voice.slug}
+                isPlaying={previewingVoice === `${premiumSlug}:${voice.slug}`}
+                onSelect={() => handleVoiceSelect(voice.slug)}
+                onPinToggle={() => togglePinnedVoice(voice.slug)}
+                onPreviewClick={() => playPreview(premiumSlug, voice.slug)}
+              />
             ))}
           </>
         )}

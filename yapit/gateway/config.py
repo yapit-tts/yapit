@@ -28,6 +28,11 @@ class Settings(BaseSettings):
     runpod_request_timeout_seconds: int | None = None
     inworld_api_key: str | None = None
 
+    openai_tts_base_url: str | None = None
+    openai_tts_api_key: str | None = None
+    openai_tts_model: str | None = None
+    openai_tts_voices: str | None = None  # comma-separated fallback voice names
+
     document_cache_type: Caches
     document_cache_config: CacheConfig
 

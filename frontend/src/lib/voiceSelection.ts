@@ -5,7 +5,7 @@ export const KOKORO_SLUG = "kokoro" as const;
 export const INWORLD_SLUG = "inworld-1.5" as const;
 export const INWORLD_MAX_SLUG = "inworld-1.5-max" as const;
 
-export type ModelType = typeof KOKORO_BROWSER_SLUG | typeof KOKORO_SLUG | typeof INWORLD_SLUG | typeof INWORLD_MAX_SLUG;
+export type ModelType = typeof KOKORO_BROWSER_SLUG | typeof KOKORO_SLUG | typeof INWORLD_SLUG | typeof INWORLD_MAX_SLUG | string;
 
 // Check if model is an Inworld model (any variant)
 export function isInworldModel(model: ModelType): boolean {

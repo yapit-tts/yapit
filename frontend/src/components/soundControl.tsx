@@ -5,7 +5,7 @@ import { useEffect, useState, useRef, useCallback, useMemo, memo } from "react";
 import { useNavigate, Link } from "react-router";
 import { VoicePicker } from "@/components/voicePicker";
 import { SettingsDialog } from "@/components/settingsDialog";
-import { type VoiceSelection, setVoiceSelection, isInworldModel, KOKORO_SLUG, KOKORO_BROWSER_SLUG } from "@/lib/voiceSelection";
+import { type VoiceSelection, setVoiceSelection, isKokoroModel, KOKORO_SLUG, KOKORO_BROWSER_SLUG } from "@/lib/voiceSelection";
 import { useSidebar } from "@/components/ui/sidebar";
 import { useOutlinerOptional } from "@/hooks/useOutliner";
 import { OUTLINER_WIDTH } from "@/components/outlinerSidebar";
@@ -314,7 +314,7 @@ const SoundControl = memo(function SoundControl({
 
   const usageLimitError = (serverTTSError && serverTTSRecoverable === false) ? serverTTSError
     : connectionError?.includes("Usage limit exceeded") ? connectionError : null;
-  const isUsingInworld = isInworldModel(voiceSelection.model);
+  const isUsingPremium = !isKokoroModel(voiceSelection.model);
   const isUsingKokoroServer = voiceSelection.model === KOKORO_SLUG;
 
   const [quotaDismissed, setQuotaDismissed] = useDismissableBanner(voiceSelection.model);
@@ -482,7 +482,7 @@ const SoundControl = memo(function SoundControl({
             Voice quota reached
           </span>
           <span className="text-muted-foreground mx-1">·</span>
-          {isUsingInworld && (
+          {isUsingPremium && (
             <Button variant="outline" size="sm" className="h-9 px-3" onClick={handleSwitchToKokoro}>
               Use Kokoro
             </Button>

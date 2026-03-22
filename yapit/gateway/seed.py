@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 
+import httpx
 from loguru import logger
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlmodel import col, delete, select
@@ -119,9 +120,10 @@ async def seed_database(db: AsyncSession, settings: Settings) -> None:
         for plan in create_plans(settings):
             db.add(plan)
         await db.commit()
-        return
 
     await sync_inworld_voices(db)
+    await sync_openai_tts_voices(db, settings)
+    await _deactivate_unconfigured_models(db, settings)
 
 
 async def sync_inworld_voices(db: AsyncSession) -> None:
@@ -153,3 +155,95 @@ async def sync_inworld_voices(db: AsyncSession) -> None:
             logger.warning(f"Removed {len(stale_slugs)} stale Inworld voices from {model.slug}: {sorted(stale_slugs)}")
 
     await db.commit()
+
+
+OPENAI_TTS_SLUG = "openai-tts"
+
+
+async def _discover_voices(base_url: str) -> list[str] | None:
+    """Try GET {base_url}/audio/voices — a community extension, not all servers support it."""
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(f"{base_url}/audio/voices")
+            resp.raise_for_status()
+            voices = resp.json().get("voices", [])
+            if voices:
+                logger.info(f"Discovered {len(voices)} voices from {base_url}/audio/voices")
+                return voices
+    except Exception as e:
+        logger.info(f"Voice discovery not available at {base_url}/audio/voices: {e}")
+    return None
+
+
+async def sync_openai_tts_voices(db: AsyncSession, settings: Settings) -> None:
+    """Create or sync the openai-tts model and voices. Skips if not configured."""
+    if not settings.openai_tts_base_url:
+        return
+
+    voice_names = await _discover_voices(settings.openai_tts_base_url)
+    if not voice_names and settings.openai_tts_voices:
+        voice_names = [v.strip() for v in settings.openai_tts_voices.split(",") if v.strip()]
+    if not voice_names:
+        logger.warning(
+            "OpenAI TTS configured but no voices found — set OPENAI_TTS_VOICES "
+            "or use a server that supports GET /v1/audio/voices"
+        )
+        return
+
+    voice_defs = [
+        {"slug": name, "name": name.title(), "lang": None, "parameters": {"voice": name}} for name in voice_names
+    ]
+    canonical_slugs = {vd["slug"] for vd in voice_defs}
+
+    display_name = settings.openai_tts_model or "Server TTS"
+
+    model = (await db.exec(select(TTSModel).where(TTSModel.slug == OPENAI_TTS_SLUG))).first()
+    if model is None:
+        model = TTSModel(slug=OPENAI_TTS_SLUG, name=display_name)
+        db.add(model)
+        await db.flush()
+    elif model.name != display_name:
+        model.name = display_name
+        db.add(model)
+
+    existing_slugs = set((await db.exec(select(Voice.slug).where(col(Voice.model_id) == model.id))).all())
+
+    new_voices = [vd for vd in voice_defs if vd["slug"] not in existing_slugs]
+    if new_voices:
+        await db.exec(
+            pg_insert(Voice)
+            .values([{**vd, "model_id": model.id} for vd in new_voices])
+            .on_conflict_do_nothing(constraint="unique_voice_per_model")
+        )
+        logger.info(f"Added {len(new_voices)} OpenAI TTS voices: {[v['slug'] for v in new_voices]}")
+
+    stale_slugs = existing_slugs - canonical_slugs
+    if stale_slugs:
+        await db.exec(delete(Voice).where(col(Voice.model_id) == model.id, col(Voice.slug).in_(stale_slugs)))
+        logger.info(f"Removed {len(stale_slugs)} stale OpenAI TTS voices: {sorted(stale_slugs)}")
+
+    await db.commit()
+
+
+async def _deactivate_unconfigured_models(db: AsyncSession, settings: Settings) -> None:
+    """Set is_active on models based on whether their backend is configured."""
+    inworld_active = settings.inworld_api_key is not None
+    openai_tts_active = settings.openai_tts_base_url is not None
+
+    models = (await db.exec(select(TTSModel))).all()
+    changed = False
+    for model in models:
+        if model.slug.startswith("inworld"):
+            should_be_active = inworld_active
+        elif model.slug == OPENAI_TTS_SLUG:
+            should_be_active = openai_tts_active
+        else:
+            continue
+        if model.is_active != should_be_active:
+            model.is_active = should_be_active
+            db.add(model)
+            changed = True
+            logger.info(f"{'Activated' if should_be_active else 'Deactivated'} model {model.slug}")
+
+    if changed:
+        await db.commit()

@@ -38,13 +38,11 @@ dependencies = [
   "pillow~=12.1",
   "aiosqlite~=0.22.1",
   "aioboto3>=15.5.0",
+  "openai>=2.0.0",
+  "av>=14.0.0",
 ]
 
 [project.optional-dependencies]
-
-openai = [
-  "openai>=2.0.0",
-]
 
 test = [
   "pytest~=8.3.5",
