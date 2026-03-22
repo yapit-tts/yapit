@@ -31,7 +31,10 @@ config = ProcessorConfig(
     extraction_cache_prefix=None,
 )
 
-PANDOC_TIMEOUT_SECONDS = 120
+PANDOC_TIMEOUT_SECONDS = 60
+
+MAX_UNCOMPRESSED_SIZE = 200 * 1024 * 1024
+MAX_ZIP_ENTRIES = 500
 
 # Output format: strict markdown + extensions our parser supports (GFM tables, dollar math, strikethrough)
 PANDOC_OUTPUT_FORMAT = "markdown_strict+pipe_tables+strikeout+tex_math_dollars"
@@ -366,6 +369,19 @@ async def _store_images_and_rewrite(
     return markdown, stored_urls
 
 
+def _validate_epub_zip(content: bytes) -> None:
+    """Pre-scan ZIP central directory to reject decompression bombs."""
+    with zipfile.ZipFile(BytesIO(content)) as zf:
+        infos = zf.infolist()
+        if len(infos) > MAX_ZIP_ENTRIES:
+            raise ValueError(f"EPUB contains too many files ({len(infos)}). Maximum is {MAX_ZIP_ENTRIES}.")
+        total_uncompressed = sum(info.file_size for info in infos)
+        if total_uncompressed > MAX_UNCOMPRESSED_SIZE:
+            size_mb = total_uncompressed / (1024 * 1024)
+            limit_mb = MAX_UNCOMPRESSED_SIZE / (1024 * 1024)
+            raise ValueError(f"EPUB is too large when uncompressed ({size_mb:.0f}MB). Maximum is {limit_mb:.0f}MB.")
+
+
 async def extract(
     content: bytes,
     pages: list[int] | None = None,
@@ -374,6 +390,8 @@ async def extract(
 ) -> AsyncIterator[PageResult]:
     """Extract text from EPUB via pandoc. Yields a single PageResult."""
     log = logger.bind(content_hash=content_hash)
+
+    await asyncio.get_running_loop().run_in_executor(cpu_executor, _validate_epub_zip, content)
 
     # Extract footnotes from ZIP before pandoc (pandoc drops cross-file EPUB3 notes — #5531)
     footnotes = await asyncio.get_running_loop().run_in_executor(cpu_executor, extract_footnotes_from_zip, content)

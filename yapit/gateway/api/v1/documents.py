@@ -260,7 +260,7 @@ class DocumentCreateRequest(BasePreparedDocumentCreateRequest):
         batch_mode: Submit as batch job (50% cheaper, async). Only valid with ai_transform=True.
     """
 
-    pages: list[int] | None = None
+    pages: list[int] | None = Field(None, max_length=1500)
     ai_transform: bool = False
     batch_mode: bool = False
 
@@ -318,7 +318,7 @@ class ExtractionStatusRequest(BaseModel):
     extraction_id: str | None = None
     content_hash: str
     ai_transform: bool
-    pages: list[int]
+    pages: list[int] = Field(max_length=1500)
 
 
 @router.post("/extraction/status", response_model=ExtractionStatusResponse)
@@ -1616,7 +1616,10 @@ def _extract_document_info(content: bytes, content_type: str) -> tuple[int, str 
                 title = pdf.metadata["title"]
     elif content_type.lower() == "application/epub+zip":
         try:
+            epub._validate_epub_zip(content)
             total_pages, title = epub.extract_document_info(content)
+        except ValueError as e:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(e)) from e
         except Exception as e:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,

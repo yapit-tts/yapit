@@ -26,7 +26,9 @@ from yapit.gateway.auth import authenticate_ws
 from yapit.gateway.cache import Cache
 from yapit.gateway.config import Settings, get_settings
 from yapit.gateway.db import create_session
-from yapit.gateway.domain_models import Document, TTSModel, Voice
+from yapit.gateway.deps import get_model, get_voice
+from yapit.gateway.domain_models import Document
+from yapit.gateway.exceptions import ResourceNotFoundError
 from yapit.gateway.metrics import log_error, log_event
 from yapit.gateway.stack_auth.users import User
 from yapit.gateway.synthesis import ErrorResult, request_synthesis
@@ -143,18 +145,6 @@ async def tts_websocket(
         await pubsub.close()
 
 
-async def _get_model_and_voice(db, model_slug: str, voice_slug: str) -> tuple[TTSModel, Voice]:
-    model = (await db.exec(select(TTSModel).where(TTSModel.slug == model_slug))).first()
-    if not model:
-        raise ValueError(f"Model {model_slug!r} not found")
-
-    voice = (await db.exec(select(Voice).where(Voice.slug == voice_slug, Voice.model_id == model.id))).first()
-    if not voice:
-        raise ValueError(f"Voice {voice_slug!r} not found for model {model_slug!r}")
-
-    return model, voice
-
-
 async def _handle_synthesize(
     ws: WebSocket,
     msg: WSSynthesizeRequest,
@@ -181,8 +171,9 @@ async def _handle_synthesize(
             return
 
         try:
-            model, voice = await _get_model_and_voice(db, msg.model, msg.voice)
-        except ValueError as e:
+            model = await get_model(db, msg.model)
+            voice = await get_voice(db, msg.model, msg.voice)
+        except ResourceNotFoundError as e:
             await ws.send_json({"type": "error", "error": str(e)})
             return
 
