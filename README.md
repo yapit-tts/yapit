@@ -39,7 +39,55 @@ make self-host
 
 Open [http://localhost](http://localhost) and create an account. Data persists across restarts.
 
-`.env.selfhost` is self-documenting — see the comments for optional features (AI extraction, Inworld voices, RunPod overflow).
+`.env.selfhost` is self-documenting — see the comments for optional features (AI extraction, premium voices, RunPod overflow).
+
+**Custom TTS voices** — use any server implementing the OpenAI `/v1/audio/speech` API ([vLLM-Omni](https://github.com/vllm-project/vllm-omni), [Kokoro-FastAPI](https://github.com/remsky/Kokoro-FastAPI), [AllTalk](https://github.com/erew123/alltalk_tts), [Chatterbox TTS](https://github.com/devnen/Chatterbox-TTS-Server), etc.). Add to `.env.selfhost`:
+
+```env
+OPENAI_TTS_BASE_URL=http://your-tts-server:8091/v1
+OPENAI_TTS_API_KEY=your-key-or-empty
+OPENAI_TTS_MODEL=your-model-name
+```
+
+Voices are auto-discovered if the server supports `GET /v1/audio/voices`. Otherwise set `OPENAI_TTS_VOICES=voice1,voice2,...`.
+
+<details>
+<summary><strong>Example: OpenAI TTS</strong></summary>
+
+OpenAI doesn't support voice auto-discovery, so `OPENAI_TTS_VOICES` is required.
+
+```env
+OPENAI_TTS_BASE_URL=https://api.openai.com/v1
+OPENAI_TTS_API_KEY=sk-...
+OPENAI_TTS_MODEL=tts-1
+OPENAI_TTS_VOICES=alloy,echo,fable,nova,onyx,shimmer
+```
+
+</details>
+
+<details>
+<summary><strong>Example: Qwen3-TTS via vLLM-Omni</strong></summary>
+
+Requires GPU. The default stage config assumes >=16GB VRAM. For 8GB cards (e.g., RTX 3070 Ti), create a custom config with lower sequence lengths and memory utilization — see the [stage config reference](https://docs.vllm.ai/projects/vllm-omni/en/stable/configuration/stage_configs/).
+
+```bash
+pip install vllm-omni
+vllm-omni serve Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice \
+    --stage-configs-path /path/to/stage_configs.yaml \
+    --omni --port 8091 --trust-remote-code --enforce-eager
+```
+
+Then configure yapit:
+
+```env
+OPENAI_TTS_BASE_URL=http://your-gpu-host:8091/v1
+OPENAI_TTS_API_KEY=EMPTY
+OPENAI_TTS_MODEL=Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice
+```
+
+Voices are auto-discovered from the server (9 built-in speakers for CustomVoice models).
+
+</details>
 
 **AI document extraction** (vision-based PDF/image processing) works with any OpenAI-compatible API. Add to `.env.selfhost`:
 
@@ -52,9 +100,10 @@ AI_PROCESSOR_MODEL=qwen/qwen3-vl-235b-a22b-instruct  # any vision-capable model
 
 Or use Google Gemini directly: `AI_PROCESSOR=gemini` + `GOOGLE_API_KEY=your-key`.
 
-**Multi-worker GPU setup:** 
+<details>
+<summary><strong>GPU worker scaling (Kokoro TTS + YOLO figure detection)</strong></summary>
 
-Workers are pull-based — any machine with Redis access can run them. Connect from the local network or via Tailscale, for example. GPU and CPU workers run side-by-side; faster workers naturally pull more jobs. Scale by running more containers on any machine that can reach Redis.
+Kokoro and YOLO run as pull-based workers — any machine with Redis access can join. Connect from the local network or via Tailscale. GPU and CPU workers run side-by-side; faster workers naturally pull more jobs. Scale by running more containers on any machine that can reach Redis.
 
 Prereq: Docker 25+, [nvidia-container-toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) with [CDI enabled](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/cdi-support.html), network access to the Redis instance.
 
@@ -99,6 +148,8 @@ EOF
 sudo systemctl daemon-reload
 sudo systemctl enable --now nvidia-mps
 ```
+
+</details>
 
 </details>
 
