@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { type InworldVoice, type InworldLanguageCode } from "@/lib/voiceSelection";
+import { type ServerVoice, type InworldLanguageCode } from "@/lib/voiceSelection";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
 
@@ -22,7 +22,7 @@ interface APIModel {
 export interface PremiumModel {
   slug: string;
   name: string;
-  voices: InworldVoice[];
+  voices: ServerVoice[];
   isInworld: boolean;
 }
 

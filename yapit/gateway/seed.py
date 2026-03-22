@@ -166,10 +166,15 @@ async def _discover_voices(base_url: str) -> list[str] | None:
         async with httpx.AsyncClient(timeout=5.0) as client:
             resp = await client.get(f"{base_url}/audio/voices")
             resp.raise_for_status()
-            voices = resp.json().get("voices", [])
-            if voices:
-                logger.info(f"Discovered {len(voices)} voices from {base_url}/audio/voices")
-                return voices
+            raw = resp.json().get("voices", [])
+            if not raw:
+                return None
+            # Normalize: some servers return strings, others return objects
+            voices = [
+                v if isinstance(v, str) else v.get("name") or v.get("voice_id") or v.get("id") or str(v) for v in raw
+            ]
+            logger.info(f"Discovered {len(voices)} voices from {base_url}/audio/voices")
+            return voices
     except Exception as e:
         logger.info(f"Voice discovery not available at {base_url}/audio/voices: {e}")
     return None

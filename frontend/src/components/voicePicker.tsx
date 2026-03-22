@@ -198,8 +198,9 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
     } else {
       const saved = getInworldSelection();
       const voiceExists = saved && premiumVoices.some(v => v.slug === saved.voiceSlug);
+      const savedModelValid = saved && (isPremiumInworld ? isInworldModel(saved.model) : saved.model === premiumSlug);
       newSelection = {
-        model: premiumSlug,
+        model: savedModelValid ? saved!.model : premiumSlug,
         voiceSlug: voiceExists ? saved!.voiceSlug : premiumVoices[0]?.slug ?? "",
       };
     }
@@ -289,7 +290,7 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
     <Tabs value={activeTab} onValueChange={handleModelChange}>
       <TabsList className="w-full h-11 rounded-none border-b">
         <TabsTrigger value="kokoro" className="flex-1 text-sm py-2.5">Kokoro</TabsTrigger>
-        {premiumModel && <TabsTrigger value="premium" className="flex-1 text-sm py-2.5">{premiumModel.name}</TabsTrigger>}
+        {premiumModel && <TabsTrigger value="premium" className="flex-1 text-sm py-2.5">{premiumModel.isInworld ? "Inworld" : premiumModel.name}</TabsTrigger>}
       </TabsList>
 
       <TabsContent value="kokoro" className="m-0 max-h-[60vh] sm:max-h-[28rem] overflow-y-auto">

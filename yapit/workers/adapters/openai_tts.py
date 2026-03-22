@@ -94,13 +94,17 @@ class OpenAITTSAdapter(SynthAdapter):
 
 
 def _get_duration_ms(audio_bytes: bytes) -> int:
-    """Read exact duration from OGG Opus container metadata."""
-    container = av.open(io.BytesIO(audio_bytes), "r")
+    """Read duration from OGG Opus container, fall back to byte-size estimate."""
     try:
-        assert container.duration is not None
-        return int(container.duration / 1_000)  # av duration is in microseconds
-    finally:
-        container.close()
+        container = av.open(io.BytesIO(audio_bytes), "r")
+        try:
+            if container.duration is not None:
+                return int(container.duration / 1_000)  # av duration is in microseconds
+        finally:
+            container.close()
+    except Exception as e:
+        logger.warning(f"Could not read OGG duration, falling back to byte-size estimate: {e}")
+    return int((len(audio_bytes) / 14_500) * 1000)
 
 
 def _transcode_to_ogg_opus(audio_bytes: bytes) -> bytes:

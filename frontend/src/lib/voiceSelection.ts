@@ -306,7 +306,7 @@ export const INWORLD_LANGUAGE_INFO: Record<InworldLanguageCode, { label: string;
 // https://en.wikipedia.org/wiki/List_of_languages_by_total_number_of_speakers
 const INWORLD_LANGUAGE_ORDER: InworldLanguageCode[] = ["en", "zh", "hi", "es", "ar", "fr", "pt", "ru", "de", "ja", "ko", "it", "pl", "nl", "he"];
 
-export interface InworldVoice {
+export interface ServerVoice {
   slug: string;
   name: string;
   lang: InworldLanguageCode;
@@ -317,12 +317,12 @@ export interface InworldVoiceLanguageGroup {
   language: InworldLanguageCode;
   label: string;
   flag: string;
-  voices: InworldVoice[];
+  voices: ServerVoice[];
 }
 
 // Group Inworld voices by language
-export function groupInworldVoicesByLanguage(voices: InworldVoice[]): InworldVoiceLanguageGroup[] {
-  const byLanguage = new Map<InworldLanguageCode, InworldVoice[]>();
+export function groupInworldVoicesByLanguage(voices: ServerVoice[]): InworldVoiceLanguageGroup[] {
+  const byLanguage = new Map<InworldLanguageCode, ServerVoice[]>();
 
   for (const voice of voices) {
     const list = byLanguage.get(voice.lang) ?? [];
