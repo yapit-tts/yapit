@@ -56,6 +56,10 @@ CF_REPORT=$(uv run "$SCRIPT_DIR/cf_analytics.py" --plain 2>&1 || echo "(cf_analy
 echo "Gathering proxy diagnostics..."
 PROXY_REPORT=$(uv run "$SCRIPT_DIR/proxy_diagnostics.py" 2>&1 || echo "(proxy_diagnostics.py failed — is VPS_HOST set and SSH working?)")
 
+# Billing reconciliation (synthesis events vs billing events)
+echo "Running billing reconciliation..."
+BILLING_RECON=$(uv run "$SCRIPT_DIR/billing_reconciliation.py" --days 14 2>&1 || echo "(billing_reconciliation.py failed)")
+
 # Build context
 if $AFTER_DEPLOY; then
     BASE_CONTEXT="CONTEXT: You were triggered shortly after a deploy. Focus on: Are there new errors since the deploy? Any anomalies compared to before?"
@@ -91,7 +95,11 @@ $CF_REPORT
 
 ## PROXY DIAGNOSTICS (Stack Auth + Traefik from VPS container logs)
 
-$PROXY_REPORT"
+$PROXY_REPORT
+
+## BILLING RECONCILIATION (synthesis events vs billing events, pre-computed)
+
+$BILLING_RECON"
 
 # The analysis prompt
 read -r -d '' PROMPT << 'EOF' || true
@@ -248,11 +256,10 @@ This is the most important section. Don't just count errors — read the actual 
 - **Batch poller 503s:** The Gemini batch GET endpoint intermittently returns 503 UNAVAILABLE (Google-side capacity issues, well-documented on their forums). The poller retries every 15s automatically. Only flag if a batch has been stuck for >24h — check time since `batch_job_submitted` event.
 
 ### Billing Health
-- Reconciliation: compare count(synthesis_complete) vs sum(data->>'events_count') from billing_processed.
-  Delta = unbilled events. Small delta (<10) is normal (in-flight).
-  Growing delta = billing consumer falling behind or losing events.
-- Consumer liveness: if synthesis_complete events exist in the last hour but no billing_processed events,
-  the billing consumer may be down.
+See the BILLING RECONCILIATION section — event counts and character totals are pre-computed.
+- **Event delta**: should be 0 for completed days. Non-zero on the current (partial) day is OK (in-flight). Non-zero on past days = lost billing events.
+- **Consumer liveness**: flagged automatically if synthesis runs ahead of billing by >1h.
+- **Character ratio** (billed/synth): varies by model mix — kokoro and inworld-1.5 are 1x, inworld-1.5-max is 2x. A sudden ratio shift without a model mix change = billing bug.
 - billing_processed errors: any `error` events with billing context indicate billing consumer failures.
 
 ### Cache
@@ -285,7 +292,7 @@ This is the most important section. Don't just count errors — read the actual 
 | Requeues | Rare/isolated | Pattern (same worker, same error) |
 | Overflow usage | Occasional spikes | Constant (capacity issue) |
 | Billing sync drift | 0 | Any (check which webhooks are being missed) |
-| Billing reconciliation delta | <10 | >50 sustained (lost events) |
+| Billing reconciliation delta | 0 (past days) | Any non-zero on completed days |
 | CF 504 rate | <15% | >20% or originResponseStatus != 0 |
 | CF cache hit ratio | Low (unique content) | <1% sustained (cache rule broken) |
 | Doc extraction errors | 0 | Any (check processor_slug + data.error) |
