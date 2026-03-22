@@ -15,6 +15,8 @@ from yapit.gateway.document.batch import BatchPageRequest
 from yapit.gateway.document.figures import build_figure_prompt, prepare_page
 from yapit.gateway.document.processors.base import (
     BASE_DELAY_SECONDS,
+    FALLBACK_INPUT_TOKENS,
+    FALLBACK_OUTPUT_TOKENS,
     MAX_DELAY_SECONDS,
     MAX_RETRIES,
     RETRYABLE_STATUS_CODES,
@@ -40,9 +42,6 @@ SAFETY_OFF = [
         types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
     ]
 ]
-
-FALLBACK_INPUT_TOKENS_PER_PAGE = 2500
-FALLBACK_OUTPUT_TOKENS_PER_PAGE = 1000
 
 
 def create_gemini_config(
@@ -151,8 +150,8 @@ class GeminiExtractor(VisionExtractor):
             logger.error(f"Gemini {context}: usage_metadata is None, using fallback estimates")
             return VisionCallResult(
                 text=text,
-                input_tokens=FALLBACK_INPUT_TOKENS_PER_PAGE,
-                output_tokens=FALLBACK_OUTPUT_TOKENS_PER_PAGE,
+                input_tokens=FALLBACK_INPUT_TOKENS,
+                output_tokens=FALLBACK_OUTPUT_TOKENS,
                 is_fallback=True,
             )
 

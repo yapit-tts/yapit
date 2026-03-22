@@ -18,6 +18,8 @@ from redis.asyncio import Redis
 
 from yapit.gateway.document.processors.base import (
     BASE_DELAY_SECONDS,
+    FALLBACK_INPUT_TOKENS,
+    FALLBACK_OUTPUT_TOKENS,
     MAX_DELAY_SECONDS,
     MAX_RETRIES,
     RETRYABLE_STATUS_CODES,
@@ -116,8 +118,8 @@ class OpenAIExtractor(VisionExtractor):
 
     def _parse_usage(self, response: openai.types.chat.ChatCompletion) -> tuple[int, int]:
         if response.usage is None:
-            logger.error("Response missing usage data")
-            return 0, 0
+            logger.error("Response missing usage data, using fallback estimates")
+            return FALLBACK_INPUT_TOKENS, FALLBACK_OUTPUT_TOKENS
         return response.usage.prompt_tokens, response.usage.completion_tokens
 
     async def _call_with_retry(
