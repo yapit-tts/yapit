@@ -203,7 +203,7 @@ cython_debug/
 .data/
 
 # Private agent files (not for public commit)
-agent/*/private/
+agent/**/private/
 agent/handoffs
 scripts/tts_speed_benchmark/results/
 data/
