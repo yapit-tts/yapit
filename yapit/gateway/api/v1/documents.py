@@ -419,7 +419,7 @@ async def get_batch_status(
 
 
 @router.post("/prepare", response_model=DocumentPrepareResponse)
-@limiter.limit("20/minute")
+@limiter.limit("10/minute")
 async def prepare_document(
     request: Request,
     body: DocumentPrepareRequest,
@@ -493,7 +493,7 @@ async def prepare_document(
 
 
 @router.post("/prepare/upload", response_model=DocumentPrepareResponse)
-@limiter.limit("20/minute")
+@limiter.limit("10/minute")
 async def prepare_document_upload(
     request: Request,
     file: UploadFile,
@@ -566,7 +566,9 @@ async def prepare_document_upload(
 
 
 @router.post("/text", response_model=DocumentCreateResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit("10/minute;1000/month")
 async def create_text_document(
+    request: Request,
     req: TextDocumentCreateRequest,
     db: DbSession,
     transformer: DocumentTransformerDep,
@@ -605,7 +607,7 @@ async def create_text_document(
 
 
 @router.post("/website", response_model=DocumentCreateResponse, status_code=status.HTTP_201_CREATED)
-@limiter.limit("10/minute")
+@limiter.limit("5/minute;1000/month")
 async def create_website_document(
     request: Request,
     req: WebsiteDocumentCreateRequest,
@@ -1128,7 +1130,7 @@ async def _run_extraction(
     response_model=ExtractionAcceptedResponse | BatchSubmittedResponse,
     status_code=status.HTTP_202_ACCEPTED,
 )
-@limiter.limit("20/minute")
+@limiter.limit("5/minute;1000/month")
 async def create_document(
     request: Request,
     req: DocumentCreateRequest,
@@ -1575,7 +1577,7 @@ class DocumentImportResponse(BaseModel):
 
 
 @router.post("/{document_id}/import", response_model=DocumentImportResponse, status_code=status.HTTP_201_CREATED)
-@limiter.limit("10/minute")
+@limiter.limit("10/minute;1000/month")
 async def import_document(
     request: Request,
     document_id: UUID,

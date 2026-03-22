@@ -226,7 +226,7 @@ class AnonymousSessionResponse(BaseModel):
 
 
 @router.post("/anonymous-session", response_model=AnonymousSessionResponse)
-@limiter.limit("10/hour")
+@limiter.limit("5/hour")
 async def create_anonymous_session(
     request: Request,
     settings: SettingsDep,
