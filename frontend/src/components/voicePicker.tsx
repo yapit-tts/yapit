@@ -20,6 +20,7 @@ import {
   INWORLD_SLUG,
   INWORLD_MAX_SLUG,
   isKokoroModel,
+  isInworldModel,
   KOKORO_VOICES,
   LANGUAGE_INFO,
   INWORLD_LANGUAGE_INFO,
@@ -49,6 +50,9 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
   const canUseLocalTTS = useCanUseLocalTTS();
   const [localUnavailableOpen, setLocalUnavailableOpen] = useState(false);
 
+  // Fetch premium model (Inworld on hosted, OpenAI TTS for self-hosters, etc.)
+  const { model: premiumModel, isLoading: premiumLoading } = usePremiumModel();
+
   // Auto-switch away from local if device can't run it (e.g. persisted selection from desktop)
   useEffect(() => {
     if (canUseLocalTTS === false && value.model === KOKORO_BROWSER_SLUG) {
@@ -58,13 +62,24 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
     }
   }, [canUseLocalTTS]);
 
+  // Auto-switch to Kokoro if saved selection references a model that's no longer available
+  useEffect(() => {
+    if (premiumLoading) return;
+    if (isKokoroModel(value.model)) return;
+    const isValidPremium = premiumModel && (
+      premiumModel.isInworld ? isInworldModel(value.model) : value.model === premiumModel.slug
+    );
+    if (!isValidPremium) {
+      const fallback: VoiceSelection = getKokoroSelection() ?? { model: KOKORO_SLUG, voiceSlug: "af_heart" };
+      onChange(fallback);
+      setVoiceSelection(fallback);
+    }
+  }, [premiumLoading, premiumModel]);
+
   // Ref to latest value — VoiceRow memo skips function props, so stale closures
   // from onSelect would read outdated model state without this.
   const valueRef = useRef(value);
   valueRef.current = value;
-
-  // Fetch premium model (Inworld on hosted, OpenAI TTS for self-hosters, etc.)
-  const { model: premiumModel, isLoading: premiumLoading } = usePremiumModel();
   const premiumVoices = premiumModel?.voices ?? [];
   const isPremiumInworld = premiumModel?.isInworld ?? false;
 
