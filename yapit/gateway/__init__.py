@@ -11,7 +11,8 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 from loguru import logger
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
-from sqlmodel import col, delete
+from sqlalchemy import func
+from sqlmodel import col, delete, select
 
 from yapit.contracts import (
     TTS_DLQ,
@@ -25,6 +26,7 @@ from yapit.contracts import (
     get_queue_name,
 )
 from yapit.gateway.api.v1 import routers as v1_routers
+from yapit.gateway.auth import ANONYMOUS_ID_PREFIX
 from yapit.gateway.billing_consumer import run_billing_consumer
 from yapit.gateway.billing_sync import run_billing_sync_loop
 from yapit.gateway.cache import Cache
@@ -36,7 +38,7 @@ from yapit.gateway.document.batch_poller import BatchPoller
 from yapit.gateway.document.defuddle_client import init_defuddle_client
 from yapit.gateway.document.processors.gemini import GeminiExtractor, create_gemini_config
 from yapit.gateway.document.types import BatchExtractor
-from yapit.gateway.domain_models import UsageLog
+from yapit.gateway.domain_models import Document, UsageLog, UserPreferences
 from yapit.gateway.exceptions import APIError
 from yapit.gateway.logging_config import (
     RequestContextMiddleware,
@@ -48,6 +50,7 @@ from yapit.gateway.metrics import init_metrics_db, start_metrics_writer, stop_me
 from yapit.gateway.overflow_scanner import run_overflow_scanner
 from yapit.gateway.rate_limit import limiter
 from yapit.gateway.result_consumer import run_result_consumer
+from yapit.gateway.storage import ImageStorage
 from yapit.gateway.visibility_scanner import run_visibility_scanner
 from yapit.workers.adapters.inworld import InworldAdapter
 from yapit.workers.tts_loop import run_api_tts_dispatcher
@@ -61,6 +64,7 @@ VISIBILITY_SCAN_INTERVAL_S = 15
 OVERFLOW_SCAN_INTERVAL_S = 2
 MAX_RETRIES = 3
 USAGE_LOG_RETENTION_DAYS = 31
+GUEST_DOC_TTL_DAYS = 30
 EXTRACTION_PROMPT_PATH = Path(__file__).parent / "document" / "prompts" / "extraction.txt"
 
 
@@ -229,6 +233,7 @@ async def lifespan(app: FastAPI):
     background_tasks.append(maintenance_task)
 
     background_tasks.append(asyncio.create_task(_usage_log_cleanup_task()))
+    background_tasks.append(asyncio.create_task(_guest_cleanup_task(app.state.image_storage)))
 
     if settings.stripe_secret_key:
         background_tasks.append(
@@ -294,6 +299,56 @@ async def _usage_log_cleanup_task() -> None:
                     )
         except Exception as e:
             logger.exception(f"UsageLog cleanup failed: {e}")
+        await asyncio.sleep(86400)
+
+
+async def _guest_cleanup_task(image_storage: ImageStorage) -> None:
+    """Delete inactive guest users and all their data.
+
+    A guest user is inactive if none of their documents have been played or
+    created within GUEST_DOC_TTL_DAYS.
+    """
+    from yapit.gateway.api.v1.documents import delete_documents_with_images
+
+    await asyncio.sleep(120)
+    while True:
+        try:
+            cutoff = datetime.now(tz=dt.UTC) - timedelta(days=GUEST_DOC_TTL_DAYS)
+            async with create_session() as db:
+                # Find guest users whose most recent activity is older than cutoff
+                inactive_users = await db.exec(
+                    select(Document.user_id)
+                    .where(col(Document.user_id).startswith(ANONYMOUS_ID_PREFIX))
+                    .group_by(Document.user_id)
+                    .having(func.max(func.coalesce(Document.last_played_at, Document.created)) < cutoff)
+                )
+                user_ids = list(inactive_users.all())
+
+                if user_ids:
+                    docs_result = await db.exec(select(Document).where(col(Document.user_id).in_(user_ids)))
+                    deleted = await delete_documents_with_images(docs_result.all(), db, image_storage)
+                    await db.exec(delete(UserPreferences).where(col(UserPreferences.user_id).in_(user_ids)))
+                    await db.commit()
+                    logger.info(f"Guest cleanup: {len(user_ids)} users, {deleted} docs")
+
+                # Sweep orphaned guest preferences (no documents at all)
+                orphaned = await db.exec(
+                    select(UserPreferences.user_id).where(
+                        col(UserPreferences.user_id).startswith(ANONYMOUS_ID_PREFIX),
+                        ~col(UserPreferences.user_id).in_(
+                            select(Document.user_id)
+                            .where(col(Document.user_id).startswith(ANONYMOUS_ID_PREFIX))
+                            .distinct()
+                        ),
+                    )
+                )
+                orphan_ids = list(orphaned.all())
+                if orphan_ids:
+                    await db.exec(delete(UserPreferences).where(col(UserPreferences.user_id).in_(orphan_ids)))
+                    await db.commit()
+                    logger.info(f"Guest cleanup: {len(orphan_ids)} orphaned preferences purged")
+        except Exception as e:
+            logger.exception(f"Guest cleanup failed: {e}")
         await asyncio.sleep(86400)
 
 

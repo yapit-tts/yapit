@@ -119,6 +119,9 @@ When **adding or removing** config files or Settings fields, check ALL of these:
 - `margin_calculator.py` — Profitability analysis
 - `test_clock_setup.py` — Stripe test clock for billing tests
 
+**Users & Storage:**
+- `guest_users.py` — Guest user storage audit, activity, idle days. `--inactive N` for TTL candidates.
+
 **Monitoring:**
 - `cf_analytics.py` — Cloudflare analytics via GraphQL (traffic, cache, errors, DNS, hourly, 504 diagnostics)
 - `proxy_diagnostics.py` — Stack Auth + Traefik diagnostics from VPS container logs (latency, errors, slow requests)

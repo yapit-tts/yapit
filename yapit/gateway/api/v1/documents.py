@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 import time
+from collections.abc import Sequence
 from datetime import datetime
 from email.message import EmailMessage
 from html import escape as html_escape
@@ -20,6 +21,7 @@ from fastapi.responses import HTMLResponse
 from loguru import logger
 from pydantic import BaseModel, Field, HttpUrl, StringConstraints, ValidationError
 from sqlmodel import col, func, select
+from sqlmodel.ext.asyncio.session import AsyncSession
 
 from yapit.contracts import (
     MAX_CONCURRENT_EXTRACTIONS,
@@ -1382,6 +1384,35 @@ async def update_document(
     return DocumentUpdateResponse(id=document.id, title=document.title, is_public=document.is_public)
 
 
+async def delete_documents_with_images(
+    documents: Sequence[Document],
+    db: AsyncSession,
+    image_storage: ImageStorage,
+) -> int:
+    """Delete documents and clean up orphaned images. Returns count deleted.
+
+    Does not commit — caller controls the transaction boundary.
+    """
+    if not documents:
+        return 0
+
+    content_hashes = {doc.content_hash for doc in documents if doc.content_hash}
+
+    for doc in documents:
+        await db.delete(doc)
+    await db.flush()
+
+    if content_hashes:
+        result = await db.exec(
+            select(Document.content_hash).where(col(Document.content_hash).in_(content_hashes)).distinct()
+        )
+        still_referenced = set(result.all())
+        for content_hash in content_hashes - still_referenced:
+            await image_storage.delete_all(content_hash)
+
+    return len(documents)
+
+
 class BulkDeleteResponse(BaseModel):
     deleted_count: int
 
@@ -1402,26 +1433,9 @@ async def bulk_delete_documents(
 
     result = await db.exec(query)
     documents = result.all()
-
-    # Collect content hashes for image cleanup
-    content_hashes = {doc.content_hash for doc in documents if doc.content_hash}
-
-    for doc in documents:
-        await db.delete(doc)
-
+    deleted = await delete_documents_with_images(documents, db, image_storage)
     await db.commit()
-
-    # Clean up images for content hashes no longer referenced
-    still_referenced: set[str] = set()
-    if content_hashes:
-        result = await db.exec(
-            select(Document.content_hash).where(col(Document.content_hash).in_(content_hashes)).distinct()
-        )
-        still_referenced = set(result.all())
-    for content_hash in content_hashes - still_referenced:
-        await image_storage.delete_all(content_hash)
-
-    return BulkDeleteResponse(deleted_count=len(documents))
+    return BulkDeleteResponse(deleted_count=deleted)
 
 
 @router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -1430,17 +1444,9 @@ async def delete_document(
     db: DbSession,
     image_storage: ImageStorageDep,
 ) -> None:
-    """Delete a document and all its blocks. Cleans up images if last doc with this content."""
-    content_hash = document.content_hash
-
-    await db.delete(document)
+    """Delete a document. Cleans up images if last doc with this content."""
+    await delete_documents_with_images([document], db, image_storage)
     await db.commit()
-
-    # Clean up images if no other documents use this content
-    if content_hash:
-        other_docs = await db.exec(select(Document).where(Document.content_hash == content_hash).limit(1))
-        if not other_docs.first():
-            await image_storage.delete_all(content_hash)
 
 
 class AudioBlock(BaseModel):
