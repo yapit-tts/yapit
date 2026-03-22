@@ -158,20 +158,14 @@ To stop: `make self-host-down`.
 
 ## Roadmap
 
-Now:
-- Launch
-
 Next:
-- Support uploading images, EPUB.
-- Support AI-transform for websites.
+- Support uploading images
 - Support exporting audio as MP3.
 
-
 Later:
-- Better support for self-hosting (better modularity for adding voices, extraction methods, documentation)
 - Support thinking parameter for Gemini
 - Support temperature parameter for Inworld
-
+- Support AI-transform for websites.
 
 ## Development
 
