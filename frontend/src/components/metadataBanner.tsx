@@ -304,7 +304,7 @@ export function MetadataBanner({
         </a>
 
         <div className="flex items-center gap-4">
-          {aiActive && !isLoading && (
+          {aiActive && !isLoading && formatInfo?.batch && (
             <div className="flex items-center gap-2" title="Save 50% on tokens. May take minutes to hours.">
               <Switch
                 id="batch-mode-toggle"

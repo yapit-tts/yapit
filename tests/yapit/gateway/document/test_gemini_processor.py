@@ -13,11 +13,8 @@ import pytest
 from google.genai import errors as genai_errors
 
 from yapit.contracts import YoloResult
-from yapit.gateway.document.processors.gemini import (
-    MAX_RETRIES,
-    GeminiExtractor,
-    PreparedPage,
-)
+from yapit.gateway.document.processors.gemini import MAX_RETRIES, GeminiExtractor
+from yapit.gateway.document.types import PreparedPage
 from yapit.gateway.storage import LocalImageStorage
 
 FIXTURES_DIR = Path("tests/fixtures/documents")
@@ -75,12 +72,12 @@ async def test_extract_pdf(extractor):
 
     with (
         patch(
-            "yapit.gateway.document.processors.gemini.enqueue_detection",
+            "yapit.gateway.document.figures.enqueue_detection",
             new_callable=AsyncMock,
             return_value="mock-job-id",
         ),
         patch(
-            "yapit.gateway.document.processors.gemini.wait_for_result",
+            "yapit.gateway.document.figures.wait_for_result",
             new_callable=AsyncMock,
             return_value=_mock_yolo_result(),
         ),
@@ -106,12 +103,12 @@ async def test_extract_specific_pages(extractor):
 
     with (
         patch(
-            "yapit.gateway.document.processors.gemini.enqueue_detection",
+            "yapit.gateway.document.figures.enqueue_detection",
             new_callable=AsyncMock,
             return_value="mock-job-id",
         ),
         patch(
-            "yapit.gateway.document.processors.gemini.wait_for_result",
+            "yapit.gateway.document.figures.wait_for_result",
             new_callable=AsyncMock,
             return_value=_mock_yolo_result(),
         ),
@@ -205,7 +202,7 @@ class TestRetryBehavior:
         )
 
         with patch("yapit.gateway.document.processors.gemini.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
-            result = await mock_extractor._call_gemini_for_page(
+            result = await mock_extractor._call_for_page(
                 page=make_prepared_page(),
                 content_hash="test-hash",
                 user_id=None,
@@ -241,7 +238,7 @@ class TestRetryBehavior:
             )
 
             with patch("yapit.gateway.document.processors.gemini.asyncio.sleep", new_callable=AsyncMock):
-                result = await mock_extractor._call_gemini_for_page(
+                result = await mock_extractor._call_for_page(
                     page=make_prepared_page(),
                     content_hash="test-hash",
                     user_id=None,
@@ -256,7 +253,7 @@ class TestRetryBehavior:
             side_effect=genai_errors.APIError(code=400, response_json={"error": {"message": "Bad request"}})
         )
 
-        result = await mock_extractor._call_gemini_for_page(
+        result = await mock_extractor._call_for_page(
             page=make_prepared_page(),
             content_hash="test-hash",
             user_id=None,
@@ -272,7 +269,7 @@ class TestRetryBehavior:
             side_effect=genai_errors.APIError(code=403, response_json={"error": {"message": "Forbidden"}})
         )
 
-        result = await mock_extractor._call_gemini_for_page(
+        result = await mock_extractor._call_for_page(
             page=make_prepared_page(),
             content_hash="test-hash",
             user_id=None,
@@ -288,7 +285,7 @@ class TestRetryBehavior:
             side_effect=genai_errors.APIError(code=404, response_json={"error": {"message": "Not found"}})
         )
 
-        result = await mock_extractor._call_gemini_for_page(
+        result = await mock_extractor._call_for_page(
             page=make_prepared_page(),
             content_hash="test-hash",
             user_id=None,
@@ -305,7 +302,7 @@ class TestRetryBehavior:
         )
 
         with patch("yapit.gateway.document.processors.gemini.asyncio.sleep", new_callable=AsyncMock):
-            result = await mock_extractor._call_gemini_for_page(
+            result = await mock_extractor._call_for_page(
                 page=make_prepared_page(),
                 content_hash="test-hash",
                 user_id=None,
@@ -338,7 +335,7 @@ class TestRetryBehavior:
         )
 
         with patch("yapit.gateway.document.processors.gemini.asyncio.sleep", new_callable=AsyncMock):
-            result = await mock_extractor._call_gemini_for_page(
+            result = await mock_extractor._call_for_page(
                 page=make_prepared_page(),
                 content_hash="test-hash",
                 user_id=None,

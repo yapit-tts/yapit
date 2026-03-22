@@ -55,7 +55,7 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 load_dotenv(PROJECT_ROOT / ".env")
 
-from yapit.gateway.document.extraction import deduplicate_footnotes, stitch_pages  # noqa: E402
+from yapit.gateway.document.orchestration import deduplicate_footnotes, stitch_pages  # noqa: E402
 from yapit.gateway.document.processors.gemini import GeminiExtractor  # noqa: E402
 
 SCRIPT_DIR = Path(__file__).parent

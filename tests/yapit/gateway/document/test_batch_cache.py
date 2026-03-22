@@ -6,7 +6,7 @@ import pytest
 
 from yapit.gateway.api.v1.documents import _check_extraction_cache
 from yapit.gateway.document.batch import BatchJobInfo, BatchJobStatus
-from yapit.gateway.document.processing import ExtractedPage, ProcessorConfig
+from yapit.gateway.document.types import ExtractedPage, ProcessorConfig
 from yapit.gateway.storage import ImageStorage
 
 

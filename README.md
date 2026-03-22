@@ -39,7 +39,18 @@ make self-host
 
 Open [http://localhost](http://localhost) and create an account. Data persists across restarts.
 
-`.env.selfhost` is self-documenting — see the comments for optional features (Gemini extraction, Inworld voices, RunPod overflow).
+`.env.selfhost` is self-documenting — see the comments for optional features (AI extraction, Inworld voices, RunPod overflow).
+
+**AI document extraction** (vision-based PDF/image processing) works with any OpenAI-compatible API. Add to `.env.selfhost`:
+
+```env
+AI_PROCESSOR=openai
+AI_PROCESSOR_BASE_URL=https://openrouter.ai/api/v1  # or your vLLM/Ollama endpoint
+AI_PROCESSOR_API_KEY=your-key
+AI_PROCESSOR_MODEL=qwen/qwen3-vl-235b-a22b-instruct  # any vision-capable model
+```
+
+Or use Google Gemini directly: `AI_PROCESSOR=gemini` + `GOOGLE_API_KEY=your-key`.
 
 **Multi-worker GPU setup:** 
 

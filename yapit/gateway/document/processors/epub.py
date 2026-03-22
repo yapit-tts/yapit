@@ -18,7 +18,7 @@ from xml.etree import ElementTree as ET
 
 from loguru import logger
 
-from yapit.gateway.document.processing import ExtractedPage, PageResult, ProcessorConfig, cpu_executor
+from yapit.gateway.document.types import ExtractedPage, PageResult, ProcessorConfig, cpu_executor
 from yapit.gateway.storage import ImageStorage
 
 config = ProcessorConfig(

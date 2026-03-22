@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from yapit.gateway.document.processors import pdf
+from yapit.gateway.document.processors import free_pdf as pdf
 
 
 async def collect_pages(extractor_iter):

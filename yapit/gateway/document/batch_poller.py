@@ -20,12 +20,9 @@ from yapit.gateway.document.batch import (
     remove_from_active_set,
     save_batch_job,
 )
-from yapit.gateway.document.extraction import substitute_image_placeholders
-from yapit.gateway.document.processing import (
-    ExtractedPage,
-    cpu_executor,
-    process_pages_to_document,
-)
+from yapit.gateway.document.figures import substitute_image_placeholders
+from yapit.gateway.document.orchestration import process_pages_to_document
+from yapit.gateway.document.types import ExtractedPage, cpu_executor
 from yapit.gateway.domain_models import Document, DocumentMetadata, UsageType
 from yapit.gateway.markdown.transformer import DocumentTransformer
 from yapit.gateway.metrics import log_event

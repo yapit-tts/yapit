@@ -37,6 +37,10 @@ class Settings(BaseSettings):
     ai_processor: str | None = None
     google_api_key: str | None = None
 
+    ai_processor_base_url: str | None = None
+    ai_processor_api_key: str | None = None
+    ai_processor_model: str | None = None
+
     # Image storage: "local" or "r2"
     image_storage_type: str
     images_dir: str | None = None  # Required for local storage

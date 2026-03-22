@@ -8,7 +8,8 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from yapit.gateway.document.processing import ExtractedPage, PageResult, ProcessorConfig, process_with_billing
+from yapit.gateway.document.orchestration import process_with_billing
+from yapit.gateway.document.types import ExtractedPage, PageResult, ProcessorConfig
 from yapit.gateway.exceptions import ValidationError
 from yapit.gateway.storage import ImageStorage
 
@@ -226,10 +227,10 @@ class TestBilling:
         mock_estimate.total_tokens = 1000
 
         with (
-            patch("yapit.gateway.document.processing.estimate_document_tokens", return_value=mock_estimate),
-            patch("yapit.gateway.document.processing.check_usage_limit", new_callable=AsyncMock) as mock_check,
-            patch("yapit.gateway.document.processing.record_usage", new_callable=AsyncMock),
-            patch("yapit.gateway.document.processing.create_session", _fake_session),
+            patch("yapit.gateway.document.orchestration.estimate_document_tokens", return_value=mock_estimate),
+            patch("yapit.gateway.document.orchestration.check_usage_limit", new_callable=AsyncMock) as mock_check,
+            patch("yapit.gateway.document.orchestration.record_usage", new_callable=AsyncMock),
+            patch("yapit.gateway.document.orchestration.create_session", _fake_session),
         ):
             await process_with_billing(
                 config=config,
@@ -256,10 +257,10 @@ class TestBilling:
         mock_estimate.total_tokens = 3000
 
         with (
-            patch("yapit.gateway.document.processing.estimate_document_tokens", return_value=mock_estimate),
-            patch("yapit.gateway.document.processing.check_usage_limit", new_callable=AsyncMock),
-            patch("yapit.gateway.document.processing.record_usage", new_callable=AsyncMock) as mock_record,
-            patch("yapit.gateway.document.processing.create_session", _fake_session),
+            patch("yapit.gateway.document.orchestration.estimate_document_tokens", return_value=mock_estimate),
+            patch("yapit.gateway.document.orchestration.check_usage_limit", new_callable=AsyncMock),
+            patch("yapit.gateway.document.orchestration.record_usage", new_callable=AsyncMock) as mock_record,
+            patch("yapit.gateway.document.orchestration.create_session", _fake_session),
         ):
             await process_with_billing(
                 config=config,
@@ -282,8 +283,8 @@ class TestBilling:
         config = make_config(is_paid=False)
 
         with (
-            patch("yapit.gateway.document.processing.check_usage_limit", new_callable=AsyncMock) as mock_check,
-            patch("yapit.gateway.document.processing.record_usage", new_callable=AsyncMock) as mock_record,
+            patch("yapit.gateway.document.orchestration.check_usage_limit", new_callable=AsyncMock) as mock_check,
+            patch("yapit.gateway.document.orchestration.record_usage", new_callable=AsyncMock) as mock_record,
         ):
             await process_with_billing(
                 config=config,
@@ -337,10 +338,10 @@ class TestCancellation:
         mock_estimate.total_tokens = 4000
 
         with (
-            patch("yapit.gateway.document.processing.estimate_document_tokens", return_value=mock_estimate),
-            patch("yapit.gateway.document.processing.check_usage_limit", new_callable=AsyncMock),
-            patch("yapit.gateway.document.processing.record_usage", new_callable=AsyncMock) as mock_record,
-            patch("yapit.gateway.document.processing.create_session", _fake_session),
+            patch("yapit.gateway.document.orchestration.estimate_document_tokens", return_value=mock_estimate),
+            patch("yapit.gateway.document.orchestration.check_usage_limit", new_callable=AsyncMock),
+            patch("yapit.gateway.document.orchestration.record_usage", new_callable=AsyncMock) as mock_record,
+            patch("yapit.gateway.document.orchestration.create_session", _fake_session),
         ):
             await process_with_billing(
                 config=config,
