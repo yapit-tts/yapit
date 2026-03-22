@@ -224,8 +224,13 @@ async def sync_openai_tts_voices(db: AsyncSession, settings: Settings) -> None:
 
     stale_slugs = existing_slugs - canonical_slugs
     if stale_slugs:
-        await db.exec(delete(Voice).where(col(Voice.model_id) == model.id, col(Voice.slug).in_(stale_slugs)))
-        logger.info(f"Removed {len(stale_slugs)} stale OpenAI TTS voices: {sorted(stale_slugs)}")
+        stale_voices = (
+            await db.exec(select(Voice).where(col(Voice.model_id) == model.id, col(Voice.slug).in_(stale_slugs)))
+        ).all()
+        for voice in stale_voices:
+            voice.is_active = False
+            db.add(voice)
+        logger.info(f"Deactivated {len(stale_slugs)} stale OpenAI TTS voices: {sorted(stale_slugs)}")
 
     await db.commit()
 
