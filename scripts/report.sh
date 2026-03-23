@@ -67,19 +67,7 @@ else
     BASE_CONTEXT="CONTEXT: Daily health check. Look for patterns, anomalies, degradation."
 fi
 
-ALLOWED_TOOLS="Read,Bash(jq:*),Bash(grep:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(duckdb:*),Bash(wc:*),Bash(sort:*),Bash(uniq:*),Bash(ls:*)"
-
 EXTRA_CONTEXT="$BASE_CONTEXT
-
-## AVAILABLE TOOLS
-
-$ALLOWED_TOOLS
-
-**CRITICAL: Do NOT use pipes (|) in commands.** Piped commands will be blocked by the permission system. Run each tool separately — write intermediate results to /tmp files if needed. For example:
-- WRONG: \`jq 'select(...)' file.jsonl | tail -50\`
-- RIGHT: \`jq 'select(...)' file.jsonl > /tmp/errors.json\` then \`tail -50 /tmp/errors.json\`
-- WRONG: \`grep ERROR file | wc -l\`
-- RIGHT: \`grep -c ERROR file\`
 
 ## DISK_USAGE (current snapshot)
 
@@ -401,12 +389,13 @@ If any of these would help future analysis, note them:
 EOF
 
 echo "Running Claude analysis..."
-output=$(CLAUDE_CODE_SIMPLE=1 claude -p "$PROMPT" \
-    --allowedTools "$ALLOWED_TOOLS" \
+output=$(clankr run "$PROJECT_DIR" -p "$SCRIPT_DIR/report-profile" \
+    -- -p "$PROMPT" \
     --append-system-prompt "$EXTRA_CONTEXT" \
     --output-format json \
     2>"$REPORT_DIR/claude-stderr.log") || {
-    echo "Claude analysis failed. stderr: $(cat "$REPORT_DIR/claude-stderr.log")"
+    echo "Claude analysis failed. stderr:"
+    cat "$REPORT_DIR/claude-stderr.log"
     echo "stdout: $output"
     exit 1
 }

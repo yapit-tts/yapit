@@ -1,0 +1,15 @@
+#!/bin/bash
+set -euo pipefail
+
+if ! command -v duckdb &>/dev/null; then
+    ARCH=$(dpkg --print-architecture)
+    case "$ARCH" in
+        amd64) DUCK_ARCH="linux-amd64" ;;
+        arm64) DUCK_ARCH="linux-aarch64" ;;
+    esac
+    VERSION=$(curl -fsSL https://api.github.com/repos/duckdb/duckdb/releases/latest | jq -r .tag_name)
+    mkdir -p "$HOME/.local/bin"
+    curl -fsSL "https://github.com/duckdb/duckdb/releases/download/${VERSION}/duckdb_cli-${DUCK_ARCH}.zip" -o /tmp/duckdb.zip
+    unzip -o /tmp/duckdb.zip -d "$HOME/.local/bin/"
+    rm /tmp/duckdb.zip
+fi
