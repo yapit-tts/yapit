@@ -229,6 +229,8 @@ async def lifespan(app: FastAPI):
         logger.info("Inworld dispatchers started")
 
     # OpenAI-compatible TTS dispatcher (any /v1/audio/speech endpoint)
+    if settings.openai_tts_base_url and not settings.openai_tts_model:
+        logger.warning("OPENAI_TTS_BASE_URL is set but OPENAI_TTS_MODEL is missing — OpenAI TTS disabled")
     if settings.openai_tts_base_url and settings.openai_tts_model:
         adapter = OpenAITTSAdapter(
             base_url=settings.openai_tts_base_url,

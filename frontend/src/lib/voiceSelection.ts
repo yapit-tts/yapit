@@ -345,17 +345,3 @@ export function groupInworldVoicesByLanguage(voices: ServerVoice[]): InworldVoic
       };
     });
 }
-
-// Legacy function for backwards compatibility (deprecated)
-export function groupKokoroVoices(voices: KokoroVoice[]) {
-  const groups = groupKokoroVoicesByLanguage(voices);
-  // Return in old format for any code still using it
-  const americanGroup = groups.find(g => g.language === "a");
-  const britishGroup = groups.find(g => g.language === "b");
-  return [
-    { key: "us-female", label: "US Female", voices: americanGroup?.voices.filter(v => v.gender === "Female") ?? [] },
-    { key: "us-male", label: "US Male", voices: americanGroup?.voices.filter(v => v.gender === "Male") ?? [] },
-    { key: "gb-female", label: "UK Female", voices: britishGroup?.voices.filter(v => v.gender === "Female") ?? [] },
-    { key: "gb-male", label: "UK Male", voices: britishGroup?.voices.filter(v => v.gender === "Male") ?? [] },
-  ];
-}

@@ -119,16 +119,17 @@ def _transcode_to_ogg_opus(audio_bytes: bytes) -> bytes:
 
     buf = io.BytesIO()
     out = av.open(buf, "w", format="ogg")
-    stream = out.add_stream("libopus", rate=48_000)
-    stream.bit_rate = 96_000
+    try:
+        stream = out.add_stream("libopus", rate=48_000)
+        stream.bit_rate = 96_000
 
-    for frame in inp.decode(audio=0):
-        frame.pts = None
-        for pkt in stream.encode(frame):
+        for frame in inp.decode(audio=0):
+            frame.pts = None
+            for pkt in stream.encode(frame):
+                out.mux(pkt)
+        for pkt in stream.encode(None):
             out.mux(pkt)
-    for pkt in stream.encode(None):
-        out.mux(pkt)
-
-    out.close()
-    inp.close()
+    finally:
+        out.close()
+        inp.close()
     return buf.getvalue()
