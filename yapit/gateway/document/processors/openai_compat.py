@@ -37,7 +37,15 @@ def create_openai_config(
 ) -> ProcessorConfig:
     return ProcessorConfig(
         slug=f"openai:{model}",
-        supported_mime_types=frozenset({"application/pdf"}),
+        supported_mime_types=frozenset({
+            "application/pdf",
+            "image/png",
+            "image/jpeg",
+            "image/webp",
+            "image/gif",
+            "image/bmp",
+            "image/tiff",
+        }),
         max_pages=10000,
         max_file_size=100 * 1024 * 1024,
         is_paid=True,
