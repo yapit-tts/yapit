@@ -26,6 +26,8 @@ import { useUserPreferences } from "@/hooks/useUserPreferences";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { cn } from "@/lib/utils";
 
+const MAX_EXTRACTION_PROMPT_LENGTH = 50_000;
+
 // LOTR trilogy stats for comparisons (Rob Inglis unabridged, trilogy only)
 const LOTR_TRILOGY_MS = 194_400_000; // ~54 hours
 
@@ -74,6 +76,7 @@ const AccountPage = () => {
   const [promptDialogOpen, setPromptDialogOpen] = useState(false);
   const [promptDraft, setPromptDraft] = useState("");
   const [defaultPrompt, setDefaultPrompt] = useState<string | null>(null);
+  const [promptSaveError, setPromptSaveError] = useState(false);
 
   useEffect(() => {
     if (!isAuthReady) return;
@@ -598,7 +601,10 @@ const AccountPage = () => {
       </Dialog>
 
       {/* Extraction Prompt Editor */}
-      <Dialog open={promptDialogOpen} onOpenChange={setPromptDialogOpen}>
+      <Dialog open={promptDialogOpen} onOpenChange={(open) => {
+        setPromptDialogOpen(open);
+        if (!open) setPromptSaveError(false);
+      }}>
         <DialogContent className="sm:max-w-2xl max-h-[80vh] flex flex-col">
           <DialogHeader>
             <DialogTitle>Extraction Prompt</DialogTitle>
@@ -608,14 +614,25 @@ const AccountPage = () => {
           </DialogHeader>
           <textarea
             value={promptDraft}
-            onChange={(e) => setPromptDraft(e.target.value)}
+            onChange={(e) => {
+              setPromptDraft(e.target.value);
+              setPromptSaveError(false);
+            }}
             className="flex-1 min-h-[300px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm font-mono ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring resize-y"
             spellCheck={false}
           />
           <div className="flex items-center justify-between">
-            <span className="text-xs text-muted-foreground">
-              {promptDraft.length.toLocaleString()} / 50,000 characters
-            </span>
+            <div className="flex flex-col gap-1">
+              <span className={cn(
+                "text-xs",
+                promptDraft.length > MAX_EXTRACTION_PROMPT_LENGTH ? "text-destructive" : "text-muted-foreground"
+              )}>
+                {promptDraft.length.toLocaleString()} / {MAX_EXTRACTION_PROMPT_LENGTH.toLocaleString()} characters
+              </span>
+              {promptSaveError && (
+                <span className="text-xs text-destructive">Something went wrong. Please reload and try again.</span>
+              )}
+            </div>
             <div className="flex gap-2">
               {defaultPrompt && (
                 <Button
@@ -632,10 +649,15 @@ const AccountPage = () => {
               </Button>
               <Button
                 size="sm"
-                onClick={() => {
+                disabled={promptDraft.length > MAX_EXTRACTION_PROMPT_LENGTH}
+                onClick={async () => {
                   const value = promptDraft.trim() === defaultPrompt?.trim() ? null : promptDraft.trim() || null;
-                  setExtractionPrompt(value);
-                  setPromptDialogOpen(false);
+                  const ok = await setExtractionPrompt(value);
+                  if (ok) {
+                    setPromptDialogOpen(false);
+                  } else {
+                    setPromptSaveError(true);
+                  }
                 }}
               >
                 Save

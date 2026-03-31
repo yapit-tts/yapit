@@ -10,7 +10,7 @@ interface UserPreferences {
   defaultDocumentsPublic: boolean;
   setDefaultDocumentsPublic: (value: boolean) => void;
   extractionPrompt: string | null;
-  setExtractionPrompt: (value: string | null) => void;
+  setExtractionPrompt: (value: string | null) => Promise<boolean>;
   isLoading: boolean;
 }
 
@@ -22,7 +22,7 @@ const UserPreferencesContext = createContext<UserPreferences>({
   defaultDocumentsPublic: false,
   setDefaultDocumentsPublic: () => {},
   extractionPrompt: null,
-  setExtractionPrompt: () => {},
+  setExtractionPrompt: async () => true,
   isLoading: true,
 });
 
@@ -47,6 +47,8 @@ export const UserPreferencesProvider: FC<PropsWithChildren> = ({ children }) => 
   isAnonymousRef.current = isAnonymous;
   const pinnedRef = useRef(pinnedVoices);
   pinnedRef.current = pinnedVoices;
+  const extractionPromptRef = useRef(extractionPrompt);
+  extractionPromptRef.current = extractionPrompt;
 
   // Fetch server preferences on init for authenticated users
   useEffect(() => {
@@ -127,11 +129,20 @@ export const UserPreferencesProvider: FC<PropsWithChildren> = ({ children }) => 
     }
   }, [api]);
 
-  const setExtractionPrompt = useCallback((value: string | null) => {
+  const setExtractionPrompt = useCallback(async (value: string | null): Promise<boolean> => {
+    const prev = extractionPromptRef.current;
     setExtractionPromptState(value);
     if (!isAnonymousRef.current) {
-      api.patch("/v1/users/me/preferences", { extraction_prompt: value ?? "" }).catch(() => {});
+      try {
+        await api.patch("/v1/users/me/preferences", { extraction_prompt: value ?? "" });
+        return true;
+      } catch (error) {
+        console.error("Failed to save extraction prompt:", error);
+        setExtractionPromptState(prev);
+        return false;
+      }
     }
+    return true;
   }, [api]);
 
   return (

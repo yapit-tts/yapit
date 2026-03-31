@@ -127,13 +127,14 @@ class PreferencesResponse(BaseModel):
 
 
 VoiceSlug = Annotated[str, StringConstraints(max_length=64)]
+MAX_EXTRACTION_PROMPT_LENGTH = 50_000
 
 
 class PreferencesUpdate(BaseModel):
     pinned_voices: list[VoiceSlug] | None = Field(None, max_length=500)
     auto_import_shared_documents: bool | None = None
     default_documents_public: bool | None = None
-    extraction_prompt: str | None = Field(None, max_length=50_000)
+    extraction_prompt: str | None = Field(None, max_length=MAX_EXTRACTION_PROMPT_LENGTH)
 
 
 @router.get("/me/preferences", response_model=PreferencesResponse)
