@@ -348,8 +348,8 @@ describe("InlineContentRenderer bionic reading", () => {
     );
     const bolds = container.querySelectorAll("b");
     expect(bolds.length).toBe(2);
-    expect(bolds[0].textContent).toBe("hel");   // 5 chars -> bold 3
-    expect(bolds[1].textContent).toBe("wor");   // 5 chars -> bold 3
+    expect(bolds[0].textContent).toBe("hel");   // 5 chars -> bold 3 (level 3)
+    expect(bolds[1].textContent).toBe("wor");   // 5 chars -> bold 3 (level 3)
     expect(container.textContent).toBe("hello world");
   });
 
@@ -359,11 +359,11 @@ describe("InlineContentRenderer bionic reading", () => {
       <InlineContentRenderer nodes={nodes} />,
       { bionicReading: true },
     );
-    // 1-char words get 0 fixation (no bold), 2-char words get 1
     const bolds = container.querySelectorAll("b");
-    expect(bolds.length).toBe(2);
-    expect(bolds[0].textContent).toBe("i");     // 2 chars -> bold 1
-    expect(bolds[1].textContent).toBe("t");     // 2 chars -> bold 1
+    expect(bolds.length).toBe(3);
+    expect(bolds[0].textContent).toBe("a");     // 1 char -> bold 1
+    expect(bolds[1].textContent).toBe("i");     // 2 chars -> bold 1
+    expect(bolds[2].textContent).toBe("t");     // 2 chars -> bold 1
     expect(container.textContent).toBe("a is to");
   });
 
@@ -403,8 +403,8 @@ describe("InlineContentRenderer bionic reading", () => {
     );
     const bolds = container.querySelectorAll("b");
     expect(bolds.length).toBe(3);         // "self", "hosted", "app" each get bold
-    expect(bolds[0].textContent).toBe("sel");   // 4 chars -> bold 3
-    expect(bolds[1].textContent).toBe("host");  // 6 chars -> bold 4
+    expect(bolds[0].textContent).toBe("se");    // 4 chars -> bold 2 (level 3)
+    expect(bolds[1].textContent).toBe("hos");   // 6 chars -> bold 3 (level 3)
     expect(container.textContent).toBe("self-hosted app");
   });
 

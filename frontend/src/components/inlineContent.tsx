@@ -31,7 +31,7 @@ const FIXATION_BOUNDARIES = [
   [1, 2, 7, 10, 13, 14, 19, 22, 25, 28, 31, 34, 37, 40, 43, 46, 49],
   [1, 2, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31, 33, 35, 37, 39, 41, 43, 45, 47, 49],
 ];
-const DEFAULT_FIXATION = FIXATION_BOUNDARIES[0];
+const DEFAULT_FIXATION = FIXATION_BOUNDARIES[2];
 
 function fixationLength(wordLength: number): number {
   const idx = DEFAULT_FIXATION.findIndex(b => wordLength <= b);
