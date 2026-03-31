@@ -20,10 +20,6 @@ Separate TimescaleDB instance for metrics (isolated from main Postgres).
 - `job_requeued` — Visibility timeout fired, job re-queued
 - `job_dlq` — Job exceeded max retries, moved to dead letter queue
 
-### Overflow
-- `job_overflow` — Job sent to RunPod serverless
-- `overflow_complete` / `overflow_error` — Serverless results
-
 ### Detection (YOLO)
 - `detection_queued` — Detection job pushed (queue_depth)
 - `detection_complete` / `detection_error` — Worker results (worker_id, processing_time)

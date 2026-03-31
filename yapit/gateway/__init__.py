@@ -15,15 +15,8 @@ from sqlalchemy import func
 from sqlmodel import col, delete, select
 
 from yapit.contracts import (
-    TTS_DLQ,
-    TTS_JOB_INDEX,
     TTS_JOBS,
-    TTS_RESULTS,
-    YOLO_DLQ,
     YOLO_JOBS,
-    YOLO_QUEUE,
-    YOLO_RESULT,
-    get_queue_name,
 )
 from yapit.gateway.api.v1 import routers as v1_routers
 from yapit.gateway.auth import ANONYMOUS_ID_PREFIX
@@ -48,7 +41,6 @@ from yapit.gateway.logging_config import (
 )
 from yapit.gateway.markdown.transformer import DocumentTransformer
 from yapit.gateway.metrics import init_metrics_db, start_metrics_writer, stop_metrics_writer
-from yapit.gateway.overflow_scanner import run_overflow_scanner
 from yapit.gateway.rate_limit import limiter
 from yapit.gateway.result_consumer import run_result_consumer
 from yapit.gateway.storage import ImageStorage
@@ -59,11 +51,8 @@ from yapit.workers.tts_loop import run_api_tts_dispatcher
 
 # Scanner constants
 TTS_VISIBILITY_TIMEOUT_S = 20
-TTS_OVERFLOW_THRESHOLD_S = 15
 YOLO_VISIBILITY_TIMEOUT_S = 10
-YOLO_OVERFLOW_THRESHOLD_S = 10
 VISIBILITY_SCAN_INTERVAL_S = 15
-OVERFLOW_SCAN_INTERVAL_S = 2
 MAX_RETRIES = 3
 USAGE_LOG_RETENTION_DAYS = 31
 GUEST_DOC_TTL_DAYS = 30
@@ -150,31 +139,6 @@ async def lifespan(app: FastAPI):
     )
     background_tasks.append(tts_visibility_task)
 
-    # TTS overflow scanner (for Kokoro)
-    if (
-        settings.kokoro_runpod_serverless_endpoint
-        and settings.runpod_api_key
-        and settings.runpod_request_timeout_seconds
-    ):
-        tts_overflow_task = asyncio.create_task(
-            run_overflow_scanner(
-                app.state.redis_client,
-                runpod_api_key=settings.runpod_api_key,
-                runpod_request_timeout_seconds=settings.runpod_request_timeout_seconds,
-                queue_name=get_queue_name("kokoro"),
-                jobs_key=TTS_JOBS,
-                job_index_key=TTS_JOB_INDEX,
-                endpoint_id=settings.kokoro_runpod_serverless_endpoint,
-                result_key_pattern=TTS_RESULTS,
-                overflow_threshold_s=TTS_OVERFLOW_THRESHOLD_S,
-                scan_interval_s=OVERFLOW_SCAN_INTERVAL_S,
-                name="tts-overflow",
-                max_retries=MAX_RETRIES,
-                dlq_key=TTS_DLQ.format(model="kokoro"),
-            )
-        )
-        background_tasks.append(tts_overflow_task)
-
     # YOLO visibility scanner
     yolo_visibility_task = asyncio.create_task(
         run_visibility_scanner(
@@ -188,27 +152,6 @@ async def lifespan(app: FastAPI):
         )
     )
     background_tasks.append(yolo_visibility_task)
-
-    # YOLO overflow scanner
-    if settings.yolo_runpod_serverless_endpoint and settings.runpod_api_key and settings.runpod_request_timeout_seconds:
-        yolo_overflow_task = asyncio.create_task(
-            run_overflow_scanner(
-                app.state.redis_client,
-                runpod_api_key=settings.runpod_api_key,
-                runpod_request_timeout_seconds=settings.runpod_request_timeout_seconds,
-                queue_name=YOLO_QUEUE,
-                jobs_key=YOLO_JOBS,
-                job_index_key=None,
-                endpoint_id=settings.yolo_runpod_serverless_endpoint,
-                result_key_pattern=YOLO_RESULT,
-                overflow_threshold_s=YOLO_OVERFLOW_THRESHOLD_S,
-                scan_interval_s=OVERFLOW_SCAN_INTERVAL_S,
-                name="yolo-overflow",
-                max_retries=MAX_RETRIES,
-                dlq_key=YOLO_DLQ,
-            )
-        )
-        background_tasks.append(yolo_overflow_task)
 
     # Inworld dispatchers run in gateway (API calls, unlimited parallelism)
     if settings.inworld_api_key:

@@ -32,14 +32,14 @@ Powered by [Gemini](https://ai.google.dev/gemini-api), [Kokoro](https://huggingf
 ## Self-hosting
 
 ```bash
-git clone https://github.com/yapit-tts/yapit.git && cd yapit
+git clone --depth 1 https://github.com/yapit-tts/yapit.git && cd yapit
 cp .env.selfhost.example .env.selfhost
 make self-host
 ```
 
 Open [http://localhost](http://localhost) and create an account. Data persists across restarts.
 
-`.env.selfhost` is self-documenting — see the comments for optional features (AI extraction, premium voices, RunPod overflow).
+`.env.selfhost` is self-documenting — see the comments for optional features (AI extraction, premium voices).
 
 **Custom TTS voices** — use any server implementing the OpenAI `/v1/audio/speech` API ([vLLM-Omni](https://github.com/vllm-project/vllm-omni), [Kokoro-FastAPI](https://github.com/remsky/Kokoro-FastAPI), [AllTalk](https://github.com/erew123/alltalk_tts), [Chatterbox TTS](https://github.com/devnen/Chatterbox-TTS-Server), etc.). Add to `.env.selfhost`:
 
