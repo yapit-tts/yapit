@@ -74,6 +74,11 @@ from yapit.gateway.stack_auth.users import User
 from yapit.gateway.storage import ImageStorage
 from yapit.gateway.usage import check_usage_limit
 
+
+def _hash_prompt(prompt: str) -> str:
+    return hashlib.sha256(prompt.encode()).hexdigest()[:16]
+
+
 router = APIRouter(prefix="/v1/documents", tags=["Documents"], dependencies=[Depends(authenticate)])
 public_router = APIRouter(prefix="/v1/documents", tags=["Documents"])
 
@@ -772,7 +777,7 @@ async def _submit_batch_extraction(
     pages_requested = list(range(total_pages)) if pages is None else pages
     submitted_at = datetime.now(tz=dt.UTC).isoformat()
 
-    prompt_hash = hashlib.sha256(extraction_prompt.encode()).hexdigest()[:16] if extraction_prompt else None
+    prompt_hash = _hash_prompt(extraction_prompt) if extraction_prompt else None
 
     # Check extraction cache — same pattern as process_with_billing (processing.py)
     cached_pages, uncached_pages = await _check_extraction_cache(
@@ -1028,7 +1033,7 @@ async def _run_extraction(
                 config = pdf.config
                 extractor = pdf.extract(content, pages)
 
-            prompt_hash = hashlib.sha256(extraction_prompt.encode()).hexdigest()[:16] if extraction_prompt else None
+            prompt_hash = _hash_prompt(extraction_prompt) if extraction_prompt else None
             ext_log.info("Starting process_with_billing")
             extraction_result = await process_with_billing(
                 config=config,
