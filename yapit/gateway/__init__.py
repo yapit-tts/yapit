@@ -37,6 +37,7 @@ from yapit.gateway.deps import create_cache, create_image_storage
 from yapit.gateway.document.batch_poller import BatchPoller
 from yapit.gateway.document.defuddle_client import init_defuddle_client
 from yapit.gateway.document.processors.gemini import GeminiExtractor, create_gemini_config
+from yapit.gateway.document.processors.openai_compat import OpenAIExtractor, create_openai_config
 from yapit.gateway.document.types import BatchExtractor
 from yapit.gateway.domain_models import Document, UsageLog, UserPreferences
 from yapit.gateway.exceptions import APIError
@@ -53,6 +54,7 @@ from yapit.gateway.result_consumer import run_result_consumer
 from yapit.gateway.storage import ImageStorage
 from yapit.gateway.visibility_scanner import run_visibility_scanner
 from yapit.workers.adapters.inworld import InworldAdapter
+from yapit.workers.adapters.openai_tts import OpenAITTSAdapter
 from yapit.workers.tts_loop import run_api_tts_dispatcher
 
 # Scanner constants
@@ -103,8 +105,6 @@ async def lifespan(app: FastAPI):
         )
         logger.info("AI extractor: gemini")
     elif settings.ai_processor == "openai":
-        from yapit.gateway.document.processors.openai_compat import OpenAIExtractor, create_openai_config
-
         assert settings.ai_processor_base_url, "AI_PROCESSOR_BASE_URL required for openai processor"
         assert settings.ai_processor_api_key, "AI_PROCESSOR_API_KEY required for openai processor"
         assert settings.ai_processor_model, "AI_PROCESSOR_MODEL required for openai processor"
@@ -227,6 +227,26 @@ async def lifespan(app: FastAPI):
             )
             background_tasks.append(task)
         logger.info("Inworld dispatchers started")
+
+    # OpenAI-compatible TTS dispatcher (any /v1/audio/speech endpoint)
+    if settings.openai_tts_base_url and not settings.openai_tts_model:
+        logger.warning("OPENAI_TTS_BASE_URL is set but OPENAI_TTS_MODEL is missing — OpenAI TTS disabled")
+    if settings.openai_tts_base_url and settings.openai_tts_model:
+        adapter = OpenAITTSAdapter(
+            base_url=settings.openai_tts_base_url,
+            api_key=settings.openai_tts_api_key or "",
+            model=settings.openai_tts_model,
+        )
+        task = asyncio.create_task(
+            run_api_tts_dispatcher(
+                redis_url=settings.redis_url,
+                model="openai-tts",
+                adapter=adapter,
+                worker_id="gateway-openai-tts",
+            )
+        )
+        background_tasks.append(task)
+        logger.info(f"OpenAI TTS dispatcher started ({settings.openai_tts_model} @ {settings.openai_tts_base_url})")
 
     all_caches = [app.state.audio_cache, app.state.document_cache, app.state.extraction_cache]
     maintenance_task = asyncio.create_task(_cache_maintenance_task(all_caches))

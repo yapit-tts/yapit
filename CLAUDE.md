@@ -51,6 +51,7 @@ Yapit TTS - Open-source text-to-speech platform for reading documents, web pages
 - If you can debug something without ssh access, e.g. by running make sync-logs and inspecting the logs and metrics locally, do that instead, since ssh requires user approval / unnecessary friction.
 - NEVER push in the same Bash tool call as git committing. Generally, NEVER push on your own except being explicitly told to push.
 - The pre-commit hook runs ruff (lint + format), ty type checks, and frontend build — no need to run these separately right before committing.
+- **Anonymous auth for API testing** (selfhost/dev): `curl -H "X-Anonymous-ID: test123" -H "X-Anonymous-Token: $(python3 -c "import hmac,hashlib; print(hmac.new(b'change-me-to-a-random-string', b'test123', hashlib.sha256).hexdigest())")" http://localhost:8000/v1/...` — the secret is `ANONYMOUS_SESSION_SECRET` from `.env.selfhost`.
 
 ## VPS SSH Permissions
 

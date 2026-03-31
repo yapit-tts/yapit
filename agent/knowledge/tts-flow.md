@@ -72,9 +72,10 @@ Pull-based workers instead of HTTP-based. Workers pull jobs from Redis, gateway 
 **Workers:**
 - `yapit/workers/tts_loop.py` — TTS worker loop with two modes:
   - `run_tts_worker` — Sequential processing for GPU models (Kokoro). One job at a time, visibility tracking for retries.
-  - `run_api_tts_dispatcher` — Parallel processing for API models (Inworld). Spawns task per job, unlimited concurrency. No visibility tracking (if gateway crashes, in-flight jobs lost).
+  - `run_api_tts_dispatcher` — Parallel processing for API models (Inworld, OpenAI TTS). Spawns task per job, unlimited concurrency. No visibility tracking (if gateway crashes, in-flight jobs lost).
 - `yapit/workers/adapters/kokoro.py` — Kokoro adapter (local model)
 - `yapit/workers/adapters/inworld.py` — Inworld adapter (API calls, with retry logic for 429/500/503/504)
+- `yapit/workers/adapters/openai_tts.py` — OpenAI-compatible adapter (any `/v1/audio/speech` endpoint). Requests `opus` format, detects OGG Opus via magic bytes (pass-through), transcodes other formats to OGG Opus via PyAV. Same retry logic as Inworld.
 
 Workers only need Redis access. No Postgres, no HTTP endpoints. Gateway handles all DB writes and notifications centrally.
 
@@ -155,7 +156,9 @@ The `Synthesizer` interface unifies both paths — the playback engine doesn't c
 
 ## Models & Voices
 
-Current models: kokoro, inworld-1.5, inworld-1.5-max. Model/voice definitions in `yapit/gateway/seed.py`. See [[inworld-tts]] for Inworld-specific details.
+Built-in models: kokoro, inworld-1.5, inworld-1.5-max. Model/voice definitions in `yapit/gateway/seed.py`. See [[inworld-tts]] for Inworld-specific details.
+
+**OpenAI-compatible TTS** (`openai-tts` slug): configured via `OPENAI_TTS_BASE_URL` + `OPENAI_TTS_MODEL`. Voices are auto-discovered at startup via `GET /v1/audio/voices` (community extension — vLLM-Omni, Kokoro-FastAPI support it; OpenAI, AllTalk don't). Fallback: `OPENAI_TTS_VOICES` env var (comma-separated). Models without a configured backend are deactivated (`is_active=False`) so they don't appear in the API or voice picker. See `seed.py:sync_openai_tts_voices` and `seed.py:_deactivate_unconfigured_models`.
 
 ## Key Files
 
@@ -187,6 +190,7 @@ Current models: kokoro, inworld-1.5, inworld-1.5-max. Model/voice definitions in
 - **Double synthesis prevention:** Inflight key deletion happens at START of result processing. First result atomically deletes key and proceeds; duplicates (from visibility timeout requeue + original completion) see delete() return 0 and skip. This prevents duplicate BillingEvents from being produced. On the consumer side, `record_usage` has its own idempotency via `UsageLog.event_id` (keyed on `job_id`) as a second line of defense.
 - **Cache warming:** `yapit/gateway/warm_cache.py` is a one-shot CLI (not a background task). Run via `make warm-cache` when voices or showcase content change. Pinned entries are exempt from LRU eviction. See [[inworld-tts]] for details.
 - **Inworld duration is estimated:** Calculated from OGG Opus file size (~14.5KB/sec assumption in adapter). Frontend uses decoded AudioBuffer for accurate playback timing.
+- **OpenAI TTS audio format:** Requests `response_format="opus"`. If server returns OGG Opus (`OggS` magic bytes), passed through. Otherwise transcoded to OGG Opus via PyAV at 96kbps. Duration read from container metadata, falls back to byte-size estimate. Transcoding runs in executor to avoid blocking the event loop.
 - **Codec is not part of variant hash:** In normal dev flow, `make dev-cpu` clears cache (`down -v`). If you run experiments without full teardown, stale cached blobs can make codec/endpoint A/B tests invalid.
 - **Per-document pubsub channels:** Pubsub scoped to `tts:done:{user_id}:{document_id}` — prevents cross-tab contamination.
 - **Eviction orphaning:** Inflight key stores `job_id`. On eviction, inflight key is conditionally deleted only if its value matches the evicted job — prevents orphaned semaphores from blocking future requests.

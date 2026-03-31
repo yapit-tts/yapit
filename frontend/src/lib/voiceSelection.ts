@@ -5,7 +5,7 @@ export const KOKORO_SLUG = "kokoro" as const;
 export const INWORLD_SLUG = "inworld-1.5" as const;
 export const INWORLD_MAX_SLUG = "inworld-1.5-max" as const;
 
-export type ModelType = typeof KOKORO_BROWSER_SLUG | typeof KOKORO_SLUG | typeof INWORLD_SLUG | typeof INWORLD_MAX_SLUG;
+export type ModelType = typeof KOKORO_BROWSER_SLUG | typeof KOKORO_SLUG | typeof INWORLD_SLUG | typeof INWORLD_MAX_SLUG | string;
 
 // Check if model is an Inworld model (any variant)
 export function isInworldModel(model: ModelType): boolean {
@@ -306,7 +306,7 @@ export const INWORLD_LANGUAGE_INFO: Record<InworldLanguageCode, { label: string;
 // https://en.wikipedia.org/wiki/List_of_languages_by_total_number_of_speakers
 const INWORLD_LANGUAGE_ORDER: InworldLanguageCode[] = ["en", "zh", "hi", "es", "ar", "fr", "pt", "ru", "de", "ja", "ko", "it", "pl", "nl", "he"];
 
-export interface InworldVoice {
+export interface ServerVoice {
   slug: string;
   name: string;
   lang: InworldLanguageCode;
@@ -317,12 +317,12 @@ export interface InworldVoiceLanguageGroup {
   language: InworldLanguageCode;
   label: string;
   flag: string;
-  voices: InworldVoice[];
+  voices: ServerVoice[];
 }
 
 // Group Inworld voices by language
-export function groupInworldVoicesByLanguage(voices: InworldVoice[]): InworldVoiceLanguageGroup[] {
-  const byLanguage = new Map<InworldLanguageCode, InworldVoice[]>();
+export function groupInworldVoicesByLanguage(voices: ServerVoice[]): InworldVoiceLanguageGroup[] {
+  const byLanguage = new Map<InworldLanguageCode, ServerVoice[]>();
 
   for (const voice of voices) {
     const list = byLanguage.get(voice.lang) ?? [];
@@ -344,18 +344,4 @@ export function groupInworldVoicesByLanguage(voices: InworldVoice[]): InworldVoi
         voices: langVoices,
       };
     });
-}
-
-// Legacy function for backwards compatibility (deprecated)
-export function groupKokoroVoices(voices: KokoroVoice[]) {
-  const groups = groupKokoroVoicesByLanguage(voices);
-  // Return in old format for any code still using it
-  const americanGroup = groups.find(g => g.language === "a");
-  const britishGroup = groups.find(g => g.language === "b");
-  return [
-    { key: "us-female", label: "US Female", voices: americanGroup?.voices.filter(v => v.gender === "Female") ?? [] },
-    { key: "us-male", label: "US Male", voices: americanGroup?.voices.filter(v => v.gender === "Male") ?? [] },
-    { key: "gb-female", label: "UK Female", voices: britishGroup?.voices.filter(v => v.gender === "Female") ?? [] },
-    { key: "gb-male", label: "UK Male", voices: britishGroup?.voices.filter(v => v.gender === "Male") ?? [] },
-  ];
 }

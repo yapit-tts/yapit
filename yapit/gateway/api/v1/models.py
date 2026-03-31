@@ -40,7 +40,7 @@ class ModelRead(BaseModel):
     voices: list[VoiceRead] = []
 
 
-@router.get("", response_model=List[ModelRead], dependencies=[Depends(authenticate)])
+@router.get("", response_model=List[ModelRead])
 async def list_models(
     db: DbSession,
 ) -> List[ModelRead]:
