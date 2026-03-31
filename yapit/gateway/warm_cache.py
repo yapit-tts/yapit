@@ -141,7 +141,9 @@ async def run_warming(cache: Cache, redis_client: Redis) -> WarmingStats:
     async with create_session() as db:
         models = (
             await db.exec(
-                select(TTSModel).where(col(TTSModel.is_active).is_(True)).options(selectinload(TTSModel.voices))  # type: ignore[arg-type]
+                select(TTSModel)
+                .where(col(TTSModel.is_active).is_(True))
+                .options(selectinload(TTSModel.voices))  # ty: ignore[invalid-argument-type]
             )
         ).all()
 
@@ -190,7 +192,7 @@ async def run_warming(cache: Cache, redis_client: Redis) -> WarmingStats:
 
 async def main() -> int:
     """Standalone entry point for manual one-off warming."""
-    settings = Settings()  # type: ignore[call-arg]
+    settings = Settings()  # ty: ignore[missing-argument]
     init_db(settings)
     redis_client = await aioredis.from_url(settings.redis_url, decode_responses=False)
     cache = create_cache(settings.audio_cache_type, settings.audio_cache_config)

@@ -772,7 +772,7 @@ async def _submit_batch_extraction(
     pages_requested = list(range(total_pages)) if pages is None else pages
     submitted_at = datetime.now(tz=dt.UTC).isoformat()
 
-    prompt_hash = hashlib.sha256(extraction_prompt.encode()).hexdigest()[:8] if extraction_prompt else None
+    prompt_hash = hashlib.sha256(extraction_prompt.encode()).hexdigest()[:16] if extraction_prompt else None
 
     # Check extraction cache — same pattern as process_with_billing (processing.py)
     cached_pages, uncached_pages = await _check_extraction_cache(
@@ -1028,7 +1028,7 @@ async def _run_extraction(
                 config = pdf.config
                 extractor = pdf.extract(content, pages)
 
-            prompt_hash = hashlib.sha256(extraction_prompt.encode()).hexdigest()[:8] if extraction_prompt else None
+            prompt_hash = hashlib.sha256(extraction_prompt.encode()).hexdigest()[:16] if extraction_prompt else None
             ext_log.info("Starting process_with_billing")
             extraction_result = await process_with_billing(
                 config=config,

@@ -172,7 +172,7 @@ async def create_subscription_checkout(
 
     checkout_params: SessionCreateParams = {
         "line_items": [{"price": price_id, "quantity": 1}],
-        "managed_payments": {"enabled": True},  # type: ignore[typeddict-unknown-key] - preview API
+        "managed_payments": {"enabled": True},  # ty: ignore[invalid-key] - preview API
         "mode": "subscription",
         "success_url": f"{origin}/checkout/success?session_id={{CHECKOUT_SESSION_ID}}",
         "cancel_url": f"{origin}/checkout/cancel",

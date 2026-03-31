@@ -323,7 +323,7 @@ async def record_usage(
     )
     if event_id is not None:
         insert_stmt = insert_stmt.on_conflict_do_nothing(index_elements=["event_id"])
-    result = await db.exec(insert_stmt.returning(UsageLog.id))  # type: ignore[arg-type]
+    result = await db.exec(insert_stmt.returning(UsageLog.id))  # ty: ignore[no-matching-overload]
     if not result.first():
         return False
 
@@ -441,8 +441,8 @@ async def _voice_breakdown(
     period_end: datetime,
     db: AsyncSession,
 ) -> list[dict]:
-    voice_slug_col = UsageLog.details["voice_slug"].astext  # type: ignore[index]
-    model_slug_col = UsageLog.details["model_slug"].astext  # type: ignore[index]
+    voice_slug_col = UsageLog.details["voice_slug"].astext  # ty: ignore[not-subscriptable]
+    model_slug_col = UsageLog.details["model_slug"].astext  # ty: ignore[not-subscriptable]
 
     rows = (
         await db.exec(
@@ -468,9 +468,13 @@ async def _voice_breakdown(
 
     # Resolve voice display names: (voice_slug, model_slug) → voice_name
     voice_names: dict[tuple[str, str], str] = {}
+    # fmt: off
     voices = (
-        await db.exec(select(Voice.slug, Voice.name, TTSModel.slug.label("model_slug")).join(TTSModel))  # type: ignore[arg-type]
+        await db.exec(
+            select(Voice.slug, Voice.name, TTSModel.slug.label("model_slug")).join(TTSModel)  # ty: ignore[unresolved-attribute]
+        )
     ).all()
+    # fmt: on
     for v in voices:
         voice_names[(v.slug, v.model_slug)] = v.name
 
@@ -495,9 +499,11 @@ async def _document_breakdown(
     rows = (
         await db.exec(
             select(
-                UsageLog.reference_id.label("content_hash"),  # type: ignore[union-attr]
+                UsageLog.reference_id.label("content_hash"),  # ty: ignore[unresolved-attribute]
                 func.sum(UsageLog.amount).label("total_tokens"),
-                func.count(func.distinct(UsageLog.details["page_idx"].astext)).label("page_count"),  # type: ignore[index]
+                func.count(func.distinct(UsageLog.details["page_idx"].astext)).label(  # ty: ignore[not-subscriptable]
+                    "page_count"
+                ),
             )
             .where(
                 col(UsageLog.user_id) == user_id,
@@ -545,7 +551,7 @@ async def get_engagement_stats(user_id: str, db: AsyncSession) -> dict:
     """Get lifetime engagement stats aggregated from UserVoiceStats."""
     rows = (
         await db.exec(
-            select(  # type: ignore[call-overload]
+            select(  # ty: ignore[no-matching-overload]
                 UserVoiceStats.voice_slug,
                 UserVoiceStats.model_slug,
                 func.sum(UserVoiceStats.total_duration_ms).label("total_duration_ms"),
@@ -561,9 +567,13 @@ async def get_engagement_stats(user_id: str, db: AsyncSession) -> dict:
     # Resolve voice display names
     voice_names: dict[tuple[str, str], str] = {}
     if rows:
+        # fmt: off
         voices = (
-            await db.exec(select(Voice.slug, Voice.name, TTSModel.slug.label("model_slug")).join(TTSModel))  # type: ignore[arg-type]
+            await db.exec(
+                select(Voice.slug, Voice.name, TTSModel.slug.label("model_slug")).join(TTSModel)  # ty: ignore[unresolved-attribute]
+            )
         ).all()
+        # fmt: on
         for v in voices:
             voice_names[(v.slug, v.model_slug)] = v.name
 
