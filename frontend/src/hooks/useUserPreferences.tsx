@@ -9,6 +9,8 @@ interface UserPreferences {
   setAutoImportSharedDocuments: (value: boolean) => void;
   defaultDocumentsPublic: boolean;
   setDefaultDocumentsPublic: (value: boolean) => void;
+  extractionPrompt: string | null;
+  setExtractionPrompt: (value: string | null) => void;
   isLoading: boolean;
 }
 
@@ -19,6 +21,8 @@ const UserPreferencesContext = createContext<UserPreferences>({
   setAutoImportSharedDocuments: () => {},
   defaultDocumentsPublic: false,
   setDefaultDocumentsPublic: () => {},
+  extractionPrompt: null,
+  setExtractionPrompt: () => {},
   isLoading: true,
 });
 
@@ -26,6 +30,7 @@ interface PreferencesResponse {
   pinned_voices: string[];
   auto_import_shared_documents: boolean;
   default_documents_public: boolean;
+  extraction_prompt: string | null;
 }
 
 export const UserPreferencesProvider: FC<PropsWithChildren> = ({ children }) => {
@@ -33,6 +38,7 @@ export const UserPreferencesProvider: FC<PropsWithChildren> = ({ children }) => 
   const [pinnedVoices, setPinnedVoices] = useState<string[]>(() => getPinnedVoices());
   const [autoImportSharedDocuments, setAutoImportSharedDocumentsState] = useState(false);
   const [defaultDocumentsPublic, setDefaultDocumentsPublicState] = useState(false);
+  const [extractionPrompt, setExtractionPromptState] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const hasFetched = useRef(false);
 
@@ -70,6 +76,7 @@ export const UserPreferencesProvider: FC<PropsWithChildren> = ({ children }) => 
         // Set sharing preferences from server
         setAutoImportSharedDocumentsState(response.data.auto_import_shared_documents);
         setDefaultDocumentsPublicState(response.data.default_documents_public);
+        setExtractionPromptState(response.data.extraction_prompt);
 
         // Sync merged list back to server if local had additions
         if (localPinned.some(v => !serverPinned.includes(v))) {
@@ -120,6 +127,13 @@ export const UserPreferencesProvider: FC<PropsWithChildren> = ({ children }) => 
     }
   }, [api]);
 
+  const setExtractionPrompt = useCallback((value: string | null) => {
+    setExtractionPromptState(value);
+    if (!isAnonymousRef.current) {
+      api.patch("/v1/users/me/preferences", { extraction_prompt: value ?? "" }).catch(() => {});
+    }
+  }, [api]);
+
   return (
     <UserPreferencesContext.Provider value={{
       pinnedVoices,
@@ -128,6 +142,8 @@ export const UserPreferencesProvider: FC<PropsWithChildren> = ({ children }) => 
       setAutoImportSharedDocuments,
       defaultDocumentsPublic,
       setDefaultDocumentsPublic,
+      extractionPrompt,
+      setExtractionPrompt,
       isLoading,
     }}>
       {children}

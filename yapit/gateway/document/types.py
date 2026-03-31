@@ -74,7 +74,9 @@ class ProcessorConfig:
         base_type = mime_type.split(";")[0].strip()
         return base_type in self.supported_mime_types
 
-    def extraction_cache_key(self, content_hash: str, page_idx: int) -> str:
+    def extraction_cache_key(self, content_hash: str, page_idx: int, prompt_hash: str | None = None) -> str:
+        if prompt_hash:
+            return f"{content_hash}:{self.extraction_cache_prefix}:{prompt_hash}:{page_idx}"
         return f"{content_hash}:{self.extraction_cache_prefix}:{page_idx}"
 
 
@@ -90,6 +92,7 @@ class Extractor(Protocol):
         pages: list[int] | None = None,
         user_id: str | None = None,
         cancel_key: str | None = None,
+        prompt_override: str | None = None,
     ) -> AsyncIterator[PageResult]: ...
 
     @property
@@ -105,6 +108,7 @@ class BatchExtractor(Extractor, Protocol):
         content: bytes,
         content_hash: str,
         pages: list[int] | None = None,
+        prompt_override: str | None = None,
     ) -> tuple[list, dict[int, list[str]]]: ...
 
     @property

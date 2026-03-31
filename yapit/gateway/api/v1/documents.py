@@ -708,6 +708,7 @@ async def _check_extraction_cache(
     extraction_cache: Cache,
     image_storage: ImageStorage,
     user_id: str,
+    prompt_hash: str | None = None,
 ) -> tuple[dict[int, ExtractedPage], set[int]]:
     """Check which pages are already in extraction cache.
 
@@ -717,7 +718,7 @@ async def _check_extraction_cache(
     if not config.extraction_cache_prefix:
         return {}, requested_pages
 
-    cache_key_map = {config.extraction_cache_key(content_hash, idx): idx for idx in requested_pages}
+    cache_key_map = {config.extraction_cache_key(content_hash, idx, prompt_hash): idx for idx in requested_pages}
     cached_data = await extraction_cache.batch_retrieve(list(cache_key_map.keys()))
 
     cached_pages: dict[int, ExtractedPage] = {}
@@ -754,6 +755,7 @@ async def _submit_batch_extraction(
     redis: RedisClient,
     extraction_cache: ExtractionCache,
     image_storage: ImageStorageDep,
+    extraction_prompt: str | None = None,
 ) -> BatchSubmittedResponse:
     """Submit document for batch extraction.
 
@@ -770,9 +772,11 @@ async def _submit_batch_extraction(
     pages_requested = list(range(total_pages)) if pages is None else pages
     submitted_at = datetime.now(tz=dt.UTC).isoformat()
 
+    prompt_hash = hashlib.sha256(extraction_prompt.encode()).hexdigest()[:8] if extraction_prompt else None
+
     # Check extraction cache — same pattern as process_with_billing (processing.py)
     cached_pages, uncached_pages = await _check_extraction_cache(
-        ai_extractor_config, content_hash, set(pages_requested), extraction_cache, image_storage, user_id
+        ai_extractor_config, content_hash, set(pages_requested), extraction_cache, image_storage, user_id, prompt_hash
     )
 
     if not uncached_pages:
@@ -849,6 +853,7 @@ async def _submit_batch_extraction(
             file_size=file_size,
             pages_requested=pages_requested,
             pages_submitted=uncached_list,
+            extraction_prompt=extraction_prompt,
         )
     )
     _background_tasks.add(task)
@@ -874,6 +879,7 @@ async def _prepare_and_submit_batch(
     file_size: int,
     pages_requested: list[int],
     pages_submitted: list[int],
+    extraction_prompt: str | None = None,
 ) -> None:
     """Background task: run YOLO detection + submit batch."""
     assert isinstance(ai_extractor, BatchExtractor)
@@ -882,6 +888,7 @@ async def _prepare_and_submit_batch(
             content,
             content_hash,
             pages,
+            prompt_override=extraction_prompt,
         )
 
         await submit_batch_job(
@@ -939,6 +946,7 @@ async def _run_extraction(
     ai_extractor: AiExtractorDep,
     redis: RedisClient,
     ratelimit_key: str,
+    extraction_prompt: str | None = None,
 ) -> None:
     """Background task: extract document, create in DB, store result in Redis."""
     ext_log = logger.bind(extraction_id=extraction_id, user_id=user_id, content_hash=content_hash)
@@ -1014,11 +1022,13 @@ async def _run_extraction(
                     pages,
                     user_id=user_id,
                     cancel_key=cancel_key,
+                    prompt_override=extraction_prompt,
                 )
             else:
                 config = pdf.config
                 extractor = pdf.extract(content, pages)
 
+            prompt_hash = hashlib.sha256(extraction_prompt.encode()).hexdigest()[:8] if extraction_prompt else None
             ext_log.info("Starting process_with_billing")
             extraction_result = await process_with_billing(
                 config=config,
@@ -1034,6 +1044,7 @@ async def _run_extraction(
                 billing_enabled=billing_enabled,
                 file_size=file_size,
                 pages=pages,
+                prompt_hash=prompt_hash,
             )
             processor_slug = config.slug
             ext_log.info(
@@ -1206,6 +1217,7 @@ async def create_document(
             redis=redis,
             extraction_cache=extraction_cache,
             image_storage=image_storage,
+            extraction_prompt=prefs.extraction_prompt if prefs else None,
         )
 
     # AI extraction requires extractor configured + content type supported
@@ -1274,6 +1286,7 @@ async def create_document(
             ai_extractor=ai_extractor,
             redis=redis,
             ratelimit_key=ratelimit_key,
+            extraction_prompt=prefs.extraction_prompt if prefs else None,
         )
     )
     _background_tasks.add(task)

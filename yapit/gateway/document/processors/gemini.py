@@ -50,15 +50,17 @@ def create_gemini_config(
 ) -> ProcessorConfig:
     return ProcessorConfig(
         slug="gemini",
-        supported_mime_types=frozenset({
-            "application/pdf",
-            "image/png",
-            "image/jpeg",
-            "image/webp",
-            "image/gif",
-            "image/bmp",
-            "image/tiff",
-        }),
+        supported_mime_types=frozenset(
+            {
+                "application/pdf",
+                "image/png",
+                "image/jpeg",
+                "image/webp",
+                "image/gif",
+                "image/bmp",
+                "image/tiff",
+            }
+        ),
         max_pages=10000,
         max_file_size=100 * 1024 * 1024,
         is_paid=True,
@@ -242,6 +244,7 @@ class GeminiExtractor(VisionExtractor):
         content: bytes,
         content_hash: str,
         pages: list[int] | None = None,
+        prompt_override: str | None = None,
     ) -> tuple[list[BatchPageRequest], dict[int, list[str]]]:
         with pymupdf.open(stream=content, filetype="pdf") as doc:
             total_pages = len(doc)
@@ -255,11 +258,12 @@ class GeminiExtractor(VisionExtractor):
         ]
         prepared = await asyncio.gather(*tasks)
 
+        base_prompt = prompt_override or self._prompt
         batch_requests = [
             BatchPageRequest(
                 page_idx=p.page_idx,
                 page_pdf_bytes=p.page_bytes,
-                prompt=build_figure_prompt(self._prompt, p.figures),
+                prompt=build_figure_prompt(base_prompt, p.figures),
             )
             for p in prepared
         ]

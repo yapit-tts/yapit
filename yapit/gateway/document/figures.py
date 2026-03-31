@@ -44,7 +44,7 @@ async def store_figure(
 def build_figure_prompt(base_prompt: str, figures: list[DetectedFigure]) -> str:
     """Build prompt with figure placement hints."""
     if not figures:
-        return f"{base_prompt}\n\nNo figures detected on this page — do not output any image placeholders."
+        return f"{base_prompt}\n\nNo figures detected on this page — do not output any image placeholders, even if you think the page contains images."
 
     hints = []
     for i, fig in enumerate(figures):

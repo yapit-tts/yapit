@@ -401,6 +401,7 @@ class UserPreferences(SQLModel, table=True):
 
     auto_import_shared_documents: bool = Field(default=False)  # skip banner, auto-clone on visit
     default_documents_public: bool = Field(default=False)  # new docs created with is_public=True
+    extraction_prompt: str | None = Field(default=None, sa_column=Column(TEXT, nullable=True))
 
     created: datetime = Field(
         default_factory=lambda: datetime.now(tz=dt.UTC),

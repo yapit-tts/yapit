@@ -123,6 +123,7 @@ class PreferencesResponse(BaseModel):
     pinned_voices: list[str]
     auto_import_shared_documents: bool
     default_documents_public: bool
+    extraction_prompt: str | None
 
 
 VoiceSlug = Annotated[str, StringConstraints(max_length=64)]
@@ -132,6 +133,7 @@ class PreferencesUpdate(BaseModel):
     pinned_voices: list[VoiceSlug] | None = Field(None, max_length=500)
     auto_import_shared_documents: bool | None = None
     default_documents_public: bool | None = None
+    extraction_prompt: str | None = Field(None, max_length=50_000)
 
 
 @router.get("/me/preferences", response_model=PreferencesResponse)
@@ -146,11 +148,13 @@ async def get_preferences(
             pinned_voices=[],
             auto_import_shared_documents=False,
             default_documents_public=False,
+            extraction_prompt=None,
         )
     return PreferencesResponse(
         pinned_voices=prefs.pinned_voices,
         auto_import_shared_documents=prefs.auto_import_shared_documents,
         default_documents_public=prefs.default_documents_public,
+        extraction_prompt=prefs.extraction_prompt,
     )
 
 
@@ -172,6 +176,8 @@ async def update_preferences(
         prefs.auto_import_shared_documents = body.auto_import_shared_documents
     if body.default_documents_public is not None:
         prefs.default_documents_public = body.default_documents_public
+    if body.extraction_prompt is not None:
+        prefs.extraction_prompt = body.extraction_prompt if body.extraction_prompt else None
     prefs.updated = datetime.now(tz=dt.UTC)
 
     await db.commit()
@@ -180,6 +186,7 @@ async def update_preferences(
         pinned_voices=prefs.pinned_voices,
         auto_import_shared_documents=prefs.auto_import_shared_documents,
         default_documents_public=prefs.default_documents_public,
+        extraction_prompt=prefs.extraction_prompt,
     )
 
 

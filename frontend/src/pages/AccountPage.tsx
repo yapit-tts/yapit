@@ -18,7 +18,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Loader2, ArrowLeft, Trash2, AlertTriangle, Calendar, Sun, Moon, Monitor, Settings } from "lucide-react";
+import { Loader2, ArrowLeft, Trash2, AlertTriangle, Calendar, Sun, Moon, Monitor, Settings, Code2, RotateCcw } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { SettingRow, darkThemes } from "@/components/settingsDialog";
 import { useSettings, useIsDark, type ContentWidth, type ScrollPosition, type Theme } from "@/hooks/useSettings";
@@ -58,6 +58,8 @@ const AccountPage = () => {
     setAutoImportSharedDocuments,
     defaultDocumentsPublic,
     setDefaultDocumentsPublic,
+    extractionPrompt,
+    setExtractionPrompt,
   } = useUserPreferences();
 
   const [engagement, setEngagement] = useState<EngagementStats | null>(null);
@@ -69,6 +71,9 @@ const AccountPage = () => {
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
   const [bulkDeleteDropdownOpen, setBulkDeleteDropdownOpen] = useState(false);
   const [expandedModels, setExpandedModels] = useState<Set<string>>(new Set());
+  const [promptDialogOpen, setPromptDialogOpen] = useState(false);
+  const [promptDraft, setPromptDraft] = useState("");
+  const [defaultPrompt, setDefaultPrompt] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isAuthReady) return;
@@ -394,6 +399,53 @@ const AccountPage = () => {
               />
             </SettingRow>
           </div>
+
+          {/* Advanced */}
+          <div className="mt-6 mb-2 text-xs font-medium text-muted-foreground uppercase tracking-wide">Advanced</div>
+          <div className="flex flex-col">
+            <SettingRow
+              label="Extraction prompt"
+              description={extractionPrompt ? "Using custom prompt" : "Using default prompt"}
+            >
+              <div className="flex gap-1">
+                {extractionPrompt && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-2 text-xs"
+                    onClick={() => {
+                      setExtractionPrompt(null);
+                    }}
+                  >
+                    <RotateCcw className="h-3 w-3 mr-1" />
+                    Reset
+                  </Button>
+                )}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 px-2 text-xs"
+                  onClick={async () => {
+                    if (!defaultPrompt) {
+                      try {
+                        const r = await api.get<string>("/v1/extraction-prompt", { transformResponse: [(d) => d] });
+                        setDefaultPrompt(r.data);
+                        setPromptDraft(extractionPrompt ?? r.data);
+                      } catch {
+                        setPromptDraft(extractionPrompt ?? "");
+                      }
+                    } else {
+                      setPromptDraft(extractionPrompt ?? defaultPrompt);
+                    }
+                    setPromptDialogOpen(true);
+                  }}
+                >
+                  <Code2 className="h-3 w-3 mr-1" />
+                  Edit
+                </Button>
+              </div>
+            </SettingRow>
+          </div>
         </CardContent>
       </Card>
 
@@ -542,6 +594,54 @@ const AccountPage = () => {
               )}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Extraction Prompt Editor */}
+      <Dialog open={promptDialogOpen} onOpenChange={setPromptDialogOpen}>
+        <DialogContent className="sm:max-w-2xl max-h-[80vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle>Extraction Prompt</DialogTitle>
+            <DialogDescription>
+              Customize the prompt used for AI document extraction. This replaces the default prompt entirely.
+            </DialogDescription>
+          </DialogHeader>
+          <textarea
+            value={promptDraft}
+            onChange={(e) => setPromptDraft(e.target.value)}
+            className="flex-1 min-h-[300px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm font-mono ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring resize-y"
+            spellCheck={false}
+          />
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-muted-foreground">
+              {promptDraft.length.toLocaleString()} / 50,000 characters
+            </span>
+            <div className="flex gap-2">
+              {defaultPrompt && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setPromptDraft(defaultPrompt)}
+                >
+                  <RotateCcw className="h-3 w-3 mr-1" />
+                  Reset to default
+                </Button>
+              )}
+              <Button variant="outline" size="sm" onClick={() => setPromptDialogOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => {
+                  const value = promptDraft.trim() === defaultPrompt?.trim() ? null : promptDraft.trim() || null;
+                  setExtractionPrompt(value);
+                  setPromptDialogOpen(false);
+                }}
+              >
+                Save
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
     </div>
