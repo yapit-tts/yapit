@@ -141,6 +141,10 @@ export class AudioPlayer {
     return this._tempo;
   }
 
+  getCurrentTime(): number {
+    return this.audioElement.currentTime;
+  }
+
   get isPlaying(): boolean {
     return !this.audioElement.paused;
   }

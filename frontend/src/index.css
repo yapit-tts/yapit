@@ -87,6 +87,7 @@
   --accent-warning: oklch(0.5 0.1 80);
   --synthesizing: oklch(0.85 0.12 90 / 0.5);
   --audio-highlight: oklch(0.55 0.1 133.7 / 0.15);
+  --audio-word-highlight: oklch(0.55 0.1 133.7 / 0.3);
   --audio-hover: oklch(0.55 0.1 133.7 / 0.1);
   --audio-hover-border: oklch(0.55 0.1 133.7 / 0.6);
   --audio-glow: oklch(0.55 0.1 133.7 / 0.8);
@@ -120,6 +121,7 @@
   --accent-success: oklch(0.63 0.12 145);
   --accent-warning: oklch(0.70 0.10 80);
   --audio-highlight: oklch(0.63 0.11 140 / 0.28);
+  --audio-word-highlight: oklch(0.63 0.11 140 / 0.45);
   --audio-hover: oklch(0.63 0.11 140 / 0.24);
   --audio-hover-border: oklch(0.63 0.11 140 / 0.5);
   --audio-glow: oklch(0.63 0.11 140 / 0.7);
@@ -165,6 +167,7 @@
   --accent-success: oklch(0.68 0.14 145);
   --accent-warning: oklch(0.72 0.10 80);
   --audio-highlight: oklch(0.68 0.15 145 / 0.25);
+  --audio-word-highlight: oklch(0.68 0.15 145 / 0.4);
   --audio-hover: oklch(0.68 0.15 145 / 0.22);
   --audio-hover-border: oklch(0.68 0.15 145 / 0.5);
   --audio-glow: oklch(0.68 0.15 145 / 0.7);
@@ -210,6 +213,7 @@
   --accent-success: oklch(0.858 0.109 142.8);
   --accent-warning: oklch(0.824 0.101 52.6);
   --audio-highlight: oklch(0.858 0.109 142.8 / 0.15);
+  --audio-word-highlight: oklch(0.858 0.109 142.8 / 0.3);
   --audio-hover: oklch(0.858 0.109 142.8 / 0.10);
   --audio-hover-border: oklch(0.858 0.109 142.8 / 0.50);
   --audio-glow: oklch(0.858 0.109 142.8 / 0.70);
@@ -284,5 +288,10 @@
 [data-audio-idx] {
   scroll-margin-top: 7rem;
   scroll-margin-bottom: 15rem;
+}
+
+/* Word-level highlight during TTS playback (CSS Custom Highlight API) */
+::highlight(audio-word-active) {
+  background-color: var(--audio-word-highlight);
 }
 

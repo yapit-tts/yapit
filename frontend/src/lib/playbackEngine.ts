@@ -12,10 +12,17 @@ export interface Block {
   est_duration_ms: number;
 }
 
+export interface WordTiming {
+  t: string;  // word text
+  s: number;  // start (seconds)
+  e: number;  // end (seconds)
+}
+
 export interface AudioBufferData {
   buffer?: AudioBuffer;
   rawAudio?: ArrayBuffer;
   duration_ms: number;
+  wordTimings?: WordTiming[];
 }
 
 export type BlockVisualState = "pending" | "synthesizing" | "cached";
@@ -72,6 +79,8 @@ export interface PlaybackEngine {
   subscribe(listener: () => void): () => void;
   getSnapshot(): PlaybackSnapshot;
   restorePosition(block: number): void;
+  setOnWordChange(cb: ((blockIdx: number, wordIdx: number) => void) | null): void;
+  getWordTimingsForBlock(blockIdx: number): WordTiming[] | undefined;
   destroy(): void;
 }
 
@@ -106,6 +115,43 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
 
   let listeners: Array<() => void> = [];
   let snapshot: PlaybackSnapshot | null = null;
+
+  // --- Word-level tracking ---
+  let onWordChangeCallback: ((blockIdx: number, wordIdx: number) => void) | null = null;
+  let currentWordIdx = -1;
+  let wordAnimFrame: number | null = null;
+
+  function startWordTracking(audioData: AudioBufferData) {
+    stopWordTracking();
+    if (!audioData.wordTimings?.length || !onWordChangeCallback) return;
+    const timings = audioData.wordTimings;
+
+    function tick() {
+      if (status !== "playing") return;
+      const t = deps.audioPlayer.getCurrentTime();
+
+      // Binary search for active word
+      let lo = 0, hi = timings.length - 1, idx = -1;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (timings[mid].e <= t) lo = mid + 1;
+        else if (timings[mid].s > t) hi = mid - 1;
+        else { idx = mid; break; }
+      }
+
+      if (idx !== currentWordIdx) {
+        currentWordIdx = idx;
+        if (idx >= 0) onWordChangeCallback!(currentBlock, idx);
+      }
+      wordAnimFrame = requestAnimationFrame(tick);
+    }
+    wordAnimFrame = requestAnimationFrame(tick);
+  }
+
+  function stopWordTracking() {
+    if (wordAnimFrame !== null) { cancelAnimationFrame(wordAnimFrame); wordAnimFrame = null; }
+    currentWordIdx = -1;
+  }
 
   // deriveBlockStates cache — only recompute when underlying maps change
   let blockStatesVersion = 0;
@@ -239,6 +285,7 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
 
   async function startAudioPlayback(audioData: AudioBufferData) {
     deps.audioPlayer.setOnEnded(() => {
+      stopWordTracking();
       blockStartTime += audioData.duration_ms;
       advanceToNext();
     });
@@ -252,6 +299,7 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
         await deps.audioPlayer.load(audioData.buffer);
       }
       await deps.audioPlayer.play();
+      startWordTracking(audioData);
       console.debug("[PlaybackEngine] startAudioPlayback: playing", { blockIdx: currentBlock });
     } catch (err) {
       console.error("[PlaybackEngine] Audio playback failed, skipping block:", err);
@@ -275,6 +323,7 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
   }
 
   function engineStop() {
+    stopWordTracking();
     setStatus("stopped", "engineStop");
     isSynthesizingCurrent = false;
     notify();
@@ -441,6 +490,7 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
     const wasPlaying = status === "playing";
     const wasBuffering = status === "buffering";
 
+    stopWordTracking();
     deps.audioPlayer.stop();
     resetSynthesis(target);
 
@@ -495,6 +545,7 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
 
   function pause() {
     if (status !== "playing") return;
+    stopWordTracking();
     deps.audioPlayer.pause();
     setStatus("stopped", "pause");
     isSynthesizingCurrent = false;
@@ -624,6 +675,7 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
   }
 
   function destroy() {
+    stopWordTracking();
     deps.audioPlayer.stop();
     synthesizer.cancelAll();
     synthesisPromises.clear();
@@ -656,6 +708,14 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
     return () => { listeners = listeners.filter(l => l !== listener); };
   }
 
+  function setOnWordChange(cb: ((blockIdx: number, wordIdx: number) => void) | null) {
+    onWordChangeCallback = cb;
+  }
+
+  function getWordTimingsForBlock(blockIdx: number): WordTiming[] | undefined {
+    return audioCache.get(currentVariantKey(blockIdx))?.wordTimings;
+  }
+
   return {
     play,
     pause,
@@ -672,6 +732,8 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
     subscribe,
     getSnapshot,
     restorePosition,
+    setOnWordChange,
+    getWordTimingsForBlock,
     destroy,
   };
 }

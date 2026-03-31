@@ -18,6 +18,7 @@ from yapit.contracts import (
     TTS_JOB_INDEX,
     TTS_JOBS,
     TTS_PENDING,
+    TTS_TIMESTAMPS_CACHE,
     SynthesisJob,
     get_pubsub_channel,
     get_queue_name,
@@ -31,7 +32,7 @@ from yapit.gateway.domain_models import Document
 from yapit.gateway.exceptions import ResourceNotFoundError
 from yapit.gateway.metrics import log_error, log_event
 from yapit.gateway.stack_auth.users import User
-from yapit.gateway.synthesis import ErrorResult, request_synthesis
+from yapit.gateway.synthesis import CachedResult, ErrorResult, request_synthesis
 
 router = APIRouter(tags=["websocket"])
 
@@ -62,6 +63,7 @@ class WSBlockStatus(BaseModel):
     recoverable: bool = True
     model_slug: str | None = None
     voice_slug: str | None = None
+    word_timestamps: str | None = None
 
 
 class WSEvicted(BaseModel):
@@ -217,6 +219,17 @@ async def _handle_synthesize(
                     track_for_websocket=True,
                 )
 
+                # Fetch word timestamps for cache hits
+                word_timestamps: str | None = None
+                if isinstance(result, CachedResult):
+                    ts_raw = await redis.get(TTS_TIMESTAMPS_CACHE.format(hash=result.variant_hash))
+                    if ts_raw is not None:
+                        word_timestamps = ts_raw.decode()
+                    else:
+                        ts_bytes = await cache.retrieve_data(f"{result.variant_hash}:ts")
+                        if ts_bytes is not None:
+                            word_timestamps = ts_bytes.decode()
+
                 await ws.send_json(
                     WSBlockStatus(
                         document_id=msg.document_id,
@@ -227,6 +240,7 @@ async def _handle_synthesize(
                         recoverable=not isinstance(result, ErrorResult),
                         model_slug=model.slug,
                         voice_slug=voice.slug,
+                        word_timestamps=word_timestamps,
                     ).model_dump(mode="json")
                 )
             except Exception as e:

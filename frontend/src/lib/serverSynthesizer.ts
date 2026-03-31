@@ -1,5 +1,5 @@
 import type { Synthesizer } from "./synthesizer";
-import type { AudioBufferData } from "./playbackEngine";
+import type { AudioBufferData, WordTiming } from "./playbackEngine";
 
 interface WSSynthesizeRequest {
   type: "synthesize";
@@ -25,6 +25,7 @@ export interface WSBlockStatusMessage {
   recoverable?: boolean;
   model_slug?: string;
   voice_slug?: string;
+  word_timestamps?: string;
 }
 
 export interface WSEvictedMessage {
@@ -237,13 +238,18 @@ export function createServerSynthesizer(deps: ServerSynthesizerDeps): Synthesize
       lastError = null;
       lastErrorRecoverable = true;
 
+      let wordTimings: WordTiming[] | undefined;
+      try {
+        wordTimings = msg.word_timestamps ? JSON.parse(msg.word_timestamps) : undefined;
+      } catch { /* ignore malformed timestamps */ }
+
       deps.fetchAudio(msg.audio_url)
         .then(async (arrayBuffer) => {
           if (deps.decodeAudio) {
             const audioBuffer = await deps.decodeAudio(arrayBuffer);
-            req.resolve({ buffer: audioBuffer, duration_ms: Math.round(audioBuffer.duration * 1000) });
+            req.resolve({ buffer: audioBuffer, duration_ms: Math.round(audioBuffer.duration * 1000), wordTimings });
           } else {
-            req.resolve({ rawAudio: arrayBuffer, duration_ms: 0 });
+            req.resolve({ rawAudio: arrayBuffer, duration_ms: 0, wordTimings });
           }
         })
         .catch((err) => {

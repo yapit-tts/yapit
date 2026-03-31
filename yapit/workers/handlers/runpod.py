@@ -16,6 +16,7 @@ WorkerResult-compatible dict so the scanner can pass it straight through.
 import asyncio
 import base64
 import importlib
+import json
 import os
 from functools import partial
 
@@ -43,6 +44,7 @@ async def handler(job, adapter: SynthAdapter):
     try:
         audio = await adapter.synthesize(params["text"], **params.get("kwargs", {}))
         audio_base64 = base64.b64encode(audio).decode("utf-8") if isinstance(audio, bytes) else audio
+        word_ts = adapter.get_word_timestamps()
         return {
             "variant_hash": job_input["variant_hash"],
             "user_id": job_input["user_id"],
@@ -56,6 +58,7 @@ async def handler(job, adapter: SynthAdapter):
             "duration_ms": adapter.calculate_duration_ms(
                 audio if isinstance(audio, bytes) else base64.b64decode(audio)
             ),
+            "word_timestamps_json": json.dumps(word_ts) if word_ts else None,
         }
     except Exception as e:
         return {"error": str(e)}

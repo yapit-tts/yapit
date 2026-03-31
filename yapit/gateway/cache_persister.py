@@ -10,7 +10,7 @@ import time
 from loguru import logger
 from redis.asyncio import Redis
 
-from yapit.contracts import TTS_AUDIO_CACHE, TTS_PERSIST
+from yapit.contracts import TTS_AUDIO_CACHE, TTS_PERSIST, TTS_TIMESTAMPS_CACHE
 from yapit.gateway.cache import Cache
 from yapit.gateway.metrics import log_error, log_event
 
@@ -27,14 +27,18 @@ async def run_cache_persister(redis: Redis, cache: Cache) -> None:
                 continue
 
             audio_keys = [TTS_AUDIO_CACHE.format(hash=h) for h in hashes]
+            ts_keys = [TTS_TIMESTAMPS_CACHE.format(hash=h) for h in hashes]
             audio_values = await redis.mget(audio_keys)
+            ts_values = await redis.mget(ts_keys)
 
             start = time.time()
             persisted = 0
-            for variant_hash, audio in zip(hashes, audio_values):
+            for variant_hash, audio, ts_json in zip(hashes, audio_values, ts_values):
                 if audio is None:
                     continue
                 await cache.store(variant_hash, audio, commit=False)
+                if ts_json:
+                    await cache.store(f"{variant_hash}:ts", ts_json, commit=False)
                 persisted += 1
             await cache.commit()
             batch_ms = int((time.time() - start) * 1000)

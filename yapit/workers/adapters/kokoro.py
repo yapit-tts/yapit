@@ -34,6 +34,7 @@ class KokoroAdapter(SynthAdapter[VoiceConfig]):
         self._voices: list[str] = []
         self._lock = asyncio.Lock()
         self._last_duration_ms: int = 0
+        self._last_word_timestamps: list[dict] | None = None
 
     @property
     def pipe(self) -> KPipeline:
@@ -52,21 +53,40 @@ class KokoroAdapter(SynthAdapter[VoiceConfig]):
 
     async def synthesize(self, text: str, **kwargs: Unpack[VoiceConfig]) -> bytes:
         async with self._lock:  # model not thread-safe (usage as local worker with fastapi)
-            pcm = b"".join(
-                [
-                    (audio.numpy() * 32767).astype(np.int16).tobytes()  # scale [-1, 1] f32 tensor to int16 range
-                    for _, _, audio in self._pipe(text, voice=kwargs["voice"], speed=kwargs["speed"])
-                    if audio is not None
-                ]
-            )
+            all_pcm: list[bytes] = []
+            all_timestamps: list[dict] = []
+            cumulative_s = 0.0
+
+            for result in self._pipe(text, voice=kwargs["voice"], speed=kwargs["speed"]):
+                if result.audio is None:
+                    continue
+                pcm = (result.audio.numpy() * 32767).astype(np.int16).tobytes()
+                all_pcm.append(pcm)
+
+                if result.tokens:
+                    for tok in result.tokens:
+                        if tok.start_ts is not None and tok.end_ts is not None:
+                            all_timestamps.append({
+                                "t": tok.text,
+                                "s": round(tok.start_ts + cumulative_s, 4),
+                                "e": round(tok.end_ts + cumulative_s, 4),
+                            })
+
+                cumulative_s += len(pcm) / (KOKORO_SAMPLE_RATE * 2)
+
+            pcm = b"".join(all_pcm)
 
         # Calculate exact duration from PCM before lossy encoding
         self._last_duration_ms = int(len(pcm) / (KOKORO_SAMPLE_RATE * 2) * 1000)
+        self._last_word_timestamps = all_timestamps if all_timestamps else None
 
         return _pcm_to_ogg_opus(pcm)
 
     def calculate_duration_ms(self, audio_bytes: bytes) -> int:
         return self._last_duration_ms
+
+    def get_word_timestamps(self) -> list[dict] | None:
+        return self._last_word_timestamps
 
 
 def _pcm_to_ogg_opus(pcm_bytes: bytes) -> bytes:

@@ -22,6 +22,7 @@ from yapit.contracts import (
     TTS_PERSIST,
     TTS_RESULTS,
     TTS_SUBSCRIBERS,
+    TTS_TIMESTAMPS_CACHE,
     WorkerResult,
     get_pubsub_channel,
 )
@@ -130,11 +131,16 @@ async def _handle_success(redis: Redis, result: WorkerResult) -> None:
     audio_key = TTS_AUDIO_CACHE.format(hash=result.variant_hash)
     await redis.set(audio_key, audio, ex=AUDIO_CACHE_TTL_S)
 
+    if result.word_timestamps_json:
+        ts_key = TTS_TIMESTAMPS_CACHE.format(hash=result.variant_hash)
+        await redis.set(ts_key, result.word_timestamps_json.encode(), ex=AUDIO_CACHE_TTL_S)
+
     await _notify_subscribers(
         redis,
         result,
         status="cached",
         audio_url=f"/v1/audio/{result.variant_hash}",
+        word_timestamps=result.word_timestamps_json,
     )
 
     billing_event = BillingEvent(
@@ -212,6 +218,7 @@ async def _notify_subscribers(
     status: BlockStatus,
     audio_url: str | None = None,
     error: str | None = None,
+    word_timestamps: str | None = None,
 ) -> None:
     subscriber_key = TTS_SUBSCRIBERS.format(hash=result.variant_hash)
     subscribers = await redis.smembers(subscriber_key)
@@ -244,6 +251,7 @@ async def _notify_subscribers(
                 error=error,
                 model_slug=result.model_slug,
                 voice_slug=result.voice_slug,
+                word_timestamps=word_timestamps,
             ).model_dump_json(),
         )
 

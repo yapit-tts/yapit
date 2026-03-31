@@ -32,6 +32,7 @@ TTS_BILLING_STREAM: Final[str] = "tts:billing:stream"
 TTS_BILLING_GROUP: Final[str] = "billing-consumers"
 TTS_BILLING_CONSUMER: Final[str] = "billing-consumer"
 TTS_AUDIO_CACHE: Final[str] = "tts:audio:{hash}"
+TTS_TIMESTAMPS_CACHE: Final[str] = "tts:timestamps:{hash}"
 TTS_PERSIST: Final[str] = "tts:persist"
 TTS_PROCESSING: Final[str] = "tts:processing:{worker_id}"
 TTS_DLQ: Final[str] = "tts:dlq:{model}"
@@ -90,6 +91,7 @@ class SynthesisJob(BaseModel):
 class SynthesisResult(BaseModel):
     audio: Annotated[bytes, annotated_types.MaxLen(10 * 1024 * 1024)]
     duration_ms: int
+    word_timestamps_json: str | None = None
 
 
 class WorkerResult(BaseModel):
@@ -111,6 +113,7 @@ class WorkerResult(BaseModel):
 
     audio_base64: str | None = None
     duration_ms: int | None = None
+    word_timestamps_json: str | None = None
     error: str | None = None
 
 
