@@ -649,15 +649,24 @@ function TableBlockView({ block }: BlockProps & { block: TableBlock }) {
 }
 
 function ImageBlockView({ block, inRow }: BlockProps & { block: ImageBlock; inRow?: boolean }) {
+  const [broken, setBroken] = useState(false);
+
   return (
     <figure className={cn("flex flex-col items-center", !inRow && "my-4")}>
-      <img
-        src={block.src}
-        alt={block.alt}
-        title={block.title}
-        referrerPolicy="no-referrer"
-        className="max-w-full max-h-96 h-auto object-contain rounded"
-      />
+      {broken ? (
+        <div className="px-4 py-3 rounded bg-muted text-muted-foreground text-sm italic">
+          {block.alt || "Image failed to load"}
+        </div>
+      ) : (
+        <img
+          src={block.src}
+          alt={block.alt}
+          title={block.title}
+          referrerPolicy="no-referrer"
+          className="max-w-full max-h-96 h-auto object-contain rounded"
+          onError={() => setBroken(true)}
+        />
+      )}
       {block.audio_chunks.length > 0 && (
         <figcaption className="text-sm text-muted-foreground mt-2 text-center">
           <AudioContent audioChunks={block.audio_chunks} />
