@@ -8,6 +8,7 @@ export type DarkTheme = "default" | "dusk" | "lavender";
 export interface AppSettings {
   scrollOnRestore: boolean;
   liveScrollTracking: boolean;
+  bionicReading: boolean;
   contentWidth: ContentWidth;
   scrollPosition: ScrollPosition;
   theme: Theme;
@@ -21,6 +22,7 @@ const THEME_CLASSES = ["theme-dusk", "theme-lavender"] as const;
 const defaultSettings: AppSettings = {
   scrollOnRestore: true,
   liveScrollTracking: true,
+  bionicReading: false,
   contentWidth: "medium",
   scrollPosition: "top",
   theme: "system",

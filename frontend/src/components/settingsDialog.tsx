@@ -145,6 +145,18 @@ export function SettingsDialog({ size = "default" }: SettingsDialogProps) {
             />
           </SettingRow>
 
+          <SettingRow
+            label="Bionic reading"
+            description="Bold the start of each word to guide your eyes"
+          >
+            <Switch
+              checked={settings.bionicReading}
+              onCheckedChange={(checked) =>
+                setSettings({ bionicReading: checked })
+              }
+            />
+          </SettingRow>
+
           {!isMobile && (
             <SettingRow
               label="Content width"

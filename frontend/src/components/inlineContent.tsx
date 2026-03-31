@@ -1,8 +1,9 @@
-import { useContext, useEffect, useRef } from "react";
+import { useContext, useEffect, useRef, type ReactNode } from "react";
 import katex from "katex";
 import type { InlineContent } from "./structuredDocument";
 import { FootnoteContext } from "./footnoteContext";
 import { HoverCard, HoverCardTrigger, HoverCardContent } from "@/components/ui/hover-card";
+import { useSettings } from "@/hooks/useSettings";
 
 function InlineMath({ content }: { content: string }) {
   const ref = useRef<HTMLSpanElement>(null);
@@ -22,9 +23,49 @@ function InlineMath({ content }: { content: string }) {
   return <span ref={ref} className="math-inline" />;
 }
 
-function renderNode(node: InlineContent, key: number): React.ReactNode {
+// Fixation length lookup table from the Bionic Reading algorithm.
+// Each row is a boundary list for a given intensity (1=heavy, 5=light).
+// Source: text-vide (MIT), reverse-engineered from the official API.
+const FIXATION_BOUNDARIES = [
+  [0, 4, 12, 17, 24, 29, 35, 42, 48],
+  [1, 2, 7, 10, 13, 14, 19, 22, 25, 28, 31, 34, 37, 40, 43, 46, 49],
+  [1, 2, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31, 33, 35, 37, 39, 41, 43, 45, 47, 49],
+];
+const DEFAULT_FIXATION = FIXATION_BOUNDARIES[2];
+
+function fixationLength(wordLength: number): number {
+  const idx = DEFAULT_FIXATION.findIndex(b => wordLength <= b);
+  if (idx === -1) return Math.max(wordLength - DEFAULT_FIXATION.length, 0);
+  return Math.max(wordLength - idx, 0);
+}
+
+const PURE_NUMBER = /^[\d-]+$/;
+
+function bionicWord(word: string, key: number): ReactNode {
+  if (PURE_NUMBER.test(word)) return word;
+  const n = fixationLength(word.length);
+  if (n === 0) return word;
+  return (
+    <span key={key}>
+      <b className="font-semibold">{word.slice(0, n)}</b>
+      {word.slice(n) || null}
+    </span>
+  );
+}
+
+function bionicText(text: string): ReactNode[] {
+  // Split on whitespace and hyphens (hyphens split words in bionic reading)
+  return text.split(/(\s+|(?<=\w)-(?=\w))/).map((segment, i) => {
+    if (!segment || /^\s+$/.test(segment)) return segment;
+    if (segment === "-") return segment;
+    return bionicWord(segment, i);
+  });
+}
+
+function renderNode(node: InlineContent, key: number, bionic: boolean): React.ReactNode {
   switch (node.type) {
     case "text":
+      if (bionic && node.content) return <span key={key}>{bionicText(node.content)}</span>;
       return node.content || null;
     case "code_span":
       return <code key={key}>{node.content}</code>;
@@ -127,6 +168,7 @@ export function InlineContentRenderer({
 }: {
   nodes: InlineContent[] | undefined | null;
 }) {
+  const { settings } = useSettings();
   if (!nodes || nodes.length === 0) return null;
-  return <>{nodes.map((node, i) => renderNode(node, i))}</>;
+  return <>{nodes.map((node, i) => renderNode(node, i, settings.bionicReading))}</>;
 }
