@@ -70,12 +70,13 @@ class VisionExtractor(ABC):
         pages: list[int] | None = None,
         user_id: str | None = None,
         cancel_key: str | None = None,
+        prompt_override: str | None = None,
     ) -> AsyncIterator[PageResult]:
         if content_type.startswith("image/"):
-            yield await self._extract_image(content, content_type, content_hash, user_id)
+            yield await self._extract_image(content, content_type, content_hash, user_id, prompt_override)
             return
 
-        async for result in self._extract_pdf(content, content_hash, pages, user_id, cancel_key):
+        async for result in self._extract_pdf(content, content_hash, pages, user_id, cancel_key, prompt_override):
             yield result
 
     @property
@@ -109,13 +110,19 @@ class VisionExtractor(ABC):
     # --- Shared orchestration ---
 
     async def _extract_image(
-        self, content: bytes, content_type: str, content_hash: str, user_id: str | None
+        self,
+        content: bytes,
+        content_type: str,
+        content_hash: str,
+        user_id: str | None,
+        prompt_override: str | None = None,
     ) -> PageResult:
         log = logger.bind(content_hash=content_hash, user_id=user_id)
+        base_prompt = prompt_override or self._prompt
 
         start_time = time.monotonic()
         try:
-            result = await self._call_api_for_image(content, content_type, self._prompt, content_hash, user_id)
+            result = await self._call_api_for_image(content, content_type, base_prompt, content_hash, user_id)
         except Exception as e:
             duration_ms = int((time.monotonic() - start_time) * 1000)
             log.error(f"Image extraction failed: {e}")
@@ -171,6 +178,7 @@ class VisionExtractor(ABC):
         pages: list[int] | None,
         user_id: str | None,
         cancel_key: str | None,
+        prompt_override: str | None = None,
     ) -> AsyncIterator[PageResult]:
         with pymupdf.open(stream=content, filetype="pdf") as doc:
             total_pages = len(doc)
@@ -179,7 +187,9 @@ class VisionExtractor(ABC):
         logger.info(f"Extraction: starting {len(pages_to_process)} pages (PDF has {total_pages} total)")
 
         tasks = {
-            asyncio.create_task(self._process_page(content, page_idx, content_hash, cancel_key, user_id)): page_idx
+            asyncio.create_task(
+                self._process_page(content, page_idx, content_hash, cancel_key, user_id, prompt_override)
+            ): page_idx
             for page_idx in pages_to_process
         }
 
@@ -193,6 +203,7 @@ class VisionExtractor(ABC):
         content_hash: str,
         cancel_key: str | None,
         user_id: str | None,
+        prompt_override: str | None = None,
     ) -> PageResult:
         cancelled = PageResult(
             page_idx=page_idx,
@@ -214,7 +225,7 @@ class VisionExtractor(ABC):
                 logger.info(f"Page {page_idx + 1} cancelled after YOLO")
                 return cancelled
 
-            return await self._call_for_page(page, content_hash, user_id)
+            return await self._call_for_page(page, content_hash, user_id, prompt_override)
 
         except Exception as e:
             logger.error(f"Page {page_idx + 1} processing failed: {e}")
@@ -228,13 +239,20 @@ class VisionExtractor(ABC):
                 cancelled=False,
             )
 
-    async def _call_for_page(self, page: PreparedPage, content_hash: str, user_id: str | None) -> PageResult:
+    async def _call_for_page(
+        self,
+        page: PreparedPage,
+        content_hash: str,
+        user_id: str | None,
+        prompt_override: str | None = None,
+    ) -> PageResult:
         """Shared page extraction orchestration: prompt building, timing,
         error handling, figure substitution, metrics.
         """
         page_idx = page.page_idx
         log = logger.bind(page_idx=page_idx, content_hash=content_hash, user_id=user_id)
-        prompt = build_figure_prompt(self._prompt, page.figures)
+        base_prompt = prompt_override or self._prompt
+        prompt = build_figure_prompt(base_prompt, page.figures)
 
         start_time = time.monotonic()
         try:

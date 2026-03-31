@@ -104,11 +104,11 @@ async def _writer_loop() -> None:
     while True:
         try:
             try:
-                event = await asyncio.wait_for(_write_queue.get(), timeout=batch_interval)  # type: ignore[union-attr]
+                event = await asyncio.wait_for(_write_queue.get(), timeout=batch_interval)  # ty: ignore[unresolved-attribute]  # fmt: skip
                 batch.append(event)
-                while not _write_queue.empty():  # type: ignore[union-attr]
+                while not _write_queue.empty():  # ty: ignore[unresolved-attribute]
                     try:
-                        batch.append(_write_queue.get_nowait())  # type: ignore[union-attr]
+                        batch.append(_write_queue.get_nowait())  # ty: ignore[unresolved-attribute]
                     except asyncio.QueueEmpty:
                         break
             except asyncio.TimeoutError:

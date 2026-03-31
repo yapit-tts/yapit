@@ -42,6 +42,7 @@ async def process_with_billing(
     billing_enabled: bool,
     file_size: int | None = None,
     pages: list[int] | None = None,
+    prompt_hash: str | None = None,
 ) -> DocumentExtractionResult:
     """Orchestrate document extraction with validation, caching, and billing.
 
@@ -72,7 +73,7 @@ async def process_with_billing(
     uncached_pages: set[int] = set()
 
     if config.extraction_cache_prefix:
-        cache_key_map = {config.extraction_cache_key(content_hash, idx): idx for idx in requested_pages}
+        cache_key_map = {config.extraction_cache_key(content_hash, idx, prompt_hash): idx for idx in requested_pages}
         cached_data = await extraction_cache.batch_retrieve(list(cache_key_map.keys()))
         for key, data in cached_data.items():
             page_idx = cache_key_map[key]
@@ -152,7 +153,7 @@ async def process_with_billing(
             fresh_pages[result.page_idx] = result.page
 
             if config.extraction_cache_prefix:
-                cache_key = config.extraction_cache_key(content_hash, result.page_idx)
+                cache_key = config.extraction_cache_key(content_hash, result.page_idx, prompt_hash)
                 await extraction_cache.store(cache_key, result.page.model_dump_json().encode())
 
             if config.is_paid:
