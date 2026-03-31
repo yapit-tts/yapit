@@ -9,6 +9,7 @@ import { useSubscription } from "@/hooks/useSubscription";
 import { useSupportedFormats } from "@/hooks/useSupportedFormats";
 import { useApi } from "@/api";
 import { cn } from "@/lib/utils";
+import { useUserPreferences } from "@/hooks/useUserPreferences";
 import { AxiosError } from "axios";
 
 const URL_REGEX = /^https?:\/\/[^\s.]+\.[^\s]{2,}/i;
@@ -81,6 +82,7 @@ export function UnifiedInput() {
   const [storageLimitError, setStorageLimitError] = useState<string | null>(null);
   const [completedPages, setCompletedPages] = useState<number[]>([]);
   const [batchMode, setBatchMode] = useState(false);
+  const { extractionPrompt } = useUserPreferences();
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragCounterRef = useRef(0);
@@ -638,7 +640,7 @@ export function UnifiedInput() {
           onCancel={cancelExtraction}
           isLoading={isCreating}
           completedPages={completedPages}
-          uncachedPages={prepareData.uncached_pages}
+          uncachedPages={extractionPrompt ? undefined : prepareData.uncached_pages}
         />
       )}
 

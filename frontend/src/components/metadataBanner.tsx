@@ -72,7 +72,8 @@ function formatCachedPages(totalPages: number, uncachedPages: number[]): string 
     return s === e ? `${s}` : `${s}-${e}`;
   });
 
-  return `Pages ${rangeStrs.join(", ")} free`;
+  const label = cachedPages.length === 1 ? "Page" : "Pages";
+  return `${label} ${rangeStrs.join(", ")} free`;
 }
 
 /**
@@ -198,7 +199,7 @@ export function MetadataBanner({
   onCancel,
   isLoading,
   completedPages = [],
-  uncachedPages = [],
+  uncachedPages,
   className,
 }: MetadataBannerProps) {
   const [pageRangeInput, setPageRangeInput] = useState("");
@@ -256,7 +257,7 @@ export function MetadataBanner({
             <span>{metadata.total_pages} {metadata.total_pages === 1 ? "page" : "pages"}</span>
             <span>·</span>
             <span>{formatFileSize(metadata.file_size)}</span>
-            {aiActive && (() => {
+            {aiActive && uncachedPages && (() => {
               const cachedText = formatCachedPages(metadata.total_pages, uncachedPages);
               if (!cachedText) return null;
               return (
