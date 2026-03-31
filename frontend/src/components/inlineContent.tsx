@@ -1,8 +1,9 @@
-import { useContext, useEffect, useRef } from "react";
+import { useContext, useEffect, useRef, type ReactNode } from "react";
 import katex from "katex";
 import type { InlineContent } from "./structuredDocument";
 import { FootnoteContext } from "./footnoteContext";
 import { HoverCard, HoverCardTrigger, HoverCardContent } from "@/components/ui/hover-card";
+import { useSettings } from "@/hooks/useSettings";
 
 function InlineMath({ content }: { content: string }) {
   const ref = useRef<HTMLSpanElement>(null);
@@ -22,9 +23,23 @@ function InlineMath({ content }: { content: string }) {
   return <span ref={ref} className="math-inline" />;
 }
 
-function renderNode(node: InlineContent, key: number): React.ReactNode {
+function bionicText(text: string): ReactNode[] {
+  return text.split(/(\s+)/).map((segment, i) => {
+    if (!segment || /^\s+$/.test(segment)) return segment;
+    const n = Math.max(1, Math.ceil(segment.length * 0.4));
+    return (
+      <span key={i}>
+        <b className="font-semibold">{segment.slice(0, n)}</b>
+        {segment.slice(n) || null}
+      </span>
+    );
+  });
+}
+
+function renderNode(node: InlineContent, key: number, bionic: boolean): React.ReactNode {
   switch (node.type) {
     case "text":
+      if (bionic && node.content) return <span key={key}>{bionicText(node.content)}</span>;
       return node.content || null;
     case "code_span":
       return <code key={key}>{node.content}</code>;
@@ -127,6 +142,7 @@ export function InlineContentRenderer({
 }: {
   nodes: InlineContent[] | undefined | null;
 }) {
+  const { settings } = useSettings();
   if (!nodes || nodes.length === 0) return null;
-  return <>{nodes.map((node, i) => renderNode(node, i))}</>;
+  return <>{nodes.map((node, i) => renderNode(node, i, settings.bionicReading))}</>;
 }

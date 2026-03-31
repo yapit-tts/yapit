@@ -1,20 +1,45 @@
-import { describe, it, expect } from "vitest";
+import { beforeAll, describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { InlineContentRenderer } from "./inlineContent";
 import type { InlineContent } from "./structuredDocument";
+import { SettingsProvider } from "@/hooks/useSettings";
+
+beforeAll(() => {
+  Object.defineProperty(window, "matchMedia", {
+    value: (query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    }),
+  });
+});
+
+function renderWithSettings(ui: React.ReactElement, opts?: { bionicReading?: boolean }) {
+  if (opts?.bionicReading) {
+    localStorage.setItem("yapit-settings", JSON.stringify({ bionicReading: true }));
+  } else {
+    localStorage.removeItem("yapit-settings");
+  }
+  return render(<SettingsProvider>{ui}</SettingsProvider>);
+}
 
 // === Node type rendering ===
 
 describe("InlineContentRenderer", () => {
   it("renders plain text", () => {
     const nodes: InlineContent[] = [{ type: "text", content: "hello world" }];
-    render(<InlineContentRenderer nodes={nodes} />);
+    renderWithSettings(<InlineContentRenderer nodes={nodes} />);
     expect(screen.getByText("hello world")).toBeInTheDocument();
   });
 
   it("renders code span", () => {
     const nodes: InlineContent[] = [{ type: "code_span", content: "const x" }];
-    const { container } = render(<InlineContentRenderer nodes={nodes} />);
+    const { container } = renderWithSettings(<InlineContentRenderer nodes={nodes} />);
     const code = container.querySelector("code");
     expect(code).toBeInTheDocument();
     expect(code?.textContent).toBe("const x");
@@ -24,7 +49,7 @@ describe("InlineContentRenderer", () => {
     const nodes: InlineContent[] = [
       { type: "strong", content: [{ type: "text", content: "bold" }] },
     ];
-    const { container } = render(<InlineContentRenderer nodes={nodes} />);
+    const { container } = renderWithSettings(<InlineContentRenderer nodes={nodes} />);
     const strong = container.querySelector("strong");
     expect(strong).toBeInTheDocument();
     expect(strong?.textContent).toBe("bold");
@@ -34,7 +59,7 @@ describe("InlineContentRenderer", () => {
     const nodes: InlineContent[] = [
       { type: "emphasis", content: [{ type: "text", content: "italic" }] },
     ];
-    const { container } = render(<InlineContentRenderer nodes={nodes} />);
+    const { container } = renderWithSettings(<InlineContentRenderer nodes={nodes} />);
     const em = container.querySelector("em");
     expect(em).toBeInTheDocument();
     expect(em?.textContent).toBe("italic");
@@ -48,7 +73,7 @@ describe("InlineContentRenderer", () => {
         content: [{ type: "text", content: "click me" }],
       },
     ];
-    const { container } = render(<InlineContentRenderer nodes={nodes} />);
+    const { container } = renderWithSettings(<InlineContentRenderer nodes={nodes} />);
     const a = container.querySelector("a");
     expect(a).toBeInTheDocument();
     expect(a?.getAttribute("href")).toBe("https://example.com");
@@ -59,7 +84,7 @@ describe("InlineContentRenderer", () => {
     const nodes: InlineContent[] = [
       { type: "inline_image", src: "img.png", alt: "photo" },
     ];
-    const { container } = render(<InlineContentRenderer nodes={nodes} />);
+    const { container } = renderWithSettings(<InlineContentRenderer nodes={nodes} />);
     const img = container.querySelector("img");
     expect(img).toBeInTheDocument();
     expect(img?.getAttribute("src")).toBe("img.png");
@@ -70,7 +95,7 @@ describe("InlineContentRenderer", () => {
     const nodes: InlineContent[] = [
       { type: "math_inline", content: "\\alpha" },
     ];
-    const { container } = render(<InlineContentRenderer nodes={nodes} />);
+    const { container } = renderWithSettings(<InlineContentRenderer nodes={nodes} />);
     // KaTeX renders into a span — check the katex class is present
     const katexEl = container.querySelector(".katex");
     expect(katexEl).toBeInTheDocument();
@@ -83,7 +108,7 @@ describe("InlineContentRenderer", () => {
         content: [{ type: "text", content: "visible reference" }],
       },
     ];
-    render(<InlineContentRenderer nodes={nodes} />);
+    renderWithSettings(<InlineContentRenderer nodes={nodes} />);
     expect(screen.getByText("visible reference")).toBeInTheDocument();
   });
 
@@ -93,7 +118,7 @@ describe("InlineContentRenderer", () => {
       { type: "speak", content: "spoken only" },
       { type: "text", content: "after" },
     ];
-    const { container } = render(<InlineContentRenderer nodes={nodes} />);
+    const { container } = renderWithSettings(<InlineContentRenderer nodes={nodes} />);
     expect(container.textContent).toContain("before");
     expect(container.textContent).toContain("after");
     expect(container.textContent).not.toContain("spoken only");
@@ -105,7 +130,7 @@ describe("InlineContentRenderer", () => {
       { type: "hardbreak" },
       { type: "text", content: "Line two" },
     ];
-    const { container } = render(<InlineContentRenderer nodes={nodes} />);
+    const { container } = renderWithSettings(<InlineContentRenderer nodes={nodes} />);
     expect(container.querySelector("br")).toBeInTheDocument();
     expect(container.textContent).toContain("Line one");
     expect(container.textContent).toContain("Line two");
@@ -115,7 +140,7 @@ describe("InlineContentRenderer", () => {
     const nodes: InlineContent[] = [
       { type: "footnote_ref", label: "1", has_content: true },
     ];
-    const { container } = render(<InlineContentRenderer nodes={nodes} />);
+    const { container } = renderWithSettings(<InlineContentRenderer nodes={nodes} />);
     const sup = container.querySelector("sup");
     expect(sup).toBeInTheDocument();
     const a = sup?.querySelector("a");
@@ -128,7 +153,7 @@ describe("InlineContentRenderer", () => {
     const nodes: InlineContent[] = [
       { type: "footnote_ref", label: "2", has_content: false },
     ];
-    const { container } = render(<InlineContentRenderer nodes={nodes} />);
+    const { container } = renderWithSettings(<InlineContentRenderer nodes={nodes} />);
     const sup = container.querySelector("sup");
     expect(sup).toBeInTheDocument();
     expect(sup?.textContent).toBe("[^2]");
@@ -149,7 +174,7 @@ describe("InlineContentRenderer nesting", () => {
         ],
       },
     ];
-    const { container } = render(<InlineContentRenderer nodes={nodes} />);
+    const { container } = renderWithSettings(<InlineContentRenderer nodes={nodes} />);
     const a = container.querySelector("a");
     const strong = a?.querySelector("strong");
     expect(strong?.textContent).toBe("bold link");
@@ -165,7 +190,7 @@ describe("InlineContentRenderer nesting", () => {
         ],
       },
     ];
-    const { container } = render(<InlineContentRenderer nodes={nodes} />);
+    const { container } = renderWithSettings(<InlineContentRenderer nodes={nodes} />);
     expect(container.querySelector(".katex")).toBeInTheDocument();
     expect(screen.getByText("ref")).toBeInTheDocument();
   });
@@ -188,7 +213,7 @@ describe("InlineContentRenderer nesting", () => {
         ],
       },
     ];
-    const { container } = render(<InlineContentRenderer nodes={nodes} />);
+    const { container } = renderWithSettings(<InlineContentRenderer nodes={nodes} />);
     const em = container.querySelector("em");
     const strong = em?.querySelector("strong");
     const a = strong?.querySelector("a");
@@ -200,19 +225,19 @@ describe("InlineContentRenderer nesting", () => {
 
 describe("InlineContentRenderer robustness", () => {
   it("renders empty for empty array", () => {
-    const { container } = render(<InlineContentRenderer nodes={[]} />);
+    const { container } = renderWithSettings(<InlineContentRenderer nodes={[]} />);
     expect(container.innerHTML).toBe("");
   });
 
   it("renders empty for undefined nodes", () => {
-    const { container } = render(
+    const { container } = renderWithSettings(
       <InlineContentRenderer nodes={undefined as unknown as InlineContent[]} />,
     );
     expect(container.innerHTML).toBe("");
   });
 
   it("renders empty for null nodes", () => {
-    const { container } = render(
+    const { container } = renderWithSettings(
       <InlineContentRenderer nodes={null as unknown as InlineContent[]} />,
     );
     expect(container.innerHTML).toBe("");
@@ -224,7 +249,7 @@ describe("InlineContentRenderer robustness", () => {
       { type: "unknown_future_type", content: "ignored" },
       { type: "text", content: "also ok" },
     ] as InlineContent[];
-    const { container } = render(<InlineContentRenderer nodes={nodes} />);
+    const { container } = renderWithSettings(<InlineContentRenderer nodes={nodes} />);
     expect(container.textContent).toContain("ok");
     expect(container.textContent).toContain("also ok");
     expect(container.textContent).not.toContain("ignored");
@@ -232,13 +257,13 @@ describe("InlineContentRenderer robustness", () => {
 
   it("handles text node with empty content", () => {
     const nodes: InlineContent[] = [{ type: "text", content: "" }];
-    const { container } = render(<InlineContentRenderer nodes={nodes} />);
+    const { container } = renderWithSettings(<InlineContentRenderer nodes={nodes} />);
     expect(container.innerHTML).toBe("");
   });
 
   it("handles math_inline with empty content without crashing", () => {
     const nodes: InlineContent[] = [{ type: "math_inline", content: "" }];
-    const { container } = render(<InlineContentRenderer nodes={nodes} />);
+    const { container } = renderWithSettings(<InlineContentRenderer nodes={nodes} />);
     // Should render something (KaTeX may render empty) but not throw
     expect(container).toBeInTheDocument();
   });
@@ -255,7 +280,7 @@ describe("InlineContentRenderer video links", () => {
         content: [{ type: "text", content: "video" }],
       },
     ];
-    const { container } = render(<InlineContentRenderer nodes={nodes} />);
+    const { container } = renderWithSettings(<InlineContentRenderer nodes={nodes} />);
     const video = container.querySelector("video");
     expect(video).toBeInTheDocument();
     expect(video?.getAttribute("src")).toBe("https://example.com/clip.mp4");
@@ -271,7 +296,7 @@ describe("InlineContentRenderer video links", () => {
         content: [{ type: "text", content: "demo" }],
       },
     ];
-    const { container } = render(<InlineContentRenderer nodes={nodes} />);
+    const { container } = renderWithSettings(<InlineContentRenderer nodes={nodes} />);
     expect(container.querySelector("video")).toBeInTheDocument();
   });
 
@@ -283,7 +308,7 @@ describe("InlineContentRenderer video links", () => {
         content: [{ type: "text", content: "link" }],
       },
     ];
-    const { container } = render(<InlineContentRenderer nodes={nodes} />);
+    const { container } = renderWithSettings(<InlineContentRenderer nodes={nodes} />);
     expect(container.querySelector("a")).toBeInTheDocument();
     expect(container.querySelector("video")).toBeNull();
   });
@@ -304,10 +329,68 @@ describe("InlineContentRenderer nested lists", () => {
       } as InlineContent,
       { type: "text", content: " After" },
     ];
-    const { container } = render(<InlineContentRenderer nodes={nodes} />);
+    const { container } = renderWithSettings(<InlineContentRenderer nodes={nodes} />);
     expect(container.textContent).toContain("Before");
     expect(container.textContent).toContain("After");
     expect(container.textContent).not.toContain("Nested");
     expect(container.querySelector("ul")).toBeNull();
+  });
+});
+
+// === Bionic reading ===
+
+describe("InlineContentRenderer bionic reading", () => {
+  it("bolds the start of each word when enabled", () => {
+    const nodes: InlineContent[] = [{ type: "text", content: "hello world" }];
+    const { container } = renderWithSettings(
+      <InlineContentRenderer nodes={nodes} />,
+      { bionicReading: true },
+    );
+    const bolds = container.querySelectorAll("b");
+    expect(bolds.length).toBe(2);
+    expect(bolds[0].textContent).toBe("he");    // ceil(5 * 0.4) = 2
+    expect(bolds[1].textContent).toBe("wo");    // ceil(5 * 0.4) = 2
+    expect(container.textContent).toBe("hello world");
+  });
+
+  it("handles short words", () => {
+    const nodes: InlineContent[] = [{ type: "text", content: "a is to" }];
+    const { container } = renderWithSettings(
+      <InlineContentRenderer nodes={nodes} />,
+      { bionicReading: true },
+    );
+    const bolds = container.querySelectorAll("b");
+    expect(bolds.length).toBe(3);
+    expect(bolds[0].textContent).toBe("a");     // 1-char: all bold
+    expect(bolds[1].textContent).toBe("i");     // ceil(2 * 0.4) = 1
+    expect(bolds[2].textContent).toBe("t");     // ceil(2 * 0.4) = 1
+  });
+
+  it("does not apply to code spans", () => {
+    const nodes: InlineContent[] = [{ type: "code_span", content: "const x" }];
+    const { container } = renderWithSettings(
+      <InlineContentRenderer nodes={nodes} />,
+      { bionicReading: true },
+    );
+    expect(container.querySelector("b")).toBeNull();
+    expect(container.querySelector("code")?.textContent).toBe("const x");
+  });
+
+  it("preserves text content exactly", () => {
+    const nodes: InlineContent[] = [{ type: "text", content: "Bionic reading is a method" }];
+    const { container } = renderWithSettings(
+      <InlineContentRenderer nodes={nodes} />,
+      { bionicReading: true },
+    );
+    expect(container.textContent).toBe("Bionic reading is a method");
+  });
+
+  it("does not bold when disabled", () => {
+    const nodes: InlineContent[] = [{ type: "text", content: "hello world" }];
+    const { container } = renderWithSettings(
+      <InlineContentRenderer nodes={nodes} />,
+    );
+    expect(container.querySelectorAll("b").length).toBe(0);
+    expect(container.textContent).toBe("hello world");
   });
 });

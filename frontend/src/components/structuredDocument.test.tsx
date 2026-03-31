@@ -1,7 +1,27 @@
-import { describe, it, expect, vi } from "vitest";
+import { beforeAll, describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { AudioContent, BlockErrorBoundary } from "./structuredDocument";
 import type { InlineContent, AudioChunk } from "./structuredDocument";
+import { SettingsProvider } from "@/hooks/useSettings";
+
+beforeAll(() => {
+  Object.defineProperty(window, "matchMedia", {
+    value: (query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    }),
+  });
+});
+
+function renderWithSettings(ui: React.ReactElement) {
+  return render(<SettingsProvider>{ui}</SettingsProvider>);
+}
 
 // --- Helpers ---
 
@@ -18,20 +38,20 @@ function makeChunk(idx: number, text: string, ast?: InlineContent[]): AudioChunk
 describe("AudioContent", () => {
   it("renders block ast when no audio chunks", () => {
     const ast: InlineContent[] = [{ type: "text", content: "display only" }];
-    const { container } = render(<AudioContent ast={ast} audioChunks={[]} />);
+    const { container } = renderWithSettings(<AudioContent ast={ast} audioChunks={[]} />);
     expect(container.textContent).toBe("display only");
   });
 
   it("renders chunk ast for single chunk", () => {
     const chunk = makeChunk(0, "hello");
-    const { container } = render(<AudioContent audioChunks={[chunk]} />);
+    const { container } = renderWithSettings(<AudioContent audioChunks={[chunk]} />);
     expect(container.textContent).toBe("hello");
   });
 
   it("falls back to block ast when single chunk has no ast", () => {
     const chunk: AudioChunk = { text: "hello", audio_block_idx: 0 };
     const ast: InlineContent[] = [{ type: "text", content: "from block" }];
-    const { container } = render(<AudioContent ast={ast} audioChunks={[chunk]} />);
+    const { container } = renderWithSettings(<AudioContent ast={ast} audioChunks={[chunk]} />);
     expect(container.textContent).toBe("from block");
   });
 
@@ -41,7 +61,7 @@ describe("AudioContent", () => {
       makeChunk(6, "second"),
       makeChunk(7, "third"),
     ];
-    const { container } = render(<AudioContent audioChunks={chunks} />);
+    const { container } = renderWithSettings(<AudioContent audioChunks={chunks} />);
 
     const spans = container.querySelectorAll("[data-audio-idx]");
     expect(spans).toHaveLength(3);
@@ -54,7 +74,7 @@ describe("AudioContent", () => {
   });
 
   it("renders nothing when no chunks and no ast", () => {
-    const { container } = render(<AudioContent audioChunks={[]} />);
+    const { container } = renderWithSettings(<AudioContent audioChunks={[]} />);
     expect(container.innerHTML).toBe("");
   });
 
@@ -63,7 +83,7 @@ describe("AudioContent", () => {
       { text: "a", audio_block_idx: 0 },
       { text: "b", audio_block_idx: 1 },
     ];
-    const { container } = render(<AudioContent audioChunks={chunks} />);
+    const { container } = renderWithSettings(<AudioContent audioChunks={chunks} />);
     const spans = container.querySelectorAll("[data-audio-idx]");
     expect(spans).toHaveLength(2);
     // Spans exist but have no content (graceful degradation)
@@ -77,7 +97,7 @@ describe("AudioContent", () => {
         { type: "strong", content: [{ type: "text", content: "bold" }] },
       ]),
     ];
-    const { container } = render(<AudioContent audioChunks={chunks} />);
+    const { container } = renderWithSettings(<AudioContent audioChunks={chunks} />);
     expect(container.querySelector("strong")?.textContent).toBe("bold");
   });
 });
