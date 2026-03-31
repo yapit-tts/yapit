@@ -394,4 +394,29 @@ describe("InlineContentRenderer bionic reading", () => {
     expect(container.querySelectorAll("b").length).toBe(0);
     expect(container.textContent).toBe("hello world");
   });
+
+  it("splits hyphenated words", () => {
+    const nodes: InlineContent[] = [{ type: "text", content: "self-hosted app" }];
+    const { container } = renderWithSettings(
+      <InlineContentRenderer nodes={nodes} />,
+      { bionicReading: true },
+    );
+    const bolds = container.querySelectorAll("b");
+    expect(bolds.length).toBe(3);         // "self", "hosted", "app" each get bold
+    expect(bolds[0].textContent).toBe("sel");   // 4 chars -> bold 3
+    expect(bolds[1].textContent).toBe("host");  // 6 chars -> bold 4
+    expect(container.textContent).toBe("self-hosted app");
+  });
+
+  it("does not bold pure numbers", () => {
+    const nodes: InlineContent[] = [{ type: "text", content: "year 2026 was" }];
+    const { container } = renderWithSettings(
+      <InlineContentRenderer nodes={nodes} />,
+      { bionicReading: true },
+    );
+    const bolds = container.querySelectorAll("b");
+    // "year" and "was" get bolded, "2026" does not
+    expect(bolds.length).toBe(2);
+    expect(container.textContent).toBe("year 2026 was");
+  });
 });

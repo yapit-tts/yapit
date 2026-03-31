@@ -39,17 +39,26 @@ function fixationLength(wordLength: number): number {
   return Math.max(wordLength - idx, 0);
 }
 
+const PURE_NUMBER = /^[\d-]+$/;
+
+function bionicWord(word: string, key: number): ReactNode {
+  if (PURE_NUMBER.test(word)) return word;
+  const n = fixationLength(word.length);
+  if (n === 0) return word;
+  return (
+    <span key={key}>
+      <b className="font-semibold">{word.slice(0, n)}</b>
+      {word.slice(n) || null}
+    </span>
+  );
+}
+
 function bionicText(text: string): ReactNode[] {
-  return text.split(/(\s+)/).map((segment, i) => {
+  // Split on whitespace and hyphens (hyphens split words in bionic reading)
+  return text.split(/(\s+|(?<=\w)-(?=\w))/).map((segment, i) => {
     if (!segment || /^\s+$/.test(segment)) return segment;
-    const n = fixationLength(segment.length);
-    if (n === 0) return segment;
-    return (
-      <span key={i}>
-        <b className="font-semibold">{segment.slice(0, n)}</b>
-        {segment.slice(n) || null}
-      </span>
-    );
+    if (segment === "-") return segment;
+    return bionicWord(segment, i);
   });
 }
 
