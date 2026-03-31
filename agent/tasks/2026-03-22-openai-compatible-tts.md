@@ -1,8 +1,10 @@
 ---
-status: active
+status: done
 refs:
   - agent/handoffs/2026-03-22-openai-compatible-tts-adapter.md
   - agent/research/2026-03-22-openai-tts-ecosystem.md
+  - 5cbbd39
+  - "#74"
 ---
 
 # OpenAI-Compatible TTS Adapter
