@@ -23,10 +23,27 @@ function InlineMath({ content }: { content: string }) {
   return <span ref={ref} className="math-inline" />;
 }
 
+// Fixation length lookup table from the Bionic Reading algorithm.
+// Each row is a boundary list for a given intensity (1=heavy, 5=light).
+// Source: text-vide (MIT), reverse-engineered from the official API.
+const FIXATION_BOUNDARIES = [
+  [0, 4, 12, 17, 24, 29, 35, 42, 48],
+  [1, 2, 7, 10, 13, 14, 19, 22, 25, 28, 31, 34, 37, 40, 43, 46, 49],
+  [1, 2, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31, 33, 35, 37, 39, 41, 43, 45, 47, 49],
+];
+const DEFAULT_FIXATION = FIXATION_BOUNDARIES[0];
+
+function fixationLength(wordLength: number): number {
+  const idx = DEFAULT_FIXATION.findIndex(b => wordLength <= b);
+  if (idx === -1) return Math.max(wordLength - DEFAULT_FIXATION.length, 0);
+  return Math.max(wordLength - idx, 0);
+}
+
 function bionicText(text: string): ReactNode[] {
   return text.split(/(\s+)/).map((segment, i) => {
     if (!segment || /^\s+$/.test(segment)) return segment;
-    const n = Math.max(1, Math.ceil(segment.length * 0.4));
+    const n = fixationLength(segment.length);
+    if (n === 0) return segment;
     return (
       <span key={i}>
         <b className="font-semibold">{segment.slice(0, n)}</b>
