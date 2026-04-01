@@ -28,7 +28,7 @@ Compose files — **prod is standalone, not an overlay on base**:
 - `docker-compose.yml` — Base services, used by dev and selfhost (NOT prod)
 - `docker-compose.dev.yml` — Dev overrides, layered on base via `-f`
 - `docker-compose.prod.yml` — **Standalone** production file for `docker stack deploy`. Duplicates service definitions with Swarm-specific config (Traefik labels, image refs, deploy constraints). Changes to base compose do NOT propagate to prod — both files must be updated independently.
-- `docker-compose.selfhost.yml` — Self-hosting overlay on base (no billing, no SOPS, `DB_CREATE_TABLES` for Alembic-free setup)
+- `docker-compose.selfhost.yml` — Self-hosting overlay on base (no billing, no SOPS, Alembic migrations)
 - `docker-compose.worker.yml` — External GPU workers (connects to prod Redis via Tailscale)
 
 **Worker replicas** configured via env vars (`KOKORO_CPU_REPLICAS`, `YOLO_CPU_REPLICAS`) in the base compose file, set in `.env.{dev,prod}`.

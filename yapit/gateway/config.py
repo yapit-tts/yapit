@@ -8,7 +8,6 @@ from yapit.gateway.cache import CacheConfig, Caches
 class Settings(BaseSettings):
     sqlalchemy_echo: bool
     db_drop_and_recreate: bool  # If True: drops all tables and recreates (dev mode)
-    db_create_tables: bool  # If True: create tables if missing, no Alembic (selfhost mode)
     db_seed: bool
 
     database_url: str

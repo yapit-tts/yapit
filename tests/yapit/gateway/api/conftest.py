@@ -86,7 +86,6 @@ def _test_settings(postgres_container, redis_container):
         metrics_database_url=None,
         log_dir="test_logs",
         db_drop_and_recreate=False,
-        db_create_tables=False,
         db_seed=False,
     )
 
