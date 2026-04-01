@@ -609,7 +609,7 @@ const AccountPage = () => {
           <DialogHeader>
             <DialogTitle>Extraction Prompt</DialogTitle>
             <DialogDescription>
-              Customize the prompt used for AI document extraction. This replaces the default prompt entirely.
+              Customize the prompt used for AI document extraction. This replaces the default prompt entirely. You can tune this to your liking, but be aware that it may affect extraction quality and token usage.
             </DialogDescription>
           </DialogHeader>
           <textarea
