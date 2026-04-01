@@ -143,7 +143,7 @@ services:
     environment:
       CLICKHOUSE_DB: analytics
       CLICKHOUSE_USER: stackframe
-      CLICKHOUSE_PASSWORD: clickhouse-dev
+      CLICKHOUSE_PASSWORD: ${STACK_CLICKHOUSE_ADMIN_PASSWORD}
       CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
     volumes:
       - clickhouse-data:/var/lib/clickhouse
