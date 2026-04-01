@@ -2,7 +2,7 @@
 # requires-python = ">=3.11"
 # dependencies = ["tyro", "rich", "httpx", "reportlab"]
 # ///
-"""YOLO stress test — submit large synthetic PDFs to trigger overflow.
+"""YOLO stress test — submit large synthetic PDFs to stress test YOLO workers.
 
 Usage:
     uv run scripts/stress_test_yolo.py --pages 300
@@ -261,7 +261,7 @@ def main(
     output_dir: Path = Path("scripts/stress_test_results"),
     env_file: Path = Path(".env"),
 ) -> None:
-    """YOLO stress test — submit large synthetic PDFs to trigger overflow processing.
+    """YOLO stress test — submit large synthetic PDFs to stress test YOLO workers processing.
 
     Auth: add PROD_TEST_EMAIL/PROD_TEST_PASSWORD to .env.sops, run make prod-env.
     Or pass --token directly.

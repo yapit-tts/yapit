@@ -128,4 +128,4 @@ When **adding or removing** config files or Settings fields, check ALL of these:
 
 **Stress testing:**
 - `stress_test.py` — TTS stress testing
-- `stress_test_yolo.py` — YOLO overflow testing with synthetic PDFs
+- `stress_test_yolo.py` — YOLO stress testing with synthetic PDFs

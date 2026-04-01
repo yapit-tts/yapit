@@ -32,12 +32,11 @@ flowchart TD
     GW <-->|extraction| Gemini
     GW <-->|premium TTS| Inworld
     GW <-->|billing| Stripe
-    Kokoro -.->|overflow| RunPod["RunPod Serverless"]
 ```
 
 **Gateway** is a FastAPI process handling all HTTP/WebSocket traffic plus
 background tasks (result consumer, billing consumer, cache persister,
-Inworld dispatchers, visibility/overflow scanners). Only service with
+Inworld dispatchers, visibility scanners). Only service with
 Postgres access.
 
 **Workers** pull jobs from Redis queues and push results back. The gateway
@@ -280,11 +279,6 @@ flowchart TD
         DLQ --> ERRSUB["Notify subscribers<br/>of failure"]
     end
 
-    subgraph overflow ["Overflow Scanner"]
-        OS["Detect queue backlog<br/>(waiting > threshold)"]
-        OS --> RP["Offload to<br/>RunPod serverless"]
-        RP --> RESULT["Results return via<br/>same tts:results path"]
-    end
 ```
 
 ### Frontend playback

@@ -100,7 +100,6 @@ jobs:
       - name: Create env files
         run: |
           cat > .env << EOF
-          RUNPOD_API_KEY=${{ secrets.RUNPOD_API_KEY }}
           AI_PROCESSOR=
           KOKORO_CPU_REPLICAS=1
           YOLO_CPU_REPLICAS=1

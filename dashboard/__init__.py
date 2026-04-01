@@ -25,7 +25,6 @@ from dashboard.data import (
 )
 from dashboard.tabs import (
     render_documents,
-    render_overflow,
     render_overview,
     render_reliability,
     render_tts,
@@ -132,7 +131,7 @@ def main():
         return
 
     # Tabs
-    tabs = st.tabs(["Overview", "TTS", "Documents", "Reliability", "Usage", "Overflow"])
+    tabs = st.tabs(["Overview", "TTS", "Documents", "Reliability", "Usage"])
 
     with tabs[0]:
         render_overview(filtered, daily_df)
@@ -148,9 +147,6 @@ def main():
 
     with tabs[4]:
         render_usage(filtered)
-
-    with tabs[5]:
-        render_overflow(filtered)
 
 
 if __name__ == "__main__":

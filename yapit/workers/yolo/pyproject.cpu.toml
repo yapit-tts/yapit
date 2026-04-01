@@ -13,7 +13,6 @@ dependencies = [
   "redis[hiredis]~=7.3.0",
   "loguru~=0.7.3",
   "PyMuPDF~=1.26.7",
-  "runpod~=1.8.1",
 ]
 
 [tool.uv.sources]

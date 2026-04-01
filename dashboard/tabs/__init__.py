@@ -1,7 +1,6 @@
 """Dashboard tabs."""
 
 from dashboard.tabs.documents import render as render_documents
-from dashboard.tabs.overflow import render as render_overflow
 from dashboard.tabs.overview import render as render_overview
 from dashboard.tabs.reliability import render as render_reliability
 from dashboard.tabs.tts import render as render_tts
@@ -13,5 +12,4 @@ __all__ = [
     "render_documents",
     "render_reliability",
     "render_usage",
-    "render_overflow",
 ]

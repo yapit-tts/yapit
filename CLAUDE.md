@@ -85,7 +85,7 @@ Don't delegate reading knowledge files.
 ## Coding Conventions
 
 - No default values in Settings class - all configs and defaults in `.env*` files only - single source of truth.
-- **Naming**: Prefer names that describe what something *is* over internal jargon (e.g., `kokoro_runpod_serverless_endpoint` over `overflow_endpoint_id`).
+- **Naming**: Prefer names that describe what something *is* over internal jargon.
 - Follow existing patterns in codebase 
 - **No architectural discussions in code comments** - these should be resolved and clear long before code is written - and documented (by the distillation agent) AFTER the code is done and tested.
 - **No useless comments**: Don't add inline comments that restate what code does, don't add untested metrics/claims, don't add "LLM-style" explanatory comments. Comments should only explain non-obvious "why" - if you feel a comment is needed, the code probably needs refactoring instead.

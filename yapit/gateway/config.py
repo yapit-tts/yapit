@@ -22,10 +22,6 @@ class Settings(BaseSettings):
     stack_auth_project_id: str
     stack_auth_server_key: str
 
-    kokoro_runpod_serverless_endpoint: str | None = None
-    yolo_runpod_serverless_endpoint: str | None = None
-    runpod_api_key: str | None = None
-    runpod_request_timeout_seconds: int | None = None
     inworld_api_key: str | None = None
 
     openai_tts_base_url: str | None = None

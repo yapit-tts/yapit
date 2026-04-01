@@ -110,19 +110,15 @@ Yapit is a text-to-speech platform with these components:
 
 **Reliability mechanisms:**
 - **Visibility timeout**: If worker takes too long (TTS: 30s, YOLO: 10s), job is requeued
-- **Overflow**: If job waits too long in queue, sent to RunPod serverless
-  - Kokoro: 30s threshold, has RunPod overflow
-  - Inworld: NO overflow (external API, can't run on RunPod)
-  - YOLO: 10s threshold, has RunPod overflow
 - **DLQ (Dead Letter Queue)**: Jobs that fail after max retries — indicates systematic failure
 
 **Models:**
-- `kokoro` — local Kokoro TTS, has overflow to RunPod serverless
-- `inworld` — Inworld external API, NO overflow. Jobs dispatched in parallel (no semaphore).
+- `kokoro` — local Kokoro TTS
+- `inworld` — Inworld external API. Jobs dispatched in parallel (no semaphore).
   - Queue wait should be <1s (parallel dispatch). High queue wait = bug.
   - `inworld-1.5-max` worker latency varies widely by text length: avg ~6s, p95 ~25s is normal for real documents. Only flag if synthesis_error events appear or rate limit (429) events spike.
   - ReadTimeout warnings (attempt N/6) are transient Inworld API slowness — only concerning if retries exhaust all 6 attempts (= synthesis_error).
-- YOLO — local object detection, has overflow to RunPod serverless
+- YOLO — local object detection
 
 ## Data Locations
 
@@ -150,8 +146,6 @@ Yapit is a text-to-speech platform with these components:
 **Reliability events:**
 - `job_requeued` — visibility timeout fired, job retrying
 - `job_dlq` — job exceeded max retries, moved to dead letter queue (BAD)
-- `job_overflow` — job sent to RunPod serverless due to queue backup
-- `overflow_complete`, `overflow_error` — RunPod result
 
 **Document extraction:**
 - `document_extraction_complete` — emitted for every document extraction (all paths)
@@ -203,7 +197,7 @@ This is the most important section. Don't just count errors — read the actual 
 **Metrics DB errors:**
 - `error` events (gateway-internal) — ANY nonzero count is a red flag. Read `data.message` for each. These represent silent failures that may cause user-visible breakage (e.g., audio not playing, results disappearing).
 - `synthesis_error` events — worker-reported failures. Check `data.error` for each distinct error message.
-- `detection_error`, `page_extraction_error`, `overflow_error` — same: read the actual error messages.
+- `detection_error`, `page_extraction_error` — same: read the actual error messages.
 - `job_dlq` — ANY entry means something is systematically broken. Investigate immediately.
 - `job_requeued` — occasional is fine (transient), sustained pattern = worker issues.
 
@@ -221,17 +215,13 @@ This is the most important section. Don't just count errors — read the actual 
 ### Queue Health
 - `queue_depth` values in `synthesis_queued` — sustained >20 means workers can't keep up
 - `queue_wait_ms` in `synthesis_complete`:
-  - TTS: <15s normal, approaching 30s = overflow about to trigger
-  - Detection: <5s normal, approaching 10s = overflow imminent
+  - TTS: <15s normal, >25s sustained = capacity issue
+  - Detection: <5s normal, >8s sustained = capacity issue
 
 ### Worker Performance
 - `worker_latency_ms` per `worker_id` — compare workers, find outliers
 - Throughput: count of completions per worker
 - Error rate per worker — one worker failing more than others?
-
-### Overflow Usage
-- `job_overflow` count — occasional during spikes is fine
-- `overflow_error` — RunPod failures, concerning if frequent
 
 ### Document Processing
 - `document_extraction_complete` — volume by `processor_slug` (pymupdf, epub, passthrough, defuddle:*, gemini)
@@ -275,10 +265,9 @@ See the BILLING RECONCILIATION section — event counts and character totals are
 | Error rate (synthesis) | 0% | >0% sustained |
 | Log ERROR entries | 0 | Any (read the actual messages) |
 | Queue depth | <10 | >20 sustained |
-| Queue wait (TTS) | <15s | >25s (overflow imminent) |
-| Queue wait (YOLO) | <5s | >8s |
+| Queue wait (TTS) | <15s | >25s sustained |
+| Queue wait (YOLO) | <5s | >8s sustained |
 | Requeues | Rare/isolated | Pattern (same worker, same error) |
-| Overflow usage | Occasional spikes | Constant (capacity issue) |
 | Billing sync drift | 0 | Any (check which webhooks are being missed) |
 | Billing reconciliation delta | 0 (past days) | Any non-zero on completed days |
 | CF 504 rate | <15% | >20% or originResponseStatus != 0 |
@@ -308,7 +297,7 @@ Common fields:
 - `job_id`, `variant_hash`, `model_slug`, `voice_slug`, `worker_id` — TTS pipeline logs
 - `extraction_id`, `content_hash` — document extraction logs
 - `document_id` — WebSocket and extraction logs
-- `queue_type`, `model_slug` — scanner/overflow logs
+- `queue_type`, `model_slug` — scanner logs
 - `method`, `path` — unhandled exception logs
 
 **Correlation strategies:**

@@ -46,7 +46,7 @@ test: test-unit test-frontend test-integration
 test-local: test-unit test-frontend test-integration-local
 
 test-unit:
-	uv run pytest tests --ignore=tests/integration -v -m "not runpod and not inworld and not gemini"
+	uv run pytest tests --ignore=tests/integration -v -m "not inworld and not gemini"
 
 test-frontend:
 	npm test --prefix frontend
@@ -55,10 +55,7 @@ test-integration:
 	uv run pytest tests/integration -v
 
 test-integration-local:
-	uv run pytest tests/integration -v -m "not runpod and not inworld and not gemini"
-
-test-runpod:
-	uv run pytest tests/integration -v -m "runpod"
+	uv run pytest tests/integration -v -m "not inworld and not gemini"
 
 test-inworld:
 	uv run pytest tests/integration -v -m "inworld"

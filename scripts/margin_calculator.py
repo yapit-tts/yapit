@@ -82,12 +82,6 @@ INWORLD_TTS1_PRICE_PER_M_CHARS_USD = 5.00  # $5.00 per million characters
 INWORLD_TTS1_MAX_PRICE_PER_M_CHARS_USD = 10.00  # $10.00 per million (but 2x credits)
 # Note: TTS-1-Max costs 2x but consumes 2x usage limits, so effective cost ratio = same
 
-# --- RunPod Overflow (Kokoro serverless workers) ---
-RUNPOD_COST_PER_SECOND_USD = 0.00004  # $0.00004 per second per worker
-RUNPOD_MAX_WORKERS = 5  # Maximum concurrent serverless workers
-RUNPOD_SELF_HOSTED_CAPACITY = 8  # Number of self-hosted (VPS) Kokoro instances
-# Overflow kicks in when concurrent requests exceed self-hosted capacity
-# Estimate: ~10 concurrent TTS requests per 1000 MAU at peak
 
 # --- R2 Object Storage (for extracted images) ---
 # Pricing: https://developers.cloudflare.com/r2/pricing/
@@ -201,12 +195,6 @@ def get_gemini_cost_per_page_usd() -> float:
 def get_inworld_cost_per_char_usd() -> float:
     """Get Inworld TTS cost per character."""
     return INWORLD_TTS1_PRICE_PER_M_CHARS_USD / 1_000_000
-
-
-def get_runpod_max_monthly_usd() -> float:
-    """Calculate max RunPod overflow cost (all workers 24/7)."""
-    seconds_per_month = 60 * 60 * 24 * 30
-    return RUNPOD_COST_PER_SECOND_USD * RUNPOD_MAX_WORKERS * seconds_per_month
 
 
 def get_r2_monthly_cost_usd(total_db_storage_mb: float) -> dict:
@@ -395,15 +383,6 @@ def calculate_business_metrics(
     # Fixed costs
     fixed_costs = get_fixed_costs_eur()
 
-    # RunPod overflow estimate (rough: kicks in above ~500 concurrent requests)
-    # Assume peak concurrency = MAU / 100 (1% concurrent at peak)
-    peak_concurrent = num_users / 100
-    runpod_overflow = 0.0
-    if peak_concurrent > RUNPOD_SELF_HOSTED_CAPACITY:
-        overflow_workers = min(peak_concurrent - RUNPOD_SELF_HOSTED_CAPACITY, RUNPOD_MAX_WORKERS)
-        # Assume overflow runs ~10% of the month during peaks
-        runpod_overflow = usd_to_eur(RUNPOD_COST_PER_SECOND_USD * overflow_workers * 60 * 60 * 24 * 30 * 0.1)
-
     # R2 storage costs (for extracted images)
     # Estimate actual DB usage from storage limit × utilization × overhead multiplier
     db_storage_per_user_mb = STORAGE_LIMIT_PAID_MB * utilization * STORAGE_ACTUAL_MULTIPLIER
@@ -411,16 +390,8 @@ def calculate_business_metrics(
     r2_costs = get_r2_monthly_cost_usd(total_db_storage_mb)
     r2_monthly = usd_to_eur(r2_costs["total"])
 
-    total_costs = total_variable_costs + total_stripe_fees + fixed_costs + runpod_overflow + r2_monthly
-    gross_profit = (
-        total_revenue
-        - total_vat_paid
-        - total_stripe_fees
-        - total_variable_costs
-        - fixed_costs
-        - runpod_overflow
-        - r2_monthly
-    )
+    total_costs = total_variable_costs + total_stripe_fees + fixed_costs + r2_monthly
+    gross_profit = total_revenue - total_vat_paid - total_stripe_fees - total_variable_costs - fixed_costs - r2_monthly
 
     # Austrian taxes on annual profit
     annual_profit = gross_profit * 12
@@ -435,7 +406,6 @@ def calculate_business_metrics(
         "monthly_stripe": total_stripe_fees,
         "monthly_variable": total_variable_costs,
         "monthly_fixed": fixed_costs,
-        "monthly_runpod_overflow": runpod_overflow,
         "monthly_r2": r2_monthly,
         "monthly_total_costs": total_costs,
         "monthly_gross_profit": gross_profit,
@@ -470,7 +440,6 @@ def print_unit_costs():
     """Print unit cost breakdown."""
     gemini_token = get_gemini_cost_per_token_equiv_usd()
     gemini_page = get_gemini_cost_per_page_usd()
-    runpod_max = get_runpod_max_monthly_usd()
     thinking_label = f" + {GEMINI_THINKING_TOKENS} thinking" if GEMINI_THINKING_TOKENS > 0 else ""
 
     if PLAIN_MODE:
@@ -484,9 +453,6 @@ def print_unit_costs():
         )
         print(
             f"Inworld TTS-1/M chars\t${INWORLD_TTS1_PRICE_PER_M_CHARS_USD:.2f}\t€{usd_to_eur(INWORLD_TTS1_PRICE_PER_M_CHARS_USD):.2f}\tTTS-1-Max $10/M but 2x credits"
-        )
-        print(
-            f"RunPod Overflow max/mo\t${runpod_max:.2f}\t€{usd_to_eur(runpod_max):.2f}\t{RUNPOD_MAX_WORKERS} workers 24/7"
         )
         print(
             f"R2 Storage/GB-month\t${R2_COST_PER_GB_MONTH_USD:.3f}\t€{usd_to_eur(R2_COST_PER_GB_MONTH_USD):.3f}\t{R2_FREE_STORAGE_GB}GB free"
@@ -526,13 +492,6 @@ def print_unit_costs():
         f"${INWORLD_TTS1_PRICE_PER_M_CHARS_USD:.2f}",
         f"€{usd_to_eur(INWORLD_TTS1_PRICE_PER_M_CHARS_USD):.2f}",
         "TTS-1-Max is $10/M but 2× credits",
-    )
-
-    table.add_row(
-        "RunPod Overflow (max/month)",
-        f"${runpod_max:.2f}",
-        f"€{usd_to_eur(runpod_max):.2f}",
-        f"{RUNPOD_MAX_WORKERS} workers × 24/7",
     )
 
     table.add_row(
@@ -813,11 +772,11 @@ def print_business_scaling():
     """Print business metrics at different user counts."""
     if PLAIN_MODE:
         print(f"6. BUSINESS SCALING ({DEFAULT_VAT} VAT, {DEFAULT_UTILIZATION * 100:.0f}% util)")
-        print("Users\tRevenue\tVAT\tStripe\tVariable\tFixed\tRunPod+\tR2\tGross Profit\tNet/yr")
+        print("Users\tRevenue\tVAT\tStripe\tVariable\tFixed\tR2\tGross Profit\tNet/yr")
         for num_users in USER_COUNTS:
             biz = calculate_business_metrics(num_users, PLAN_DISTRIBUTION, DEFAULT_UTILIZATION, DEFAULT_VAT)
             print(
-                f"{num_users}\t€{biz['monthly_revenue']:.0f}\t€{biz['monthly_vat']:.0f}\t€{biz['monthly_stripe']:.0f}\t€{biz['monthly_variable']:.0f}\t€{biz['monthly_fixed']:.0f}\t€{biz['monthly_runpod_overflow']:.0f}\t€{biz['monthly_r2']:.0f}\t€{biz['monthly_gross_profit']:.0f}\t€{biz['annual_net_profit']:.0f}"
+                f"{num_users}\t€{biz['monthly_revenue']:.0f}\t€{biz['monthly_vat']:.0f}\t€{biz['monthly_stripe']:.0f}\t€{biz['monthly_variable']:.0f}\t€{biz['monthly_fixed']:.0f}\t€{biz['monthly_r2']:.0f}\t€{biz['monthly_gross_profit']:.0f}\t€{biz['annual_net_profit']:.0f}"
             )
         print()
         return
@@ -834,7 +793,6 @@ def print_business_scaling():
     table.add_column("Stripe", justify="right")
     table.add_column("Variable", justify="right")
     table.add_column("Fixed", justify="right")
-    table.add_column("RunPod+", justify="right")
     table.add_column("R2", justify="right")
     table.add_column("Gross Profit", justify="right", style="bold")
     table.add_column("Net/yr*", justify="right")
@@ -851,7 +809,6 @@ def print_business_scaling():
             f"€{biz['monthly_stripe']:,.0f}",
             f"€{biz['monthly_variable']:,.0f}",
             f"€{biz['monthly_fixed']:,.0f}",
-            f"€{biz['monthly_runpod_overflow']:,.0f}",
             f"€{biz['monthly_r2']:,.0f}",
             f"[{profit_style}]€{biz['monthly_gross_profit']:,.0f}[/{profit_style}]",
             f"€{biz['annual_net_profit']:,.0f}",
@@ -1062,7 +1019,7 @@ def print_free_user_analysis():
     console.print(f"  Guest: [green]€{guest_monthly_cost:.4f}[/green]/month (DB storage)")
     console.print(f"  Free:  [green]€{free_monthly_cost:.4f}[/green]/month (DB storage)")
     console.print(
-        "\n[dim]Note: Free/guest use self-hosted TTS (no API cost until overflow). No R2 costs (no extraction access).[/dim]"
+        "\n[dim]Note: Free/guest use self-hosted TTS (no API cost). No R2 costs (no extraction access).[/dim]"
     )
 
 
@@ -1079,7 +1036,6 @@ def print_config_summary():
             f"Gemini 3 Flash: ${GEMINI_INPUT_PRICE_PER_M_TOKENS_USD}/M in, ${GEMINI_OUTPUT_PRICE_PER_M_TOKENS_USD}/M out{thinking_str}"
         )
         print(f"Inworld TTS-1: ${INWORLD_TTS1_PRICE_PER_M_CHARS_USD}/M chars")
-        print(f"RunPod: ${RUNPOD_COST_PER_SECOND_USD}/s × {RUNPOD_MAX_WORKERS} workers max")
         print(f"Fixed: €{get_fixed_costs_eur()}/month")
         print(
             f"Austrian Tax: ~{AUSTRIAN_INCOME_TAX_RATE * 100:.0f}% income + {SVS_RATE * 100:.0f}% SVS above €{SVS_THRESHOLD_EUR}"
@@ -1096,7 +1052,6 @@ def print_config_summary():
 [cyan]Stripe Fees:[/cyan] {STRIPE_PERCENT * 100:.0f}% + €{STRIPE_FIXED_EUR}
 [cyan]Gemini 3 Flash:[/cyan] ${GEMINI_INPUT_PRICE_PER_M_TOKENS_USD}/M in, ${GEMINI_OUTPUT_PRICE_PER_M_TOKENS_USD}/M out, {GEMINI_THINKING_TOKENS} thinking tokens
 [cyan]Inworld TTS-1:[/cyan] ${INWORLD_TTS1_PRICE_PER_M_CHARS_USD}/M chars
-[cyan]RunPod:[/cyan] ${RUNPOD_COST_PER_SECOND_USD}/s × {RUNPOD_MAX_WORKERS} workers max
 [cyan]Fixed:[/cyan] €{get_fixed_costs_eur()}/month
 [cyan]Austrian Tax:[/cyan] ~{AUSTRIAN_INCOME_TAX_RATE * 100:.0f}% income + {SVS_RATE * 100:.0f}% SVS above €{SVS_THRESHOLD_EUR}
 """
