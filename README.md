@@ -33,7 +33,7 @@ Powered by [Gemini](https://ai.google.dev/gemini-api), [Kokoro](https://huggingf
 
 ```bash
 git clone --depth 1 https://github.com/yapit-tts/yapit.git && cd yapit
-cp .env.selfhost.example .env.selfhost
+cp .env.selfhost.example .env.selfhost # edit to enable optional features (AI-extraction, custom TTS models)
 make self-host
 ```
 
