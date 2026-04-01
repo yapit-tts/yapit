@@ -225,8 +225,8 @@ export function MetadataBanner({
 
   useEffect(() => {
     if (userOverrideBatch.current) return;
-    onBatchModeToggle(effectivePageCount > 100);
-  }, [effectivePageCount, onBatchModeToggle]);
+    onBatchModeToggle(formatInfo?.batch === true && effectivePageCount > 100);
+  }, [effectivePageCount, onBatchModeToggle, formatInfo?.batch]);
 
   const handleBatchToggle = (enabled: boolean) => {
     userOverrideBatch.current = true;
