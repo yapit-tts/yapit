@@ -1,7 +1,7 @@
 
 -include .env
 
-DEV_COMPOSE = docker compose -p yapit-dev --env-file .env --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml
+DEV_COMPOSE = COMPOSE_PROFILES=auth,metrics docker compose -p yapit-dev --env-file .env --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml
 SELFHOST_COMPOSE = docker compose --env-file .env.selfhost -f docker-compose.yml -f docker-compose.selfhost.yml
 
 define create-dev-user
@@ -27,8 +27,11 @@ down:
 self-host:
 	$(SELFHOST_COMPOSE) up -d --build
 
+self-host-auth:
+	VITE_ENV_FILE=.env.selfhost.auth COMPOSE_PROFILES=auth $(SELFHOST_COMPOSE) up -d --build
+
 self-host-down:
-	$(SELFHOST_COMPOSE) down
+	$(SELFHOST_COMPOSE) --profile auth down
 
 dev-user:
 	$(call create-dev-user)

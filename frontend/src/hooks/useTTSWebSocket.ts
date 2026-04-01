@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useUser } from "@stackframe/react";
+import { useAuthUser } from "@/hooks/useAuthUser";
 import { getAnonymousToken, getOrCreateAnonymousId } from "@/lib/anonymousId";
 
 const WS_BASE_URL = import.meta.env.VITE_WS_BASE_URL ||
@@ -22,7 +22,7 @@ export function useTTSWebSocket(
   onMessage: (data: WSMessage) => void,
   onConnect?: () => void,
 ): UseTTSWebSocketReturn {
-  const user = useUser();
+  const user = useAuthUser();
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
   const reconnectAttemptsRef = useRef(0);

@@ -4,7 +4,7 @@ import { Loader2 } from "lucide-react";
 import MainLayout from "../layouts/MainLayout";
 import TextInputPage from "@/pages/TextInputPage";
 import UrlCatchAllPage from "@/pages/UrlCatchAllPage";
-import { stackClientApp } from "@/auth";
+import { authEnabled, stackClientApp } from "@/auth";
 import { ChunkErrorBoundary } from "@/components/ChunkErrorBoundary";
 
 const PlaybackPage = lazy(() => import("@/pages/PlaybackPage"));
@@ -47,7 +47,7 @@ const AuthRoutes = () => {
 	return (
 		<Lazy>
 			<LazyStackHandler
-				app={stackClientApp}
+				app={stackClientApp!}
 				location={location.pathname}
 				fullPage
 			/>
@@ -57,9 +57,13 @@ const AuthRoutes = () => {
 
 const AppRoutes = () => (
 	<Routes>
-		<Route path="/handler/sign-in" element={<Lazy><SignInPage /></Lazy>} />
-		<Route path="/handler/sign-up" element={<Lazy><SignUpPage /></Lazy>} />
-		<Route path="/handler/*" element={<AuthRoutes />} />
+		{authEnabled && (
+			<>
+				<Route path="/handler/sign-in" element={<Lazy><SignInPage /></Lazy>} />
+				<Route path="/handler/sign-up" element={<Lazy><SignUpPage /></Lazy>} />
+				<Route path="/handler/*" element={<AuthRoutes />} />
+			</>
+		)}
 		<Route
 			path="/"
 			element={
@@ -84,14 +88,42 @@ const AppRoutes = () => (
 				</MainLayout>
 			}
 		/>
-		<Route
-			path="/subscription"
-			element={
-				<MainLayout>
-					<Lazy><SubscriptionPage /></Lazy>
-				</MainLayout>
-			}
-		/>
+		{authEnabled && (
+			<>
+				<Route
+					path="/subscription"
+					element={
+						<MainLayout>
+							<Lazy><SubscriptionPage /></Lazy>
+						</MainLayout>
+					}
+				/>
+				<Route
+					path="/account/settings"
+					element={
+						<MainLayout>
+							<Lazy><AccountSettingsPage /></Lazy>
+						</MainLayout>
+					}
+				/>
+				<Route
+					path="/checkout/success"
+					element={
+						<MainLayout>
+							<Lazy><CheckoutSuccessPage /></Lazy>
+						</MainLayout>
+					}
+				/>
+				<Route
+					path="/checkout/cancel"
+					element={
+						<MainLayout>
+							<Lazy><CheckoutCancelPage /></Lazy>
+						</MainLayout>
+					}
+				/>
+			</>
+		)}
 		<Route
 			path="/tips"
 			element={
@@ -109,34 +141,10 @@ const AppRoutes = () => (
 			}
 		/>
 		<Route
-			path="/account/settings"
-			element={
-				<MainLayout>
-					<Lazy><AccountSettingsPage /></Lazy>
-				</MainLayout>
-			}
-		/>
-		<Route
 			path="/about"
 			element={
 				<MainLayout>
 					<Lazy><AboutPage /></Lazy>
-				</MainLayout>
-			}
-		/>
-		<Route
-			path="/checkout/success"
-			element={
-				<MainLayout>
-					<Lazy><CheckoutSuccessPage /></Lazy>
-				</MainLayout>
-			}
-		/>
-		<Route
-			path="/checkout/cancel"
-			element={
-				<MainLayout>
-					<Lazy><CheckoutCancelPage /></Lazy>
 				</MainLayout>
 			}
 		/>

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router";
-import { useUser } from "@stackframe/react";
+import { useAuthUser } from "@/hooks/useAuthUser";
 import { useApi } from "@/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -51,7 +51,7 @@ interface EngagementStats {
 const AccountPage = () => {
   const { api, isAuthReady, isAnonymous } = useApi();
   const navigate = useNavigate();
-  const user = useUser();
+  const user = useAuthUser();
   const { settings, setSettings } = useSettings();
   const isDark = useIsDark();
   const isMobile = useIsMobile();

@@ -17,9 +17,13 @@ class Settings(BaseSettings):
     audio_cache_type: Caches
     audio_cache_config: CacheConfig
 
-    stack_auth_api_host: str
-    stack_auth_project_id: str
-    stack_auth_server_key: str
+    stack_auth_api_host: str | None = None
+    stack_auth_project_id: str | None = None
+    stack_auth_server_key: str | None = None
+
+    @property
+    def stack_auth_enabled(self) -> bool:
+        return all([self.stack_auth_api_host, self.stack_auth_project_id, self.stack_auth_server_key])
 
     inworld_api_key: str | None = None
 
@@ -80,7 +84,7 @@ class Settings(BaseSettings):
 
     billing_enabled: bool  # Self-hosting: set False to disable subscription/usage limits
 
-    metrics_database_url: str | None
+    metrics_database_url: str | None = None
     log_dir: str
 
     model_config = SettingsConfigDict(
