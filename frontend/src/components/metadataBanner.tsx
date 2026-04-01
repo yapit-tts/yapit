@@ -206,9 +206,10 @@ export function MetadataBanner({
 
   const title = metadata.title || metadata.file_name || "Untitled Document";
   const showPageSelector = !!formatInfo?.has_pages && metadata.total_pages > 1;
-  const showAiToggle = !!formatInfo?.ai;
-  const forceAi = !!formatInfo?.ai && !formatInfo?.free;
-  const aiActive = forceAi || aiTransformEnabled;
+  const aiSupported = !!formatInfo?.ai;
+  const showAiToggle = aiSupported || !!formatInfo?.has_pages;
+  const forceAi = aiSupported && !formatInfo?.free;
+  const aiActive = forceAi || (aiSupported && aiTransformEnabled);
 
   const selectedPages = useMemo(
     () => parsePageRanges(pageRangeInput, metadata.total_pages),
@@ -319,14 +320,20 @@ export function MetadataBanner({
           )}
 
           {showAiToggle && (
-            <div className="flex items-center gap-2">
+            <div
+              className="flex items-center gap-2"
+              title={!aiSupported ? "No AI processor configured" : undefined}
+            >
               <Switch
                 id="ai-transform-toggle"
                 checked={forceAi || aiTransformEnabled}
                 onCheckedChange={onAiTransformToggle}
-                disabled={forceAi}
+                disabled={forceAi || !aiSupported}
               />
-              <Label htmlFor="ai-transform-toggle" className="text-sm cursor-pointer">
+              <Label
+                htmlFor="ai-transform-toggle"
+                className={cn("text-sm", aiSupported ? "cursor-pointer" : "cursor-not-allowed text-muted-foreground")}
+              >
                 AI Transform
               </Label>
             </div>
