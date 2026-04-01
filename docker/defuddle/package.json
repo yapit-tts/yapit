@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "defuddle": "0.14.0",
+    "defuddle": "0.15.0",
     "playwright": "1.52.0",
     "undici": "^7.0.0"
   }
