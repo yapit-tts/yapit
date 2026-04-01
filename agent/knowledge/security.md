@@ -2,10 +2,7 @@
 
 ## Audits
 
-- [[xss-security-audit]] — XSS and SSRF analysis, DOMPurify, Smokescreen proxy
-- [[beta-launch-security-checklist]] — CORS, CSP, secrets, SQL injection, CSRF, auth gaps, deps, HTTPS, error leakage, SSRF
-- [[2026-02-21-red-team-security-audit]] — Offensive pre-public-launch audit: billing bypass, SSRF, anonymous session theft, infrastructure trust boundaries
-- [[2026-02-25-red-team-security-audit-v2]] — Second pass: verifies prior fixes, covers code changed since v1, PII scan for public repo readiness
+See [[security-audits]] for the consolidated findings, fix verification, and accepted risks from all three red-team audits (v1 Feb 21, v2 Feb 25, v3 Mar 22).
 
 ## Auth & Trust Boundaries
 
