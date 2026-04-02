@@ -38,12 +38,19 @@ make self-host
 ```
 
 Open [http://localhost](http://localhost). Data persists across restarts.
+To stop: `make self-host-down`.
+
+### Multi-user mode
 
 By default, yapit runs in **single-user mode** — no login required, all features unlocked. `.env.selfhost` is self-documenting — see the comments for optional features (AI extraction, custom TTS models).
 
-**Multi-user mode** — if you want user accounts with login (e.g., for a family or small team), set `AUTH_ENABLED=true` in `.env.selfhost`, uncomment the Stack Auth section below it, and use `make self-host-auth` instead. This adds Stack Auth and ClickHouse containers. Note: in single-user mode, all requests share one user — everyone on the network sees the same document library.
+If you want user accounts with login (e.g., for a family or small team), set `AUTH_ENABLED=true` in `.env.selfhost`, uncomment the Stack Auth section below it, and use `make self-host-auth` instead. This adds Stack Auth and ClickHouse containers. Note: in single-user mode, all requests share one user — everyone on the network sees the same document library.
 
-**Custom TTS voices** — use any server implementing the OpenAI `/v1/audio/speech` API ([vLLM-Omni](https://github.com/vllm-project/vllm-omni), [Kokoro-FastAPI](https://github.com/remsky/Kokoro-FastAPI), [AllTalk](https://github.com/erew123/alltalk_tts), [Chatterbox TTS](https://github.com/devnen/Chatterbox-TTS-Server), etc.). Add to `.env.selfhost`:
+### Custom TTS voices
+
+Use any server implementing the OpenAI `/v1/audio/speech` API ([vLLM-Omni](https://github.com/vllm-project/vllm-omni), [Kokoro-FastAPI](https://github.com/remsky/Kokoro-FastAPI), [AllTalk](https://github.com/erew123/alltalk_tts), [Chatterbox TTS](https://github.com/devnen/Chatterbox-TTS-Server), etc.).
+
+Add to `.env.selfhost`:
 
 ```env
 OPENAI_TTS_BASE_URL=http://your-tts-server:8091/v1
@@ -91,7 +98,11 @@ Voices are auto-discovered from the server (9 built-in speakers for CustomVoice 
 
 </details>
 
-**AI document extraction** (vision-based PDF/image processing) works with any OpenAI-compatible API. Add to `.env.selfhost`:
+### AI document extraction
+
+Vision-based PDF/image processing works with any OpenAI-compatible API.
+
+Add to `.env.selfhost`:
 
 ```env
 AI_PROCESSOR=openai
@@ -102,8 +113,10 @@ AI_PROCESSOR_MODEL=qwen/qwen3-vl-235b-a22b-instruct  # any vision-capable model
 
 Or use Google Gemini directly (with batch-mode support): `AI_PROCESSOR=gemini` + `GOOGLE_API_KEY=your-key`.
 
+### GPU workers for Kokoro TTS & YOLO figure detection
+
 <details>
-<summary><strong>GPU worker scaling (Kokoro TTS + YOLO figure detection)</strong></summary>
+<summary><strong></strong></summary>
 
 Kokoro and YOLO run as pull-based workers — any machine with Redis access can join. Connect from the local network or via Tailscale. GPU and CPU workers run side-by-side; faster workers naturally pull more jobs. Scale by running more containers on any machine that can reach Redis.
 
@@ -155,14 +168,11 @@ sudo systemctl enable --now nvidia-mps
 
 </details>
 
-To stop: `make self-host-down`.
-
-
 ## Roadmap
 
 Next:
-- Support uploading images
 - Support exporting audio as MP3.
+- Support word-level highlighting for kokoro english
 
 Later:
 - Support thinking parameter for Gemini
