@@ -6,12 +6,15 @@ This file covers auth concepts at the gateway level.
 
 ## Auth Modes
 
-Two ways to authenticate (`gateway/auth.py`):
+Three modes (`gateway/auth.py`):
 
-1. **Bearer token** — Validated against Stack Auth → returns `User`
-2. **Anonymous ID** — `X-Anonymous-ID` header → creates anonymous user with `anon-{uuid}` ID
+1. **Selfhost** — When `auth_enabled=False`, all endpoints return a static `SELFHOST_USER` (no auth provider needed). Default for `make self-host`.
+2. **Bearer token** — Validated against Stack Auth → returns `User`
+3. **Anonymous ID** — `X-Anonymous-ID` + `X-Anonymous-Token` headers → creates anonymous user with `anon-{uuid}` ID
 
-WebSocket uses query params (`?token=...` or `?anonymous_id=...`).
+WebSocket uses query params (`?token=...` or `?anonymous_id=...&anonymous_token=...`).
+
+`authenticate_optional` returns `None` instead of 401 when no credentials provided — used for unified endpoints that serve both public/shared and private documents.
 
 ## Anonymous → Registered Flow
 

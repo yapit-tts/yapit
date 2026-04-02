@@ -1,6 +1,6 @@
 # Stack Auth
 
-Self-hosted auth provider. Runs as a Docker container (`stackauth/server:<commit-sha>`), provides user management, OAuth, session tokens, and an admin dashboard at `auth.yapit.md`.
+Self-hosted auth provider. Runs as a Docker container (`stackauth/server:<commit-sha>`), provides user management, OAuth, session tokens, and an admin dashboard at `auth.yapit.md`. **Optional for selfhost** — `make self-host` runs without Stack Auth (gateway uses static `SELFHOST_USER`); `make self-host-auth` activates it for multi-user setups.
 
 ## Architecture
 
@@ -72,7 +72,7 @@ Resend (SMTP port 587) + Freestyle (template rendering). Port 465 blocked by Het
 
 Env vars: `STACK_EMAIL_HOST`, `STACK_EMAIL_PORT`, `STACK_EMAIL_USERNAME`, `STACK_EMAIL_PASSWORD`, `STACK_EMAIL_SENDER`, `STACK_FREESTYLE_API_KEY`.
 
-See [[stack-auth-email-setup]] for the full debugging history (Docker Swarm env_file baking caused spurious postgres restarts).
+Docker Swarm env_file baking caused spurious postgres restarts during initial email setup. See [[dependency-updates]] Swarm gotchas.
 
 ## Dev Setup
 
@@ -125,7 +125,7 @@ See [[stack-auth-email-setup]] for the full debugging history (Docker Swarm env_
 ## Sources
 
 - [[dependency-updates]] — Upgrade guide, gotchas, checklist
-- [[stack-auth-email-setup]] — Email setup debugging history
+- [[dependency-updates]] — Upgrade guide, gotchas (includes Swarm env_file incident from email setup)
 - [[stack-auth-upstream-blockers]] — Active workarounds for self-hosted regressions
 - [Stack Auth Self-Host Docs](https://docs.stack-auth.com/docs/js/others/self-host)
 - [Stack Auth Entrypoint](https://github.com/stack-auth/stack-auth/blob/main/docker/server/entrypoint.sh)

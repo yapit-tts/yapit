@@ -53,7 +53,7 @@ Stack Auth has two components: the Docker server image (`stackauth/server:<commi
 - **Never run `npm audit fix` in frontend** — It bumps `@stackframe/react` (transitive deps have CVEs). Update direct deps individually with `npm install <pkg>@latest` and verify `npm ls @stackframe/react` is unchanged after each.
 - **NPM semver is loose** — All versions stay within `2.8.x` but internal deps have major bumps (jose 5→6, oauth4webapi 2→3). The SDK bundles these, so they shouldn't affect us directly, but behavior changes are possible.
 - **Migration backfills** — Some migrations backfill data across all rows (e.g., `lastActiveAt`). Safe for small DBs but could be slow on large ones.
-- **Swarm race condition on first deploy** — ClickHouse container may not be ready when stack-auth starts. Swarm doesn't support `depends_on`. A second deploy usually works. Also: Swarm bakes env_file into service specs — changing any var in `.env` restarts ALL services using that env_file. See [[stack-auth-email-setup]] for the full incident.
+- **Swarm race condition on first deploy** — ClickHouse container may not be ready when stack-auth starts. Swarm doesn't support `depends_on`. A second deploy usually works. Also: Swarm bakes env_file into service specs — changing any var in `.env` restarts ALL services using that env_file (discovered during email setup debugging — Swarm env_file baking caused spurious postgres restarts).
 - **Old image + new migrations = seed crash** — If the old image runs new migrations (e.g., Swarm pulls wrong image), the seed may crash on config overrides the old code doesn't understand. The fix is in the new image (commit `dff0ddd1`). Ensure CI has built the new image before deploying.
 
 ### Key Files

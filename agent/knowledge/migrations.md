@@ -54,7 +54,7 @@ Ref: https://github.com/sqlalchemy/alembic/discussions/1578
 
 ## Deploying
 
-**No special action.** Gateway runs `alembic upgrade head` on startup.
+**No special action.** Gateway runs `alembic upgrade head` on startup — both production and self-hosted. A baseline migration (`a7b8c9d0e1f2`) uses `IF NOT EXISTS`/`IF EXISTS` to bridge legacy databases that were created with `create_all()`. Legacy DBs are auto-detected and stamped on first startup.
 
 ## How MANAGED_TABLES Works
 

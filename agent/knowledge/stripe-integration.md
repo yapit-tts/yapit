@@ -60,9 +60,10 @@ Production-ready Stripe Managed Payments integration with:
 
 | Path | Why |
 |------|-----|
-| `yapit/gateway/api/v1/billing.py` | Core billing logic, webhooks, downgrade endpoint |
+| `yapit/gateway/api/v1/billing.py` | Webhooks, billing endpoints |
+| `yapit/gateway/billing_ops.py` | Core plan change logic (`apply_plan_change`) — shared by webhooks and billing sync |
 | `yapit/gateway/usage.py` | Waterfall consumption, limits, reservations |
-| `yapit/gateway/billing_sync.py` | Background reconciliation, point-of-decision sync |
+| `yapit/gateway/billing_sync.py` | Background reconciliation (hourly), point-of-decision sync |
 | `yapit/gateway/domain_models.py` | Plan, UserSubscription, UsagePeriod models |
 | `scripts/stripe_setup.py` | Current IaC script — products, prices |
 | `yapit/gateway/config.py` | Stripe settings (price IDs from env) |
@@ -79,7 +80,7 @@ Portal config uses `schedule_at_period_end` with two conditions (OR'd):
 
 Upgrades remain immediate with `always_invoice` proration. Stripe natively keeps the user on the higher plan until period end — no proration credit, no custom logic.
 
-**Grace period fields** (`grace_tier`, `grace_until`, `previous_plan_id`) are no longer read/written by code. Columns kept temporarily for phase 2 migration (drop after all existing grace periods expire).
+**Grace period fields** (`grace_tier`, `grace_until`, `previous_plan_id`) have been dropped from the `UserSubscription` table (migration `86c4c0dd6eeb`).
 
 ### UsagePeriod.plan_id — Correct Rollover After Plan Changes
 
@@ -119,7 +120,7 @@ Replaced page-based billing with token-based to eliminate exploit vectors and ma
 - `purchased_tokens` (uncapped, from packs, never negative)
 - `purchased_voice_chars` (uncapped, from packs, never negative)
 
-See [[2026-01-14-pricing-restructure]] for full implementation details.
+Token billing was introduced in Jan 2026, replacing page-based billing.
 
 ### Trial Strategy
 
@@ -132,12 +133,7 @@ See [[2026-01-14-pricing-restructure]] for full implementation details.
 
 ### Infrastructure as Code
 
-Best handled by one agent sequentially (all touch `stripe_setup.py`, share context):
-
-- [[stripe-iac-improvements]] — Upsert pattern, general approach
-- [[stripe-iac-portal]] — Portal configuration via API
-- [[stripe-promo-codes-and-seed-refactor]] — Promo codes (seed refactor already DONE)
-- [[stripe-iac-webhooks-tos]] — Webhook endpoint + ToS/Privacy URLs via API
+All handled via `scripts/stripe_setup.py` — upsert pattern, products, prices, portal config, promo codes, webhooks, ToS/Privacy URLs.
 
 ### Testing
 
@@ -156,16 +152,15 @@ Best handled by one agent sequentially (all touch `stripe_setup.py`, share conte
 
 2. **Manual E2E with real Stripe sandbox** (for what deterministic tests can't cover):
    - [[stripe-e2e-testing]] — Testing workflow template, test clock patterns
-   - [[stripe-testing-pricing-restructure]] — E2E results for token billing, waterfall, debt/rollover (2026-01)
    - `scripts/test_clock_setup.py` — Helper script for test clock testing
 
    Covers: real Checkout/Portal UI flows, actual webhook delivery + signature verification, card payments + dunning, promo code application, billing sync loop against live Stripe, frontend subscription state rendering.
 
 ### Research
-- [[stripe-eu-withdrawal]] — EU 14-day withdrawal research ✅ (resolved 2026-01-07, see file for Stripe support response)
+- EU 14-day withdrawal — resolved 2026-01-07 (Stripe support confirmed two-step waiver in ToS is sufficient)
 
 ### Validation
-- [[stripe-sandbox-validation]] — Fresh sandbox test with IaC-only setup
+- Fresh sandbox test with IaC-only setup completed 2026-01
 
 ## Production Deployment
 
@@ -195,24 +190,6 @@ Then update `.env.prod` with the price IDs from the output (or they're already s
 - [x] **Email settings** — No API for receipt/email configuration. Dashboard only at https://dashboard.stripe.com/settings/emails. Can only set `receipt_email` per-charge, not account-wide.
 
 ## Completed Work
-
-### Core Implementation ✅
-- [[stripe-plan-switching-fix]] — Downgrades, grace period, trial eligibility, invoice API fix
-- [[subscription-backend-refactor]] — Initial subscription system
-- [[subscription-frontend]] — Subscription page UI
-
-### IaC ✅ (2026-01-02)
-- [[stripe-iac-improvements]] — Upsert pattern, fail-fast validation, comprehensive docs
-- [[stripe-iac-portal]] — Portal configuration via API (all features)
-- [[stripe-promo-codes-and-seed-refactor]] — Complete (seed + promo codes)
-
-## TODOs
-
-- [x] **Add test cases to [[stripe-e2e-testing]]:** All covered in [[stripe-testing-fresh-sandbox]] (2026-01-05)
-- [x] **Refine testing workflow** — [[stripe-e2e-testing]] updated with gotchas, environment setup, test clock workflow
-- [x] **Send EU withdrawal email** — Response received 2026-01-07, ToS updated with two-step waiver language per [[stripe-eu-withdrawal]]
-- [x] **Run IaC in prod** — See Prod Launch Checklist below
-- [x] **Fix IaC prod issues** — See "Current Prod Issues" section below
 
 ## Prod Launch Checklist
 

@@ -35,7 +35,7 @@ For URLs and files, there's a **prepare → create** pattern:
 
 This allows showing page count, title, cached AI pages before committing. Text/markdown file uploads skip prepare (frontend-enforced) — frontend reads the file client-side and POSTs to `/text` directly.
 
-**Caching:** Free extraction is not cached (fast enough to re-run). AI extraction is cached per-page by content hash + processor-specific cache prefix (e.g., `gemini:high:v11`, `openai:qwen/qwen3-vl-235b:v1`). `uncached_pages` in prepare response shows which pages still need AI extraction. Switching models automatically uses a different cache key.
+**Caching:** Free extraction is not cached (fast enough to re-run). AI extraction is cached per-page by content hash + processor-specific cache prefix (e.g., `gemini:high:v11`, `openai:qwen/qwen3-vl-235b:v1`). Users with a custom extraction prompt get a different cache prefix (16-char SHA256 hash of prompt appended). `uncached_pages` in prepare response shows which pages still need AI extraction. Switching models or prompts automatically uses a different cache key.
 
 ### Async Extraction
 
@@ -80,7 +80,7 @@ arXiv URLs (arxiv.org, alphaxiv.org, ar5iv) are detected in `documents.py` via `
 
 PyMuPDF `get_text("dict")` per page — uses dict mode for structured data with direction vectors to filter rotated text (axis labels, watermarks). Fast (<1s for 714-page textbooks), releases GIL (C extension), not cached.
 
-**Gotcha:** `get_text("text")` extracts all text indiscriminately — body text, figure labels, annotations. Papers with embedded text in figures (e.g., attention heatmaps) produce garbage. See task `2026-02-12-pymupdf-free-extraction-quality` for improvement investigation.
+**Gotcha:** `get_text("text")` extracts all text indiscriminately — body text, figure labels, annotations. Papers with embedded text in figures (e.g., attention heatmaps) produce garbage.
 
 ## EPUB Extraction
 
@@ -107,7 +107,7 @@ AI extraction uses a pluggable backend controlled by `AI_PROCESSOR` env var (`ge
 
 The `VisionExtractor` base class owns: dispatch (image vs PDF), parallel page processing, cancellation, YOLO preparation via `prepare_page()`, timing, error handling, figure placeholder substitution, and metrics logging. Subclasses implement only `_call_api_for_page` and `_call_api_for_image` — the narrow hooks that encode content and call the specific API.
 
-**Gemini** sends native PDF bytes via `Part.from_bytes()`. Has Gemini-specific config (media_resolution, thinking_level, safety settings) and batch support.
+**Gemini** sends native PDF bytes via `Part.from_bytes()`. Has Gemini-specific config (media_resolution, thinking_level) and batch support. All four configurable safety categories are disabled — we extract user-provided documents, refusing to output their content helps nobody. The RECITATION (copyright) filter remains non-configurable by Google. When Gemini returns empty text with a non-STOP finish reason, a visible message is injected (e.g., "[Page 1 blocked by Google: RECITATION]").
 
 **OpenAI-compatible** renders PDF pages to 200 DPI PNG and sends as base64 `image_url`. Works with any OpenAI-compatible endpoint: vLLM, Ollama, LiteLLM, OpenRouter, etc. Tested with Qwen3-VL-235B, Qwen2.5-VL-7B, Kimi K2.5, Claude Sonnet. No batch support.
 
@@ -133,15 +133,15 @@ DocLayout-YOLO detects semantic figures in PDF pages:
 - `w=85` → figure is 85% of page width
 - `row=row0` → figures with same row_group are side-by-side
 
-See [[2026-01-14-doclayout-yolo-figure-detection]] for design decisions.
+Design decisions: YOLO was chosen over PyMuPDF for figure detection because it handles vector graphics, filters decorative elements, groups multi-part figures, and provides layout info.
 
 ### Extraction Prompt
 
 `yapit/gateway/document/prompts/extraction.txt`
 
-The prompt tells Gemini how to extract content with TTS annotations. When modifying the prompt, bump `prompt_version` in `gemini.py`. This invalidates cached extractions so documents get re-extracted with the new prompt.
+The prompt tells the AI model how to extract content with TTS annotations. Shared by both Gemini and OpenAI backends. When modifying the prompt, bump `prompt_version` in the relevant extractor. This invalidates cached extractions so documents get re-extracted with the new prompt. Users can override with a custom extraction prompt (per-user, stored in `UserPreferences`).
 
-Cache key format: `{slug}:{resolution}:{prompt_version}`
+Cache key format: `{slug}:{resolution}:{prompt_version}` (+ prompt hash suffix if custom prompt)
 
 **Prompt design principles:**
 
@@ -238,7 +238,7 @@ Math is always silent; pronunciation via adjacent `<yap-speak>`.
 
 For detailed tag semantics, composition rules, and edge cases: [[markdown-parser-spec]]
 
-Historical context: [[2026-01-15-tts-annotation-syntax-pivot]]
+Historical context: yap tags replaced the earlier approach of embedding TTS annotations directly in markdown syntax.
 
 ## Block Splitting
 

@@ -28,8 +28,19 @@ Compose files — **prod is standalone, not an overlay on base**:
 - `docker-compose.yml` — Base services, used by dev and selfhost (NOT prod)
 - `docker-compose.dev.yml` — Dev overrides, layered on base via `-f`
 - `docker-compose.prod.yml` — **Standalone** production file for `docker stack deploy`. Duplicates service definitions with Swarm-specific config (Traefik labels, image refs, deploy constraints). Changes to base compose do NOT propagate to prod — both files must be updated independently.
-- `docker-compose.selfhost.yml` — Self-hosting overlay on base (no billing, no SOPS, Alembic migrations)
+- `docker-compose.selfhost.yml` — Self-hosting overlay on base (Alembic migrations, no billing, no SOPS)
 - `docker-compose.worker.yml` — External GPU workers (connects to prod Redis via Tailscale)
+
+### Self-Hosting Modes
+
+Two modes via Docker Compose profiles:
+
+- **`make self-host`** (default) — 7 services, no Stack Auth, no ClickHouse. Static "selfhost" user (`auth_enabled=False`), all features unlocked, no auth overhead. Gateway returns `SELFHOST_USER` for all requests.
+- **`make self-host-auth`** (profile: `auth`) — activates Stack Auth + ClickHouse (10 services). Multi-user with full auth.
+
+Metrics DB is also profiled (`metrics`) — graceful fallback on connection failure. `make dev-cpu` uses `COMPOSE_PROFILES=auth,metrics`.
+
+Self-hosting uses **Alembic** for schema migrations (same as production), not SQLAlchemy's `create_all()`. A one-time baseline migration (all `IF NOT EXISTS`/`IF EXISTS`) bridges legacy databases. On startup, legacy DBs are auto-detected and stamped.
 
 **Worker replicas** configured via env vars (`KOKORO_CPU_REPLICAS`, `YOLO_CPU_REPLICAS`) in the base compose file, set in `.env.{dev,prod}`.
 
@@ -112,11 +123,13 @@ When **adding or removing** config files or Settings fields, check ALL of these:
 **Operations:**
 - `disk-usage.sh` — Comprehensive disk report (volumes, caches, DBs, logs). Appends history to VPS.
 - `document_storage.py` — Per-document storage breakdown (DB + images)
-- `report.sh` — Daily health diagnostics agent. Syncs prod data, runs Claude analysis, posts to ntfy.
+- `report.sh` — Daily health diagnostics agent. Runs in a clankr container (sandboxed Claude) with DuckDB init script. Syncs prod data, runs analysis, posts to ntfy.
 
 **Billing:**
 - `stripe_setup.py` — Stripe IaC (products, prices, coupons, portal)
+- `stripe_inspect.py` — Read-only Stripe config verification (portal config, subscriptions)
 - `margin_calculator.py` — Profitability analysis
+- `billing_reconciliation.py` — Diffs synthesis_complete vs billing_processed events per day. Pre-computed for the report agent.
 - `test_clock_setup.py` — Stripe test clock for billing tests
 
 **Users & Storage:**
@@ -126,6 +139,15 @@ When **adding or removing** config files or Settings fields, check ALL of these:
 - `cf_analytics.py` — Cloudflare analytics via GraphQL (traffic, cache, errors, DNS, hourly, 504 diagnostics)
 - `proxy_diagnostics.py` — Stack Auth + Traefik diagnostics from VPS container logs (latency, errors, slow requests)
 
+**Dependencies:**
+- `dep-scout.sh` — Monthly agent-driven dependency report (checks versions, changelogs, relevance via ntfy)
+
 **Stress testing:**
 - `stress_test.py` — TTS stress testing
 - `stress_test_yolo.py` — YOLO stress testing with synthetic PDFs
+
+## Releases
+
+Makefile targets for tagging and publishing:
+- `make release-patch/minor/major` — bump version, update CHANGELOG.md, commit + tag
+- `make gh-release` — push tag + create GitHub release from changelog section
