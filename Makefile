@@ -129,6 +129,39 @@ check-backend:
 check-frontend:
 	cd frontend && npm run lint && npx tsc --noEmit
 
+# Releases
+define do_release
+	@LAST=$$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0"); \
+	IFS='.' read -r MAJOR MINOR PATCH <<< "$${LAST#v}"; \
+	case "$(1)" in \
+		patch) PATCH=$$((PATCH + 1));; \
+		minor) MINOR=$$((MINOR + 1)); PATCH=0;; \
+		major) MAJOR=$$((MAJOR + 1)); MINOR=0; PATCH=0;; \
+	esac; \
+	NEW="v$$MAJOR.$$MINOR.$$PATCH"; \
+	echo "$$LAST → $$NEW"; \
+	sed -i "s/^## Unreleased/## $$NEW — $$(date +%Y-%m-%d)/" CHANGELOG.md; \
+	git add CHANGELOG.md; \
+	git commit -m "Release $$NEW"; \
+	git tag "$$NEW"; \
+	echo "Tagged $$NEW. Run 'make gh-release' to push and publish."
+endef
+
+release-patch:
+	$(call do_release,patch)
+
+release-minor:
+	$(call do_release,minor)
+
+release-major:
+	$(call do_release,major)
+
+gh-release:
+	@git push && git push --tags
+	@TAG=$$(git describe --tags --abbrev=0); \
+	BODY=$$(sed -n "/^## $$TAG/,/^## v/{/^## v/!p;}" CHANGELOG.md | sed '1d'); \
+	gh release create "$$TAG" --title "$$TAG" --notes "$$BODY"
+
 # Prod operations
 deploy:
 	./scripts/deploy.sh
