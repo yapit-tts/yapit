@@ -88,6 +88,13 @@ export const ApiProvider: FC<PropsWithChildren> = ({ children }) => {
 			return config;
 		});
 
+		instance.interceptors.response.use(undefined, (error) => {
+			if (error.response?.status >= 500) {
+				console.error(`[api] ${error.response.status} ${error.config?.method?.toUpperCase()} ${error.config?.url}`);
+			}
+			return Promise.reject(error);
+		});
+
 		// On 401 for anonymous users, renew session and retry once
 		instance.interceptors.response.use(undefined, async (error) => {
 			const config = error.config;
