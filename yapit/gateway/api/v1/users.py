@@ -360,7 +360,7 @@ async def delete_account(
     await db.commit()
 
     # 4. Delete from Stack Auth (if configured)
-    if settings.stack_auth_enabled:
+    if settings.auth_enabled:
         access_token = request.headers.get("authorization", "").removeprefix("Bearer ")
         try:
             await stack_auth_delete_user(settings, access_token, user_id)

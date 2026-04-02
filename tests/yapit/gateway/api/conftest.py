@@ -83,6 +83,7 @@ def _test_settings(postgres_container, redis_container):
         stack_auth_server_key="",
         tts_processors_file="tests/empty_processors.json",
         ai_processor=None,
+        auth_enabled=True,
         billing_enabled=True,
         metrics_database_url=None,
         log_dir="test_logs",

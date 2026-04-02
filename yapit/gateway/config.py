@@ -17,13 +17,11 @@ class Settings(BaseSettings):
     audio_cache_type: Caches
     audio_cache_config: CacheConfig
 
+    auth_enabled: bool
+
     stack_auth_api_host: str | None = None
     stack_auth_project_id: str | None = None
     stack_auth_server_key: str | None = None
-
-    @property
-    def stack_auth_enabled(self) -> bool:
-        return all([self.stack_auth_api_host, self.stack_auth_project_id, self.stack_auth_server_key])
 
     inworld_api_key: str | None = None
 

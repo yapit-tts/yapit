@@ -47,7 +47,7 @@ async def authenticate(
     x_anonymous_id: str | None = Header(None, alias="X-Anonymous-ID"),
     x_anonymous_token: str | None = Header(None, alias="X-Anonymous-Token"),
 ) -> User:
-    if not settings.stack_auth_enabled:
+    if not settings.auth_enabled:
         return SELFHOST_USER
 
     # Try Bearer token first (authenticated user)
@@ -87,7 +87,7 @@ async def authenticate_optional(
     x_anonymous_token: str | None = Header(None, alias="X-Anonymous-Token"),
 ) -> User | None:
     """Like authenticate(), but returns None instead of 401 when no credentials are provided."""
-    if not settings.stack_auth_enabled:
+    if not settings.auth_enabled:
         return SELFHOST_USER
 
     if creds is not None:
@@ -115,7 +115,7 @@ async def authenticate_ws(
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> User:
     """Authenticate WebSocket connection via query param token or anonymous ID."""
-    if not settings.stack_auth_enabled:
+    if not settings.auth_enabled:
         return SELFHOST_USER
 
     token = websocket.query_params.get("token")
