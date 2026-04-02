@@ -333,14 +333,14 @@ def create_app(
     app.dependency_overrides[get_settings] = lambda: settings
 
     app.add_middleware(
-        CORSMiddleware,  # type: ignore[arg-type]  # Starlette typing limitation
+        CORSMiddleware,  # ty: ignore[invalid-argument-type]  # Starlette typing limitation
         allow_origins=settings.cors_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    app.add_middleware(SlowAPIMiddleware)  # type: ignore[arg-type]
-    app.add_middleware(RequestContextMiddleware)  # type: ignore[arg-type]
+    app.add_middleware(SlowAPIMiddleware)  # ty: ignore[invalid-argument-type]
+    app.add_middleware(RequestContextMiddleware)  # ty: ignore[invalid-argument-type]
 
     @app.exception_handler(RateLimitExceeded)
     async def rate_limit_handler(request: Request, exc: RateLimitExceeded):

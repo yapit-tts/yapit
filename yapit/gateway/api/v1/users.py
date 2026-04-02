@@ -365,8 +365,8 @@ async def delete_account(
         try:
             await stack_auth_delete_user(settings, access_token, user_id)
             logger.info(f"Deleted user {user_id} from Stack Auth")
-        except Exception as e:
-            logger.error(f"Failed to delete user from Stack Auth: {e}")
+        except Exception:
+            logger.exception("Failed to delete user from Stack Auth")
             # Don't fail the request - data is already cleaned up
 
     logger.info(f"Account deletion complete for user {user_id} (anonymized as {anon_id})")

@@ -353,7 +353,7 @@ function DocumentSidebar() {
                 <SidebarMenuButton size="lg">
                   <User2 />
                   <span className="truncate">
-                    {user?.displayName || user?.primaryEmail || "Guest"}
+                    {user?.displayName || user?.primaryEmail || (authEnabled ? "Guest" : "Settings")}
                   </span>
                   <ChevronUp className="ml-auto" />
                 </SidebarMenuButton>
@@ -362,7 +362,7 @@ function DocumentSidebar() {
                 side="top"
                 className="min-w-[var(--radix-popper-anchor-width)]"
               >
-                {user && (
+                {(user || !authEnabled) && (
                   <DropdownMenuItem onClick={() => { closeMobileSheet(); navigate("/account"); }}>
                     <Settings className="mr-2 h-4 w-4" />
                     Account
