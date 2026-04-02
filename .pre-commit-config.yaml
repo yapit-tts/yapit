@@ -1,6 +1,6 @@
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.11.6
+    rev: v0.15.8
     hooks:
       # lint (check-only to avoid stash conflicts with unstaged changes)
       - id: ruff
