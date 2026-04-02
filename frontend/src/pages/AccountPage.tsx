@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router";
-import { useUser } from "@stackframe/react";
+import { useAuthUser } from "@/hooks/useAuthUser";
+import { authEnabled } from "@/auth";
 import { useApi } from "@/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -51,7 +52,7 @@ interface EngagementStats {
 const AccountPage = () => {
   const { api, isAuthReady, isAnonymous } = useApi();
   const navigate = useNavigate();
-  const user = useUser();
+  const user = useAuthUser();
   const { settings, setSettings } = useSettings();
   const isDark = useIsDark();
   const isMobile = useIsMobile();
@@ -179,12 +180,14 @@ const AccountPage = () => {
       <div className="flex items-baseline justify-between mb-10">
         <div>
           <h1 className="text-4xl font-bold mb-1">Account</h1>
-          <p className="text-muted-foreground">{user?.primaryEmail ?? ""}</p>
+          {user?.primaryEmail && <p className="text-muted-foreground">{user.primaryEmail}</p>}
         </div>
-        <Button variant="outline" size="sm" onClick={() => navigate("/account/settings")}>
-          <Settings className="h-4 w-4 mr-2" />
-          Manage
-        </Button>
+        {authEnabled && (
+          <Button variant="outline" size="sm" onClick={() => navigate("/account/settings")}>
+            <Settings className="h-4 w-4 mr-2" />
+            Manage
+          </Button>
+        )}
       </div>
 
       {/* Listening Journey */}
@@ -503,18 +506,20 @@ const AccountPage = () => {
             </DropdownMenu>
           </div>
 
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="font-medium">Delete Account</p>
-              <p className="text-sm text-muted-foreground">
-                Permanently delete your account and all associated data
-              </p>
+          {authEnabled && (
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-medium">Delete Account</p>
+                <p className="text-sm text-muted-foreground">
+                  Permanently delete your account and all associated data
+                </p>
+              </div>
+              <Button variant="destructive" onClick={() => setDeleteDialogOpen(true)}>
+                <Trash2 className="h-4 w-4 mr-2" />
+                Delete Account
+              </Button>
             </div>
-            <Button variant="destructive" onClick={() => setDeleteDialogOpen(true)}>
-              <Trash2 className="h-4 w-4 mr-2" />
-              Delete Account
-            </Button>
-          </div>
+          )}
         </CardContent>
       </Card>
 

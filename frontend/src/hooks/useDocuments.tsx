@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import { useLocation } from "react-router";
 import { useApi } from "@/api";
-import { useUser } from "@stackframe/react";
+import { useAuthUser } from "@/hooks/useAuthUser";
 
 export interface DocumentItem {
   id: string;
@@ -22,7 +22,7 @@ export function DocumentsProvider({ children }: { children: React.ReactNode }) {
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const { api, isAuthReady } = useApi();
-  const user = useUser();
+  const user = useAuthUser();
   const location = useLocation();
 
   useEffect(() => {

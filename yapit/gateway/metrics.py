@@ -39,6 +39,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 import asyncpg
+from loguru import logger
 
 # Global connection pool, initialized on startup
 _pool: asyncpg.Pool | None = None
@@ -51,11 +52,15 @@ async def init_metrics_db(database_url: str | None) -> None:
     global _pool
     if not database_url:
         return
-    _pool = await asyncpg.create_pool(
-        database_url,
-        min_size=1,
-        max_size=5,
-    )
+    try:
+        _pool = await asyncpg.create_pool(
+            database_url,
+            min_size=1,
+            max_size=5,
+        )
+    except Exception as e:
+        logger.warning(f"Metrics DB unavailable ({e}), continuing without metrics")
+        _pool = None
 
 
 async def start_metrics_writer() -> None:

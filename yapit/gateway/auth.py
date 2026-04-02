@@ -14,6 +14,15 @@ bearer = HTTPBearer(auto_error=False)
 
 ANONYMOUS_ID_PREFIX = "anon-"
 
+SELFHOST_USER = User(
+    id="selfhost",
+    primary_email_verified=False,
+    primary_email_auth_enabled=False,
+    signed_up_at_millis=0,
+    last_active_at_millis=0,
+    is_anonymous=False,
+)
+
 
 def verify_anonymous_token(anonymous_id: str, token: str, secret: str) -> bool:
     expected = hmac.new(secret.encode(), anonymous_id.encode(), hashlib.sha256).hexdigest()
@@ -38,6 +47,9 @@ async def authenticate(
     x_anonymous_id: str | None = Header(None, alias="X-Anonymous-ID"),
     x_anonymous_token: str | None = Header(None, alias="X-Anonymous-Token"),
 ) -> User:
+    if not settings.auth_enabled:
+        return SELFHOST_USER
+
     # Try Bearer token first (authenticated user)
     if creds is not None:
         user = await get_me(settings, access_token=creds.credentials)
@@ -75,6 +87,9 @@ async def authenticate_optional(
     x_anonymous_token: str | None = Header(None, alias="X-Anonymous-Token"),
 ) -> User | None:
     """Like authenticate(), but returns None instead of 401 when no credentials are provided."""
+    if not settings.auth_enabled:
+        return SELFHOST_USER
+
     if creds is not None:
         user = await get_me(settings, access_token=creds.credentials)
         if user is not None:
@@ -100,6 +115,9 @@ async def authenticate_ws(
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> User:
     """Authenticate WebSocket connection via query param token or anonymous ID."""
+    if not settings.auth_enabled:
+        return SELFHOST_USER
+
     token = websocket.query_params.get("token")
     anonymous_id = websocket.query_params.get("anonymous_id")
     anonymous_token = websocket.query_params.get("anonymous_token")

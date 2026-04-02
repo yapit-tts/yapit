@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+* **Breaking:** Default self-hosting no longer requires Stack Auth, ClickHouse, or TimescaleDB — runs 7 containers instead of 10. Existing selfhosters: `cp .env.selfhost.example .env.selfhost` and re-add your custom config. #80
+* Multi-user mode available via `make self-host-auth` (adds Stack Auth + ClickHouse containers).
+
 ## v0.1.0 — 2026-04-02
 
 First tagged release. Selfhosters can pin to this tag for a stable baseline.
