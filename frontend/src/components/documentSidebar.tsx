@@ -36,6 +36,7 @@ import { ChevronUp, FileText, Loader2, MoreHorizontal, User2, LogOut, LogIn, Tra
 import { useApi } from "@/api";
 import { authEnabled } from "@/auth";
 import { useAuthUser } from "@/hooks/useAuthUser";
+import { useSubscription } from "@/hooks/useSubscription";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useSettings, useIsDark } from "@/hooks/useSettings";
 import { useDocuments, type DocumentItem } from "@/hooks/useDocuments";
@@ -91,6 +92,7 @@ function DocumentSidebar() {
   const navigate = useNavigate();
   const { documentId } = useParams();
   const user = useAuthUser();
+  const { billingEnabled } = useSubscription();
   const isMobile = useIsMobile();
   const { setOpenMobile } = useSidebar();
   const closeMobileSheet = () => { if (isMobile) setOpenMobile(false); };
@@ -272,8 +274,8 @@ function DocumentSidebar() {
 
       <SidebarFooter className="border-t border-sidebar-border">
         <SidebarMenu>
-          {/* Subscription / Plan button (hidden when auth is disabled) */}
-          {authEnabled && <SidebarMenuItem>
+          {/* Subscription / Plan button (hidden when billing is disabled) */}
+          {billingEnabled && <SidebarMenuItem>
             <Tooltip>
               <TooltipTrigger asChild>
                 <SidebarMenuButton asChild size="lg" className="h-auto py-3">

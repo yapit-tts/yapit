@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuthUser } from "@/hooks/useAuthUser";
+import { authEnabled } from "@/auth";
 import { getAnonymousToken, getOrCreateAnonymousId } from "@/lib/anonymousId";
 
 const WS_BASE_URL = import.meta.env.VITE_WS_BASE_URL ||
@@ -44,6 +45,7 @@ export function useTTSWebSocket(
 
   const getWebSocketUrl = useCallback(async (): Promise<string> => {
     const baseUrl = `${WS_BASE_URL}/v1/ws/tts`;
+    if (!authEnabled) return baseUrl;
     if (user?.currentSession) {
       try {
         const { accessToken } = await user.currentSession.getTokens();

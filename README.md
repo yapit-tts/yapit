@@ -37,9 +37,11 @@ cp .env.selfhost.example .env.selfhost # edit to enable optional features (AI-ex
 make self-host
 ```
 
-Open [http://localhost](http://localhost) and create an account. Data persists across restarts.
+Open [http://localhost](http://localhost). Data persists across restarts.
 
-`.env.selfhost` is self-documenting — see the comments for optional features (AI extraction, premium voices).
+By default, yapit runs in **single-user mode** — no login required, all features unlocked. `.env.selfhost` is self-documenting — see the comments for optional features (AI extraction, custom TTS models).
+
+**Multi-user mode** — if you want user accounts with login (e.g., for a family or small team), uncomment the Stack Auth section in `.env.selfhost` and use `make self-host-auth` instead. This adds Stack Auth and ClickHouse containers. Note: in single-user mode, all requests share one user — everyone on the network sees the same document library.
 
 **Custom TTS voices** — use any server implementing the OpenAI `/v1/audio/speech` API ([vLLM-Omni](https://github.com/vllm-project/vllm-omni), [Kokoro-FastAPI](https://github.com/remsky/Kokoro-FastAPI), [AllTalk](https://github.com/erew123/alltalk_tts), [Chatterbox TTS](https://github.com/devnen/Chatterbox-TTS-Server), etc.). Add to `.env.selfhost`:
 

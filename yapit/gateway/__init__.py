@@ -64,6 +64,11 @@ async def lifespan(app: FastAPI):
     settings = app.dependency_overrides[get_settings]()
     assert isinstance(settings, Settings)
 
+    stack_auth_fields = [settings.stack_auth_api_host, settings.stack_auth_project_id, settings.stack_auth_server_key]
+    if any(stack_auth_fields) and not all(stack_auth_fields):
+        set_fields = [n for n, v in zip(["api_host", "project_id", "server_key"], stack_auth_fields) if v]
+        logger.warning(f"Partial Stack Auth config ({', '.join(set_fields)}) — auth disabled. Set all three or none.")
+
     await init_metrics_db(settings.metrics_database_url)
     await start_metrics_writer()
 

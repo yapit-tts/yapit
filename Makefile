@@ -31,7 +31,7 @@ self-host-auth:
 	VITE_ENV_FILE=.env.selfhost.auth COMPOSE_PROFILES=auth $(SELFHOST_COMPOSE) up -d --build
 
 self-host-down:
-	$(SELFHOST_COMPOSE) --profile auth down
+	$(SELFHOST_COMPOSE) --profile auth --profile metrics down
 
 dev-user:
 	$(call create-dev-user)
