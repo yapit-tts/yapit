@@ -13,3 +13,7 @@ class SynthAdapter[SynthesisParameters: TypedDict](ABC):
     @abstractmethod
     def calculate_duration_ms(self, audio_bytes: bytes) -> int:
         """Calculate audio duration in milliseconds from pcm audio bytes."""
+
+    def get_word_timestamps(self) -> list[dict] | None:
+        """Word-level timestamps from last synthesis, or None if unsupported."""
+        return None

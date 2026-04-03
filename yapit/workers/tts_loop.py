@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import json
 import time
 
 import redis.asyncio as redis
@@ -81,6 +82,7 @@ async def run_tts_worker(redis_url: str, model: str, adapter: SynthAdapter, work
                     queue_wait_ms=queue_wait_ms,
                     audio_base64=base64.b64encode(synth_result.audio).decode("ascii"),
                     duration_ms=synth_result.duration_ms,
+                    word_timestamps_json=synth_result.word_timestamps_json,
                 )
                 job_log.info(
                     f"Job completed: {processing_time_ms}ms processing, "
@@ -173,6 +175,7 @@ async def run_api_tts_dispatcher(redis_url: str, model: str, adapter: SynthAdapt
                 queue_wait_ms=queue_wait_ms,
                 audio_base64=base64.b64encode(synth_result.audio).decode("ascii"),
                 duration_ms=synth_result.duration_ms,
+                word_timestamps_json=synth_result.word_timestamps_json,
             )
             job_log.info(
                 f"Job completed: {processing_time_ms}ms processing, "
@@ -223,7 +226,9 @@ async def _synthesize(adapter: SynthAdapter, job: SynthesisJob) -> SynthesisResu
     if isinstance(audio, str):
         audio = audio.encode()
 
+    word_ts = adapter.get_word_timestamps()
     return SynthesisResult(
         audio=audio,
         duration_ms=adapter.calculate_duration_ms(audio),
+        word_timestamps_json=json.dumps(word_ts) if word_ts else None,
     )

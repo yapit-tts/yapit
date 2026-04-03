@@ -1,4 +1,5 @@
 import { useSyncExternalStore, useRef, useState, useEffect, useLayoutEffect, useCallback, useMemo } from "react";
+import { createWordHighlightManager } from '@/lib/wordHighlight';
 import { SoundControl } from '@/components/soundControl';
 import { DocumentOutliner } from '@/components/documentOutliner';
 import { OutlinerSidebar, OUTLINER_WIDTH } from '@/components/outlinerSidebar';
@@ -105,6 +106,21 @@ export function PlaybackOverlay({
     }
     prevBlockIdxRef.current = currentBlock;
   }, [currentBlock, findElementsByAudioIdx]);
+
+  // --- Word-level highlighting (CSS Custom Highlight API) ---
+
+  const wordHighlightRef = useRef(createWordHighlightManager());
+
+  useEffect(() => {
+    if (!wordHighlightRef.current.isSupported) return;
+    engine.setOnWordChange((blockIdx, wordIdx) => {
+      const timings = engine.getWordTimingsForBlock(blockIdx);
+      if (timings) wordHighlightRef.current.update(blockIdx, wordIdx, timings);
+    });
+    return () => { engine.setOnWordChange(null); wordHighlightRef.current.clear(); };
+  }, [engine]);
+
+  useLayoutEffect(() => { wordHighlightRef.current.clear(); }, [currentBlock, snapshot.status]);
 
   const handleBlockHover = useCallback((idx: number | null, isDragging: boolean) => {
     const prevHovered = hoveredBlockRef.current;
