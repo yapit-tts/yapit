@@ -4,11 +4,11 @@ const HIGHLIGHT_NAME = "audio-word-active";
 
 export function createWordHighlightManager() {
   const isSupported = typeof CSS !== "undefined" && "highlights" in CSS;
-  let prebuiltRanges: Range[] | null = null;
+  let prebuiltRanges: (Range | null)[] | null = null;
   let prebuiltBlockIdx = -1;
 
-  function buildRanges(container: Element, timings: WordTiming[]): Range[] {
-    const ranges: Range[] = [];
+  function buildRanges(container: Element, timings: WordTiming[]): (Range | null)[] {
+    const ranges: (Range | null)[] = [];
     const textNodes: Text[] = [];
     const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
     let node: Text | null;
@@ -19,7 +19,7 @@ export function createWordHighlightManager() {
 
     for (let wordPointer = 0; wordPointer < timings.length; wordPointer++) {
       const wordText = timings[wordPointer].t.trim();
-      if (!wordText) { ranges.push(null!); continue; }
+      if (!wordText) { ranges.push(null); continue; }
 
       let found = false;
       for (let n = nodeIdx; n < textNodes.length; n++) {
@@ -37,7 +37,7 @@ export function createWordHighlightManager() {
           break;
         }
       }
-      if (!found) ranges.push(null!);
+      if (!found) ranges.push(null);
     }
     return ranges;
   }
