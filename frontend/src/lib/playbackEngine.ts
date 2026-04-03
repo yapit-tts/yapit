@@ -710,6 +710,7 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
 
   function setOnWordChange(cb: ((blockIdx: number, wordIdx: number) => void) | null) {
     onWordChangeCallback = cb;
+    if (!cb) stopWordTracking();
   }
 
   function getWordTimingsForBlock(blockIdx: number): WordTiming[] | undefined {

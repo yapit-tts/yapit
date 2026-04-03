@@ -53,13 +53,11 @@ export function createWordHighlightManager() {
     }
     const range = prebuiltRanges?.[wordIdx];
     if (!range) return;
-    // @ts-expect-error CSS.highlights is not yet in all TS lib types
     CSS.highlights.set(HIGHLIGHT_NAME, new Highlight(range));
   }
 
   function clear() {
     if (!isSupported) return;
-    // @ts-expect-error CSS.highlights is not yet in all TS lib types
     CSS.highlights?.delete(HIGHLIGHT_NAME);
     prebuiltRanges = null;
     prebuiltBlockIdx = -1;
