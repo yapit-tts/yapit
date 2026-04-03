@@ -1,10 +1,12 @@
 import asyncio
 import datetime as dt
+import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 
 import redis.asyncio as redis
+import sentry_sdk
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
@@ -320,6 +322,9 @@ def create_app(
 ) -> FastAPI:
     if settings is None:
         settings = Settings()  # type: ignore
+
+    if os.environ.get("SENTRY_DSN"):
+        sentry_sdk.init(traces_sample_rate=0)
 
     configure_logging(Path(settings.log_dir))
 

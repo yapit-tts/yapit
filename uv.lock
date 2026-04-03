@@ -6,6 +6,10 @@ resolution-markers = [
     "sys_platform != 'win32'",
 ]
 
+[options]
+exclude-newer = "2026-03-27T01:24:26.49522283Z"
+exclude-newer-span = "P7D"
+
 [[package]]
 name = "aioboto3"
 version = "15.5.0"
@@ -1973,6 +1977,7 @@ dependencies = [
     { name = "pymupdf" },
     { name = "redis", extra = ["hiredis"] },
     { name = "requests" },
+    { name = "sentry-sdk" },
     { name = "slowapi" },
     { name = "sqlmodel" },
     { name = "stripe" },
@@ -2022,6 +2027,7 @@ requires-dist = [
     { name = "python-dotenv", marker = "extra == 'test'", specifier = ">=1.0.0" },
     { name = "redis", extras = ["hiredis"], specifier = "~=7.3.0" },
     { name = "requests", specifier = "~=2.32.5" },
+    { name = "sentry-sdk", specifier = ">=2.49.0" },
     { name = "slowapi", specifier = "~=0.1.9" },
     { name = "sqlmodel", specifier = "~=0.0.37" },
     { name = "stripe", specifier = "~=14.2.0" },

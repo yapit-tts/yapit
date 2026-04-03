@@ -14,6 +14,10 @@ export default defineConfig(() => {
 			}),
 			tailwindcss(),
 		],
+		define: {
+			__SENTRY_DEBUG__: false,
+			__SENTRY_TRACING__: false,
+		},
 		resolve: {
 			alias: {
 				"@": path.resolve(__dirname, "./src"),

@@ -39,6 +39,7 @@ dependencies = [
   "aioboto3>=15.5.0",
   "openai>=2.0.0",
   "av>=14.0.0",
+  "sentry-sdk>=2.49.0",
 ]
 
 [project.optional-dependencies]
