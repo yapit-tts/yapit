@@ -111,6 +111,32 @@ Each issue is a separate markdown file in the repo root: `defuddle-issue-{short-
 - Use `WebFetch` to check defuddle.md — it summarizes instead of returning raw output. Use `curl` instead.
 - Frame issues around one site when the fix is general — if the bug affects any site with links inside inline code, say that in the title, not "Verso inline code links"
 
+## When to also submit a PR
+
+Always file an issue first. Additionally submit a PR only when ALL of these hold:
+
+1. **Mechanical bugfix** — the fix follows directly from the root cause with no design judgment, no architectural tradeoffs, no "should this behave like X or Y" questions. If the fix involves taste or interpretation, the issue is enough — let the maintainer decide.
+2. **Full codebase understanding** — you've read broadly enough to be confident the fix doesn't conflict with patterns elsewhere. You have 1M tokens of context — read the full `src/` directory, not just the file you're changing.
+3. **The maintainer couldn't do it better** — if kepano would write the same fix given the same information, a PR saves him time. If he'd approach it differently with his deeper knowledge, the issue alone is more helpful.
+
+### Matching the project's standards
+
+- **Read defuddle's `CLAUDE.md`** for current conventions, build/test instructions, and pitfalls.
+- **Study how our past issues were fixed** — fetch the closing commits for issues filed by MaxWolf-01 and read the patches. Look at commit message style, how fixtures are structured, what gets tested, how much code changes per fix.
+- **Check recent merged PRs** (`gh pr list -R kepano/defuddle --state merged --limit 10`) to see what external contributions look like.
+
+### PR workflow
+
+1. Clone fresh from GitHub (not from local): `git clone https://github.com/kepano/defuddle.git /tmp/defuddle-pr`
+2. `npm install && npm test` — verify clean baseline
+3. Create fixture + expected output following the conventions in defuddle's `CLAUDE.md`
+4. Run tests → must **fail** (proves the fixture exercises the bug)
+5. Apply fix
+6. Run tests → must **pass**, full suite must stay green
+7. Fork via `gh repo fork`, push branch, open PR referencing the issue
+8. No Co-Authored-By lines for external contributions
+9. Finish the refactor — if your fix touches a pattern that exists in multiple places, apply it everywhere. A PR that fixes two of three call sites isn't "surgical," it's incomplete. (E.g. extracting a helper but leaving one inline copy "to be safe" just creates cleanup for the maintainer.)
+
 ## Yapit Pipeline Context
 
 Yapit runs defuddle in an isolated Node.js container (`docker/defuddle/app.js`) with a three-step cascade:
