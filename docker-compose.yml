@@ -28,6 +28,7 @@ services:
 
   # -------- metrics (separate from main postgres for isolation)
   metrics-db:
+    profiles: ["metrics"]
     init: true
     image: timescale/timescaledb:latest-pg16
     restart: unless-stopped
@@ -108,10 +109,6 @@ services:
         condition: service_started
       postgres:
         condition: service_healthy
-      metrics-db:
-        condition: service_healthy
-      stack-auth:
-        condition: service_started
       smokescreen:
         condition: service_started
       defuddle:
@@ -134,6 +131,7 @@ services:
 
   # -------- analytics (required by stack-auth migration runner, see github.com/stack-auth/stack-auth/issues/1228)
   clickhouse:
+    profiles: ["auth"]
     init: true
     image: clickhouse/clickhouse-server:25.10-alpine
     restart: unless-stopped
@@ -143,7 +141,7 @@ services:
     environment:
       CLICKHOUSE_DB: analytics
       CLICKHOUSE_USER: stackframe
-      CLICKHOUSE_PASSWORD: clickhouse-dev
+      CLICKHOUSE_PASSWORD: ${STACK_CLICKHOUSE_ADMIN_PASSWORD}
       CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
     volumes:
       - clickhouse-data:/var/lib/clickhouse
@@ -162,6 +160,7 @@ services:
 
   # -------- auth
   stack-auth:
+    profiles: ["auth"]
     init: true
     build:
       dockerfile: ./docker/Dockerfile.stackauth

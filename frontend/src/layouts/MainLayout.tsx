@@ -1,10 +1,10 @@
 import { ReactNode, useEffect } from 'react';
 import { useNavigate } from 'react-router';
-import { useUser } from '@stackframe/react';
+import { useAuthUser } from '@/hooks/useAuthUser';
 import SidebarLayout from "@/layouts/SidebarLayout";
 
 const MainLayout = ({ children }: { children: ReactNode }) => {
-	const user = useUser();
+	const user = useAuthUser();
 	const navigate = useNavigate();
 
 	useEffect(() => {

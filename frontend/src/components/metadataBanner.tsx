@@ -72,7 +72,8 @@ function formatCachedPages(totalPages: number, uncachedPages: number[]): string 
     return s === e ? `${s}` : `${s}-${e}`;
   });
 
-  return `Pages ${rangeStrs.join(", ")} free`;
+  const label = cachedPages.length === 1 ? "Page" : "Pages";
+  return `${label} ${rangeStrs.join(", ")} free`;
 }
 
 /**
@@ -198,16 +199,17 @@ export function MetadataBanner({
   onCancel,
   isLoading,
   completedPages = [],
-  uncachedPages = [],
+  uncachedPages,
   className,
 }: MetadataBannerProps) {
   const [pageRangeInput, setPageRangeInput] = useState("");
 
   const title = metadata.title || metadata.file_name || "Untitled Document";
   const showPageSelector = !!formatInfo?.has_pages && metadata.total_pages > 1;
-  const showAiToggle = !!formatInfo?.ai;
-  const forceAi = !!formatInfo?.ai && !formatInfo?.free;
-  const aiActive = forceAi || aiTransformEnabled;
+  const aiSupported = !!formatInfo?.ai;
+  const showAiToggle = aiSupported || !!formatInfo?.has_pages;
+  const forceAi = aiSupported && !formatInfo?.free;
+  const aiActive = forceAi || (aiSupported && aiTransformEnabled);
 
   const selectedPages = useMemo(
     () => parsePageRanges(pageRangeInput, metadata.total_pages),
@@ -223,8 +225,8 @@ export function MetadataBanner({
 
   useEffect(() => {
     if (userOverrideBatch.current) return;
-    onBatchModeToggle(effectivePageCount > 100);
-  }, [effectivePageCount, onBatchModeToggle]);
+    onBatchModeToggle(formatInfo?.batch === true && effectivePageCount > 100);
+  }, [effectivePageCount, onBatchModeToggle, formatInfo?.batch]);
 
   const handleBatchToggle = (enabled: boolean) => {
     userOverrideBatch.current = true;
@@ -256,7 +258,7 @@ export function MetadataBanner({
             <span>{metadata.total_pages} {metadata.total_pages === 1 ? "page" : "pages"}</span>
             <span>·</span>
             <span>{formatFileSize(metadata.file_size)}</span>
-            {aiActive && (() => {
+            {aiActive && uncachedPages && (() => {
               const cachedText = formatCachedPages(metadata.total_pages, uncachedPages);
               if (!cachedText) return null;
               return (
@@ -318,14 +320,20 @@ export function MetadataBanner({
           )}
 
           {showAiToggle && (
-            <div className="flex items-center gap-2">
+            <div
+              className="flex items-center gap-2"
+              title={!aiSupported ? "No AI processor configured" : undefined}
+            >
               <Switch
                 id="ai-transform-toggle"
                 checked={forceAi || aiTransformEnabled}
                 onCheckedChange={onAiTransformToggle}
-                disabled={forceAi}
+                disabled={forceAi || !aiSupported}
               />
-              <Label htmlFor="ai-transform-toggle" className="text-sm cursor-pointer">
+              <Label
+                htmlFor="ai-transform-toggle"
+                className={cn("text-sm", aiSupported ? "cursor-pointer" : "cursor-not-allowed text-muted-foreground")}
+              >
                 AI Transform
               </Label>
             </div>

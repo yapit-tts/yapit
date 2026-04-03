@@ -8,7 +8,6 @@ import pytest
     "model_slug,voice_slug",
     [
         ("kokoro", "af_heart"),
-        pytest.param("higgs", "en-man", marks=pytest.mark.runpod),
         pytest.param("inworld-1.5", "ashley", marks=pytest.mark.inworld),
     ],
 )

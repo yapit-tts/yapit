@@ -34,7 +34,9 @@ import { Progress } from "@/components/ui/progress";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { ChevronUp, FileText, Loader2, MoreHorizontal, User2, LogOut, LogIn, Trash2, Pencil, CreditCard, Lightbulb, Settings, Info, Link2, Check, Sun, Moon } from "lucide-react";
 import { useApi } from "@/api";
-import { useUser } from "@stackframe/react";
+import { authEnabled } from "@/auth";
+import { useAuthUser } from "@/hooks/useAuthUser";
+import { useSubscription } from "@/hooks/useSubscription";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useSettings, useIsDark } from "@/hooks/useSettings";
 import { useDocuments, type DocumentItem } from "@/hooks/useDocuments";
@@ -89,7 +91,8 @@ function DocumentSidebar() {
   const { api, isAuthReady, isAnonymous } = useApi();
   const navigate = useNavigate();
   const { documentId } = useParams();
-  const user = useUser();
+  const user = useAuthUser();
+  const { billingEnabled } = useSubscription();
   const isMobile = useIsMobile();
   const { setOpenMobile } = useSidebar();
   const closeMobileSheet = () => { if (isMobile) setOpenMobile(false); };
@@ -156,6 +159,7 @@ function DocumentSidebar() {
   };
 
   const handleAuth = () => {
+    if (!authEnabled) return;
     if (user) {
       user.signOut();
     } else {
@@ -270,8 +274,8 @@ function DocumentSidebar() {
 
       <SidebarFooter className="border-t border-sidebar-border">
         <SidebarMenu>
-          {/* Subscription / Plan button */}
-          <SidebarMenuItem>
+          {/* Subscription / Plan button (hidden when billing is disabled) */}
+          {billingEnabled && <SidebarMenuItem>
             <Tooltip>
               <TooltipTrigger asChild>
                 <SidebarMenuButton asChild size="lg" className="h-auto py-3">
@@ -329,7 +333,7 @@ function DocumentSidebar() {
                 )}
               </TooltipContent>
             </Tooltip>
-          </SidebarMenuItem>
+          </SidebarMenuItem>}
 
           {/* Tips button */}
           <SidebarMenuItem>
@@ -351,7 +355,7 @@ function DocumentSidebar() {
                 <SidebarMenuButton size="lg">
                   <User2 />
                   <span className="truncate">
-                    {user?.displayName || user?.primaryEmail || "Guest"}
+                    {user?.displayName || user?.primaryEmail || (authEnabled ? "Guest" : "Settings")}
                   </span>
                   <ChevronUp className="ml-auto" />
                 </SidebarMenuButton>
@@ -360,7 +364,7 @@ function DocumentSidebar() {
                 side="top"
                 className="min-w-[var(--radix-popper-anchor-width)]"
               >
-                {user && (
+                {(user || !authEnabled) && (
                   <DropdownMenuItem onClick={() => { closeMobileSheet(); navigate("/account"); }}>
                     <Settings className="mr-2 h-4 w-4" />
                     Account
@@ -370,23 +374,27 @@ function DocumentSidebar() {
                   <Info className="mr-2 h-4 w-4" />
                   About
                 </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  onClick={handleAuth}
-                  className={user ? "hover:bg-muted-warm focus:bg-muted-warm" : ""}
-                >
-                  {user ? (
-                    <>
-                      <LogOut className="mr-2 h-4 w-4" />
-                      Sign out
-                    </>
-                  ) : (
-                    <>
-                      <LogIn className="mr-2 h-4 w-4" />
-                      Sign in
-                    </>
-                  )}
-                </DropdownMenuItem>
+                {authEnabled && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      onClick={handleAuth}
+                      className={user ? "hover:bg-muted-warm focus:bg-muted-warm" : ""}
+                    >
+                      {user ? (
+                        <>
+                          <LogOut className="mr-2 h-4 w-4" />
+                          Sign out
+                        </>
+                      ) : (
+                        <>
+                          <LogIn className="mr-2 h-4 w-4" />
+                          Sign in
+                        </>
+                      )}
+                    </DropdownMenuItem>
+                  </>
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
           </SidebarMenuItem>

@@ -15,9 +15,9 @@ Returning guests get a working session (HMAC is stateless) but an empty library.
 
 ## Risk Notes
 
-No per-IP rate limit on session creation. No global concurrent extraction cap across all users. Guest extractions are cheap (defuddle/PyMuPDF, no external APIs) but can saturate VPS CPU during traffic spikes.
+No per-IP rate limit on session creation. No global concurrent extraction cap across all users. Guest extractions are cheap (defuddle/PyMuPDF, no external APIs) but can saturate VPS CPU during traffic spikes. Monthly caps (1000/month per IP) on all document creation endpoints mitigate sustained abuse.
 
 ## Related
 
 - [[auth]] — anonymous flow, claim-anonymous
-- [[rate-limiting]] — per-user caps
+- [[security]] — rate limiting, per-user caps

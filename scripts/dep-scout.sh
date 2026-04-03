@@ -8,7 +8,6 @@ cd "$PROJECT_DIR"
 REPORT_DIR="$HOME/tmp/yapit-reports"
 mkdir -p "$REPORT_DIR"
 
-# Load env vars (.env has NTFY_TOPIC, etc.)
 if [[ -f "$PROJECT_DIR/.env" ]]; then
     set -a
     source "$PROJECT_DIR/.env"
@@ -26,15 +25,6 @@ deps = data['project']['dependencies']
 print(json.dumps(deps, indent=2))
 ")
 
-# --- Python (defuddle service) ---
-DEFUDDLE_DEPS=$(uv run python -c "
-import tomllib, json
-with open('docker/defuddle/pyproject.toml', 'rb') as f:
-    data = tomllib.load(f)
-deps = data['project']['dependencies']
-print(json.dumps(deps, indent=2))
-")
-
 # --- Frontend (npm) ---
 FRONTEND_DEPS=$(uv run python -c "
 import json
@@ -47,6 +37,21 @@ print(json.dumps({
 }, indent=2))
 ")
 
+# --- Defuddle service (npm) ---
+DEFUDDLE_DEPS=$(uv run python -c "
+import json
+with open('docker/defuddle/package.json') as f:
+    data = json.load(f)
+print(json.dumps({
+    'dependencies': data.get('dependencies', {}),
+}, indent=2))
+")
+
+# --- npm audit ---
+echo "Running npm audit..."
+FRONTEND_AUDIT=$(cd frontend && npm audit --json 2>/dev/null || true)
+DEFUDDLE_AUDIT=$(cd docker/defuddle && npm audit --json 2>/dev/null || true)
+
 # --- Docker base images ---
 DOCKER_IMAGES=$(grep -rh '^FROM ' docker/ yapit/ frontend/Dockerfile 2>/dev/null | sort -u)
 
@@ -57,12 +62,12 @@ echo "Fetching Stack Auth commit log..."
 STACKAUTH_COMMITS=$(gh api -X GET "repos/stack-auth/stack-auth/commits?per_page=30" \
     --jq '.[] | "- \(.sha[0:7]) \(.commit.message | split("\n")[0])"' 2>/dev/null || echo "(failed to fetch)")
 
-# --- Latest PyPI versions (quick, deterministic) ---
+# --- Latest PyPI versions ---
 echo "Checking latest PyPI versions..."
 PYPI_VERSIONS=$(uv run python -c "
-import subprocess, json, re
+import urllib.request, json, re
 
-specs = json.loads('''$PYTHON_DEPS''') + json.loads('''$DEFUDDLE_DEPS''')
+specs = json.loads('''$PYTHON_DEPS''')
 seen = set()
 results = {}
 for spec in specs:
@@ -71,14 +76,10 @@ for spec in specs:
         continue
     seen.add(name)
     try:
-        out = subprocess.run(
-            ['uv', 'pip', 'index', 'versions', name],
-            capture_output=True, text=True, timeout=10
-        )
-        # Output: 'package (X.Y.Z)' on first line
-        match = re.search(r'\(([^)]+)\)', out.stdout.split('\n')[0])
-        if match:
-            results[name] = match.group(1)
+        url = f'https://pypi.org/pypi/{name}/json'
+        with urllib.request.urlopen(url, timeout=10) as resp:
+            data = json.loads(resp.read())
+            results[name] = data['info']['version']
     except Exception:
         pass
 print(json.dumps(results, indent=2))
@@ -87,40 +88,46 @@ print(json.dumps(results, indent=2))
 # --- Latest npm versions ---
 echo "Checking latest npm versions..."
 FRONTEND_LATEST=$(uv run python -c "
-import subprocess, json, re
-
-with open('frontend/package.json') as f:
-    data = json.load(f)
+import subprocess, json
 
 results = {}
-for section in ['dependencies', 'devDependencies']:
-    for pkg in data.get(section, {}):
-        try:
-            out = subprocess.run(
-                ['npm', 'view', pkg, 'version'],
-                capture_output=True, text=True, timeout=10,
-                cwd='frontend'
-            )
-            ver = out.stdout.strip()
-            if ver:
-                results[pkg] = ver
-        except Exception:
-            pass
+for pkg_file in ['frontend/package.json', 'docker/defuddle/package.json']:
+    with open(pkg_file) as f:
+        data = json.load(f)
+    for section in ['dependencies', 'devDependencies']:
+        for pkg in data.get(section, {}):
+            if pkg in results:
+                continue
+            try:
+                out = subprocess.run(
+                    ['npm', 'view', pkg, 'version'],
+                    capture_output=True, text=True, timeout=10
+                )
+                ver = out.stdout.strip()
+                if ver:
+                    results[pkg] = ver
+            except Exception:
+                pass
 print(json.dumps(results, indent=2))
 " 2>/dev/null)
 
-ALLOWED_TOOLS="WebSearch,WebFetch"
-
-CONTEXT="## Current Dependency Inventory
+# --- Build the data payload ---
+DATA="## Current Dependency Inventory
 
 ### Python — main project (pyproject.toml)
 $PYTHON_DEPS
 
-### Python — defuddle service (docker/defuddle/pyproject.toml)
-$DEFUDDLE_DEPS
-
 ### Frontend (frontend/package.json)
 $FRONTEND_DEPS
+
+### Defuddle service (docker/defuddle/package.json)
+$DEFUDDLE_DEPS
+
+### npm audit — frontend
+$FRONTEND_AUDIT
+
+### npm audit — defuddle
+$DEFUDDLE_AUDIT
 
 ### Docker base images
 $DOCKER_IMAGES
@@ -136,76 +143,14 @@ $PYPI_VERSIONS
 ### Latest available versions (npm)
 $FRONTEND_LATEST"
 
-read -r -d '' PROMPT << 'PROMPT_EOF' || true
-You are a dependency scout for Yapit TTS, an open-source text-to-speech platform.
-
-Your job: analyze the dependency inventory below and produce an actionable update report.
-
-## Instructions
-
-1. Compare current pinned versions against the latest available versions provided.
-2. For any dependency that is outdated, research what changed between current and latest:
-   - Use WebSearch to find changelogs, release notes, or GitHub releases
-   - Focus on: security fixes, performance improvements, new features, breaking changes
-   - Be specific — "bug fixes" is not useful, "fixes memory leak in async context managers" is
-   - **Cite your sources** — include a URL for every claim (changelog link, PR, CVE, release page)
-3. Assess relevance to Yapit specifically:
-   - HIGH: security fixes, performance wins in code paths we use, bug fixes we might hit
-   - MEDIUM: useful new features, quality-of-life improvements
-   - LOW: cosmetic changes, features we don't use, dev tooling minor bumps
-   - SKIP: already current, or delta is trivial (patch bump with no meaningful changes)
-
-## Special cases
-
-**Playwright** — The bundled Chromium version is the real concern, not Playwright itself.
-Check what Chromium version ships with the latest Playwright and whether there are
-security fixes in the Chromium versions between our current and latest.
-
-**Stack Auth** — No semver. Pinned by commit SHA. Check the commit log provided for:
-migration files, env var changes, entrypoint changes, security-relevant commits.
-Flag anything matching known gotchas: env var renames, Prisma version bumps,
-ClickHouse schema changes, seed data changes.
-
-**@stackframe/react** — Must be updated together with Stack Auth server. Note this
-in the report if either is outdated.
-
-**Docker base images** — Check if major/minor bumps are available (e.g. node:22 → node:24,
-python:3.12 → 3.13, postgres:16 → 17). Only flag if there's a compelling reason to upgrade.
-
-**Frontend deps** — Most are UI libraries with frequent patch releases. Only flag
-if there are security fixes or breaking changes. Don't waste time on minor bumps
-of radix-ui, lucide-react, etc. unless there's something notable.
-
-## Output format
-
-Start with a 2-3 sentence executive summary.
-
-Then a table per ecosystem, sorted by relevance (HIGH first):
-
-```
-| Package | Current | Latest | What Changed | Relevance |
-|---------|---------|--------|-------------|-----------|
-```
-
-After each table, list source URLs for the claims made (changelog links, PRs, CVEs).
-
-Only include rows where the dependency is meaningfully outdated (skip patch bumps
-with no notable changes). If an entire ecosystem has nothing notable, say so in
-one line and skip the table.
-
-End with a "Recommended actions" section — a short prioritized list of what's
-actually worth updating, grouped by effort level (quick wins vs. involved updates).
-
-Be concise. This is a scan, not a dissertation.
-PROMPT_EOF
-
 echo "Running Claude analysis..."
-output=$(CLAUDE_CODE_SIMPLE=1 claude -p "$PROMPT" \
-    --allowedTools "$ALLOWED_TOOLS" \
-    --append-system-prompt "$CONTEXT" \
+output=$(clankr run "$PROJECT_DIR" -p "$SCRIPT_DIR/dep-scout-profile" \
+    -- -p "$DATA" \
+    --allowedTools "WebSearch,WebFetch" \
     --output-format json \
     2>"$REPORT_DIR/dep-scout-stderr.log") || {
-    echo "Claude analysis failed. stderr: $(cat "$REPORT_DIR/dep-scout-stderr.log")"
+    echo "Claude analysis failed. stderr:"
+    cat "$REPORT_DIR/dep-scout-stderr.log"
     echo "stdout: $output"
     exit 1
 }
@@ -240,7 +185,7 @@ if [[ -n "${NTFY_TOPIC:-}" ]]; then
     fi
 
     printf '%s' "$ntfy_message" | curl -s \
-        -H "Title: 📦 Yapit dependency report" \
+        -H "Title: Yapit dependency report" \
         -H "Priority: low" \
         -H "Tags: dependencies" \
         -d @- \

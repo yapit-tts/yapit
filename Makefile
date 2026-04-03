@@ -1,7 +1,8 @@
+SHELL := /bin/bash
 
 -include .env
 
-DEV_COMPOSE = docker compose -p yapit-dev --env-file .env --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml
+DEV_COMPOSE = docker compose -p yapit-dev --profile auth --profile metrics --env-file .env --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml
 SELFHOST_COMPOSE = docker compose --env-file .env.selfhost -f docker-compose.yml -f docker-compose.selfhost.yml
 
 define create-dev-user
@@ -27,8 +28,11 @@ down:
 self-host:
 	$(SELFHOST_COMPOSE) up -d --build
 
+self-host-auth:
+	VITE_ENV_FILE=.env.selfhost.auth COMPOSE_PROFILES=auth $(SELFHOST_COMPOSE) up -d --build
+
 self-host-down:
-	$(SELFHOST_COMPOSE) down
+	$(SELFHOST_COMPOSE) --profile auth --profile metrics down
 
 dev-user:
 	$(call create-dev-user)
@@ -46,7 +50,7 @@ test: test-unit test-frontend test-integration
 test-local: test-unit test-frontend test-integration-local
 
 test-unit:
-	uv run pytest tests --ignore=tests/integration -v -m "not runpod and not inworld and not gemini"
+	uv run pytest tests --ignore=tests/integration -v -m "not inworld and not gemini"
 
 test-frontend:
 	npm test --prefix frontend
@@ -55,10 +59,7 @@ test-integration:
 	uv run pytest tests/integration -v
 
 test-integration-local:
-	uv run pytest tests/integration -v -m "not runpod and not inworld and not gemini"
-
-test-runpod:
-	uv run pytest tests/integration -v -m "runpod"
+	uv run pytest tests/integration -v -m "not inworld and not gemini"
 
 test-inworld:
 	uv run pytest tests/integration -v -m "inworld"
@@ -131,6 +132,39 @@ check-backend:
 
 check-frontend:
 	cd frontend && npm run lint && npx tsc --noEmit
+
+# Releases
+define do_release
+	@LAST=$$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0"); \
+	IFS='.' read -r MAJOR MINOR PATCH <<< "$${LAST#v}"; \
+	case "$(1)" in \
+		patch) PATCH=$$((PATCH + 1));; \
+		minor) MINOR=$$((MINOR + 1)); PATCH=0;; \
+		major) MAJOR=$$((MAJOR + 1)); MINOR=0; PATCH=0;; \
+	esac; \
+	NEW="v$$MAJOR.$$MINOR.$$PATCH"; \
+	echo "$$LAST → $$NEW"; \
+	sed -i "s/^## Unreleased/## $$NEW — $$(date +%Y-%m-%d)/" CHANGELOG.md; \
+	git add CHANGELOG.md; \
+	git commit -m "Release $$NEW"; \
+	git tag "$$NEW"; \
+	echo "Tagged $$NEW. Run 'make gh-release' to push and publish."
+endef
+
+release-patch:
+	$(call do_release,patch)
+
+release-minor:
+	$(call do_release,minor)
+
+release-major:
+	$(call do_release,major)
+
+gh-release:
+	@git push && git push --tags
+	@TAG=$$(git describe --tags --abbrev=0); \
+	BODY=$$(sed -n "/^## $$TAG/,/^## v/{/^## v/!p;}" CHANGELOG.md | sed '1d'); \
+	gh release create "$$TAG" --title "$$TAG" --notes "$$BODY"
 
 # Prod operations
 deploy:

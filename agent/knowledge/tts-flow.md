@@ -81,7 +81,7 @@ Workers only need Redis access. No Postgres, no HTTP endpoints. Gateway handles 
 
 **Why pull-based:**
 - Natural load balancing (faster workers pull more)
-- Any device can be a worker (home GPU, VPS, RunPod)
+- Any device can be a worker (home GPU, VPS, cloud)
 - Zero gateway changes to add/remove workers
 
 ### 5. Result Processing (Hot/Cold/Persist Split)
@@ -118,8 +118,6 @@ Redis Streams consumer group on `tts:billing:stream`. At-least-once delivery: ev
 - Jobs move to processing set with timestamp when pulled
 - Scanner runs every 15s, re-queues jobs stuck > 20s (constants in `gateway/__init__.py`)
 - Retry count increments; jobs exceeding max retries → DLQ
-
-**Overflow scanner** (`yapit/gateway/overflow_scanner.py`) — **disabled.** RunPod serverless cold starts too slow without dedicated workers. Code retained but not started.
 
 **Dead letter queue:** `tts:dlq:{model}` (per-model). DLQ entries push error results so result_consumer cleans up.
 
@@ -170,7 +168,6 @@ Built-in models: kokoro, inworld-1.5, inworld-1.5-max. Model/voice definitions i
 | `gateway/cache_persister.py` | Drain-on-wake batched Redis→SQLite persistence |
 | `gateway/billing_consumer.py` | Cold path: BlockVariant update, usage billing, engagement stats |
 | `gateway/visibility_scanner.py` | Re-queues stuck jobs |
-| `gateway/overflow_scanner.py` | Sends stale jobs to RunPod |
 | `workers/tts_loop.py` | Pull-based worker main loop |
 | `workers/queue.py` | Shared queue utilities (push, pull, requeue) |
 | `workers/adapters/*.py` | Model-specific synthesis |

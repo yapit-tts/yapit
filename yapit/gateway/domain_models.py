@@ -289,12 +289,6 @@ class UserSubscription(SQLModel, table=True):
 
     ever_paid: bool = Field(default=False)
 
-    # Legacy columns — kept for phase 1 migration (code no longer reads/writes these).
-    # Phase 2 migration will drop them after all active grace periods have expired.
-    grace_tier: PlanTier | None = Field(default=None)
-    grace_until: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
-    previous_plan_id: int | None = Field(default=None)
-
     # Rollover: unused subscription tokens/chars carried forward (capped)
     rollover_tokens: int = Field(default=0)  # Capped at 10M
     rollover_voice_chars: int = Field(default=0)  # Capped at 1M

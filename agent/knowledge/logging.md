@@ -31,7 +31,6 @@ Set in `yapit/gateway/logging_config.py`:
 | WebSocket (`ws.py`) | `user_id`, `document_id` |
 | Extraction (`documents.py`) | `extraction_id`, `user_id`, `content_hash` |
 | Visibility scanner | `job_id`, `queue_type`, `model_slug` |
-| Overflow scanner | `queue_type`, `model_slug`, `job_id` |
 | Inworld adapter | `model_id`, `voice_id` |
 | Synthesis timeout | `user_id`, `model_slug`, `voice_slug`, `variant_hash`, `document_id` |
 | Usage/billing debt | `user_id`, `usage_type` |

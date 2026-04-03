@@ -157,7 +157,7 @@ MIME_EXTENSIONS: dict[str, list[str]] = {
 async def get_supported_formats(ai_config: AiExtractorConfigDep) -> SupportedFormatsResponse:
     batch = ai_config.supports_batch if ai_config else False
     formats: dict[str, FormatInfo] = {
-        "application/pdf": FormatInfo(free=True, ai=True, has_pages=True, batch=batch),
+        "application/pdf": FormatInfo(free=True, ai=bool(ai_config), has_pages=True, batch=batch),
         "application/epub+zip": FormatInfo(free=True, ai=False, has_pages=False, batch=False),
         "text/html": FormatInfo(free=True, ai=False, has_pages=False, batch=False),
         "text/plain": FormatInfo(free=True, ai=False, has_pages=False, batch=False),

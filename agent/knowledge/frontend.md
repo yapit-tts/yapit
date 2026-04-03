@@ -128,13 +128,15 @@ Check `index.css` for existing color variables before adding new colors. Prefer 
 
 **Smooth scroll needs 800ms+ cooldown:** `scrollIntoView({ behavior: "smooth" })` fires scroll events for 300-500ms. Short timeouts cause false "user scroll" detection.
 
-See [[2026-01-28-smart-scroll-detach]] for implementation details and additional gotchas (effect cascades, timer races).
+Gotcha: effect cascades and timer races when smooth scroll overlaps with user scroll detection. The 800ms cooldown accounts for 300-500ms of scroll events from `scrollIntoView`.
 
 ## Keyboard & Media Controls
 
 Keyboard shortcuts are registered in two places:
 - **Global** (`frontend/src/components/ui/sidebar.tsx`) — sidebar toggle (`Ctrl+b` or bare `s`), works on any page
 - **PlaybackPage** (`frontend/src/pages/PlaybackPage.tsx`) — playback controls: hjkl/arrows (skip/speed), space (play/pause), `+`/`-` (volume), `m` (mute), `o` (outliner), `r` (back to reading), `?` (help)
+
+Both handlers suppress shortcuts when focus is in INPUT/TEXTAREA/SELECT or any `contentEditable` element (document title uses `contentEditable` on an `<h1>`).
 
 **MediaSession API** handles headphone/media key controls and OS media notifications (lock screen, dynamic island, notification shade).
 
@@ -150,6 +152,26 @@ Three layers in `PlaybackPage.tsx`:
 Wrap action handlers in try/catch per MDN recommendation since unsupported actions throw.
 
 **Gotcha — stale closures in keyboard handlers:** The `handleKeyDown` useEffect has a stable dependency array for performance. Context-provided functions (like `sidebar.toggleSidebar`, `outliner.toggleOutliner`) change identity on re-renders, so they must be accessed via refs, not captured directly in the closure. Without refs, the handler captures the initial function and toggle only works one direction.
+
+## Command Palette
+
+`frontend/src/components/commandPalette.tsx` — Cmd+K opens a fuzzy-search document picker (uses cmdk/shadcn Command component). Handles duplicate document titles gracefully. Registered in `SidebarLayout.tsx`.
+
+## Bionic Reading
+
+Toggle in settings. Bolds the first ~50% of each word (medium intensity, level 3) using a lookup table reverse-engineered from the Bionic Reading API (via text-vide, MIT). Applied in `InlineContentRenderer` — transforms text nodes, leaves code/math/images untouched. Hyphens split into separate words, pure numbers left unbolded.
+
+## Footnote Hover Previews
+
+`frontend/src/components/footnoteContext.ts` — React context bridges footnote definition data to inline refs. `FootnoteRefContent` in `inlineContent.tsx` renders a Radix HoverCard showing the full footnote content on hover.
+
+## Voice Picker
+
+`frontend/src/components/voicePicker.tsx` — Bottom sheet on mobile, popover on desktop.
+
+The premium model tab is **dynamic** — driven by `/v1/models` API response. `usePremiumModel` hook replaces the old `useInworldVoices`. When Inworld is the premium model, the voice picker shows Inworld-specific UI (grouped voices, quality toggle). For other models (OpenAI TTS, etc.), it shows a flat voice list. Models without a configured backend are deactivated and hidden.
+
+Saved voice selections are validated against available models on load — if the saved model is no longer active, auto-switches to Kokoro.
 
 ## Client-Side Hash Navigation
 

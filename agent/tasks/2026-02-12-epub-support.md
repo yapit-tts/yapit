@@ -1,6 +1,7 @@
 ---
-status: active
+status: done
 started: 2026-02-12
+refs: [2553d38, "#75"]
 ---
 
 # Task: Add epub and image upload support

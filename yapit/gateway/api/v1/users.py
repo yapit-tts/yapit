@@ -36,8 +36,26 @@ async def get_my_subscription(
     db: DbSession,
     auth_user: AuthenticatedUser,
     stripe_client: StripeClient,
+    settings: SettingsDep,
 ) -> dict:
     """Get current user's subscription and usage summary."""
+    if not settings.billing_enabled:
+        return {
+            "billing_enabled": False,
+            "plan": {"tier": "max", "name": "Self-Hosted"},
+            "subscription": None,
+            "limits": {"server_kokoro_characters": None, "premium_voice_characters": None, "ocr_tokens": None},
+            "usage": {"server_kokoro_characters": 0, "premium_voice_characters": 0, "ocr_tokens": 0},
+            "extra_balances": {
+                "rollover_tokens": 0,
+                "rollover_voice_chars": 0,
+                "purchased_tokens": 0,
+                "purchased_voice_chars": 0,
+            },
+            "period": None,
+            "schedule_pending": False,
+        }
+
     summary = await get_usage_summary(auth_user.id, db)
 
     # Check Stripe directly for pending schedule (e.g., deferred downgrade)
@@ -341,13 +359,14 @@ async def delete_account(
 
     await db.commit()
 
-    # 4. Delete from Stack Auth
-    access_token = request.headers.get("authorization", "").removeprefix("Bearer ")
-    try:
-        await stack_auth_delete_user(settings, access_token, user_id)
-        logger.info(f"Deleted user {user_id} from Stack Auth")
-    except Exception as e:
-        logger.error(f"Failed to delete user from Stack Auth: {e}")
-        # Don't fail the request - data is already cleaned up
+    # 4. Delete from Stack Auth (if configured)
+    if settings.auth_enabled:
+        access_token = request.headers.get("authorization", "").removeprefix("Bearer ")
+        try:
+            await stack_auth_delete_user(settings, access_token, user_id)
+            logger.info(f"Deleted user {user_id} from Stack Auth")
+        except Exception:
+            logger.exception("Failed to delete user from Stack Auth")
+            # Don't fail the request - data is already cleaned up
 
     logger.info(f"Account deletion complete for user {user_id} (anonymized as {anon_id})")

@@ -13,7 +13,7 @@ const PrivacyPage = () => {
       </Button>
 
       <h1 className="text-4xl font-bold mb-2">Privacy Policy</h1>
-      <p className="text-muted-foreground mb-8">Last updated: February 18, 2026</p>
+      <p className="text-muted-foreground mb-8">Last updated: April 1, 2026</p>
 
       <div className="prose prose-neutral dark:prose-invert max-w-none space-y-8">
         <section>
@@ -89,7 +89,6 @@ const PrivacyPage = () => {
           <ul className="list-disc pl-6 space-y-1 mb-3">
             <li><strong>InWorld</strong>: Premium voice synthesis (text blocks sent for audio generation)</li>
             <li><strong>Google (Gemini API)</strong>: AI document processing (PDF pages sent for text extraction when AI Transform is enabled). See <a href="https://ai.google.dev/gemini-api/terms" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">Gemini API Terms</a>.</li>
-            <li><strong>RunPod</strong>: Server-side TTS (text blocks sent for audio generation, if enabled)</li>
           </ul>
           <p className="mb-4">These APIs process your content to provide the service. They may process data in the United States. We don't control their data retention policies — refer to their respective privacy policies for details.</p>
 

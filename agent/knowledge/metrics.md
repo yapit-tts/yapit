@@ -20,10 +20,6 @@ Separate TimescaleDB instance for metrics (isolated from main Postgres).
 - `job_requeued` — Visibility timeout fired, job re-queued
 - `job_dlq` — Job exceeded max retries, moved to dead letter queue
 
-### Overflow
-- `job_overflow` — Job sent to RunPod serverless
-- `overflow_complete` / `overflow_error` — Serverless results
-
 ### Detection (YOLO)
 - `detection_queued` — Detection job pushed (queue_depth)
 - `detection_complete` / `detection_error` — Worker results (worker_id, processing_time)
@@ -87,7 +83,7 @@ During development: just nuke the volume (`docker volume rm yapit_metricsdata`) 
 
 `dashboard/` module with modular structure:
 
-- `tabs/` — Overview, TTS, Detection, Extraction, Reliability, Usage
+- `tabs/` — Overview, TTS, Documents (unified: detection + extraction + batch), Reliability, Usage
 - `theme.py` — Dark mode (GitHub-style colors)
 - `data.py` — DuckDB queries
 - `components.py` — Reusable chart components
@@ -99,11 +95,13 @@ make sync-metrics     # just sync, no dashboard
 ```
 
 **Features:**
-- Executive summary with KPIs and sparklines
+- Executive summary with KPIs and sparklines, always-visible Trends section using daily aggregates
 - Per-worker and per-model breakdowns
 - Gemini token cost calculation ($0.50/M input, $3.00/M output)
 - Cache stats integrated into relevant sections
 - Usage heatmap (hour × day) and user distribution
+- User Type filter (All/Guest/Registered) — segments raw metrics events by `anon-` prefix
+- Date range: quick toggles (7d/14d/30d) replace calendar picker
 
 ## Health Reports
 

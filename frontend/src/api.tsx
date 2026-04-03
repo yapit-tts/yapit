@@ -1,4 +1,5 @@
-import { useUser } from "@stackframe/react";
+import { useAuthUser } from "@/hooks/useAuthUser";
+import { authEnabled } from "@/auth";
 import axios, { Axios } from "axios";
 import {
 	createContext,
@@ -34,11 +35,11 @@ const ApiContext = createContext<Api>({
 
 export const ApiProvider: FC<PropsWithChildren> = ({ children }) => {
 	const userRef = useRef<typeof user>(undefined);
-	const [isAuthReady, setIsAuthReady] = useState(false);
-	const [isAnonymous, setIsAnonymous] = useState(true);
+	const [isAuthReady, setIsAuthReady] = useState(!authEnabled);
+	const [isAnonymous, setIsAnonymous] = useState(authEnabled);
 	const [authTrigger, setAuthTrigger] = useState(0);
 	const claimAttempted = useRef(false);
-	const user = useUser();
+	const user = useAuthUser();
 
 	// Keep userRef in sync with current user
 	useEffect(() => {
@@ -64,6 +65,8 @@ export const ApiProvider: FC<PropsWithChildren> = ({ children }) => {
 		const instance = axios.create({ baseURL });
 
 		instance.interceptors.request.use(async (config) => {
+			if (!authEnabled) return config;
+
 			const currentUser = userRef.current;
 
 			if (currentUser?.currentSession) {
@@ -83,6 +86,13 @@ export const ApiProvider: FC<PropsWithChildren> = ({ children }) => {
 			config.headers["X-Anonymous-ID"] = await getOrCreateAnonymousId();
 			config.headers["X-Anonymous-Token"] = getAnonymousToken();
 			return config;
+		});
+
+		instance.interceptors.response.use(undefined, (error) => {
+			if (error.response?.status >= 500) {
+				console.error(`[api] ${error.response.status} ${error.config?.method?.toUpperCase()} ${error.config?.url}`);
+			}
+			return Promise.reject(error);
 		});
 
 		// On 401 for anonymous users, renew session and retry once
@@ -106,6 +116,7 @@ export const ApiProvider: FC<PropsWithChildren> = ({ children }) => {
 	}, []);
 
 	useEffect(() => {
+		if (!authEnabled) return;
 		if (user === undefined) return;
 
 		if (user === null || !user.currentSession) {

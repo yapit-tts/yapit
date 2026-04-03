@@ -667,7 +667,8 @@ function ImageBlockView({ block, inRow }: BlockProps & { block: ImageBlock; inRo
           onError={() => setBroken(true)}
         />
       )}
-      {block.audio_chunks.length > 0 && (
+      {block.audio_chunks.length > 0 &&
+        !(broken && block.audio_chunks.map(c => c.text).join("") === block.alt) && (
         <figcaption className="text-sm text-muted-foreground mt-2 text-center">
           <AudioContent audioChunks={block.audio_chunks} />
         </figcaption>

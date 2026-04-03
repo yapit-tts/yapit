@@ -8,6 +8,7 @@ interface SubscriptionState {
   hasActivePlan: boolean;
   canUseCloudKokoro: boolean;  // Basic, Plus, Max
   canUseInworld: boolean;      // Plus, Max only
+  billingEnabled: boolean;
   isLoading: boolean;
 }
 
@@ -16,10 +17,12 @@ const SubscriptionContext = createContext<SubscriptionState>({
   hasActivePlan: false,
   canUseCloudKokoro: false,
   canUseInworld: false,
+  billingEnabled: true,
   isLoading: true,
 });
 
 interface SubscriptionResponse {
+  billing_enabled?: boolean;
   plan: { tier: PlanTier };
   subscription: { status: string } | null;
 }
@@ -31,6 +34,7 @@ export const SubscriptionProvider: FC<PropsWithChildren> = ({ children }) => {
     hasActivePlan: false,
     canUseCloudKokoro: false,
     canUseInworld: false,
+    billingEnabled: true,
     isLoading: true,
   });
 
@@ -38,12 +42,24 @@ export const SubscriptionProvider: FC<PropsWithChildren> = ({ children }) => {
     if (!isAuthReady) return;
 
     if (isAnonymous) {
-      setState({ tier: "free", hasActivePlan: false, canUseCloudKokoro: false, canUseInworld: false, isLoading: false });
+      setState({ tier: "free", hasActivePlan: false, canUseCloudKokoro: false, canUseInworld: false, billingEnabled: true, isLoading: false });
       return;
     }
 
     api.get<SubscriptionResponse>("/v1/users/me/subscription")
       .then(({ data }) => {
+        if (data.billing_enabled === false) {
+          setState({
+            tier: "max",
+            hasActivePlan: true,
+            canUseCloudKokoro: true,
+            canUseInworld: true,
+            billingEnabled: false,
+            isLoading: false,
+          });
+          return;
+        }
+
         const tier = data.plan.tier;
         const hasActive = data.subscription !== null &&
           ["active", "trialing"].includes(data.subscription.status);
@@ -54,12 +70,13 @@ export const SubscriptionProvider: FC<PropsWithChildren> = ({ children }) => {
           hasActivePlan: hasActive,
           canUseCloudKokoro: canCloud,
           canUseInworld: canInworld,
+          billingEnabled: true,
           isLoading: false,
         });
       })
       .catch((err) => {
         console.error("Failed to fetch subscription:", err);
-        setState({ tier: "free", hasActivePlan: false, canUseCloudKokoro: false, canUseInworld: false, isLoading: false });
+        setState({ tier: "free", hasActivePlan: false, canUseCloudKokoro: false, canUseInworld: false, billingEnabled: true, isLoading: false });
       });
   }, [api, isAuthReady, isAnonymous]);
 
