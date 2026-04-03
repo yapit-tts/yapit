@@ -375,6 +375,7 @@ If any of these would help future analysis, note them:
 **Important**:
 - DO NOT request live/interactive prod access — that's out of scope by design.
 - DO NOT include comments before bash commands — they won't match allowed tool patterns and will be blocked.
+- DO NOT use subagents.
 EOF
 
 echo "Running Claude analysis..."
