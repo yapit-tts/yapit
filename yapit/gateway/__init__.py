@@ -1,6 +1,5 @@
 import asyncio
 import datetime as dt
-import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -323,8 +322,8 @@ def create_app(
     if settings is None:
         settings = Settings()  # type: ignore
 
-    if os.environ.get("SENTRY_DSN"):
-        sentry_sdk.init(traces_sample_rate=0)
+    if settings.sentry_dsn:
+        sentry_sdk.init(dsn=settings.sentry_dsn, traces_sample_rate=0)
 
     configure_logging(Path(settings.log_dir))
 

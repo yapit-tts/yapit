@@ -105,7 +105,7 @@ const PrivacyPage = () => {
 
           <h3 className="text-lg font-medium mt-4 mb-2">Error monitoring:</h3>
           <ul className="list-disc pl-6 space-y-1">
-            <li><strong>Sentry</strong>: When errors occur, diagnostic data (stack traces, request URLs, browser metadata) is sent to Sentry for analysis. No document content is included. Data processed in the US. See <a href="https://sentry.io/privacy/" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">Sentry Privacy Policy</a>.</li>
+            <li><strong>Sentry</strong>: When errors occur, diagnostic data (stack traces, request URLs, browser metadata) is sent to Sentry for analysis. Error messages may occasionally contain fragments of document text. Data stored in the EU. See <a href="https://sentry.io/privacy/" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">Sentry Privacy Policy</a>.</li>
           </ul>
 
           <h3 className="text-lg font-medium mt-4 mb-2">Infrastructure:</h3>

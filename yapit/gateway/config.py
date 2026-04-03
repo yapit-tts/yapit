@@ -82,6 +82,8 @@ class Settings(BaseSettings):
 
     billing_enabled: bool  # Self-hosting: set False to disable subscription/usage limits
 
+    sentry_dsn: str | None = None
+
     metrics_database_url: str | None = None
     log_dir: str
 
