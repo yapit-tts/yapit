@@ -316,10 +316,13 @@ const SoundControl = memo(function SoundControl({
     : connectionError?.includes("Usage limit exceeded") ? connectionError : null;
   const isUsingPremium = !isKokoroModel(voiceSelection.model);
   const isUsingKokoroServer = voiceSelection.model === KOKORO_SLUG;
+  const isUsingBrowser = voiceSelection.model === KOKORO_BROWSER_SLUG;
 
-  const [quotaDismissed, setQuotaDismissed] = useDismissableBanner(voiceSelection.model);
+  // Plain useState, not useDismissableBanner: banner buttons change the voice model,
+  // which would reset the dismissed state and re-show the banner. handlePlay resets instead.
+  const [quotaDismissed, setQuotaDismissed] = useState(false);
 
-  const showQuotaBanner = usageLimitError && !quotaDismissed;
+  const showQuotaBanner = usageLimitError && !quotaDismissed && !isUsingBrowser;
 
   // Wrap onPlay to reset dismissed state (so modal shows again on retry)
   const handlePlay = useCallback(() => {
@@ -359,7 +362,6 @@ const SoundControl = memo(function SoundControl({
     setQuotaDismissed(true);
   }, [voiceSelection, onVoiceChange]);
 
-  const isUsingBrowser = voiceSelection.model === KOKORO_BROWSER_SLUG;
   const [browserErrorDismissed, setBrowserErrorDismissed] = useDismissableBanner(voiceSelection.model);
   const showBrowserErrorBanner = isUsingBrowser && browserTTSError && !browserErrorDismissed;
 
