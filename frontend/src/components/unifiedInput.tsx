@@ -174,6 +174,7 @@ export function UnifiedInput() {
   useEffect(() => {
     if (mode !== "url" || !debouncedValue.trim()) return;
     if (!isUrl(debouncedValue)) return;
+    if (!formats) return;
 
     prepareAbortRef.current?.abort();
     const controller = new AbortController();
@@ -210,7 +211,7 @@ export function UnifiedInput() {
     };
 
     fetchMetadata();
-  }, [debouncedValue, mode, isUrl, api]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [debouncedValue, mode, isUrl, api, formats]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Save AI Transform preference
   useEffect(() => {
