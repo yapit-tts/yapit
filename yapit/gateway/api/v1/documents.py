@@ -109,15 +109,18 @@ def _parse_arxiv_title(xml: str) -> str | None:
     return None
 
 
-async def _fetch_arxiv_title(arxiv_id: str) -> str | None:
+async def _fetch_arxiv_title(arxiv_id: str, retries: int = 2) -> str | None:
     """Fetch paper title from the arxiv Atom API. Returns None on failure."""
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(f"https://export.arxiv.org/api/query?id_list={arxiv_id}")
-            resp.raise_for_status()
-        return _parse_arxiv_title(resp.text)
-    except Exception:
-        logger.warning("Failed to fetch arxiv title", arxiv_id=arxiv_id)
+    for attempt in range(1, retries + 1):
+        try:
+            async with httpx.AsyncClient(timeout=3) as client:
+                resp = await client.get(f"https://export.arxiv.org/api/query?id_list={arxiv_id}")
+                resp.raise_for_status()
+            return _parse_arxiv_title(resp.text)
+        except Exception as e:
+            logger.warning("Failed to fetch arxiv title", arxiv_id=arxiv_id, attempt=attempt, error=str(e))
+            if attempt < retries:
+                await asyncio.sleep(1)
     return None
 
 
