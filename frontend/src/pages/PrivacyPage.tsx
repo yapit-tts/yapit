@@ -13,7 +13,7 @@ const PrivacyPage = () => {
       </Button>
 
       <h1 className="text-4xl font-bold mb-2">Privacy Policy</h1>
-      <p className="text-muted-foreground mb-8">Last updated: April 1, 2026</p>
+      <p className="text-muted-foreground mb-8">Last updated: April 3, 2026</p>
 
       <div className="prose prose-neutral dark:prose-invert max-w-none space-y-8">
         <section>
@@ -101,6 +101,11 @@ const PrivacyPage = () => {
           <ul className="list-disc pl-6 space-y-1">
             <li><strong>Resend</strong>: Delivers verification and notification emails. Your email address is sent to Resend for delivery. Data stored in the US with GDPR-compliant safeguards (Standard Contractual Clauses, SOC 2 Type II, ISO 27001). See <a href="https://resend.com/legal/privacy-policy" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">Resend Privacy Policy</a>.</li>
             <li><strong>Freestyle.sh</strong>: Renders email templates (no user data stored, just template processing).</li>
+          </ul>
+
+          <h3 className="text-lg font-medium mt-4 mb-2">Error monitoring:</h3>
+          <ul className="list-disc pl-6 space-y-1">
+            <li><strong>Sentry</strong>: When errors occur, diagnostic data (stack traces, request URLs, browser metadata) is sent to Sentry for analysis. Error messages may occasionally contain fragments of document text. Data stored in the EU. See <a href="https://sentry.io/privacy/" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">Sentry Privacy Policy</a>.</li>
           </ul>
 
           <h3 className="text-lg font-medium mt-4 mb-2">Infrastructure:</h3>
