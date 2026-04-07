@@ -45,7 +45,6 @@ from yapit.gateway.rate_limit import limiter
 from yapit.gateway.result_consumer import run_result_consumer
 from yapit.gateway.storage import ImageStorage
 from yapit.gateway.visibility_scanner import run_visibility_scanner
-from yapit.workers.adapters.inworld import InworldAdapter
 from yapit.workers.adapters.openai_tts import OpenAITTSAdapter
 from yapit.workers.tts_loop import run_api_tts_dispatcher
 
@@ -152,24 +151,6 @@ async def lifespan(app: FastAPI):
         )
     )
     background_tasks.append(yolo_visibility_task)
-
-    # Inworld dispatchers run in gateway (API calls, unlimited parallelism)
-    if settings.inworld_api_key:
-        for model_id, model_slug in [
-            ("inworld-tts-1.5-mini", "inworld-1.5"),
-            ("inworld-tts-1.5-max", "inworld-1.5-max"),
-        ]:
-            adapter = InworldAdapter(api_key=settings.inworld_api_key, model_id=model_id)
-            task = asyncio.create_task(
-                run_api_tts_dispatcher(
-                    redis_url=settings.redis_url,
-                    model=model_slug,
-                    adapter=adapter,
-                    worker_id=f"gateway-{model_slug}",
-                )
-            )
-            background_tasks.append(task)
-        logger.info("Inworld dispatchers started")
 
     # OpenAI-compatible TTS dispatcher (any /v1/audio/speech endpoint)
     if settings.openai_tts_base_url and not settings.openai_tts_model:

@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { type ServerVoice, type InworldLanguageCode } from "@/lib/voiceSelection";
+import { type ServerVoice } from "@/lib/voiceSelection";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
 
@@ -23,7 +23,6 @@ export interface PremiumModel {
   slug: string;
   name: string;
   voices: ServerVoice[];
-  isInworld: boolean;
 }
 
 interface UsePremiumModelReturn {
@@ -42,18 +41,16 @@ async function fetchPremiumModel(): Promise<PremiumModel | null> {
   const models: APIModel[] = await response.json();
   const nonKokoro = models.filter(m => m.slug !== "kokoro");
 
-  // Prefer Inworld if both configured
-  const picked = nonKokoro.find(m => m.slug.startsWith("inworld")) ?? nonKokoro[0] ?? null;
+  const picked = nonKokoro[0] ?? null;
   if (!picked) return null;
 
   return {
     slug: picked.slug,
     name: picked.name,
-    isInworld: picked.slug.startsWith("inworld"),
     voices: picked.voices.map(v => ({
       slug: v.slug,
       name: v.name,
-      lang: (v.lang ?? "en") as InworldLanguageCode,
+      lang: (v.lang ?? "en") as ServerVoice["lang"],
       description: v.description,
     })),
   };

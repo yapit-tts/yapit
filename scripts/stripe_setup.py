@@ -73,6 +73,16 @@ TAX_CODE = "txcd_10103000"  # SaaS - personal use
 
 PRODUCTS = [
     {
+        "id": "yapit_voice",
+        "name": "Yapit Voice",
+        "description": "Unlimited server-side Kokoro TTS",
+        "active": True,
+        "prices": [
+            {"id": "yapit_voice_monthly_v1", "amount": 300, "interval": "month"},
+            {"id": "yapit_voice_yearly_v1", "amount": 2700, "interval": "year"},
+        ],
+    },
+    {
         "id": "yapit_basic",
         "name": "Yapit Basic",
         "description": "Unlimited Kokoro TTS, 5M AI extraction tokens/month",
@@ -86,20 +96,20 @@ PRODUCTS = [
         "id": "yapit_plus",
         "name": "Yapit Plus",
         "description": "1M premium voice chars/month, 10M AI extraction tokens/month",
-        "active": True,
+        "active": False,
         "prices": [
-            {"id": "yapit_plus_monthly_v2", "amount": 2000, "interval": "month"},
-            {"id": "yapit_plus_yearly_v2", "amount": 18000, "interval": "year"},
+            {"id": "yapit_plus_monthly_v2", "amount": 2000, "interval": "month", "active": False},
+            {"id": "yapit_plus_yearly_v2", "amount": 18000, "interval": "year", "active": False},
         ],
     },
     {
         "id": "yapit_max",
         "name": "Yapit Max",
         "description": "3M premium voice chars/month, 15M AI extraction tokens/month",
-        "active": True,
+        "active": False,
         "prices": [
-            {"id": "yapit_max_monthly_v2", "amount": 4000, "interval": "month"},
-            {"id": "yapit_max_yearly_v2", "amount": 36000, "interval": "year"},
+            {"id": "yapit_max_monthly_v2", "amount": 4000, "interval": "month", "active": False},
+            {"id": "yapit_max_yearly_v2", "amount": 36000, "interval": "year", "active": False},
         ],
     },
 ]

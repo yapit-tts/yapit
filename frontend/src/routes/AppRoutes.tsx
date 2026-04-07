@@ -91,6 +91,14 @@ const AppRoutes = () => (
 		{authEnabled && (
 			<>
 				<Route
+					path="/pricing"
+					element={
+						<MainLayout>
+							<Lazy><SubscriptionPage /></Lazy>
+						</MainLayout>
+					}
+				/>
+				<Route
 					path="/subscription"
 					element={
 						<MainLayout>

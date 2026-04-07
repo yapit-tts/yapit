@@ -595,7 +595,7 @@ export function UnifiedInput() {
           <Info className="h-4 w-4 shrink-0" />
           <span>
             This request exceeds your current plan's usage limits.{" "}
-            <Link to="/subscription" className="text-primary hover:underline">
+            <Link to="/pricing" className="text-primary hover:underline">
               Upgrade plan
             </Link>
           </span>
@@ -615,7 +615,7 @@ export function UnifiedInput() {
               </>
             ) : tier === "free" ? (
               <>
-                <Link to="/subscription" className="text-primary hover:underline">Upgrade</Link>
+                <Link to="/pricing" className="text-primary hover:underline">Upgrade</Link>
                 {" for more storage or "}
                 <Link to="/account" className="text-primary hover:underline">delete old documents</Link>.
               </>

@@ -6,28 +6,13 @@ from pathlib import Path
 import httpx
 from loguru import logger
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlmodel import col, delete, select
+from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from yapit.gateway.config import Settings
 from yapit.gateway.domain_models import Plan, PlanTier, TTSModel, Voice
 
-INWORLD_VOICES_JSON = Path(__file__).parent.parent / "data/inworld/voices.json"
 KOKORO_VOICES_JSON = Path(__file__).parent.parent / "workers/kokoro/voices.json"
-
-
-def _load_inworld_voices() -> list[dict]:
-    data = json.loads(INWORLD_VOICES_JSON.read_text())
-    return [
-        {
-            "slug": v["voiceId"].lower(),
-            "name": v["displayName"],
-            "lang": v["languages"][0] if v.get("languages") else "en",
-            "description": v.get("description", ""),
-            "parameters": {"voice_id": v["voiceId"]},
-        }
-        for v in data.get("voices", [])
-    ]
 
 
 def create_models() -> list[TTSModel]:
@@ -44,14 +29,7 @@ def create_models() -> list[TTSModel]:
             )
         )
 
-    inworld = TTSModel(slug="inworld-1.5", name="Inworld TTS-1.5")
-    inworld_max = TTSModel(slug="inworld-1.5-max", name="Inworld TTS-1.5-Max", usage_multiplier=2.0)
-
-    for vd in _load_inworld_voices():
-        inworld.voices.append(Voice(**vd))  # model_id set by relationship
-        inworld_max.voices.append(Voice(**vd))  # model_id set by relationship
-
-    return [kokoro, inworld, inworld_max]
+    return [kokoro]
 
 
 def create_plans(settings: Settings) -> list[Plan]:
@@ -68,6 +46,18 @@ def create_plans(settings: Settings) -> list[Plan]:
             price_cents_yearly=0,
         ),
         Plan(
+            tier=PlanTier.voice,
+            name="Voice",
+            server_kokoro_characters=None,  # unlimited
+            premium_voice_characters=0,
+            ocr_tokens=0,
+            stripe_price_id_monthly=settings.stripe_price_voice_monthly,
+            stripe_price_id_yearly=settings.stripe_price_voice_yearly,
+            trial_days=3,
+            price_cents_monthly=300,
+            price_cents_yearly=2700,
+        ),
+        Plan(
             tier=PlanTier.basic,
             name="Basic",
             server_kokoro_characters=None,  # unlimited
@@ -78,30 +68,6 @@ def create_plans(settings: Settings) -> list[Plan]:
             trial_days=3,
             price_cents_monthly=1000,
             price_cents_yearly=9000,
-        ),
-        Plan(
-            tier=PlanTier.plus,
-            name="Plus",
-            server_kokoro_characters=None,  # unlimited
-            premium_voice_characters=1_000_000,  # ~20 hours
-            ocr_tokens=10_000_000,  # 10M tokens
-            stripe_price_id_monthly=settings.stripe_price_plus_monthly,
-            stripe_price_id_yearly=settings.stripe_price_plus_yearly,
-            trial_days=3,
-            price_cents_monthly=2000,
-            price_cents_yearly=18000,
-        ),
-        Plan(
-            tier=PlanTier.max,
-            name="Max",
-            server_kokoro_characters=None,  # unlimited
-            premium_voice_characters=3_000_000,  # ~60 hours
-            ocr_tokens=15_000_000,  # 15M tokens
-            stripe_price_id_monthly=settings.stripe_price_max_monthly,
-            stripe_price_id_yearly=settings.stripe_price_max_yearly,
-            trial_days=0,  # No trial for Max tier
-            price_cents_monthly=4000,
-            price_cents_yearly=36000,
         ),
     ]
 
@@ -121,40 +87,8 @@ async def seed_database(db: AsyncSession, settings: Settings) -> None:
             db.add(plan)
         await db.commit()
 
-    await sync_inworld_voices(db)
     await sync_openai_tts_voices(db, settings)
     await _deactivate_unconfigured_models(db, settings)
-
-
-async def sync_inworld_voices(db: AsyncSession) -> None:
-    """Sync Inworld voices in DB to match voices.json (add missing, remove stale)."""
-    models = (await db.exec(select(TTSModel).where(col(TTSModel.slug).startswith("inworld")))).all()
-    if not models:
-        return
-
-    voice_defs = _load_inworld_voices()
-    canonical_slugs = {vd["slug"] for vd in voice_defs}
-
-    for model in models:
-        existing_slugs = set((await db.exec(select(Voice.slug).where(col(Voice.model_id) == model.id))).all())
-
-        # Add missing
-        new_voices = [vd for vd in voice_defs if vd["slug"] not in existing_slugs]
-        if new_voices:
-            await db.exec(
-                pg_insert(Voice)
-                .values([{**vd, "model_id": model.id} for vd in new_voices])
-                .on_conflict_do_nothing(constraint="unique_voice_per_model")
-            )
-            logger.info(f"Added {len(new_voices)} Inworld voices to {model.slug}: {[v['slug'] for v in new_voices]}")
-
-        # Remove stale
-        stale_slugs = existing_slugs - canonical_slugs
-        if stale_slugs:
-            await db.exec(delete(Voice).where(col(Voice.model_id) == model.id, col(Voice.slug).in_(stale_slugs)))
-            logger.warning(f"Removed {len(stale_slugs)} stale Inworld voices from {model.slug}: {sorted(stale_slugs)}")
-
-    await db.commit()
 
 
 OPENAI_TTS_SLUG = "openai-tts"
@@ -237,15 +171,12 @@ async def sync_openai_tts_voices(db: AsyncSession, settings: Settings) -> None:
 
 async def _deactivate_unconfigured_models(db: AsyncSession, settings: Settings) -> None:
     """Set is_active on models based on whether their backend is configured."""
-    inworld_active = settings.inworld_api_key is not None
     openai_tts_active = settings.openai_tts_base_url is not None
 
     models = (await db.exec(select(TTSModel))).all()
     changed = False
     for model in models:
-        if model.slug.startswith("inworld"):
-            should_be_active = inworld_active
-        elif model.slug == OPENAI_TTS_SLUG:
+        if model.slug == OPENAI_TTS_SLUG:
             should_be_active = openai_tts_active
         else:
             continue

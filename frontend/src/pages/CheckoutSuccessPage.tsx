@@ -97,7 +97,7 @@ const CheckoutSuccessPage = () => {
             </p>
           )}
           <div className="flex gap-4 justify-center">
-            <Button variant="outline" onClick={() => navigate("/subscription")}>
+            <Button variant="outline" onClick={() => navigate("/pricing")}>
               View Subscription
             </Button>
             <Button onClick={() => navigate("/")}>

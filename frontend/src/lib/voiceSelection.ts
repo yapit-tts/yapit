@@ -2,16 +2,8 @@
 
 export const KOKORO_BROWSER_SLUG = "kokoro-browser" as const;
 export const KOKORO_SLUG = "kokoro" as const;
-export const INWORLD_SLUG = "inworld-1.5" as const;
-export const INWORLD_MAX_SLUG = "inworld-1.5-max" as const;
 
-export type ModelType = typeof KOKORO_BROWSER_SLUG | typeof KOKORO_SLUG | typeof INWORLD_SLUG | typeof INWORLD_MAX_SLUG | string;
-
-// Check if model is an Inworld model (any variant)
-export function isInworldModel(model: ModelType): boolean {
-  return model.startsWith("inworld");
-}
-
+export type ModelType = typeof KOKORO_BROWSER_SLUG | typeof KOKORO_SLUG | string;
 
 export function isServerSideModel(model: ModelType): boolean {
   return model !== KOKORO_BROWSER_SLUG;
@@ -51,7 +43,7 @@ export interface KokoroVoice {
 
 const VOICE_SELECTION_KEY = "yapit_voice_selection";
 const KOKORO_SELECTION_KEY = "yapit_kokoro_selection";
-const INWORLD_SELECTION_KEY = "yapit_inworld_selection";
+const SERVER_SELECTION_KEY = "yapit_inworld_selection"; // legacy key name preserved for existing users
 const PINNED_VOICES_KEY = "yapit_pinned_voices";
 const PLAYBACK_SPEED_KEY = "yapit_playback_speed";
 const VOLUME_KEY = "yapit_volume";
@@ -79,7 +71,7 @@ export function setVoiceSelection(selection: VoiceSelection): void {
   if (isKokoroModel(selection.model)) {
     localStorage.setItem(KOKORO_SELECTION_KEY, JSON.stringify(selection));
   } else {
-    localStorage.setItem(INWORLD_SELECTION_KEY, JSON.stringify(selection));
+    localStorage.setItem(SERVER_SELECTION_KEY, JSON.stringify(selection));
   }
 }
 
@@ -97,7 +89,7 @@ export function getKokoroSelection(): VoiceSelection | null {
 
 export function getInworldSelection(): VoiceSelection | null {
   try {
-    const stored = localStorage.getItem(INWORLD_SELECTION_KEY);
+    const stored = localStorage.getItem(SERVER_SELECTION_KEY);
     if (stored) return JSON.parse(stored) as VoiceSelection;
   } catch { /* localStorage unavailable */ }
   return null;
@@ -280,68 +272,9 @@ export function isHighQualityVoice(voice: KokoroVoice): boolean {
   return voice.grade !== undefined && gradeScore(voice.grade) >= 80;
 }
 
-// Inworld voice types (fetched from API)
-export type InworldLanguageCode = "en" | "zh" | "nl" | "fr" | "de" | "it" | "ja" | "ko" | "pl" | "pt" | "es" | "ru" | "hi" | "ar" | "he";
-
-export const INWORLD_LANGUAGE_INFO: Record<InworldLanguageCode, { label: string; flag: string }> = {
-  en: { label: "English", flag: "🇺🇸" },
-  zh: { label: "Chinese", flag: "🇨🇳" },
-  nl: { label: "Dutch", flag: "🇳🇱" },
-  fr: { label: "French", flag: "🇫🇷" },
-  de: { label: "German", flag: "🇩🇪" },
-  it: { label: "Italian", flag: "🇮🇹" },
-  ja: { label: "Japanese", flag: "🇯🇵" },
-  ko: { label: "Korean", flag: "🇰🇷" },
-  pl: { label: "Polish", flag: "🇵🇱" },
-  pt: { label: "Portuguese", flag: "🇧🇷" },
-  es: { label: "Spanish", flag: "🇪🇸" },
-  ru: { label: "Russian", flag: "🇷🇺" },
-  hi: { label: "Hindi", flag: "🇮🇳" },
-  ar: { label: "Arabic", flag: "🇸🇦" },
-  he: { label: "Hebrew", flag: "🇮🇱" },
-};
-
-// Sorted by global speaker count
-// Sorted by total speakers (Ethnologue 2025)
-// https://en.wikipedia.org/wiki/List_of_languages_by_total_number_of_speakers
-const INWORLD_LANGUAGE_ORDER: InworldLanguageCode[] = ["en", "zh", "hi", "es", "ar", "fr", "pt", "ru", "de", "ja", "ko", "it", "pl", "nl", "he"];
-
 export interface ServerVoice {
   slug: string;
   name: string;
-  lang: InworldLanguageCode;
+  lang: string;
   description: string | null;
-}
-
-export interface InworldVoiceLanguageGroup {
-  language: InworldLanguageCode;
-  label: string;
-  flag: string;
-  voices: ServerVoice[];
-}
-
-// Group Inworld voices by language
-export function groupInworldVoicesByLanguage(voices: ServerVoice[]): InworldVoiceLanguageGroup[] {
-  const byLanguage = new Map<InworldLanguageCode, ServerVoice[]>();
-
-  for (const voice of voices) {
-    const list = byLanguage.get(voice.lang) ?? [];
-    list.push(voice);
-    byLanguage.set(voice.lang, list);
-  }
-
-  return INWORLD_LANGUAGE_ORDER
-    .filter(lang => byLanguage.has(lang))
-    .map(lang => {
-      const info = INWORLD_LANGUAGE_INFO[lang];
-      const langVoices = byLanguage.get(lang)!;
-      // Sort alphabetically by name
-      langVoices.sort((a, b) => a.name.localeCompare(b.name));
-      return {
-        language: lang,
-        label: info.label,
-        flag: info.flag,
-        voices: langVoices,
-      };
-    });
 }

@@ -279,7 +279,7 @@ function DocumentSidebar() {
             <Tooltip>
               <TooltipTrigger asChild>
                 <SidebarMenuButton asChild size="lg" className="h-auto py-3">
-                  <Link to="/subscription" onClick={closeMobileSheet}>
+                  <Link to="/pricing" onClick={closeMobileSheet}>
                     <div className="flex flex-col w-full gap-1">
                       <div className="flex items-center gap-2">
                         <CreditCard className="h-4 w-4 text-primary shrink-0" />
