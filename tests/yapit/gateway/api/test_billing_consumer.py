@@ -74,7 +74,7 @@ def _make_billing_event(*, job_id: str | None = None, user_id: str = "billing-te
         job_id=job_id or str(uuid.uuid4()),
         variant_hash="abc123",
         user_id=user_id,
-        model_slug="inworld-v2",
+        model_slug="model-v2",
         voice_slug="narrator",
         text_length=100,
         usage_multiplier=1.0,
