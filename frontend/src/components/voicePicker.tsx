@@ -23,7 +23,7 @@ import {
   isHighQualityVoice,
   setVoiceSelection,
   getKokoroSelection,
-  getInworldSelection,
+  getServerSelection,
 } from "@/lib/voiceSelection";
 import { usePremiumModel } from "@/hooks/usePremiumModel";
 
@@ -164,7 +164,7 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
     if (tab === "kokoro") {
       newSelection = getKokoroSelection() ?? { model: KOKORO_SLUG, voiceSlug: "af_heart" };
     } else {
-      const saved = getInworldSelection();
+      const saved = getServerSelection();
       const voiceExists = saved && premiumVoices.some(v => v.slug === saved.voiceSlug);
       const savedModelValid = saved && saved.model === premiumSlug;
       newSelection = {

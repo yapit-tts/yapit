@@ -2,7 +2,7 @@
 # requires-python = ">=3.11"
 # dependencies = ["tyro", "rich"]
 # ///
-"""Yapit margin calculator — post-Inworld plan pricing.
+"""Yapit margin calculator.
 
 Voice plan: Kokoro TTS only (self-hosted, zero variable API cost).
 Basic plan: Kokoro TTS + Gemini AI transform.

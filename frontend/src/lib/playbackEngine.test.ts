@@ -437,7 +437,7 @@ describe("createPlaybackEngine", () => {
       const d = makeDeps({ synthesizer: synth });
       const e = createPlaybackEngine(d);
 
-      e.setVoice("inworld-1.5", "alex");
+      e.setVoice("openai-tts", "alex");
       e.setDocument("doc-1", makeBlocks(5));
       e.play();
       expect(e.getSnapshot().status).toBe("buffering");
@@ -465,7 +465,7 @@ describe("createPlaybackEngine", () => {
       const d = makeDeps({ synthesizer: synth });
       const e = createPlaybackEngine(d);
 
-      e.setVoice("inworld-1.5", "alex");
+      e.setVoice("openai-tts", "alex");
       e.setDocument("doc-1", makeBlocks(10));
       e.play();
 
@@ -567,7 +567,7 @@ describe("createPlaybackEngine", () => {
       const d = makeDeps({ synthesizer: synth });
       const e = createPlaybackEngine(d);
 
-      e.setVoice("inworld-1.5", "blake");
+      e.setVoice("openai-tts", "blake");
       e.setDocument("doc-1", makeBlocks(5));
       e.play();
       expect(e.getSnapshot().status).toBe("buffering");

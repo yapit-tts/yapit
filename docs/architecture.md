@@ -23,26 +23,24 @@ flowchart TD
 
         GW --> Smoke["Smokescreen (SSRF proxy)"]
 
-        Redis -->|pull jobs| Kokoro["Kokoro TTS Workers"]
+        Redis -->|pull jobs| TTS["TTS Workers<br/>(Kokoro, OpenAI-compat)"]
         Redis -->|pull jobs| YOLO["YOLO Figure Workers"]
     end
 
-    Gemini["Gemini API"] ~~~ Inworld["Inworld API"] ~~~ Stripe
+    VisionAPI["Vision API<br/>(Gemini, OpenAI-compat)"] ~~~ Stripe
 
-    GW <-->|extraction| Gemini
-    GW <-->|premium TTS| Inworld
+    GW <-->|extraction| VisionAPI
     GW <-->|billing| Stripe
 ```
 
 **Gateway** is a FastAPI process handling all HTTP/WebSocket traffic plus
 background tasks (result consumer, billing consumer, cache persister,
-Inworld dispatchers, visibility scanners). Only service with
-Postgres access.
+OpenAI-compat TTS dispatchers, visibility scanners).
 
 **Workers** pull jobs from Redis queues and push results back. The gateway
 never pushes to workers directly — any machine with Redis access can be a
-worker. Kokoro and YOLO run as separate containers. Inworld dispatchers run
-inside the gateway (just HTTP calls).
+worker. Kokoro and YOLO run as separate containers. OpenAI-compatible TTS
+dispatchers run inside the gateway (just HTTP calls).
 
 **Storage:**
 
@@ -212,7 +210,7 @@ sequenceDiagram
 
     Worker->>Redis: Pull job from queue
     activate Worker
-    Note over Worker: Synthesize audio<br/>(Kokoro local or Inworld API)
+    Note over Worker: Synthesize audio<br/>(Kokoro or OpenAI-compat API)
     Worker->>Redis: Push result
     deactivate Worker
 
@@ -264,8 +262,8 @@ flowchart LR
 **Kokoro** (local model): Sequential processing, one job per replica. Runs
 in its own container. Replica count scales with CPU cores.
 
-**Inworld** (API model): Parallel dispatching inside the gateway. One async
-task per job, unlimited concurrency.
+**OpenAI-compatible** (API model): Parallel dispatching inside the gateway.
+One async task per job, unlimited concurrency.
 
 ### Reliability
 

@@ -124,7 +124,7 @@ async def run_api_tts_dispatcher(redis_url: str, model: str, adapter: SynthAdapt
     """Dispatch API-based TTS jobs with unlimited parallelism.
 
     Unlike run_tts_worker (for GPU models), this spawns a task per job instead of
-    processing sequentially. API models like Inworld can handle many concurrent
+    processing sequentially. API models can handle many concurrent
     requests, so we don't artificially bottleneck. Retry logic is in the adapter.
 
     No visibility tracking — if gateway crashes, in-flight jobs are lost (acceptable).

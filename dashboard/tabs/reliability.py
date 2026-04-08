@@ -304,7 +304,7 @@ def _rate_limit_timeline(df: pd.DataFrame) -> go.Figure | None:
     )
     rate_limits = bin_by_time(rate_limits, "1h")
 
-    api_colors = {"gemini": COLORS["accent_blue"], "inworld": COLORS["accent_coral"]}
+    api_colors = {"gemini": COLORS["accent_blue"]}
 
     fig = go.Figure()
     for api_name in sorted(rate_limits["api_name"].unique()):

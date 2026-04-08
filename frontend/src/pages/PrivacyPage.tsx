@@ -87,7 +87,6 @@ const PrivacyPage = () => {
 
           <h3 className="text-lg font-medium mt-4 mb-2">Your text content is sent to these APIs for processing:</h3>
           <ul className="list-disc pl-6 space-y-1 mb-3">
-            <li><strong>InWorld</strong>: Premium voice synthesis (text blocks sent for audio generation)</li>
             <li><strong>Google (Gemini API)</strong>: AI document processing (PDF pages sent for text extraction when AI Transform is enabled). See <a href="https://ai.google.dev/gemini-api/terms" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">Gemini API Terms</a>.</li>
           </ul>
           <p className="mb-4">These APIs process your content to provide the service. They may process data in the United States. We don't control their data retention policies — refer to their respective privacy policies for details.</p>

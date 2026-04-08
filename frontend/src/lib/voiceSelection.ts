@@ -87,7 +87,7 @@ export function getKokoroSelection(): VoiceSelection | null {
   return null;
 }
 
-export function getInworldSelection(): VoiceSelection | null {
+export function getServerSelection(): VoiceSelection | null {
   try {
     const stored = localStorage.getItem(SERVER_SELECTION_KEY);
     if (stored) return JSON.parse(stored) as VoiceSelection;

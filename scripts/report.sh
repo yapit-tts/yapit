@@ -99,8 +99,8 @@ Yapit is a text-to-speech platform with these components:
 
 **TTS Pipeline:**
 - Users submit text blocks for synthesis
-- Jobs go to Redis queues, one per model (e.g., `tts:queue:kokoro`, `tts:queue:inworld`)
-- TTS workers (Kokoro, Inworld) pull jobs, synthesize audio, push results
+- Jobs go to Redis queues, one per model (e.g., `tts:queue:kokoro`)
+- TTS workers pull jobs, synthesize audio, push results
 - Gateway consumes results and streams to clients via WebSocket
 
 **Detection Pipeline:**
@@ -114,10 +114,7 @@ Yapit is a text-to-speech platform with these components:
 
 **Models:**
 - `kokoro` — local Kokoro TTS
-- `inworld` — Inworld external API. Jobs dispatched in parallel (no semaphore).
-  - Queue wait should be <1s (parallel dispatch). High queue wait = bug.
-  - `inworld-1.5-max` worker latency varies widely by text length: avg ~6s, p95 ~25s is normal for real documents. Only flag if synthesis_error events appear or rate limit (429) events spike.
-  - ReadTimeout warnings (attempt N/6) are transient Inworld API slowness — only concerning if retries exhaust all 6 attempts (= synthesis_error).
+- `openai-tts` — OpenAI-compatible TTS API. Jobs dispatched in parallel. Currently not configured in production.
 - YOLO — local object detection
 
 ## Data Locations
@@ -159,7 +156,7 @@ Yapit is a text-to-speech platform with these components:
 
 **API rate limits:**
 - `api_rate_limit` — emitted on every 429 response from external APIs before retry
-  - `data.api_name` — which API ("gemini" or "inworld")
+  - `data.api_name` — which API (e.g. "gemini")
   - `status_code` — always 429
   - `retry_count` — 0-indexed attempt number when the 429 occurred
   - Any occurrence means we're hitting rate limits. Occasional is expected under load; sustained = need to throttle or increase quota.
@@ -237,7 +234,7 @@ This is the most important section. Don't just count errors — read the actual 
 See the BILLING RECONCILIATION section — event counts and character totals are pre-computed.
 - **Event delta**: should be 0 for completed days. Non-zero on the current (partial) day is OK (in-flight). Non-zero on past days = lost billing events.
 - **Consumer liveness**: flagged automatically if synthesis runs ahead of billing by >1h.
-- **Character ratio** (billed/synth): varies by model mix — kokoro and inworld-1.5 are 1x, inworld-1.5-max is 2x. A sudden ratio shift without a model mix change = billing bug.
+- **Character ratio** (billed/synth): varies by model mix (usage_multiplier per model). A sudden ratio shift without a model mix change = billing bug.
 - billing_processed errors: any `error` events with billing context indicate billing consumer failures.
 
 ### Cache

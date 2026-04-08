@@ -30,7 +30,6 @@ User-facing capabilities.
 
 - **Kokoro.js** — browser-side TTS via Web Worker (WASM/WebGPU). Free, unlimited, no server needed
 - **Kokoro server** — pull-based GPU workers for higher throughput
-- **Inworld** — premium voices (1.5, 1.5-max). See [[inworld-tts]]
 - **OpenAI-compatible TTS** — any `/v1/audio/speech` endpoint (Kokoro-FastAPI, vLLM-Omni, AllTalk, etc.). See [[tts-flow]]
 - **Local TTS detection** — `useCanUseLocalTTS` disables browser TTS on mobile/no-WebGPU with explanatory UI
 - **Voice picker search** — name + description match

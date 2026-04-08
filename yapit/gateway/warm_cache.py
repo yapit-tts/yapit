@@ -52,7 +52,7 @@ SHOWCASE_DOCS = [
     ),
     ShowcaseDoc(
         id=uuid.UUID("3bde213b-3a5a-465f-9198-be65430b699e"),  # Attention Is All You Need
-        voice_filter={"inworld-1.5": "english", "inworld-1.5-max": "english"},
+        voice_filter={},
     ),
 ]
 
@@ -141,9 +141,7 @@ async def run_warming(cache: Cache, redis_client: Redis) -> WarmingStats:
     async with create_session() as db:
         models = (
             await db.exec(
-                select(TTSModel)
-                .where(col(TTSModel.is_active).is_(True))
-                .options(selectinload(TTSModel.voices))  # ty: ignore[invalid-argument-type]
+                select(TTSModel).where(col(TTSModel.is_active).is_(True)).options(selectinload(TTSModel.voices))  # ty: ignore[invalid-argument-type]
             )
         ).all()
 

@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+* **Breaking:** Removed Inworld TTS integration — Inworld adapter, voices, and dispatcher deleted. Self-hosters using Inworld must switch to the OpenAI-compatible TTS adapter.
+* Added Voice plan (€3/mo) — server-side Kokoro TTS without AI extraction.
+* Added `/pricing` route (alias for `/subscription`).
+* Removed Plus and Max subscription tiers (deactivated via migration).
+* Word-level highlighting during Kokoro TTS playback. #78
+* Fixed quota banner re-appearing after switching to a free/local voice.
+* Fixed URL submission racing format loading, bypassing AI transform selector.
+* Fixed arxiv title fetch with retry and reduced timeout.
+
 ## v0.2.0 — 2026-04-02
 
 * **Breaking:** Default self-hosting no longer requires Stack Auth, ClickHouse, or TimescaleDB — runs 7 containers instead of 10. Existing selfhosters: `cp .env.selfhost.example .env.selfhost` and re-add your custom config. #80

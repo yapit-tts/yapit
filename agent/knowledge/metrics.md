@@ -53,7 +53,7 @@ Separate TimescaleDB instance for metrics (isolated from main Postgres).
 - `billing_processed` — TTS billing consumer batch (duration_ms, text_length, data.events_count, data.users_count). Reconcile count(synthesis_complete) vs sum(data.events_count) to detect lost billing events.
 
 ### Rate Limiting
-- `api_rate_limit` — External API returned 429 (status_code, retry_count, data.api_name). Emitted before retry from Gemini and Inworld adapters.
+- `api_rate_limit` — External API returned 429 (status_code, retry_count, data.api_name). Emitted before retry from API adapters.
 
 ## Retention & Aggregates
 
@@ -123,6 +123,5 @@ make report-post-deploy  # with deploy context
 
 ## Gotchas
 
-- **Inworld `audio_duration_ms` is estimated** — Calculated from OGG Opus file size (~14.5KB/sec assumption in adapter), can be off 10-20%. Realtime ratio metrics for Inworld are approximate. Kokoro duration is accurate (calculated from PCM bytes). Frontend uses accurate duration from decoded AudioBuffer regardless.
 - **Token counts are Gemini-specific** — `prompt_tokens`, `candidates_tokens`, `thoughts_tokens`, `cached_content_token_count`, `total_tokens` columns only populated for Gemini extractions.
 - **Schema design: columns vs JSONB `data`** — Dedicated columns for fields that need aggregation (token counts, latencies, queue depths — used in continuous aggregates and dashboard queries). JSONB `data` field for ad-hoc context (error messages, content hashes, job IDs). When adding a new field, ask: "will this be aggregated/trended?" → column. "Just extra context for debugging?" → `data`.
