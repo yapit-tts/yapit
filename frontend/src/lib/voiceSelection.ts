@@ -43,7 +43,7 @@ export interface KokoroVoice {
 
 const VOICE_SELECTION_KEY = "yapit_voice_selection";
 const KOKORO_SELECTION_KEY = "yapit_kokoro_selection";
-const SERVER_SELECTION_KEY = "yapit_inworld_selection"; // legacy key name preserved for existing users
+const SERVER_SELECTION_KEY = "yapit_server_voice_selection";
 const PINNED_VOICES_KEY = "yapit_pinned_voices";
 const PLAYBACK_SPEED_KEY = "yapit_playback_speed";
 const VOLUME_KEY = "yapit_volume";
