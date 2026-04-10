@@ -63,7 +63,7 @@ Pull and read the source at `~/repos/github/kepano/defuddle/src/`. Key files:
 
 ### 4. Verify hypotheses before writing
 
-Every root cause claim must be tested. Write a verification script to `/tmp/` and run it. Don't state something as fact until confirmed with code. Common verification patterns:
+Every root cause claim must be tested. Write a verification script to `/tmp/` and run it with `uv run python /tmp/script.py` — this is auto-approved unlike `python -c` which prompts every time. Always use this pattern for verification, never inline `python -c`. Don't state something as fact until confirmed with code. Common verification patterns:
 
 - Check if an element has inline styles: `el.getAttribute('style')`
 - Check cloneNode behavior: clone the doc, check `clone.defaultView`
@@ -104,7 +104,7 @@ Each issue is a separate markdown file in the repo root: `defuddle-issue-{short-
 
 **Don't:**
 - Reference line numbers (they change)
-- Over-explain how defuddle's internals work
+- Over-explain how defuddle's internals work — the maintainer knows the codebase. Keep root cause and fix direction brief.
 - Combine multiple issues into one file
 - Write unverified root causes
 - Quantify occurrences ("99 links on this page") or editorialize ("prose becomes unreadable") — the example speaks for itself
@@ -129,13 +129,17 @@ Always file an issue first. Additionally submit a PR only when ALL of these hold
 
 1. Clone fresh from GitHub (not from local): `git clone https://github.com/kepano/defuddle.git /tmp/defuddle-pr`
 2. `npm install && npm test` — verify clean baseline
-3. Create fixture + expected output following the conventions in defuddle's `CLAUDE.md`
+3. Create a **minimal** fixture + expected output following the conventions in defuddle's `CLAUDE.md`. Minimal means: only the HTML structure needed to trigger the bug. Don't replicate the full page — strip everything that isn't load-bearing for the reproduction. Unrelated elements create noise in the expected output and can cause the test to break for reasons unrelated to the bug.
 4. Run tests → must **fail** (proves the fixture exercises the bug)
 5. Apply fix
 6. Run tests → must **pass**, full suite must stay green
-7. Fork via `gh repo fork`, push branch, open PR referencing the issue
-8. No Co-Authored-By lines for external contributions
-9. Finish the refactor — if your fix touches a pattern that exists in multiple places, apply it everywhere. A PR that fixes two of three call sites isn't "surgical," it's incomplete. (E.g. extracting a helper but leaving one inline copy "to be safe" just creates cleanup for the maintainer.)
+7. Finish the refactor — if your fix touches a pattern that exists in multiple places, apply it everywhere. A PR that fixes two of three call sites isn't "surgical," it's incomplete. (E.g. extracting a helper but leaving one inline copy "to be safe" just creates cleanup for the maintainer.)
+8. Spawn a subagent to review your changes before submission
+9. Fork via `gh repo fork`, push branch, open PR referencing the issue
+10. PR body should just be `Fixes #NNN` — the issue already has the explanation. Check recent merged PRs for kepano's style.
+11. No Co-Authored-By lines for external contributions
+
+Reuse `/tmp/test_defuddle.mjs` for all manual testing — the user has to approve each unique filename for `node` execution.
 
 ## Yapit Pipeline Context
 

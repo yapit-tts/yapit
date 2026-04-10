@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node test_defuddle.mjs)",
+      "Bash(node test_defuddle2.mjs)",
+      "Bash(npm test:*)"
+    ]
+  }
+}
