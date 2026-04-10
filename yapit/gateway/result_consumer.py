@@ -206,7 +206,7 @@ async def _handle_error(redis: Redis, result: WorkerResult) -> None:
         user_id=result.user_id,
         document_id=str(result.document_id),
         block_idx=result.block_idx,
-        data={"error": result.error},
+        data={"error": result.error, "error_detail": result.error_detail},
     )
 
     await _notify_subscribers(redis, result, status="error", error=result.error)

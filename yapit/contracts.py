@@ -115,6 +115,7 @@ class WorkerResult(BaseModel):
     duration_ms: int | None = None
     word_timestamps_json: str | None = None
     error: str | None = None
+    error_detail: str | None = None
 
 
 def build_tts_dlq_error(job_json: str, error: str, worker_id: str = "dlq") -> "WorkerResult":

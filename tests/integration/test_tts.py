@@ -66,3 +66,51 @@ async def test_tts_integration(model_slug, voice_slug, subscribed_ws_client, sub
 
     assert cached_status is not None
     assert cached_status["audio_url"] == audio_url
+
+
+@pytest.mark.asyncio
+async def test_degenerate_text_skipped_not_crashed(subscribed_ws_client, subscribed_client):
+    """Regression: text that produces no audio must be skipped, not crash the worker.
+
+    Before the Opus encoding change (1d69419), empty PCM from Kokoro flowed
+    through as audio_base64="" and the result consumer marked it "skipped".
+    After Opus, _pcm_to_ogg_opus crashed on the 0-sample frame with MemoryError,
+    turning a skip into a synthesis error with retries.
+    """
+    text = "<"
+    response = await subscribed_client.post("/v1/documents/text", json={"content": text})
+    assert response.status_code == 201
+    doc = response.json()
+
+    blocks_response = await subscribed_client.get(f"/v1/documents/{doc['id']}/blocks")
+    assert blocks_response.status_code == 200
+    blocks = blocks_response.json()
+    assert len(blocks) > 0
+
+    block_idx = blocks[0]["idx"]
+    await subscribed_ws_client.synthesize(
+        document_id=doc["id"],
+        block_indices=[block_idx],
+        model="kokoro",
+        voice="af_heart",
+    )
+
+    status_msg = await subscribed_ws_client.wait_for_any_status(block_idx, timeout=30.0)
+    assert status_msg is not None, f"No status received for degenerate text {text!r}"
+
+    # Must reach skipped (empty audio) — not error (crash)
+    if status_msg["status"] == "queued":
+        final = await subscribed_ws_client.wait_for_status(block_idx, "skipped", timeout=30.0)
+        if final is None:
+            # Check if it errored instead
+            errors = [
+                m
+                for m in subscribed_ws_client.messages
+                if m.get("block_idx") == block_idx and m.get("status") == "error"
+            ]
+            assert not errors, f"Degenerate text {text!r} caused error instead of skip: {errors}"
+            pytest.fail(f"Degenerate text {text!r}: expected 'skipped', got neither skipped nor error")
+    else:
+        assert status_msg["status"] == "skipped", (
+            f"Degenerate text {text!r}: expected 'skipped', got {status_msg['status']!r}"
+        )

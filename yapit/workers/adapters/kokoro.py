@@ -66,11 +66,13 @@ class KokoroAdapter(SynthAdapter[VoiceConfig]):
                 if result.tokens:
                     for tok in result.tokens:
                         if tok.start_ts is not None and tok.end_ts is not None:
-                            all_timestamps.append({
-                                "t": tok.text,
-                                "s": round(tok.start_ts + cumulative_s, 4),
-                                "e": round(tok.end_ts + cumulative_s, 4),
-                            })
+                            all_timestamps.append(
+                                {
+                                    "t": tok.text,
+                                    "s": round(tok.start_ts + cumulative_s, 4),
+                                    "e": round(tok.end_ts + cumulative_s, 4),
+                                }
+                            )
 
                 cumulative_s += len(pcm) / (KOKORO_SAMPLE_RATE * 2)
 
@@ -91,6 +93,8 @@ class KokoroAdapter(SynthAdapter[VoiceConfig]):
 
 def _pcm_to_ogg_opus(pcm_bytes: bytes) -> bytes:
     """Encode raw 24kHz mono int16 PCM to OGG_OPUS."""
+    if not pcm_bytes:
+        return b""
     buf = io.BytesIO()
     output = av.open(buf, "w", format="ogg")
     stream = output.add_stream("libopus", rate=KOKORO_SAMPLE_RATE)
