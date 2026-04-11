@@ -226,15 +226,24 @@ async function handleRequest(req, res) {
 			return;
 		}
 
-		const { url, timeout_ms = 30_000 } = parsed;
-		if (!url) {
+		const { url, html, timeout_ms = 30_000 } = parsed;
+		if (!url && !html) {
 			res.writeHead(400, { "Content-Type": "application/json" });
-			res.end('{"error":"url required"}');
+			res.end('{"error":"url or html required"}');
 			return;
 		}
 
 		try {
-			const result = await extract(url, timeout_ms);
+			let result;
+			if (html) {
+				const t0 = performance.now();
+				const r = await Defuddle(html, url || "", { markdown: true });
+				const ms = Math.round(performance.now() - t0);
+				result = { markdown: r.content || "", title: r.title || null, extraction_method: "html-direct" };
+				console.log(`html-direct: ${url || "(uploaded)"} ${ms}ms (${result.markdown.length} chars)`);
+			} else {
+				result = await extract(url, timeout_ms);
+			}
 			res.writeHead(200, { "Content-Type": "application/json" });
 			res.end(JSON.stringify(result));
 		} catch (e) {

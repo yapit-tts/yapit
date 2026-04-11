@@ -646,9 +646,12 @@ async def create_website_document(
             detail="Cached document has no content. This should not happen.",
         )
 
-    assert cached_doc.metadata.url, "Website document must have a URL"
     t0 = time.monotonic()
-    markdown, defuddle_title, defuddle_method = await extract_website_content(cached_doc.metadata.url)
+    if cached_doc.metadata.url:
+        markdown, defuddle_title, defuddle_method = await extract_website_content(cached_doc.metadata.url)
+    else:
+        html = cached_doc.content.decode("utf-8", errors="ignore")
+        markdown, defuddle_title, defuddle_method = await extract_website_content(html=html)
 
     processed = await asyncio.get_running_loop().run_in_executor(
         cpu_executor,

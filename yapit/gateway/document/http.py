@@ -26,7 +26,9 @@ async def download_document(url: HttpUrl, max_size: int) -> tuple[bytes, str]:
     Raises:
         HTTPException: If download fails or file is too large
     """
-    headers = {"User-Agent": "Yapit/1.0 (https://yapit.md; document fetcher)"}
+    headers = {
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Yapit/1.0 (+https://yapit.md)"
+    }
     start = time.monotonic()
     async with httpx.AsyncClient(
         proxy="http://smokescreen:4750",

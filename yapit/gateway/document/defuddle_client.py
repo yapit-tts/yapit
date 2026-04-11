@@ -17,21 +17,32 @@ def init_defuddle_client(base_url: str) -> None:
     _client = httpx.AsyncClient(base_url=base_url)
 
 
-async def extract_website(url: str, timeout_ms: int = 30_000) -> tuple[str, str | None, str]:
-    """Extract markdown from a URL via the defuddle service.
+async def extract_website(
+    url: str | None = None, *, html: str | None = None, timeout_ms: int = 30_000
+) -> tuple[str, str | None, str]:
+    """Extract markdown via the defuddle service.
 
-    Third return value is the cascade step (static, static-bot, playwright).
+    Pass url for a live fetch (cascade: static → bot → playwright),
+    or html for pre-fetched/uploaded content (parsed directly, no fetch).
+
+    Third return value is the extraction method.
     """
     assert _client is not None, "Call init_defuddle_client() during app startup"
+    assert url or html, "Either url or html is required"
+
+    label = url or "(uploaded HTML)"
+    body: dict = {"timeout_ms": timeout_ms}
+    if html:
+        body["html"] = html
+        if url:
+            body["url"] = url
+    else:
+        body["url"] = url
 
     try:
-        resp = await _client.post(
-            "/extract",
-            json={"url": url, "timeout_ms": timeout_ms},
-            timeout=timeout_ms / 1000 + 5,
-        )
-    except Exception as e:
-        logger.error(f"Defuddle service unreachable for {url}: {e}")
+        resp = await _client.post("/extract", json=body, timeout=timeout_ms / 1000 + 5)
+    except Exception:
+        logger.exception(f"Defuddle service unreachable for {label}")
         raise
 
     if resp.status_code == 503:
@@ -40,7 +51,7 @@ async def extract_website(url: str, timeout_ms: int = 30_000) -> tuple[str, str 
             detail="Content extraction service is busy — please try again in a moment",
         )
     if not resp.is_success:
-        logger.error(f"Defuddle service returned {resp.status_code} for {url}")
+        logger.error(f"Defuddle service returned {resp.status_code} for {label}")
         resp.raise_for_status()
 
     data = resp.json()
@@ -48,5 +59,5 @@ async def extract_website(url: str, timeout_ms: int = 30_000) -> tuple[str, str 
     title = data.get("title")
     method = data.get("extraction_method", "unknown")
 
-    logger.info(f"Extracted {url} via {method} ({len(markdown)} chars)")
+    logger.info(f"Extracted {label} via {method} ({len(markdown)} chars)")
     return markdown, title, method
