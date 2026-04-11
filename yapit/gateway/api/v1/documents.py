@@ -668,7 +668,10 @@ async def create_website_document(
 
     doc = Document.from_content(
         user_id=user.id,
-        title=defuddle_title or cached_doc.metadata.title or req.title or cached_doc.metadata.file_name,
+        title=defuddle_title
+        or cached_doc.metadata.title
+        or req.title
+        or (Path(cached_doc.metadata.file_name).stem if cached_doc.metadata.file_name else None),
         original_text=processed.extracted_text,
         structured_content=processed.structured_content,
         metadata=cached_doc.metadata,
@@ -1213,7 +1216,9 @@ async def create_document(
             content_hash=content_hash,
             total_pages=cached_doc.metadata.total_pages,
             file_size=cached_doc.metadata.file_size or len(cached_doc.content),
-            title=cached_doc.metadata.title or req.title or cached_doc.metadata.file_name,
+            title=cached_doc.metadata.title
+            or req.title
+            or (Path(cached_doc.metadata.file_name).stem if cached_doc.metadata.file_name else None),
             pages=req.pages,
             user_id=user.id,
             is_public=prefs.default_documents_public if prefs else False,
@@ -1282,7 +1287,9 @@ async def create_document(
             ai_transform=req.ai_transform,
             arxiv_id=arxiv_id,
             billing_enabled=settings.billing_enabled,
-            title=cached_doc.metadata.title or req.title or cached_doc.metadata.file_name,
+            title=cached_doc.metadata.title
+            or req.title
+            or (Path(cached_doc.metadata.file_name).stem if cached_doc.metadata.file_name else None),
             pages=req.pages,
             user_id=user.id,
             is_public=prefs.default_documents_public if prefs else False,
