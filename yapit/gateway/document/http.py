@@ -48,7 +48,13 @@ async def download_document(url: HttpUrl, max_size: int) -> tuple[bytes, str]:
                         detail=f"File too large: {int(content_length)} bytes exceeds maximum of {max_size} bytes",
                     )
             response = await client.get(str(url))
-            response.raise_for_status()
+            # Allow 404 on HTML responses — JS-rendered SPAs may return 404
+            # for server-side routes while rendering content client-side.
+            # Defuddle's Playwright cascade will handle the actual rendering.
+            content_type_header = response.headers.get("content-type", "")
+            is_html = "text/html" in content_type_header or "application/xhtml+xml" in content_type_header
+            if not (is_html and response.status_code == 404):
+                response.raise_for_status()
             content = io.BytesIO()
             downloaded = 0
             async for chunk in response.aiter_bytes(chunk_size=8192):
