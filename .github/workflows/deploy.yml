@@ -26,6 +26,11 @@ on:
         required: false
         default: false
         type: boolean
+      force_build:
+        description: 'Force build specific services (comma-separated: gateway,defuddle,frontend,workers,stack-auth,smokescreen)'
+        required: false
+        default: ''
+        type: string
 
 env:
   REGISTRY: ghcr.io
@@ -133,7 +138,7 @@ jobs:
     if: |
       always() &&
       github.ref == 'refs/heads/main' &&
-      (needs.changes.outputs.frontend == 'true' || inputs.force_build_all) &&
+      (needs.changes.outputs.frontend == 'true' || inputs.force_build_all || contains(inputs.force_build, 'frontend')) &&
       (inputs.skip_tests == true || contains(github.event.head_commit.message, '[skip tests]') || needs.test-unit.result == 'cancelled' || needs.test-integration.result == 'cancelled' || needs.test-frontend.result == 'cancelled' || (needs.lint.result == 'success' && needs.test-unit.result == 'success' && needs.test-integration.result == 'success' && needs.test-frontend.result == 'success'))
     runs-on: ubuntu-latest
     permissions:
@@ -170,7 +175,7 @@ jobs:
     if: |
       always() &&
       github.ref == 'refs/heads/main' &&
-      (needs.changes.outputs.gateway == 'true' || inputs.force_build_all) &&
+      (needs.changes.outputs.gateway == 'true' || inputs.force_build_all || contains(inputs.force_build, 'gateway')) &&
       (inputs.skip_tests == true || contains(github.event.head_commit.message, '[skip tests]') || needs.test-unit.result == 'cancelled' || needs.test-integration.result == 'cancelled' || needs.test-frontend.result == 'cancelled' || (needs.lint.result == 'success' && needs.test-unit.result == 'success' && needs.test-integration.result == 'success' && needs.test-frontend.result == 'success'))
     runs-on: ubuntu-latest
     permissions:
@@ -207,7 +212,7 @@ jobs:
     if: |
       always() &&
       github.ref == 'refs/heads/main' &&
-      (needs.changes.outputs.defuddle == 'true' || inputs.force_build_all) &&
+      (needs.changes.outputs.defuddle == 'true' || inputs.force_build_all || contains(inputs.force_build, 'defuddle')) &&
       (inputs.skip_tests == true || contains(github.event.head_commit.message, '[skip tests]') || needs.test-unit.result == 'cancelled' || needs.test-integration.result == 'cancelled' || needs.test-frontend.result == 'cancelled' || (needs.lint.result == 'success' && needs.test-unit.result == 'success' && needs.test-integration.result == 'success' && needs.test-frontend.result == 'success'))
     runs-on: ubuntu-latest
     permissions:
@@ -243,7 +248,7 @@ jobs:
     if: |
       always() &&
       github.ref == 'refs/heads/main' &&
-      (needs.changes.outputs.workers == 'true' || inputs.force_build_all) &&
+      (needs.changes.outputs.workers == 'true' || inputs.force_build_all || contains(inputs.force_build, 'workers')) &&
       (inputs.skip_tests == true || contains(github.event.head_commit.message, '[skip tests]') || needs.test-unit.result == 'cancelled' || needs.test-integration.result == 'cancelled' || needs.test-frontend.result == 'cancelled' || (needs.lint.result == 'success' && needs.test-unit.result == 'success' && needs.test-integration.result == 'success' && needs.test-frontend.result == 'success'))
     runs-on: ubuntu-latest
     permissions:
@@ -291,7 +296,7 @@ jobs:
     if: |
       always() &&
       github.ref == 'refs/heads/main' &&
-      (needs.changes.outputs.stack-auth == 'true' || inputs.force_build_all) &&
+      (needs.changes.outputs.stack-auth == 'true' || inputs.force_build_all || contains(inputs.force_build, 'stack-auth')) &&
       (inputs.skip_tests == true || contains(github.event.head_commit.message, '[skip tests]') || needs.test-unit.result == 'cancelled' || needs.test-integration.result == 'cancelled' || needs.test-frontend.result == 'cancelled' || (needs.lint.result == 'success' && needs.test-unit.result == 'success' && needs.test-integration.result == 'success' && needs.test-frontend.result == 'success'))
     runs-on: ubuntu-latest
     permissions:
@@ -328,7 +333,7 @@ jobs:
     if: |
       always() &&
       github.ref == 'refs/heads/main' &&
-      (needs.changes.outputs.smokescreen == 'true' || inputs.force_build_all) &&
+      (needs.changes.outputs.smokescreen == 'true' || inputs.force_build_all || contains(inputs.force_build, 'smokescreen')) &&
       (inputs.skip_tests == true || contains(github.event.head_commit.message, '[skip tests]') || needs.test-unit.result == 'cancelled' || needs.test-integration.result == 'cancelled' || needs.test-frontend.result == 'cancelled' || (needs.lint.result == 'success' && needs.test-unit.result == 'success' && needs.test-integration.result == 'success' && needs.test-frontend.result == 'success'))
     runs-on: ubuntu-latest
     permissions:
