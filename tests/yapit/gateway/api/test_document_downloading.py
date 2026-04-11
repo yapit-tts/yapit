@@ -84,6 +84,7 @@ class TestDownloadDocument:
         """Test handling of HTTP errors."""
         mock_response = AsyncMock()
         mock_response.status_code = 404
+        mock_response.headers = {"content-type": "application/json"}
         mock_response.raise_for_status = Mock(
             side_effect=httpx.HTTPStatusError("Not found", request=Mock(), response=mock_response)
         )
