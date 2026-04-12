@@ -17,7 +17,7 @@ if (!PROXY_URL) throw new Error("PROXY_URL is required (e.g. http://smokescreen:
 
 const PORT = 8001;
 const MAX_CONCURRENT_BROWSER = 50;
-const STATIC_FETCH_TIMEOUT_MS = 10_000;
+const STATIC_FETCH_TIMEOUT_MS = 5_000;
 const MAX_PAGE_SIZE = 20 * 1024 * 1024;
 const DEFAULT_UA = "Mozilla/5.0 (compatible; Yapit/1.0; +https://yapit.md)";
 const BOT_UA = DEFAULT_UA + " bot";
@@ -116,7 +116,7 @@ async function extractPlaywright(url, timeoutMs) {
 
 	try {
 		const resp = await page.goto(url, {
-			waitUntil: "networkidle",
+			waitUntil: "domcontentloaded",
 			timeout: timeoutMs,
 		});
 		if (resp && resp.status() >= 400) {
