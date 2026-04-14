@@ -28,7 +28,7 @@ from yapit.gateway.config import Settings, get_settings
 from yapit.gateway.db import close_db, create_session, init_db, prepare_database
 from yapit.gateway.deps import create_cache, create_image_storage
 from yapit.gateway.document.batch_poller import BatchPoller
-from yapit.gateway.document.defuddle_client import init_defuddle_client
+from yapit.gateway.document.defuddle_client import close_defuddle_client, init_defuddle_client
 from yapit.gateway.document.processors.gemini import GeminiExtractor, create_gemini_config
 from yapit.gateway.document.processors.openai_compat import OpenAIExtractor, create_openai_config
 from yapit.gateway.document.types import BatchExtractor
@@ -43,6 +43,7 @@ from yapit.gateway.markdown.transformer import DocumentTransformer
 from yapit.gateway.metrics import init_metrics_db, start_metrics_writer, stop_metrics_writer
 from yapit.gateway.rate_limit import limiter
 from yapit.gateway.result_consumer import run_result_consumer
+from yapit.gateway.stack_auth import close_stack_auth_client, init_stack_auth_client
 from yapit.gateway.storage import ImageStorage
 from yapit.gateway.visibility_scanner import run_visibility_scanner
 from yapit.workers.adapters.inworld import InworldAdapter
@@ -82,6 +83,8 @@ async def lifespan(app: FastAPI):
     )
 
     init_defuddle_client(settings.defuddle_service_url)
+    if settings.stack_auth_api_host:
+        init_stack_auth_client(settings.stack_auth_api_host)
 
     # Document extractors
     if settings.ai_processor == "gemini":
@@ -230,6 +233,8 @@ async def lifespan(app: FastAPI):
     for cache in all_caches:
         await cache.close()
 
+    await close_stack_auth_client()
+    await close_defuddle_client()
     await stop_metrics_writer()
     await close_db()
     await app.state.redis_client.aclose()
@@ -333,14 +338,14 @@ def create_app(
     app.dependency_overrides[get_settings] = lambda: settings
 
     app.add_middleware(
-        CORSMiddleware,  # ty: ignore[invalid-argument-type]  # Starlette typing limitation
+        CORSMiddleware,
         allow_origins=settings.cors_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    app.add_middleware(SlowAPIMiddleware)  # ty: ignore[invalid-argument-type]
-    app.add_middleware(RequestContextMiddleware)  # ty: ignore[invalid-argument-type]
+    app.add_middleware(SlowAPIMiddleware)
+    app.add_middleware(RequestContextMiddleware)
 
     @app.exception_handler(RateLimitExceeded)
     async def rate_limit_handler(request: Request, exc: RateLimitExceeded):

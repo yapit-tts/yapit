@@ -3,8 +3,10 @@ from yapit.gateway.stack_auth.users import (
     UserClientMetadata,
     UserClientReadOnlyMetadata,
     UserServerMetadata,
+    close_stack_auth_client,
     get_me,
     get_user,
+    init_stack_auth_client,
 )
 
 __all__ = [
@@ -12,6 +14,8 @@ __all__ = [
     "UserClientMetadata",
     "UserClientReadOnlyMetadata",
     "UserServerMetadata",
+    "close_stack_auth_client",
     "get_me",
     "get_user",
+    "init_stack_auth_client",
 ]

@@ -35,7 +35,7 @@ def create_models() -> list[TTSModel]:
     kokoro = TTSModel(slug="kokoro", name="Kokoro")
     for v in json.loads(KOKORO_VOICES_JSON.read_text()):
         kokoro.voices.append(
-            Voice(  # ty: ignore[missing-argument]
+            Voice(
                 slug=v["index"],
                 name=v["name"],
                 lang=v["language"],

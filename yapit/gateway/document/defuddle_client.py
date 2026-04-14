@@ -17,6 +17,13 @@ def init_defuddle_client(base_url: str) -> None:
     _client = httpx.AsyncClient(base_url=base_url)
 
 
+async def close_defuddle_client() -> None:
+    global _client
+    if _client is not None:
+        await _client.aclose()
+        _client = None
+
+
 async def extract_website(
     url: str | None = None, *, html: str | None = None, timeout_ms: int = 30_000
 ) -> tuple[str, str | None, str]:

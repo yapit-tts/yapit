@@ -3,12 +3,15 @@ import hmac
 import time
 from typing import Annotated
 
+import httpx
 from fastapi import Depends, Header, HTTPException, Security, WebSocket, WebSocketException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from loguru import logger
 
 from yapit.gateway.config import Settings, get_settings
 from yapit.gateway.stack_auth import User, get_me
+
+_TRANSIENT_ERRORS = (httpx.TimeoutException, httpx.ConnectError)
 
 bearer = HTTPBearer(auto_error=False)
 
@@ -52,7 +55,12 @@ async def authenticate(
 
     # Try Bearer token first (authenticated user)
     if creds is not None:
-        user = await get_me(settings, access_token=creds.credentials)
+        try:
+            user = await get_me(settings, access_token=creds.credentials)
+        except _TRANSIENT_ERRORS:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Authentication service temporarily unavailable"
+            )
         if user is not None:
             return user
         logger.debug("Bearer token invalid or expired")
@@ -91,7 +99,12 @@ async def authenticate_optional(
         return SELFHOST_USER
 
     if creds is not None:
-        user = await get_me(settings, access_token=creds.credentials)
+        try:
+            user = await get_me(settings, access_token=creds.credentials)
+        except _TRANSIENT_ERRORS:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Authentication service temporarily unavailable"
+            )
         if user is not None:
             return user
         raise HTTPException(
@@ -128,6 +141,10 @@ async def authenticate_ws(
             if user is not None:
                 return user
             logger.warning("WS auth: get_me returned None for token")
+        except _TRANSIENT_ERRORS:
+            raise WebSocketException(
+                code=status.WS_1013_TRY_AGAIN_LATER, reason="Authentication service temporarily unavailable"
+            )
         except Exception as e:
             logger.error(f"WS auth: get_me raised exception: {e}")
         raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid token")

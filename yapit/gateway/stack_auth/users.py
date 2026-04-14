@@ -1,10 +1,44 @@
-from typing import Literal
+import asyncio
+from typing import Any, Literal
 
 import httpx
+from loguru import logger
 from pydantic import BaseModel, Field
 
 from yapit.gateway.config import Settings
 from yapit.gateway.stack_auth.api import build_headers
+
+_client: httpx.AsyncClient | None = None
+
+
+def init_stack_auth_client(base_url: str) -> None:
+    global _client
+    _client = httpx.AsyncClient(
+        base_url=base_url,
+        timeout=httpx.Timeout(10, connect=3),
+    )
+
+
+async def close_stack_auth_client() -> None:
+    global _client
+    if _client is not None:
+        await _client.aclose()
+        _client = None
+
+
+async def _request(method: str, url: str, headers: dict[str, Any]) -> httpx.Response:
+    """Make an HTTP request with a single retry on transient network errors."""
+    assert _client is not None, "Call init_stack_auth_client() during app startup"
+    last_exc: Exception = Exception("unreachable")
+    for attempt in range(2):
+        try:
+            return await _client.request(method, url, headers=headers)
+        except (httpx.TimeoutException, httpx.ConnectError) as exc:
+            last_exc = exc
+            if attempt == 0:
+                logger.warning(f"Stack Auth {type(exc).__name__}, retrying")
+                await asyncio.sleep(0.5)
+    raise last_exc
 
 
 # visible to the client
@@ -41,17 +75,12 @@ class User(BaseModel):
 
 
 async def get_user(settings: Settings, access_token: str, user_id: str) -> User | None:
-    url = f"{settings.stack_auth_api_host}/api/v1/users/{user_id}"
     headers = build_headers(settings, access_token=access_token)
-
-    async with httpx.AsyncClient() as client:
-        response = await client.get(url, headers=headers)
+    response = await _request("GET", f"/api/v1/users/{user_id}", headers)
     if response.status_code == 401:
         return None
     response.raise_for_status()
-
-    body = response.json()
-    return User.model_validate(obj=body)
+    return User.model_validate(obj=response.json())
 
 
 async def get_me(settings: Settings, access_token: str) -> User | None:
@@ -60,12 +89,9 @@ async def get_me(settings: Settings, access_token: str) -> User | None:
 
 async def delete_user(settings: Settings, access_token: str, user_id: str) -> bool:
     """Delete a user from Stack Auth. Returns True if successful."""
-    url = f"{settings.stack_auth_api_host}/api/v1/users/{user_id}"
     headers = build_headers(settings, access_token=access_token)
-
-    async with httpx.AsyncClient() as client:
-        response = await client.request("DELETE", url, headers=headers)
+    response = await _request("DELETE", f"/api/v1/users/{user_id}", headers)
     if response.status_code == 404:
-        return False  # User already deleted
+        return False
     response.raise_for_status()
     return True
