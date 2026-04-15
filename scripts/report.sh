@@ -231,6 +231,7 @@ This is the most important section. Don't just count errors — read the actual 
 ### Extraction (Gemini)
 - `page_extraction_error` — rate limit (429), server errors (5xx)?
 - Token counts — unusual spikes?
+- **OCR token quota warnings** (`Usage limit exceeded for ocr_tokens`): These are **expected user-level quota enforcement**, NOT system errors. `limit 0` means the user has no AI extraction quota (all anonymous users, free-tier users who exhausted theirs). The extraction falls back to pymupdf (non-OCR). Do NOT flag these as issues or recommend checking the Google Cloud console — they are working as designed.
 - **Batch poller 503s:** The Gemini batch GET endpoint intermittently returns 503 UNAVAILABLE (Google-side capacity issues, well-documented on their forums). The poller retries every 15s automatically. Only flag if a batch has been stuck for >24h — check time since `batch_job_submitted` event.
 
 ### Billing Health

@@ -34,8 +34,11 @@ Check `gh run view <id> --log-failed` for the failing job's output. If log colle
 Manual triggers via `workflow_dispatch`:
 - `skip_tests` — bypass test jobs
 - `force_build_all` — build all images regardless of path changes
+- `force_build` — comma-separated list of specific services to rebuild (e.g. `gateway,defuddle`)
 
-Useful for forcing image rebuilds after a failed matrix build.
+Example: `gh workflow run deploy.yml -f force_build=gateway`
+
+**Gotcha:** `dorny/paths-filter` marks all files as changed on `workflow_dispatch` (no base commit to diff against). Build conditions use `github.event_name != 'workflow_dispatch'` to ignore `changes` outputs on manual dispatch — only `force_build`/`force_build_all` control what builds.
 
 ## Adding New Images
 

@@ -12,7 +12,7 @@ Three ways content enters the system:
 | `POST /v1/documents/website` | URL | See below* |
 | `POST /v1/documents/document` | File upload | See format routing table |
 
-*Website flow branches: arXiv URLs (abs, pdf, alphaxiv, ar5iv) → rewritten to PDF URL in `prepare` so they flow through the document path (surfacing the free vs AI toggle). Other URLs → `extract_website_content` in `website.py`: defuddle service extracts markdown via static fetch + linkedom (Playwright fallback for JS-rendered SPAs).
+*Website flow branches: arXiv URLs (abs, pdf, alphaxiv, ar5iv) → rewritten to PDF URL in `prepare` so they flow through the document path (surfacing the free vs AI toggle). Other URLs → `extract_website_content` in `website.py`: defuddle service extracts markdown via static fetch + linkedom (Playwright fallback for JS-rendered SPAs). The gateway's `download_document` (used in `prepare`) uses a browser-like UA with Yapit identifier appended — avoids bot-detection blocks on sites like OpenReview while staying identifiable. HTML 404 responses are passed through (not rejected) so JS-rendered SPAs that return 404 server-side can still be extracted by defuddle's Playwright cascade.
 
 ### Format Routing
 
@@ -55,24 +55,28 @@ arXiv URLs (arxiv.org, alphaxiv.org, ar5iv) are detected in `documents.py` via `
 
 `yapit/gateway/document/website.py`
 
-**`extract_website_content(url) → (markdown, title)`** — calls the defuddle service, resolves relative image URLs, raises HTTPException if no content extracted.
+**`extract_website_content(url, *, html) → (markdown, title)`** — calls the defuddle service, resolves relative image URLs (when URL is known), raises HTTPException if no content extracted. Accepts either a URL (defuddle fetches it) or raw HTML (defuddle parses directly, no fetch). The HTML path is used for uploaded HTML files.
 
 `yapit/gateway/document/defuddle_client.py`
 
-**`extract_website(url, timeout_ms) → (markdown, title)`** — HTTP client to the defuddle container (`docker/defuddle/app.js`). Raises HTTPException on 503 (capacity), lets other errors propagate.
+**`extract_website(url, *, html, timeout_ms) → (markdown, title)`** — HTTP client to the defuddle container (`docker/defuddle/app.js`). Accepts `url` for live fetch or `html` for pre-fetched content. Raises HTTPException on 503 (capacity), lets other errors propagate.
 
 **Defuddle service cascade** (`docker/defuddle/app.js`, Node.js container):
 
-1. **Static fetch** (normal UA) → linkedom → defuddle Node API → return if wordCount > 0
+When given a URL (normal flow):
+1. **Static fetch** (normal UA, 5s timeout) → linkedom → defuddle Node API → return if wordCount > 0
 2. **Static fetch** (bot UA) → linkedom → defuddle Node API → return if wordCount > 0
-3. **Playwright fallback** → Chromium navigates to URL via Smokescreen, `networkidle`, injects defuddle browser bundle, extracts from rendered DOM
+3. **Playwright fallback** → Chromium navigates to URL via Smokescreen, `domcontentloaded`, injects defuddle browser bundle, extracts from rendered DOM
+
+When given raw HTML (uploaded files): runs defuddle Node API directly, no fetch cascade.
 
 - Static path handles most content sites; Playwright reserved for JS-rendered SPAs
 - All fetches go through Smokescreen SSRF proxy
-- Shared time budget: total never exceeds caller's `timeout_ms` (default 30s)
+- Shared time budget: total never exceeds caller's `timeout_ms` (default 30s). Static timeout is 5s per attempt, leaving Playwright ~20s
 - Playwright: single Chromium instance, new context+page per request, 50 concurrent cap
-- `extraction_method` logged in metrics (`static`, `static-bot`, `playwright`)
+- `extraction_method` logged in metrics (`static`, `static-bot`, `playwright`, `html-direct`)
 - `resolve_relative_urls` converts `<img>` tags to `![alt](url)` syntax
+- **Gotcha:** `undici` (used by defuddle) through Smokescreen CONNECT tunnel can get different HTTP responses than curl/browsers (e.g. 200 vs 404 from SPAs). The CONNECT tunnel changes how some servers route requests
 
 ## Free PDF Extraction
 

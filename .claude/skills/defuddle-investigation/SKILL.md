@@ -110,6 +110,7 @@ Each issue is a separate markdown file in the repo root: `defuddle-issue-{short-
 - Quantify occurrences ("99 links on this page") or editorialize ("prose becomes unreadable") — the example speaks for itself
 - Use `WebFetch` to check defuddle.md — it summarizes instead of returning raw output. Use `curl` instead.
 - Frame issues around one site when the fix is general — if the bug affects any site with links inside inline code, say that in the title, not "Verso inline code links"
+- File without checking whether the behavior is intentional. If it's consistent across all sites, it's probably by design (#240).
 
 ## When to also submit a PR
 
@@ -118,6 +119,7 @@ Always file an issue first. Additionally submit a PR only when ALL of these hold
 1. **Mechanical bugfix** — the fix follows directly from the root cause with no design judgment, no architectural tradeoffs, no "should this behave like X or Y" questions. If the fix involves taste or interpretation, the issue is enough — let the maintainer decide.
 2. **Full codebase understanding** — you've read broadly enough to be confident the fix doesn't conflict with patterns elsewhere. You have 1M tokens of context — read the full `src/` directory, not just the file you're changing.
 3. **The maintainer couldn't do it better** — if kepano would write the same fix given the same information, a PR saves him time. If he'd approach it differently with his deeper knowledge, the issue alone is more helpful.
+4. **General over specific** — fixes should work for the next site with the same pattern, not just the ones you've seen. Hardcoding domains or site-specific patterns when a content-based heuristic would work is a red flag (#246).
 
 ### Matching the project's standards
 
@@ -127,7 +129,7 @@ Always file an issue first. Additionally submit a PR only when ALL of these hold
 
 ### PR workflow
 
-1. Clone fresh from GitHub (not from local): `git clone https://github.com/kepano/defuddle.git /tmp/defuddle-pr`
+1. Clone fresh from GitHub (not from local): `git clone https://github.com/kepano/defuddle.git /tmp/defuddle-pr`. Verify HEAD matches `gh api -X GET repos/kepano/defuddle/commits/main --jq '.sha[:7]'` — the fork remote or stale fetch can silently put you on old code.
 2. `npm install && npm test` — verify clean baseline
 3. Create a **minimal** fixture + expected output following the conventions in defuddle's `CLAUDE.md`. Minimal means: only the HTML structure needed to trigger the bug. Don't replicate the full page — strip everything that isn't load-bearing for the reproduction. Unrelated elements create noise in the expected output and can cause the test to break for reasons unrelated to the bug.
 4. Run tests → must **fail** (proves the fixture exercises the bug)
@@ -135,7 +137,7 @@ Always file an issue first. Additionally submit a PR only when ALL of these hold
 6. Run tests → must **pass**, full suite must stay green
 7. Finish the refactor — if your fix touches a pattern that exists in multiple places, apply it everywhere. A PR that fixes two of three call sites isn't "surgical," it's incomplete. (E.g. extracting a helper but leaving one inline copy "to be safe" just creates cleanup for the maintainer.)
 8. Spawn a subagent to review your changes before submission
-9. Fork via `gh repo fork`, push branch, open PR referencing the issue
+9. Add fork remote and push branch: `git remote add fork https://github.com/MaxWolf-01/defuddle.git` (the fork already exists from prior PRs), then `git push fork <branch>`. Open PR with `gh pr create`.
 10. PR body should just be `Fixes #NNN` — the issue already has the explanation. Check recent merged PRs for kepano's style.
 11. No Co-Authored-By lines for external contributions
 
