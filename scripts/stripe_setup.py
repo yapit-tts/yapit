@@ -60,6 +60,7 @@ PORTAL DOWNGRADES:
 
 import argparse
 import os
+import re
 import sys
 
 import stripe
@@ -627,7 +628,7 @@ def main():
     else:
         print("\n\nWebhook Endpoint: skipped (test mode uses stripe listen)")
 
-    # Summary - only show active prices (v2)
+    # Summary - only show active prices
     print(f"\n{'=' * 60}")
     print("Price IDs for .env.dev / .env.prod:")
     print(f"{'=' * 60}")
@@ -641,7 +642,7 @@ def main():
                     break
         if not is_active:
             continue
-        env_var = lookup_key.upper().replace("YAPIT_", "STRIPE_PRICE_").replace("_V2", "")
+        env_var = re.sub(r"_v\d+$", "", lookup_key).upper().replace("YAPIT_", "STRIPE_PRICE_")
         print(f"  {env_var}={stripe_id}")
 
     print("\nAdd these to .env.dev (test) or .env.prod (live)")

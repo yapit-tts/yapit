@@ -13,7 +13,7 @@ const PrivacyPage = () => {
       </Button>
 
       <h1 className="text-4xl font-bold mb-2">Privacy Policy</h1>
-      <p className="text-muted-foreground mb-8">Last updated: April 1, 2026</p>
+      <p className="text-muted-foreground mb-8">Last updated: April 16, 2026</p>
 
       <div className="prose prose-neutral dark:prose-invert max-w-none space-y-8">
         <section>

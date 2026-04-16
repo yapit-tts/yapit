@@ -68,9 +68,9 @@ const tipLink = (text: string, hash: string) => (
   <a href={`/tips#${hash}`} className="underline decoration-dotted underline-offset-2 decoration-muted-foreground/50 hover:decoration-foreground">{text}</a>
 );
 
-const PLAN_FEATURES: Record<string, React.ReactNode[]> = {
+const PLAN_FEATURES: Partial<Record<PlanTier, React.ReactNode[]>> = {
   free: [tipLink("Kokoro TTS (local, English)", "local-tts"), "100 documents"],
-  voice: ["Unlimited Kokoro TTS (server)", "500 documents", tipLink("Unused quota accumulates**", "billing"), "Cancel anytime during trial"],
+  voice: ["Unlimited Kokoro TTS (server)", "500 documents", "Cancel anytime during trial"],
   basic: ["Unlimited Kokoro TTS (server)", "1,000 documents", tipLink("~500 AI-transformed pages*", "ai-transform"), tipLink("Unused quota accumulates**", "billing"), "Cancel anytime during trial"],
 };
 
