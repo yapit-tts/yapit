@@ -17,7 +17,7 @@ const NAV_ITEMS = [
   { label: "New Document", path: "/", icon: Plus },
   { label: "Account", path: "/account", icon: Settings },
   { label: "Tips", path: "/tips", icon: Lightbulb },
-  { label: "Subscription", path: "/subscription", icon: CreditCard },
+  { label: "Pricing", path: "/pricing", icon: CreditCard },
   { label: "About", path: "/about", icon: Info },
 ] as const;
 

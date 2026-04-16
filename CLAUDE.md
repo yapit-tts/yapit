@@ -10,7 +10,6 @@ Yapit TTS - Open-source text-to-speech platform for reading documents, web pages
 
 - `docs/architecture.md` has mermaid diagrams of the overall architecture and sequence flows.
 - [[tts-flow]] — Audio synthesis pipeline: WebSocket protocol, Redis queues, pull-based workers, caching. Read for TTS bugs, latency issues, worker scaling.
-- [[inworld-tts]] — Inworld API specifics: voices, models, gotchas, cache warming/pinning. Read for Inworld voice issues, warming, voice picker.
 - [[document-processing]] — How content becomes blocks: input paths (text/URL/file), Gemini extraction, YOLO figure detection, markdown parsing, block splitting. Read for document upload bugs, extraction failures, rendering issues.
 - [[frontend]] — React architecture, component hierarchy, chrome devtools MCP workflows. Read for UI work, frontend debugging.
 - [[features]] — User-facing capabilities: sharing, JS rendering, etc.

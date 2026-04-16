@@ -60,6 +60,7 @@ PORTAL DOWNGRADES:
 
 import argparse
 import os
+import re
 import sys
 
 import stripe
@@ -72,6 +73,16 @@ from dotenv import load_dotenv
 TAX_CODE = "txcd_10103000"  # SaaS - personal use
 
 PRODUCTS = [
+    {
+        "id": "yapit_voice",
+        "name": "Yapit Voice",
+        "description": "Unlimited server-side Kokoro TTS",
+        "active": True,
+        "prices": [
+            {"id": "yapit_voice_monthly_v1", "amount": 300, "interval": "month"},
+            {"id": "yapit_voice_yearly_v1", "amount": 2700, "interval": "year"},
+        ],
+    },
     {
         "id": "yapit_basic",
         "name": "Yapit Basic",
@@ -86,20 +97,20 @@ PRODUCTS = [
         "id": "yapit_plus",
         "name": "Yapit Plus",
         "description": "1M premium voice chars/month, 10M AI extraction tokens/month",
-        "active": True,
+        "active": False,
         "prices": [
-            {"id": "yapit_plus_monthly_v2", "amount": 2000, "interval": "month"},
-            {"id": "yapit_plus_yearly_v2", "amount": 18000, "interval": "year"},
+            {"id": "yapit_plus_monthly_v2", "amount": 2000, "interval": "month", "active": False},
+            {"id": "yapit_plus_yearly_v2", "amount": 18000, "interval": "year", "active": False},
         ],
     },
     {
         "id": "yapit_max",
         "name": "Yapit Max",
         "description": "3M premium voice chars/month, 15M AI extraction tokens/month",
-        "active": True,
+        "active": False,
         "prices": [
-            {"id": "yapit_max_monthly_v2", "amount": 4000, "interval": "month"},
-            {"id": "yapit_max_yearly_v2", "amount": 36000, "interval": "year"},
+            {"id": "yapit_max_monthly_v2", "amount": 4000, "interval": "month", "active": False},
+            {"id": "yapit_max_yearly_v2", "amount": 36000, "interval": "year", "active": False},
         ],
     },
 ]
@@ -617,7 +628,7 @@ def main():
     else:
         print("\n\nWebhook Endpoint: skipped (test mode uses stripe listen)")
 
-    # Summary - only show active prices (v2)
+    # Summary - only show active prices
     print(f"\n{'=' * 60}")
     print("Price IDs for .env.dev / .env.prod:")
     print(f"{'=' * 60}")
@@ -631,7 +642,7 @@ def main():
                     break
         if not is_active:
             continue
-        env_var = lookup_key.upper().replace("YAPIT_", "STRIPE_PRICE_").replace("_V2", "")
+        env_var = re.sub(r"_v\d+$", "", lookup_key).upper().replace("YAPIT_", "STRIPE_PRICE_")
         print(f"  {env_var}={stripe_id}")
 
     print("\nAdd these to .env.dev (test) or .env.prod (live)")

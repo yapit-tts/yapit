@@ -1,13 +1,12 @@
 import { createContext, useContext, useEffect, useState, type FC, type PropsWithChildren } from "react";
 import { useApi } from "@/api";
 
-type PlanTier = "free" | "basic" | "plus" | "max";
+type PlanTier = "free" | "voice" | "basic" | "plus" | "max";
 
 interface SubscriptionState {
   tier: PlanTier;
   hasActivePlan: boolean;
-  canUseCloudKokoro: boolean;  // Basic, Plus, Max
-  canUseInworld: boolean;      // Plus, Max only
+  canUseCloudKokoro: boolean;
   billingEnabled: boolean;
   isLoading: boolean;
 }
@@ -16,7 +15,6 @@ const SubscriptionContext = createContext<SubscriptionState>({
   tier: "free",
   hasActivePlan: false,
   canUseCloudKokoro: false,
-  canUseInworld: false,
   billingEnabled: true,
   isLoading: true,
 });
@@ -33,7 +31,6 @@ export const SubscriptionProvider: FC<PropsWithChildren> = ({ children }) => {
     tier: "free",
     hasActivePlan: false,
     canUseCloudKokoro: false,
-    canUseInworld: false,
     billingEnabled: true,
     isLoading: true,
   });
@@ -42,7 +39,7 @@ export const SubscriptionProvider: FC<PropsWithChildren> = ({ children }) => {
     if (!isAuthReady) return;
 
     if (isAnonymous) {
-      setState({ tier: "free", hasActivePlan: false, canUseCloudKokoro: false, canUseInworld: false, billingEnabled: true, isLoading: false });
+      setState({ tier: "free", hasActivePlan: false, canUseCloudKokoro: false, billingEnabled: true, isLoading: false });
       return;
     }
 
@@ -53,7 +50,6 @@ export const SubscriptionProvider: FC<PropsWithChildren> = ({ children }) => {
             tier: "max",
             hasActivePlan: true,
             canUseCloudKokoro: true,
-            canUseInworld: true,
             billingEnabled: false,
             isLoading: false,
           });
@@ -64,19 +60,17 @@ export const SubscriptionProvider: FC<PropsWithChildren> = ({ children }) => {
         const hasActive = data.subscription !== null &&
           ["active", "trialing"].includes(data.subscription.status);
         const canCloud = tier !== "free";
-        const canInworld = tier === "plus" || tier === "max";
         setState({
           tier,
           hasActivePlan: hasActive,
           canUseCloudKokoro: canCloud,
-          canUseInworld: canInworld,
           billingEnabled: true,
           isLoading: false,
         });
       })
       .catch((err) => {
         console.error("Failed to fetch subscription:", err);
-        setState({ tier: "free", hasActivePlan: false, canUseCloudKokoro: false, canUseInworld: false, billingEnabled: true, isLoading: false });
+        setState({ tier: "free", hasActivePlan: false, canUseCloudKokoro: false, billingEnabled: true, isLoading: false });
       });
   }, [api, isAuthReady, isAnonymous]);
 

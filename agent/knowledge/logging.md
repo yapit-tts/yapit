@@ -31,7 +31,6 @@ Set in `yapit/gateway/logging_config.py`:
 | WebSocket (`ws.py`) | `user_id`, `document_id` |
 | Extraction (`documents.py`) | `extraction_id`, `user_id`, `content_hash` |
 | Visibility scanner | `job_id`, `queue_type`, `model_slug` |
-| Inworld adapter | `model_id`, `voice_id` |
 | Synthesis timeout | `user_id`, `model_slug`, `voice_slug`, `variant_hash`, `document_id` |
 | Usage/billing debt | `user_id`, `usage_type` |
 | Stripe webhooks (`billing.py`) | `event_type`, `stripe_event_id`, `user_id`, `stripe_sub_id`, `stripe_customer_id`, `plan_tier`, `invoice_id`, `billing_reason` |

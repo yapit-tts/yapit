@@ -169,7 +169,7 @@ Toggle in settings. Bolds the first ~50% of each word (medium intensity, level 3
 
 `frontend/src/components/voicePicker.tsx` — Bottom sheet on mobile, popover on desktop.
 
-The premium model tab is **dynamic** — driven by `/v1/models` API response. `usePremiumModel` hook replaces the old `useInworldVoices`. When Inworld is the premium model, the voice picker shows Inworld-specific UI (grouped voices, quality toggle). For other models (OpenAI TTS, etc.), it shows a flat voice list. Models without a configured backend are deactivated and hidden.
+The premium model tab is **dynamic** — driven by `/v1/models` API response. `usePremiumModel` hook fetches non-Kokoro models. If one exists (e.g. OpenAI-compatible TTS for self-hosters), it shows as a second tab with a flat voice list. Models without a configured backend are deactivated and hidden.
 
 Saved voice selections are validated against available models on load — if the saved model is no longer active, auto-switches to Kokoro.
 

@@ -35,8 +35,6 @@ COLORS = {
 # Model-specific colors (consistent across all charts)
 MODEL_COLORS = {
     "kokoro": "#39d98a",
-    "inworld-1.5-max": "#58a6ff",
-    "inworld-1.5": "#ff7b72",
 }
 
 # Queue type colors
@@ -58,7 +56,7 @@ def get_model_color(model_slug: str) -> str:
     if not model_slug:
         return COLORS["text_muted"]
     model_lower = model_slug.lower()
-    for key in ["inworld-1.5-max", "kokoro", "inworld-1.5"]:
+    for key in ["kokoro"]:
         if key in model_lower:
             return MODEL_COLORS[key]
     return COLORS["text_secondary"]

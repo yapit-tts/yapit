@@ -14,7 +14,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from yapit.gateway.config import Settings
 from yapit.gateway.exceptions import ResourceNotFoundError
-from yapit.gateway.seed import seed_database, sync_inworld_voices
+from yapit.gateway.seed import seed_database
 
 ALEMBIC_INI = Path(__file__).parent / "alembic.ini"
 
@@ -82,7 +82,6 @@ async def prepare_database(settings: Settings) -> None:
         await asyncio.to_thread(command.upgrade, alembic_cfg, "head")
     if settings.db_seed:
         await _seed_db(settings)
-    await _sync_voices()
 
 
 def _table_exists(connection, table_name: str) -> bool:
@@ -106,11 +105,6 @@ async def close_db() -> None:
 async def _seed_db(settings: Settings) -> None:
     async with create_session() as db:
         await seed_database(db, settings)
-
-
-async def _sync_voices() -> None:
-    async with create_session() as db:
-        await sync_inworld_voices(db)
 
 
 async def get_or_404[T: SQLModel](session: AsyncSession, model: type[T], id: Any, *, options: list | None = None) -> T:

@@ -23,7 +23,7 @@
 Paste a URL or upload a PDF. Yapit renders the document and reads it aloud.
 
 - Handles the documents other TTS tools can't: academic papers with math, citations, figures, tables, messy formatting. Math is rendered visually but gets spoken alt text. Citations and figure labels are silently displayed or naturalized for speech. Page numbers and headers are removed. All driven by a [customizable prompt](https://yapit.md/tips#extraction-prompt).
-- 170+ voices across 15 languages. Kokoro runs locally in your browser (WebGPU), on CPU, or on GPU. [Inworld](https://inworld.ai) and any [OpenAI-compatible TTS server](https://github.com/yapit-tts/yapit#custom-tts-voices) also supported.
+- 58 Kokoro voices across 9 languages. Runs locally in your browser (WebGPU), on CPU, or on GPU. Any [OpenAI-compatible TTS server](https://github.com/yapit-tts/yapit#custom-tts-voices) also supported.
 - Vim-style keyboard shortcuts, document outliner, media key support, adjustable speed, dark mode, share by link.
 - Markdown export: append `/md` to any document URL to get clean markdown via curl. `/md-annotated` includes TTS annotations.
 
@@ -173,7 +173,6 @@ Next:
 
 Later:
 - Support thinking parameter for AI extraction
-- Support temperature parameter for Inworld
 
 ## Development
 
@@ -192,5 +191,5 @@ The `agent/knowledge/` directory is the project's in-depth knowledge base, maint
 
 ---
 
-Built with [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M), [defuddle](https://github.com/kepano/defuddle), [DocLayout-YOLO](https://huggingface.co/juliozhao/DocLayout-YOLO-DocStructBench). The hosted version at [yapit.md](https://yapit.md) also uses [Gemini](https://ai.google.dev/gemini-api) and [Inworld TTS](https://inworld.ai).
+Built with [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M), [defuddle](https://github.com/kepano/defuddle), [DocLayout-YOLO](https://huggingface.co/juliozhao/DocLayout-YOLO-DocStructBench). The hosted version at [yapit.md](https://yapit.md) also uses [Gemini](https://ai.google.dev/gemini-api).
 

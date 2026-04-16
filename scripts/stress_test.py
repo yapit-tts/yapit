@@ -122,8 +122,6 @@ DEFAULT_MIN_BUFFER_TO_START = 2
 
 MODEL_DEFAULT_VOICES = {
     "kokoro": "af_heart",
-    "inworld-1.5": "alex",
-    "inworld-1.5-max": "alex",
 }
 
 

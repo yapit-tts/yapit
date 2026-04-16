@@ -180,6 +180,7 @@ class BlockVariant(SQLModel, table=True):
 
 class PlanTier(StrEnum):
     free = auto()
+    voice = auto()
     basic = auto()
     plus = auto()
     max = auto()
@@ -244,9 +245,10 @@ _STRIPE_STATUS_MAP: dict[str, SubscriptionStatus] = {
 
 TIER_RANK: dict[PlanTier, int] = {
     PlanTier.free: 0,
-    PlanTier.basic: 1,
-    PlanTier.plus: 2,
-    PlanTier.max: 3,
+    PlanTier.voice: 1,
+    PlanTier.basic: 2,
+    PlanTier.plus: 3,
+    PlanTier.max: 4,
 }
 
 

@@ -59,13 +59,11 @@ const AboutPage = () => {
           <div className="flex gap-3">
             <Mic className="h-5 w-5 text-primary mt-1 shrink-0" />
             <div>
-              <h3 className="font-medium mb-1">170+ voices</h3>
+              <h3 className="font-medium mb-1">58 voices</h3>
               <p className="text-sm text-muted-foreground">
-                State of the art voices by{" "}
-                <a href="https://inworld.ai/" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">Inworld</a>
-                {" "}and{" "}
+                Open-source{" "}
                 <a href="https://huggingface.co/hexgrad/Kokoro-82M" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">Kokoro</a>
-                {" "}models that run locally on your PC.
+                {" "}voices that run locally in your browser or on our servers.
               </p>
             </div>
           </div>

@@ -15,7 +15,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Loader2, ArrowLeft, Check, Clock } from "lucide-react";
 import { UsageBreakdown } from "@/components/UsageBreakdown";
 
-type PlanTier = "free" | "basic" | "plus" | "max";
+type PlanTier = "free" | "voice" | "basic" | "plus" | "max";
 type BillingInterval = "monthly" | "yearly";
 
 interface Plan {
@@ -62,17 +62,16 @@ interface UsageSummary {
   schedule_pending: boolean;
 }
 
-const TIER_ORDER: PlanTier[] = ["free", "basic", "plus", "max"];
+const TIER_ORDER: PlanTier[] = ["free", "voice", "basic", "plus", "max"];
 
 const tipLink = (text: string, hash: string) => (
   <a href={`/tips#${hash}`} className="underline decoration-dotted underline-offset-2 decoration-muted-foreground/50 hover:decoration-foreground">{text}</a>
 );
 
-const PLAN_FEATURES: Record<PlanTier, React.ReactNode[]> = {
+const PLAN_FEATURES: Partial<Record<PlanTier, React.ReactNode[]>> = {
   free: [tipLink("Kokoro TTS (local, English)", "local-tts"), "100 documents"],
-  basic: ["Unlimited Kokoro TTS", "1,000 documents", tipLink("~500 AI-transformed pages*", "ai-transform"), tipLink("Unused quota accumulates**", "billing"), "Cancel anytime during trial"],
-  plus: ["Everything in Basic", tipLink("~20 hrs premium voices*", "premium-voices"), tipLink("~1,000 AI-transformed pages*", "ai-transform"), "Cancel anytime during trial"],
-  max: ["Everything in Plus", tipLink("~60 hrs premium voices*", "premium-voices"), tipLink("~1,500 AI-transformed pages*", "ai-transform")],
+  voice: ["Unlimited Kokoro TTS (server)", "500 documents", "Cancel anytime during trial"],
+  basic: ["Unlimited Kokoro TTS (server)", "1,000 documents", tipLink("~500 AI-transformed pages*", "ai-transform"), tipLink("Unused quota accumulates**", "billing"), "Cancel anytime during trial"],
 };
 
 const SubscriptionPage = () => {
@@ -110,7 +109,7 @@ const SubscriptionPage = () => {
 
   const handleSubscribe = async (tier: PlanTier) => {
     if (isAnonymous) {
-      localStorage.setItem("returnAfterSignIn", "/subscription");
+      localStorage.setItem("returnAfterSignIn", "/pricing");
       navigate("/handler/signin");
       return;
     }
@@ -190,7 +189,7 @@ const SubscriptionPage = () => {
   );
 
   return (
-    <div className="max-w-[1400px] mx-auto py-8 px-6">
+    <div className="max-w-[1000px] mx-auto py-8 px-6">
       <Button variant="ghost" className="mb-8" onClick={() => navigate(-1)}>
         <ArrowLeft className="mr-2 h-5 w-5" />
         Back
@@ -203,7 +202,7 @@ const SubscriptionPage = () => {
             <div className="flex items-center justify-between">
               <div>
                 <CardTitle className="flex items-center gap-2">
-                  {subscription.subscribed_tier.charAt(0).toUpperCase() + subscription.subscribed_tier.slice(1)} Plan
+                  {subscription.plan.name} Plan
                   {isTrialing && (
                     <span className="text-sm font-normal text-primary bg-primary/10 px-2 py-0.5 rounded-full flex items-center gap-1">
                       <Clock className="h-3 w-3" />
@@ -263,7 +262,7 @@ const SubscriptionPage = () => {
 
       {/* Plan Selection */}
       <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <h2 className="text-2xl font-semibold">Available Plans</h2>
+        <h2 className="text-2xl font-semibold">Plans</h2>
         <Tabs value={interval} onValueChange={(v) => setInterval(v as BillingInterval)}>
           <TabsList>
             <TabsTrigger value="monthly">Monthly</TabsTrigger>
@@ -281,10 +280,12 @@ const SubscriptionPage = () => {
         </p>
       )}
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
         {sortedPlans.map((plan) => {
           const isCurrent = plan.tier === currentTier;
           const isUpgrade = TIER_ORDER.indexOf(plan.tier) > TIER_ORDER.indexOf(currentTier);
+          const features = PLAN_FEATURES[plan.tier];
+          if (!features) return null;
 
           return (
             <Card
@@ -323,7 +324,7 @@ const SubscriptionPage = () => {
 
               <CardContent className="flex-1">
                 <ul className="space-y-3">
-                  {PLAN_FEATURES[plan.tier].map((feature, idx) => (
+                  {features.map((feature, idx) => (
                     <li key={idx} className="flex items-start gap-2.5">
                       <Check className="h-5 w-5 text-primary shrink-0 mt-0.5" />
                       <span>{feature}</span>
@@ -373,77 +374,10 @@ const SubscriptionPage = () => {
         })}
       </div>
 
-      {/* Value Comparison Table */}
-      <div className="mt-10 max-w-3xl mx-auto">
-        <h3 className="text-lg font-medium text-center mb-4 text-muted-foreground">Value Comparison</h3>
-        <div className="border rounded-lg overflow-hidden overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-muted/50">
-              <tr>
-                <th className="px-2 py-2 text-left font-medium"></th>
-                <th className="px-2 py-2 text-center font-medium">Basic Mo.</th>
-                <th className="px-2 py-2 text-center font-medium">Basic Yr.</th>
-                <th className="px-2 py-2 text-center font-medium">Plus Mo.</th>
-                <th className="px-2 py-2 text-center font-medium">Plus Yr.</th>
-                <th className="px-2 py-2 text-center font-medium">Max Mo.</th>
-                <th className="px-2 py-2 text-center font-medium">Max Yr.</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              <tr>
-                <td className="pl-2 pr-0 py-2 font-medium text-muted-foreground">Price</td>
-                <td className="px-2 py-2 text-center">€10/mo</td>
-                <td className="px-2 py-2 text-center">€7.5/mo eff.</td>
-                <td className="px-2 py-2 text-center">€20/mo</td>
-                <td className="px-2 py-2 text-center">€15/mo eff.</td>
-                <td className="px-2 py-2 text-center">€40/mo</td>
-                <td className="px-2 py-2 text-center">€30/mo eff.</td>
-              </tr>
-              <tr>
-                <td className="pl-2 pr-0 py-2 font-medium text-muted-foreground">Premium Voice</td>
-                <td className="px-2 py-2 text-center text-muted-foreground">—</td>
-                <td className="px-2 py-2 text-center text-muted-foreground">—</td>
-                <td className="px-2 py-2 text-center">1M</td>
-                <td className="px-2 py-2 text-center">1M</td>
-                <td className="px-2 py-2 text-center">3M</td>
-                <td className="px-2 py-2 text-center">3M</td>
-              </tr>
-              <tr>
-                <td className="pl-2 pr-0 py-2 font-medium text-muted-foreground">chars/€</td>
-                <td className="px-2 py-2 text-center text-muted-foreground">—</td>
-                <td className="px-2 py-2 text-center text-muted-foreground">—</td>
-                <td className="px-2 py-2 text-center">50k</td>
-                <td className="px-2 py-2 text-center">67k <span className="text-xs text-accent-success">+33%</span></td>
-                <td className="px-2 py-2 text-center">75k <span className="text-xs text-accent-success">+50%</span></td>
-                <td className="px-2 py-2 text-center">100k <span className="text-xs text-accent-success">+100%</span></td>
-              </tr>
-              <tr>
-                <td className="pl-2 pr-0 py-2 font-medium text-muted-foreground">AI Tokens</td>
-                <td className="px-2 py-2 text-center">5M</td>
-                <td className="px-2 py-2 text-center">5M</td>
-                <td className="px-2 py-2 text-center">10M</td>
-                <td className="px-2 py-2 text-center">10M</td>
-                <td className="px-2 py-2 text-center">15M</td>
-                <td className="px-2 py-2 text-center">15M</td>
-              </tr>
-              <tr>
-                <td className="pl-2 pr-0 py-2 font-medium text-muted-foreground">tokens/€</td>
-                <td className="px-2 py-2 text-center">500k</td>
-                <td className="px-2 py-2 text-center">667k <span className="text-xs text-accent-success">+33%</span></td>
-                <td className="px-2 py-2 text-center">500k</td>
-                <td className="px-2 py-2 text-center">667k <span className="text-xs text-accent-success">+33%</span></td>
-                <td className="px-2 py-2 text-center">375k</td>
-                <td className="px-2 py-2 text-center">500k</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-
       <p className="mt-8 text-center text-sm text-muted-foreground">
-        *Estimates vary by content and voice. TTS-1.5-Max uses 2× voice quota.
+        *Estimates vary by content complexity.
         <br />
-        **Capped at 1M voice chars / 10M AI transformation tokens.
+        **Capped at 10M AI transformation tokens.
         <br />
         Fair use applies. Paid subscriptions are non-refundable. See <a href="/terms" className="underline hover:text-foreground">Terms</a>.
       </p>

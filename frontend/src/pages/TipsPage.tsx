@@ -14,7 +14,6 @@ const sections = [
   { id: "showcase", label: "Try it out" },
   { id: "controls", label: "Controls" },
   { id: "local-tts", label: "Local TTS" },
-  { id: "premium-voices", label: "Premium voices" },
   { id: "document-processing", label: "Document processing" },
   { id: "billing", label: "Billing & quota" },
   { id: "faq", label: "FAQ" },
@@ -243,27 +242,6 @@ const TipsPage = () => {
           <li><strong className="text-foreground">No audio, no error?</strong> Check the browser console (F12). Usually an ad-blocker blocking HuggingFace or missing GPU drivers</li>
           <li><strong className="text-foreground">Very slow?</strong> You're likely on the WASM fallback. Enable WebGPU for faster processing</li>
         </ul>
-      </section>
-
-      <section id="premium-voices" className="mb-12 scroll-mt-24">
-        <h2 className="text-2xl font-semibold mb-4">Premium voices</h2>
-        <p className="text-muted-foreground mb-3">
-          Premium voices are powered by {extLink("https://inworld.ai/tts", "Inworld TTS 1.5")},
-          with voices across 15+ languages. They sound more natural
-          than Kokoro. Available on Plus and Max plans.
-        </p>
-        <p className="text-muted-foreground mb-3">
-          Usage is measured in voice characters (the text sent for synthesis).
-          Estimates are based on typical reading speed; your actual hours
-          will vary with content density and speaking rate.
-        </p>
-        <p className="text-muted-foreground">
-          <strong className="text-foreground">TTS-1.5-Max</strong> is the higher-quality variant,
-          with better stability, more natural multilingual pronunciation, and fewer edge-case
-          artifacts. It uses 2x the voice character quota.{" "}
-          <strong className="text-foreground">TTS-1.5-Mini</strong> is optimized for speed at half the cost,
-          and still sounds great for most content.
-        </p>
       </section>
 
       <section id="document-processing" className="mb-12 scroll-mt-24">

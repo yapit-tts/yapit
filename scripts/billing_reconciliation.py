@@ -11,7 +11,7 @@ Two checks:
 1. Event count: count(synthesis_complete) vs sum(billing_processed.events_count)
    Should be 0 for completed days. Non-zero on current day is OK (in-flight).
 2. Character totals: sum(synthesis_complete.text_length) vs sum(billing_processed.text_length)
-   Ratio depends on model mix (kokoro/inworld-1.5 = 1x, inworld-1.5-max = 2x).
+   Ratio depends on model mix (usage_multiplier per TTSModel).
 
 Examples::
 

@@ -344,7 +344,7 @@ const SoundControl = memo(function SoundControl({
 
   const handleUpgradePlan = useCallback(() => {
     setQuotaDismissed(true);
-    navigate("/subscription");
+    navigate("/pricing");
   }, [navigate]);
 
   const canUseLocalTTS = useCanUseLocalTTS();

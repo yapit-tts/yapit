@@ -87,7 +87,6 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"
 markers = [
-    "inworld: marks tests that require Inworld API integration",
     "gemini: marks tests that require Google Gemini API integration",
 ]
 

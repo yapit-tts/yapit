@@ -23,8 +23,6 @@ class Settings(BaseSettings):
     stack_auth_project_id: str | None = None
     stack_auth_server_key: str | None = None
 
-    inworld_api_key: str | None = None
-
     openai_tts_base_url: str | None = None
     openai_tts_api_key: str | None = None
     openai_tts_model: str | None = None
@@ -69,6 +67,8 @@ class Settings(BaseSettings):
 
     # Stripe price IDs (from stripe_setup.py output)
     # Test IDs go in .env.dev, live IDs go in .env.prod
+    stripe_price_voice_monthly: str | None = None
+    stripe_price_voice_yearly: str | None = None
     stripe_price_basic_monthly: str | None = None
     stripe_price_basic_yearly: str | None = None
     stripe_price_plus_monthly: str | None = None
