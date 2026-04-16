@@ -378,9 +378,9 @@ EOF
 
 echo "Running Claude analysis..."
 output=$(clankr run "$PROJECT_DIR" -p "$SCRIPT_DIR/report-profile" \
-    -- -p "$PROMPT" \
-    --append-system-prompt "$EXTRA_CONTEXT" \
+    -- --system-prompt "$PROMPT" \
     --output-format json \
+    -p "$EXTRA_CONTEXT" \
     2>"$REPORT_DIR/claude-stderr.log") || {
     echo "Claude analysis failed. stderr:"
     cat "$REPORT_DIR/claude-stderr.log"
