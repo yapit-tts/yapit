@@ -117,10 +117,18 @@ def _clean_pandoc_output(markdown: str) -> str:
 # Footnote ref patterns in pandoc output (after span cleanup)
 # Old-style: <sup><a href="#notes.xhtml_ntsN" id="backref">N</a></sup>
 # EPUB3: <a href="#notes.xhtml_note_N" class="noteref" role="doc-noteref">N</a>
+# Springer: \[<cite>[N](#CRn)</cite>\] (bracket-wrapped academic citation)
 _FOOTNOTE_SUP_REF = re.compile(r'<sup><a\s+href="#([^"]+)"[^>]*>\s*(\d+)\s*</a></sup>')
 _FOOTNOTE_NOTEREF = re.compile(r'<a\s+[^>]*href="#([^"]+)"[^>]*role="doc-noteref"[^>]*>\s*(\d+)\s*</a>')
 # Third pattern: pandoc converts <a>[N]</a> to markdown link [\[N\]](#target) inside <sup>
 _FOOTNOTE_SUP_MDLINK = re.compile(r"<sup>\[?\\\[(\d+)\\\]\]?\(#([^)]+)\)</sup>")
+# Springer academic: <cite>[N](#CRn)</cite>, typically wrapped in escaped brackets \[...\]
+_FOOTNOTE_CITE_MDLINK = re.compile(r"<cite>\[(\d+)\]\(#([^)]+)\)</cite>")
+# Strip escaped brackets wrapping one or more resulting footnote refs (Springer \[[^1]\] → [^1])
+_ESCAPED_BRACKETS_AROUND_FOOTNOTES = re.compile(r"\\\[((?:\[\^\d+\](?:,\s*)?)+)\\\]")
+# Springer bibliography rendered as plain text (from <div class="Heading">): "Bibliography\n\n1\.\n\n<text>..."
+# Don't eat the trailing \n\n — back-to-back bibliographies (chapter end + backmatter aggregate) need it.
+_SPRINGER_BIBLIOGRAPHY = re.compile(r"\n\nBibliography\n(?:\n\d+\\\.\n\n[^\n]+)+")
 
 
 def _get_text_content(el: ET.Element) -> str:
@@ -171,6 +179,39 @@ def _extract_div_footnotes(root: ET.Element, notes: dict[str, str]) -> None:
             notes[note_id] = text
 
 
+def _collect_text_excluding(el: ET.Element, exclude_class: str) -> str:
+    """Depth-first text concatenation that prunes any subtree whose element has `exclude_class`."""
+    parts: list[str] = []
+    if el.text:
+        parts.append(el.text)
+    for child in el:
+        if exclude_class in child.get("class", ""):
+            if child.tail:
+                parts.append(child.tail)
+            continue
+        parts.append(_collect_text_excluding(child, exclude_class))
+        if child.tail:
+            parts.append(child.tail)
+    return "".join(parts)
+
+
+def _extract_springer_citations(root: ET.Element, notes: dict[str, str]) -> None:
+    """Extract notes from Springer academic EPUBs: <div class="CitationContent" id="CRn">text</div>.
+
+    Excludes <span class="Occurrences"> badges (CrossRef/MathSciNet links) and collapses
+    whitespace — the backmatter OnlinePDF.html pretty-prints entries with ~14-space indents.
+    """
+    for div in root.iter("div"):
+        if "CitationContent" not in div.get("class", ""):
+            continue
+        cid = div.get("id")
+        if not cid:
+            continue
+        text = re.sub(r"\s+", " ", _collect_text_excluding(div, "Occurrences")).strip()
+        if text:
+            notes[cid] = text
+
+
 def extract_footnotes_from_zip(content: bytes) -> dict[str, str]:
     """Extract footnote definitions from EPUB ZIP.
 
@@ -194,6 +235,7 @@ def extract_footnotes_from_zip(content: bytes) -> dict[str, str]:
 
             _extract_epub3_notes(root, notes)
             _extract_div_footnotes(root, notes)
+            _extract_springer_citations(root, notes)
             if not notes:
                 _extract_old_style_notes(root, notes)
 
@@ -258,19 +300,27 @@ def convert_footnotes(markdown: str, notes: dict[str, str]) -> str:
     markdown = _FOOTNOTE_SUP_REF.sub(replace_ref, markdown)
     markdown = _FOOTNOTE_NOTEREF.sub(replace_ref, markdown)
     markdown = _FOOTNOTE_SUP_MDLINK.sub(replace_mdlink_ref, markdown)
+    markdown = _FOOTNOTE_CITE_MDLINK.sub(replace_mdlink_ref, markdown)
+    # Springer wraps cite refs in escaped brackets; unwrap any bracket group that now
+    # contains only footnote refs (handles both single \[[^1]\] and grouped \[[^29], [^30]\]).
+    markdown = _ESCAPED_BRACKETS_AROUND_FOOTNOTES.sub(r"\1", markdown)
 
     if not used_notes:
         return markdown
 
-    # Remove the original notes section (stop at any next heading — notes sections are flat)
+    # Remove heading-style notes sections (stop at any next heading — notes sections are flat)
     markdown = re.sub(
-        r"\n#{1,2}\s+(?:Notes(?:\s+and\s+References)?|ENDNOTES)\s*\n(?:(?!\n#).)*",
+        r"\n#{1,2}\s+(?:Notes(?:\s+and\s+References)?|ENDNOTES|Bibliography|References)\s*\n(?:(?!\n#).)*",
         "",
         markdown,
         flags=re.DOTALL,
     )
+    # Remove Springer plain-text bibliographies (<div class="Heading"> → not a markdown heading).
+    markdown = _SPRINGER_BIBLIOGRAPHY.sub("\n\n", markdown)
 
-    definitions = "\n".join(f"[^{label}]: {text}" for label, text in used_notes)
+    # Blank line between definitions — Obsidian (both live preview and reading mode)
+    # mis-parses back-to-back defs when a preceding def is a very long single line.
+    definitions = "\n\n".join(f"[^{label}]: {text}" for label, text in used_notes)
     return f"{markdown.rstrip()}\n\n{definitions}\n"
 
 
