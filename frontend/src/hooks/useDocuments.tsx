@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { useLocation } from "react-router";
 import { useApi } from "@/api";
 import { useAuthUser } from "@/hooks/useAuthUser";
@@ -14,22 +14,36 @@ interface DocumentsContextValue {
   documents: DocumentItem[];
   setDocuments: React.Dispatch<React.SetStateAction<DocumentItem[]>>;
   isLoading: boolean;
+  hasMore: boolean;
+  isFetchingMore: boolean;
+  loadMore: () => void;
 }
 
 const DocumentsContext = createContext<DocumentsContextValue | null>(null);
 
+const PAGE_SIZE = 50;
+
 export function DocumentsProvider({ children }: { children: React.ReactNode }) {
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [hasMore, setHasMore] = useState(false);
+  const [isFetchingMore, setIsFetchingMore] = useState(false);
   const { api, isAuthReady } = useApi();
   const user = useAuthUser();
   const location = useLocation();
 
+  const documentsRef = useRef(documents);
+  documentsRef.current = documents;
+  const isFetchingMoreRef = useRef(false);
+
   useEffect(() => {
     if (!isAuthReady) return;
 
-    api.get<DocumentItem[]>("/v1/documents")
-      .then((r) => setDocuments(r.data))
+    api.get<DocumentItem[]>("/v1/documents", { params: { offset: 0, limit: PAGE_SIZE } })
+      .then((r) => {
+        setDocuments(r.data);
+        setHasMore(r.data.length === PAGE_SIZE);
+      })
       .catch((err) => console.error("Failed to fetch documents:", err))
       .finally(() => setIsLoading(false));
   }, [api, isAuthReady, user, location.pathname]);
@@ -45,16 +59,40 @@ export function DocumentsProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const refetch = () => {
-      api.get<DocumentItem[]>("/v1/documents")
-        .then((r) => setDocuments(r.data))
+      api.get<DocumentItem[]>("/v1/documents", { params: { offset: 0, limit: PAGE_SIZE } })
+        .then((r) => {
+          setDocuments(r.data);
+          setHasMore(r.data.length === PAGE_SIZE);
+        })
         .catch(console.error);
     };
     window.addEventListener("documents-changed", refetch);
     return () => window.removeEventListener("documents-changed", refetch);
   }, [api]);
 
+  const loadMore = useCallback(() => {
+    if (isFetchingMoreRef.current) return;
+    isFetchingMoreRef.current = true;
+    setIsFetchingMore(true);
+
+    const offset = documentsRef.current.length;
+    api.get<DocumentItem[]>("/v1/documents", { params: { offset, limit: PAGE_SIZE } })
+      .then((r) => {
+        setDocuments((prev) => {
+          const seen = new Set(prev.map((d) => d.id));
+          return [...prev, ...r.data.filter((d) => !seen.has(d.id))];
+        });
+        setHasMore(r.data.length === PAGE_SIZE);
+      })
+      .catch((err) => console.error("Failed to fetch more documents:", err))
+      .finally(() => {
+        isFetchingMoreRef.current = false;
+        setIsFetchingMore(false);
+      });
+  }, [api]);
+
   return (
-    <DocumentsContext value={{ documents, setDocuments, isLoading }}>
+    <DocumentsContext value={{ documents, setDocuments, isLoading, hasMore, isFetchingMore, loadMore }}>
       {children}
     </DocumentsContext>
   );
