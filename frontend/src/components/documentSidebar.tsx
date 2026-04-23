@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import {
   Sidebar,
@@ -82,7 +82,8 @@ function ThemeToggle() {
 }
 
 function DocumentSidebar() {
-  const { documents, setDocuments, isLoading } = useDocuments();
+  const { documents, setDocuments, isLoading, hasMore, isFetchingMore, loadMore } = useDocuments();
+  const sentinelRef = useRef<HTMLLIElement | null>(null);
   const [renameDoc, setRenameDoc] = useState<DocumentItem | null>(null);
   const [newTitle, setNewTitle] = useState("");
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
@@ -104,6 +105,21 @@ function DocumentSidebar() {
       .then((r) => setSubscription(r.data))
       .catch(() => {});
   }, [api, isAuthReady, isAnonymous, user]);
+
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el || !hasMore) return;
+
+    const root = el.closest('[data-sidebar="content"]') as HTMLElement | null;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) loadMore();
+      },
+      { root, rootMargin: "200px" },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [hasMore, loadMore]);
 
   const handleDeleteDocument = async (e: React.MouseEvent, docId: string) => {
     e.stopPropagation();
@@ -207,7 +223,8 @@ function DocumentSidebar() {
                   No documents yet
                 </div>
               ) : (
-                documents.map((doc) => (
+                <>
+                {documents.map((doc) => (
                   <SidebarMenuItem key={doc.id}>
                     <SidebarMenuButton
                       asChild
@@ -265,7 +282,14 @@ function DocumentSidebar() {
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </SidebarMenuItem>
-                ))
+                ))}
+                {hasMore && <li ref={sentinelRef} className="h-px" aria-hidden />}
+                {isFetchingMore && (
+                  <div className="flex items-center justify-center py-2">
+                    <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                  </div>
+                )}
+                </>
               )}
             </SidebarMenu>
           </SidebarGroupContent>
