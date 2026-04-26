@@ -25,6 +25,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from yapit.contracts import (
     MAX_CONCURRENT_EXTRACTIONS,
+    MAX_EXTRACTION_PROMPT_LENGTH,
     MAX_STORAGE_FREE,
     MAX_STORAGE_GUEST,
     MAX_STORAGE_PAID,
@@ -268,11 +269,14 @@ class DocumentCreateRequest(BasePreparedDocumentCreateRequest):
         pages: List of page indices to process (0-indexed). None = all pages.
         ai_transform: Use AI-powered extraction (requires subscription). False = free extraction.
         batch_mode: Submit as batch job (50% cheaper, async). Only valid with ai_transform=True.
+        extraction_prompt: Per-request override for the AI extraction prompt. Falls back
+            to the user's stored preference, then the server default. Requires ai_transform=true.
     """
 
     pages: list[int] | None = Field(None, max_length=1500)
     ai_transform: bool = False
     batch_mode: bool = False
+    extraction_prompt: str | None = Field(None, max_length=MAX_EXTRACTION_PROMPT_LENGTH)
 
 
 class WebsiteDocumentCreateRequest(BasePreparedDocumentCreateRequest):
@@ -293,6 +297,7 @@ class ExtractionAcceptedResponse(BaseModel):
     extraction_id: str
     content_hash: str
     total_pages: int
+    prompt_hash: str | None = None
 
 
 class BatchSubmittedResponse(BaseModel):
@@ -301,6 +306,7 @@ class BatchSubmittedResponse(BaseModel):
     content_hash: str
     total_pages: int
     submitted_at: str
+    prompt_hash: str | None = None
 
 
 class ExtractionStatusResponse(BaseModel):
@@ -329,6 +335,7 @@ class ExtractionStatusRequest(BaseModel):
     content_hash: str
     ai_transform: bool
     pages: list[int] = Field(max_length=1500)
+    prompt_hash: str | None = None
 
 
 @router.post("/extraction/status", response_model=ExtractionStatusResponse)
@@ -369,7 +376,7 @@ async def get_extraction_status(
     if not config or not config.extraction_cache_prefix:
         return ExtractionStatusResponse(total_pages=len(req.pages), completed_pages=[], status="processing")
 
-    keys = [config.extraction_cache_key(req.content_hash, idx) for idx in req.pages]
+    keys = [config.extraction_cache_key(req.content_hash, idx, req.prompt_hash) for idx in req.pages]
     cached_keys = await extraction_cache.batch_exists(keys)
     completed = [idx for idx, key in zip(req.pages, keys) if key in cached_keys]
 
@@ -816,6 +823,7 @@ async def _submit_batch_extraction(
             content_hash=content_hash,
             total_pages=len(pages_requested),
             submitted_at=submitted_at,
+            prompt_hash=prompt_hash,
         )
 
     uncached_list = sorted(uncached_pages)
@@ -877,6 +885,7 @@ async def _submit_batch_extraction(
         content_hash=content_hash,
         total_pages=len(pages_requested),
         submitted_at=submitted_at,
+        prompt_hash=prompt_hash,
     )
 
 
@@ -1206,11 +1215,19 @@ async def create_document(
             detail="batch_mode requires ai_transform=true",
         )
 
+    if req.extraction_prompt and not req.ai_transform:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="extraction_prompt requires ai_transform=true",
+        )
+
     if req.batch_mode and (not ai_extractor_config or not ai_extractor_config.supports_batch):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Batch mode is not supported by the configured AI processor",
         )
+
+    extraction_prompt = req.extraction_prompt or (prefs.extraction_prompt if prefs else None)
 
     if req.batch_mode:
         return await _submit_batch_extraction(
@@ -1233,7 +1250,7 @@ async def create_document(
             redis=redis,
             extraction_cache=extraction_cache,
             image_storage=image_storage,
-            extraction_prompt=prefs.extraction_prompt if prefs else None,
+            extraction_prompt=extraction_prompt,
         )
 
     # AI extraction requires extractor configured + content type supported
@@ -1304,7 +1321,7 @@ async def create_document(
             ai_extractor=ai_extractor,
             redis=redis,
             ratelimit_key=ratelimit_key,
-            extraction_prompt=prefs.extraction_prompt if prefs else None,
+            extraction_prompt=extraction_prompt,
         )
     )
     _background_tasks.add(task)
@@ -1314,6 +1331,7 @@ async def create_document(
         extraction_id=extraction_id,
         content_hash=content_hash,
         total_pages=cached_doc.metadata.total_pages,
+        prompt_hash=_hash_prompt(extraction_prompt) if extraction_prompt else None,
     )
 
 

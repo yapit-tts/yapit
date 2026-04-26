@@ -49,6 +49,7 @@ interface ExtractionAcceptedResponse {
   extraction_id: string;
   content_hash: string;
   total_pages: number;
+  prompt_hash: string | null;
 }
 
 interface DocumentCreateResponse {
@@ -61,6 +62,7 @@ interface BatchSubmittedResponse {
   content_hash: string;
   total_pages: number;
   submitted_at: string;
+  prompt_hash: string | null;
 }
 
 type InputMode = "idle" | "text" | "url" | "file";
@@ -284,6 +286,7 @@ export function UnifiedInput() {
             content_hash: accepted.content_hash,
             ai_transform: useAiTransform,
             pages: requestedPages,
+            prompt_hash: accepted.prompt_hash,
           });
           const statusData = statusResponse.data;
           setCompletedPages(statusData.completed_pages);

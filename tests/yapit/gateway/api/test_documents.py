@@ -176,6 +176,38 @@ async def test_document_create_invalid_page_numbers(client, as_test_user):
         assert "Document has 3 pages" in create_response.json()["detail"]
 
 
+@pytest.mark.asyncio
+async def test_document_create_extraction_prompt_requires_ai(client, as_test_user):
+    """A custom extraction_prompt only makes sense with ai_transform=true."""
+    mock_content = b"fake pdf"
+
+    with (
+        patch("yapit.gateway.api.v1.documents.download_document") as mock_download,
+        patch("yapit.gateway.api.v1.documents._extract_document_info") as mock_extract,
+    ):
+        mock_download.return_value = (mock_content, "application/pdf")
+        mock_extract.return_value = (1, "Test PDF")
+
+        prepare_response = await client.post(
+            "/v1/documents/prepare",
+            json={"url": "https://example.com/test.pdf"},
+        )
+        assert prepare_response.status_code == 200
+        prepare_data = prepare_response.json()
+
+        create_response = await client.post(
+            "/v1/documents/document",
+            json={
+                "hash": prepare_data["hash"],
+                "ai_transform": False,
+                "extraction_prompt": "extract only the abstract",
+            },
+        )
+
+        assert create_response.status_code == 422
+        assert "extraction_prompt requires ai_transform=true" in create_response.json()["detail"]
+
+
 @pytest.mark.parametrize(
     "content_type,expected",
     [

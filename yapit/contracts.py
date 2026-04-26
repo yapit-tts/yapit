@@ -22,6 +22,8 @@ MAX_STORAGE_GUEST: Final[int] = 10 * 1024 * 1024  # 10MB
 MAX_STORAGE_FREE: Final[int] = 50 * 1024 * 1024  # 50MB
 MAX_STORAGE_PAID: Final[int] = 500 * 1024 * 1024  # 500MB
 
+MAX_EXTRACTION_PROMPT_LENGTH: Final[int] = 50_000
+
 # Queue structure (sorted set + hashes for efficient eviction)
 TTS_QUEUE: Final[str] = "tts:queue:{model}"  # sorted set: job_id -> timestamp
 TTS_JOBS: Final[str] = "tts:jobs"  # hash: job_id -> job_json
