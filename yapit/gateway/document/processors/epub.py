@@ -128,7 +128,7 @@ _FOOTNOTE_CITE_MDLINK = re.compile(r"<cite>\[(\d+)\]\(#([^)]+)\)</cite>")
 _ESCAPED_BRACKETS_AROUND_FOOTNOTES = re.compile(r"\\\[((?:\[\^\d+\](?:,\s*)?)+)\\\]")
 # Springer bibliography rendered as plain text (from <div class="Heading">): "Bibliography\n\n1\.\n\n<text>..."
 # Don't eat the trailing \n\n — back-to-back bibliographies (chapter end + backmatter aggregate) need it.
-_SPRINGER_BIBLIOGRAPHY = re.compile(r"\n\nBibliography\n(?:\n\d+\\\.\n\n[^\n]+)+")
+_SPRINGER_BIBLIOGRAPHY = re.compile(r"\n\nBibliography\n(?:\n+\d+\\\.\n+[^\n]+)+")
 
 
 def _get_text_content(el: ET.Element) -> str:

@@ -262,21 +262,28 @@ class TestConvertFootnotes:
         Each entry is `N\.\n\n<text>\n\n`. Strip the whole block when refs match.
         """
         md = (
-            "Chapter text with ref \\[<cite>[1](#CR1)</cite>\\].\n\n"
+            "Chapter text with refs \\[<cite>[1](#CR1)</cite>\\] \\[<cite>[2](#CR2)</cite>\\].\n\n"
             "Bibliography\n\n"
             "1\\.\n\n"
             "D. Godse, Computer Organisation.\n\n"
             "2\\.\n\n"
             "Wikipedia, 2011.\n\n"
+            "3\\.\n\n"
+            "S. Okamura, History of electron tubes. IOS Press, 1994.\n\n"
             "© Springer copyright boilerplate\n"
         )
-        notes = {"CR1": "D. Godse, Computer Organisation."}
+        notes = {"CR1": "D. Godse, Computer Organisation.", "CR2": "Wikipedia, 2011."}
 
         result = convert_footnotes(md, notes)
         assert "Bibliography\n" not in result
+        # All numbered entry markers stripped from body, not just the first
         assert "1\\." not in result
-        assert "D. Godse, Computer Organisation.\n\n" not in result  # stripped from body
+        assert "2\\." not in result
+        assert "3\\." not in result
+        assert "Wikipedia, 2011.\n\n" not in result  # second entry text stripped from body
+        assert "S. Okamura" not in result  # entry beyond used notes still stripped
         assert "[^1]: D. Godse, Computer Organisation." in result  # kept in footnote def
+        assert "[^2]: Wikipedia, 2011." in result
 
     def test_definitions_separated_by_blank_lines(self):
         """Obsidian's live preview mis-parses back-to-back footnote defs after
