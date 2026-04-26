@@ -1,6 +1,6 @@
-"""Tests for EPUB footnote extraction and conversion.
+r"""Tests for EPUB footnote extraction and conversion.
 
-Two patterns exist in the wild:
+Patterns in the wild:
 
 1. Old-style HTML (e.g., Ubiquity): refs and definitions both survive in pandoc
    output as HTML links. Definitions are in a notes section at the end.
@@ -12,7 +12,12 @@ Two patterns exist in the wild:
    - Ref: <a href="#notes.xhtml_note_N" class="noteref" role="doc-noteref">N</a>
    - Def (in ZIP): <li><span id="note_N"><a epub:type="backlink">N</a> text</span></li>
 
-Both patterns are converted to markdown footnotes: [^N] / [^N]: text
+3. Springer academic (e.g., Why Greatness Cannot Be Planned): inline cites
+   wrapped in brackets. Targets live in a Bibliography div, not a notes section.
+   - Ref (pandoc output): \[<cite>[N](#CRn)</cite>\]
+   - Def (in ZIP): <div class="CitationContent" id="CRn">text</div>
+
+All patterns are converted to markdown footnotes: [^N] / [^N]: text
 """
 
 import pytest
@@ -104,6 +109,31 @@ class TestExtractFootnotesFromZip:
         result = extract_footnotes_from_zip(self._make_epub_zip(notes_xhtml))
         assert result["footnote-008"] == "Gibbon, The Decline and Fall."
         assert result["footnote-007"] == "Aristotle, Metaphysics."
+
+    def test_extracts_springer_citations(self):
+        """Springer academic: <div class="CitationContent" id="CRn"> inside Bibliography div."""
+        notes_xhtml = """<?xml version="1.0" encoding="UTF-8"?>
+        <html xmlns="http://www.w3.org/1999/xhtml">
+        <body>
+        <p>Chapter text with ref [<cite><a href="#CR1">1</a></cite>].</p>
+        <div class="Bibliography" id="Bib1">
+        <div class="Heading">Bibliography</div>
+        <div class="BibliographyWrapper">
+        <div class="Citation">
+        <div class="CitationNumber">1.</div>
+        <div class="CitationContent" id="CR1">D. Godse, Computer Organisation. Technical Publications, 2009.</div>
+        </div>
+        <div class="Citation">
+        <div class="CitationNumber">2.</div>
+        <div class="CitationContent" id="CR2">Wikipedia, "Instructions per second," 2011.</div>
+        </div>
+        </div>
+        </div>
+        </body></html>"""
+
+        result = extract_footnotes_from_zip(self._make_epub_zip(notes_xhtml))
+        assert result["CR1"].startswith("D. Godse")
+        assert "Instructions per second" in result["CR2"]
 
     def test_returns_empty_for_epub_without_notes(self):
         no_notes_xhtml = """<?xml version="1.0" encoding="UTF-8"?>
@@ -202,6 +232,68 @@ class TestConvertFootnotes:
         result = convert_footnotes(md, notes)
         assert "# Notes and References" not in result
         assert "[^1]: The note text." in result
+
+    def test_converts_springer_cite_refs(self):
+        r"""Springer: \[<cite>[N](#CRn)</cite>\] → [^N], escaped brackets stripped."""
+        md = r"ENIAC executed 5,000 instructions per second \[<cite>[1](#A328923_1_En_1_Chapter.html_CR1)</cite>\]."
+        notes = {"CR1": "D. Godse, Computer Organisation."}
+
+        result = convert_footnotes(md, notes)
+        assert "[^1]" in result
+        assert "[^1]: D. Godse, Computer Organisation." in result
+        assert "<cite>" not in result
+        assert r"\[" not in result  # escaped brackets around the ref removed
+
+    def test_converts_grouped_springer_cites(self):
+        r"""Springer: \[<cite>[A]...</cite>, <cite>[B]...</cite>\] → [^A], [^B]."""
+        md = r"Combined refs \[<cite>[29](#ch.html_CR29)</cite>, <cite>[30](#ch.html_CR30)</cite>\] here."
+        notes = {"CR29": "Note 29.", "CR30": "Note 30."}
+
+        result = convert_footnotes(md, notes)
+        assert "[^1]" in result
+        assert "[^2]" in result
+        assert "<cite>" not in result
+        # Escaped brackets wrapping the group are removed
+        assert r"\[" not in result
+
+    def test_strips_springer_plain_text_bibliography(self):
+        r"""Springer renders Bibliography as div, pandoc emits plain-text section.
+
+        Each entry is `N\.\n\n<text>\n\n`. Strip the whole block when refs match.
+        """
+        md = (
+            "Chapter text with refs \\[<cite>[1](#CR1)</cite>\\] \\[<cite>[2](#CR2)</cite>\\].\n\n"
+            "Bibliography\n\n"
+            "1\\.\n\n"
+            "D. Godse, Computer Organisation.\n\n"
+            "2\\.\n\n"
+            "Wikipedia, 2011.\n\n"
+            "3\\.\n\n"
+            "S. Okamura, History of electron tubes. IOS Press, 1994.\n\n"
+            "© Springer copyright boilerplate\n"
+        )
+        notes = {"CR1": "D. Godse, Computer Organisation.", "CR2": "Wikipedia, 2011."}
+
+        result = convert_footnotes(md, notes)
+        assert "Bibliography\n" not in result
+        # All numbered entry markers stripped from body, not just the first
+        assert "1\\." not in result
+        assert "2\\." not in result
+        assert "3\\." not in result
+        assert "Wikipedia, 2011.\n\n" not in result  # second entry text stripped from body
+        assert "S. Okamura" not in result  # entry beyond used notes still stripped
+        assert "[^1]: D. Godse, Computer Organisation." in result  # kept in footnote def
+        assert "[^2]: Wikipedia, 2011." in result
+
+    def test_definitions_separated_by_blank_lines(self):
+        """Obsidian's live preview mis-parses back-to-back footnote defs after
+        very long lines. Blank line separation keeps every parser happy.
+        """
+        md = 'First<sup><a href="#n1">1</a></sup> second<sup><a href="#n2">2</a></sup>.'
+        notes = {"n1": "Note one.", "n2": "Note two."}
+
+        result = convert_footnotes(md, notes)
+        assert "[^1]: Note one.\n\n[^2]: Note two." in result
 
     def test_suffix_matching_handles_any_filename_prefix(self):
         """Pandoc prefixes IDs with the source filename. Suffix matching handles this."""
