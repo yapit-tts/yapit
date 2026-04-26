@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy import func, update
 from sqlmodel import col, delete, select
 
+from yapit.contracts import MAX_EXTRACTION_PROMPT_LENGTH
 from yapit.gateway.auth import ANONYMOUS_ID_PREFIX, verify_anonymous_token
 from yapit.gateway.constants import estimate_duration_ms
 from yapit.gateway.deps import AuthenticatedUser, DbSession, SettingsDep, StripeClient
@@ -145,7 +146,6 @@ class PreferencesResponse(BaseModel):
 
 
 VoiceSlug = Annotated[str, StringConstraints(max_length=64)]
-MAX_EXTRACTION_PROMPT_LENGTH = 50_000
 
 
 class PreferencesUpdate(BaseModel):
