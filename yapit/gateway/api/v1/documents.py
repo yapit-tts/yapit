@@ -297,6 +297,7 @@ class ExtractionAcceptedResponse(BaseModel):
     extraction_id: str
     content_hash: str
     total_pages: int
+    prompt_hash: str | None = None
 
 
 class BatchSubmittedResponse(BaseModel):
@@ -305,6 +306,7 @@ class BatchSubmittedResponse(BaseModel):
     content_hash: str
     total_pages: int
     submitted_at: str
+    prompt_hash: str | None = None
 
 
 class ExtractionStatusResponse(BaseModel):
@@ -333,6 +335,7 @@ class ExtractionStatusRequest(BaseModel):
     content_hash: str
     ai_transform: bool
     pages: list[int] = Field(max_length=1500)
+    prompt_hash: str | None = None
 
 
 @router.post("/extraction/status", response_model=ExtractionStatusResponse)
@@ -373,7 +376,7 @@ async def get_extraction_status(
     if not config or not config.extraction_cache_prefix:
         return ExtractionStatusResponse(total_pages=len(req.pages), completed_pages=[], status="processing")
 
-    keys = [config.extraction_cache_key(req.content_hash, idx) for idx in req.pages]
+    keys = [config.extraction_cache_key(req.content_hash, idx, req.prompt_hash) for idx in req.pages]
     cached_keys = await extraction_cache.batch_exists(keys)
     completed = [idx for idx, key in zip(req.pages, keys) if key in cached_keys]
 
@@ -820,6 +823,7 @@ async def _submit_batch_extraction(
             content_hash=content_hash,
             total_pages=len(pages_requested),
             submitted_at=submitted_at,
+            prompt_hash=prompt_hash,
         )
 
     uncached_list = sorted(uncached_pages)
@@ -881,6 +885,7 @@ async def _submit_batch_extraction(
         content_hash=content_hash,
         total_pages=len(pages_requested),
         submitted_at=submitted_at,
+        prompt_hash=prompt_hash,
     )
 
 
@@ -1326,6 +1331,7 @@ async def create_document(
         extraction_id=extraction_id,
         content_hash=content_hash,
         total_pages=cached_doc.metadata.total_pages,
+        prompt_hash=_hash_prompt(extraction_prompt) if extraction_prompt else None,
     )
 
 
