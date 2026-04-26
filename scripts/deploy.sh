@@ -162,6 +162,25 @@ echo "  ✓ Frontend OK"
 RUNNING_COMMIT=$(curl -sf "https://yapit.md/api/version" 2>/dev/null | grep -oP '"commit":\s*"\K[^"]+' || echo "unknown")
 echo "  Gateway image: ${RUNNING_COMMIT:0:12}"
 
+# --- Update external workers (Tailscale-connected GPU/CPU boxes) ---
+# Pull-based: workers fetch jobs from Redis. Failure to update one host
+# doesn't affect the gateway — others (and their existing containers)
+# keep working. WORKER_HOSTS is space-separated SSH targets; REDIS_URL
+# must already be set in each host's shell profile.
+if [ -n "${WORKER_HOSTS:-}" ]; then
+  log "Updating external workers..."
+  for host in $WORKER_HOSTS; do
+    ssh "$host" '
+      set -e
+      rm -rf /tmp/yapit-worker
+      git clone --depth=1 https://github.com/yapit-tts/yapit /tmp/yapit-worker >/dev/null
+      cd /tmp/yapit-worker
+      docker compose -f docker-compose.worker.yml pull
+      docker compose -f docker-compose.worker.yml up -d
+    ' && echo "  ✓ $host updated" || echo "  ✗ $host update failed (continuing)"
+  done
+fi
+
 log "Deploy complete"
 COMMIT_MSG=$(git log -1 --format=%s "$GIT_COMMIT" 2>/dev/null || echo "")
 echo "$(date -Iseconds)  ${RUNNING_COMMIT:0:12}  $COMMIT_MSG" >> .deploys.log
