@@ -16,7 +16,7 @@ from xml.etree import ElementTree as ET
 
 import httpx
 import pymupdf
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, UploadFile, status
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.responses import HTMLResponse
 from loguru import logger
 from pydantic import BaseModel, Field, HttpUrl, StringConstraints, ValidationError
@@ -25,6 +25,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from yapit.contracts import (
     MAX_CONCURRENT_EXTRACTIONS,
+    MAX_EXTRACTION_PROMPT_LENGTH,
     MAX_STORAGE_FREE,
     MAX_STORAGE_GUEST,
     MAX_STORAGE_PAID,
@@ -216,6 +217,7 @@ async def check_storage_limit(user_id: str, is_anonymous: bool, db: DbSession) -
 
 class DocumentPrepareRequest(BaseModel):
     url: HttpUrl
+    extraction_prompt: str | None = Field(None, max_length=MAX_EXTRACTION_PROMPT_LENGTH)
 
 
 class DocumentPrepareResponse(BaseModel):
@@ -225,7 +227,8 @@ class DocumentPrepareResponse(BaseModel):
         hash: SHA256 hash of the document content (for uploads) or url (for urls), used as cache key
         content_hash: SHA256 hash of actual content (for extraction progress tracking)
         endpoint: Which API endpoint the client should use to create the document
-        uncached_pages: Page numbers without AI extraction cache (empty if AI extractor not configured/supported)
+        uncached_pages: Page numbers without AI extraction cache for the supplied extraction_prompt
+            (empty if AI extractor not configured/supported for this content type)
     """
 
     hash: str
@@ -268,11 +271,14 @@ class DocumentCreateRequest(BasePreparedDocumentCreateRequest):
         pages: List of page indices to process (0-indexed). None = all pages.
         ai_transform: Use AI-powered extraction (requires subscription). False = free extraction.
         batch_mode: Submit as batch job (50% cheaper, async). Only valid with ai_transform=True.
+        extraction_prompt: Per-request override for the AI extraction prompt. Falls back
+            to the user's stored preference, then the server default. Requires ai_transform=true.
     """
 
     pages: list[int] | None = Field(None, max_length=1500)
     ai_transform: bool = False
     batch_mode: bool = False
+    extraction_prompt: str | None = Field(None, max_length=MAX_EXTRACTION_PROMPT_LENGTH)
 
 
 class WebsiteDocumentCreateRequest(BasePreparedDocumentCreateRequest):
@@ -293,6 +299,7 @@ class ExtractionAcceptedResponse(BaseModel):
     extraction_id: str
     content_hash: str
     total_pages: int
+    prompt_hash: str | None = None
 
 
 class BatchSubmittedResponse(BaseModel):
@@ -301,6 +308,7 @@ class BatchSubmittedResponse(BaseModel):
     content_hash: str
     total_pages: int
     submitted_at: str
+    prompt_hash: str | None = None
 
 
 class ExtractionStatusResponse(BaseModel):
@@ -329,6 +337,7 @@ class ExtractionStatusRequest(BaseModel):
     content_hash: str
     ai_transform: bool
     pages: list[int] = Field(max_length=1500)
+    prompt_hash: str | None = None
 
 
 @router.post("/extraction/status", response_model=ExtractionStatusResponse)
@@ -369,7 +378,7 @@ async def get_extraction_status(
     if not config or not config.extraction_cache_prefix:
         return ExtractionStatusResponse(total_pages=len(req.pages), completed_pages=[], status="processing")
 
-    keys = [config.extraction_cache_key(req.content_hash, idx) for idx in req.pages]
+    keys = [config.extraction_cache_key(req.content_hash, idx, req.prompt_hash) for idx in req.pages]
     cached_keys = await extraction_cache.batch_exists(keys)
     completed = [idx for idx, key in zip(req.pages, keys) if key in cached_keys]
 
@@ -438,6 +447,7 @@ async def prepare_document(
 ) -> DocumentPrepareResponse:
     """Prepare a document from URL for creation."""
     url = str(body.url)
+    prompt_hash = _hash_prompt(body.extraction_prompt) if body.extraction_prompt else None
 
     arxiv_id = _detect_arxiv_id(url)
     if arxiv_id:
@@ -456,12 +466,14 @@ async def prepare_document(
         endpoint = _get_endpoint_type_from_content_type(cached_doc.metadata.content_type)
         # Compute content_hash for extraction cache lookup
         content_hash = hashlib.sha256(cached_doc.content).hexdigest() if cached_doc.content else url_hash
-        if ai_extractor_config and ai_extractor_config.is_supported(cached_doc.metadata.content_type):
-            uncached_pages = await _get_uncached_pages(
-                content_hash, cached_doc.metadata.total_pages, extraction_cache, ai_extractor_config
-            )
-        else:
-            uncached_pages: set[int] = set()
+        uncached_pages = await _get_uncached_pages(
+            content_hash,
+            cached_doc.metadata.total_pages,
+            cached_doc.metadata.content_type,
+            extraction_cache,
+            ai_extractor_config,
+            prompt_hash,
+        )
         return DocumentPrepareResponse(
             hash=url_hash,
             content_hash=content_hash,
@@ -489,12 +501,9 @@ async def prepare_document(
     await file_cache.store(url_hash, cached_doc.model_dump_json().encode())
 
     content_hash = hashlib.sha256(content).hexdigest()
-    if ai_extractor_config and ai_extractor_config.is_supported(content_type):
-        uncached_pages = await _get_uncached_pages(
-            content_hash, metadata.total_pages, extraction_cache, ai_extractor_config
-        )
-    else:
-        uncached_pages: set[int] = set()
+    uncached_pages = await _get_uncached_pages(
+        content_hash, metadata.total_pages, content_type, extraction_cache, ai_extractor_config, prompt_hash
+    )
     return DocumentPrepareResponse(
         hash=url_hash, content_hash=content_hash, metadata=metadata, endpoint=endpoint, uncached_pages=uncached_pages
     )
@@ -508,6 +517,7 @@ async def prepare_document_upload(
     file_cache: DocumentCache,
     extraction_cache: ExtractionCache,
     ai_extractor_config: AiExtractorConfigDep,
+    extraction_prompt: Annotated[str | None, Form(max_length=MAX_EXTRACTION_PROMPT_LENGTH)] = None,
 ) -> DocumentPrepareResponse:
     """Prepare a document from file upload."""
     t0 = time.monotonic()
@@ -515,6 +525,7 @@ async def prepare_document_upload(
     if not content:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Empty file")
 
+    prompt_hash = _hash_prompt(extraction_prompt) if extraction_prompt else None
     cache_key = hashlib.sha256(content).hexdigest()
     cached_data = await file_cache.retrieve_data(cache_key)
     if cached_data:
@@ -523,12 +534,14 @@ async def prepare_document_upload(
             "document_cache_hit",
             data={"cache_type": "upload", "content_type": cached_doc.metadata.content_type},
         )
-        if ai_extractor_config and ai_extractor_config.is_supported(cached_doc.metadata.content_type):
-            uncached_pages = await _get_uncached_pages(
-                cache_key, cached_doc.metadata.total_pages, extraction_cache, ai_extractor_config
-            )
-        else:
-            uncached_pages: set[int] = set()
+        uncached_pages = await _get_uncached_pages(
+            cache_key,
+            cached_doc.metadata.total_pages,
+            cached_doc.metadata.content_type,
+            extraction_cache,
+            ai_extractor_config,
+            prompt_hash,
+        )
         logger.info(f"prepare/upload cache hit in {time.monotonic() - t0:.2f}s")
         return DocumentPrepareResponse(
             hash=cache_key,
@@ -560,12 +573,9 @@ async def prepare_document_upload(
     cached_doc = CachedDocument(metadata=metadata, content=content)
     await file_cache.store(cache_key, cached_doc.model_dump_json().encode())
 
-    if ai_extractor_config and ai_extractor_config.is_supported(content_type):
-        uncached_pages = await _get_uncached_pages(
-            cache_key, metadata.total_pages, extraction_cache, ai_extractor_config
-        )
-    else:
-        uncached_pages: set[int] = set()
+    uncached_pages = await _get_uncached_pages(
+        cache_key, metadata.total_pages, content_type, extraction_cache, ai_extractor_config, prompt_hash
+    )
     logger.info(f"prepare/upload in {time.monotonic() - t0:.2f}s")
     endpoint = _get_endpoint_type_from_content_type(content_type)
     return DocumentPrepareResponse(
@@ -816,6 +826,7 @@ async def _submit_batch_extraction(
             content_hash=content_hash,
             total_pages=len(pages_requested),
             submitted_at=submitted_at,
+            prompt_hash=prompt_hash,
         )
 
     uncached_list = sorted(uncached_pages)
@@ -877,6 +888,7 @@ async def _submit_batch_extraction(
         content_hash=content_hash,
         total_pages=len(pages_requested),
         submitted_at=submitted_at,
+        prompt_hash=prompt_hash,
     )
 
 
@@ -1206,11 +1218,19 @@ async def create_document(
             detail="batch_mode requires ai_transform=true",
         )
 
+    if req.extraction_prompt and not req.ai_transform:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="extraction_prompt requires ai_transform=true",
+        )
+
     if req.batch_mode and (not ai_extractor_config or not ai_extractor_config.supports_batch):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Batch mode is not supported by the configured AI processor",
         )
+
+    extraction_prompt = req.extraction_prompt or (prefs.extraction_prompt if prefs else None)
 
     if req.batch_mode:
         return await _submit_batch_extraction(
@@ -1233,7 +1253,7 @@ async def create_document(
             redis=redis,
             extraction_cache=extraction_cache,
             image_storage=image_storage,
-            extraction_prompt=prefs.extraction_prompt if prefs else None,
+            extraction_prompt=extraction_prompt,
         )
 
     # AI extraction requires extractor configured + content type supported
@@ -1304,7 +1324,7 @@ async def create_document(
             ai_extractor=ai_extractor,
             redis=redis,
             ratelimit_key=ratelimit_key,
-            extraction_prompt=prefs.extraction_prompt if prefs else None,
+            extraction_prompt=extraction_prompt,
         )
     )
     _background_tasks.add(task)
@@ -1314,6 +1334,7 @@ async def create_document(
         extraction_id=extraction_id,
         content_hash=content_hash,
         total_pages=cached_doc.metadata.total_pages,
+        prompt_hash=_hash_prompt(extraction_prompt) if extraction_prompt else None,
     )
 
 
@@ -1702,12 +1723,15 @@ def _get_endpoint_type_from_content_type(content_type: str | None) -> Literal["w
 async def _get_uncached_pages(
     content_hash: str,
     total_pages: int,
+    content_type: str,
     extraction_cache: Cache,
-    ai_config: ProcessorConfig,
+    ai_config: ProcessorConfig | None,
+    prompt_hash: str | None = None,
 ) -> set[int]:
-    """Pages without AI extraction cache."""
-    assert ai_config.extraction_cache_prefix
-    keys = [ai_config.extraction_cache_key(content_hash, idx) for idx in range(total_pages)]
+    """Pages without AI extraction cache for the given prompt. Empty when AI is unavailable for this content type."""
+    if not ai_config or not ai_config.is_supported(content_type) or not ai_config.extraction_cache_prefix:
+        return set()
+    keys = [ai_config.extraction_cache_key(content_hash, idx, prompt_hash) for idx in range(total_pages)]
     cached_keys = await extraction_cache.batch_exists(keys)
     cached_indices = {idx for idx, key in enumerate(keys) if key in cached_keys}
     return set(range(total_pages)) - cached_indices

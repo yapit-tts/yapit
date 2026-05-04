@@ -49,6 +49,7 @@ interface ExtractionAcceptedResponse {
   extraction_id: string;
   content_hash: string;
   total_pages: number;
+  prompt_hash: string | null;
 }
 
 interface DocumentCreateResponse {
@@ -61,6 +62,7 @@ interface BatchSubmittedResponse {
   content_hash: string;
   total_pages: number;
   submitted_at: string;
+  prompt_hash: string | null;
 }
 
 type InputMode = "idle" | "text" | "url" | "file";
@@ -188,6 +190,7 @@ export function UnifiedInput() {
       try {
         const response = await api.post<PrepareResponse>("/v1/documents/prepare", {
           url: debouncedValue.trim(),
+          extraction_prompt: extractionPrompt || undefined,
         }, { signal: controller.signal });
 
         if (controller.signal.aborted) return;
@@ -211,7 +214,7 @@ export function UnifiedInput() {
     };
 
     fetchMetadata();
-  }, [debouncedValue, mode, isUrl, api, formats]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [debouncedValue, mode, isUrl, api, formats, extractionPrompt]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Save AI Transform preference
   useEffect(() => {
@@ -284,6 +287,7 @@ export function UnifiedInput() {
             content_hash: accepted.content_hash,
             ai_transform: useAiTransform,
             pages: requestedPages,
+            prompt_hash: accepted.prompt_hash,
           });
           const statusData = statusResponse.data;
           setCompletedPages(statusData.completed_pages);
@@ -406,6 +410,7 @@ export function UnifiedInput() {
     try {
       const formData = new FormData();
       formData.append("file", file);
+      if (extractionPrompt) formData.append("extraction_prompt", extractionPrompt);
 
       const response = await api.post<PrepareResponse>("/v1/documents/prepare/upload", formData, {
         headers: { "Content-Type": "multipart/form-data" },
@@ -641,7 +646,7 @@ export function UnifiedInput() {
           onCancel={cancelExtraction}
           isLoading={isCreating}
           completedPages={completedPages}
-          uncachedPages={extractionPrompt ? undefined : prepareData.uncached_pages}
+          uncachedPages={prepareData.uncached_pages}
         />
       )}
 

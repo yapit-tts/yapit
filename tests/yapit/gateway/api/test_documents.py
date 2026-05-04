@@ -10,8 +10,10 @@ from yapit.gateway.api.v1.documents import (
     ExtractionAcceptedResponse,
     ExtractionStatusResponse,
     _get_endpoint_type_from_content_type,
+    _get_uncached_pages,
 )
 from yapit.gateway.auth import authenticate_optional
+from yapit.gateway.document.types import ProcessorConfig
 
 FIXTURES_DIR = Path("tests/fixtures/documents")
 
@@ -174,6 +176,76 @@ async def test_document_create_invalid_page_numbers(client, as_test_user):
         assert create_response.status_code == 422
         assert "Invalid page numbers: [5, 10]" in create_response.json()["detail"]
         assert "Document has 3 pages" in create_response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_get_uncached_pages_salts_by_prompt_hash():
+    """Prompt-salted lookups must not see entries cached for a different prompt."""
+    config = ProcessorConfig(
+        slug="test",
+        supported_mime_types=frozenset({"application/pdf"}),
+        max_pages=1000,
+        max_file_size=10**9,
+        is_paid=True,
+        output_token_multiplier=1,
+        extraction_cache_prefix="test",
+    )
+    content_hash = "abc"
+    total_pages = 3
+    default_keys = {config.extraction_cache_key(content_hash, idx): idx for idx in range(total_pages)}
+
+    class FakeCache:
+        def __init__(self, present: set[str]) -> None:
+            self.present = present
+
+        async def batch_exists(self, keys):
+            return {k for k in keys if k in self.present}
+
+    cache = FakeCache(present=set(default_keys.keys()))
+
+    no_prompt = await _get_uncached_pages(content_hash, total_pages, "application/pdf", cache, config)
+    assert no_prompt == set()
+
+    with_prompt = await _get_uncached_pages(content_hash, total_pages, "application/pdf", cache, config, "deadbeef")
+    assert with_prompt == set(range(total_pages))
+
+    unsupported = await _get_uncached_pages(content_hash, total_pages, "image/png", cache, config)
+    assert unsupported == set()
+
+    no_config = await _get_uncached_pages(content_hash, total_pages, "application/pdf", cache, None)
+    assert no_config == set()
+
+
+@pytest.mark.asyncio
+async def test_document_create_extraction_prompt_requires_ai(client, as_test_user):
+    """A custom extraction_prompt only makes sense with ai_transform=true."""
+    mock_content = b"fake pdf"
+
+    with (
+        patch("yapit.gateway.api.v1.documents.download_document") as mock_download,
+        patch("yapit.gateway.api.v1.documents._extract_document_info") as mock_extract,
+    ):
+        mock_download.return_value = (mock_content, "application/pdf")
+        mock_extract.return_value = (1, "Test PDF")
+
+        prepare_response = await client.post(
+            "/v1/documents/prepare",
+            json={"url": "https://example.com/test.pdf"},
+        )
+        assert prepare_response.status_code == 200
+        prepare_data = prepare_response.json()
+
+        create_response = await client.post(
+            "/v1/documents/document",
+            json={
+                "hash": prepare_data["hash"],
+                "ai_transform": False,
+                "extraction_prompt": "extract only the abstract",
+            },
+        )
+
+        assert create_response.status_code == 422
+        assert "extraction_prompt requires ai_transform=true" in create_response.json()["detail"]
 
 
 @pytest.mark.parametrize(
