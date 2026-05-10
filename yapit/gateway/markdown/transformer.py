@@ -509,6 +509,16 @@ class TextSplitter:
         if current_end > current_start:
             ranges.append((current_start, current_end))
 
+        # Extend each non-last chunk through the whitespace gap to the next chunk.
+        # SENTENCE_END / pause splits drop the separating whitespace; without this
+        # the sliced AST has no space between sibling chunk spans on the frontend.
+        # chunk.text stays unaffected (it's .strip()-ed in split_with_spans).
+        for i in range(len(ranges) - 1):
+            start, end = ranges[i]
+            next_start = ranges[i + 1][0]
+            if end < next_start and text[end:next_start].isspace():
+                ranges[i] = (start, next_start)
+
         return ranges if ranges else [(0, len(text))]
 
     def _split_long_sentence(self, sentence: str, sent_start: int, ranges: list[tuple[int, int]]) -> None:

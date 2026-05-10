@@ -131,6 +131,59 @@ class TestChunkAst:
             assert chunk.ast, f"Chunk {chunk.audio_block_idx} missing ast"
             assert ast_text(chunk.ast), f"Chunk {chunk.audio_block_idx} has empty text"
 
+    def test_split_paragraph_chunks_preserve_boundary_whitespace(self):
+        """Adjacent chunk ASTs must concatenate back to the original text.
+
+        The frontend renders each chunk's AST inside a bare <span> with no
+        separator (AudioContent in structuredDocument.tsx). If the chunker drops
+        the whitespace at a sentence boundary, sibling spans glue together —
+        "one another?We have…" instead of "one another? We have…".
+        """
+
+        def concat_inline(nodes) -> str:
+            out: list[str] = []
+            for n in nodes:
+                if n.type in ("text", "code_span"):
+                    out.append(n.content)
+                elif hasattr(n, "content") and isinstance(n.content, list):
+                    out.append(concat_inline(n.content))
+            return "".join(out)
+
+        text = "First sentence here. Second sentence here. Third sentence here. Fourth sentence here."
+        doc = transform(text, max_block_chars=30)
+        block = doc.blocks[0]
+        assert len(block.audio_chunks) > 1
+        rendered = "".join(concat_inline(c.ast) for c in block.audio_chunks)
+        assert rendered == text
+
+    def test_long_sentence_split_chunks_preserve_clause_whitespace(self):
+        """Within-sentence pause splits must also preserve boundary whitespace.
+
+        A sentence longer than soft_max is split at commas/colons/semicolons;
+        the same span-rendering concern applies to those chunk boundaries.
+        """
+
+        def concat_inline(nodes) -> str:
+            out: list[str] = []
+            for n in nodes:
+                if n.type in ("text", "code_span"):
+                    out.append(n.content)
+                elif hasattr(n, "content") and isinstance(n.content, list):
+                    out.append(concat_inline(n.content))
+            return "".join(out)
+
+        text = (
+            "When considering moral patients, we ask: how do we weigh chimpanzees, "
+            "or bonobos, or octopuses, or even octopus arms, or embryos at various "
+            "stages, or people in profound comas, against one another in any "
+            "principled way."
+        )
+        doc = transform(text, max_block_chars=80)
+        block = doc.blocks[0]
+        assert len(block.audio_chunks) > 1
+        rendered = "".join(concat_inline(c.ast) for c in block.audio_chunks)
+        assert rendered == text
+
     def test_heading_chunk_has_ast(self):
         """Heading: chunk AST matches block AST."""
         doc = transform("# My **Bold** Heading")
