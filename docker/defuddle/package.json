@@ -6,6 +6,6 @@
   "dependencies": {
     "defuddle": "0.19.0",
     "playwright": "1.59.1",
-    "undici": "^7.0.0"
+    "undici": "^7.28.0"
   }
 }
