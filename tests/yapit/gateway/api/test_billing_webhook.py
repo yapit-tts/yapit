@@ -886,8 +886,8 @@ async def test_subscription_updated_noop_when_row_absent_and_missing_price(sessi
 
 
 @pytest.mark.asyncio
-async def test_subscription_deleted_raises_when_row_missing(session):
-    """HD-101: Row not found → raises so Stripe retries until checkout.completed creates it."""
+async def test_subscription_deleted_noop_when_row_missing(session):
+    """HD-101: Row not found → idempotent no-op (200), so Stripe doesn't retry for 3 days."""
     now = datetime.now(tz=dt.UTC).replace(microsecond=0)
 
     stripe_sub = make_stripe_subscription(
@@ -899,8 +899,94 @@ async def test_subscription_deleted_raises_when_row_missing(session):
         status="canceled",
     )
 
-    with pytest.raises(ValueError, match="not found"):
-        await billing_api._handle_subscription_deleted(stripe_sub, session)
+    await billing_api._handle_subscription_deleted(stripe_sub, session)
+
+    result = await session.exec(
+        select(UserSubscription).where(UserSubscription.stripe_subscription_id == "sub_nonexistent")
+    )
+    assert result.first() is None
+
+
+@pytest.mark.asyncio
+async def test_subscription_deleted_finds_anonymized_row_by_sub_id(session):
+    """HD-102: Account deletion anonymizes user_id but keeps the row. The deletion webhook
+    (metadata still carries the original user_id) must find it via stripe_subscription_id.
+    """
+    now = datetime.now(tz=dt.UTC).replace(microsecond=0)
+    plan = await ensure_plan(
+        session,
+        tier=PlanTier.plus,
+        monthly_price_id="price_plus_monthly_anon_del",
+        yearly_price_id="price_plus_yearly_anon_del",
+    )
+
+    await create_subscription(
+        session,
+        user_id="deleted-152b2d6c20c8",
+        plan_id=plan.id,
+        stripe_subscription_id="sub_anon_del",
+        status=SubscriptionStatus.trialing,
+        current_period_start=now,
+        current_period_end=now + timedelta(days=30),
+    )
+
+    stripe_sub = make_stripe_subscription(
+        sub_id="sub_anon_del",
+        user_id="user-original-deleted",
+        price_id=plan.stripe_price_id_monthly,
+        period_start=now,
+        period_end=now + timedelta(days=30),
+        status="canceled",
+        canceled_at=now,
+    )
+
+    await billing_api._handle_subscription_deleted(stripe_sub, session)
+
+    refreshed = await session.get(UserSubscription, "deleted-152b2d6c20c8")
+    assert refreshed is not None
+    assert refreshed.status == SubscriptionStatus.canceled
+    assert refreshed.canceled_at == now
+
+
+@pytest.mark.asyncio
+async def test_subscription_updated_finds_anonymized_row_by_sub_id(session):
+    """HU-103: subscription.updated for an anonymized row must update it, not resurrect
+    a subscription under the original (deleted) user_id.
+    """
+    now = datetime.now(tz=dt.UTC).replace(microsecond=0)
+    plan = await ensure_plan(
+        session,
+        tier=PlanTier.plus,
+        monthly_price_id="price_plus_monthly_anon_upd",
+        yearly_price_id="price_plus_yearly_anon_upd",
+    )
+
+    await create_subscription(
+        session,
+        user_id="deleted-aabbccddeeff",
+        plan_id=plan.id,
+        stripe_subscription_id="sub_anon_upd",
+        status=SubscriptionStatus.trialing,
+        current_period_start=now,
+        current_period_end=now + timedelta(days=30),
+    )
+
+    stripe_sub = make_stripe_subscription(
+        sub_id="sub_anon_upd",
+        user_id="user-original-updated",
+        price_id=plan.stripe_price_id_monthly,
+        period_start=now,
+        period_end=now + timedelta(days=30),
+        status="canceled",
+        canceled_at=now,
+    )
+
+    await billing_api._handle_subscription_updated(stripe_sub, make_stripe_client(stripe_sub), session)
+
+    assert await session.get(UserSubscription, "user-original-updated") is None
+    refreshed = await session.get(UserSubscription, "deleted-aabbccddeeff")
+    assert refreshed is not None
+    assert refreshed.status == SubscriptionStatus.canceled
 
 
 # --- Handler-level tests: _handle_invoice_paid ---

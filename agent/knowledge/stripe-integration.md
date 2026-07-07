@@ -279,7 +279,7 @@ Fix: With Issue 1 fixed, script now reaches product updates. Re-run `stripe_setu
 - **Webhook 500 errors** — Check gateway container logs for the actual traceback, not just Stripe dashboard/CLI status codes.
 - **Webhook event ordering** — Stripe doesn't guarantee order. `checkout.session.completed` and `customer.subscription.created` can race. We use PostgreSQL `INSERT ON CONFLICT` upserts by `user_id` to handle this atomically.
 - **Webhook idempotency** — Handlers must be idempotent (Stripe retries on non-2xx). We use database upserts for UserSubscription and UsagePeriod (with UniqueConstraint on `user_id, period_start`). No event ID tracking needed.
-- **subscription.deleted not found** — If the subscription row doesn't exist yet (checkout.completed hasn't committed), we raise an exception to return 500, triggering Stripe retry.
+- **subscription.deleted not found** — Idempotent no-op (200). Account deletion anonymizes `user_id` but keeps the row, so webhook lookups fall back to `stripe_subscription_id`. A delete-before-checkout race self-heals: checkout.completed fetches authoritative status from Stripe, and hourly billing sync reconciles any drift. (Previously 500'd to force Stripe retry — caused 3-day retry storms for deleted users.)
 
 ### Assumptions / Corners Cut
 - Didn't implement `--dry-run` flag — upsert pattern is safe enough, validation catches immutable drift

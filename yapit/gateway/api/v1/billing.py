@@ -410,6 +410,16 @@ async def _handle_checkout_completed(
     log.bind(status=sub_status).info("Subscription upserted via checkout")
 
 
+async def _find_subscription(user_id: str | None, stripe_sub_id: str, db: DbSession) -> UserSubscription | None:
+    """Look up by user_id, falling back to stripe_subscription_id (account deletion anonymizes user_id)."""
+    if user_id:
+        subscription = await db.get(UserSubscription, user_id)
+        if subscription:
+            return subscription
+    result = await db.exec(select(UserSubscription).where(UserSubscription.stripe_subscription_id == stripe_sub_id))
+    return result.first()
+
+
 async def _handle_subscription_updated(
     stripe_sub: stripe.Subscription, client: stripe.StripeClient, db: DbSession
 ) -> None:
@@ -420,16 +430,11 @@ async def _handle_subscription_updated(
     """
     user_id = stripe_sub.metadata.get("user_id") if stripe_sub.metadata else None
 
-    # Look up by user_id (consistent with checkout handler) or fall back to stripe_subscription_id
-    if user_id:
-        subscription = await db.get(UserSubscription, user_id)
-    else:
-        result = await db.exec(select(UserSubscription).where(UserSubscription.stripe_subscription_id == stripe_sub.id))
-        subscription = result.first()
-        if subscription:
-            user_id = subscription.user_id
+    subscription = await _find_subscription(user_id, stripe_sub.id, db)
+    if subscription and not user_id:
+        user_id = subscription.user_id
 
-    log = logger.bind(stripe_sub_id=stripe_sub.id, user_id=user_id, lookup="user_id" if user_id else "sub_id")
+    log = logger.bind(stripe_sub_id=stripe_sub.id, user_id=user_id)
 
     # Fetch authoritative current state from Stripe API (not the potentially stale event payload)
     stripe_sub = await client.v1.subscriptions.retrieve_async(stripe_sub.id)
@@ -541,22 +546,19 @@ async def _handle_subscription_updated(
 
 
 async def _handle_subscription_deleted(stripe_sub: stripe.Subscription, db: DbSession) -> None:
-    """Handle subscription deletion. Raises if not found to trigger Stripe retry."""
-    user_id = stripe_sub.metadata.get("user_id") if stripe_sub.metadata else None
+    """Handle subscription deletion. Idempotent: unknown subscriptions are a no-op.
 
-    # Look up by user_id (consistent key) or fall back to stripe_subscription_id
-    if user_id:
-        subscription = await db.get(UserSubscription, user_id)
-    else:
-        result = await db.exec(select(UserSubscription).where(UserSubscription.stripe_subscription_id == stripe_sub.id))
-        subscription = result.first()
+    A delete-before-checkout race self-heals without retries — checkout.completed
+    fetches authoritative status from Stripe, and hourly billing sync reconciles drift.
+    """
+    user_id = stripe_sub.metadata.get("user_id") if stripe_sub.metadata else None
+    subscription = await _find_subscription(user_id, stripe_sub.id, db)
 
     log = logger.bind(stripe_sub_id=stripe_sub.id, user_id=user_id)
 
     if not subscription:
-        # Return 500 so Stripe retries until checkout.completed creates the row
-        log.warning("Subscription not found for deletion, Stripe will retry")
-        raise ValueError(f"Subscription {stripe_sub.id} not found")
+        log.warning("Subscription not found for deletion, ignoring")
+        return
 
     # Guard: skip deletion events for stale/replaced subscriptions
     if subscription.stripe_subscription_id != stripe_sub.id:
