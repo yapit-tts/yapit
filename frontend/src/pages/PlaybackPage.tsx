@@ -275,6 +275,13 @@ const PlaybackPage = () => {
     });
   }, [documentTitle]);
 
+  useEffect(() => {
+    if (!documentTitle) return;
+    const defaultTitle = window.document.title;
+    window.document.title = documentTitle;
+    return () => { window.document.title = defaultTitle; };
+  }, [documentTitle]);
+
   // --- Outliner ---
 
   useEffect(() => {
