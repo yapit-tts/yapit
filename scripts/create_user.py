@@ -6,7 +6,7 @@ import os
 import sys
 import time
 
-import requests
+import httpx
 
 
 def wait_for_stack_auth(api_host: str, max_attempts: int = 120):
@@ -14,7 +14,7 @@ def wait_for_stack_auth(api_host: str, max_attempts: int = 120):
     print(f"Waiting for stack-auth at {api_host}...")
     for i in range(max_attempts):
         try:
-            r = requests.get(f"{api_host}/health", timeout=1)
+            r = httpx.get(f"{api_host}/health", timeout=1)
             if r.status_code == 200:
                 print("Stack-auth is ready!")
                 return True
@@ -55,7 +55,7 @@ def create_dev_user(
     print(f"Using server_key: {server_key[:10]}...")
 
     # Try to create user (might already exist)
-    r = requests.post(
+    r = httpx.post(
         f"{api_host}/api/v1/users",
         headers=headers,
         json={
@@ -75,7 +75,7 @@ def create_dev_user(
     elif (r.status_code == 400 and "already exists" in r.text) or (r.status_code == 409):
         print(f"User already exists: {email}")
         # Try to find existing user
-        r = requests.get(
+        r = httpx.get(
             f"{api_host}/api/v1/users",
             headers=headers,
         )

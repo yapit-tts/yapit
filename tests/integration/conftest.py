@@ -7,8 +7,8 @@ import subprocess
 import uuid
 from datetime import datetime, timedelta, timezone
 
+import httpx
 import pytest
-import requests
 import websockets
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -90,7 +90,7 @@ def get_auth_token(email: str, password: str) -> str:
         "X-Stack-Publishable-Client-Key": config["client_key"],
     }
 
-    r = requests.post(
+    r = httpx.post(
         f"{config['api_host']}/api/v1/auth/password/sign-in",
         headers=headers,
         json={"email": email, "password": password},
@@ -121,8 +121,6 @@ def regular_user():
 
 async def make_client(auth_token: str = None):
     """Create an HTTP client with optional authentication."""
-    import httpx
-
     headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else {}
     async with httpx.AsyncClient(base_url="http://localhost:8000", timeout=200.0, headers=headers) as client:
         yield client
