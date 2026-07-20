@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.2 — 2026-07-20
+
+* Security: updated python-multipart 0.0.22 → 0.0.32 (multipart upload parser), aiohttp, pillow, urllib3, idna, mako (backend) and react-router (frontend) — all Dependabot-flagged vulnerabilities.
+* Gateway image now installs dependencies pinned and hash-checked from `uv.lock` instead of resolving them at build time — selfhost builds are reproducible and match tested versions.
+
 ## v0.3.1 — 2026-07-17
 
 * Security: updated starlette 0.50.0 → 1.3.1 (via fastapi 0.139) — `Form()` size limits are now enforced for urlencoded request bodies, closing a memory-exhaustion DoS on upload endpoints (GHSA-82w8-qh3p-5jfq).
