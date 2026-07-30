@@ -272,6 +272,26 @@ class TestStreamMechanics:
         assert length == 0
 
     @pytest.mark.asyncio
+    async def test_collect_batch_recreates_missing_group(self, app, session):
+        """Redis holds no state across container recreation, so a Redis restart the
+        gateway outlives leaves the consumer group gone. Reads must re-establish it
+        instead of failing with NOGROUP forever (2026-07-28: 47h billing outage).
+        """
+        redis: Redis = app.state.redis_client
+        await _ensure_consumer_group(redis)
+        await redis.xgroup_destroy(TTS_BILLING_STREAM, TTS_BILLING_GROUP)
+
+        event = _make_billing_event()
+        await redis.xadd(TTS_BILLING_STREAM, {"data": event.model_dump_json()})
+
+        assert await _collect_batch(redis) == []
+
+        batch = await _collect_batch(redis)
+        assert len(batch) == 1
+        _, parsed_event = batch[0]
+        assert parsed_event.job_id == event.job_id
+
+    @pytest.mark.asyncio
     async def test_poison_message_acked_and_deleted(self, app, session):
         redis: Redis = app.state.redis_client
         await _ensure_consumer_group(redis)

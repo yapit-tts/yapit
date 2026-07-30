@@ -27,6 +27,7 @@ from yapit.contracts import (
     get_pubsub_channel,
 )
 from yapit.gateway.api.v1.ws import BlockStatus, WSBlockStatus
+from yapit.gateway.backoff import Backoff
 from yapit.gateway.metrics import log_error, log_event
 
 AUDIO_CACHE_TTL_S = 300
@@ -55,9 +56,11 @@ class BillingEvent(BaseModel):
 async def run_result_consumer(redis: Redis) -> None:
     logger.info("Result consumer starting")
 
+    backoff = Backoff()
     while True:
         try:
             result = await redis.brpop(TTS_RESULTS, timeout=5)
+            backoff.reset()
             if result is None:
                 continue
 
@@ -73,7 +76,7 @@ async def run_result_consumer(redis: Redis) -> None:
         except Exception as e:
             logger.exception(f"Error in result consumer: {e}")
             await log_error(f"Result consumer loop error: {e}")
-            await asyncio.sleep(1)
+            await backoff.sleep()
 
 
 async def _process_result(redis: Redis, result: WorkerResult) -> None:

@@ -24,6 +24,7 @@ from yapit.contracts import (
     get_queue_name,
 )
 from yapit.gateway.auth import authenticate_ws
+from yapit.gateway.backoff import Backoff
 from yapit.gateway.cache import Cache
 from yapit.gateway.config import Settings, get_settings
 from yapit.gateway.db import create_session
@@ -357,13 +358,15 @@ async def _pubsub_listener(ws: WebSocket, pubsub):
     Restarts on transient errors (Redis disconnect, encoding issues).
     Only stops on WebSocket disconnect — the main loop handles that lifecycle.
     """
+    backoff = Backoff()
     while True:
         try:
             async for message in pubsub.listen():
+                backoff.reset()
                 if message["type"] == "message":
                     await ws.send_text(message["data"].decode())
         except WebSocketDisconnect:
             return
         except Exception:
-            logger.exception("Pubsub listener error, restarting in 1s")
-            await asyncio.sleep(1)
+            logger.exception("Pubsub listener error, restarting")
+            await backoff.sleep()

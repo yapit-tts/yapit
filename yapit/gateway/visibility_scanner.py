@@ -13,6 +13,7 @@ from loguru import logger
 from redis.asyncio import Redis
 
 from yapit.contracts import TTS_RESULTS, YOLO_RESULT, YoloResult, build_tts_dlq_error, parse_queue_name
+from yapit.gateway.backoff import MAX_DELAY_SECONDS, Backoff
 from yapit.gateway.metrics import log_error, log_event
 from yapit.workers.queue import move_to_dlq, requeue_job
 
@@ -39,9 +40,11 @@ async def run_visibility_scanner(
     """
     logger.info(f"{name} scanner starting (pattern={processing_pattern}, timeout={visibility_timeout_s}s)")
 
+    backoff = Backoff(base_s=scan_interval_s, max_s=max(MAX_DELAY_SECONDS, scan_interval_s))
     while True:
         try:
             await _scan_processing_sets(redis, processing_pattern, jobs_key, visibility_timeout_s, max_retries)
+            backoff.reset()
             await asyncio.sleep(scan_interval_s)
         except asyncio.CancelledError:
             logger.info(f"{name} scanner shutting down")
@@ -49,7 +52,7 @@ async def run_visibility_scanner(
         except Exception as e:
             logger.exception(f"Error in {name} scanner: {e}")
             await log_error(f"Visibility scanner {name} loop error: {e}")
-            await asyncio.sleep(scan_interval_s)
+            await backoff.sleep()
 
 
 async def _scan_processing_sets(

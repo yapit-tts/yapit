@@ -21,6 +21,7 @@ from sqlmodel import col, update
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from yapit.contracts import TTS_BILLING_CONSUMER, TTS_BILLING_GROUP, TTS_BILLING_STREAM
+from yapit.gateway.backoff import Backoff
 from yapit.gateway.domain_models import BlockVariant, UsageType, UserVoiceStats
 from yapit.gateway.metrics import log_error, log_event
 from yapit.gateway.result_consumer import BillingEvent
@@ -36,12 +37,19 @@ async def run_billing_consumer(redis: Redis, database_url: str) -> None:
     logger.info("Billing consumer starting")
 
     try:
-        await _ensure_consumer_group(redis)
-        await _recover_pending(redis, session_factory)
-
+        backoff = Backoff()
+        pending_recovered = False
         while True:
             try:
+                # Inside the loop so an unreachable Redis at startup retries
+                # instead of killing the task before the loop begins.
+                if not pending_recovered:
+                    await _ensure_consumer_group(redis)
+                    await _recover_pending(redis, session_factory)
+                    pending_recovered = True
+
                 batch = await _collect_batch(redis)
+                backoff.reset()
                 if not batch:
                     continue
 
@@ -64,7 +72,7 @@ async def run_billing_consumer(redis: Redis, database_url: str) -> None:
             except Exception as e:
                 logger.exception(f"Billing consumer error: {e}")
                 await log_error(f"Billing consumer error: {e}")
-                await asyncio.sleep(1)
+                await backoff.sleep()
     finally:
         await engine.dispose()
 
@@ -100,14 +108,27 @@ async def _recover_pending(redis: Redis, session_factory: async_sessionmaker[Asy
 
 
 async def _collect_batch(redis: Redis) -> list[tuple[bytes, BillingEvent]]:
-    """Block until new events arrive, read up to MAX_BATCH."""
-    entries = await redis.xreadgroup(
-        TTS_BILLING_GROUP,
-        TTS_BILLING_CONSUMER,
-        {TTS_BILLING_STREAM: ">"},
-        count=MAX_BATCH,
-        block=5000,
-    )
+    """Block until new events arrive, read up to MAX_BATCH.
+
+    Re-creates the consumer group if it vanished. Redis holds no persistent
+    state across container recreation, so a Redis restart the gateway happens
+    to outlive leaves the group gone and every read failing with NOGROUP —
+    establishing it here rather than only at startup makes that self-healing.
+    """
+    try:
+        entries = await redis.xreadgroup(
+            TTS_BILLING_GROUP,
+            TTS_BILLING_CONSUMER,
+            {TTS_BILLING_STREAM: ">"},
+            count=MAX_BATCH,
+            block=5000,
+        )
+    except ResponseError as e:
+        if "NOGROUP" not in str(e):
+            raise
+        logger.warning("Billing consumer group missing (Redis reset?), re-creating")
+        await _ensure_consumer_group(redis)
+        return []
     if not entries:
         return []
     return await _parse_entries(redis, entries[0][1])

@@ -8,6 +8,7 @@ from google import genai
 from loguru import logger
 from redis.asyncio import Redis
 
+from yapit.gateway.backoff import MAX_DELAY_SECONDS, Backoff
 from yapit.gateway.cache import Cache
 from yapit.gateway.db import create_session
 from yapit.gateway.document.batch import (
@@ -256,9 +257,11 @@ class BatchPoller:
         logger.info("Batch poller stopped")
 
     async def _poll_loop(self) -> None:
+        backoff = Backoff(base_s=POLL_INTERVAL_SECONDS, max_s=max(MAX_DELAY_SECONDS, POLL_INTERVAL_SECONDS))
         while self._running:
             try:
                 jobs = await list_pending_batch_jobs(self._redis)
+                backoff.reset()
 
                 for job in jobs:
                     if not self._running:
@@ -274,7 +277,7 @@ class BatchPoller:
                 break
             except Exception as e:
                 logger.error(f"Batch poller error: {e}")
-                await asyncio.sleep(POLL_INTERVAL_SECONDS)
+                await backoff.sleep()
 
     async def _poll_and_handle_job(self, job: BatchJobInfo) -> None:
         job, batch_job = await poll_batch_job(self._client, self._redis, job)

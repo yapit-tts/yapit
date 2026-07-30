@@ -11,6 +11,7 @@ from loguru import logger
 from redis.asyncio import Redis
 
 from yapit.contracts import TTS_AUDIO_CACHE, TTS_PERSIST, TTS_TIMESTAMPS_CACHE
+from yapit.gateway.backoff import Backoff
 from yapit.gateway.cache import Cache
 from yapit.gateway.metrics import log_error, log_event
 
@@ -20,9 +21,11 @@ MAX_BATCH = 200
 async def run_cache_persister(redis: Redis, cache: Cache) -> None:
     logger.info("Cache persister starting")
 
+    backoff = Backoff()
     while True:
         try:
             hashes = await _collect_batch(redis)
+            backoff.reset()
             if not hashes:
                 continue
 
@@ -54,7 +57,7 @@ async def run_cache_persister(redis: Redis, cache: Cache) -> None:
         except Exception as e:
             logger.exception(f"Cache persister error: {e}")
             await log_error(f"Cache persister error: {e}")
-            await asyncio.sleep(1)
+            await backoff.sleep()
 
 
 async def _collect_batch(redis: Redis) -> list[str]:
