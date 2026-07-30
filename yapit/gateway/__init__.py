@@ -248,12 +248,12 @@ async def lifespan(app: FastAPI):
 async def _supervised(name: str, coro: Coroutine[Any, Any, None]) -> None:
     """Make a background task's death visible.
 
-    These loops are meant to run for the process lifetime; each handles its own
-    transient errors internally. Anything that escapes — or a plain return — means
-    the loop is gone and its work silently stops, which is how a billing outage
-    once went unnoticed for 47 hours. Emit an `error` event so the health report
-    flags it. Deliberately does not restart: the loops self-heal internally, so a
-    crash here means an unforeseen defect that a restart loop would only mask.
+    These loops run for the process lifetime and handle transient errors
+    internally, so anything escaping — or a plain return — means their work has
+    silently stopped. The `error` event surfaces that in the health report.
+
+    Deliberately does not restart: a crash here means an unforeseen defect,
+    which a restart loop would mask.
     """
     try:
         await coro

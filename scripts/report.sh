@@ -390,9 +390,6 @@ run_analysis() {
         2>"$REPORT_DIR/claude-stderr.log"
 }
 
-# A skipped report looks exactly like a quiet day. On 2026-07-29 a transient
-# 529 killed the run silently, and a live billing outage went unnoticed for
-# another 24h. Retry transient failures, and page if we still can't report.
 output=""
 for attempt in 1 2 3; do
     if output=$(run_analysis); then
@@ -406,6 +403,7 @@ for attempt in 1 2 3; do
 done
 
 if [[ -z "$output" ]]; then
+    # Notify on give-up — an unreported failure is indistinguishable from a healthy day.
     echo "Claude analysis failed after 3 attempts. stderr:"
     cat "$REPORT_DIR/claude-stderr.log"
     if [[ -n "${NTFY_TOPIC:-}" ]]; then

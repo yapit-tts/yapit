@@ -1,10 +1,7 @@
 """Exponential backoff schedule, shared by the long-lived supervisor loops.
 
-A loop that retries a persistently-failing operation at a fixed 1s interval
-emits one log line and one metrics row per second. A single wedged consumer
-once produced 168k metrics rows and ~600MB of logs per day, which collapsed
-log retention from months to hours and buried every unrelated error.
-Backing off keeps the failure visible without drowning out everything else.
+Each retry costs a log line and a metrics row, so a fixed-interval retry of a
+persistent failure floods both and destroys log retention.
 
 Unbounded by design: consumer loops must never give up. Bounded retries of a
 single call (document extraction, TTS adapters) compute the same schedule

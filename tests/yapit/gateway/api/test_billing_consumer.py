@@ -273,10 +273,7 @@ class TestStreamMechanics:
 
     @pytest.mark.asyncio
     async def test_collect_batch_recreates_missing_group(self, app, session):
-        """Redis holds no state across container recreation, so a Redis restart the
-        gateway outlives leaves the consumer group gone. Reads must re-establish it
-        instead of failing with NOGROUP forever (2026-07-28: 47h billing outage).
-        """
+        """A read whose consumer group has vanished re-establishes it and recovers."""
         redis: Redis = app.state.redis_client
         await _ensure_consumer_group(redis)
         await redis.xgroup_destroy(TTS_BILLING_STREAM, TTS_BILLING_GROUP)

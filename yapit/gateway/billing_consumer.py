@@ -41,8 +41,7 @@ async def run_billing_consumer(redis: Redis, database_url: str) -> None:
         pending_recovered = False
         while True:
             try:
-                # Inside the loop so an unreachable Redis at startup retries
-                # instead of killing the task before the loop begins.
+                # Inside the loop so an unreachable Redis retries rather than killing the task.
                 if not pending_recovered:
                     await _ensure_consumer_group(redis)
                     await _recover_pending(redis, session_factory)
@@ -110,10 +109,8 @@ async def _recover_pending(redis: Redis, session_factory: async_sessionmaker[Asy
 async def _collect_batch(redis: Redis) -> list[tuple[bytes, BillingEvent]]:
     """Block until new events arrive, read up to MAX_BATCH.
 
-    Re-creates the consumer group if it vanished. Redis holds no persistent
-    state across container recreation, so a Redis restart the gateway happens
-    to outlive leaves the group gone and every read failing with NOGROUP —
-    establishing it here rather than only at startup makes that self-healing.
+    Re-creates the consumer group if it vanished: Redis keeps no state across
+    container recreation, which a running gateway can outlive.
     """
     try:
         entries = await redis.xreadgroup(
