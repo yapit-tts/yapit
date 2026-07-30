@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -384,6 +385,22 @@ async def test_public_document_accessible_without_auth(client, app, as_test_user
 
     r = await client.get(f"/v1/documents/{doc_id}/blocks")
     assert r.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_document_detail_exposes_created(client, app, as_test_user):
+    """Capture date is returned to the owner and to anonymous viewers of a public doc."""
+    r = await client.post("/v1/documents/text", json={"content": "Some content"})
+    doc_id = r.json()["id"]
+    await client.patch(f"/v1/documents/{doc_id}", json={"is_public": True})
+
+    r = await client.get(f"/v1/documents/{doc_id}")
+    owner_created = datetime.fromisoformat(r.json()["created"])
+    assert owner_created.tzinfo is not None
+
+    app.dependency_overrides[authenticate_optional] = lambda: None
+    r = await client.get(f"/v1/documents/{doc_id}")
+    assert datetime.fromisoformat(r.json()["created"]) == owner_created
 
 
 @pytest.mark.asyncio

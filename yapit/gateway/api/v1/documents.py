@@ -1386,6 +1386,7 @@ async def list_documents(
 class DocumentDetailResponse(BaseModel):
     id: UUID
     title: str | None
+    created: str
     original_text: str
     structured_content: str | None
     metadata_dict: dict | None
@@ -1416,6 +1417,7 @@ async def get_document(document_id: UUID, db: DbSession, user: OptionalUser) -> 
     return DocumentDetailResponse(
         id=document.id,
         title=document.title,
+        created=document.created.isoformat(),
         original_text=document.original_text,
         structured_content=document.structured_content,
         metadata_dict=document.metadata_dict,
