@@ -1,5 +1,6 @@
 volumes:
   pgdata:
+  redisdata:
   audio_cache:
   document_cache:
   extraction_cache:
@@ -61,9 +62,16 @@ services:
 
   redis:
     init: true
-    image: redis:7-alpine
+    # Digest-pinned: `docker stack deploy` resolves floating tags to a digest, so an
+    # upstream :7-alpine push silently recreates this container on the *next* unrelated
+    # deploy. That wiped the billing stream on 2026-07-28. Bump deliberately.
+    image: redis:7-alpine@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
+    # AOF so a container recreation doesn't drop unacked billing events.
+    command: redis-server --appendonly yes
     user: redis
     cap_drop: [ALL]
+    volumes:
+      - redisdata:/data
     ports:
       - target: 6379
         published: 6379
