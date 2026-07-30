@@ -381,16 +381,44 @@ If any of these would help future analysis, note them:
 EOF
 
 echo "Running Claude analysis..."
-output=$(clankr run "$PROJECT_DIR" -p "$SCRIPT_DIR/report-profile" \
-    -- --system-prompt "$PROMPT" \
-    --output-format json \
-    -p "$EXTRA_CONTEXT" \
-    2>"$REPORT_DIR/claude-stderr.log") || {
-    echo "Claude analysis failed. stderr:"
-    cat "$REPORT_DIR/claude-stderr.log"
-    echo "stdout: $output"
-    exit 1
+
+run_analysis() {
+    clankr run "$PROJECT_DIR" -p "$SCRIPT_DIR/report-profile" \
+        -- --system-prompt "$PROMPT" \
+        --output-format json \
+        -p "$EXTRA_CONTEXT" \
+        2>"$REPORT_DIR/claude-stderr.log"
 }
+
+# A skipped report looks exactly like a quiet day. On 2026-07-29 a transient
+# 529 killed the run silently, and a live billing outage went unnoticed for
+# another 24h. Retry transient failures, and page if we still can't report.
+output=""
+for attempt in 1 2 3; do
+    if output=$(run_analysis); then
+        break
+    fi
+    output=""
+    echo "Claude analysis failed (attempt ${attempt}/3)"
+    if [[ "$attempt" -lt 3 ]]; then
+        sleep $((attempt * 60))
+    fi
+done
+
+if [[ -z "$output" ]]; then
+    echo "Claude analysis failed after 3 attempts. stderr:"
+    cat "$REPORT_DIR/claude-stderr.log"
+    if [[ -n "${NTFY_TOPIC:-}" ]]; then
+        printf 'Health report could not run — system state is UNKNOWN.\n\n%s' \
+            "$(tail -c 500 "$REPORT_DIR/claude-stderr.log")" | curl -s \
+            -H "Title: ❌ Yapit health report FAILED" \
+            -H "Priority: high" \
+            -H "Tags: health" \
+            -d @- \
+            "https://ntfy.sh/${NTFY_TOPIC}" > /dev/null || true
+    fi
+    exit 1
+fi
 
 # --output-format json returns a JSON array of events; extract the result event
 result_event=$(echo "$output" | jq -c '.[] | select(.type == "result")' 2>/dev/null || echo "$output" | jq -c 'select(.type == "result")' 2>/dev/null || echo '{}')
