@@ -7,7 +7,6 @@ most VLMs don't accept native PDF.
 
 import asyncio
 import base64
-import random
 from pathlib import Path
 
 import openai
@@ -16,6 +15,7 @@ import pymupdf
 from loguru import logger
 from redis.asyncio import Redis
 
+from yapit.gateway.backoff import delay_for
 from yapit.gateway.document.processors.base import (
     BASE_DELAY_SECONDS,
     FALLBACK_INPUT_TOKENS,
@@ -159,24 +159,21 @@ class OpenAIExtractor(VisionExtractor):
                     )
 
                 if attempt < MAX_RETRIES - 1:
-                    delay = min(BASE_DELAY_SECONDS * (2**attempt), MAX_DELAY_SECONDS)
-                    jitter = random.uniform(0, delay * 0.5)
+                    delay = delay_for(attempt, BASE_DELAY_SECONDS, MAX_DELAY_SECONDS)
                     logger.warning(
                         f"OpenAI {context}: attempt {attempt + 1}/{MAX_RETRIES} "
-                        f"failed ({e.status_code}), retrying in {delay + jitter:.1f}s"
+                        f"failed ({e.status_code}), retrying in {delay:.1f}s"
                     )
-                    await asyncio.sleep(delay + jitter)
+                    await asyncio.sleep(delay)
 
             except Exception as e:
                 last_error = e
                 if attempt < MAX_RETRIES - 1:
-                    delay = min(BASE_DELAY_SECONDS * (2**attempt), MAX_DELAY_SECONDS)
-                    jitter = random.uniform(0, delay * 0.5)
+                    delay = delay_for(attempt, BASE_DELAY_SECONDS, MAX_DELAY_SECONDS)
                     logger.warning(
-                        f"OpenAI {context}: attempt {attempt + 1}/{MAX_RETRIES} "
-                        f"failed ({e}), retrying in {delay + jitter:.1f}s"
+                        f"OpenAI {context}: attempt {attempt + 1}/{MAX_RETRIES} failed ({e}), retrying in {delay:.1f}s"
                     )
-                    await asyncio.sleep(delay + jitter)
+                    await asyncio.sleep(delay)
 
         assert last_error is not None
         raise last_error

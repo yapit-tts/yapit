@@ -2,12 +2,12 @@
 
 import asyncio
 import io
-import random
 
 import av
 import openai
 from loguru import logger
 
+from yapit.gateway.backoff import delay_for
 from yapit.gateway.metrics import log_event
 from yapit.workers.adapters.base import SynthAdapter
 
@@ -68,9 +68,7 @@ class OpenAITTSAdapter(SynthAdapter):
                     )
 
                 if attempt < MAX_RETRIES - 1:
-                    delay = min(BASE_DELAY_SECONDS * (2**attempt), MAX_DELAY_SECONDS)
-                    jitter = random.uniform(0, delay * 0.5)
-                    wait_time = delay + jitter
+                    wait_time = delay_for(attempt, BASE_DELAY_SECONDS, MAX_DELAY_SECONDS)
                     logger.bind(model=self._model, voice=voice).warning(
                         f"OpenAI TTS error {e.status_code}, "
                         f"attempt {attempt + 1}/{MAX_RETRIES}, retrying in {wait_time:.1f}s"
@@ -80,9 +78,7 @@ class OpenAITTSAdapter(SynthAdapter):
             except (openai.APIConnectionError, openai.APITimeoutError) as e:
                 last_error = e
                 if attempt < MAX_RETRIES - 1:
-                    delay = min(BASE_DELAY_SECONDS * (2**attempt), MAX_DELAY_SECONDS)
-                    jitter = random.uniform(0, delay * 0.5)
-                    wait_time = delay + jitter
+                    wait_time = delay_for(attempt, BASE_DELAY_SECONDS, MAX_DELAY_SECONDS)
                     logger.bind(model=self._model, voice=voice).warning(
                         f"OpenAI TTS {type(e).__name__}: {e or '(no details)'}, "
                         f"attempt {attempt + 1}/{MAX_RETRIES}, retrying in {wait_time:.1f}s"
