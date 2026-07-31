@@ -1,5 +1,6 @@
 volumes:
   pgdata:
+  redisdata:
   audio-cache:
   document-cache:
   extraction-cache:
@@ -54,6 +55,10 @@ services:
       - "8102:8102"
 
   redis:
+    # Real deployment, so unacked billing events must survive a container recreation.
+    command: redis-server --appendonly yes --appendfsync no
+    volumes:
+      - redisdata:/data
     ports:
       - "127.0.0.1:6379:6379"
 

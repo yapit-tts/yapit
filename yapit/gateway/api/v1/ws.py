@@ -39,6 +39,8 @@ router = APIRouter(tags=["websocket"])
 
 BlockStatus = Literal["queued", "processing", "cached", "skipped", "error"]
 
+PUBSUB_MAX_BACKOFF_S = 5.0  # pub/sub drops messages while nobody is listening
+
 
 class WSSynthesizeRequest(BaseModel):
     type: Literal["synthesize"] = "synthesize"
@@ -358,7 +360,7 @@ async def _pubsub_listener(ws: WebSocket, pubsub):
     Restarts on transient errors (Redis disconnect, encoding issues).
     Only stops on WebSocket disconnect — the main loop handles that lifecycle.
     """
-    backoff = Backoff()
+    backoff = Backoff(max_s=PUBSUB_MAX_BACKOFF_S)
     while True:
         try:
             async for message in pubsub.listen():

@@ -1,10 +1,8 @@
 import asyncio
 import datetime as dt
-from collections.abc import Coroutine
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
 
 import redis.asyncio as redis
 from fastapi import FastAPI, Request
@@ -42,11 +40,12 @@ from yapit.gateway.logging_config import (
     unhandled_exception_handler,
 )
 from yapit.gateway.markdown.transformer import DocumentTransformer
-from yapit.gateway.metrics import init_metrics_db, log_error, start_metrics_writer, stop_metrics_writer
+from yapit.gateway.metrics import init_metrics_db, start_metrics_writer, stop_metrics_writer
 from yapit.gateway.rate_limit import limiter
 from yapit.gateway.result_consumer import run_result_consumer
 from yapit.gateway.stack_auth import close_stack_auth_client, init_stack_auth_client
 from yapit.gateway.storage import ImageStorage
+from yapit.gateway.supervision import supervised
 from yapit.gateway.visibility_scanner import run_visibility_scanner
 from yapit.workers.adapters.openai_tts import OpenAITTSAdapter
 from yapit.workers.tts_loop import run_api_tts_dispatcher
@@ -119,25 +118,25 @@ async def lifespan(app: FastAPI):
 
     # TTS result consumer (hot path: Redis SET + notify, no SQLite, no Postgres)
     result_consumer_task = asyncio.create_task(
-        _supervised("result-consumer", run_result_consumer(app.state.redis_client))
+        supervised("result-consumer", run_result_consumer(app.state.redis_client))
     )
     background_tasks.append(result_consumer_task)
 
     # Cache persister (drain-on-wake: Redis audio → batched SQLite writes)
     cache_persister_task = asyncio.create_task(
-        _supervised("cache-persister", run_cache_persister(app.state.redis_client, app.state.audio_cache))
+        supervised("cache-persister", run_cache_persister(app.state.redis_client, app.state.audio_cache))
     )
     background_tasks.append(cache_persister_task)
 
     # TTS billing consumer (cold path: Postgres on own connection pool)
     billing_consumer_task = asyncio.create_task(
-        _supervised("billing-consumer", run_billing_consumer(app.state.redis_client, settings.database_url))
+        supervised("billing-consumer", run_billing_consumer(app.state.redis_client, settings.database_url))
     )
     background_tasks.append(billing_consumer_task)
 
     # TTS visibility scanner
     tts_visibility_task = asyncio.create_task(
-        _supervised(
+        supervised(
             "tts-visibility",
             run_visibility_scanner(
                 app.state.redis_client,
@@ -154,7 +153,7 @@ async def lifespan(app: FastAPI):
 
     # YOLO visibility scanner
     yolo_visibility_task = asyncio.create_task(
-        _supervised(
+        supervised(
             "yolo-visibility",
             run_visibility_scanner(
                 app.state.redis_client,
@@ -179,7 +178,7 @@ async def lifespan(app: FastAPI):
             model=settings.openai_tts_model,
         )
         task = asyncio.create_task(
-            _supervised(
+            supervised(
                 "openai-tts-dispatcher",
                 run_api_tts_dispatcher(
                     redis_url=settings.redis_url,
@@ -193,18 +192,18 @@ async def lifespan(app: FastAPI):
         logger.info(f"OpenAI TTS dispatcher started ({settings.openai_tts_model} @ {settings.openai_tts_base_url})")
 
     all_caches = [app.state.audio_cache, app.state.document_cache, app.state.extraction_cache]
-    maintenance_task = asyncio.create_task(_supervised("cache-maintenance", _cache_maintenance_task(all_caches)))
+    maintenance_task = asyncio.create_task(supervised("cache-maintenance", _cache_maintenance_task(all_caches)))
     background_tasks.append(maintenance_task)
 
-    background_tasks.append(asyncio.create_task(_supervised("usage-log-cleanup", _usage_log_cleanup_task())))
+    background_tasks.append(asyncio.create_task(supervised("usage-log-cleanup", _usage_log_cleanup_task())))
     background_tasks.append(
-        asyncio.create_task(_supervised("guest-cleanup", _guest_cleanup_task(app.state.image_storage)))
+        asyncio.create_task(supervised("guest-cleanup", _guest_cleanup_task(app.state.image_storage)))
     )
 
     if settings.stripe_secret_key:
         background_tasks.append(
             asyncio.create_task(
-                _supervised(
+                supervised(
                     "billing-sync",
                     run_billing_sync_loop(settings.stripe_secret_key, app.state.redis_client),
                 )
@@ -243,28 +242,6 @@ async def lifespan(app: FastAPI):
     await stop_metrics_writer()
     await close_db()
     await app.state.redis_client.aclose()
-
-
-async def _supervised(name: str, coro: Coroutine[Any, Any, None]) -> None:
-    """Make a background task's death visible.
-
-    These loops run for the process lifetime and handle transient errors
-    internally, so anything escaping — or a plain return — means their work has
-    silently stopped. The `error` event surfaces that in the health report.
-
-    Deliberately does not restart: a crash here means an unforeseen defect,
-    which a restart loop would mask.
-    """
-    try:
-        await coro
-    except asyncio.CancelledError:
-        raise
-    except Exception as e:
-        logger.exception(f"Background task {name} crashed: {e}")
-        await log_error(f"Background task {name} crashed: {e}")
-        return
-    logger.error(f"Background task {name} exited unexpectedly")
-    await log_error(f"Background task {name} exited unexpectedly")
 
 
 async def _cache_maintenance_task(caches: list[Cache]) -> None:

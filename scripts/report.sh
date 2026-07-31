@@ -165,6 +165,9 @@ Yapit is a text-to-speech platform with these components:
 - `error` — gateway-side failures caught by exception handlers (e.g., cache write failures, DB errors during result processing). These are NOT pipeline-specific errors — they indicate something broke inside the gateway itself. Check `data.message` for details.
 - `warning` — non-fatal issues worth tracking (e.g., near-failures, degraded behavior)
 - ANY `error` event is a red flag. These represent failures that may silently drop work — e.g., a synthesis result that completed but couldn't be cached, leaving the user with no audio.
+- **`Background task <name> crashed` / `Background task <name> exited unexpectedly`** — a long-lived loop (billing-consumer, result-consumer, cache-persister, tts-visibility, yolo-visibility, batch-poller, cache-maintenance, usage-log-cleanup, guest-cleanup, billing-sync, openai-tts-dispatcher) is **gone** and is not coming back. Whatever that loop does has stopped silently for the rest of the process lifetime. **P0 — a gateway restart is required to recover.** Identify the loop from the name and report what has stopped (e.g. billing-consumer = nothing is being billed).
+- **`Billing consumer group missing (Redis reset?), re-creating`** (WARNING, `yapit.gateway.billing_consumer`) — Redis was recreated and the consumer group was rebuilt automatically. One occurrence per Redis restart is expected and self-healing; nothing to do. A *repeating* pattern means Redis is restarting in a loop — investigate that instead.
+- Since retries now back off exponentially (1s→60s), a stuck loop produces roughly 1 error/minute rather than 1/second. **Do not read a low error count as a minor problem** — check the time span between first and last occurrence, not just the count.
 
 **Billing/Webhooks:**
 - `stripe_webhook` — Stripe webhook processing

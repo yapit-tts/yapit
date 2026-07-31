@@ -38,14 +38,14 @@ async def run_billing_consumer(redis: Redis, database_url: str) -> None:
 
     try:
         backoff = Backoff()
-        pending_recovered = False
+        recovered_on_start = False
         while True:
             try:
                 # Inside the loop so an unreachable Redis retries rather than killing the task.
-                if not pending_recovered:
+                if not recovered_on_start:
                     await _ensure_consumer_group(redis)
                     await _recover_pending(redis, session_factory)
-                    pending_recovered = True
+                    recovered_on_start = True
 
                 batch = await _collect_batch(redis)
                 backoff.reset()
@@ -109,8 +109,9 @@ async def _recover_pending(redis: Redis, session_factory: async_sessionmaker[Asy
 async def _collect_batch(redis: Redis) -> list[tuple[bytes, BillingEvent]]:
     """Block until new events arrive, read up to MAX_BATCH.
 
-    Re-creates the consumer group if it vanished: Redis keeps no state across
-    container recreation, which a running gateway can outlive.
+    Re-creates the consumer group if it vanished, which a running gateway can
+    outlive a Redis restart to find. The group is re-created at id="0", so any
+    entries the AOF retained are redelivered; billing dedupes on UsageLog.event_id.
     """
     try:
         entries = await redis.xreadgroup(

@@ -36,7 +36,7 @@ def test_delay_for_huge_attempt_stays_capped():
 
 def test_delay_for_rejects_bad_input():
     with pytest.raises(AssertionError):
-        delay_for(-1)
+        delay_for(-1, base_s=1, max_s=10)
     with pytest.raises(AssertionError):
         delay_for(0, base_s=30, max_s=10)
 

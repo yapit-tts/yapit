@@ -215,6 +215,7 @@ async def run_api_tts_dispatcher(redis_url: str, model: str, adapter: SynthAdapt
 
     except asyncio.CancelledError:
         logger.info(f"API dispatcher {worker_id} shutting down")
+        raise
     finally:
         await client.aclose()
 

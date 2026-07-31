@@ -21,13 +21,12 @@ DEFAULT_MAX_DELAY_S = 60.0
 _MAX_EXPONENT = 30
 
 
-def delay_for(
-    attempt: int,
-    base_s: float = DEFAULT_BASE_DELAY_S,
-    max_s: float = DEFAULT_MAX_DELAY_S,
-    jitter: bool = True,
-) -> float:
-    """Seconds to wait before retrying 0-indexed `attempt`."""
+def delay_for(attempt: int, base_s: float, max_s: float, jitter: bool = True) -> float:
+    """Seconds to wait before retrying 0-indexed `attempt`.
+
+    Tuning is required rather than defaulted — API retries and supervisor loops
+    cap at different ceilings, and inheriting the wrong one is silent.
+    """
     assert attempt >= 0
     assert 0 < base_s <= max_s
     delay = min(base_s * (2 ** min(attempt, _MAX_EXPONENT)), max_s)
