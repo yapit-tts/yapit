@@ -60,7 +60,6 @@ async def run_result_consumer(redis: Redis) -> None:
     while True:
         try:
             result = await redis.brpop(TTS_RESULTS, timeout=5)
-            backoff.reset()
             if result is None:
                 continue
 
@@ -69,6 +68,8 @@ async def run_result_consumer(redis: Redis) -> None:
             task = asyncio.create_task(_process_result(redis, worker_result))
             _background_tasks.add(task)
             task.add_done_callback(_background_tasks.discard)
+
+            backoff.reset()
 
         except asyncio.CancelledError:
             logger.info("Result consumer shutting down")

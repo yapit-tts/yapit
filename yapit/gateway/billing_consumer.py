@@ -41,14 +41,12 @@ async def run_billing_consumer(redis: Redis, database_url: str) -> None:
         recovered_on_start = False
         while True:
             try:
-                # Inside the loop so an unreachable Redis retries rather than killing the task.
                 if not recovered_on_start:
                     await _ensure_consumer_group(redis)
                     await _recover_pending(redis, session_factory)
                     recovered_on_start = True
 
                 batch = await _collect_batch(redis)
-                backoff.reset()
                 if not batch:
                     continue
 
@@ -65,6 +63,8 @@ async def run_billing_consumer(redis: Redis, database_url: str) -> None:
                     text_length=total_chars,
                     data={"events_count": len(events), "users_count": len(user_ids)},
                 )
+
+                backoff.reset()
 
             except asyncio.CancelledError:
                 raise
@@ -113,20 +113,26 @@ async def _collect_batch(redis: Redis) -> list[tuple[bytes, BillingEvent]]:
     outlive a Redis restart to find. The group is re-created at id="0", so any
     entries the AOF retained are redelivered; billing dedupes on UsageLog.event_id.
     """
-    try:
-        entries = await redis.xreadgroup(
+
+    async def read() -> list:
+        return await redis.xreadgroup(
             TTS_BILLING_GROUP,
             TTS_BILLING_CONSUMER,
             {TTS_BILLING_STREAM: ">"},
             count=MAX_BATCH,
             block=5000,
         )
+
+    try:
+        entries = await read()
     except ResponseError as e:
         if "NOGROUP" not in str(e):
             raise
         logger.warning("Billing consumer group missing (Redis reset?), re-creating")
         await _ensure_consumer_group(redis)
-        return []
+        # Re-read rather than returning empty: this blocks, so a group that keeps
+        # vanishing surfaces as an error the caller backs off on, not a spin.
+        entries = await read()
     if not entries:
         return []
     return await _parse_entries(redis, entries[0][1])

@@ -48,6 +48,11 @@ class Backoff:
         self.jitter = jitter
         self.attempt = 0
 
+    @classmethod
+    def from_interval(cls, interval_s: float, jitter: bool = True) -> "Backoff":
+        """For a loop with a natural cadence: start there, never retry faster."""
+        return cls(base_s=interval_s, max_s=max(DEFAULT_MAX_DELAY_S, interval_s), jitter=jitter)
+
     def reset(self) -> None:
         self.attempt = 0
 

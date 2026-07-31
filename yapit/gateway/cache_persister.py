@@ -25,7 +25,6 @@ async def run_cache_persister(redis: Redis, cache: Cache) -> None:
     while True:
         try:
             hashes = await _collect_batch(redis)
-            backoff.reset()
             if not hashes:
                 continue
 
@@ -51,6 +50,8 @@ async def run_cache_persister(redis: Redis, cache: Cache) -> None:
                     "cache_persisted",
                     data={"batch_size": persisted, "batch_ms": batch_ms},
                 )
+
+            backoff.reset()
 
         except asyncio.CancelledError:
             raise

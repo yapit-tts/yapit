@@ -281,8 +281,6 @@ class TestStreamMechanics:
         event = _make_billing_event()
         await redis.xadd(TTS_BILLING_STREAM, {"data": event.model_dump_json()})
 
-        assert await _collect_batch(redis) == []
-
         batch = await _collect_batch(redis)
         assert len(batch) == 1
         _, parsed_event = batch[0]

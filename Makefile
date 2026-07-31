@@ -125,7 +125,7 @@ format:
 check: check-backend check-frontend
 
 check-backend:
-	uvx ty@0.0.56 check yapit/gateway/  # keep in sync with .pre-commit-config.yaml ty-check hook
+	uvx ty@0.0.56 check yapit/  # keep in sync with .pre-commit-config.yaml ty-check hook
 
 check-frontend:
 	cd frontend && npm run lint && npx tsc --noEmit

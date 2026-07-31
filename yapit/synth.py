@@ -11,12 +11,13 @@ from loguru import logger
 from yapit.contracts import SynthesisJob, SynthesisResult, WorkerResult
 
 
-class SynthAdapter[SynthesisParameters: TypedDict](ABC):
+# ty doesn't accept a TypedDict bound on a type parameter yet; the runtime contract is fine.
+class SynthAdapter[SynthesisParameters: TypedDict](ABC):  # ty: ignore[invalid-type-form]
     @abstractmethod
     async def initialize(self) -> None: ...
 
     @abstractmethod
-    async def synthesize(self, text: str, **kwargs: Unpack[SynthesisParameters]) -> bytes | str:
+    async def synthesize(self, text: str, **kwargs: Unpack[SynthesisParameters]) -> bytes | str:  # ty: ignore[invalid-type-form]
         """Synthesize text to pcm audio bytes."""
 
     @abstractmethod
@@ -41,7 +42,14 @@ async def execute_job(adapter: SynthAdapter, job: SynthesisJob, worker_id: str, 
     start_time = time.time()
     queue_wait_ms = int((start_time - queued_at) * 1000)
 
-    def build_result(**outcome) -> WorkerResult:
+    def build_result(
+        *,
+        audio_base64: str | None = None,
+        duration_ms: int | None = None,
+        word_timestamps_json: str | None = None,
+        error: str | None = None,
+        error_detail: str | None = None,
+    ) -> WorkerResult:
         return WorkerResult(
             job_id=job.job_id,
             variant_hash=job.variant_hash,
@@ -55,7 +63,11 @@ async def execute_job(adapter: SynthAdapter, job: SynthesisJob, worker_id: str, 
             worker_id=worker_id,
             processing_time_ms=int((time.time() - start_time) * 1000),
             queue_wait_ms=queue_wait_ms,
-            **outcome,
+            audio_base64=audio_base64,
+            duration_ms=duration_ms,
+            word_timestamps_json=word_timestamps_json,
+            error=error,
+            error_detail=error_detail,
         )
 
     try:

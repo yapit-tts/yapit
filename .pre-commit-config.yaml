@@ -17,9 +17,9 @@ repos:
       - id: ty-check
         name: ty type check
         # pinned: ty@latest broke on new false positives with zero code changes; bump deliberately (keep in sync with Makefile check-backend)
-        entry: uvx ty@0.0.56 check yapit/gateway/
+        entry: uvx ty@0.0.56 check yapit/
         language: system
-        files: ^yapit/gateway/
+        files: ^yapit/
         types_or: [python]
         pass_filenames: false
       - id: frontend-build
