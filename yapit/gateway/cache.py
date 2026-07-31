@@ -9,6 +9,9 @@ import aiosqlite
 from loguru import logger
 from pydantic import BaseModel
 
+from yapit.gateway.metrics import log_error
+from yapit.gateway.supervision import supervised
+
 LRU_FLUSH_INTERVAL_S = 10
 
 
@@ -150,10 +153,11 @@ class SqliteCache(Cache):
 
     def _ensure_lru_task(self) -> None:
         if self._lru_task is None or self._lru_task.done():
-            self._lru_task = asyncio.create_task(self._lru_flush_loop())
+            self._lru_task = asyncio.create_task(supervised("cache-lru-flush", self._lru_flush_loop()))
 
     async def _lru_flush_loop(self) -> None:
-        while not self._closed:
+        # Cancellation is the only exit; _flush_lru absorbs its own failures.
+        while True:
             await asyncio.sleep(LRU_FLUSH_INTERVAL_S)
             await self._flush_lru()
 
@@ -170,8 +174,9 @@ class SqliteCache(Cache):
                 (time.time(), *keys),
             )
             await db.commit()
-        except Exception:
+        except Exception as e:
             logger.exception(f"LRU flush failed for {self.db_path}")
+            await log_error(f"Cache LRU flush failed for {self.db_path}: {e}")
 
     async def store(self, key: str, data: bytes, *, commit: bool = True, pinned: bool = False) -> str | None:
         ts = time.time()

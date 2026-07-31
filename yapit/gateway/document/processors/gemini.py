@@ -10,16 +10,18 @@ from google.genai import types
 from loguru import logger
 from redis.asyncio import Redis
 
-from yapit.gateway.backoff import delay_for
+from yapit.gateway.backoff import (
+    API_BASE_DELAY_S,
+    API_MAX_DELAY_S,
+    API_MAX_RETRIES,
+    API_RETRYABLE_STATUS_CODES,
+    delay_for,
+)
 from yapit.gateway.document.batch import BatchPageRequest
 from yapit.gateway.document.figures import build_figure_prompt, prepare_page
 from yapit.gateway.document.processors.base import (
-    BASE_DELAY_SECONDS,
     FALLBACK_INPUT_TOKENS,
     FALLBACK_OUTPUT_TOKENS,
-    MAX_DELAY_SECONDS,
-    MAX_RETRIES,
-    RETRYABLE_STATUS_CODES,
     VisionCallResult,
     VisionExtractor,
 )
@@ -194,7 +196,7 @@ class GeminiExtractor(VisionExtractor):
         context: str,
     ) -> types.GenerateContentResponse:
         last_error: Exception | None = None
-        for attempt in range(MAX_RETRIES):
+        for attempt in range(API_MAX_RETRIES):
             try:
                 return await self._client.aio.models.generate_content(
                     model=self._model,
@@ -203,7 +205,7 @@ class GeminiExtractor(VisionExtractor):
                 )
             except genai_errors.APIError as e:
                 last_error = e
-                if e.code not in RETRYABLE_STATUS_CODES:
+                if e.code not in API_RETRYABLE_STATUS_CODES:
                     raise
 
                 if e.code == 429:
@@ -214,20 +216,20 @@ class GeminiExtractor(VisionExtractor):
                         data={"api_name": "gemini", "context": context},
                     )
 
-                if attempt < MAX_RETRIES - 1:
-                    delay = delay_for(attempt, BASE_DELAY_SECONDS, MAX_DELAY_SECONDS)
+                if attempt < API_MAX_RETRIES - 1:
+                    delay = delay_for(attempt, API_BASE_DELAY_S, API_MAX_DELAY_S)
                     logger.warning(
-                        f"Gemini {context}: attempt {attempt + 1}/{MAX_RETRIES} "
+                        f"Gemini {context}: attempt {attempt + 1}/{API_MAX_RETRIES} "
                         f"failed ({e.code}), retrying in {delay:.1f}s"
                     )
                     await asyncio.sleep(delay)
 
             except Exception as e:
                 last_error = e
-                if attempt < MAX_RETRIES - 1:
-                    delay = delay_for(attempt, BASE_DELAY_SECONDS, MAX_DELAY_SECONDS)
+                if attempt < API_MAX_RETRIES - 1:
+                    delay = delay_for(attempt, API_BASE_DELAY_S, API_MAX_DELAY_S)
                     logger.warning(
-                        f"Gemini {context}: attempt {attempt + 1}/{MAX_RETRIES} failed ({e}), retrying in {delay:.1f}s"
+                        f"Gemini {context}: attempt {attempt + 1}/{API_MAX_RETRIES} failed ({e}), retrying in {delay:.1f}s"
                     )
                     await asyncio.sleep(delay)
 

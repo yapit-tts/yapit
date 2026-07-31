@@ -21,11 +21,6 @@ from yapit.gateway.document.types import ExtractedPage, PageResult, PreparedPage
 from yapit.gateway.metrics import log_event
 from yapit.gateway.storage import ImageStorage
 
-RETRYABLE_STATUS_CODES = {429, 500, 503, 504}
-MAX_RETRIES = 6
-BASE_DELAY_SECONDS = 1.0
-MAX_DELAY_SECONDS = 30.0
-
 FALLBACK_INPUT_TOKENS = 2500
 FALLBACK_OUTPUT_TOKENS = 1000
 

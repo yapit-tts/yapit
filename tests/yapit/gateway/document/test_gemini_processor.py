@@ -13,7 +13,8 @@ import pytest
 from google.genai import errors as genai_errors
 
 from yapit.contracts import YoloResult
-from yapit.gateway.document.processors.gemini import MAX_RETRIES, GeminiExtractor
+from yapit.gateway.backoff import API_MAX_RETRIES
+from yapit.gateway.document.processors.gemini import GeminiExtractor
 from yapit.gateway.document.types import PreparedPage
 from yapit.gateway.storage import LocalImageStorage
 
@@ -309,7 +310,7 @@ class TestRetryBehavior:
             )
 
         assert result.page is None
-        assert mock_extractor._client.aio.models.generate_content.call_count == MAX_RETRIES
+        assert mock_extractor._client.aio.models.generate_content.call_count == API_MAX_RETRIES
 
     @pytest.mark.asyncio
     async def test_retries_on_unexpected_exceptions(self, mock_extractor):

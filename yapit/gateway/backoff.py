@@ -17,6 +17,13 @@ import random
 DEFAULT_BASE_DELAY_S = 1.0
 DEFAULT_MAX_DELAY_S = 60.0
 
+# Retry policy for outbound calls to external AI/TTS APIs. Caps below the
+# supervisor-loop default because a user is waiting on the result.
+API_RETRYABLE_STATUS_CODES = {429, 500, 503, 504}
+API_MAX_RETRIES = 6
+API_BASE_DELAY_S = 1.0
+API_MAX_DELAY_S = 30.0
+
 # Bounds the exponent so a long-wedged loop doesn't build absurd intermediate ints.
 _MAX_EXPONENT = 30
 
