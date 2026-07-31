@@ -54,6 +54,8 @@ jobs:
       - uses: dorny/paths-filter@v4
         id: filter
         with:
+          # A module lives in the package for the image it runs on; `yapit/*.py` is
+          # the shared layer both images ship, so it rebuilds both.
           filters: |
             frontend:
               - 'frontend/**'
@@ -61,12 +63,12 @@ jobs:
               - 'pyproject.toml'
               - 'uv.lock'
               - 'yapit/gateway/**'
-              - 'yapit/contracts.py'
+              - 'yapit/*.py'
             defuddle:
               - 'docker/defuddle/**'
             workers:
               - 'yapit/workers/**'
-              - 'yapit/contracts.py'
+              - 'yapit/*.py'
             stack-auth:
               - 'docker/Dockerfile.stackauth'
             smokescreen:

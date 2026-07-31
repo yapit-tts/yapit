@@ -69,12 +69,13 @@ Pull-based workers instead of HTTP-based. Workers pull jobs from Redis, gateway 
 - `tts:job_index` — Hash mapping "user:doc:block" to job_id (for eviction)
 - `tts:results` — List for completed results
 
-**Workers:**
-- `yapit/workers/tts_loop.py` — TTS worker loop with two modes:
-  - `run_tts_worker` — Sequential processing for GPU models (Kokoro). One job at a time, visibility tracking for retries.
-  - `run_api_tts_dispatcher` — Parallel processing for API models (OpenAI-compatible TTS). Spawns task per job, unlimited concurrency. No visibility tracking (if gateway crashes, in-flight jobs lost).
-- `yapit/workers/adapters/kokoro.py` — Kokoro adapter (local model)
-- `yapit/workers/adapters/openai_tts.py` — OpenAI-compatible adapter (any `/v1/audio/speech` endpoint). Requests `opus` format, detects OGG Opus via magic bytes (pass-through), transcodes other formats to OGG Opus via PyAV.
+**Runners** — two ways to schedule jobs, both calling `execute_job` from `yapit/synth.py`:
+- `yapit/workers/tts_loop.py` → `run_tts_worker` — Sequential processing for GPU models (Kokoro). One job at a time, visibility tracking for retries. Runs on the worker image.
+- `yapit/gateway/api_tts_dispatcher.py` → `run_api_tts_dispatcher` — Parallel processing for API models (OpenAI-compatible TTS). Spawns task per job, unlimited concurrency. No visibility tracking (if gateway crashes, in-flight jobs lost). Runs in the gateway process — the work is an outbound HTTP call, so it needs no worker of its own.
+
+**Adapters:**
+- `yapit/workers/kokoro/adapter.py` — Kokoro adapter (local model), worker image
+- `yapit/gateway/openai_tts_adapter.py` — OpenAI-compatible adapter (any `/v1/audio/speech` endpoint). Requests `opus` format, detects OGG Opus via magic bytes (pass-through), transcodes other formats to OGG Opus via PyAV. Gateway image.
 
 Workers only need Redis access. No Postgres, no HTTP endpoints. Gateway handles all DB writes and notifications centrally.
 
@@ -167,9 +168,10 @@ Built-in model: kokoro. Model/voice definitions in `yapit/gateway/seed.py`.
 | `gateway/cache_persister.py` | Drain-on-wake batched Redis→SQLite persistence |
 | `gateway/billing_consumer.py` | Cold path: BlockVariant update, usage billing, engagement stats |
 | `gateway/visibility_scanner.py` | Re-queues stuck jobs |
-| `workers/tts_loop.py` | Pull-based worker main loop |
-| `workers/queue.py` | Shared queue utilities (push, pull, requeue) |
-| `workers/adapters/*.py` | Model-specific synthesis |
+| `workers/tts_loop.py` | Pull-based worker main loop (worker image) |
+| `gateway/api_tts_dispatcher.py` | Parallel dispatcher for API models (gateway image) |
+| `queue.py` | Shared queue utilities (push, pull, requeue) |
+| `synth.py` | Shared `SynthAdapter` interface + `execute_job` |
 | `contracts.py` | Shared types for gateway↔worker |
 | `gateway/cache.py` | SQLite audio cache (async) |
 | `gateway/domain_models.py` | Document, BlockVariant models |

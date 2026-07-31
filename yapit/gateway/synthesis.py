@@ -26,7 +26,7 @@ from yapit.gateway.domain_models import BlockVariant, TTSModel, UsageType, Voice
 from yapit.gateway.exceptions import UsageLimitExceededError
 from yapit.gateway.metrics import log_event
 from yapit.gateway.usage import check_usage_limit
-from yapit.workers.queue import QueueConfig, push_job
+from yapit.queue import QueueConfig, push_job
 
 
 @dataclass

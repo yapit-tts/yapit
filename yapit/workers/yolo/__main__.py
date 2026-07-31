@@ -32,7 +32,7 @@ from yapit.contracts import (
 from yapit.contracts import (
     DetectedFigure as DetectedFigureContract,
 )
-from yapit.workers.queue import QueueConfig, pull_job, track_processing
+from yapit.queue import QueueConfig, pull_job, track_processing
 
 DEVICE: str = os.getenv("DEVICE", "cpu")
 

@@ -1,7 +1,8 @@
-"""Shared queue utilities for pull-based workers.
+"""Redis operations for the pull-based job queues.
 
-Both TTS and YOLO workers use these functions for common Redis operations.
-Job types and processing logic are handled by the workers themselves.
+The gateway pushes jobs, requeues stuck ones and moves them to the DLQ; TTS and
+YOLO workers pull and track them. Job types and processing logic live with the
+callers.
 """
 
 import json

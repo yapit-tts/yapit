@@ -13,7 +13,7 @@ from yapit.contracts import (
     YoloResult,
 )
 from yapit.gateway.metrics import log_event
-from yapit.workers.queue import QueueConfig, push_job
+from yapit.queue import QueueConfig, push_job
 
 YOLO_RESULT_TIMEOUT_S = 120
 

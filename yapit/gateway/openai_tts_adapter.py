@@ -9,7 +9,7 @@ from loguru import logger
 
 from yapit.gateway.backoff import delay_for
 from yapit.gateway.metrics import log_event
-from yapit.workers.adapters.base import SynthAdapter
+from yapit.synth import SynthAdapter
 
 RETRYABLE_STATUS_CODES = {429, 500, 503, 504}
 MAX_RETRIES = 6
@@ -43,6 +43,7 @@ class OpenAITTSAdapter(SynthAdapter):
         return _get_duration_ms(audio_bytes)
 
     async def _call_with_retry(self, text: str, voice: str) -> bytes:
+        assert self._client is not None, "Adapter not initialized"
         last_error: Exception | None = None
         for attempt in range(MAX_RETRIES):
             try:

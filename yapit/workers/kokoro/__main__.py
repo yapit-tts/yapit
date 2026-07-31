@@ -1,7 +1,7 @@
 import asyncio
 import os
 
-from yapit.workers.adapters.kokoro import KokoroAdapter
+from yapit.workers.kokoro.adapter import KokoroAdapter
 from yapit.workers.tts_loop import run_tts_worker
 
 if __name__ == "__main__":

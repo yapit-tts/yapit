@@ -15,7 +15,7 @@ from redis.asyncio import Redis
 from yapit.contracts import TTS_RESULTS, YOLO_RESULT, YoloResult, build_tts_dlq_error, parse_queue_name
 from yapit.gateway.backoff import DEFAULT_MAX_DELAY_S, Backoff
 from yapit.gateway.metrics import log_error, log_event
-from yapit.workers.queue import move_to_dlq, requeue_job
+from yapit.queue import move_to_dlq, requeue_job
 
 
 async def run_visibility_scanner(

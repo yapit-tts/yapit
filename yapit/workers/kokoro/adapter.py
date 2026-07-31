@@ -11,7 +11,7 @@ import torch
 from kokoro import KPipeline
 from typing_extensions import TypedDict
 
-from yapit.workers.adapters.base import SynthAdapter
+from yapit.synth import SynthAdapter
 
 DEVICE: str = os.getenv("DEVICE", "")
 
