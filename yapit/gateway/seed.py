@@ -19,13 +19,17 @@ def create_models() -> list[TTSModel]:
     """Create TTS models with voices. Used for fresh DB seeding only."""
     kokoro = TTSModel(slug="kokoro", name="Kokoro")
     for v in json.loads(KOKORO_VOICES_JSON.read_text()):
+        parameters: dict = {"voice": v["index"], "speed": 1.0}
+        if not v["language"].startswith("en"):
+            # Cache-busting marker, must match migration c7d8e9f0a1b2 (see its docstring)
+            parameters["g2p"] = "native"
         kokoro.voices.append(
             Voice(
                 slug=v["index"],
                 name=v["name"],
                 lang=v["language"],
                 description=f"Quality grade {v['overallGrade']}",
-                parameters={"voice": v["index"], "speed": 1.0},
+                parameters=parameters,
             )
         )
 
