@@ -3,26 +3,6 @@ import time
 import pytest
 
 
-async def synthesize_block_to_audio_url(ws_client, document_id: str, block_idx: int, model: str, voice: str) -> str:
-    """Synthesize one block via WebSocket and wait until its audio is cached."""
-    await ws_client.synthesize(
-        document_id=document_id,
-        block_indices=[block_idx],
-        model=model,
-        voice=voice,
-    )
-
-    status_msg = await ws_client.wait_for_any_status(block_idx, timeout=10.0)
-    assert status_msg is not None, f"{voice}: no status message received"
-    assert status_msg["status"] in ("queued", "cached"), f"Unexpected status: {status_msg}"
-
-    if status_msg["status"] == "cached":
-        return status_msg["audio_url"]
-    cached_msg = await ws_client.wait_for_status(block_idx, "cached", timeout=120.0)
-    assert cached_msg is not None, f"{voice}: synthesis did not produce audio (skipped or timed out)"
-    return cached_msg["audio_url"]
-
-
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "model_slug,voice_slug",
@@ -94,7 +74,7 @@ async def test_tts_non_english_voices(subscribed_ws_client, subscribed_client):
     blocks = blocks_response.json()
     assert len(blocks) == len(cases), f"Expected one block per paragraph, got {blocks}"
 
-    for (voice_slug, _), block in zip(cases, blocks):
+    for (voice_slug, _), block in zip(cases, blocks, strict=True):
         audio_url = await synthesize_block_to_audio_url(
             subscribed_ws_client, doc["id"], block["idx"], "kokoro", voice_slug
         )
@@ -149,3 +129,23 @@ async def test_degenerate_text_skipped_not_crashed(subscribed_ws_client, subscri
         assert status_msg["status"] == "skipped", (
             f"Degenerate text {text!r}: expected 'skipped', got {status_msg['status']!r}"
         )
+
+
+async def synthesize_block_to_audio_url(ws_client, document_id: str, block_idx: int, model: str, voice: str) -> str:
+    """Synthesize one block via WebSocket and wait until its audio is cached."""
+    await ws_client.synthesize(
+        document_id=document_id,
+        block_indices=[block_idx],
+        model=model,
+        voice=voice,
+    )
+
+    status_msg = await ws_client.wait_for_any_status(block_idx, timeout=10.0)
+    assert status_msg is not None, f"{voice}: no status message received"
+    assert status_msg["status"] in ("queued", "cached"), f"Unexpected status: {status_msg}"
+
+    if status_msg["status"] == "cached":
+        return status_msg["audio_url"]
+    cached_msg = await ws_client.wait_for_status(block_idx, "cached", timeout=120.0)
+    assert cached_msg is not None, f"{voice}: synthesis did not produce audio (skipped or timed out)"
+    return cached_msg["audio_url"]

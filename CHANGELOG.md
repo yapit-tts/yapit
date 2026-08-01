@@ -3,6 +3,9 @@
 ## Unreleased
 
 * Fixed non-English Kokoro voices reading text with English pronunciation — each language now uses its own G2P pipeline; Japanese and Chinese (previously silent or spelling out "japanese letter"/"chinese letter") now work. #87
+* Stale pre-fix audio for non-English voices is invalidated automatically (data migration changes their cache keys; old entries fall out of the LRU cache).
+* Voice previews now speak the voice's own language instead of accented English.
+* Word-level highlighting is now English-only: Spanish/French/Hindi/Italian/Portuguese voices previously showed highlighting (synced to the wrong-sounding audio); Kokoro's non-English pipelines don't produce word timestamps.
 * **Breaking (selfhost):** New required env var `RATELIMIT_ENABLED` — add `RATELIMIT_ENABLED=true` to your `.env.selfhost` (see `.env.selfhost.example`), or the gateway will fail to start.
 
 ## v0.3.2 — 2026-07-20

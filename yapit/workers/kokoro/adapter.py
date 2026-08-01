@@ -21,7 +21,8 @@ OPUS_BITRATE = 48_000
 
 # Kokoro's non-English chunker only splits on ASCII sentence enders and silently truncates
 # chunks over 510 phonemes — a single 250-char CJK block far exceeds that. Splitting on CJK
-# enders too keeps chunks under the cap; a no-op for text that doesn't contain them.
+# enders too keeps chunks under the cap. (Applies to every language: an English ellipsis
+# also becomes a chunk boundary, i.e. a slight pause.)
 SPLIT_PATTERN = r"\n+|(?<=[。！？…])"
 
 
