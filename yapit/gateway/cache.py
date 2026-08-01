@@ -83,6 +83,10 @@ class Cache(abc.ABC):
         """Mark keys as pinned (exempt from LRU eviction). Returns count updated."""
 
     @abc.abstractmethod
+    async def unpin_all(self) -> int:
+        """Clear the pinned flag on every entry. Returns count updated."""
+
+    @abc.abstractmethod
     async def close(self) -> None:
         """Release resources. Called during shutdown."""
 
@@ -344,6 +348,12 @@ class SqliteCache(Cache):
             total += cursor.rowcount
         await db.commit()
         return total
+
+    async def unpin_all(self) -> int:
+        db = await self._get_writer()
+        cursor = await db.execute("UPDATE cache SET pinned=0 WHERE pinned=1")
+        await db.commit()
+        return cursor.rowcount
 
     async def close(self) -> None:
         self._closed = True

@@ -138,3 +138,14 @@ async def test_inactive_voices_not_listed(client, as_test_user, session):
     slugs = [v["slug"] for v in response.json()]
     assert "active-voice" in slugs
     assert "inactive-voice" not in slugs
+
+
+def test_preview_sentences_language_selection():
+    from yapit.gateway.preview_sentences import PREVIEW_SENTENCES, preview_sentences
+
+    assert preview_sentences("en-us") is PREVIEW_SENTENCES["en"]
+    assert preview_sentences("en-gb") is PREVIEW_SENTENCES["en"]
+    assert preview_sentences("pt-br") is PREVIEW_SENTENCES["pt"]
+    assert preview_sentences("es") is PREVIEW_SENTENCES["es"]
+    assert preview_sentences(None) is PREVIEW_SENTENCES["en"]  # openai-tts voices have no lang
+    assert preview_sentences("tlh") is PREVIEW_SENTENCES["en"]  # unknown language

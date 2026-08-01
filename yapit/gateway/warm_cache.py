@@ -25,17 +25,10 @@ from yapit.gateway.config import Settings
 from yapit.gateway.db import close_db, create_session, init_db
 from yapit.gateway.deps import create_cache
 from yapit.gateway.domain_models import BlockVariant, Document, TTSModel, Voice
+from yapit.gateway.preview_sentences import N_PREVIEW_SENTENCES, preview_sentences
 from yapit.gateway.synthesis import CachedResult, QueuedResult, synthesize_and_wait
 
 PREVIEW_DOCUMENT_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
-
-PREVIEW_SENTENCES = [
-    "Hello, this is a sample of my voice.",
-    "The quick brown fox jumps over the lazy dog.",
-    "I can read documents, articles, and research papers.",
-    "Sometimes I wonder what it would be like to have a body.",
-    "Breaking news: scientists discover that coffee is, in fact, essential.",
-]
 
 
 @dataclass
@@ -46,13 +39,15 @@ class ShowcaseDoc:
 
 
 SHOWCASE_DOCS = [
+    # English-only docs: don't warm them with non-English kokoro voices — since the
+    # per-language G2P fix those voices read English text as accented gibberish.
     ShowcaseDoc(
         id=uuid.UUID("1c185db2-cdd7-4de4-9016-c1ff6abe4cd9"),  # File Over App
-        voice_filter={},  # empty = "all" for every model
+        voice_filter={"kokoro": "english"},
     ),
     ShowcaseDoc(
         id=uuid.UUID("3bde213b-3a5a-465f-9198-be65430b699e"),  # Attention Is All You Need
-        voice_filter={},
+        voice_filter={"kokoro": "english"},
     ),
 ]
 
@@ -148,17 +143,20 @@ async def run_warming(cache: Cache, redis_client: Redis) -> WarmingStats:
     stats = WarmingStats()
     all_hashes: list[str] = []
 
-    # --- Voice previews ---
+    # --- Voice previews (each voice previews in its own language) ---
     total_voices = sum(len([v for v in m.voices if v.is_active]) for m in models)
     logger.info(
-        f"Voice previews: {len(models)} models, {total_voices} voices, {total_voices * len(PREVIEW_SENTENCES)} requests"
+        f"Voice previews: {len(models)} models, {total_voices} voices, {total_voices * N_PREVIEW_SENTENCES} requests"
     )
 
     for model in models:
         active = [v for v in model.voices if v.is_active]
         logger.info(f"{model.slug}: {len(active)} voices")
-        hashes = await warm_texts(redis_client, cache, model, active, PREVIEW_SENTENCES, PREVIEW_DOCUMENT_ID, stats)
-        all_hashes.extend(hashes)
+        for voice in active:
+            hashes = await warm_texts(
+                redis_client, cache, model, [voice], preview_sentences(voice.lang), PREVIEW_DOCUMENT_ID, stats
+            )
+            all_hashes.extend(hashes)
 
     # --- Showcase documents ---
     for showcase in SHOWCASE_DOCS:
@@ -178,12 +176,14 @@ async def run_warming(cache: Cache, redis_client: Redis) -> WarmingStats:
             hashes = await warm_texts(redis_client, cache, model, voices, block_texts, showcase.id, stats)
             all_hashes.extend(hashes)
 
-    # --- Pin all warmed entries ---
+    # --- Pin all warmed entries; pins from previous runs (stale hashes) return to LRU ---
     unique_hashes = list(dict.fromkeys(all_hashes))  # deduplicate, preserve order
+    unpinned = await cache.unpin_all()
     newly_pinned = await cache.pin(unique_hashes)
     logger.info(
         f"Cache warming done: {stats.cached} cached, {stats.synthesized} synthesized, "
-        f"{stats.failed} failed, {newly_pinned} newly pinned ({len(unique_hashes)} total pinnable)"
+        f"{stats.failed} failed, {unpinned} previously pinned reset, "
+        f"{newly_pinned} pinned ({len(unique_hashes)} total pinnable)"
     )
     return stats
 

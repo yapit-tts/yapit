@@ -9,19 +9,12 @@ from yapit.gateway.auth import authenticate
 from yapit.gateway.config import Settings, get_settings
 from yapit.gateway.deps import AudioCache, AuthenticatedUser, CurrentTTSModel, CurrentVoice, DbSession, RedisClient
 from yapit.gateway.domain_models import TTSModel
+from yapit.gateway.preview_sentences import N_PREVIEW_SENTENCES, preview_sentences
 from yapit.gateway.synthesis import synthesize_and_wait
 
 router = APIRouter(prefix="/v1/models", tags=["Models"])
 
 VOICE_PREVIEW_DOCUMENT_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
-
-VOICE_PREVIEW_SENTENCES = [
-    "Hello, this is a sample of my voice.",
-    "The quick brown fox jumps over the lazy dog.",
-    "I can read documents, articles, and research papers.",
-    "Sometimes I wonder what it would be like to have a body.",
-    "Breaking news: scientists discover that coffee is, in fact, essential.",
-]
 
 
 class VoiceRead(BaseModel):
@@ -126,10 +119,10 @@ async def get_voice_preview(
     model: CurrentTTSModel,
     voice: CurrentVoice,
     settings: Settings = Depends(get_settings),
-    sentence_idx: int = Query(default=0, ge=0, lt=len(VOICE_PREVIEW_SENTENCES)),
+    sentence_idx: int = Query(default=0, ge=0, lt=N_PREVIEW_SENTENCES),
 ) -> VoicePreviewResponse:
-    """Get audio for a voice preview sentence. Synthesizes on-demand if not cached."""
-    sentence = VOICE_PREVIEW_SENTENCES[sentence_idx]
+    """Get audio for a voice preview sentence (in the voice's language). Synthesizes on-demand if not cached."""
+    sentence = preview_sentences(voice.lang)[sentence_idx]
 
     result = await synthesize_and_wait(
         db=db,
