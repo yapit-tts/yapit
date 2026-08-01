@@ -35,7 +35,6 @@ function makeSection(id: string, start: number, end: number): Section {
 
 function mockAudioPlayer(): AudioPlayer {
   return {
-    load: vi.fn().mockResolvedValue(undefined),
     loadRawAudio: vi.fn().mockResolvedValue(1500),
     play: vi.fn().mockResolvedValue(undefined),
     pause: vi.fn(),
@@ -47,11 +46,12 @@ function mockAudioPlayer(): AudioPlayer {
   } as unknown as AudioPlayer;
 }
 
-const FAKE_BUFFER = {} as AudioBuffer;
-const FAKE_AUDIO: AudioBufferData = { buffer: FAKE_BUFFER, duration_ms: 1000 };
-/** Server synthesis shape: compressed bytes, duration unknown until the element loads them. */
+const FAKE_AUDIO: AudioBufferData = {
+  rawAudio: new ArrayBuffer(8), mimeType: "audio/ogg", duration_ms: 1000,
+};
+/** A block whose length the server didn't report — known only once the element loads it. */
 const fakeRawAudio = (wordTimings?: WordTiming[]): AudioBufferData =>
-  ({ rawAudio: new ArrayBuffer(8), duration_ms: 0, wordTimings });
+  ({ rawAudio: new ArrayBuffer(8), mimeType: "audio/ogg", duration_ms: 0, wordTimings });
 
 type SynthesizeHandler = (blockIdx: number, text: string, documentId: string, model: string, voice: string) => Promise<AudioBufferData | null>;
 
@@ -392,7 +392,9 @@ describe("createPlaybackEngine", () => {
   describe("duration correction", () => {
     it("adjusts totalDuration when actual audio duration differs from estimate", async () => {
       const synth = mockSynthesizer();
-      synth.onSynthesize = () => Promise.resolve({ buffer: FAKE_BUFFER, duration_ms: 1500 });
+      synth.onSynthesize = () => Promise.resolve({
+        rawAudio: new ArrayBuffer(8), mimeType: "audio/ogg", duration_ms: 1500,
+      });
       const d = makeDeps({ synthesizer: synth });
       const e = createPlaybackEngine(d);
 
@@ -428,11 +430,12 @@ describe("createPlaybackEngine", () => {
         // Block 0 reported 1500ms against a 1000ms estimate → +500ms
         expect(e.getSnapshot().totalDuration).toBe(3500);
       });
-      expect(d.audioPlayer.load).not.toHaveBeenCalled();
     });
 
     it("uses the server-reported duration before a block is played", async () => {
-      const d = rawDeps(() => Promise.resolve({ rawAudio: new ArrayBuffer(8), duration_ms: 2500 }));
+      const d = rawDeps(() => Promise.resolve({
+        rawAudio: new ArrayBuffer(8), mimeType: "audio/ogg", duration_ms: 2500,
+      }));
       // Never resolves: isolates the synthesis-time duration from the play-time correction.
       (d.audioPlayer.loadRawAudio as Mock).mockImplementation(() => new Promise<number>(() => {}));
       const e = createPlaybackEngine(d);

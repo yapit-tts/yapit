@@ -19,15 +19,13 @@ export interface WordTiming {
   e: number;  // end (seconds)
 }
 
-interface AudioDataCommon {
+/** Encoded audio as it arrives: OGG Opus from the server, WAV from browser synthesis. */
+export interface AudioBufferData {
+  rawAudio: ArrayBuffer;
+  mimeType: string;
   duration_ms: number;
   wordTimings?: WordTiming[];
 }
-
-/** Server synthesis yields compressed bytes; browser synthesis yields decoded samples. Never both. */
-export type AudioBufferData =
-  | (AudioDataCommon & { rawAudio: ArrayBuffer; buffer?: never })
-  | (AudioDataCommon & { buffer: AudioBuffer; rawAudio?: never });
 
 export type BlockVisualState = "pending" | "synthesizing" | "cached";
 
@@ -294,20 +292,15 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
       advanceToNext();
     });
     try {
+      const actualMs = await deps.audioPlayer.loadRawAudio(audioData.rawAudio, audioData.mimeType);
       // Loading shares one <audio> element, so a seek during the await lands us
       // on a different block — anything past this point would apply to the wrong one.
-      if (audioData.rawAudio) {
-        const actualMs = await deps.audioPlayer.loadRawAudio(audioData.rawAudio, "audio/ogg");
-        if (currentBlock !== blockIdx || status !== "playing") return;
-        audioData.duration_ms = actualMs;
-        const blk = blocks[blockIdx];
-        if (blk) {
-          recordDurationCorrection(blk, actualMs);
-          notify(); // totalDuration changed; the snapshot is memoized until invalidated
-        }
-      } else {
-        await deps.audioPlayer.load(audioData.buffer);
-        if (currentBlock !== blockIdx || status !== "playing") return;
+      if (currentBlock !== blockIdx || status !== "playing") return;
+      audioData.duration_ms = actualMs;
+      const blk = blocks[blockIdx];
+      if (blk) {
+        recordDurationCorrection(blk, actualMs);
+        notify(); // totalDuration changed; the snapshot is memoized until invalidated
       }
       await deps.audioPlayer.play();
       startWordTracking(audioData);

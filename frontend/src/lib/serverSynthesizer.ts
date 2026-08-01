@@ -246,7 +246,12 @@ export function createServerSynthesizer(deps: ServerSynthesizerDeps): Synthesize
 
       deps.fetchAudio(msg.audio_url)
         .then((arrayBuffer) => {
-          req.resolve({ rawAudio: arrayBuffer, duration_ms: msg.duration_ms ?? 0, wordTimings });
+          req.resolve({
+            rawAudio: arrayBuffer,
+            mimeType: "audio/ogg",
+            duration_ms: msg.duration_ms ?? 0,
+            wordTimings,
+          });
         })
         .catch((err) => {
           console.error(`[ServerSynth] Failed to fetch audio for block ${block_idx}:`, err);

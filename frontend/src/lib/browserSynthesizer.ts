@@ -1,21 +1,18 @@
 import type { Synthesizer } from "./synthesizer";
 import type { AudioBufferData } from "./playbackEngine";
 import type { WorkerMessage, TTSDevice, TTSDtype } from "./browserTTS/types";
+import { encodeWavPcm16 } from "./wav";
 
 interface PendingRequest {
   resolve: (data: AudioBufferData | null) => void;
 }
 
-interface BrowserSynthesizerDeps {
-  audioContext: AudioContext;
-}
-
 /**
  * Browser-side TTS synthesizer using a Web Worker running Kokoro.js.
  * Manages worker lifecycle, cancellation via generation counter,
- * and converts raw PCM to AudioBuffer.
+ * and encodes raw PCM to WAV for the audio element.
  */
-export function createBrowserSynthesizer(deps: BrowserSynthesizerDeps): Synthesizer & {
+export function createBrowserSynthesizer(): Synthesizer & {
   getDevice(): TTSDevice | null;
   getDtype(): TTSDtype | null;
 } {
@@ -46,10 +43,12 @@ export function createBrowserSynthesizer(deps: BrowserSynthesizerDeps): Synthesi
         lastError = null;
 
         const audio = new Float32Array(msg.audioData);
-        const audioBuffer = deps.audioContext.createBuffer(1, audio.length, msg.sampleRate);
-        audioBuffer.getChannelData(0).set(audio);
         const durationMs = Math.round((audio.length / msg.sampleRate) * 1000);
-        req.resolve({ buffer: audioBuffer, duration_ms: durationMs });
+        req.resolve({
+          rawAudio: encodeWavPcm16(audio, msg.sampleRate),
+          mimeType: "audio/wav",
+          duration_ms: durationMs,
+        });
         break;
       }
 
