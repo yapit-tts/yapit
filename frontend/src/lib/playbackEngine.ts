@@ -18,12 +18,15 @@ export interface WordTiming {
   e: number;  // end (seconds)
 }
 
-export interface AudioBufferData {
-  buffer?: AudioBuffer;
-  rawAudio?: ArrayBuffer;
+interface AudioDataCommon {
   duration_ms: number;
   wordTimings?: WordTiming[];
 }
+
+/** Server synthesis yields compressed bytes; browser synthesis yields decoded samples. Never both. */
+export type AudioBufferData =
+  | (AudioDataCommon & { rawAudio: ArrayBuffer; buffer?: never })
+  | (AudioDataCommon & { buffer: AudioBuffer; rawAudio?: never });
 
 export type BlockVisualState = "pending" | "synthesizing" | "cached";
 
@@ -252,7 +255,7 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
     if (audio) {
       isSynthesizingCurrent = false;
       notify();
-      await startAudioPlayback(audio);
+      await startAudioPlayback(audio, blockIdx);
     } else {
       isSynthesizingCurrent = true;
       notify();
@@ -276,31 +279,38 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
         return;
       }
       notify();
-      await startAudioPlayback(audioData);
+      await startAudioPlayback(audioData, blockIdx);
     }
 
     checkAndRefillBuffer();
     evictOldBlocks();
   }
 
-  async function startAudioPlayback(audioData: AudioBufferData) {
+  async function startAudioPlayback(audioData: AudioBufferData, blockIdx: number) {
     deps.audioPlayer.setOnEnded(() => {
       stopWordTracking();
       blockStartTime += audioData.duration_ms;
       advanceToNext();
     });
     try {
+      // Loading shares one <audio> element, so a seek during the await lands us
+      // on a different block — anything past this point would apply to the wrong one.
       if (audioData.rawAudio) {
         const actualMs = await deps.audioPlayer.loadRawAudio(audioData.rawAudio, "audio/ogg");
+        if (currentBlock !== blockIdx || status !== "playing") return;
         audioData.duration_ms = actualMs;
-        const blk = blocks[currentBlock];
-        if (blk) recordDurationCorrection(blk, actualMs);
-      } else if (audioData.buffer) {
+        const blk = blocks[blockIdx];
+        if (blk) {
+          recordDurationCorrection(blk, actualMs);
+          notify(); // totalDuration changed; the snapshot is memoized until invalidated
+        }
+      } else {
         await deps.audioPlayer.load(audioData.buffer);
+        if (currentBlock !== blockIdx || status !== "playing") return;
       }
       await deps.audioPlayer.play();
       startWordTracking(audioData);
-      console.debug("[PlaybackEngine] startAudioPlayback: playing", { blockIdx: currentBlock });
+      console.debug("[PlaybackEngine] startAudioPlayback: playing", { blockIdx });
     } catch (err) {
       console.error("[PlaybackEngine] Audio playback failed, skipping block:", err);
       advanceToNext();
@@ -352,6 +362,14 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
           knownCached.add(key);
           invalidateBlockStates();
           const blk = blocks[blockIdx];
+          // Server results carry no duration — compressed audio is only measurable once
+          // the element loads it. The last word timing keeps the total sharpening across
+          // the prefetch window instead of only as blocks are played; the exact duration
+          // replaces it in startAudioPlayback.
+          if (result.duration_ms === 0) {
+            const lastWordEnd = result.wordTimings?.at(-1)?.e;
+            if (lastWordEnd) result.duration_ms = Math.round(lastWordEnd * 1000);
+          }
           if (blk && result.duration_ms > 0) recordDurationCorrection(blk, result.duration_ms);
           checkBufferReady();
         } else {

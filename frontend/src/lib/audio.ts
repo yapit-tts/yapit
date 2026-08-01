@@ -70,7 +70,13 @@ export class AudioPlayer {
     this.currentBlobUrl = URL.createObjectURL(blob);
 
     return this.waitForCanPlayThrough().then(() => {
-      this.currentDurationMs = Math.round(this.audioElement.duration * 1000);
+      const duration = this.audioElement.duration;
+      // A container the browser can't length reports Infinity/NaN here. Letting that
+      // through would silently poison progress and remaining-time for the whole session.
+      if (!Number.isFinite(duration)) {
+        throw new Error(`[AudioPlayer] Non-finite duration (${duration}) for ${mimeType}`);
+      }
+      this.currentDurationMs = Math.round(duration * 1000);
       return this.currentDurationMs;
     });
   }

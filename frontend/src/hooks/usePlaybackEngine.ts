@@ -25,8 +25,6 @@ export interface UsePlaybackEngineReturn {
   getBrowserTTSStatus: () => {
     error: string | null;
     device: "webgpu" | "wasm" | null;
-    loading: boolean;
-    loadingProgress: number;
   };
 }
 
@@ -42,7 +40,9 @@ export function usePlaybackEngine(
   const apiRef = useRef(api);
   apiRef.current = api;
 
-  // AudioContext needed for browser synthesis (createBuffer).
+  // Only browser synthesis uses this (createBuffer), but it stays eager: the play
+  // wrapper below has to resume() it inside the user gesture, before we know which
+  // synthesizer the voice needs.
   const audioContextRef = useRef<AudioContext | null>(null);
   const audioPlayerRef = useRef<AudioPlayer | null>(null);
   const engineRef = useRef<PlaybackEngine | null>(null);
@@ -188,13 +188,8 @@ export function usePlaybackEngine(
 
   const getBrowserTTSStatus = useCallback(() => {
     const synth = browserSynthRef.current;
-    if (!synth) return { error: null, device: null, loading: false, loadingProgress: 0 };
-    return {
-      error: synth.getError(),
-      device: synth.getDevice(),
-      loading: synth.isLoading(),
-      loadingProgress: synth.getLoadingProgress(),
-    };
+    if (!synth) return { error: null, device: null };
+    return { error: synth.getError(), device: synth.getDevice() };
   }, []);
 
   return {

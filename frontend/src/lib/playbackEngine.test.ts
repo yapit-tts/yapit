@@ -5,6 +5,7 @@ import {
   type PlaybackEngineDeps,
   type Block,
   type AudioBufferData,
+  type WordTiming,
 } from "./playbackEngine";
 import type { Section } from "./sectionIndex";
 import type { AudioPlayer } from "./audio";
@@ -35,6 +36,7 @@ function makeSection(id: string, start: number, end: number): Section {
 function mockAudioPlayer(): AudioPlayer {
   return {
     load: vi.fn().mockResolvedValue(undefined),
+    loadRawAudio: vi.fn().mockResolvedValue(1500),
     play: vi.fn().mockResolvedValue(undefined),
     pause: vi.fn(),
     stop: vi.fn(),
@@ -47,6 +49,9 @@ function mockAudioPlayer(): AudioPlayer {
 
 const FAKE_BUFFER = {} as AudioBuffer;
 const FAKE_AUDIO: AudioBufferData = { buffer: FAKE_BUFFER, duration_ms: 1000 };
+/** Server synthesis shape: compressed bytes, duration unknown until the element loads them. */
+const fakeRawAudio = (wordTimings?: WordTiming[]): AudioBufferData =>
+  ({ rawAudio: new ArrayBuffer(8), duration_ms: 0, wordTimings });
 
 type SynthesizeHandler = (blockIdx: number, text: string, documentId: string, model: string, voice: string) => Promise<AudioBufferData | null>;
 
@@ -401,6 +406,70 @@ describe("createPlaybackEngine", () => {
         // Block 0 synthesized with 1500ms → correction of +500ms
         expect(e.getSnapshot().totalDuration).toBeGreaterThan(3000);
       });
+    });
+  });
+
+  describe("server audio (compressed, duration known only at play time)", () => {
+    function rawDeps(onSynthesize?: () => Promise<AudioBufferData | null>) {
+      const synth = mockSynthesizer();
+      synth.onSynthesize = onSynthesize ?? (() => Promise.resolve(fakeRawAudio()));
+      return makeDeps({ synthesizer: synth });
+    }
+
+    it("plays compressed bytes directly and adopts the duration the element reports", async () => {
+      const d = rawDeps();
+      const e = createPlaybackEngine(d);
+      e.setVoice("kokoro", "af_heart");
+      e.setDocument("doc-1", makeBlocks(3)); // 3 * 1000ms estimate
+      e.play();
+
+      await vi.waitFor(() => {
+        expect(d.audioPlayer.loadRawAudio).toHaveBeenCalled();
+        // Block 0 reported 1500ms against a 1000ms estimate → +500ms
+        expect(e.getSnapshot().totalDuration).toBe(3500);
+      });
+      expect(d.audioPlayer.load).not.toHaveBeenCalled();
+    });
+
+    it("sharpens the estimate from word timings before a block is played", async () => {
+      const d = rawDeps(() => Promise.resolve(fakeRawAudio([
+        { t: "one", s: 0, e: 0.5 },
+        { t: "two", s: 0.5, e: 2.5 },
+      ])));
+      // Never resolves: isolates the synthesis-time estimate from the play-time correction.
+      (d.audioPlayer.loadRawAudio as Mock).mockImplementation(() => new Promise<number>(() => {}));
+      const e = createPlaybackEngine(d);
+      e.setVoice("kokoro", "af_heart");
+      e.setDocument("doc-1", makeBlocks(3));
+      e.play();
+
+      // Each block: last word ends at 2.5s vs a 1000ms estimate → +1500ms each
+      await vi.waitFor(() => expect(e.getSnapshot().totalDuration).toBe(7500));
+    });
+
+    it("discards a duration that arrives after the cursor moved on", async () => {
+      const d = rawDeps();
+      const pendingLoads: Array<(ms: number) => void> = [];
+      (d.audioPlayer.loadRawAudio as Mock).mockImplementation(
+        () => new Promise<number>((resolve) => pendingLoads.push(resolve)),
+      );
+      const e = createPlaybackEngine(d);
+      e.setVoice("kokoro", "af_heart");
+      e.setDocument("doc-1", makeBlocks(5)); // 5000ms estimate
+      e.play();
+
+      await vi.waitFor(() => expect(pendingLoads).toHaveLength(1));
+      e.seekToBlock(2);
+      await vi.waitFor(() => expect(pendingLoads).toHaveLength(2));
+
+      // Block 0's load finally resolves — it belongs to a block we already left.
+      pendingLoads[0](9999);
+      await Promise.resolve();
+      expect(e.getSnapshot().totalDuration).toBe(5000);
+
+      // The current block's own load still counts.
+      pendingLoads[1](2000);
+      await vi.waitFor(() => expect(e.getSnapshot().totalDuration).toBe(6000));
     });
   });
 
