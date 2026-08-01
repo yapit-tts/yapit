@@ -8,13 +8,14 @@ from typing import Unpack
 import av
 import numpy as np
 import torch
-from kokoro import KPipeline
+from kokoro import KModel, KPipeline
 from typing_extensions import TypedDict
 
 from yapit.synth import SynthAdapter
 
 DEVICE: str = os.getenv("DEVICE", "")
 
+REPO_ID = "hexgrad/Kokoro-82M"
 KOKORO_SAMPLE_RATE = 24_000
 OPUS_BITRATE = 48_000
 
@@ -30,34 +31,40 @@ class KokoroAdapter(SynthAdapter[VoiceConfig]):
             raise ValueError("DEVICE environment variable must be set to 'cpu' or 'cuda'")
         if DEVICE == "cuda" and not torch.cuda.is_available():
             raise RuntimeError("CUDA requested but unavailable, please check your setup.")
-        self._pipe: KPipeline | None = None
-        self._voices: list[str] = []
+        self._model: KModel | None = None
+        self._pipes: dict[str, KPipeline] = {}
+        self._voices_by_lang: dict[str, list[str]] = {}
         self._lock = asyncio.Lock()
         self._last_duration_ms: int = 0
         self._last_word_timestamps: list[dict] | None = None
 
-    @property
-    def pipe(self) -> KPipeline:
-        if self._pipe is None:
-            raise RuntimeError("Adapter not initialized. Call initialize() first.")
-        return self._pipe
-
     async def initialize(self) -> None:
-        if self._pipe is not None:
+        if self._model is not None:
             return
-        self._pipe = KPipeline(repo_id="hexgrad/Kokoro-82M", lang_code="a", device=DEVICE)
-        voices_json = Path(__file__).parent.parent / "kokoro" / "voices.json"
-        self._voices = [v["index"] for v in json.loads(voices_json.read_text())]
-        for v in self._voices:
-            self.pipe.load_voice(v)
+        self._model = KModel(repo_id=REPO_ID).to(DEVICE).eval()
+        for v in json.loads((Path(__file__).parent / "voices.json").read_text()):
+            self._voices_by_lang.setdefault(v["index"][0], []).append(v["index"])
+
+    def _pipeline(self, lang_code: str) -> KPipeline:
+        """Pipelines own the language's G2P frontend, so there is one per language (the voice
+        slug's first letter), created lazily and all sharing the single model.
+        """
+        assert self._model is not None, "Adapter not initialized. Call initialize() first."
+        if lang_code not in self._pipes:
+            pipe = KPipeline(repo_id=REPO_ID, lang_code=lang_code, model=self._model)
+            for voice in self._voices_by_lang[lang_code]:
+                pipe.load_voice(voice)
+            self._pipes[lang_code] = pipe
+        return self._pipes[lang_code]
 
     async def synthesize(self, text: str, **kwargs: Unpack[VoiceConfig]) -> bytes:
         async with self._lock:  # model not thread-safe (usage as local worker with fastapi)
+            pipe = self._pipeline(kwargs["voice"][0])
             all_pcm: list[bytes] = []
             all_timestamps: list[dict] = []
             cumulative_s = 0.0
 
-            for result in self._pipe(text, voice=kwargs["voice"], speed=kwargs["speed"]):
+            for result in pipe(text, voice=kwargs["voice"], speed=kwargs["speed"]):
                 if result.audio is None:
                     continue
                 pcm = (result.audio.numpy() * 32767).astype(np.int16).tobytes()

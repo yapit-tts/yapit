@@ -68,6 +68,57 @@ async def test_tts_integration(model_slug, voice_slug, subscribed_ws_client, sub
 
 
 @pytest.mark.asyncio
+async def test_tts_non_english_voices(subscribed_ws_client, subscribed_client):
+    """Regression for #87: non-English voices must use their language's G2P pipeline.
+
+    Before the fix all voices ran through the American English pipeline: Spanish came
+    out with English pronunciation, and Japanese/Chinese blocks ended as "skipped"
+    (English G2P drops pure-CJK text) or read Latin fragments with each CJK glyph
+    spoken as "japanese letter"/"chinese letter" via the espeak fallback.
+
+    One document with one paragraph (= block) per language.
+    """
+    cases = [
+        ("ef_dora", "El veloz murciélago comía feliz cardillo y kiwi."),
+        ("jf_alpha", "今日はいい天気ですね。散歩に行きましょう。"),
+        ("zf_xiaobei", "今天天气很好，我们去散步吧。"),
+    ]
+    content = "\n\n".join(text for _, text in cases)
+    response = await subscribed_client.post("/v1/documents/text", json={"content": content})
+    assert response.status_code == 201
+    doc = response.json()
+
+    blocks_response = await subscribed_client.get(f"/v1/documents/{doc['id']}/blocks")
+    assert blocks_response.status_code == 200
+    blocks = blocks_response.json()
+    assert len(blocks) == len(cases), f"Expected one block per paragraph, got {blocks}"
+
+    for (voice_slug, _), block in zip(cases, blocks):
+        block_idx = block["idx"]
+        await subscribed_ws_client.synthesize(
+            document_id=doc["id"],
+            block_indices=[block_idx],
+            model="kokoro",
+            voice=voice_slug,
+        )
+
+        status_msg = await subscribed_ws_client.wait_for_any_status(block_idx, timeout=10.0)
+        assert status_msg is not None, f"{voice_slug}: no status message received"
+        assert status_msg["status"] in ("queued", "cached"), f"Unexpected status: {status_msg}"
+
+        if status_msg["status"] == "queued":
+            cached_msg = await subscribed_ws_client.wait_for_status(block_idx, "cached", timeout=120.0)
+            assert cached_msg is not None, f"{voice_slug}: synthesis did not produce audio (skipped or timed out)"
+            audio_url = cached_msg["audio_url"]
+        else:
+            audio_url = status_msg["audio_url"]
+
+        audio_response = await subscribed_client.get(audio_url)
+        assert audio_response.status_code == 200
+        assert len(audio_response.content) > 0, f"{voice_slug}: empty audio"
+
+
+@pytest.mark.asyncio
 async def test_degenerate_text_skipped_not_crashed(subscribed_ws_client, subscribed_client):
     """Regression: text that produces no audio must be skipped, not crash the worker.
 

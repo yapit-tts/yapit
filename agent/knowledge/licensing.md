@@ -33,6 +33,9 @@ pip show <package> | grep -i license
 **Key dependencies verified:**
 - kokoro-js: Apache-2.0
 - Stack Auth SDK: MIT
+- misaki: Apache-2.0; its `[zh]` extra (jieba, pypinyin, pypinyin-dict, cn2an, ordered-set) is all MIT
+- pyopenjtalk-plus: MIT (bundles OpenJTalk + hts_engine + naist-jdic dictionary, all modified-BSD)
+- Japanese G2P deps: fugashi MIT+BSD-3 (bundled MeCab under its BSD option), jaconv MIT, mojimoji Apache-2.0, unidic-lite MIT (dictionary under UniDic's BSD option)
 
 ## AGPL Compatibility Notes
 
