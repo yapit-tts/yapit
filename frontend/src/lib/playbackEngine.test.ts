@@ -431,19 +431,16 @@ describe("createPlaybackEngine", () => {
       expect(d.audioPlayer.load).not.toHaveBeenCalled();
     });
 
-    it("sharpens the estimate from word timings before a block is played", async () => {
-      const d = rawDeps(() => Promise.resolve(fakeRawAudio([
-        { t: "one", s: 0, e: 0.5 },
-        { t: "two", s: 0.5, e: 2.5 },
-      ])));
-      // Never resolves: isolates the synthesis-time estimate from the play-time correction.
+    it("uses the server-reported duration before a block is played", async () => {
+      const d = rawDeps(() => Promise.resolve({ rawAudio: new ArrayBuffer(8), duration_ms: 2500 }));
+      // Never resolves: isolates the synthesis-time duration from the play-time correction.
       (d.audioPlayer.loadRawAudio as Mock).mockImplementation(() => new Promise<number>(() => {}));
       const e = createPlaybackEngine(d);
       e.setVoice("kokoro", "af_heart");
       e.setDocument("doc-1", makeBlocks(3));
       e.play();
 
-      // Each block: last word ends at 2.5s vs a 1000ms estimate → +1500ms each
+      // All 3 blocks prefetch at 2500ms against a 1000ms estimate → +1500ms each
       await vi.waitFor(() => expect(e.getSnapshot().totalDuration).toBe(7500));
     });
 

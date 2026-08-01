@@ -33,6 +33,7 @@ from yapit.queue import QueueConfig, push_job
 class CachedResult:
     status: Literal["cached"] = "cached"
     variant_hash: str = ""
+    duration_ms: int | None = None
 
     @property
     def audio_url(self) -> str:
@@ -101,7 +102,7 @@ async def request_synthesis(
             document_id=str(document_id),
             block_idx=block_idx,
         )
-        return CachedResult(variant_hash=variant_hash)
+        return CachedResult(variant_hash=variant_hash, duration_ms=variant.duration_ms)
 
     usage_type = UsageType.server_kokoro if model.slug.startswith("kokoro") else UsageType.premium_voice
     block_chars = int(len(text) * model.usage_multiplier)

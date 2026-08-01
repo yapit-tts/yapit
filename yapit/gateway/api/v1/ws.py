@@ -67,6 +67,7 @@ class WSBlockStatus(BaseModel):
     model_slug: str | None = None
     voice_slug: str | None = None
     word_timestamps: str | None = None
+    duration_ms: int | None = None
 
 
 class WSEvicted(BaseModel):
@@ -244,6 +245,7 @@ async def _handle_synthesize(
                         model_slug=model.slug,
                         voice_slug=voice.slug,
                         word_timestamps=word_timestamps,
+                        duration_ms=getattr(result, "duration_ms", None),
                     ).model_dump(mode="json")
                 )
             except Exception as e:

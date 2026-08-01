@@ -256,6 +256,7 @@ async def _notify_subscribers(
                 model_slug=result.model_slug,
                 voice_slug=result.voice_slug,
                 word_timestamps=word_timestamps,
+                duration_ms=result.duration_ms,
             ).model_dump_json(),
         )
 

@@ -374,14 +374,6 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
           knownCached.add(key);
           invalidateBlockStates();
           const blk = blocks[blockIdx];
-          // Server results carry no duration — compressed audio is only measurable once
-          // the element loads it. The last word timing keeps the total sharpening across
-          // the prefetch window instead of only as blocks are played; the exact duration
-          // replaces it in startAudioPlayback.
-          if (result.duration_ms === 0) {
-            const lastWordEnd = result.wordTimings?.at(-1)?.e;
-            if (lastWordEnd) result.duration_ms = Math.round(lastWordEnd * 1000);
-          }
           if (blk && result.duration_ms > 0) recordDurationCorrection(blk, result.duration_ms);
           checkBufferReady();
         } else {
