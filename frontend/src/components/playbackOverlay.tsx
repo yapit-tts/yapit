@@ -350,6 +350,7 @@ export function PlaybackOverlay({
         onSpeedChange={onSpeedChange}
         voiceSelection={voiceSelection}
         onVoiceChange={onVoiceChange}
+        playbackError={snapshot.playbackError}
         serverTTSError={serverTTS.error}
         serverTTSRecoverable={serverTTS.recoverable}
         browserTTSError={browserTTS.error}

@@ -259,6 +259,7 @@ interface Props {
   onSpeedChange: (value: number) => void;
   voiceSelection: VoiceSelection;
   onVoiceChange: (selection: VoiceSelection) => void;
+  playbackError?: string | null;
   serverTTSError?: string | null;
   serverTTSRecoverable?: boolean;
   browserTTSError?: string | null;
@@ -297,6 +298,7 @@ const SoundControl = memo(function SoundControl({
   onSpeedChange,
   voiceSelection,
   onVoiceChange,
+  playbackError,
   serverTTSError,
   serverTTSRecoverable,
   browserTTSError,
@@ -379,6 +381,9 @@ const SoundControl = memo(function SoundControl({
   // Synthesis error banner (non-quota server errors like API outage, timeouts)
   const [synthErrorDismissed, setSynthErrorDismissed] = useState(false);
   const showSynthErrorBanner = !!serverTTSError && !usageLimitError && !synthErrorDismissed && !isUsingBrowser;
+
+  // Playback stopped because the browser can't decode the audio at all — no retry will help.
+  const showPlaybackErrorBanner = !!playbackError;
 
   const handleSwitchToCloud = useCallback(() => {
     const newSelection: VoiceSelection = {
@@ -559,6 +564,14 @@ const SoundControl = memo(function SoundControl({
       )}
 
       {/* Synthesis error banner (non-quota) */}
+      {showPlaybackErrorBanner && (
+        <div className="flex items-center justify-center gap-2 mb-3 py-2 px-4 bg-destructive/10 rounded-lg text-sm border border-destructive/20">
+          <AlertTriangle className="h-4 w-4 text-destructive shrink-0" />
+          <span className="text-foreground font-medium">{playbackError}</span>
+          <span className="text-muted-foreground">·</span>
+          <span className="text-muted-foreground">Try Chrome or Firefox</span>
+        </div>
+      )}
       {showSynthErrorBanner && (
         <div className="flex items-center justify-center gap-2 mb-3 py-2 px-4 bg-destructive/10 rounded-lg text-sm border border-destructive/20">
           <AlertTriangle className="h-4 w-4 text-destructive shrink-0" />

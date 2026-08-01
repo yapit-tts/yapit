@@ -10,8 +10,6 @@ export interface VoiceInfo {
 // Messages FROM worker TO main thread
 export type WorkerMessage =
   | { type: "device"; device: TTSDevice; dtype: TTSDtype }
-  | { type: "progress"; progress: number }
-  | { type: "ready"; voices: string[] }
   | { type: "audio"; requestId: string; audioData: ArrayBuffer; sampleRate: number }
   | { type: "error"; requestId: string; error: string };
 

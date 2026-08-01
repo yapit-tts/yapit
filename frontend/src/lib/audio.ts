@@ -66,7 +66,7 @@ export class AudioPlayer {
     const blob = new Blob([data], { type: mimeType });
     this.currentBlobUrl = URL.createObjectURL(blob);
 
-    return this.waitForCanPlayThrough().then(() => {
+    return this.waitForCanPlayThrough(mimeType).then(() => {
       const duration = this.audioElement.duration;
       // A container the browser can't length reports Infinity/NaN here. Letting that
       // through would silently poison progress and remaining-time for the whole session.
@@ -78,7 +78,7 @@ export class AudioPlayer {
     });
   }
 
-  private waitForCanPlayThrough(): Promise<void> {
+  private waitForCanPlayThrough(mimeType: string): Promise<void> {
     return new Promise((resolve, reject) => {
       const cleanup = () => {
         this.audioElement.removeEventListener("canplaythrough", onCanPlay);
@@ -90,7 +90,14 @@ export class AudioPlayer {
       const onCanPlay = () => { cleanup(); resolve(); };
       const onError = () => {
         cleanup();
-        reject(new Error("[AudioPlayer] Audio element error during load"));
+        // MEDIA_ERR_SRC_NOT_SUPPORTED: the browser can't decode this container at all,
+        // so no block of this document will play. Anything else may be one bad block.
+        const code = this.audioElement.error?.code;
+        if (code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED) {
+          reject(new UnplayableAudioError(`[AudioPlayer] Unsupported container: ${mimeType}`));
+          return;
+        }
+        reject(new Error(`[AudioPlayer] Audio element error during load (code ${code})`));
       };
       const timer = setTimeout(() => {
         console.debug("[AudioPlayer] waitForCanPlayThrough: timeout", { LOAD_TIMEOUT_MS });

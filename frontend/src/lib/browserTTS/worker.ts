@@ -45,16 +45,7 @@ async function loadModel(): Promise<KokoroTTS> {
   console.log(`[TTS Worker] Device: ${device}, dtype: ${dtype}`);
   post({ type: "device", device, dtype });
 
-  const instance = await KokoroTTS.from_pretrained(MODEL_ID, {
-    dtype,
-    device,
-    progress_callback: (progress) => {
-      const pct = "progress" in progress ? (progress.progress ?? 0) : 0;
-      post({ type: "progress", progress: pct });
-    },
-  });
-
-  return instance;
+  return KokoroTTS.from_pretrained(MODEL_ID, { dtype, device });
 }
 
 async function processQueue() {
@@ -81,9 +72,6 @@ async function processQueue() {
           });
         }
         tts = await loadingPromise;
-
-        const voices = Object.keys(tts.voices ?? {});
-        post({ type: "ready", voices });
       }
 
       console.log(`[TTS Worker] Synthesizing block ${blockIdx} (${text.length} chars)...`);

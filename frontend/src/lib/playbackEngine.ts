@@ -38,7 +38,8 @@ export interface PlaybackSnapshot {
   blockStates: BlockVisualState[];
   audioProgress: number;
   totalDuration: number;
-
+  /** Set when playback stopped for a reason the user needs to see (unsupported audio format). */
+  playbackError: string | null;
 }
 
 // --- Configuration ---
@@ -106,6 +107,7 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
   let audioProgress = 0;
   let totalDuration = 0;
   let initialTotalEstimate = 0;
+  let playbackError: string | null = null;
   const durationCorrections = new Map<number, number>();
 
   const audioCache = new Map<VariantKey, AudioBufferData>();
@@ -314,6 +316,7 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
         // Not one bad block: nothing in this document will play. Stop instead of
         // fast-forwarding through every block in silence.
         console.error("[PlaybackEngine] Audio unplayable in this browser, stopping:", err);
+        playbackError = "This browser can't play this audio format";
         engineStop();
         return;
       }
@@ -526,6 +529,7 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
     if (status === "playing" || status === "buffering") return;
     if (!blocks.length) return;
 
+    playbackError = null;
     synthesizer.clearError();
 
     let startBlock = currentBlock;
@@ -638,6 +642,7 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
   }
 
   function setDocument(newDocumentId: string, newBlocks: Block[]) {
+    playbackError = null;
     deps.audioPlayer.stop();
 
     synthesizer.cancelAll();
@@ -713,6 +718,7 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
       blockStates: deriveBlockStates(),
       audioProgress,
       totalDuration,
+      playbackError,
     };
     end();
     return snapshot;

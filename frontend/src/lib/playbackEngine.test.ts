@@ -496,7 +496,7 @@ describe("createPlaybackEngine", () => {
     it("stops rather than skipping every block when audio is unplayable", async () => {
       const d = rawDeps();
       (d.audioPlayer.loadRawAudio as Mock).mockRejectedValue(
-        new UnplayableAudioError("non-finite duration"),
+        new UnplayableAudioError("unsupported container"),
       );
       const e = createPlaybackEngine(d);
       e.setVoice("kokoro", "af_heart");
@@ -506,6 +506,22 @@ describe("createPlaybackEngine", () => {
       await vi.waitFor(() => expect(e.getSnapshot().status).toBe("stopped"));
       // Not a silent fast-forward through the document.
       expect(e.getSnapshot().currentBlock).toBe(0);
+      // And the user is told why, rather than play doing nothing.
+      expect(e.getSnapshot().playbackError).toMatch(/can't play/i);
+    });
+
+    it("clears the playback error when the user presses play again", async () => {
+      const d = rawDeps();
+      (d.audioPlayer.loadRawAudio as Mock).mockRejectedValue(new UnplayableAudioError("nope"));
+      const e = createPlaybackEngine(d);
+      e.setVoice("kokoro", "af_heart");
+      e.setDocument("doc-1", makeBlocks(3));
+      e.play();
+      await vi.waitFor(() => expect(e.getSnapshot().playbackError).toBeTruthy());
+
+      (d.audioPlayer.loadRawAudio as Mock).mockResolvedValue(1500);
+      e.play();
+      expect(e.getSnapshot().playbackError).toBeNull();
     });
   });
 
