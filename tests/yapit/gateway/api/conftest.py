@@ -20,7 +20,6 @@ from yapit.gateway.config import Settings
 from yapit.gateway.db import close_db, create_session, get_engine, init_db
 from yapit.gateway.deps import create_cache, create_image_storage
 from yapit.gateway.markdown.transformer import DocumentTransformer
-from yapit.gateway.rate_limit import limiter
 from yapit.gateway.stack_auth.users import User
 
 DEFAULT_TEST_USER = User(
@@ -100,7 +99,6 @@ async def _shared_app(_create_schema, _test_settings) -> FastAPI:
     shutil.rmtree("test_document_cache", ignore_errors=True)
 
     settings = _test_settings
-    limiter.enabled = False
 
     @asynccontextmanager
     async def _test_lifespan(app: FastAPI):

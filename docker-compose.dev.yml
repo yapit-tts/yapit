@@ -5,6 +5,7 @@ volumes:
 services:
   gateway:
     env_file:
+      # order matters: later files override earlier ones (e.g. .env.dev flips RATELIMIT_ENABLED=false)
       - ./.env.prod
       - ./.env.dev
       - ./.env

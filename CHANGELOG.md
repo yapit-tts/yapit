@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+* Fixed non-English Kokoro voices reading text with English pronunciation — each language now uses its own G2P pipeline; Japanese and Chinese (previously silent or spelling out "japanese letter"/"chinese letter") now work. #87
+* **Breaking (selfhost):** New required env var `RATELIMIT_ENABLED` — add `RATELIMIT_ENABLED=true` to your `.env.selfhost` (see `.env.selfhost.example`), or the gateway will fail to start.
+
 ## v0.3.2 — 2026-07-20
 
 * Security: updated python-multipart 0.0.22 → 0.0.32 (multipart upload parser), aiohttp, pillow, urllib3, idna, mako (backend) and react-router (frontend) — all Dependabot-flagged vulnerabilities.

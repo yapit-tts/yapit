@@ -19,6 +19,11 @@ REPO_ID = "hexgrad/Kokoro-82M"
 KOKORO_SAMPLE_RATE = 24_000
 OPUS_BITRATE = 48_000
 
+# Kokoro's non-English chunker only splits on ASCII sentence enders and silently truncates
+# chunks over 510 phonemes — a single 250-char CJK block far exceeds that. Splitting on CJK
+# enders too keeps chunks under the cap; a no-op for text that doesn't contain them.
+SPLIT_PATTERN = r"\n+|(?<=[。！？…])"
+
 
 class VoiceConfig(TypedDict):
     voice: str
@@ -43,7 +48,8 @@ class KokoroAdapter(SynthAdapter[VoiceConfig]):
             return
         self._model = KModel(repo_id=REPO_ID).to(DEVICE).eval()
         for v in json.loads((Path(__file__).parent / "voices.json").read_text()):
-            self._voices_by_lang.setdefault(v["index"][0], []).append(v["index"])
+            self._voices_by_lang.setdefault(_lang_code(v["index"]), []).append(v["index"])
+        self._pipeline("a")  # pre-warm the common case; other languages init on first use
 
     def _pipeline(self, lang_code: str) -> KPipeline:
         """Pipelines own the language's G2P frontend, so there is one per language (the voice
@@ -59,12 +65,12 @@ class KokoroAdapter(SynthAdapter[VoiceConfig]):
 
     async def synthesize(self, text: str, **kwargs: Unpack[VoiceConfig]) -> bytes:
         async with self._lock:  # model not thread-safe (usage as local worker with fastapi)
-            pipe = self._pipeline(kwargs["voice"][0])
+            pipe = self._pipeline(_lang_code(kwargs["voice"]))
             all_pcm: list[bytes] = []
             all_timestamps: list[dict] = []
             cumulative_s = 0.0
 
-            for result in pipe(text, voice=kwargs["voice"], speed=kwargs["speed"]):
+            for result in pipe(text, voice=kwargs["voice"], speed=kwargs["speed"], split_pattern=SPLIT_PATTERN):
                 if result.audio is None:
                     continue
                 pcm = (result.audio.numpy() * 32767).astype(np.int16).tobytes()
@@ -96,6 +102,11 @@ class KokoroAdapter(SynthAdapter[VoiceConfig]):
 
     def get_word_timestamps(self) -> list[dict] | None:
         return self._last_word_timestamps
+
+
+def _lang_code(voice_slug: str) -> str:
+    """Kokoro voice slugs start with their language code: ef_dora -> 'e' (Spanish)."""
+    return voice_slug[0]
 
 
 def _pcm_to_ogg_opus(pcm_bytes: bytes) -> bytes:
