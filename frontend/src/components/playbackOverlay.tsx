@@ -1,4 +1,4 @@
-import { useSyncExternalStore, useRef, useState, useEffect, useLayoutEffect, useCallback, useMemo } from "react";
+import { useSyncExternalStore, useRef, useState, useEffect, useLayoutEffect, useImperativeHandle, useCallback, useMemo } from "react";
 import { createWordHighlightManager } from '@/lib/wordHighlight';
 import { SoundControl } from '@/components/soundControl';
 import { DocumentOutliner } from '@/components/documentOutliner';
@@ -186,7 +186,8 @@ export function PlaybackOverlay({
     scrollCooldownTimerRef.current = setTimeout(() => { scrollCooldownRef.current = false; }, 1200);
   }, [findElementsByAudioIdx, scrollBlockPosition]);
 
-  scrollToBlockRef.current = scrollToBlock;
+  // The parent drives scrolling from its keyboard handlers; this is the handle it calls.
+  useImperativeHandle(scrollToBlockRef, () => scrollToBlock, [scrollToBlock]);
 
   // Preview scroll position change immediately
   useEffect(() => {
@@ -230,7 +231,7 @@ export function PlaybackOverlay({
     scrollToBlock(currentBlock, "smooth");
   }, [currentBlock, scrollToBlock]);
 
-  handleBackToReadingRef.current = handleBackToReading;
+  useImperativeHandle(handleBackToReadingRef, () => handleBackToReading, [handleBackToReading]);
 
   // --- MediaSession playback state + position ---
 
