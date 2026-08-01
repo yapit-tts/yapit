@@ -92,13 +92,17 @@ export function usePlaybackEngine(
         const response = await apiRef.current.get(url, { responseType: "arraybuffer" });
         return response.data;
       },
-      decodeAudio: (data: ArrayBuffer) => audioContext.decodeAudioData(data.slice(0)),
     });
   }
 
-  if (!browserSynthRef.current) {
-    browserSynthRef.current = createBrowserSynthesizer({ audioContext });
-  }
+  // Created on first use: constructing it spawns the Kokoro worker, which pulls
+  // ~1.8MB of JS into a second isolate that server-side voices never touch.
+  const getBrowserSynth = useCallback(() => {
+    if (!browserSynthRef.current) {
+      browserSynthRef.current = createBrowserSynthesizer({ audioContext });
+    }
+    return browserSynthRef.current;
+  }, [audioContext]);
 
   const originalPlayRef = useRef<(() => void) | null>(null);
 
@@ -137,10 +141,10 @@ export function usePlaybackEngine(
   useEffect(() => {
     const synth = isServerSideModel(voiceSelection.model)
       ? serverSynthRef.current!
-      : browserSynthRef.current!;
+      : getBrowserSynth();
     engine.setSynthesizer(synth);
     engine.setVoice(voiceSelection.model, voiceSelection.voiceSlug);
-  }, [voiceSelection.model, voiceSelection.voiceSlug, engine]);
+  }, [voiceSelection.model, voiceSelection.voiceSlug, engine, getBrowserSynth]);
 
   // Sync sections — derive collapsed (skipped) set from expandedSections
   const collapsedSections = useMemo(
@@ -182,12 +186,16 @@ export function usePlaybackEngine(
     recoverable: serverSynthRef.current!.isRecoverable(),
   }), []);
 
-  const getBrowserTTSStatus = useCallback(() => ({
-    error: browserSynthRef.current!.getError(),
-    device: browserSynthRef.current!.getDevice(),
-    loading: browserSynthRef.current!.isLoading(),
-    loadingProgress: browserSynthRef.current!.getLoadingProgress(),
-  }), []);
+  const getBrowserTTSStatus = useCallback(() => {
+    const synth = browserSynthRef.current;
+    if (!synth) return { error: null, device: null, loading: false, loadingProgress: 0 };
+    return {
+      error: synth.getError(),
+      device: synth.getDevice(),
+      loading: synth.isLoading(),
+      loadingProgress: synth.getLoadingProgress(),
+    };
+  }, []);
 
   return {
     engine,
