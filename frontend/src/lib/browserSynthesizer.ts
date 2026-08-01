@@ -18,16 +18,12 @@ interface BrowserSynthesizerDeps {
 export function createBrowserSynthesizer(deps: BrowserSynthesizerDeps): Synthesizer & {
   getDevice(): TTSDevice | null;
   getDtype(): TTSDtype | null;
-  isLoading(): boolean;
-  getLoadingProgress(): number;
 } {
   const pending = new Map<string, PendingRequest>();
   let generation = 0;
   let lastError: string | null = null;
   let device: TTSDevice | null = null;
   let dtype: TTSDtype | null = null;
-  let loading = false;
-  let loadingProgress = 0;
 
   const worker = new Worker(
     new URL("./browserTTS/worker.ts", import.meta.url),
@@ -41,15 +37,6 @@ export function createBrowserSynthesizer(deps: BrowserSynthesizerDeps): Synthesi
       case "device":
         device = msg.device;
         dtype = msg.dtype;
-        loading = true;
-        break;
-
-      case "progress":
-        loadingProgress = msg.progress;
-        break;
-
-      case "ready":
-        loading = false;
         break;
 
       case "audio": {
@@ -83,7 +70,6 @@ export function createBrowserSynthesizer(deps: BrowserSynthesizerDeps): Synthesi
 
   worker.onerror = (e) => {
     lastError = e.message || "Worker failed to load";
-    loading = false;
   };
 
   function synthesize(
@@ -133,8 +119,6 @@ export function createBrowserSynthesizer(deps: BrowserSynthesizerDeps): Synthesi
     destroy,
     getDevice: () => device,
     getDtype: () => dtype,
-    isLoading: () => loading,
-    getLoadingProgress: () => loadingProgress,
   };
 }
 

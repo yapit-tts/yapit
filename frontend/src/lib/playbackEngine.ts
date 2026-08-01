@@ -1,4 +1,5 @@
 import type { AudioPlayer } from "./audio";
+import { StaleLoadError, UnplayableAudioError } from "./audio";
 import type { Section } from "./sectionIndex";
 import { findSectionForBlock } from "./sectionIndex";
 import type { Synthesizer } from "./synthesizer";
@@ -312,6 +313,17 @@ export function createPlaybackEngine(deps: PlaybackEngineDeps): PlaybackEngine {
       startWordTracking(audioData);
       console.debug("[PlaybackEngine] startAudioPlayback: playing", { blockIdx });
     } catch (err) {
+      // A superseded load belongs to a block we already left — advancing here would
+      // step past whatever the user actually seeked to.
+      if (err instanceof StaleLoadError) return;
+      if (currentBlock !== blockIdx || status !== "playing") return;
+      if (err instanceof UnplayableAudioError) {
+        // Not one bad block: nothing in this document will play. Stop instead of
+        // fast-forwarding through every block in silence.
+        console.error("[PlaybackEngine] Audio unplayable in this browser, stopping:", err);
+        engineStop();
+        return;
+      }
       console.error("[PlaybackEngine] Audio playback failed, skipping block:", err);
       advanceToNext();
     }

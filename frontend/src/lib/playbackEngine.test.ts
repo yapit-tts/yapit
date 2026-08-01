@@ -8,7 +8,7 @@ import {
   type WordTiming,
 } from "./playbackEngine";
 import type { Section } from "./sectionIndex";
-import type { AudioPlayer } from "./audio";
+import { StaleLoadError, UnplayableAudioError, type AudioPlayer } from "./audio";
 import type { Synthesizer } from "./synthesizer";
 
 // --- Test helpers ---
@@ -470,6 +470,42 @@ describe("createPlaybackEngine", () => {
       // The current block's own load still counts.
       pendingLoads[1](2000);
       await vi.waitFor(() => expect(e.getSnapshot().totalDuration).toBe(6000));
+    });
+
+    it("stays on the seeked block when a superseded load rejects", async () => {
+      const d = rawDeps();
+      const rejects: Array<(err: Error) => void> = [];
+      (d.audioPlayer.loadRawAudio as Mock).mockImplementation(
+        () => new Promise<number>((_, reject) => rejects.push(reject)),
+      );
+      const e = createPlaybackEngine(d);
+      e.setVoice("kokoro", "af_heart");
+      e.setDocument("doc-1", makeBlocks(30));
+      e.play();
+
+      await vi.waitFor(() => expect(rejects).toHaveLength(1));
+      e.seekToBlock(20);
+      expect(e.getSnapshot().currentBlock).toBe(20);
+
+      // Block 0's abandoned load finally gives up — it must not move the cursor.
+      rejects[0](new StaleLoadError("superseded"));
+      await new Promise((r) => setTimeout(r, 0));
+      expect(e.getSnapshot().currentBlock).toBe(20);
+    });
+
+    it("stops rather than skipping every block when audio is unplayable", async () => {
+      const d = rawDeps();
+      (d.audioPlayer.loadRawAudio as Mock).mockRejectedValue(
+        new UnplayableAudioError("non-finite duration"),
+      );
+      const e = createPlaybackEngine(d);
+      e.setVoice("kokoro", "af_heart");
+      e.setDocument("doc-1", makeBlocks(10));
+      e.play();
+
+      await vi.waitFor(() => expect(e.getSnapshot().status).toBe("stopped"));
+      // Not a silent fast-forward through the document.
+      expect(e.getSnapshot().currentBlock).toBe(0);
     });
   });
 

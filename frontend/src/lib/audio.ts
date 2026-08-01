@@ -11,6 +11,12 @@ const SILENT_WAV = "data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEARKwAAI
 
 const LOAD_TIMEOUT_MS = 5_000;
 
+/** A load that stop() (or a newer load) superseded. The caller no longer owns the element. */
+export class StaleLoadError extends Error {}
+
+/** The browser loaded the audio but can't tell us how long it is — the container is unusable. */
+export class UnplayableAudioError extends Error {}
+
 export class AudioPlayer {
   private audioElement: HTMLAudioElement;
   private _tempo = 1.0;
@@ -20,6 +26,7 @@ export class AudioPlayer {
   private currentBlobUrl: string | null = null;
   private currentDurationMs = 0;
   private unlocked = false;
+  private cancelPendingLoad: (() => void) | null = null;
 
   constructor() {
     this.audioElement = document.createElement("audio");
@@ -74,7 +81,7 @@ export class AudioPlayer {
       // A container the browser can't length reports Infinity/NaN here. Letting that
       // through would silently poison progress and remaining-time for the whole session.
       if (!Number.isFinite(duration)) {
-        throw new Error(`[AudioPlayer] Non-finite duration (${duration}) for ${mimeType}`);
+        throw new UnplayableAudioError(`[AudioPlayer] Non-finite duration (${duration}) for ${mimeType}`);
       }
       this.currentDurationMs = Math.round(duration * 1000);
       return this.currentDurationMs;
@@ -87,6 +94,7 @@ export class AudioPlayer {
         this.audioElement.removeEventListener("canplaythrough", onCanPlay);
         this.audioElement.removeEventListener("error", onError);
         clearTimeout(timer);
+        this.cancelPendingLoad = null;
       };
 
       const onCanPlay = () => { cleanup(); resolve(); };
@@ -99,6 +107,13 @@ export class AudioPlayer {
         cleanup();
         reject(new Error("[AudioPlayer] Load timeout — canplaythrough not fired"));
       }, LOAD_TIMEOUT_MS);
+
+      // Without this, a superseded load keeps its listeners and timer: it either resolves off
+      // the *next* block's canplaythrough, or times out and looks like a genuine failure.
+      this.cancelPendingLoad = () => {
+        cleanup();
+        reject(new StaleLoadError("[AudioPlayer] Load superseded"));
+      };
 
       this.audioElement.addEventListener("canplaythrough", onCanPlay);
       this.audioElement.addEventListener("error", onError);
@@ -124,6 +139,7 @@ export class AudioPlayer {
   }
 
   stop(): void {
+    this.cancelPendingLoad?.();
     this.audioElement.pause();
     this.audioElement.currentTime = 0;
     this.stopProgressTracking();
