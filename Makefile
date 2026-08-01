@@ -128,7 +128,9 @@ check-backend:
 	uvx ty@0.0.56 check yapit/  # keep in sync with .pre-commit-config.yaml ty-check hook
 
 check-frontend:
-	cd frontend && npm run lint && npx tsc --noEmit
+	# tsconfig.json is a solution file (files: []), so plain `tsc --noEmit` checks nothing —
+	# -b follows the project references, same as the build does.
+	cd frontend && npm run lint && npx tsc -b --force
 
 # Releases
 define do_release
