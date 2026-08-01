@@ -81,6 +81,7 @@ class Settings(BaseSettings):
     anonymous_session_secret: str
 
     billing_enabled: bool  # Self-hosting: set False to disable subscription/usage limits
+    ratelimit_enabled: bool  # False in dev/CI: the integration suite makes all requests from one IP
 
     metrics_database_url: str | None = None
     log_dir: str

@@ -338,6 +338,7 @@ def create_app(
         lifespan=lifespan,
     )
     app.state.limiter = limiter
+    limiter.enabled = settings.ratelimit_enabled
 
     app.dependency_overrides[get_settings] = lambda: settings
 

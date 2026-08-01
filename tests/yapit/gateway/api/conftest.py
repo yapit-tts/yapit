@@ -85,6 +85,7 @@ def _test_settings(postgres_container, redis_container):
         ai_processor=None,
         auth_enabled=True,
         billing_enabled=True,
+        ratelimit_enabled=False,
         metrics_database_url=None,
         log_dir="test_logs",
         db_drop_and_recreate=False,
