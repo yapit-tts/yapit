@@ -80,8 +80,9 @@ async def seed_database(db: AsyncSession, settings: Settings) -> None:
     """Seed database with models, voices, and plans.
 
     Idempotent — safe to leave DB_SEED=1 permanently:
-    - Fresh DB: creates models, voices, and plans.
-    - Existing DB: inserts any voices from voices.json missing in the DB.
+    - Kokoro model + voices: created only when no models exist.
+    - Plans: only missing tiers are inserted; existing rows are never modified.
+    - openai-tts model + voices: synced from settings on every run.
     """
     existing_models = (await db.exec(select(TTSModel))).all()
     if not existing_models:
