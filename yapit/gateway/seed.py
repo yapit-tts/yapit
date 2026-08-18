@@ -87,9 +87,13 @@ async def seed_database(db: AsyncSession, settings: Settings) -> None:
     if not existing_models:
         for model in create_models():
             db.add(model)
-        for plan in create_plans(settings):
+
+    # Migrations insert plan rows (b1c2d3e4f5a6 adds 'voice'), so a migrated DB has plans but no models
+    existing_tiers = {plan.tier for plan in (await db.exec(select(Plan))).all()}
+    for plan in create_plans(settings):
+        if plan.tier not in existing_tiers:
             db.add(plan)
-        await db.commit()
+    await db.commit()
 
     await sync_openai_tts_voices(db, settings)
     await _deactivate_unconfigured_models(db, settings)
