@@ -661,7 +661,7 @@ async def create_website_document(
         )
 
     t0 = time.monotonic()
-    html = cached_doc.content.decode("utf-8", errors="ignore") if cached_doc.content_from_client else None
+    html = None if cached_doc.fetch_url else cached_doc.content.decode("utf-8", errors="ignore")
     markdown, defuddle_title, defuddle_method = await extract_website_content(cached_doc.metadata.url, html=html)
 
     processed = await asyncio.get_running_loop().run_in_executor(
@@ -1311,8 +1311,7 @@ async def create_document(
             redis=redis,
         )
 
-    fetched_url = None if cached_doc.content_from_client else cached_doc.metadata.url
-    arxiv_id = _detect_arxiv_id(fetched_url) if fetched_url else None
+    arxiv_id = _detect_arxiv_id(cached_doc.fetch_url) if cached_doc.fetch_url else None
 
     extraction_id = str(uuid4())
 

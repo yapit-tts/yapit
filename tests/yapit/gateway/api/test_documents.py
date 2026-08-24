@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
@@ -14,7 +15,8 @@ from yapit.gateway.api.v1.documents import (
     _get_uncached_pages,
 )
 from yapit.gateway.auth import authenticate_optional
-from yapit.gateway.document.types import ProcessorConfig
+from yapit.gateway.document.types import CachedDocument, ProcessorConfig
+from yapit.gateway.domain_models import DocumentMetadata
 
 FIXTURES_DIR = Path("tests/fixtures/documents")
 
@@ -227,6 +229,27 @@ async def test_website_from_upload_without_source_url(client, as_test_user):
     assert response.status_code == 201
     assert mock_extract.call_args.args == (None,)
     assert mock_extract.call_args.kwargs["html"] == html
+
+
+@pytest.mark.asyncio
+async def test_website_from_cache_entry_without_origin(client, as_test_user, app):
+    """An entry that records neither a fetch URL nor a client origin still extracts."""
+    html = b"<html><body><p>Hi</p></body></html>"
+    key = hashlib.sha256(html).hexdigest()
+    entry = CachedDocument(
+        metadata=DocumentMetadata(
+            content_type="text/html", total_pages=1, title=None, url=None, file_name="page.html", file_size=len(html)
+        ),
+        content=html,
+    )
+    await app.state.document_cache.store(key, entry.model_dump_json(exclude={"content_from_client"}).encode())
+
+    with patch("yapit.gateway.document.website.extract_website") as mock_extract:
+        mock_extract.return_value = ("Body.", "Extracted title", "html-direct")
+        response = await client.post("/v1/documents/website", json={"hash": key})
+
+    assert response.status_code == 201
+    assert mock_extract.call_args.kwargs["html"] == html.decode()
 
 
 @pytest.mark.asyncio
