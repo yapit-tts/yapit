@@ -144,6 +144,80 @@ async def test_upload_and_create_document(client, as_test_user):
 
 
 @pytest.mark.asyncio
+async def test_upload_records_source_url(client, as_test_user):
+    """A source URL supplied with an upload becomes the document's provenance."""
+    source_url = "https://example.com/article"
+    files = {"file": ("page.html", b"<html><body><p>Hi</p></body></html>", "text/html")}
+
+    response = await client.post("/v1/documents/prepare/upload", files=files, data={"source_url": source_url})
+
+    assert response.status_code == 200
+    data = DocumentPrepareResponse.model_validate(response.json())
+    assert data.metadata.url == source_url
+    assert data.endpoint == "website"
+
+
+@pytest.mark.asyncio
+async def test_upload_source_url_splits_document_but_shares_extraction(client, as_test_user):
+    """Same bytes from two sources are two documents, but one extraction."""
+    files = {"file": ("page.html", b"<html><body><p>Hi</p></body></html>", "text/html")}
+
+    first = await client.post("/v1/documents/prepare/upload", files=files, data={"source_url": "https://a.example/one"})
+    second = await client.post(
+        "/v1/documents/prepare/upload", files=files, data={"source_url": "https://b.example/two"}
+    )
+
+    a = DocumentPrepareResponse.model_validate(first.json())
+    b = DocumentPrepareResponse.model_validate(second.json())
+    assert a.hash != b.hash
+    assert a.content_hash == b.content_hash
+    assert a.metadata.url == "https://a.example/one"
+    assert b.metadata.url == "https://b.example/two"
+
+
+@pytest.mark.asyncio
+async def test_website_from_upload_extracts_html_against_source_url(client, as_test_user):
+    """Uploaded HTML is never re-fetched; its source URL only resolves relative links."""
+    html = "<html><body><p>Hi</p></body></html>"
+    source_url = "https://example.com/section/article"
+    files = {"file": ("page.html", html.encode(), "text/html")}
+
+    upload = await client.post("/v1/documents/prepare/upload", files=files, data={"source_url": source_url})
+    assert upload.status_code == 200
+    upload_data = DocumentPrepareResponse.model_validate(upload.json())
+
+    with patch("yapit.gateway.document.website.extract_website") as mock_extract:
+        mock_extract.return_value = ("Body [x](/y) end.", "Extracted title", "html-direct")
+        response = await client.post("/v1/documents/website", json={"hash": upload_data.hash})
+
+    assert response.status_code == 201
+    assert mock_extract.call_args.args == (source_url,)
+    assert mock_extract.call_args.kwargs["html"] == html
+
+    doc = await client.get(f"/v1/documents/{DocumentCreateResponse.model_validate(response.json()).id}")
+    assert "https://example.com/y" in doc.json()["original_text"]
+
+
+@pytest.mark.asyncio
+async def test_website_from_upload_without_source_url(client, as_test_user):
+    """Uploaded HTML with no source is still extracted from its bytes."""
+    html = "<html><body><p>Hi</p></body></html>"
+    files = {"file": ("page.html", html.encode(), "text/html")}
+
+    upload = await client.post("/v1/documents/prepare/upload", files=files)
+    upload_data = DocumentPrepareResponse.model_validate(upload.json())
+    assert upload_data.metadata.url is None
+
+    with patch("yapit.gateway.document.website.extract_website") as mock_extract:
+        mock_extract.return_value = ("Body.", "Extracted title", "html-direct")
+        response = await client.post("/v1/documents/website", json={"hash": upload_data.hash})
+
+    assert response.status_code == 201
+    assert mock_extract.call_args.args == (None,)
+    assert mock_extract.call_args.kwargs["html"] == html
+
+
+@pytest.mark.asyncio
 async def test_document_create_invalid_page_numbers(client, as_test_user):
     """Test validation of page numbers when creating a document."""
     mock_content = b"fake pdf"

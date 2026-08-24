@@ -36,6 +36,7 @@ class CachedDocument(BaseModel):
 
     metadata: DocumentMetadata
     content: bytes | None = None
+    content_from_client: bool = False
     extraction: DocumentExtractionResult | None = None
 
     model_config = ConfigDict(

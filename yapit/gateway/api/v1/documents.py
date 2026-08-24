@@ -518,6 +518,7 @@ async def prepare_document_upload(
     extraction_cache: ExtractionCache,
     ai_extractor_config: AiExtractorConfigDep,
     extraction_prompt: Annotated[str | None, Form(max_length=MAX_EXTRACTION_PROMPT_LENGTH)] = None,
+    source_url: Annotated[str | None, Form(max_length=2000)] = None,
 ) -> DocumentPrepareResponse:
     """Prepare a document from file upload."""
     t0 = time.monotonic()
@@ -526,7 +527,9 @@ async def prepare_document_upload(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Empty file")
 
     prompt_hash = _hash_prompt(extraction_prompt) if extraction_prompt else None
-    cache_key = hashlib.sha256(content).hexdigest()
+    content_hash = hashlib.sha256(content).hexdigest()
+    # Uploads get their own key space: the same bytes from two sources are two documents.
+    cache_key = hashlib.sha256(f"upload:{content_hash}:{source_url or ''}".encode()).hexdigest()
     cached_data = await file_cache.retrieve_data(cache_key)
     if cached_data:
         cached_doc = CachedDocument.model_validate_json(cached_data)
@@ -535,7 +538,7 @@ async def prepare_document_upload(
             data={"cache_type": "upload", "content_type": cached_doc.metadata.content_type},
         )
         uncached_pages = await _get_uncached_pages(
-            cache_key,
+            content_hash,
             cached_doc.metadata.total_pages,
             cached_doc.metadata.content_type,
             extraction_cache,
@@ -545,7 +548,7 @@ async def prepare_document_upload(
         logger.info(f"prepare/upload cache hit in {time.monotonic() - t0:.2f}s")
         return DocumentPrepareResponse(
             hash=cache_key,
-            content_hash=cache_key,
+            content_hash=content_hash,
             metadata=cached_doc.metadata,
             endpoint=_get_endpoint_type_from_content_type(cached_doc.metadata.content_type),
             uncached_pages=uncached_pages,
@@ -565,21 +568,21 @@ async def prepare_document_upload(
         content_type=content_type,
         total_pages=total_pages,
         title=title,
-        url=None,
+        url=source_url,
         file_name=file.filename,
         file_size=len(content),
     )
 
-    cached_doc = CachedDocument(metadata=metadata, content=content)
+    cached_doc = CachedDocument(metadata=metadata, content=content, content_from_client=True)
     await file_cache.store(cache_key, cached_doc.model_dump_json().encode())
 
     uncached_pages = await _get_uncached_pages(
-        cache_key, metadata.total_pages, content_type, extraction_cache, ai_extractor_config, prompt_hash
+        content_hash, metadata.total_pages, content_type, extraction_cache, ai_extractor_config, prompt_hash
     )
     logger.info(f"prepare/upload in {time.monotonic() - t0:.2f}s")
     endpoint = _get_endpoint_type_from_content_type(content_type)
     return DocumentPrepareResponse(
-        hash=cache_key, content_hash=cache_key, metadata=metadata, endpoint=endpoint, uncached_pages=uncached_pages
+        hash=cache_key, content_hash=content_hash, metadata=metadata, endpoint=endpoint, uncached_pages=uncached_pages
     )
 
 
@@ -657,11 +660,8 @@ async def create_website_document(
         )
 
     t0 = time.monotonic()
-    if cached_doc.metadata.url:
-        markdown, defuddle_title, defuddle_method = await extract_website_content(cached_doc.metadata.url)
-    else:
-        html = cached_doc.content.decode("utf-8", errors="ignore")
-        markdown, defuddle_title, defuddle_method = await extract_website_content(html=html)
+    html = cached_doc.content.decode("utf-8", errors="ignore") if cached_doc.content_from_client else None
+    markdown, defuddle_title, defuddle_method = await extract_website_content(cached_doc.metadata.url, html=html)
 
     processed = await asyncio.get_running_loop().run_in_executor(
         cpu_executor,
@@ -1310,7 +1310,8 @@ async def create_document(
             redis=redis,
         )
 
-    arxiv_id = _detect_arxiv_id(cached_doc.metadata.url) if cached_doc.metadata.url else None
+    fetched_url = None if cached_doc.content_from_client else cached_doc.metadata.url
+    arxiv_id = _detect_arxiv_id(fetched_url) if fetched_url else None
 
     extraction_id = str(uuid4())
 
