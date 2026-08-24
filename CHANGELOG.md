@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+* Updated defuddle 0.19.2 → 0.19.3 — footnote references no longer carry a stray space before the marker and footnote text keeps its trailing punctuation, so footnote-heavy articles read more cleanly. Ad, nav and ratings containers are stripped from more sites, as are "related stories" card blocks injected between paragraphs. Content is no longer dropped from sections whose class merely contains "logo" as a substring (e.g. "blogosphere").
+
 ## v0.4.3 — 2026-08-18
 
 * Self-host on arm64 now actually gets the jemalloc allocator in the TTS and figure-detection workers — `LD_PRELOAD` pinned an x86-only library path, so arm machines silently fell back to glibc malloc (worse memory behavior on long-running workers).
