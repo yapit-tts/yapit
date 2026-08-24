@@ -224,7 +224,7 @@ class DocumentPrepareResponse(BaseModel):
     """Response with document metadata for preparation.
 
     Args:
-        hash: SHA256 hash of the document content (for uploads) or url (for urls), used as cache key
+        hash: Cache key for the prepared document — over the URL for urls, over the content and source URL for uploads
         content_hash: SHA256 hash of actual content (for extraction progress tracking)
         endpoint: Which API endpoint the client should use to create the document
         uncached_pages: Page numbers without AI extraction cache for the supplied extraction_prompt
@@ -518,7 +518,7 @@ async def prepare_document_upload(
     extraction_cache: ExtractionCache,
     ai_extractor_config: AiExtractorConfigDep,
     extraction_prompt: Annotated[str | None, Form(max_length=MAX_EXTRACTION_PROMPT_LENGTH)] = None,
-    source_url: Annotated[str | None, Form(max_length=2000)] = None,
+    source_url: Annotated[HttpUrl | None, Form()] = None,
 ) -> DocumentPrepareResponse:
     """Prepare a document from file upload."""
     t0 = time.monotonic()
@@ -527,9 +527,10 @@ async def prepare_document_upload(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Empty file")
 
     prompt_hash = _hash_prompt(extraction_prompt) if extraction_prompt else None
+    source = str(source_url) if source_url else None
     content_hash = hashlib.sha256(content).hexdigest()
-    # Uploads get their own key space: the same bytes from two sources are two documents.
-    cache_key = hashlib.sha256(f"upload:{content_hash}:{source_url or ''}".encode()).hexdigest()
+    # The same bytes from two sources are two documents.
+    cache_key = f"upload:{hashlib.sha256(f'{content_hash}:{source}'.encode()).hexdigest()}"
     cached_data = await file_cache.retrieve_data(cache_key)
     if cached_data:
         cached_doc = CachedDocument.model_validate_json(cached_data)
@@ -568,7 +569,7 @@ async def prepare_document_upload(
         content_type=content_type,
         total_pages=total_pages,
         title=title,
-        url=source_url,
+        url=source,
         file_name=file.filename,
         file_size=len(content),
     )

@@ -158,6 +158,18 @@ async def test_upload_records_source_url(client, as_test_user):
 
 
 @pytest.mark.asyncio
+async def test_upload_rejects_non_http_source_url(client, as_test_user):
+    """The source URL becomes a link the frontend opens, so only http(s) is accepted."""
+    files = {"file": ("page.html", b"<html><body><p>Hi</p></body></html>", "text/html")}
+
+    response = await client.post(
+        "/v1/documents/prepare/upload", files=files, data={"source_url": "javascript:alert(1)"}
+    )
+
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_upload_source_url_splits_document_but_shares_extraction(client, as_test_user):
     """Same bytes from two sources are two documents, but one extraction."""
     files = {"file": ("page.html", b"<html><body><p>Hi</p></body></html>", "text/html")}

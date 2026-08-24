@@ -62,7 +62,7 @@ Content enters as URLs, file uploads, or raw text. All paths produce markdown.
 flowchart TD
     T["Text input"] --> TEXT["POST /text"]
     U["URL input"] --> P1["POST /prepare<br/>Download + cache by URL hash"]
-    F["File upload"] --> P2["POST /prepare/upload<br/>Cache by content hash"]
+    F["File upload"] --> P2["POST /prepare/upload<br/>Cache by content + source URL"]
 
     P1 & P2 --> META["Return hash + metadata<br/>(page count, title, cost estimate)"]
 
