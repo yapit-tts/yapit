@@ -36,12 +36,22 @@ class CachedDocument(BaseModel):
 
     metadata: DocumentMetadata
     content: bytes | None = None
+    content_from_client: bool = False
     extraction: DocumentExtractionResult | None = None
 
     model_config = ConfigDict(
         ser_json_bytes="base64",
         val_json_bytes="base64",
     )
+
+    @property
+    def fetch_url(self) -> str | None:
+        """Where to fetch this document from, when the gateway is the one that fetched it.
+
+        None for anything a client uploaded: metadata.url is then provenance, and no
+        fetch could reproduce the bytes anyway.
+        """
+        return None if self.content_from_client else self.metadata.url
 
 
 @dataclass
