@@ -9,11 +9,12 @@
 #   3. Deploy stack
 #   4. Wait for Docker Swarm rolling update to complete
 #   5. Verify endpoints and check for rollbacks
-#   6. Send ntfy notification
+#   6. On failure, send an alert email (dotfiles bin/alert-send); success is
+#      silent — the alert channel is failure-only by decision (dotfiles
+#      secrets, decisions/0002-alerts-by-email.md)
 #
 # Config via .env (from sops):
 #   VPS_HOST          - SSH host (e.g. yapit-prod)
-#   NTFY_TOPIC - ntfy topic for deploy notifications (optional)
 #
 # Environment variables:
 #   SKIP_VERIFY       - Set to 1 to skip post-deploy verification
@@ -25,21 +26,18 @@ cd "$(dirname "$0")/.."
 log() { echo "==> $*"; }
 
 notify() {
-  [ -z "${NTFY_TOPIC:-}" ] && return
-  local icon="$1" priority="$2" body="$3"
-  printf '%s' "$body" | curl -s \
-    -H "Title: ${icon} yapit deploy: ${GIT_COMMIT:0:12}" \
-    -H "Priority: ${priority}" \
-    -H "Tags: rocket" \
-    -d @- \
-    "https://ntfy.sh/${NTFY_TOPIC}" > /dev/null
+  local icon="$1" body="$2"
+  command -v alert-send >/dev/null 2>&1 \
+    || { echo "alert-send not on PATH — no deploy notification" >&2; return; }
+  printf '%s' "$body" | alert-send "${icon} yapit deploy: ${GIT_COMMIT:0:12}" \
+    || echo "deploy notification failed (continuing)" >&2
 }
 
 die() {
   echo "ERROR: $*" >&2
   local msg=$(git log -1 --format=%s "$GIT_COMMIT" 2>/dev/null || echo "")
   echo "$(date -Iseconds)  ${GIT_COMMIT:0:12}  FAILED: $msg" >> .deploys.log
-  notify "❌" "high" "$*"
+  notify "❌" "$*"
   exit 1
 }
 
@@ -77,7 +75,6 @@ ssh "$VPS_HOST" "cd $DEPLOY_DIR && set -a && source .env && source .env.prod && 
 # --- Verify ---
 if [ "${SKIP_VERIFY:-0}" = "1" ]; then
   log "Skipping verification"
-  notify "✅" "default" "deployed (unverified)"
   exit 0
 fi
 
@@ -196,7 +193,6 @@ fi
 log "Deploy complete"
 COMMIT_MSG=$(git log -1 --format=%s "$GIT_COMMIT" 2>/dev/null || echo "")
 echo "$(date -Iseconds)  ${RUNNING_COMMIT:0:12}  $COMMIT_MSG" >> .deploys.log
-notify "✅" "default" "$COMMIT_MSG"
 
 # Clean up old images. `docker image prune` doesn't work in Swarm — all `:latest` duplicates
 # are considered "in use" by service specs. Instead, compare against running container images.
