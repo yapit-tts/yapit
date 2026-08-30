@@ -541,8 +541,7 @@ case "$status" in
 esac
 
 # Delivery happens before the run is recorded, so the record can say what
-# became of it: a failed send must be readable somewhere that is not the
-# channel that just failed, and must not change the run's own outcome.
+# became of it (stats.alert); a failed send never changes the run's own outcome.
 alert=""
 if [[ -z "$TITLE" ]]; then
     echo ""

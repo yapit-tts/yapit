@@ -30,7 +30,7 @@ alert() {
         msg=$(mktemp)
         printf 'From: %s\nTo: %s\nSubject: CF firewall sync failed\nDate: %s\n\n%s\n' \
             "$ALERT_MAIL_FROM" "$ALERT_MAIL_TO" "$(date -R)" "$1" > "$msg"
-        curl -s --max-time 60 --ssl-reqd \
+        curl -sS --max-time 60 --ssl-reqd --crlf \
             --url "$ALERT_SMTP_URL" \
             --mail-from "$ALERT_MAIL_FROM" \
             --mail-rcpt "$ALERT_MAIL_TO" \

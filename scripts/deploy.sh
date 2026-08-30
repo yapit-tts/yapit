@@ -9,7 +9,9 @@
 #   3. Deploy stack
 #   4. Wait for Docker Swarm rolling update to complete
 #   5. Verify endpoints and check for rollbacks
-#   6. Send a deploy notification (email, via dotfiles bin/alert-send)
+#   6. On failure, send an alert email (dotfiles bin/alert-send); success is
+#      silent — the alert channel is failure-only by decision (dotfiles
+#      secrets, decisions/0002-alerts-by-email.md)
 #
 # Config via .env (from sops):
 #   VPS_HOST          - SSH host (e.g. yapit-prod)
@@ -73,7 +75,6 @@ ssh "$VPS_HOST" "cd $DEPLOY_DIR && set -a && source .env && source .env.prod && 
 # --- Verify ---
 if [ "${SKIP_VERIFY:-0}" = "1" ]; then
   log "Skipping verification"
-  notify "✅" "deployed (unverified)"
   exit 0
 fi
 
@@ -192,7 +193,6 @@ fi
 log "Deploy complete"
 COMMIT_MSG=$(git log -1 --format=%s "$GIT_COMMIT" 2>/dev/null || echo "")
 echo "$(date -Iseconds)  ${RUNNING_COMMIT:0:12}  $COMMIT_MSG" >> .deploys.log
-notify "✅" "$COMMIT_MSG"
 
 # Clean up old images. `docker image prune` doesn't work in Swarm — all `:latest` duplicates
 # are considered "in use" by service specs. Instead, compare against running container images.
