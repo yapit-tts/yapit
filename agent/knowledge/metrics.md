@@ -117,7 +117,7 @@ Automated analysis via `make report`:
 2. Runs the deterministic freshness check (`scripts/metrics_freshness.py`) — a STALE verdict is injected as the first context section so the agent leads with it
 3. Runs Claude with read-only tools to analyze system health
 4. Saves the full report to `~/logs/yapit-reports/` and records the run in `~/logs/runs/yapit-health-report.jsonl`
-5. Notifies (ntfy, if `NTFY_TOPIC` set) only when the report opened with ⚠️ issues, or when its status line could not be read at all — a green day and an anomaly note are read from the laptop's yapit dashboard instead. `scripts/report.sh --classify < report.md` prints the verdict that decides this.
+5. Notifies (email, via the dotfiles `alert-send`) only when the report opened with ⚠️ issues, or when its status line could not be read at all — a green day and an anomaly note are read from the laptop's yapit dashboard instead. `scripts/report.sh --classify < report.md` prints the verdict that decides this.
 
 ```bash
 make sync-logs        # rsync + decompress logs from prod

@@ -79,9 +79,8 @@ trap finish EXIT
 echo "Syncing data from prod..."
 make sync-data
 
-# Load env vars from .env (VPS_HOST, NTFY_TOPIC, CLOUDFLARE_API_TOKEN, etc.).
-# These win over anything already exported: an NTFY_TOPIC from the environment
-# is overwritten here, while NTFY_BASE_URL, which .env does not set, is not.
+# Load env vars from .env (VPS_HOST, CLOUDFLARE_API_TOKEN, etc.).
+# These win over anything already exported.
 if [[ -f "$PROJECT_DIR/.env" ]]; then
     set -a
     source "$PROJECT_DIR/.env"
@@ -530,45 +529,41 @@ echo ""
 echo "$message"
 
 status=$(printf '%s' "$result" | classify)
-log_run ok "" "$(jq -n --arg status "$status" --arg report "$REPORT_FILE" --arg session "$session_id" \
-    '{status: $status, report: $report, session: $session}')"
 
 # Only a report that found issues is worth a notification. A green day and an
 # anomaly note are read from the dashboard, on the reader's schedule. A report
 # whose status line cannot be found still pings: unreadable is not the same as
 # fine, and it may be an "issues detected" this could not see.
 case "$status" in
-    issues)  TITLE="⚠️ Yapit health: issues detected"; PRIORITY="high" ;;
-    unknown) TITLE="🔍 Yapit health: could not tell how it went"; PRIORITY="default" ;;
+    issues)  TITLE="⚠️ Yapit health: issues detected" ;;
+    unknown) TITLE="🔍 Yapit health: could not tell how it went" ;;
     *)       TITLE="" ;;
 esac
 
+# Delivery happens before the run is recorded, so the record can say what
+# became of it: a failed send must be readable somewhere that is not the
+# channel that just failed, and must not change the run's own outcome.
+alert=""
 if [[ -z "$TITLE" ]]; then
     echo ""
     echo "Status: $status — recorded, no notification sent."
-elif [[ -z "${NTFY_TOPIC:-}" ]]; then
+elif ! command -v alert-send >/dev/null 2>&1; then
+    alert="delivery failed (alert-send not on PATH)"
     echo ""
-    echo "Status: $status — NTFY_TOPIC not set, so nothing was notified."
+    echo "Status: $status — alert-send is not on PATH, so nothing was notified." >&2
 else
     echo ""
-    echo "Status: $status — sending to ntfy..."
-
-    # ntfy has ~4KB limit for message body
-    if [[ ${#message} -gt 3800 ]]; then
-        ntfy_message="${message:0:3700}
-
-... (truncated, full: $REPORT_FILE)"
+    echo "Status: $status — sending alert email..."
+    if printf '%s' "$message" | alert-send "$TITLE"; then
+        alert="delivered"
+        echo "Alert sent."
     else
-        ntfy_message="$message"
+        alert="delivery failed (alert-send exited $?)"
+        echo "Alert delivery failed — recorded in the run log." >&2
     fi
-
-    printf '%s' "$ntfy_message" | curl -s \
-        -H "Title: $TITLE" \
-        -H "Priority: $PRIORITY" \
-        -H "Tags: health" \
-        --data-binary @- \
-        "${NTFY_BASE_URL:-https://ntfy.sh}/${NTFY_TOPIC}" || {
-        echo "ntfy notification failed (continuing anyway)"
-    }
-    echo "Sent to ntfy."
 fi
+
+log_run ok "" "$(jq -n --arg status "$status" --arg report "$REPORT_FILE" \
+    --arg session "$session_id" --arg alert "$alert" \
+    '{status: $status, report: $report, session: $session, alert: $alert}
+     | if .alert == "" then del(.alert) else . end')"

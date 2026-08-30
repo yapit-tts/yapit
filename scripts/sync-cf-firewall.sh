@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # Sync Cloudflare IP ranges to Hetzner Cloud Firewall.
 # Restricts ports 80/443 to Cloudflare IPs only. ICMP open. SSH via Tailscale only.
-# Run hourly via cron. Alerts via ntfy on failure.
+# Run hourly via cron. Alerts by email on failure.
 #
 # Requires: curl, jq, hcloud (authenticated via HCLOUD_TOKEN or hcloud context)
-# Environment: HCLOUD_FIREWALL (name or ID), NTFY_TOPIC (optional)
+# Environment: HCLOUD_FIREWALL (name or ID), plus ALERT_SMTP_URL, ALERT_SMTP_USER,
+#   ALERT_SMTP_PASSWORD, ALERT_MAIL_FROM, ALERT_MAIL_TO for the failure email
+#   (optional; with ALERT_SMTP_URL unset nothing is sent). On the VPS they live
+#   in /opt/yapit/.env.firewall — see agent/knowledge/vps-setup.md.
 # Usage: sync-cf-firewall.sh [env-file]
 set -euo pipefail
 
@@ -16,11 +19,25 @@ fi
 LOCKFILE="/tmp/sync-cf-firewall.lock"
 FIREWALL="${HCLOUD_FIREWALL:?Set HCLOUD_FIREWALL to the firewall name or ID}"
 
+# This runs on the VPS, where the dotfiles alert-send does not exist, so the
+# same envelope is built inline from the env file's ALERT_* values (see
+# .env.template). The credential rides in on stdin, never the command line.
 alert() {
     echo "ERROR: $1" >&2
-    if [[ -n "${NTFY_TOPIC:-}" ]]; then
-        curl -sf -H "Title: CF firewall sync failed" -H "Priority: high" -H "Tags: warning" \
-            -d "$1" "https://ntfy.sh/${NTFY_TOPIC}" || true
+    if [[ -n "${ALERT_SMTP_URL:-}" && -n "${ALERT_SMTP_USER:-}" && -n "${ALERT_SMTP_PASSWORD:-}" \
+          && -n "${ALERT_MAIL_FROM:-}" && -n "${ALERT_MAIL_TO:-}" ]]; then
+        local msg
+        msg=$(mktemp)
+        printf 'From: %s\nTo: %s\nSubject: CF firewall sync failed\nDate: %s\n\n%s\n' \
+            "$ALERT_MAIL_FROM" "$ALERT_MAIL_TO" "$(date -R)" "$1" > "$msg"
+        curl -s --max-time 60 --ssl-reqd \
+            --url "$ALERT_SMTP_URL" \
+            --mail-from "$ALERT_MAIL_FROM" \
+            --mail-rcpt "$ALERT_MAIL_TO" \
+            --upload-file "$msg" \
+            -K - <<<"user = \"$ALERT_SMTP_USER:$ALERT_SMTP_PASSWORD\"" \
+            || echo "alert email failed too — this failure is only in the cron log" >&2
+        rm -f "$msg"
     fi
     exit 1
 }

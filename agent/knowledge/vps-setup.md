@@ -213,11 +213,11 @@ Key-only auth. X11 forwarding disabled (headless server, no GUI needed).
 
 SSH is Tailscale-only — no public port 22. Hetzner emergency console is the fallback if Tailscale goes down.
 
-Script: fetches CF IPs from `api.cloudflare.com/client/v4/ips`, validates, atomic replace via `hcloud`. Alerts via ntfy on failure.
+Script: fetches CF IPs from `api.cloudflare.com/client/v4/ips`, validates, atomic replace via `hcloud`. Alerts by email on failure (ALERT_* variables in the env file; header of the script has the list).
 
 VPS paths:
 - Script: `/opt/yapit/sync-cf-firewall.sh` (synced automatically by `deploy.sh`)
-- Env (token, firewall name, ntfy topic): `/opt/yapit/.env.firewall` (mode 600)
+- Env (token, firewall name, ALERT_* email settings): `/opt/yapit/.env.firewall` (mode 600)
 - Log: `/var/log/cf-firewall-sync.log`
 - Cron: `0 * * * *` (hourly) — **created manually** (`crontab -e`), deploy.sh only syncs the script; on a fresh server the crontab entry must be added by hand
 
