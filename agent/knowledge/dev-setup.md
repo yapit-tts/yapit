@@ -5,7 +5,7 @@ READ THE `Makefile` — it documents all common commands/workflows.
 ## Quick Start
 
 ```bash
-make dev-cpu      # Start backend (or make dev-mac on macOS)
+make dev-cpu      # Start backend
 cd frontend && npm run dev  # Start frontend separately
 ```
 
