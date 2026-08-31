@@ -2,7 +2,6 @@
 
 import asyncio
 
-import redis.asyncio as redis
 from loguru import logger
 
 from yapit.contracts import (
@@ -14,6 +13,7 @@ from yapit.contracts import (
 )
 from yapit.gateway.backoff import Backoff
 from yapit.gateway.metrics import log_error
+from yapit.gateway.redis_client import create_redis_client
 from yapit.queue import QueueConfig, pull_job
 from yapit.synth import SynthAdapter, execute_job
 
@@ -39,7 +39,7 @@ async def run_api_tts_dispatcher(redis_url: str, model: str, adapter: SynthAdapt
     await adapter.initialize()
     logger.info(f"API dispatcher {worker_id} adapter initialized")
 
-    client = await redis.from_url(redis_url, decode_responses=False)
+    client = await create_redis_client(redis_url)
     in_flight: set[asyncio.Task] = set()
 
     async def process_job(raw_job: bytes, queued_at: float) -> None:

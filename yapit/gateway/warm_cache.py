@@ -14,7 +14,6 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Literal
 
-import redis.asyncio as aioredis
 from loguru import logger
 from redis.asyncio import Redis
 from sqlalchemy.orm import selectinload
@@ -26,6 +25,7 @@ from yapit.gateway.db import close_db, create_session, init_db
 from yapit.gateway.deps import create_cache
 from yapit.gateway.domain_models import BlockVariant, Document, TTSModel, Voice
 from yapit.gateway.preview_sentences import N_PREVIEW_SENTENCES, preview_sentences
+from yapit.gateway.redis_client import create_redis_client
 from yapit.gateway.synthesis import CachedResult, QueuedResult, synthesize_and_wait
 
 PREVIEW_DOCUMENT_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
@@ -192,7 +192,7 @@ async def main() -> int:
     """Standalone entry point for manual one-off warming."""
     settings = Settings()  # ty: ignore[missing-argument]
     init_db(settings)
-    redis_client = await aioredis.from_url(settings.redis_url, decode_responses=False)
+    redis_client = await create_redis_client(settings.redis_url)
     cache = create_cache(settings.audio_cache_type, settings.audio_cache_config)
 
     try:

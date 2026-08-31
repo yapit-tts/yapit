@@ -4,7 +4,6 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 
-import redis.asyncio as redis
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
@@ -44,6 +43,7 @@ from yapit.gateway.markdown.transformer import DocumentTransformer
 from yapit.gateway.metrics import init_metrics_db, start_metrics_writer, stop_metrics_writer
 from yapit.gateway.openai_tts_adapter import OpenAITTSAdapter
 from yapit.gateway.rate_limit import limiter
+from yapit.gateway.redis_client import create_redis_client
 from yapit.gateway.result_consumer import run_result_consumer
 from yapit.gateway.stack_auth import close_stack_auth_client, init_stack_auth_client
 from yapit.gateway.storage import ImageStorage
@@ -71,7 +71,7 @@ async def lifespan(app: FastAPI):
     init_db(settings)
     await prepare_database(settings)
 
-    app.state.redis_client = await redis.from_url(settings.redis_url, decode_responses=False)
+    app.state.redis_client = await create_redis_client(settings.redis_url)
     app.state.audio_cache = create_cache(settings.audio_cache_type, settings.audio_cache_config)
     app.state.document_cache = create_cache(settings.document_cache_type, settings.document_cache_config)
     app.state.extraction_cache = create_cache(settings.extraction_cache_type, settings.extraction_cache_config)
