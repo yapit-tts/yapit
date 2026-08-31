@@ -19,12 +19,14 @@ import pymupdf
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.responses import HTMLResponse
 from loguru import logger
-from pydantic import BaseModel, Field, HttpUrl, StringConstraints, ValidationError
+from pydantic import BaseModel, Field, HttpUrl, StringConstraints, UrlConstraints, ValidationError
 from sqlmodel import col, func, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from yapit.contracts import (
     MAX_CONCURRENT_EXTRACTIONS,
+    MAX_DOCUMENT_TITLE_LENGTH,
+    MAX_DOCUMENT_URL_LENGTH,
     MAX_EXTRACTION_PROMPT_LENGTH,
     MAX_STORAGE_FREE,
     MAX_STORAGE_GUEST,
@@ -215,8 +217,13 @@ async def check_storage_limit(user_id: str, is_anonymous: bool, db: DbSession) -
         )
 
 
+DocumentSourceUrl = Annotated[HttpUrl, UrlConstraints(max_length=MAX_DOCUMENT_URL_LENGTH)]
+"""A URL a document can be fetched from. Capped to what DocumentMetadata.url stores:
+a URL clipped to fit would no longer resolve, so an over-long one is rejected here."""
+
+
 class DocumentPrepareRequest(BaseModel):
-    url: HttpUrl
+    url: DocumentSourceUrl
     extraction_prompt: str | None = Field(None, max_length=MAX_EXTRACTION_PROMPT_LENGTH)
 
 
@@ -245,7 +252,7 @@ class BaseDocumentCreateRequest(BaseModel):
         title (str | None): Optional title for the document.
     """
 
-    title: str | None = None
+    title: str | None = Field(None, max_length=MAX_DOCUMENT_TITLE_LENGTH)
 
 
 class TextDocumentCreateRequest(BaseDocumentCreateRequest):
@@ -518,7 +525,7 @@ async def prepare_document_upload(
     extraction_cache: ExtractionCache,
     ai_extractor_config: AiExtractorConfigDep,
     extraction_prompt: Annotated[str | None, Form(max_length=MAX_EXTRACTION_PROMPT_LENGTH)] = None,
-    source_url: Annotated[HttpUrl | None, Form()] = None,
+    source_url: Annotated[DocumentSourceUrl | None, Form()] = None,
 ) -> DocumentPrepareResponse:
     """Prepare a document from file upload."""
     t0 = time.monotonic()

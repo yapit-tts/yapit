@@ -7,11 +7,17 @@ from functools import cached_property
 from typing import Any
 
 from pydantic import BaseModel as PydanticModel
+from pydantic import field_validator
 from sqlalchemy import Index, UniqueConstraint
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.types import JSON
 from sqlmodel import TEXT, Column, DateTime, Field, Relationship, SQLModel
 
+from yapit.contracts import (
+    MAX_DOCUMENT_FILE_NAME_LENGTH,
+    MAX_DOCUMENT_TITLE_LENGTH,
+    MAX_DOCUMENT_URL_LENGTH,
+)
 from yapit.gateway.markdown.models import StructuredDocument
 
 # NOTE: Forward annotations do not work with SQLModel
@@ -66,10 +72,23 @@ class DocumentMetadata(PydanticModel):
 
     content_type: str  # MIME type
     total_pages: int  # 1 for websites and text
-    title: str | None = Field(default=None, max_length=500)
-    url: str | None = Field(default=None, max_length=2000)
-    file_name: str | None = Field(default=None, max_length=255)
+    title: str | None = Field(default=None, max_length=MAX_DOCUMENT_TITLE_LENGTH)
+    url: str | None = Field(default=None, max_length=MAX_DOCUMENT_URL_LENGTH)
+    file_name: str | None = Field(default=None, max_length=MAX_DOCUMENT_FILE_NAME_LENGTH)
     file_size: int | None = None  # Content size in bytes
+
+    # Both are read out of the document or off the upload rather than typed by the user,
+    # so an over-long one is nothing they could fix: truncate rather than reject.
+
+    @field_validator("title", mode="before")
+    @classmethod
+    def _clip_title(cls, v: Any) -> Any:
+        return v[:MAX_DOCUMENT_TITLE_LENGTH] if isinstance(v, str) else v
+
+    @field_validator("file_name", mode="before")
+    @classmethod
+    def _clip_file_name(cls, v: Any) -> Any:
+        return v[:MAX_DOCUMENT_FILE_NAME_LENGTH] if isinstance(v, str) else v
 
 
 class Document(SQLModel, table=True):
@@ -77,7 +96,7 @@ class Document(SQLModel, table=True):
     user_id: str = Field()
     is_public: bool = Field(default=False)
 
-    title: str | None = Field(default=None, max_length=500)
+    title: str | None = Field(default=None, max_length=MAX_DOCUMENT_TITLE_LENGTH)
 
     original_text: str = Field(sa_column=Column(TEXT))
     last_applied_filter_config: dict | None = Field(
