@@ -22,6 +22,7 @@ export interface UseTTSWebSocketReturn {
 export function useTTSWebSocket(
   onMessage: (data: WSMessage) => void,
   onConnect?: () => void,
+  isPlaybackActive?: () => boolean,
 ): UseTTSWebSocketReturn {
   const user = useAuthUser();
   const wsRef = useRef<WebSocket | null>(null);
@@ -31,10 +32,15 @@ export function useTTSWebSocket(
   onMessageRef.current = onMessage;
   const onConnectRef = useRef(onConnect);
   onConnectRef.current = onConnect;
+  const isPlaybackActiveRef = useRef(isPlaybackActive);
+  isPlaybackActiveRef.current = isPlaybackActive;
 
   const BASE_RECONNECT_DELAY = 1000;
   const MAX_RECONNECT_DELAY = 30000;
   const MAX_AUTH_FAILURES = 3;
+  // The gateway pings at 20s and drops the socket 20s later if no pong arrives (uvicorn
+  // defaults), so a connection has to outlive one full cycle before it counts as working.
+  const STABLE_CONNECTION_MS = 60000;
 
   const [isConnected, setIsConnected] = useState(false);
   const [isReconnecting, setIsReconnecting] = useState(false);
@@ -43,6 +49,7 @@ export function useTTSWebSocket(
   const connectingRef = useRef(false);
   const epochRef = useRef(0);
   const authFailuresRef = useRef(0);
+  const openedAtRef = useRef(0);
 
   // Message queue: messages sent while WS is not connected are queued and drained on connect
   const messageQueueRef = useRef<object[]>([]);
@@ -71,6 +78,14 @@ export function useTTSWebSocket(
     const epoch = epochRef.current;
 
     const scheduleReconnect = () => {
+      // A hidden tab with nothing playing needs no socket, and the gateway will keep
+      // dropping it as unresponsive once the tab is throttled — reconnecting is a loop
+      // that never ends. wake() below reconnects the moment the tab is visible again.
+      // Hidden *and* playing is background listening, which must stay connected.
+      if (document.visibilityState === "hidden" && !isPlaybackActiveRef.current?.()) {
+        setIsReconnecting(false);
+        return;
+      }
       setIsReconnecting(true);
       const delay = Math.min(BASE_RECONNECT_DELAY * Math.pow(2, reconnectAttemptsRef.current), MAX_RECONNECT_DELAY);
       console.log(`[TTS WS] Reconnecting in ${delay}ms (attempt ${reconnectAttemptsRef.current + 1})`);
@@ -88,11 +103,13 @@ export function useTTSWebSocket(
         return;
       }
       console.log("[TTS WS] Connecting to:", url.replace(/token=[^&]+/, "token=***"));
+      openedAtRef.current = 0;
       const ws = new WebSocket(url);
       wsRef.current = ws;
 
       ws.onopen = () => {
         connectingRef.current = false;
+        openedAtRef.current = Date.now();
         console.log("[TTS WS] Connected");
         isConnectedRef.current = true;
         setIsConnected(true);
@@ -112,7 +129,6 @@ export function useTTSWebSocket(
         // Notify listeners (synthesizer uses this to retry pending blocks)
         onConnectRef.current?.();
 
-        reconnectAttemptsRef.current = 0;
         authFailuresRef.current = 0;
       };
 
@@ -136,6 +152,12 @@ export function useTTSWebSocket(
         setIsConnected(false);
         if (wsRef.current === ws) wsRef.current = null;
 
+        // Reset backoff only for a socket that actually held. Resetting on open instead
+        // means a peer that connects and dies every cycle never backs off at all.
+        if (openedAtRef.current && Date.now() - openedAtRef.current >= STABLE_CONNECTION_MS) {
+          reconnectAttemptsRef.current = 0;
+        }
+
         if (event.code === 1000) return;
 
         if (event.code === 1008) {
@@ -157,6 +179,9 @@ export function useTTSWebSocket(
       scheduleReconnect();
     }
   }, [getWebSocketUrl]);
+
+  const connectRef = useRef(connect);
+  connectRef.current = connect;
 
   useEffect(() => {
     connect();
@@ -200,6 +225,12 @@ export function useTTSWebSocket(
   const send = useCallback((msg: object) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
       messageQueueRef.current.push(msg);
+      // scheduleReconnect leaves a hidden, idle tab disconnected. A queued message means
+      // the socket is wanted again, so reopen here — onopen drains the queue.
+      if (!wsRef.current && !connectingRef.current) {
+        reconnectAttemptsRef.current = 0;
+        connectRef.current();
+      }
       return;
     }
     wsRef.current.send(JSON.stringify(msg));

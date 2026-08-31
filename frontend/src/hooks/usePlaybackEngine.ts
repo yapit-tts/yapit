@@ -66,7 +66,14 @@ export function usePlaybackEngine(
     serverSynthRef.current?.retryAllPending();
   }, []);
 
-  const ttsWS = useTTSWebSocket(handleWSMessage, handleWSConnect);
+  // "stopped" covers both idle and paused; "buffering" means a block is still in flight,
+  // so the socket is still carrying its status updates.
+  const isPlaybackActive = useCallback(() => {
+    const engine = engineRef.current;
+    return engine ? engine.getSnapshot().status !== "stopped" : false;
+  }, []);
+
+  const ttsWS = useTTSWebSocket(handleWSMessage, handleWSConnect, isPlaybackActive);
 
   // Stable refs for WS deps
   const sendWSRef = useRef(ttsWS.send);
