@@ -24,6 +24,11 @@ MAX_STORAGE_PAID: Final[int] = 500 * 1024 * 1024  # 500MB
 
 MAX_EXTRACTION_PROMPT_LENGTH: Final[int] = 50_000
 
+# Document metadata field widths
+MAX_DOCUMENT_TITLE_LENGTH: Final[int] = 500
+MAX_DOCUMENT_FILE_NAME_LENGTH: Final[int] = 255
+MAX_DOCUMENT_URL_LENGTH: Final[int] = 2000
+
 # Queue structure (sorted set + hashes for efficient eviction)
 TTS_QUEUE: Final[str] = "tts:queue:{model}"  # sorted set: job_id -> timestamp
 TTS_JOBS: Final[str] = "tts:jobs"  # hash: job_id -> job_json

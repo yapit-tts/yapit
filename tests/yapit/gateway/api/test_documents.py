@@ -5,9 +5,16 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from pydantic import ValidationError
 
+from yapit.contracts import (
+    MAX_DOCUMENT_FILE_NAME_LENGTH,
+    MAX_DOCUMENT_TITLE_LENGTH,
+    MAX_DOCUMENT_URL_LENGTH,
+)
 from yapit.gateway.api.v1.documents import (
     DocumentCreateResponse,
+    DocumentPrepareRequest,
     DocumentPrepareResponse,
     ExtractionAcceptedResponse,
     ExtractionStatusResponse,
@@ -525,3 +532,38 @@ async def test_owner_sees_full_document(client, as_test_user):
     assert r.json()["last_block_idx"] == 3
     # Consumers derive a local calendar date from this, so the offset has to be on the wire.
     assert datetime.fromisoformat(r.json()["created"]).tzinfo is not None
+
+
+# --- Over-long metadata ---------------------------------------------------------------
+# Titles, file names and URLs all exceed DocumentMetadata's column widths for real inputs
+# (PDF metadata, uploaded filenames, long URLs). Before these were bounded, each raised a
+# ValidationError inside the route and reached the client as an unhandled 500.
+
+
+def test_over_long_title_and_file_name_are_clipped_not_rejected():
+    meta = DocumentMetadata(
+        content_type="application/pdf",
+        total_pages=1,
+        title="त" * 900,
+        file_name="a" * 400 + ".pdf",
+    )
+    assert len(meta.title) == MAX_DOCUMENT_TITLE_LENGTH
+    assert len(meta.file_name) == MAX_DOCUMENT_FILE_NAME_LENGTH
+
+
+def test_metadata_url_fits_every_url_the_api_accepts():
+    """A URL cannot be clipped without breaking it, so the request boundary has to reject
+    anything DocumentMetadata could not store. pydantic's own HttpUrl cap is 2083.
+    """
+    url = "https://example.com/" + "a" * (MAX_DOCUMENT_URL_LENGTH - 20)
+    assert DocumentMetadata(content_type="text/html", total_pages=1, url=url).url == url
+
+    too_long = "https://example.com/" + "a" * MAX_DOCUMENT_URL_LENGTH
+    with pytest.raises(ValidationError):
+        DocumentPrepareRequest(url=too_long)
+
+
+@pytest.mark.asyncio
+async def test_over_long_client_title_is_rejected(client, as_test_user):
+    r = await client.post("/v1/documents/text", json={"content": "x", "title": "t" * 5000})
+    assert r.status_code == 422

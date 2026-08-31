@@ -26,6 +26,9 @@ echo
 ssh "$VPS_HOST" bash -s << 'REMOTE_SCRIPT'
 set -euo pipefail
 
+# Truncate with `awk 'NR<=N'`, never `head -N`: head's early exit SIGPIPEs the
+# producer upstream of it, and pipefail turns that into a fatal error.
+
 echo "=== Overall Disk Usage ==="
 df -h / | tail -1 | awk '{print "Total: "$2"  Used: "$3" ("$5")  Available: "$4}'
 echo
@@ -88,7 +91,7 @@ fi
 echo
 
 echo "=== Container Images ==="
-docker images --format "table {{.Repository}}:{{.Tag}}\t{{.Size}}" 2>/dev/null | grep -E '(yapit|REPOSITORY)' | head -10
+docker images --format "table {{.Repository}}:{{.Tag}}\t{{.Size}}" 2>/dev/null | grep -E '(yapit|REPOSITORY)' | awk 'NR<=10'
 echo
 
 echo "=== Largest Files in Volumes (top 10) ==="
@@ -97,7 +100,7 @@ for vol in $(docker volume ls -q 2>/dev/null | grep -E '^yapit_' || true); do
     if [[ -d "$mountpoint" ]]; then
         find "$mountpoint" -type f -printf "%s %p\n" 2>/dev/null
     fi
-done | sort -rn | head -10 | while read size path; do
+done | sort -rn | awk 'NR<=10' | while read size path; do
     human=$(numfmt --to=iec-i --suffix=B "$size" 2>/dev/null || echo "${size}B")
     printf "%-10s %s\n" "$human" "$(basename "$path")"
 done
