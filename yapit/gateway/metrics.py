@@ -51,6 +51,7 @@ _write_queue: asyncio.Queue[dict[str, Any]] | None = None
 _writer_task: asyncio.Task[None] | None = None
 
 BATCH_INTERVAL_S = 5.0
+HEARTBEAT_INTERVAL_S = 3600.0  # longest a live writer leaves metrics_event quiet; scripts/metrics_freshness.py reads it
 MAX_PENDING_EVENTS = 10_000  # buffer cap while the DB is unreachable; oldest dropped first
 RETRY_MIN_DELAY_S = 5.0
 RETRY_MAX_DELAY_S = 60.0
@@ -127,6 +128,10 @@ async def _writer_loop() -> None:
 
     Failures (connect or write) don't kill metrics: events buffer in a bounded
     deque and each tick retries with backoff until the DB is reachable again.
+
+    An idle writer proves it is alive: once HEARTBEAT_INTERVAL_S passes without a
+    successful write (immediately on start), it writes a `heartbeat` event, so a
+    live pipeline never leaves a longer gap in metrics_event.
     """
     global _pool
     queue = _write_queue
@@ -137,6 +142,7 @@ async def _writer_loop() -> None:
     down_since: float | None = None
     last_attempt = 0.0
     last_down_log = 0.0
+    last_write = float("-inf")
     retry_delay = RETRY_MIN_DELAY_S
 
     while True:
@@ -156,10 +162,12 @@ async def _writer_loop() -> None:
             except TimeoutError:
                 pass
 
+            now = time.monotonic()
+            if not pending and now - last_write >= HEARTBEAT_INTERVAL_S:
+                pending.append({"event_type": "heartbeat", "timestamp": datetime.now(UTC)})
             if not pending:
                 continue
 
-            now = time.monotonic()
             if down_since is not None and now - last_attempt < retry_delay:
                 continue
             last_attempt = now
@@ -197,6 +205,7 @@ async def _writer_loop() -> None:
                 down_since = None
                 dropped = 0
             retry_delay = RETRY_MIN_DELAY_S
+            last_write = now
             pending.clear()
 
         except asyncio.CancelledError:
@@ -254,7 +263,7 @@ async def _write_batch(events: list[dict[str, Any]]) -> None:
     for event in events:
         data = event.get("data")
         row = (
-            event.get("timestamp", datetime.now(UTC)),
+            event["timestamp"],
             event.get("event_type"),
             event.get("model_slug"),
             event.get("voice_slug"),
@@ -301,12 +310,14 @@ async def log_event(event_type: str, **kwargs: Any) -> None:
 
     Args:
         event_type: Event type (e.g., 'synthesis_complete', 'request_complete')
-        **kwargs: Event fields matching the schema columns, plus optional 'data' dict
+        **kwargs: Event fields matching the schema columns, plus optional 'data' dict.
+            `timestamp` defaults to now, so events buffered through a DB outage
+            keep the time they happened rather than the time they were flushed.
     """
     if _write_queue is None:
         return
 
-    event = {"event_type": event_type, **kwargs}
+    event = {"event_type": event_type, "timestamp": datetime.now(UTC), **kwargs}
     await _write_queue.put(event)
 
 
