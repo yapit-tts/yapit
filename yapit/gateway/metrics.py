@@ -130,8 +130,8 @@ async def _writer_loop() -> None:
     deque and each tick retries with backoff until the DB is reachable again.
 
     An idle writer proves it is alive: once HEARTBEAT_INTERVAL_S passes without a
-    successful write (immediately on start), it writes a `heartbeat` event, so a
-    live pipeline never leaves a longer gap in metrics_event.
+    successful write (and on its first idle tick), it writes a `heartbeat` event,
+    so a live pipeline never leaves a longer gap in metrics_event.
     """
     global _pool
     queue = _write_queue
@@ -164,7 +164,7 @@ async def _writer_loop() -> None:
 
             now = time.monotonic()
             if not pending and now - last_write >= HEARTBEAT_INTERVAL_S:
-                pending.append({"event_type": "heartbeat", "timestamp": datetime.now(UTC)})
+                pending.append({"event_type": "heartbeat"})
             if not pending:
                 continue
 
@@ -259,11 +259,14 @@ async def _write_batch(events: list[dict[str, Any]]) -> None:
         "data",
     ]
 
+    # Stamped at flush, not at log time: the continuous aggregates only refresh a
+    # trailing window (3h hourly, 3d daily), so events buffered through a longer
+    # outage would never reach them under their real timestamps.
     rows = []
     for event in events:
         data = event.get("data")
         row = (
-            event["timestamp"],
+            event.get("timestamp", datetime.now(UTC)),
             event.get("event_type"),
             event.get("model_slug"),
             event.get("voice_slug"),
@@ -310,14 +313,12 @@ async def log_event(event_type: str, **kwargs: Any) -> None:
 
     Args:
         event_type: Event type (e.g., 'synthesis_complete', 'request_complete')
-        **kwargs: Event fields matching the schema columns, plus optional 'data' dict.
-            `timestamp` defaults to now, so events buffered through a DB outage
-            keep the time they happened rather than the time they were flushed.
+        **kwargs: Event fields matching the schema columns, plus optional 'data' dict
     """
     if _write_queue is None:
         return
 
-    event = {"event_type": event_type, "timestamp": datetime.now(UTC), **kwargs}
+    event = {"event_type": event_type, **kwargs}
     await _write_queue.put(event)
 
 

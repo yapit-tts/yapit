@@ -129,7 +129,7 @@ fi
 
 EXTRA_CONTEXT="$BASE_CONTEXT
 
-## METRICS FRESHNESS (newest metrics event vs the writer's hourly heartbeat, pre-computed)
+## METRICS FRESHNESS (newest metrics event vs the writer's heartbeat interval, pre-computed)
 
 $METRICS_FRESHNESS
 
@@ -219,7 +219,7 @@ Yapit is a text-to-speech platform with these components:
 - `job_dlq` — job exceeded max retries, moved to dead letter queue (BAD)
 
 **Liveness:**
-- `heartbeat` — written by the metrics writer whenever an hour passes without any other write, so a live pipeline never leaves a gap longer than an hour in metrics_event. Carries no other fields; leave it out of activity counts.
+- `heartbeat` — written by the metrics writer whenever its heartbeat interval (printed in the METRICS FRESHNESS section) passes without any other write, so a live pipeline never leaves a longer gap in metrics_event. Carries no other fields; leave it out of activity counts.
 
 **Document extraction:**
 - `document_extraction_complete` — emitted for every document extraction (all paths)
@@ -277,7 +277,7 @@ Judge the match on substance rather than on a plausible-looking subject line. `g
 Recovery is not a fix. An outage that ended, a background loop that came back after a restart, a queue that drained — with no commit behind it, nobody has addressed the cause, and it stays in the report as an issue.
 
 ### Metrics freshness
-The METRICS FRESHNESS verdict is deterministic: the writer's hourly `heartbeat` means a live pipeline never leaves a gap over an hour in metrics_event, so FRESH is not to be second-guessed and STALE is never a quiet day. A STALE verdict is the lead issue of the report (P0): the metrics pipeline is down, and the metrics DB only covers the period before the gap — the window after it is unobserved, not quiet. Analyze that window from logs, and label each finding metrics-based or log-based.
+The METRICS FRESHNESS verdict is deterministic: the writer's `heartbeat` means a live pipeline never leaves a gap longer than its heartbeat interval in metrics_event, so FRESH is not to be second-guessed and STALE is never a quiet day. A STALE verdict is the lead issue of the report (P0): the metrics pipeline is down, and the metrics DB only covers the period before the gap — the window after it is unobserved, not quiet. Analyze that window from logs, and label each finding metrics-based or log-based.
 
 The metrics writer self-heals: it buffers events (bounded, 10k) and retries with backoff when the metrics DB is unreachable. Log lines to know (module `yapit.gateway.metrics`):
 - `Metrics DB unavailable at startup (...); writer will keep retrying` / `Metrics DB write failed (...); buffering events and retrying` (ERROR) — outage started

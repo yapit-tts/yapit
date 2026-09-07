@@ -1,10 +1,11 @@
 """Metrics pipeline freshness: is the newest metrics event recent enough for a live writer?
 
 Run by report.sh after sync-data. The gateway's metrics writer writes a `heartbeat`
-event whenever an hour passes without any other write, so a live pipeline never
-leaves a longer gap in metrics_event; a newest event older than STALE_AFTER_H means
-the writer is dead, wedged, or cut off from its DB. The newest gateway log line is
-printed alongside, to tell a silent metrics writer from a silent gateway.
+event whenever HEARTBEAT_INTERVAL_S passes without any other write, so a live
+pipeline never leaves a longer gap in metrics_event; a newest event older than
+STALE_AFTER_H means the writer is dead, wedged, or cut off from its DB. The newest
+gateway log line is printed alongside, to tell a silent metrics writer from a silent
+gateway.
 """
 
 import json
@@ -32,7 +33,7 @@ def main() -> None:
     print(f"Last metrics event:  {last_event:%Y-%m-%d %H:%M:%S %Z} ({event_age_h:.1f}h ago)")
 
     last_log = _last_log_time()
-    log_age_h = (now - last_log).total_seconds() / 3600 if last_log else None
+    log_age_h = (now - last_log).total_seconds() / 3600 if last_log is not None else None
     if log_age_h is not None:
         print(f"Last gateway log:    {last_log:%Y-%m-%d %H:%M:%S %Z} ({log_age_h:.1f}h ago)")
 
