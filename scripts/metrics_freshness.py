@@ -1,8 +1,11 @@
-"""Metrics pipeline freshness: age of the newest metrics event, cross-checked against gateway logs.
+"""Metrics pipeline freshness: is the newest metrics event recent enough for a live writer?
 
-Run by report.sh after sync-data. A metrics DB that stops receiving events looks
-identical to a quiet day unless compared against log activity — this makes the
-distinction deterministic instead of leaving it to the analysis agent to notice.
+Run by report.sh after sync-data. The gateway's metrics writer writes a `heartbeat`
+event whenever HEARTBEAT_INTERVAL_S passes without any other write, so a live
+pipeline never leaves a longer gap in metrics_event; a newest event older than
+STALE_AFTER_H means the writer is dead, wedged, or cut off from its DB. The newest
+gateway log line is printed alongside, to tell a silent metrics writer from a silent
+gateway.
 """
 
 import json
@@ -12,10 +15,12 @@ from pathlib import Path
 
 import duckdb
 
+from yapit.gateway.metrics import HEARTBEAT_INTERVAL_S
+
 DB_PATH = Path("data/metrics.duckdb")
 LOG_PATH = Path("data/logs/gateway.jsonl")
-STALE_AFTER_H = 3.0
-LOG_GAP_ALERT_H = 1.0
+HEARTBEAT_H = HEARTBEAT_INTERVAL_S / 3600
+STALE_AFTER_H = 2 * HEARTBEAT_H  # one missed heartbeat is jitter, two is an outage
 
 
 def main() -> None:
@@ -28,25 +33,24 @@ def main() -> None:
     print(f"Last metrics event:  {last_event:%Y-%m-%d %H:%M:%S %Z} ({event_age_h:.1f}h ago)")
 
     last_log = _last_log_time()
-    if last_log is not None:
-        log_age_h = (now - last_log).total_seconds() / 3600
+    log_age_h = (now - last_log).total_seconds() / 3600 if last_log is not None else None
+    if log_age_h is not None:
         print(f"Last gateway log:    {last_log:%Y-%m-%d %H:%M:%S %Z} ({log_age_h:.1f}h ago)")
 
     if event_age_h <= STALE_AFTER_H:
-        print("✅ FRESH — metrics pipeline is live.")
+        print(f"✅ FRESH — metrics pipeline is live (a live writer never goes quiet for more than {HEARTBEAT_H:.0f}h).")
         return
-
-    log_gap_h = (last_log - last_event).total_seconds() / 3600 if last_log else None
-    if log_gap_h is not None and log_gap_h > LOG_GAP_ALERT_H:
+    if log_age_h is not None and log_age_h > STALE_AFTER_H:
         print(
-            f"🚨 STALE — gateway logged activity {log_gap_h:.1f}h past the last metrics event. "
-            "The metrics pipeline is DOWN (P0). Lead the report with this; "
-            "all metrics-based sections only cover the period before the gap."
+            f"🚨 STALE — no metrics event for {event_age_h:.1f}h and no gateway log line for {log_age_h:.1f}h: "
+            "the gateway itself has gone silent, not just its metrics writer (P0). Lead the report with this."
         )
         return
+    gateway_alive = f" while the gateway logged {log_age_h:.1f}h ago" if log_age_h is not None else ""
     print(
-        f"⚠️ No metrics events for {event_age_h:.1f}h, but logs are similarly quiet — "
-        "possibly just low traffic. Verify against log activity before concluding either way."
+        f"🚨 STALE — no metrics event for {event_age_h:.1f}h{gateway_alive}, though a live writer "
+        f"heartbeats every {HEARTBEAT_H:.0f}h. The metrics pipeline is DOWN (P0). Lead the report with this; "
+        "all metrics-based sections only cover the period before the gap."
     )
 
 

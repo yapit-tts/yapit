@@ -114,13 +114,13 @@ async def test_db_down_at_startup_recovers_without_restart(db, stop_writer):
 async def test_midlife_outage_buffers_and_flushes(db, stop_writer):
     await metrics.start_metrics_writer()
     await metrics.log_event("synthesis_complete", text_length=1)
-    await eventually(lambda: len(db["rows"]) == 1)
+    await eventually(lambda: event_types(db).count("synthesis_complete") == 1)
 
     db["up"] = False
     await metrics.log_event("synthesis_complete", text_length=2)
     await metrics.log_event("synthesis_complete", text_length=3)
     await asyncio.sleep(0.1)
-    assert len(db["rows"]) == 1
+    assert event_types(db).count("synthesis_complete") == 1
 
     db["up"] = True
     await eventually(lambda: event_types(db).count("synthesis_complete") == 3)
@@ -144,6 +144,18 @@ async def test_buffer_overflow_drops_oldest_and_reports(db, stop_writer, monkeyp
     assert kept == [2, 3, 4]
     warning_data = json.loads(next(row[-1] for row in db["rows"] if row[1] == "warning"))
     assert warning_data["events_dropped"] == 2
+
+
+@pytest.mark.asyncio
+async def test_idle_writer_heartbeats(db, stop_writer, monkeypatch):
+    """A writer with nothing to write still proves it is alive, so a quiet day and a
+    dead pipeline stop looking the same in metrics_event.
+    """
+    monkeypatch.setattr(metrics, "HEARTBEAT_INTERVAL_S", 0.05)
+    await metrics.start_metrics_writer()
+
+    await eventually(lambda: event_types(db).count("heartbeat") >= 3)
+    assert set(event_types(db)) == {"heartbeat"}
 
 
 @pytest.mark.asyncio
