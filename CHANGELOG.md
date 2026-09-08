@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.4.5 — 2026-09-08
 
 * Fixed every cache write taking about a minute once the audio cache grew to several GB — the size check on each commit summed entry sizes by reading through every stored blob. It now reads a small index instead; the same scan was also behind `/documents/prepare` slowing to 5–6 s. The index is built once when the gateway first starts on an existing cache file.
 
