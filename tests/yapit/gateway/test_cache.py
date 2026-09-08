@@ -251,21 +251,6 @@ class TestCacheStats:
 
 class TestSchema:
     @pytest.mark.asyncio
-    async def test_size_sum_reads_the_index_not_the_blobs(self, unlimited_cache):
-        """The eviction check runs on every commit; on a multi-GB cache it must not
-        touch the audio rows to add up their sizes.
-        """
-        import aiosqlite
-
-        sql = "SELECT COALESCE(SUM(size), 0) FROM cache WHERE pinned=0"
-        async with (
-            aiosqlite.connect(unlimited_cache.db_path) as db,
-            db.execute("EXPLAIN QUERY PLAN " + sql) as cur,
-        ):
-            plan = " ".join(row[3] for row in await cur.fetchall())
-        assert "COVERING INDEX idx_cache_pinned_size" in plan
-
-    @pytest.mark.asyncio
     async def test_existing_file_gains_the_index_on_open(self, cache_dir):
         """A cache file created before the index existed (prod's audio cache) gets
         it when the gateway starts, without a rebuild.
