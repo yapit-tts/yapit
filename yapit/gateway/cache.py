@@ -119,18 +119,21 @@ class SqliteCache(Cache):
         self._init_schema()
 
     def _init_schema(self) -> None:
-        """Create tables synchronously at startup (idempotent)."""
+        """Create tables synchronously at startup (idempotent).
+
+        The blob is declared last so reads of the small columns never page through it.
+        """
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         with sqlite3.connect(self.db_path) as db:
             db.execute(
                 """
                 CREATE TABLE IF NOT EXISTS cache (
                     key TEXT PRIMARY KEY,
-                    data BLOB NOT NULL,
                     size INTEGER NOT NULL,
                     created_at REAL NOT NULL,
                     last_accessed REAL NOT NULL,
-                    pinned INTEGER NOT NULL DEFAULT 0
+                    pinned INTEGER NOT NULL DEFAULT 0,
+                    data BLOB NOT NULL
                 )
                 """
             )
@@ -140,6 +143,7 @@ class SqliteCache(Cache):
             except sqlite3.OperationalError:
                 pass  # column already exists
             db.execute("CREATE INDEX IF NOT EXISTS idx_cache_last_accessed ON cache(last_accessed)")
+            db.execute("CREATE INDEX IF NOT EXISTS idx_cache_pinned_size ON cache(pinned, size)")
             db.execute("PRAGMA journal_mode=WAL")
 
     async def _get_reader(self) -> aiosqlite.Connection:
