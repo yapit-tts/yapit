@@ -5,7 +5,7 @@
   "type": "module",
   "dependencies": {
     "defuddle": "0.19.3",
-    "playwright": "1.62.1",
+    "playwright": "1.63.0",
     "undici": "^7.29.0"
   }
 }
