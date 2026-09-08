@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+* Security: updated the browser used to render JavaScript-heavy pages — Playwright 1.62.1 → 1.63.0, which bundles Chromium 153 instead of 151. This browser loads untrusted pages; Chromium 152 fixed a V8 type-confusion bug exploited in the wild (CVE-2026-85046) and a sandbox-escaping ANGLE use-after-free (CVE-2026-79282).
+* Security: the SSRF proxy (smokescreen) that fronts every web-page fetch is now compiled with a supported Go toolchain (1.23 → 1.27) on Alpine 3.23. Go 1.23 left support in 2025-08, so the binary lacked a year of `net/http` and `crypto/tls` fixes, among them an HTTP/2 client hang (CVE-2026-33814) and TLS KeyUpdate flooding (CVE-2026-56862).
+* Fixed a hidden browser tab with nothing playing reconnecting its WebSocket in a loop — hundreds of connect/disconnect pairs a day per idle tab. It now reconnects when the tab becomes visible or has something to send.
+* Fixed over-long document titles, file names and URLs surfacing as an unhandled 500 — document-derived values are truncated, client-supplied ones rejected with a proper error.
+* HTML uploaded from the browser now keeps its source URL, so root-relative links in the extracted content resolve and the document records where it came from.
+* Metrics profile: the metrics writer emits an hourly `heartbeat` event while idle, so the health report can tell a quiet day from a dead metrics pipeline instead of guessing from log activity (which produced a false "pipeline down" every idle day).
 * Updated defuddle 0.19.2 → 0.19.3 — footnote references no longer carry a stray space before the marker and footnote text keeps its trailing punctuation, so footnote-heavy articles read more cleanly. Ad, nav and ratings containers are stripped from more sites, as are "related stories" card blocks injected between paragraphs. Content is no longer dropped from sections whose class merely contains "logo" as a substring (e.g. "blogosphere").
 
 ## v0.4.3 — 2026-08-18
