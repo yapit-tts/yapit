@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+* Fixed every cache write taking about a minute once the audio cache grew to several GB — the size check on each commit summed entry sizes by reading through every stored blob. It now reads a small index instead; the same scan was also behind `/documents/prepare` slowing to 5–6 s. The index is built once when the gateway first starts on an existing cache file.
+
 ## v0.4.4 — 2026-09-08
 
 * Security: updated the browser used to render JavaScript-heavy pages — Playwright 1.62.1 → 1.63.0, which bundles Chromium 153 instead of 151. This browser loads untrusted pages; Chromium 152 fixed a V8 type-confusion bug exploited in the wild (CVE-2026-85046) and a sandbox-escaping ANGLE use-after-free (CVE-2026-79282).
