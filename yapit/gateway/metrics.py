@@ -259,9 +259,6 @@ async def _write_batch(events: list[dict[str, Any]]) -> None:
         "data",
     ]
 
-    # Stamped at flush, not at log time: the continuous aggregates only refresh a
-    # trailing window (3h hourly, 3d daily), so events buffered through a longer
-    # outage would never reach them under their real timestamps.
     rows = []
     for event in events:
         data = event.get("data")
