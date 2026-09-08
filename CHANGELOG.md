@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.4.4 — 2026-09-08
 
 * Security: updated the browser used to render JavaScript-heavy pages — Playwright 1.62.1 → 1.63.0, which bundles Chromium 153 instead of 151. This browser loads untrusted pages; Chromium 152 fixed a V8 type-confusion bug exploited in the wild (CVE-2026-85046) and a sandbox-escaping ANGLE use-after-free (CVE-2026-79282).
 * Security: the SSRF proxy (smokescreen) that fronts every web-page fetch is now compiled with a supported Go toolchain (1.23 → 1.27) on Alpine 3.23. Go 1.23 left support in 2025-08, so the binary lacked a year of `net/http` and `crypto/tls` fixes, among them an HTTP/2 client hang (CVE-2026-33814) and TLS KeyUpdate flooding (CVE-2026-56862).
