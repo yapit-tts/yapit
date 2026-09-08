@@ -249,6 +249,46 @@ class TestCacheStats:
         assert stats.entry_count == 1
 
 
+class TestSchema:
+    @pytest.mark.asyncio
+    async def test_size_sum_reads_the_index_not_the_blobs(self, unlimited_cache):
+        """The eviction check runs on every commit; on a multi-GB cache it must not
+        touch the audio rows to add up their sizes.
+        """
+        import aiosqlite
+
+        sql = "SELECT COALESCE(SUM(size), 0) FROM cache WHERE pinned=0"
+        async with (
+            aiosqlite.connect(unlimited_cache.db_path) as db,
+            db.execute("EXPLAIN QUERY PLAN " + sql) as cur,
+        ):
+            plan = " ".join(row[3] for row in await cur.fetchall())
+        assert "COVERING INDEX idx_cache_pinned_size" in plan
+
+    @pytest.mark.asyncio
+    async def test_existing_file_gains_the_index_on_open(self, cache_dir):
+        """A cache file created before the index existed (prod's audio cache) gets
+        it when the gateway starts, without a rebuild.
+        """
+        import sqlite3
+
+        with sqlite3.connect(cache_dir / "cache.db") as db:
+            db.execute(
+                "CREATE TABLE cache (key TEXT PRIMARY KEY, data BLOB NOT NULL, size INTEGER NOT NULL, "
+                "created_at REAL NOT NULL, last_accessed REAL NOT NULL, pinned INTEGER NOT NULL DEFAULT 0)"
+            )
+            db.execute("INSERT INTO cache VALUES ('k', X'00', 1, 0, 0, 0)")
+
+        cache = SqliteCache(CacheConfig(path=cache_dir, max_size_mb=None))
+        try:
+            with sqlite3.connect(cache.db_path) as db:
+                names = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='index'")}
+            assert "idx_cache_pinned_size" in names
+            assert await cache.retrieve_data("k") == b"\x00"
+        finally:
+            await cache.close()
+
+
 class TestVacuum:
     @pytest.mark.asyncio
     async def test_vacuum_skips_when_not_bloated(self, unlimited_cache):
