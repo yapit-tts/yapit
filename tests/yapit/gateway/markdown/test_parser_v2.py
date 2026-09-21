@@ -10,6 +10,8 @@ Tests are organized by feature area. Many will FAIL against the current
 implementation — they define the target spec for the rewrite.
 """
 
+import pytest
+
 from yapit.gateway.markdown import DocumentTransformer, parse_markdown
 from yapit.gateway.markdown.models import (
     ImageBlock,
@@ -611,6 +613,26 @@ class TestBasicBlockTypes:
         doc = transform(ast)
         audio = doc.get_audio_blocks()
         assert audio == []
+
+    @pytest.mark.parametrize("alt", ["PIC", "pic", "image", "image1", "Image 3", "IMG"])
+    def test_image_with_placeholder_alt_no_audio(self, alt):
+        """Alt text a conversion tool writes on every image is not read out."""
+        doc = transform(parse_markdown(f"![{alt}](fig.png)"))
+        assert doc.get_audio_blocks() == []
+        assert isinstance(doc.blocks[0], ImageBlock)
+        assert doc.blocks[0].alt == ""
+
+    @pytest.mark.parametrize("alt", ["Figure 4", "Image of a skull", "Pictures from Picbreeder"])
+    def test_image_alt_that_starts_like_a_placeholder_has_audio(self, alt):
+        doc = transform(parse_markdown(f"![{alt}](fig.png)"))
+        assert doc.get_audio_blocks() == [alt]
+
+    def test_inline_image_with_placeholder_alt_is_silent(self):
+        """A linked video thumbnail above its title reads only the title."""
+        md = "[![pic](thumb.jpg)](https://youtu.be/x)  \n[AI is SO Smart](https://youtu.be/x)"
+        doc = transform(parse_markdown(md))
+        assert doc.get_audio_blocks() == ["AI is SO Smart"]
+        assert ast_contains(doc.blocks[0].ast, "inline_image")
 
     def test_bold_italic_in_paragraph(self):
         """Formatting in paragraph preserved in display, stripped for TTS."""

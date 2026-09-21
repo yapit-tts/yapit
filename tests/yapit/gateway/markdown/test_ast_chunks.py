@@ -35,6 +35,17 @@ def transform(md: str, **kwargs):
     ).transform(ast)
 
 
+def concat_inline(nodes) -> str:
+    """Concatenate the text of an inline AST exactly, the way the frontend renders it."""
+    out: list[str] = []
+    for n in nodes:
+        if n.type in ("text", "code_span"):
+            out.append(n.content)
+        elif hasattr(n, "content") and isinstance(n.content, list):
+            out.append(concat_inline(n.content))
+    return "".join(out)
+
+
 def collect_display_text(doc) -> str:
     """Collect all display text from document blocks for content-presence checks."""
     texts = []
@@ -139,16 +150,6 @@ class TestChunkAst:
         the whitespace at a sentence boundary, sibling spans glue together —
         "one another?We have…" instead of "one another? We have…".
         """
-
-        def concat_inline(nodes) -> str:
-            out: list[str] = []
-            for n in nodes:
-                if n.type in ("text", "code_span"):
-                    out.append(n.content)
-                elif hasattr(n, "content") and isinstance(n.content, list):
-                    out.append(concat_inline(n.content))
-            return "".join(out)
-
         text = "First sentence here. Second sentence here. Third sentence here. Fourth sentence here."
         doc = transform(text, max_block_chars=30)
         block = doc.blocks[0]
@@ -162,16 +163,6 @@ class TestChunkAst:
         A sentence longer than soft_max is split at commas/colons/semicolons;
         the same span-rendering concern applies to those chunk boundaries.
         """
-
-        def concat_inline(nodes) -> str:
-            out: list[str] = []
-            for n in nodes:
-                if n.type in ("text", "code_span"):
-                    out.append(n.content)
-                elif hasattr(n, "content") and isinstance(n.content, list):
-                    out.append(concat_inline(n.content))
-            return "".join(out)
-
         text = (
             "When considering moral patients, we ask: how do we weigh chimpanzees, "
             "or bonobos, or octopuses, or even octopus arms, or embryos at various "
@@ -183,6 +174,16 @@ class TestChunkAst:
         assert len(block.audio_chunks) > 1
         rendered = "".join(concat_inline(c.ast) for c in block.audio_chunks)
         assert rendered == text
+
+    def test_split_paragraph_with_silent_inline_image_keeps_chunks_aligned(self):
+        """Each chunk's AST shows the text that chunk speaks when a placeholder-alt image sits mid-paragraph."""
+        md = "First sentence here. Second ![PIC](icon.png) sentence here. Third sentence here. Fourth one."
+        doc = transform(md, max_block_chars=30)
+        block = doc.blocks[0]
+        assert len(block.audio_chunks) > 1
+        for chunk in block.audio_chunks:
+            assert concat_inline(chunk.ast).split() == chunk.text.split()
+        assert sum(ast_contains(c.ast, "inline_image") for c in block.audio_chunks) == 1
 
     def test_heading_chunk_has_ast(self):
         """Heading: chunk AST matches block AST."""
