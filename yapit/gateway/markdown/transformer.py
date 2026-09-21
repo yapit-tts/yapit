@@ -129,6 +129,16 @@ YAP_CAP_OPEN = "<yap-cap>"
 YAP_CAP_CLOSE = "</yap-cap>"
 
 
+# Alt text a conversion tool writes on every image, whatever it shows:
+# tex4ht's "PIC", Frontiers' "image", calibre's "Image 3".
+_PLACEHOLDER_ALT = re.compile(r"(?:pic|image|img)\s*\d*", re.IGNORECASE)
+
+
+def informative_alt(alt: str) -> str:
+    """The alt text, or "" when it is a placeholder that says nothing about the image."""
+    return "" if _PLACEHOLDER_ALT.fullmatch(alt.strip()) else alt
+
+
 def _is_tag(node: SyntaxTreeNode, tag: str) -> bool:
     """Check if node is an html_inline containing the specified tag."""
     return node.type == "html_inline" and node.content == tag
@@ -217,7 +227,7 @@ class InlineProcessor:
         elif node.type == "code_inline":
             return node.content or ""
         elif node.type == "image":
-            return node.content or ""  # Alt text
+            return informative_alt(node.content or "")
         elif node.type in ("softbreak", "hardbreak"):
             return " "
         elif node.type == "math_inline":
@@ -413,7 +423,7 @@ def _transform_inline_node(node: SyntaxTreeNode) -> InlineContent | None:
     elif node.type == "image":
         return InlineImageContent(
             src=cast(str, node.attrs.get("src", "")),
-            alt=node.content or "",
+            alt=informative_alt(node.content or ""),
         )
     elif node.type == "math_inline":
         return MathInlineContent(content=node.content or "")
@@ -1125,7 +1135,7 @@ class DocumentTransformer:
         img_node = children[img_idx]
 
         src = str(img_node.attrs.get("src", ""))
-        alt = img_node.content or ""
+        alt = informative_alt(img_node.content or "")
         title_raw = img_node.attrs.get("title")
         title = str(title_raw) if title_raw is not None else None
 

@@ -88,6 +88,32 @@ class TestCleanPandocOutput:
         assert "![](cover.jpg)" in result
         assert "Text" in result
 
+    def test_drops_text_sized_images_with_placeholder_alt(self):
+        """tex4ht's YouTube link badge: both icons go, the link text stays."""
+        md = (
+            '[<img src="images/youtube-logo.png" width="15" height="10" alt="PIC" /> Deep Learning has '
+            '“fractured" representations <img src="images/lettermark_yellow.png" width="13" height="8" alt="PIC" />]'
+            "(https://www.youtube.com/watch?v=o1q6Hhz0MAg)"
+        )
+        assert _clean_pandoc_output(md) == (
+            '[ Deep Learning has “fractured" representations ](https://www.youtube.com/watch?v=o1q6Hhz0MAg)'
+        )
+
+    @pytest.mark.parametrize("size", ['width="12" height="12"', 'width="32" height="32"', 'width="12px" height="9px"'])
+    def test_text_sized_image_becomes_its_alt_text(self, size):
+        assert _clean_pandoc_output(f'Supported: <img src="check.png" {size} alt="✓" />') == "Supported: ✓"
+
+    def test_text_sized_image_alt_is_escaped_for_markdown(self):
+        md = '<img src="op.png" width="20" height="14" alt="a*b &amp; [c]" />'
+        assert _clean_pandoc_output(md) == r"a\*b \& \[c\]"
+
+    @pytest.mark.parametrize(
+        "size", ['width="33" height="10"', 'width="318" height="75"', 'width="15"', 'width="1em" height="1em"', ""]
+    )
+    def test_keeps_images_not_declared_text_sized(self, size):
+        tag = f'<img src="fig.png" {size} alt="PIC" />'
+        assert _clean_pandoc_output(f"Text {tag}") == f"Text {tag}"
+
     def test_collapses_blank_lines(self):
         md = "Para one\n\n\n\n\nPara two"
         assert _clean_pandoc_output(md) == "Para one\n\nPara two"

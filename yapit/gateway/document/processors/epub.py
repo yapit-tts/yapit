@@ -5,6 +5,7 @@ footnotes, image extraction, and XHTML→markdown in one subprocess call.
 """
 
 import asyncio
+import html
 import mimetypes
 import re
 import subprocess
@@ -19,6 +20,7 @@ from xml.etree import ElementTree as ET
 from loguru import logger
 
 from yapit.gateway.document.types import ExtractedPage, PageResult, ProcessorConfig, cpu_executor
+from yapit.gateway.markdown.transformer import informative_alt
 from yapit.gateway.storage import ImageStorage
 
 config = ProcessorConfig(
@@ -35,6 +37,9 @@ PANDOC_TIMEOUT_SECONDS = 60
 
 MAX_UNCOMPRESSED_SIZE = 200 * 1024 * 1024
 MAX_ZIP_ENTRIES = 500
+
+# An <img> declared no larger than this in both dimensions sits in a line of text (an icon, a glyph).
+MAX_TEXT_SIZED_IMAGE_PX = 32
 
 # Output format: strict markdown + extensions our parser supports (GFM tables, dollar math, strikethrough)
 PANDOC_OUTPUT_FORMAT = "markdown_strict+pipe_tables+strikeout+tex_math_dollars"
@@ -54,6 +59,9 @@ _REMAINING_SPAN = re.compile(r"</?span[^>]*>")
 _PRESENTATION_IMG = re.compile(r'<img\s[^>]*role="presentation"[^>]*/?\s*>')
 _TOC_SECTION = re.compile(r"\n#{1,2}\s+(?:Contents|Table of Contents)\s*\n(?:(?!\n#).)*", re.DOTALL)
 _BLANK_LINES = re.compile(r"\n{3,}")
+
+_PX_VALUE = re.compile(r"(\d+(?:\.\d+)?)(?:px)?")
+_MARKDOWN_PUNCTUATION = re.compile(r"[!-/:-@\[-`{-~]")
 
 
 @dataclass
@@ -97,6 +105,29 @@ def _dedup_images(markdown: str) -> str:
     return "\n".join(result)
 
 
+def _img_attr(tag: str, name: str) -> str | None:
+    """Value of attribute `name` on an <img> tag, or None when it is absent."""
+    m = re.search(rf"\s{name}=(?:\"([^\"]*)\"|'([^']*)')", tag)
+    if not m:
+        return None
+    return m.group(1) if m.group(1) is not None else m.group(2)
+
+
+def _declared_px(tag: str, dimension: str) -> float | None:
+    m = _PX_VALUE.fullmatch((_img_attr(tag, dimension) or "").strip())
+    return float(m.group(1)) if m else None
+
+
+def _text_sized_img_to_alt(match: re.Match) -> str:
+    """Replace an <img> declared at text size with its alt text, escaped for markdown."""
+    tag = match.group(0)
+    width, height = _declared_px(tag, "width"), _declared_px(tag, "height")
+    if width is None or height is None or max(width, height) > MAX_TEXT_SIZED_IMAGE_PX:
+        return tag
+    alt = informative_alt(html.unescape(_img_attr(tag, "alt") or ""))
+    return _MARKDOWN_PUNCTUATION.sub(r"\\\g<0>", alt)
+
+
 def _clean_pandoc_output(markdown: str) -> str:
     """Strip EPUB-specific HTML cruft that pandoc passes through."""
     markdown = _EMPTY_ANCHOR_SPAN.sub("", markdown)
@@ -107,6 +138,7 @@ def _clean_pandoc_output(markdown: str) -> str:
     markdown = _DECORATIVE_WRAPPER.sub(lambda m: m.group(1), markdown)
     markdown = _ARIA_HIDDEN.sub("", markdown)
     markdown = _PRESENTATION_IMG.sub("", markdown)
+    markdown = _IMG_TAG_PATTERN.sub(_text_sized_img_to_alt, markdown)
     markdown = _REMAINING_SPAN.sub("", markdown)
     markdown = _TOC_SECTION.sub("", markdown)
     markdown = _dedup_images(markdown)
@@ -411,9 +443,7 @@ async def _store_images_and_rewrite(
         url = path_to_url.get(path)
         if not url:
             return match.group(0)
-        alt_match = re.search(r'alt=(?:"([^"]*)"|\'([^\']*)\')', match.group(0))
-        alt = (alt_match.group(1) or alt_match.group(2) or "") if alt_match else ""
-        return f"![{alt}]({url})"
+        return f"![{_img_attr(match.group(0), 'alt') or ''}]({url})"
 
     markdown = _IMAGE_REF_PATTERN.sub(replace_md_image, markdown)
     markdown = _IMG_TAG_PATTERN.sub(replace_img_tag, markdown)
