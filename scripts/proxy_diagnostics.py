@@ -93,7 +93,7 @@ def parse_stack_auth(host: str, hours: int) -> dict:
             errors[m2.group(1)[:80]] += 1
 
     if not response_times:
-        return {"error": "no response lines found in Stack Auth logs"}
+        return {"requests": 0, "errors": dict(errors)}
 
     response_times.sort()
     n = len(response_times)
@@ -183,6 +183,12 @@ def print_stack_auth(data: dict, plain: bool) -> None:
     print(header)
     if not plain:
         print("─" * 50)
+
+    if data["requests"] == 0:
+        print("  requests=0")
+        for msg, count in data["errors"].items():
+            print(f"  error: {count}x {msg}")
+        return
 
     print(
         f"  requests={data['requests']} p50={data['p50']}ms p95={data['p95']}ms p99={data['p99']}ms max={data['max']}ms"
