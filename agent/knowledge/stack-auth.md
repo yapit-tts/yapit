@@ -9,7 +9,7 @@ Frontend (React)
   └── @stackframe/react SDK → Stack Auth API (port 8102)
                                     ↑
 Gateway (Python)                    │
-  └── gateway/auth.py → validates tokens against ───┘
+  └── gateway/auth.py → fetches token signing keys ─┘
 
 Dashboard (Next.js, inside stack-auth container)
   └── port 8101 → auth.yapit.md (Cloudflare Access protected)
@@ -46,14 +46,14 @@ Stack Auth is primarily a SaaS product. Self-hosting is second-class. Known issu
 ### Auth Modes
 
 Two ways to authenticate (`gateway/auth.py`):
-1. **Bearer token** — Validated against Stack Auth → returns `User`
+1. **Bearer token** — a Stack Auth access token, verified in the gateway against the project's public signing keys (`verify_access_token`) → returns `User`. Stack Auth is only asked for the key set, on first use and when a token names a key id the gateway hasn't seen
 2. **Anonymous ID** — `X-Anonymous-ID` header → creates anonymous user with `anon-{uuid}` ID
 
 WebSocket uses query params (`?token=...` or `?anonymous_id=...`).
 
 ### User Model
 
-`gateway/stack_auth/users.py` — `is_anonymous`, `client_metadata` (editable by client), `client_read_only_metadata` (tier info), `server_metadata` (admin flag).
+`gateway/stack_auth/users.py` — `User` holds what the gateway reads: `id`, `is_anonymous`, `primary_email` (from the token's `email` claim, used to pre-fill Stripe checkout).
 
 ### Anonymous → Registered Flow
 
@@ -101,7 +101,7 @@ Docker Swarm env_file baking caused spurious postgres restarts during initial em
 | File | Purpose |
 |------|---------|
 | `gateway/auth.py` | `authenticate()` / `authenticate_ws()` |
-| `gateway/stack_auth/users.py` | User model, API calls |
+| `gateway/stack_auth/users.py` | User model, token verification, user deletion |
 | `gateway/stack_auth/api.py` | `build_headers()` for server API |
 | `gateway/config.py` | `stack_auth_api_host`, `stack_auth_project_id`, `stack_auth_server_key` |
 | `scripts/create_user.py` | Dev user creation |

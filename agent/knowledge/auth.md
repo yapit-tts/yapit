@@ -9,7 +9,7 @@ This file covers auth concepts at the gateway level.
 Three modes (`gateway/auth.py`):
 
 1. **Selfhost** — When `auth_enabled=False`, all endpoints return a static `SELFHOST_USER` (no auth provider needed). Default for `make self-host`.
-2. **Bearer token** — Validated against Stack Auth → returns `User`
+2. **Bearer token** — a Stack Auth access token, verified in the gateway against the project's public signing keys (`verify_access_token`) → returns `User`. Stack Auth is only asked for the key set, on first use and when a token names a key id the gateway hasn't seen
 3. **Anonymous ID** — `X-Anonymous-ID` + `X-Anonymous-Token` headers → creates anonymous user with `anon-{uuid}` ID
 
 WebSocket uses query params (`?token=...` or `?anonymous_id=...&anonymous_token=...`).
