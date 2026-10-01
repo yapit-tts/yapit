@@ -25,14 +25,7 @@ from yapit.gateway.domain_models import Plan, PlanTier, SubscriptionStatus, Usag
 from yapit.gateway.markdown.transformer import DocumentTransformer
 from yapit.gateway.stack_auth.users import User
 
-DEFAULT_TEST_USER = User(
-    id="default-test-user",
-    primary_email_verified=True,
-    primary_email_auth_enabled=True,
-    signed_up_at_millis=1234567890000,
-    last_active_at_millis=1234567890000,
-    is_anonymous=False,
-)
+DEFAULT_TEST_USER = User(id="default-test-user", is_anonymous=False)
 
 
 def _make_delete_statements():
@@ -160,15 +153,7 @@ def app(_shared_app):
 
 @pytest.fixture
 def test_user():
-    return User(
-        id="test-user-123",
-        primary_email_verified=True,
-        primary_email_auth_enabled=True,
-        signed_up_at_millis=1234567890,
-        last_active_at_millis=1234567890,
-        is_anonymous=False,
-        primary_email="test@example.com",
-    )
+    return User(id="test-user-123", is_anonymous=False, primary_email="test@example.com")
 
 
 @pytest.fixture

@@ -1,6 +1,5 @@
 import hashlib
 import hmac
-import time
 from typing import Annotated
 
 import httpx
@@ -9,7 +8,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from loguru import logger
 
 from yapit.gateway.config import Settings, get_settings
-from yapit.gateway.stack_auth import User, get_me
+from yapit.gateway.stack_auth import User, verify_access_token
 
 _TRANSIENT_ERRORS = (httpx.TimeoutException, httpx.ConnectError)
 
@@ -17,14 +16,7 @@ bearer = HTTPBearer(auto_error=False)
 
 ANONYMOUS_ID_PREFIX = "anon-"
 
-SELFHOST_USER = User(
-    id="selfhost",
-    primary_email_verified=False,
-    primary_email_auth_enabled=False,
-    signed_up_at_millis=0,
-    last_active_at_millis=0,
-    is_anonymous=False,
-)
+SELFHOST_USER = User(id="selfhost", is_anonymous=False)
 
 
 def verify_anonymous_token(anonymous_id: str, token: str, secret: str) -> bool:
@@ -34,14 +26,7 @@ def verify_anonymous_token(anonymous_id: str, token: str, secret: str) -> bool:
 
 def create_anonymous_user(anonymous_id: str) -> User:
     """Create an anonymous user with the given ID."""
-    return User(
-        id=f"{ANONYMOUS_ID_PREFIX}{anonymous_id}",
-        primary_email_verified=False,
-        primary_email_auth_enabled=False,
-        signed_up_at_millis=time.time() * 1000,
-        last_active_at_millis=time.time() * 1000,
-        is_anonymous=True,
-    )
+    return User(id=f"{ANONYMOUS_ID_PREFIX}{anonymous_id}", is_anonymous=True)
 
 
 async def authenticate(
@@ -56,7 +41,7 @@ async def authenticate(
     # Try Bearer token first (authenticated user)
     if creds is not None:
         try:
-            user = await get_me(settings, access_token=creds.credentials)
+            user = await verify_access_token(settings, creds.credentials)
         except _TRANSIENT_ERRORS:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Authentication service temporarily unavailable"
@@ -100,7 +85,7 @@ async def authenticate_optional(
 
     if creds is not None:
         try:
-            user = await get_me(settings, access_token=creds.credentials)
+            user = await verify_access_token(settings, creds.credentials)
         except _TRANSIENT_ERRORS:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Authentication service temporarily unavailable"
@@ -137,16 +122,16 @@ async def authenticate_ws(
 
     if token:
         try:
-            user = await get_me(settings, access_token=token)
+            user = await verify_access_token(settings, token)
             if user is not None:
                 return user
-            logger.warning("WS auth: get_me returned None for token")
+            logger.warning("WS auth: invalid or expired token")
         except _TRANSIENT_ERRORS:
             raise WebSocketException(
                 code=status.WS_1013_TRY_AGAIN_LATER, reason="Authentication service temporarily unavailable"
             )
         except Exception as e:
-            logger.error(f"WS auth: get_me raised exception: {e}")
+            logger.error(f"WS auth: token verification raised exception: {e}")
         raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid token")
 
     if anonymous_id:

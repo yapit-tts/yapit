@@ -72,14 +72,7 @@ def ai_extractor(app):
 
 @pytest.fixture
 def as_subscribed_user(app, subscribed_user):
-    user = User(
-        id=subscribed_user["user_id"],
-        primary_email_verified=True,
-        primary_email_auth_enabled=True,
-        signed_up_at_millis=0,
-        last_active_at_millis=0,
-        is_anonymous=False,
-    )
+    user = User(id=subscribed_user["user_id"], is_anonymous=False)
     app.dependency_overrides[authenticate] = lambda: user
     app.dependency_overrides[authenticate_optional] = lambda: user
     yield user
