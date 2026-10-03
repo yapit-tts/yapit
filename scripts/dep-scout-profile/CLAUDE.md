@@ -10,7 +10,7 @@ Yapit uses any of it, and reachability is the whole judgement.
 ## Orient
 
 1. `README.md` and `docs/architecture.md` — what runs where.
-2. `agent/knowledge/` — infrastructure, features, integrations; follow the wikilinks
+2. The rest of `docs/` — infrastructure, features, integrations; follow the wikilinks
    that bear on dependencies. [[dependency-updates]] holds the per-package gotchas
    and the update procedures to cite in a fix.
 3. `pyproject.toml`, `frontend/package.json`, `docker/defuddle/package.json` — how
