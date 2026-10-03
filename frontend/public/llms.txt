@@ -1,0 +1,15 @@
+# Yapit
+
+> Free, open-source text-to-speech for documents and web pages. Paste a URL or upload a PDF; Yapit renders the document and reads it aloud, including academic papers with math, citations, figures and tables.
+
+Any document on Yapit is available as markdown: append `/md` to its URL (`https://yapit.md/listen/{id}/md`), or `/md-annotated` for the version with TTS annotations. Prepending `yapit.md/` to a web page's URL (`https://yapit.md/example.com/article`) opens that page in Yapit.
+
+## Docs
+
+- [README](https://github.com/yapit-tts/yapit/blob/main/README.md): features, self-hosting, custom TTS voices, AI document extraction
+- [Architecture](https://github.com/yapit-tts/yapit/blob/main/docs/architecture.md): how documents become audio
+- [CLI](https://github.com/yapit-tts/yapit-cli): `uvx yapit` to create documents from URLs or files and export them as markdown
+
+## Optional
+
+- [Source code](https://github.com/yapit-tts/yapit) (AGPL-3.0)
