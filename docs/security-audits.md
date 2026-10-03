@@ -34,7 +34,7 @@ Three red-team audits conducted before and after public launch. Each audit used 
 
 | ID | Finding | Status |
 |----|---------|--------|
-| v1-M1, v2-M1 | No Content Security Policy | Backlog — [[2026-02-21-content-security-policy]] |
+| v1-M1, v2-M1 | No Content Security Policy | Backlog |
 | v1-M3 | All containers run as root | Fixed — all services non-root with `cap_drop: [ALL]` |
 | v1-M5/M6 | No per-endpoint rate limiting | Fixed — decorators on expensive endpoints |
 | v2-M2 | Unescaped HTML in transformer `html` field | Fixed — field removed |

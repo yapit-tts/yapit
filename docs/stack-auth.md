@@ -33,7 +33,7 @@ Startup takes ~90 seconds (copies many files before health checks pass).
 
 Stack Auth is primarily a SaaS product. Self-hosting is second-class. Known issues:
 
-- **ClickHouse required** — Since Jan 28, 2026, the migration runner unconditionally requires ClickHouse. We run a lightweight container that sits idle. Filed [#1228](https://github.com/stack-auth/stack-auth/issues/1228). Requires version `25.10+` (JSON column type) and `SYS_KILL` capability (init scripts).
+- **ClickHouse required** — Since Jan 28, 2026, the migration runner unconditionally requires ClickHouse. We run a lightweight container that sits idle. Filed [#1228](https://github.com/stack-auth/stack-auth/issues/1228), closed 2026-03-10 as won't-fix: Stack Auth is moving core features onto ClickHouse, so the container stays. Requires version `25.10+` (JSON column type) and `SYS_KILL` capability (init scripts).
 - **ClickHouse self-telemetry grows unbounded** — Default config has no TTL on `system.*_log` tables; an idle server writes ~600MB/day of profiler traces + metrics (hit 97GB on prod, July 2026). `docker/clickhouse-config.xml` (mounted into `config.d/` by both compose files) disables all introspection logs and puts a 7-day TTL on `query_log`. Version upgrades that change a log table's schema rename the old table to `*_log_0` and leave its data forever — check for those after upgrades.
 - **No S3 = hidden avatar upload** — Without S3 configured, the AccountSettings profile image upload 500s. We hide it with a CSS selector hack: `div.flex.flex-col.sm\:flex-row.gap-2:has(span.rounded-full)`. Verify this selector survives every SDK upgrade.
 - **`STACK_SERVER_SECRET` must be base64url** — Used for JWT signing. NOT the same as the API server key (`ssk_*`). Generate with `openssl rand -base64 32 | tr '+/' '-_' | tr -d '='`.
@@ -127,7 +127,6 @@ Docker Swarm env_file baking caused spurious postgres restarts during initial em
 
 - [[dependency-updates]] — Upgrade guide, gotchas, checklist
 - [[dependency-updates]] — Upgrade guide, gotchas (includes Swarm env_file incident from email setup)
-- [[stack-auth-upstream-blockers]] — Active workarounds for self-hosted regressions
 - [Stack Auth Self-Host Docs](https://docs.stack-auth.com/docs/js/others/self-host)
 - [Stack Auth Entrypoint](https://github.com/stack-auth/stack-auth/blob/main/docker/server/entrypoint.sh)
 - [Stack Auth Docker .env](https://github.com/stack-auth/stack-auth/blob/main/docker/server/.env)

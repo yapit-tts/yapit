@@ -1,6 +1,6 @@
 # Frontend Performance
 
-Optimization patterns and measurement techniques for large documents (10k+ blocks). See [[frontend-performance-tracking]] for the full decision trail, measurements, and methodology.
+Optimization patterns and measurement techniques for large documents (10k+ blocks).
 
 ## Where Time Goes (j/k navigation on 12k blocks / 48k DOM)
 
