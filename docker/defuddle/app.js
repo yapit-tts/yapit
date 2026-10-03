@@ -64,10 +64,7 @@ async function fetchPage(url, userAgent, timeoutMs) {
 			throw new Error(`Not HTML (${contentType})`);
 		}
 
-		const buffer = await response.arrayBuffer();
-		if (buffer.byteLength > MAX_PAGE_SIZE) throw new Error("Page too large");
-
-		return new TextDecoder().decode(buffer);
+		return new TextDecoder().decode(await readCapped(response.body, MAX_PAGE_SIZE));
 	} catch (err) {
 		if (err.name === "AbortError")
 			throw new Error(`Timed out after ${fetchTimeout / 1000}s`);
@@ -75,6 +72,19 @@ async function fetchPage(url, userAgent, timeoutMs) {
 	} finally {
 		clearTimeout(timer);
 	}
+}
+
+// fetch decompresses transparently, so a few KB of gzip can expand to gigabytes:
+// the cap has to apply to decoded bytes as they arrive, not to the finished body.
+async function readCapped(body, maxBytes) {
+	const chunks = [];
+	let size = 0;
+	for await (const chunk of body) {
+		size += chunk.byteLength;
+		if (size > maxBytes) throw new Error("Page too large");
+		chunks.push(chunk);
+	}
+	return Buffer.concat(chunks);
 }
 
 async function extractStatic(url, userAgent, timeoutMs) {
