@@ -38,6 +38,7 @@ User-facing capabilities.
 
 - **Document sharing** — share by link; viewers get clones preserving OCR work, use their own TTS quota
 - **Markdown export** — `/md` and `/md-annotated` endpoints. Curl-friendly, nginx rewrite maps `/listen/{id}/md`
+- **Markdown for agents** — a request with `Accept: text/markdown` gets `/listen/{id}` as its `/md` export and `/` as `frontend/public/index.md`; every other page stays HTML (`frontend/nginx.conf`). robots.txt declares content signals: no AI training, since shared documents are mostly other people's writing
 - **Compact embeds** — shared listen pages render as small text-only cards in Discord/Slack
 - **Showcase documents** — pre-warmed cached content for new users
 
