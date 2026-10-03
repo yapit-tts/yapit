@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.4.7 — 2026-10-03
 
 * Signed-in requests answer faster, audio fetches and the playback connection included: the server now checks the sign-in token itself instead of asking the auth service on every request, a call that took 34 ms at the median and over 100 ms for one request in a hundred.
 * Security: updated the XML parser behind defuddle's MathML-to-LaTeX conversion (`@xmldom/xmldom` 0.9.10 → 0.9.12), which now runs on every extracted page carrying math. The old version parsed and serialized malformed input in quadratic time and accepted names that bypassed its well-formedness checks (GHSA-6mj3-qw4j-hgrw, GHSA-g53g-w8rj-fmg7, GHSA-93r5-fhx6-vmg9 among them).
