@@ -4,13 +4,11 @@ on:
   push:
     branches: [main]
     paths-ignore:
-      - 'agent/**'
       - 'notes/**'
       - 'docs/**'
       - '**/*.md'
   pull_request:
     paths-ignore:
-      - 'agent/**'
       - 'notes/**'
       - 'docs/**'
       - '**/*.md'

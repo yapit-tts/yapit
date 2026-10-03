@@ -39,7 +39,12 @@ Yapit TTS - Open-source text-to-speech platform for reading documents, web pages
 ### Notes for distill agents
 
 - Upon any metrics/logging changes, update the monitoring agent prompt in `scripts/report.sh`.
-- In addition to knowledge, make sure `docs/architecture.md`, `README.md`, etc. are up-to-date.
+- Besides the notes linked above, keep `docs/architecture.md`, `README.md`, etc. up to date.
+
+### Public docs, private tracker
+
+- `docs/` is public, like the rest of this repo: the notes above live there. Anything private (business, legal, pricing, user data, prod credentials) goes to `agent/private/` instead.
+- `agent/` is the agent repo: a private git repo of its own (branch `yapit` of `MaxWolf-01/agent-repos`), which this repo ignores. It holds the tickets, research and handoffs; commit there with `git -C agent`. The mx `tracker` skill has the conventions.
 
 ## Development
 
@@ -71,8 +76,8 @@ Do NOT assume approval from vague statements like "fix it" or "go ahead". Prod i
 
 `tre` for code structure, `mx` for knowledge navigation — don't mix them.
 
-- **Code:** `tre -e agent` scoped to relevant dirs (`tre frontend`, `tre yapit`). Full repo is too noisy.
-- **Knowledge:** `mx explore <topic> yapit` or `mx search "<question>" -v yapit`. Don't `tre` the agent/ dir (unless you want to read hundreds of filenames).
+- **Code:** `tre` scoped to relevant dirs (`tre frontend`, `tre yapit`). Full repo is too noisy.
+- **Knowledge:** `mx explore <topic> yapit` or `mx search "<question>" -v yapit`. Don't `tre` the `agent/` dir (unless you want to read hundreds of filenames).
 - **Recent activity:** `git log --oneline -30`
 
 ## Memex
@@ -94,8 +99,4 @@ Don't delegate reading knowledge files.
 - **Before updating dependencies**, read [[dependency-updates]] — there are version constraints and gotchas that will break prod if ignored.
 - Never use git add -u or git add . — we work with many parallel agents in the same repo.
 - "[skip tests]" anywhere in the commit message can be included to avoid running tests in ci (takes 10mins). use it *only* if something needs to be pushed quickly.
-
-## Legacy Workflow Notes
-
-- Task files that do not follow naming conventions or the structure / content guidelines of the new workflow - Some of these still contain useful context or historical reasoning trails, but are not up to date with our current practices. We keep them for reference; those that are valuable will be wikilinked (more often), naturally. The others can be ignored for almost all purposes.
 

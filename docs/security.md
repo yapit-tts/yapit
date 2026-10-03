@@ -21,7 +21,7 @@ See [[security-audits]] for the consolidated findings, fix verification, and acc
 
 - **No `dangerouslySetInnerHTML`** anywhere. Frontend uses a typed AST renderer — backend parses markdown into AST, frontend renders via React components. Unknown node types return `null`. Raw `html_inline` nodes dropped in `transformer.py`.
 - **Link href sanitization** in `inlineContent.tsx`: rejects `javascript:`, `vbscript:`, `data:` URI schemes (defense-in-depth behind markdown-it's own filtering). All rendered links have `rel="noopener noreferrer"` and images have `referrerPolicy="no-referrer"`.
-- **CSP not deployed** (deferred since beta). See [[2026-02-21-content-security-policy]]. Blocker: inline `<style>` in `AccountSettingsPage.tsx` needs refactoring to CSS file first.
+- **CSP not deployed** (deferred since beta). Blocker: inline `<style>` in `AccountSettingsPage.tsx` needs refactoring to CSS file first.
 - Security headers in `frontend/nginx.conf`: HSTS, X-Frame-Options DENY, X-Content-Type-Options nosniff, Referrer-Policy.
 
 ## Infrastructure

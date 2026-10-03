@@ -47,7 +47,7 @@ Stack Auth has two components: the Docker server image (`stackauth/server:<commi
 
 - **No GitHub Releases** — Stack Auth tags Docker images by commit SHA on every push to `main`. There's no semver for the server.
 - **Env var drift** — They rename/remove env vars without deprecation. `STACK_DIRECT_DATABASE_CONNECTION_STRING` silently removed (Prisma v7). `STACK_RUN_MIGRATIONS` replaced by `STACK_SKIP_MIGRATIONS` (inverted logic). Always diff the current `.env` reference against ours.
-- **ClickHouse mandatory** — Since Jan 28, 2026 (`484c3a63`), the migration runner requires ClickHouse unconditionally. We run a lightweight container. See [[stack-auth-upstream-blockers]].
+- **ClickHouse mandatory** — Since Jan 28, 2026 (`484c3a63`), the migration runner requires ClickHouse unconditionally. We run a lightweight container; see [[stack-auth]].
 - **`STACK_SERVER_SECRET` must be base64url** — Used for JWT signing, NOT the same as the API server key (`ssk_*`). The old server didn't validate this at runtime; the new one does. Generate with `openssl rand -base64 32 | tr '+/' '-_' | tr -d '='`.
 - **SDK and server must be upgraded together** — The SDK is semver-compatible but newer versions break auth without a matching server (causes `StackAssertionError`, blank page). Never update one without the other.
 - **Never run `npm audit fix` in frontend** — It bumps `@stackframe/react` (transitive deps have CVEs). Update direct deps individually with `npm install <pkg>@latest` and verify `npm ls @stackframe/react` is unchanged after each.

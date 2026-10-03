@@ -7,7 +7,7 @@
 # Environment: HCLOUD_FIREWALL (name or ID), plus ALERT_SMTP_URL, ALERT_SMTP_USER,
 #   ALERT_SMTP_PASSWORD, ALERT_MAIL_FROM, ALERT_MAIL_TO for the failure email
 #   (optional; with ALERT_SMTP_URL unset nothing is sent). On the VPS they live
-#   in /opt/yapit/.env.firewall — see agent/knowledge/vps-setup.md.
+#   in /opt/yapit/.env.firewall — see docs/vps-setup.md.
 # Usage: sync-cf-firewall.sh [env-file]
 set -euo pipefail
 

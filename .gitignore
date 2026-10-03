@@ -202,9 +202,8 @@ cython_debug/
 
 .data/
 
-# Private agent files (not for public commit)
-agent/**/private/
-agent/handoffs
+# The agent repo: tickets, research, handoffs (a private repo of its own)
+/agent/
 scripts/tts_speed_benchmark/results/
 data/
 

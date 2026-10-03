@@ -185,9 +185,9 @@ cd frontend && npm run dev           # start frontend
 make test-local                      # run tests
 ```
 
-See [agent/knowledge/dev-setup.md](agent/knowledge/dev-setup.md) for full setup instructions.
+See [docs/dev-setup.md](docs/dev-setup.md) for full setup instructions.
 
-The `agent/knowledge/` directory is the project's in-depth knowledge base, maintained jointly with Claude during development.
+The `docs/` directory is the project's in-depth knowledge base, maintained jointly with Claude during development.
 
 ---
 
