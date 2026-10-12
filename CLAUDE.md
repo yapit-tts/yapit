@@ -20,6 +20,7 @@ Yapit TTS - Open-source text-to-speech platform for reading documents, web pages
 - [[vps-setup]] — Production server config, Traefik, nginx reverse proxy routing, debugging. **READ BEFORE ANY SSH/prod commands** (DB creds, container names, security rules). Read for prod issues or nginx config changes (`frontend/nginx.conf`).
 - [[infrastructure]] — Docker compose structure (base/dev/prod layers), worker services, config change checklist. Read for deployment issues or adding services.
 - [[ci]] — GitHub Actions pipeline (~10 min), integration test setup, workflow dispatch options, debugging failures. Read when CI breaks or when changes might affect it (Dockerfiles, compose, Makefile, env files, project structure, test setup).
+- Shipping: pushing `main` builds and publishes the changed images to ghcr and leaves prod as it is. Prod moves only on `make prod-env && make deploy` (`scripts/deploy.sh`), which runs whatever `:latest` ghcr holds, so deploy after the push's build jobs have finished.
 - [[env-config]] — Secrets management, .env files, sops encryption.
 - [[dev-setup]] — **READ BEFORE TESTING.** Test commands, fixture gotchas, uv/pyproject structure. Tests WILL fail without proper env setup.
 - [[dependency-updates]] — Version-specific gotchas, license checking. Always read before updating/adding any dependencies.
