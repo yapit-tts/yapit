@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.4.8 — 2026-10-13
 
 * Security: updated PyMuPDF 1.26.7 → 1.28.2, which bundles MuPDF 1.28.2 instead of 1.26.12. The old MuPDF computed an image's row size in 32 bits, so a crafted PDF image could overflow it into an out-of-bounds heap write, with possible code execution (CVE-2026-3308). Uploaded PDFs reach that code when figures are detected and images extracted for AI extraction.
 * Free PDF extraction no longer breaks sentences at indented lines. MuPDF 1.28 starts a new paragraph at every line that begins further right than the one above, so references and index entries with a hanging indent, or a line justification nudged right, would have been read as two paragraphs; those lines now rejoin their sentence. Indented first lines of real paragraphs now start a new paragraph more reliably than before. Free extraction is also about 10% faster.
