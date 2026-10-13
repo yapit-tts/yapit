@@ -1,4 +1,4 @@
-"""Tests for PDF page analysis and the free extraction path on scanned pages."""
+"""Tests for PDF page analysis and the free extraction path: scanned pages, paragraph breaks."""
 
 import pymupdf
 import pytest
@@ -60,3 +60,61 @@ async def test_free_extraction_keeps_the_ocr_text_of_a_scanned_page():
     pages = [result.page async for result in free_pdf.extract(content)]
     assert pages[0] is not None
     assert "Recognized text from the scan" in pages[0].markdown
+
+
+def _page_of_lines(lines: list[tuple[float, str]]) -> bytes:
+    """One text object, 10 pt type on 12 pt leading; each line is (x, text)."""
+    doc = pymupdf.open()
+    page = doc.new_page(width=A4_PT[0], height=A4_PT[1])
+    writer = pymupdf.TextWriter(page.rect)
+    for i, (x, text) in enumerate(lines):
+        writer.append((x, 100 + 12 * i), text, fontsize=10)
+    writer.write_text(page)
+    return doc.tobytes()
+
+
+async def _paragraphs(content: bytes) -> list[str]:
+    pages = [result.page async for result in free_pdf.extract(content)]
+    assert pages[0] is not None
+    return pages[0].markdown.split("\n\n")
+
+
+@pytest.mark.asyncio
+async def test_hanging_indent_does_not_split_a_reference():
+    content = _page_of_lines(
+        [
+            (72, "Liu, Z. Y., Lee, K.-Y., and Hsu,"),
+            (82, "W. (2019b). Free-form video inpainting."),
+            (72, "Morris, C., Ren, X., and Hamil-"),
+            (82, "ton, W. (2018b). Weisfeiler and Leman."),
+        ]
+    )
+    assert len(await _paragraphs(content)) == 1
+
+
+@pytest.mark.asyncio
+async def test_sentence_on_a_line_nudged_right_stays_one_paragraph():
+    content = _page_of_lines(
+        [
+            (72, "and so you believe that there is a goblin"),
+            (73, "in your closet that ties your shoes together."),
+        ]
+    )
+    assert await _paragraphs(content) == [
+        "and so you believe that there is a goblin\nin your closet that ties your shoes together."
+    ]
+
+
+@pytest.mark.asyncio
+async def test_indented_first_line_after_a_full_stop_starts_a_paragraph():
+    content = _page_of_lines(
+        [
+            (72, "This paragraph ends here."),
+            (90, "Another paragraph starts with an indent"),
+            (72, "and continues on the next line."),
+        ]
+    )
+    assert await _paragraphs(content) == [
+        "This paragraph ends here.",
+        "Another paragraph starts with an indent\nand continues on the next line.",
+    ]
