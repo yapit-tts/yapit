@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+* Security: updated PyMuPDF 1.26.7 → 1.28.2, which bundles MuPDF 1.28.2 instead of 1.26.12. The old MuPDF computed an image's row size in 32 bits, so a crafted PDF image could overflow it into an out-of-bounds heap write, with possible code execution (CVE-2026-3308). Uploaded PDFs reach that code when figures are detected and images extracted for AI extraction.
+* Free PDF extraction no longer breaks sentences at indented lines. MuPDF 1.28 starts a new paragraph at every line that begins further right than the one above, so references and index entries with a hanging indent, or a line justification nudged right, would have been read as two paragraphs; those lines now rejoin their sentence. Indented first lines of real paragraphs now start a new paragraph more reliably than before. Free extraction is also about 10% faster.
+* Security: updated the browser used to render JavaScript-heavy pages — Playwright 1.63.0 → 1.64.0, which bundles Chromium 156 instead of 153. This browser loads untrusted pages; Chromium 153.0.8010.36 fixed a V8 out-of-bounds write exploited in the wild (CVE-2026-87491), which our 153 build predated.
+* Updated defuddle 0.19.4 → 0.19.5 — lazy-loaded images in extracted web pages (Wikipedia's among them) now point at the image instead of its description page, image URLs containing parentheses no longer cut the link short, and `javascript:` links are dropped.
+
 ## v0.4.7 — 2026-10-03
 
 * Signed-in requests answer faster, audio fetches and the playback connection included: the server now checks the sign-in token itself instead of asking the auth service on every request, a call that took 34 ms at the median and over 100 ms for one request in a hundred.
