@@ -12,5 +12,5 @@ dependencies = [
   "pillow~=12.1",
   "redis[hiredis]~=7.3.0",
   "loguru~=0.7.3",
-  "PyMuPDF~=1.26.7",
+  "PyMuPDF~=1.28.2",
 ]
