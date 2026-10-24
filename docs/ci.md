@@ -2,6 +2,8 @@
 
 Workflow: `.github/workflows/deploy.yml`
 
+`.github/workflows/defuddle-bump.yml` runs separately, on PRs that change the pinned defuddle version; [[dependency-updates]] describes it.
+
 ## Pipeline
 
 On push to `main`:
