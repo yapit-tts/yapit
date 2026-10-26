@@ -1,0 +1,12 @@
+# Pages the defuddle bump check extracts with both versions: one "name url" per line.
+sourcegraph https://sourcegraph.com/blog/revenge-of-the-junior-developer
+muzero https://www.julian.ac/blog/2020/12/22/muzero-intuition/
+vienna https://ludwigabap.com/posts/on-my-trip-to-vienna/
+antikythera https://whatisintelligence.antikythera.org/chapter-01/
+earendil https://earendil.com/purpose/
+wikipedia https://en.wikipedia.org/wiki/World_War_II
+arxiv_html https://arxiv.org/html/2401.04088v1
+arxiv_abs https://arxiv.org/abs/1706.03762
+github_readme https://github.com/kepano/defuddle
+pydocs https://docs.python.org/3/library/functools.html
+mdn https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/map

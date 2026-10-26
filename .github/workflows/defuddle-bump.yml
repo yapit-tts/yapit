@@ -1,0 +1,74 @@
+name: defuddle bump check
+
+# Runs scripts/defuddle-bump-check.mjs on any PR that changes the pinned defuddle version
+# and posts its report on the PR, one comment kept up to date across pushes.
+
+on:
+  pull_request:
+    paths:
+      - docker/defuddle/package-lock.json
+
+permissions: {}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      bumped: ${{ steps.versions.outputs.bumped }}
+    steps:
+      # The check builds upstream's code, so the job holds no token it could read.
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - id: versions
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git fetch --quiet --depth=1 origin "$BASE_SHA"
+          old=$(git show FETCH_HEAD:docker/defuddle/package.json | jq -r .dependencies.defuddle)
+          new=$(jq -r .dependencies.defuddle docker/defuddle/package.json)
+          echo "old=$old" >> "$GITHUB_OUTPUT"
+          echo "new=$new" >> "$GITHUB_OUTPUT"
+          [ "$old" = "$new" ] || echo "bumped=true" >> "$GITHUB_OUTPUT"
+      # Upstream's release workflow builds on Node 24; the byte-for-byte rebuild needs the same.
+      - if: steps.versions.outputs.bumped == 'true'
+        uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+      - if: steps.versions.outputs.bumped == 'true'
+        env:
+          OLD: ${{ steps.versions.outputs.old }}
+          NEW: ${{ steps.versions.outputs.new }}
+        run: node scripts/defuddle-bump-check.mjs "$OLD" "$NEW" "$RUNNER_TEMP/defuddle-check"
+      - if: always() && steps.versions.outputs.bumped == 'true'
+        run: cat "$RUNNER_TEMP/defuddle-check/report.md" >> "$GITHUB_STEP_SUMMARY"
+      - if: always() && steps.versions.outputs.bumped == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: defuddle-check
+          path: |
+            ${{ runner.temp }}/defuddle-check/report.md
+            ${{ runner.temp }}/defuddle-check/ab/*.html
+            ${{ runner.temp }}/defuddle-check/ab/*.md
+            ${{ runner.temp }}/defuddle-check/ab/*.diff
+
+  comment:
+    needs: check
+    # A fork's PR gets a read-only token, so only the step summary carries its report.
+    if: |
+      always() &&
+      needs.check.outputs.bumped == 'true' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: defuddle-check
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: gh pr comment "$PR" -R "$GITHUB_REPOSITORY" --body-file report.md --edit-last --create-if-none
