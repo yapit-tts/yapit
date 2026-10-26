@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.4.9 — 2026-10-26
+
+* Updated defuddle 0.19.5 → 0.19.6. Embedded media, SVG, superscripts and complex tables that an extracted web page keeps as HTML no longer carry unsafe links or event handlers, and no longer contain text that renders as Markdown links.  #98
+
 ## v0.4.8 — 2026-10-13
 
 * Security: updated PyMuPDF 1.26.7 → 1.28.2, which bundles MuPDF 1.28.2 instead of 1.26.12. The old MuPDF computed an image's row size in 32 bits, so a crafted PDF image could overflow it into an out-of-bounds heap write, with possible code execution (CVE-2026-3308). Uploaded PDFs reach that code when figures are detected and images extracted for AI extraction.
