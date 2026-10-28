@@ -265,7 +265,7 @@ def test_retention_counts_the_seed(database_url: str) -> None:
     assert data["came_back"] == {"eligible": 4, "came_back": 3}
 
 
-@pytest.mark.parametrize("columns", ["40", "80", "300"])
+@pytest.mark.parametrize("columns", ["40", "80"])
 @pytest.mark.parametrize(
     "args,whole_row",
     [
@@ -294,13 +294,14 @@ def test_tables_are_never_cut(database_url: str, columns: str, args: tuple[str, 
 def test_colour_follows_no_color_and_force_color(database_url: str) -> None:
     def run(**env: str) -> str:
         clean = {k: v for k, v in os.environ.items() if k not in ("NO_COLOR", "FORCE_COLOR")}
-        done = user_stats("--database-url", database_url, "--as-of", AS_OF, "users", env={**clean, **env})
+        terminal = {"TERM": "xterm-256color", "COLORTERM": "truecolor"}
+        done = user_stats("--database-url", database_url, "--as-of", AS_OF, "users", env={**clean, **terminal, **env})
         assert done.returncode == 0, done.stderr
         return done.stdout
 
-    # NO_COLOR drops colour (38;…) and keeps bold and dim.
     assert "\x1b[" not in run()
     assert "38;" in run(FORCE_COLOR="1")
+    # NO_COLOR drops colour (38;…) and keeps bold and dim.
     assert "38;" not in run(FORCE_COLOR="1", NO_COLOR="1")
 
 

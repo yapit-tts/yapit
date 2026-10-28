@@ -213,8 +213,8 @@ def month_offset(start: str, end: str) -> int:
     return (y1 - y0) * 12 + m1 - m0
 
 
-def is_paying(user: User) -> bool:
-    return user.plan not in ("", "free") and user.status in ("active", "past_due")
+def is_paying(plan: str, status: str) -> bool:
+    return plan not in ("", "free") and status in ("active", "past_due")
 
 
 def overview(people: People, as_of: date, weeks: int, months: int) -> dict:
@@ -223,7 +223,7 @@ def overview(people: People, as_of: date, weeks: int, months: int) -> dict:
     week_starts = [this_week - timedelta(weeks=k) for k in reversed(range(weeks))]
     by_week = Counter(u.signed_up - timedelta(days=u.signed_up.weekday()) for u in users)
     by_month = Counter(month_key(u.signed_up) for u in users)
-    paying = Counter(u.plan for u in users if is_paying(u))
+    paying = Counter(u.plan for u in users if is_paying(u.plan, u.status))
     return {
         "as_of": as_of.isoformat(),
         "users": len(users),
@@ -349,7 +349,7 @@ def plan_style(row: dict) -> str:
         return "cyan"
     if row["status"] == "canceled":
         return "dim red"
-    if row["plan"] not in ("", "free") and row["status"] in ("active", "past_due"):
+    if is_paying(row["plan"], row["status"]):
         return "green"
     return "grey50"
 
