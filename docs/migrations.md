@@ -4,7 +4,7 @@ Alembic database migrations for Yapit.
 
 ## Tables alembic does not manage
 
-The `env.py` filters to only include `MANAGED_TABLES` (tables from our SQLModel models), so alembic ignores any other table in the database. Stack Auth's tables (PascalCase) used to share prod's database; revision `d4b8c97a743c` drops them ([[auth]]).
+The `env.py` filters to only include `MANAGED_TABLES` (tables from our SQLModel models), so alembic ignores any other table in the database.
 
 ## Creating a Migration
 
@@ -62,8 +62,6 @@ def include_object(object, name, type_, reflected, compare_to):
         return name in MANAGED_TABLES
     ...
 ```
-
-Only tables from our SQLModel models are included; any other table in the database is invisible to alembic.
 
 **Gotcha:** When you delete a model, the table disappears from `MANAGED_TABLES`, so alembic won't generate a drop. You must write it manually.
 

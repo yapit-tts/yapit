@@ -23,7 +23,7 @@ The frontend and the API share an origin everywhere, so the browser sends the co
 
 ## Sessions
 
-Signing in starts a browser session: a random 32-byte token in the cookie `__Host-yapit_session` (`yapit_session` over plain http, since the prefix requires Secure; HttpOnly, SameSite=Lax, Path=/, and Secure when `APP_URL` is https). The gateway keeps no state in the cookie; it looks the token's hash up in `authsession` on every request.
+Signing in starts a browser session: a random 32-byte token in the cookie `__Host-yapit_session` (`yapit_session` over plain http, since the prefix requires Secure; HttpOnly, SameSite=Lax, Path=/, and Secure when `APP_URL` is https). The gateway keeps no state in the cookie; it looks the token's hash up in `authsession` on every request. Over https the other auth cookies, `yapit_signin_pending` and `yapit_oauth_state`, carry the `__Host-` prefix too, so no subdomain can plant one.
 
 A session lives `SESSION_LIFETIME` and slides: a request on a session with less than `SESSION_RENEW_BELOW` left extends it to the full lifetime, and that response sets the cookie again so that the browser's copy expires with the row (`gateway/auth/sessions.py`). `GET /v1/auth/session` re-sets the cookie on every call as well.
 
@@ -77,7 +77,7 @@ Prod sends through Resend on port 587; the Hetzner firewall blocks outgoing port
 
 ## Endpoints
 
-- `GET /v1/auth/session` → always 200 `{auth_enabled, user: {id, email, name, identities} | null}`. The frontend's `AuthProvider` (`frontend/src/hooks/useAuthUser.tsx`) reads it on load.
+- `GET /v1/auth/session` → always 200 `{auth_enabled, providers, user: {id, email, name, identities} | null}`; `providers` are the OAuth providers sign-in offers. The frontend's `AuthProvider` (`frontend/src/hooks/useAuthUser.tsx`) reads it on load.
 - `POST /v1/auth/email/start`, `POST /v1/auth/email/verify`: above.
 - `POST /v1/auth/sign-out` → 204, deletes the session row and the cookie.
 - `GET /v1/auth/oauth/{provider}/start`, `GET /v1/auth/oauth/{provider}/callback`, `POST /v1/auth/email/change`: above.

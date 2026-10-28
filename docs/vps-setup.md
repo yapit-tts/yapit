@@ -297,7 +297,7 @@ Or remove and redeploy the entire stack.
 Create A records pointing to the VPS public IP (proxied):
 - `yapit.md`
 
-(`www.yapit.md`, `api.yapit.md` and `auth.yapit.md` also exist and point at the same IP, but Traefik only routes `yapit.md`, so the others return 404 at the origin. `auth.yapit.md` was Stack Auth's host; max removes it and its Cloudflare Access applications after the cutover.)
+(`www.yapit.md`, `api.yapit.md` and `auth.yapit.md` also exist and point at the same IP, but Traefik only routes `yapit.md`, so the others return 404 at the origin. `auth.yapit.md` was Stack Auth's host and serves nothing since the cutover.)
 
 ## Docker Compose Labels
 
@@ -325,28 +325,39 @@ Seeds: TTS models, voices, document processors, subscription plans. Voice sync r
 The gateway signs people in itself ([[auth]]); nothing needs setting up after a deploy. What it needs from config:
 
 - `APP_URL=https://yapit.md` in `.env.prod`.
-- `PROD_SMTP_HOST`, `PROD_SMTP_PORT`, `PROD_SMTP_USERNAME`, `PROD_SMTP_PASSWORD` and `PROD_SMTP_SENDER` in `.env.sops`: Resend's SMTP credentials, port 587. Without them the gateway refuses to start.
+- `PROD_SMTP_HOST`, `PROD_SMTP_PORT`, `PROD_SMTP_USERNAME`, `PROD_SMTP_PASSWORD` and `PROD_SMTP_SENDER` in `.env.sops`: Resend's SMTP credentials, port 587.
+- `PROD_GOOGLE_CLIENT_ID`, `PROD_GOOGLE_CLIENT_SECRET`, `PROD_GITHUB_CLIENT_ID` and `PROD_GITHUB_CLIENT_SECRET` in `.env.sops`. A provider whose id is empty has no button on the sign-in page.
+- In each provider's OAuth app, the redirect URI `https://yapit.md/api/v1/auth/oauth/{google,github}/callback`. The GitHub app allows only one callback URL.
 
-A failed sign-in mail is an ERROR in the gateway log (`Sign-in email to an address at … failed`), which the daily report flags.
+The gateway refuses to start while any of these `.env.sops` entries is missing; an empty value is fine.
+
+A failed auth mail is an ERROR in the gateway log (`Auth email to an address at … failed`), which the daily report flags.
 
 ### Cutover from Stack Auth
 
 The deploy that first runs the gateway's auth also runs the revisions that copy Stack Auth's users and then drop Stack Auth's data ([[auth]]). In this order:
 
-1. Dump the database; the dump is the only way back:
+1. Make sure everything under [Auth Setup](#auth-setup) is in place: the `.env.sops` entries and both providers' redirect URIs.
+2. Dump the database; the dump is the only way back:
    ```bash
    ssh root@yapit-prod 'docker exec $(docker ps -qf "name=yapit_postgres") pg_dump -U yapit_prod -Fc yapit_prod' > yapit_prod-before-auth-cutover.dump
    ```
-2. Deploy (`make prod-env && make deploy`).
-3. Once the gateway is up on the new auth, remove ClickHouse's volume: `ssh root@yapit-prod "docker volume rm yapit_clickhouse-data"`.
+3. Deploy (`make prod-env && make deploy`), once the push's image builds have finished.
+4. Once the gateway is up on the new auth, remove ClickHouse's volume: `ssh root@yapit-prod "docker volume rm yapit_clickhouse-data"`.
 
-To go back, restore the dump into an emptied database before deploying a commit from before the cutover, whose code knows neither the gateway's auth tables nor their Alembic revisions. Everything written since the dump is lost:
+To go back, restore the dump into an emptied database, then deploy a commit from before the cutover, whose code knows neither the gateway's auth tables nor their Alembic revisions. Everything written since the dump is lost.
+
+`scripts/deploy.sh` deploys the `docker-compose.prod.yml` of the checkout it runs from, and that file names `:latest` images, which after the cutover are the new auth's. So in the pre-cutover checkout, pin the images first:
+
+- each `ghcr.io/yapit-tts/<service>:latest` to the image CI built for that commit, tagged with its full sha;
+- `stack-auth` to the working Stack Auth image saved before the cutover, loaded on the VPS with `docker load`. `stack-auth:latest` on ghcr is a build that exits on start.
 
 ```bash
 ssh root@yapit-prod "docker service scale yapit_gateway=0"
 ssh root@yapit-prod 'docker exec $(docker ps -qf "name=yapit_postgres") sh -c "dropdb -U yapit_prod --force yapit_prod && createdb -U yapit_prod yapit_prod"'
 ssh root@yapit-prod 'docker exec -i $(docker ps -qf "name=yapit_postgres") pg_restore -U yapit_prod -d yapit_prod' < yapit_prod-before-auth-cutover.dump
-GIT_COMMIT=<pre-cutover sha> ./scripts/deploy.sh
+git checkout <pre-cutover sha>   # then pin the images in docker-compose.prod.yml, as above
+./scripts/deploy.sh
 ```
 
 ## Operations
@@ -377,9 +388,11 @@ ssh root@yapit-prod 'docker exec $(docker ps -qf "name=yapit_postgres") psql -U 
 # Quick rollback
 ssh root@yapit-prod "docker service rollback yapit_gateway"
 
-# Rollback to specific commit (one from before the auth cutover needs the dump restored first: Cutover from Stack Auth)
+# Rollback to specific commit
 GIT_COMMIT=<old_sha> ./scripts/deploy.sh
 ```
+
+Neither crosses the auth cutover: going back to before it is the dump restore under [Cutover from Stack Auth](#cutover-from-stack-auth).
 
 ### Traefik Recovery
 
