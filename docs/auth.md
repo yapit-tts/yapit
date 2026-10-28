@@ -129,7 +129,7 @@ Before the gateway had auth of its own, a self-hosted Stack Auth container signe
 
 Since every id stays the same, the documents, subscriptions and Stripe `metadata.user_id` that name a user still name the same person. Password users sign in by email from then on, with the address their account has. The migration skips users of Stack Auth's internal (dashboard) project, users without a primary email, and, of two users sharing an email, the one active less recently. It logs the ids it skips. Stack Auth sessions do not carry over: everyone signs in once more.
 
-The next revision, `d4b8c97a743c`, drops Stack Auth's tables, enum types and sequence by name, so nothing of Stack Auth stays in the database. Its downgrade does nothing. The way back is the `pg_dump` taken before the cutover deploy ([[vps-setup]]); restoring it also loses everything written since, including the users who signed up after the cutover.
+The next revision, `d4b8c97a743c`, drops Stack Auth's tables, enum types and sequence by name, so nothing of Stack Auth stays in the database. Its downgrade does nothing. The way back is a `pg_dump` taken before the deploy that ran it.
 
 ## Dev and tests
 
