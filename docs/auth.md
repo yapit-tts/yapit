@@ -107,17 +107,18 @@ These are on the account page's Account card (`frontend/src/components/auth/Acco
 2. `ANONYMOUS_SESSION_SECRET` to a random string, e.g. the output of `openssl rand -hex 32`.
 3. `APP_URL` to the exact origin people open Yapit at, scheme and port included (`https://yapit.example.org`, or `http://192.168.1.20` on a LAN). Sign-in links point there, and the gateway refuses cookie requests from any other origin. Over https the cookie is Secure.
 4. `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD` and `SMTP_SENDER` from your mail provider. `SMTP_SENDER` is the From address, and the provider must allow sending from it. Leave `SMTP_HOST` empty to try it out first: sign-in mails then appear in `make self-host-logs`.
+5. Optionally, Google and GitHub sign-in: register an OAuth app with the provider, with the redirect URI `{APP_URL}/api/v1/auth/oauth/google/callback` (or `…/github/callback`), and fill in its `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` (or `GITHUB_*`). A provider left empty has no button on the sign-in page.
 
 Then `make self-host` again. Anyone with an email address can sign up; there is no invite list.
 
-A script or yapit-cli against a multi-user instance needs an API token. On the selfhost machine, from a checkout of this repo:
+A script or yapit-cli against a multi-user instance needs an API token: create one on the account page (`/account`), or on the selfhost machine, from a checkout of this repo:
 
 ```
 uv run python scripts/create_user.py --email you@example.org --label cli \
   --database-url postgresql+asyncpg://yapit:yapit@localhost:5432/yapit
 ```
 
-The gateway refuses to start while any of `APP_URL` and `SMTP_*` is missing from `.env.selfhost`, since `Settings` has no defaults. An `.env.selfhost` from before these variables existed needs them copied in from `.env.selfhost.example`.
+The gateway refuses to start while any of `APP_URL`, `SMTP_*`, `GOOGLE_*` and `GITHUB_*` is missing (empty is fine) from `.env.selfhost`, since `Settings` has no defaults. An `.env.selfhost` from before these variables existed needs them copied in from `.env.selfhost.example`.
 
 ## Users migrated from Stack Auth
 
