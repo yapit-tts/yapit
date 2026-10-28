@@ -110,7 +110,7 @@ const SubscriptionPage = () => {
   const handleSubscribe = async (tier: PlanTier) => {
     if (isAnonymous) {
       localStorage.setItem("returnAfterSignIn", "/pricing");
-      navigate("/handler/signin");
+      navigate("/auth/sign-in");
       return;
     }
 
@@ -276,7 +276,7 @@ const SubscriptionPage = () => {
 
       {isAnonymous && (
         <p className="text-muted-foreground mb-4">
-          <a href="/handler/signin" className="underline hover:text-foreground">Sign in</a> to subscribe to a plan
+          <a href="/auth/sign-in" className="underline hover:text-foreground">Sign in</a> to subscribe to a plan
         </p>
       )}
 

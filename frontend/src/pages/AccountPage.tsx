@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router";
-import { useAuthUser } from "@/hooks/useAuthUser";
-import { authEnabled } from "@/auth";
+import { useAuth } from "@/hooks/useAuthUser";
 import { useApi } from "@/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -19,7 +18,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Loader2, ArrowLeft, Trash2, AlertTriangle, Calendar, Sun, Moon, Monitor, Settings, Code2, RotateCcw } from "lucide-react";
+import { Loader2, ArrowLeft, Trash2, AlertTriangle, Calendar, Sun, Moon, Monitor, Code2, RotateCcw } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { SettingRow, darkThemes } from "@/components/settingsDialog";
 import { useSettings, useIsDark, type ContentWidth, type ScrollPosition, type Theme } from "@/hooks/useSettings";
@@ -52,7 +51,7 @@ interface EngagementStats {
 const AccountPage = () => {
   const { api, isAuthReady, isAnonymous } = useApi();
   const navigate = useNavigate();
-  const user = useAuthUser();
+  const { user, authEnabled } = useAuth();
   const { settings, setSettings } = useSettings();
   const isDark = useIsDark();
   const isMobile = useIsMobile();
@@ -159,7 +158,7 @@ const AccountPage = () => {
           Sign in to view your account settings and usage stats.
         </p>
 
-        <Button onClick={() => navigate("/handler/signin")}>Sign In</Button>
+        <Button onClick={() => navigate("/auth/sign-in")}>Sign In</Button>
       </div>
     );
   }
@@ -180,14 +179,8 @@ const AccountPage = () => {
       <div className="flex items-baseline justify-between mb-10">
         <div>
           <h1 className="text-4xl font-bold mb-1">Account</h1>
-          {user?.primaryEmail && <p className="text-muted-foreground">{user.primaryEmail}</p>}
+          {user?.email && <p className="text-muted-foreground">{user.email}</p>}
         </div>
-        {authEnabled && (
-          <Button variant="outline" size="sm" onClick={() => navigate("/account/settings")}>
-            <Settings className="h-4 w-4 mr-2" />
-            Manage
-          </Button>
-        )}
       </div>
 
       {/* Listening Journey */}
