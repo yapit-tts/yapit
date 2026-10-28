@@ -843,3 +843,15 @@ async def test_websocket_with_auth_disabled_is_the_selfhost_user(_test_settings)
     settings = _test_settings.model_copy(update={"auth_enabled": False})
 
     assert await authenticate_ws(websocket({}), settings) == SELFHOST_USER
+
+
+@pytest.mark.asyncio
+async def test_sign_in_and_email_change_mails_carry_their_code_in_the_subject(browser, app):
+    _, sign_in_code = await request_sign_in(browser, app, "reader@example.com")
+    sign_in_subject = app.state.mailer.sent[-1].subject
+    await sign_in(browser, app, "reader@example.com")
+    _, change_code = await request_email_change(browser, app, "new@example.com")
+    change_subject = app.state.mailer.sent[-1].subject
+
+    assert sign_in_subject == f"Yapit sign-in code: {sign_in_code}"
+    assert change_subject == f"Yapit email change code: {change_code}"
