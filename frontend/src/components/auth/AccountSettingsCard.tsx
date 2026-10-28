@@ -5,29 +5,22 @@ import { useApi } from "@/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { SettingRow } from "@/components/settingsDialog";
+import { SectionHeading, SettingRow } from "@/components/settingsDialog";
 import { ProviderIcon } from "@/components/auth/ProviderIcon";
 import { useAuth, type AuthUser } from "@/hooks/useAuthUser";
 import {
 	PROVIDER_NAMES,
 	oauthErrorMessage,
 	oauthStartUrl,
-	signInError,
+	authErrorMessage,
+	NOT_AN_EMAIL,
 	verifySignIn,
 	type OAuthProvider,
 } from "@/lib/authApi";
 
 const RETURN_TO = "/account";
 
-function SectionHeading({ children, first }: { children: React.ReactNode; first?: boolean }) {
-	return (
-		<div className={`${first ? "" : "mt-6 "}mb-2 text-xs font-medium text-muted-foreground uppercase tracking-wide`}>
-			{children}
-		</div>
-	);
-}
-
-/** Name, email, the ways to sign in, and API tokens: what Stack Auth's account settings used to hold. */
+/** Name, email, the ways to sign in, and API tokens. */
 export function AccountSettingsCard() {
 	const { user } = useAuth();
 	if (!user) return null;
@@ -67,7 +60,7 @@ function NameRow({ user }: { user: AuthUser }) {
 			await api.patch("/v1/users/me", { name: name.trim() });
 			await refresh();
 		} catch (err) {
-			setError(signInError(err));
+			setError(authErrorMessage(err));
 		} finally {
 			setBusy(false);
 		}
@@ -115,7 +108,7 @@ function EmailRow({ user }: { user: AuthUser }) {
 			await api.post("/v1/auth/email/change", { email: newEmail.trim() });
 			setStage("sent");
 		} catch (err) {
-			setError(signInError(err));
+			setError(authErrorMessage(err, NOT_AN_EMAIL));
 		} finally {
 			setBusy(false);
 		}
@@ -130,7 +123,7 @@ function EmailRow({ user }: { user: AuthUser }) {
 			await refresh();
 			reset();
 		} catch (err) {
-			setError(signInError(err));
+			setError(authErrorMessage(err));
 		} finally {
 			setBusy(false);
 		}
@@ -236,7 +229,7 @@ function SignInMethods({ user }: { user: AuthUser }) {
 			await api.delete(`/v1/auth/identities/${provider}`);
 			await refresh();
 		} catch (err) {
-			setError(signInError(err));
+			setError(authErrorMessage(err));
 		} finally {
 			setBusy(null);
 		}
@@ -311,7 +304,7 @@ function ApiTokens() {
 		api
 			.get<ApiToken[]>("/v1/auth/tokens")
 			.then((r) => setTokens(r.data))
-			.catch((err) => setError(signInError(err)));
+			.catch((err) => setError(authErrorMessage(err)));
 	}, [api]);
 
 	const create = async (e: FormEvent) => {
@@ -325,7 +318,7 @@ function ApiTokens() {
 			setCopied(false);
 			setLabel("");
 		} catch (err) {
-			setError(signInError(err));
+			setError(authErrorMessage(err));
 		}
 	};
 
@@ -335,7 +328,7 @@ function ApiTokens() {
 			await api.delete(`/v1/auth/tokens/${id}`);
 			setTokens((current) => (current ?? []).filter((t) => t.id !== id));
 		} catch (err) {
-			setError(signInError(err));
+			setError(authErrorMessage(err));
 		} finally {
 			setConfirmingRevoke(null);
 		}

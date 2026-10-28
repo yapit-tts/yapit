@@ -35,18 +35,18 @@ The link's page (`/auth/email`) first posts the token with `same_browser_only`: 
 `gateway/auth/oauth.py`, routes in `api/v1/oauth.py`. The authorization code flow with PKCE (S256), hand-written over httpx; the providers' endpoints and issuers are its `PROVIDERS`.
 
 1. `GET /v1/auth/oauth/{provider}/start?return_to=&mode=sign_in|link` (302 to the provider) keeps the flow in Redis for `STATE_LIFETIME` under the state's value, and sets the `yapit_oauth_state` cookie to the same value. `return_to` must be a path on the app. Link mode needs a signed-in user.
-2. `GET /v1/auth/oauth/{provider}/callback` takes the flow out of Redis (once), and refuses it unless the browser's state cookie matches, so a callback URL opened in another browser signs it in to nothing. When the callback carries `iss` (RFC 9207) it must be the provider's issuer. It trades the code for a token and reads the profile, then 302s to `return_to`, or on failure to `/auth/sign-in?error=<code>` (link mode: `return_to?error=<code>`). The codes are `OAuthError`'s; the frontend words them (`oauthErrorMessage` in `frontend/src/lib/authApi.ts`).
+2. `GET /v1/auth/oauth/{provider}/callback` takes the flow out of Redis, so each state works once. It refuses the flow unless the browser's state cookie matches: a callback URL opened in another browser is refused, and that browser stays signed out. When the callback carries `iss` (RFC 9207) it must be the provider's issuer. It trades the code for a token and reads the profile, then redirects (302) to `return_to`. On failure it redirects to `/auth/sign-in?error=<code>`, or in link mode to `return_to?error=<code>`, where the person is still signed in. The codes are `OAuthError`'s; the frontend words them (`oauthErrorMessage` in `frontend/src/lib/authApi.ts`).
 
 Which account an identity signs in to (`resolve_account`):
 
-- **Sign-in:** a known `(provider, provider_account_id)` signs its user in. Otherwise an email the provider marks verified (Google's `email_verified`; GitHub's primary entry of `/user/emails` with `verified`) signs in the account holding it, attaching the identity, or creates one named after the profile. An unverified or missing email signs in to nothing (`email_unverified`): an account created under an address its owner never proved would be the owner's on their first email sign-in.
+- **Sign-in:** a known `(provider, provider_account_id)` signs its user in. Otherwise an email the provider marks verified (Google's `email_verified`; GitHub's primary entry of `/user/emails` with `verified`) signs in the account holding it, attaching the identity, or creates one named after the profile. An unverified or missing email is refused (`email_unverified`): an account created under an address its owner never proved would be the owner's on their first email sign-in.
 - **Link** (from account settings): the identity attaches to the user who started the flow, if that browser is still signed in as them; an identity that belongs to another user is refused (`identity_taken`).
 
 A provider whose `*_CLIENT_ID` is empty is left out of `/v1/auth/session`'s `providers` and refused at `start` (404). Each provider's OAuth app registers the redirect URI `{APP_URL}/api/v1/auth/oauth/{provider}/callback`.
 
 ## Email change
 
-`POST /v1/auth/email/change {email}` (202) mails a link and code to the new address, in an `emailchallenge` of purpose `change_email`; an address another account holds is refused (409). `/v1/auth/email/verify` with that link or code switches the account to the new address and signs the browser in. Until then the account keeps its address.
+`POST /v1/auth/email/change {email}` (202) mails a link and code to the new address, in an `emailchallenge` of purpose `change_email`; an address another account holds is refused (409). `/v1/auth/email/verify` with that link or code switches the account to the new address, but only in a request signed in to the account that asked (403 elsewhere, consuming nothing): otherwise whoever holds the new address could confirm it into the requester's account, and their own sign-ins would land there. Until then the account keeps its address.
 
 ## Email delivery
 

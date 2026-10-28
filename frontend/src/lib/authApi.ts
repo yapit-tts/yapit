@@ -29,15 +29,17 @@ export async function signOut(): Promise<void> {
 	await axios.post(`${baseURL}/v1/auth/sign-out`);
 }
 
-/** The gateway's own words for a failed sign-in request, or a generic line when it gave none. */
-export function signInError(err: unknown): string {
+/** The gateway's own words for a failed auth request, `invalid` for input it refused unworded, or a generic line. */
+export function authErrorMessage(err: unknown, invalid = "Please check what you entered."): string {
 	if (axios.isAxiosError(err)) {
 		const detail = err.response?.data?.detail;
 		if (typeof detail === "string") return detail;
-		if (err.response?.status === 422) return "That doesn't look like an email address.";
+		if (err.response?.status === 422) return invalid;
 	}
 	return "Something went wrong. Please try again.";
 }
+
+export const NOT_AN_EMAIL = "That doesn't look like an email address.";
 
 export async function emailSignInLink(email: string): Promise<void> {
 	await axios.post(`${baseURL}/v1/auth/email/start`, { email });

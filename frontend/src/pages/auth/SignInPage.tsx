@@ -12,7 +12,8 @@ import {
 	emailSignInLink,
 	oauthErrorMessage,
 	oauthStartUrl,
-	signInError,
+	authErrorMessage,
+	NOT_AN_EMAIL,
 	verifySignIn,
 } from "@/lib/authApi";
 
@@ -35,7 +36,7 @@ export default function SignInPage() {
 			setSentTo(address);
 			setCode("");
 		} catch (err) {
-			setError(signInError(err));
+			setError(authErrorMessage(err, NOT_AN_EMAIL));
 		} finally {
 			setBusy(false);
 		}
@@ -56,7 +57,7 @@ export default function SignInPage() {
 			await refresh();
 			navigate("/", { replace: true });
 		} catch (err) {
-			setError(signInError(err));
+			setError(authErrorMessage(err));
 			setBusy(false);
 		}
 	};

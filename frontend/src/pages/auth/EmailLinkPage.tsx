@@ -4,7 +4,7 @@ import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useAuth } from "@/hooks/useAuthUser";
-import { isOtherBrowser, signInError, verifySignIn } from "@/lib/authApi";
+import { isOtherBrowser, authErrorMessage, verifySignIn } from "@/lib/authApi";
 import AuthPageLayout from "./AuthPageLayout";
 
 /** The link's token and email, which travel in the fragment so no server or proxy log ever sees them. */
@@ -37,7 +37,7 @@ export default function EmailLinkPage() {
 				setState("confirm");
 				return;
 			}
-			setError(signInError(err));
+			setError(authErrorMessage(err));
 			setState("error");
 		}
 	};
@@ -75,7 +75,11 @@ export default function EmailLinkPage() {
 						<>
 							<p className="text-sm text-destructive">{error}</p>
 							<Button asChild variant="outline">
-								<Link to="/auth/sign-in">Get a new sign-in email</Link>
+								{isEmailChange ? (
+									<Link to="/account">Go to your account</Link>
+								) : (
+									<Link to="/auth/sign-in">Get a new sign-in email</Link>
+								)}
 							</Button>
 						</>
 					)}
