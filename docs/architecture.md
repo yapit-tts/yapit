@@ -31,8 +31,8 @@ flowchart TD
     GW <-->|billing| Stripe
 ```
 
-**Gateway** is a FastAPI process handling all HTTP/WebSocket traffic plus
-background tasks (result consumer, billing consumer, cache persister,
+**Gateway** is a FastAPI process handling all HTTP/WebSocket traffic,
+sign-in included, plus background tasks (result consumer, billing consumer, cache persister,
 OpenAI-compat TTS dispatchers, visibility scanners).
 
 **Workers** pull jobs from Redis queues and push results back. The gateway
@@ -46,9 +46,40 @@ dispatchers run inside the gateway (just HTTP calls).
 |-------|------|
 | Redis | Job queues, inflight tracking, pubsub, audio hot cache (300s TTL) |
 | SQLite | Audio cold cache (persistent, LRU-evicted), document cache, extraction cache |
-| Postgres | Documents, blocks, variants, billing, user data |
+| Postgres | Documents, blocks, variants, billing, user data, accounts and sessions |
 | TimescaleDB | Metrics and events |
 
+
+## Auth
+
+The gateway signs people in itself.
+People sign in by email, with a link or a code; signing in starts a session
+whose opaque token lives in an HttpOnly cookie, and the gateway looks the
+token's hash up in Postgres on every request. Scripts send an API token as
+`Authorization: Bearer`. With `AUTH_ENABLED=false` (single-user selfhost)
+every request is one static user. Details in [[auth]].
+
+```mermaid
+sequenceDiagram
+  participant B as Browser
+  participant G as Gateway
+  participant DB as Postgres
+  participant M as SMTP
+  B->>G: POST /v1/auth/email/start {email}
+  G->>DB: insert emailchallenge (hashes of link token and code)
+  G->>M: one mail with a link and a 6-digit code
+  G-->>B: 202, same answer whether the account exists or not
+  alt link
+    B->>G: POST /v1/auth/email/verify {token}
+  else code
+    B->>G: POST /v1/auth/email/verify {email, code}
+  end
+  G->>DB: consume the challenge, find or create the useraccount
+  G->>DB: insert authsession (hash of the session token)
+  G-->>B: 200 + Set-Cookie yapit_session
+  B->>G: later requests carry the cookie
+  G->>DB: look up authsession by the token's hash
+```
 
 ## Document Processing
 
@@ -320,13 +351,15 @@ the cache key. Frontend shows costs before starting extraction.
 Docker Compose with layered overrides:
 
 ```
-docker-compose.yml              Base: all services + worker definitions
-  └── docker-compose.dev.yml    Dev: host ports, volume mounts, stripe-cli
-  └── docker-compose.prod.yml   Prod: Swarm mode, Traefik labels, ghcr.io images
+docker-compose.yml                Base: all services + worker definitions
+  └── docker-compose.dev.yml      Dev: host ports, volume mounts, stripe-cli
+  └── docker-compose.selfhost.yml Selfhost: frontend, persistent volumes
+docker-compose.prod.yml           Prod, standalone: Swarm mode, Traefik labels, ghcr.io images
 ```
 
-Production runs on Docker Swarm (single node). CI/CD pushes to `main`
-trigger lint, test, build, push to ghcr.io, SSH deploy, and health check.
+Production runs on Docker Swarm (single node). A push to `main` runs lint
+and tests and pushes the changed images to ghcr.io; `make deploy` moves prod
+onto them and checks its health.
 
 Worker replica counts are configured via env vars. External workers connect
 via Tailscale VPN.

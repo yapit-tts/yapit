@@ -31,14 +31,11 @@ Compose files — **prod is standalone, not an overlay on base**:
 - `docker-compose.selfhost.yml` — Self-hosting overlay on base (Alembic migrations, no billing, no SOPS)
 - `docker-compose.worker.yml` — External GPU workers (connects to prod Redis via Tailscale). A worker host failing the deploy with `unresolvable CDI devices nvidia.com/gpu=all` has an nvidia kernel module older than the userspace driver its last NixOS switch installed, so the CDI generator found no working NVML and wrote no spec — the host needs a reboot, not a regenerated spec.
 
-### Self-Hosting Modes
+### Self-Hosting
 
-Two modes via Docker Compose profiles:
+`make self-host` runs the base services with the selfhost overlay. With `AUTH_ENABLED=false` (the `.env.selfhost.example` default) the gateway answers every request as the static `SELFHOST_USER`, with all features unlocked. With `AUTH_ENABLED=true` and `SMTP_*` set, the same services serve several people, who sign in by email; [[auth]] has the setup.
 
-- **`make self-host`** (default) — 7 services, no Stack Auth, no ClickHouse. Static "selfhost" user (`auth_enabled=False`), all features unlocked, no auth overhead. Gateway returns `SELFHOST_USER` for all requests.
-- **`make self-host-auth`** (profile: `auth`) — activates Stack Auth + ClickHouse (10 services). Multi-user with full auth.
-
-Metrics DB is also profiled (`metrics`) — graceful fallback on connection failure. `make dev-cpu` uses `COMPOSE_PROFILES=auth,metrics`.
+Metrics DB is profiled (`metrics`) — graceful fallback on connection failure. `make dev-cpu` turns the profile on.
 
 Self-hosting uses **Alembic** for schema migrations (same as production), not SQLAlchemy's `create_all()`. A one-time baseline migration (all `IF NOT EXISTS`/`IF EXISTS`) bridges legacy databases. On startup, legacy DBs are auto-detected and stamped.
 
@@ -83,8 +80,6 @@ As of Mar 2026, ~10-12% of daily requests show as 504 in CF analytics. All have 
 
 ### Observability Gaps
 
-**Stack Auth:** No metrics pipeline. Container logs are the only diagnostic — access via `docker logs <container>` on prod. Logs include response times in `[    RES]` lines. No alerting on errors or latency.
-
 **Traefik:** JSON access logs available via `docker logs traefik`. Fields: `DownstreamStatus`, `Duration` (ns), `OriginDuration`, `ServiceName`, `RequestPath`. Not exported or aggregated — must query ad-hoc on the VPS.
 
 **CF ↔ origin connectivity:** No direct probe. The Hetzner firewall blocks non-CF traffic on 80/443, so external uptime monitors (UptimeRobot etc.) only test the CF path, not origin directly. The `originResponseStatus` field in CF GraphQL is the best proxy for now.
@@ -99,7 +94,7 @@ As of Mar 2026, ~10-12% of daily requests show as 504 in CF analytics. All have 
 
 **HSTS:** Set via nginx, not Cloudflare. CF-level HSTS is redundant since all traffic passes through nginx. See [[security]] for header details.
 
-**Email:** Transactional email via Resend (`send.mail.yapit.md`). DNS records: SPF (TXT on `send.mail`), DKIM (TXT on `resend._domainkey`), MX (on `send.mail`), DMARC `p=reject` (TXT on `_dmarc.yapit.md`). Cloudflare DMARC Management enabled for report dashboard.
+**Email:** The gateway's sign-in mails go out through Resend (`send.mail.yapit.md`). DNS records: SPF (TXT on `send.mail`), DKIM (TXT on `resend._domainkey`), MX (on `send.mail`), DMARC `p=reject` (TXT on `_dmarc.yapit.md`). Cloudflare DMARC Management enabled for report dashboard.
 
 ## Config Change Checklist
 
@@ -137,7 +132,7 @@ When **adding or removing** config files or Settings fields, check ALL of these:
 
 **Monitoring:**
 - `cf_analytics.py` — Cloudflare analytics via GraphQL (traffic, cache, errors, DNS, hourly, 504 diagnostics)
-- `proxy_diagnostics.py` — Stack Auth + Traefik diagnostics from VPS container logs (latency, errors, slow requests)
+- `proxy_diagnostics.py` — Traefik diagnostics from VPS container logs (latency, errors, slow requests)
 
 **Dependencies:**
 - `dep-scout.sh` — Agent-driven dependency report on a timer (checks versions, changelogs, relevance). Notifies nobody; saved to `~/logs/yapit-reports/`.

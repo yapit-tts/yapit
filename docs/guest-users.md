@@ -1,6 +1,6 @@
 # Guest Users
 
-Anonymous/guest sessions use `anon-{uuid}` as `user_id`. HMAC-signed, no Stack Auth persistence.
+Anonymous/guest sessions use `anon-{uuid}` as `user_id`. HMAC-signed, with no `useraccount` row.
 
 ## Cleanup
 

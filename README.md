@@ -42,7 +42,9 @@ To stop: `make self-host-down`.
 
 By default, yapit runs in **single-user mode** — no login required, all features unlocked. `.env.selfhost` is self-documenting — see the comments for optional features (AI extraction, custom TTS models).
 
-If you want user accounts with login (e.g., for a family or small team), set `AUTH_ENABLED=true` in `.env.selfhost` and follow the comments below it: people sign in with an emailed link or code, so fill in `SMTP_*` (left empty, the sign-in emails are written to the gateway log). Note: in single-user mode, all requests share one user — everyone on the network sees the same document library.
+Note: in single-user mode, all requests share one user — everyone on the network sees the same document library.
+
+If you want user accounts with login (e.g., for a family or small team), set `AUTH_ENABLED=true` in `.env.selfhost` and follow the comments below it. People sign in with an emailed link or code, so fill in `APP_URL` and `SMTP_*` (left empty, `SMTP_HOST` writes the sign-in emails to the gateway log). [docs/auth.md](docs/auth.md#multi-user-selfhost) has the steps, and how to give the [CLI](https://github.com/yapit-tts/yapit-cli) an API token.
 
 ### Custom TTS voices
 
