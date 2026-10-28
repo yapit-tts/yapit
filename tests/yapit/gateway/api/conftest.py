@@ -242,3 +242,10 @@ def real_auth(app):
     overrides = {dep: app.dependency_overrides.pop(dep) for dep in (authenticate, authenticate_optional)}
     yield
     app.dependency_overrides.update(overrides)
+
+
+@pytest_asyncio.fixture
+async def browser(app, real_auth):
+    """A client at the app's origin that keeps cookies, like the browser the frontend runs in."""
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=APP_URL) as client:
+        yield client

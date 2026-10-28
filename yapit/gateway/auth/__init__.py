@@ -162,6 +162,18 @@ async def authenticate(user: Annotated[User | None, Depends(authenticate_optiona
     return user
 
 
+async def authenticate_account(
+    user: Annotated[User, Depends(authenticate)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> User:
+    """The caller, who must be signed in to an account: not anonymous, and not the selfhost user without auth."""
+    if not settings.auth_enabled:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sign-in is disabled (AUTH_ENABLED=false).")
+    if user.is_anonymous:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Sign in first.")
+    return user
+
+
 async def authenticate_ws(
     websocket: WebSocket,
     settings: Annotated[Settings, Depends(get_settings)],

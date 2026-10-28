@@ -15,7 +15,7 @@ from yapit.contracts import MAX_EXTRACTION_PROMPT_LENGTH
 from yapit.gateway.auth import ANONYMOUS_ID_PREFIX, sign_anonymous_id, verify_anonymous_token
 from yapit.gateway.auth.sessions import clear_session_cookie
 from yapit.gateway.constants import estimate_duration_ms
-from yapit.gateway.deps import AuthenticatedUser, DbSession, SettingsDep, StripeClient
+from yapit.gateway.deps import AuthenticatedUser, DbSession, SettingsDep, SignedInAccount, StripeClient
 from yapit.gateway.domain_models import (
     Document,
     EmailChallenge,
@@ -303,6 +303,18 @@ async def claim_anonymous_data(
         logger.info(f"User {auth_user.id} claimed {claimed_docs} docs from {anon_user_id}")
 
     return ClaimResponse(claimed_documents=claimed_docs)
+
+
+class AccountUpdate(BaseModel):
+    name: Annotated[str, StringConstraints(strip_whitespace=True, max_length=100)] | None  # empty or null clears it
+
+
+@router.patch("/me", status_code=status.HTTP_204_NO_CONTENT)
+async def update_account(body: AccountUpdate, user: SignedInAccount, db: DbSession) -> None:
+    account = await db.get_one(UserAccount, user.id)
+    account.name = body.name or None
+    db.add(account)
+    await db.commit()
 
 
 # Account deletion

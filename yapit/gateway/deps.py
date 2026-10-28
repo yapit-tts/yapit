@@ -10,7 +10,7 @@ from redis.asyncio import Redis
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from yapit.gateway.auth import User, authenticate, authenticate_optional
+from yapit.gateway.auth import User, authenticate, authenticate_account, authenticate_optional
 from yapit.gateway.cache import Cache, CacheConfig, Caches, SqliteCache
 from yapit.gateway.config import Settings, get_settings
 from yapit.gateway.db import get_db_session, get_or_404
@@ -163,6 +163,7 @@ CurrentDoc = Annotated[Document, Depends(get_doc)]
 CurrentVoice = Annotated[Voice, Depends(get_voice)]
 CurrentBlockVariant = Annotated[BlockVariant, Depends(get_block_variant)]
 AuthenticatedUser = Annotated[User, Depends(authenticate)]
+SignedInAccount = Annotated[User, Depends(authenticate_account)]
 OptionalUser = Annotated[User | None, Depends(authenticate_optional)]
 DocumentTransformerDep = Annotated[DocumentTransformer, Depends(get_document_transformer)]
 StripeClient = Annotated[stripe.StripeClient | None, Depends(get_stripe_client)]

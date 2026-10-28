@@ -40,13 +40,6 @@ def sha256(value: str) -> str:
 
 
 @pytest_asyncio.fixture
-async def browser(app, real_auth):
-    """A client at the app's origin that keeps cookies, like the browser the frontend runs in."""
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=APP_URL) as client:
-        yield client
-
-
-@pytest_asyncio.fixture
 async def api_token(session) -> str:
     """An API token of the user cli-user."""
     session.add(UserAccount(id="cli-user", email="cli@example.com"))
@@ -535,6 +528,151 @@ async def test_unknown_api_token_is_refused(app, real_auth):
     assert response.status_code == 401
 
 
+@pytest.mark.asyncio
+async def test_api_token_created_in_settings_authenticates_until_revoked(browser, app):
+    await sign_in(browser, app, "reader@example.com")
+
+    created = await browser.post("/v1/auth/tokens", json={"label": " laptop "}, headers=SAME_ORIGIN)
+    assert created.status_code == 201, created.text
+    token = created.json()["token"]
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://cli", headers={"Authorization": f"Bearer {token}"}
+    ) as cli:
+        before = (await cli.get("/v1/auth/session")).json()["user"]
+        listed = (await browser.get("/v1/auth/tokens")).json()
+        revoked = await browser.delete(f"/v1/auth/tokens/{created.json()['id']}", headers=SAME_ORIGIN)
+        after = (await cli.get("/v1/auth/session")).json()["user"]
+
+    assert token.startswith("yapit_")
+    assert before["email"] == "reader@example.com"
+    assert [t["label"] for t in listed] == ["laptop"]
+    assert token not in str(listed)
+    assert revoked.status_code == 204
+    assert after is None
+
+
+@pytest.mark.asyncio
+async def test_api_tokens_of_another_user_are_neither_listed_nor_revocable(browser, app, api_token):
+    await sign_in(browser, app, "reader@example.com")
+
+    listed = (await browser.get("/v1/auth/tokens")).json()
+    revoked = await browser.delete(f"/v1/auth/tokens/{sha256(api_token)}", headers=SAME_ORIGIN)
+
+    assert listed == []
+    assert revoked.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_api_token_list_leaves_out_browser_sessions(browser, app):
+    await sign_in(browser, app, "reader@example.com")
+
+    revoked = await browser.delete(f"/v1/auth/tokens/{sha256(browser.cookies[SESSION_COOKIE])}", headers=SAME_ORIGIN)
+
+    assert (await browser.get("/v1/auth/tokens")).json() == []
+    assert revoked.status_code == 404
+    assert await signed_in_user(browser) is not None
+
+
+@pytest.mark.asyncio
+async def test_anonymous_user_gets_no_api_token(app, real_auth, _test_settings):
+    headers = {
+        "X-Anonymous-ID": "a1",
+        "X-Anonymous-Token": sign_anonymous_id("a1", _test_settings.anonymous_session_secret),
+    }
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=APP_URL) as client:
+        response = await client.post("/v1/auth/tokens", json={"label": "x"}, headers=headers)
+
+    assert response.status_code == 401
+
+
+# Name and email, from account settings
+
+
+@pytest.mark.asyncio
+async def test_name_is_set_and_cleared(browser, app):
+    await sign_in(browser, app, "reader@example.com")
+
+    named = await browser.patch("/v1/users/me", json={"name": "  Ada  "}, headers=SAME_ORIGIN)
+    name_after_set = (await signed_in_user(browser))["name"]
+    cleared = await browser.patch("/v1/users/me", json={"name": ""}, headers=SAME_ORIGIN)
+
+    assert (named.status_code, cleared.status_code) == (204, 204)
+    assert name_after_set == "Ada"
+    assert (await signed_in_user(browser))["name"] is None
+
+
+async def request_email_change(browser, app, new_email: str) -> tuple[str, str]:
+    response = await browser.post("/v1/auth/email/change", json={"email": new_email}, headers=SAME_ORIGIN)
+    assert response.status_code == 202, response.text
+    mail: Email = app.state.mailer.sent[-1]
+    assert mail.to == new_email.lower()
+    token = parse_qs(urlsplit(mailed_link(app)).fragment)["token"][0]
+    code = re.search(r"\b\d{6}\b", mail.text)
+    assert code is not None
+    return token, code.group()
+
+
+@pytest.mark.asyncio
+async def test_email_changes_only_once_the_link_sent_to_the_new_address_is_opened(browser, app):
+    user = await sign_in(browser, app, "old@example.com")
+
+    token, _ = await request_email_change(browser, app, "new@example.com")
+    before = await signed_in_user(browser)
+    confirmed = await browser.post("/v1/auth/email/verify", json={"token": token}, headers=SAME_ORIGIN)
+
+    assert before["email"] == "old@example.com"
+    assert confirmed.status_code == 200, confirmed.text
+    assert await signed_in_user(browser) == {**user, "email": "new@example.com"}
+
+
+@pytest.mark.asyncio
+async def test_email_change_is_confirmed_by_code_too(browser, app):
+    user = await sign_in(browser, app, "old@example.com")
+
+    _, code = await request_email_change(browser, app, "New@Example.com")
+    confirmed = await browser.post(
+        "/v1/auth/email/verify", json={"email": "new@example.com", "code": code}, headers=SAME_ORIGIN
+    )
+
+    assert confirmed.status_code == 200, confirmed.text
+    assert (await signed_in_user(browser))["id"] == user["id"]
+    assert (await signed_in_user(browser))["email"] == "new@example.com"
+
+
+@pytest.mark.asyncio
+async def test_after_an_email_change_the_new_address_signs_in_to_the_same_account(browser, app):
+    user = await sign_in(browser, app, "old@example.com")
+    token, _ = await request_email_change(browser, app, "new@example.com")
+    await browser.post("/v1/auth/email/verify", json={"token": token}, headers=SAME_ORIGIN)
+    await browser.post("/v1/auth/sign-out", headers=SAME_ORIGIN)
+
+    assert (await sign_in(browser, app, "new@example.com"))["id"] == user["id"]
+
+
+@pytest.mark.asyncio
+async def test_email_change_to_an_address_another_account_holds_is_refused(browser, app, session):
+    session.add(UserAccount(id="other", email="taken@example.com"))
+    await session.commit()
+    await sign_in(browser, app, "me@example.com")
+
+    response = await browser.post("/v1/auth/email/change", json={"email": "taken@example.com"}, headers=SAME_ORIGIN)
+
+    assert response.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_email_change_link_fails_if_another_account_took_the_address_meanwhile(browser, app, session):
+    await sign_in(browser, app, "me@example.com")
+    token, _ = await request_email_change(browser, app, "new@example.com")
+    session.add(UserAccount(id="other", email="new@example.com"))
+    await session.commit()
+
+    response = await browser.post("/v1/auth/email/verify", json={"token": token}, headers=SAME_ORIGIN)
+
+    assert response.status_code == 400
+    assert (await signed_in_user(browser))["email"] == "me@example.com"
+
+
 # A failed auth email fails the request and is logged
 
 
@@ -554,7 +692,7 @@ async def test_failed_sign_in_email_fails_the_request_and_logs_an_error(browser,
         logger.remove(sink)
 
     assert response.status_code == 502
-    assert any("Sign-in email to an address at example.com failed" in error for error in errors)
+    assert any("Auth email to an address at example.com failed" in error for error in errors)
     assert (await session.exec(select(EmailChallenge))).all() == []
 
 
@@ -591,7 +729,7 @@ async def test_auth_disabled_makes_every_request_the_selfhost_user_without_readi
     finally:
         event.remove(engine, "before_cursor_execute", record)
 
-    assert session_state.json() == {"auth_enabled": False, "user": None}
+    assert session_state.json() == {"auth_enabled": False, "providers": [], "user": None}
     assert preferences.status_code == 200
     assert statements, "the preferences write should have reached the database"
     auth_tables = ("useraccount", "authsession", "emailchallenge", "oauthidentity")

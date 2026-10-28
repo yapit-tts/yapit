@@ -26,6 +26,12 @@ class Settings(BaseSettings):
     smtp_password: str
     smtp_sender: str
 
+    # an empty client id hides the provider
+    google_client_id: str
+    google_client_secret: str
+    github_client_id: str
+    github_client_secret: str
+
     openai_tts_base_url: str | None = None
     openai_tts_api_key: str | None = None
     openai_tts_model: str | None = None
