@@ -112,6 +112,10 @@ make sync-metrics     # just sync, no dashboard
 - User Type filter (All/Guest/Registered) — segments raw metrics events by `anon-` prefix
 - Date range: quick toggles (7d/14d/30d) replace calendar picker
 
+## Sign-ups and returns
+
+Who signs up, how (Google, GitHub, email) and whether they come back comes from the main Postgres, not the metrics DB, through `make user-stats` (`scripts/user_stats.py`). It has an overview, a per-user table and monthly retention cohorts, and reads prod read-only over ssh. `make user-stats ARGS=--help` says what counts as active.
+
 ## Health Reports
 
 Automated analysis via `make report`:
