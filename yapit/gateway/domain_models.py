@@ -278,7 +278,7 @@ def tier_rank(tier: PlanTier | None) -> int:
 class UserSubscription(SQLModel, table=True):
     """User's active subscription."""
 
-    user_id: str = Field(primary_key=True)  # Stack Auth user ID
+    user_id: str = Field(primary_key=True)
     plan_id: int = Field(foreign_key="plan.id")
 
     status: SubscriptionStatus = Field(default=SubscriptionStatus.active)

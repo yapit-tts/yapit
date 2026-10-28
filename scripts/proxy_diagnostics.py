@@ -2,7 +2,7 @@
 # requires-python = ">=3.11"
 # dependencies = ["tyro", "python-dotenv"]
 # ///
-"""Proxy diagnostics — Stack Auth + Traefik summary from prod container logs.
+"""Proxy diagnostics — Traefik summary from prod container logs.
 
 SSHes into the VPS, pulls recent container logs, and outputs a compact
 diagnostic summary. Designed for the daily report agent (--plain by default)
@@ -10,37 +10,29 @@ but also useful for ad-hoc debugging.
 
 Requires VPS_HOST in .env and SSH access (Tailscale).
 
-Examples::
-
+Examples:
     uv run scripts/proxy_diagnostics.py
     uv run scripts/proxy_diagnostics.py --hours 4
-    uv run scripts/proxy_diagnostics.py --section traefik
 """
 
 from __future__ import annotations
 
 import json
 import os
-import re
 import subprocess
 import sys
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
 
 import tyro
 from dotenv import load_dotenv
-
-Section = Literal["all", "stack-auth", "traefik"]
 
 
 @dataclass
 class Args:
     hours: int = 24
     """Time window (hours back from now)."""
-    section: Section = "all"
-    """Which section to show."""
     plain: bool = True
     """Plain output for LLM consumption (default). Use --no-plain for human-friendly."""
 
@@ -61,52 +53,6 @@ def ssh_cmd(host: str, cmd: str) -> str:
 def _when(iso: str) -> str:
     """RFC3339 timestamp → 'MM-DD HH:MM' UTC, enough to line an entry up with gateway.jsonl."""
     return iso[5:16].replace("T", " ")
-
-
-def parse_stack_auth(host: str, hours: int) -> dict:
-    # -t: Stack Auth's own lines carry no timestamp
-    raw = ssh_cmd(host, f"docker logs -t $(docker ps -q -f name=yapit_stack-auth) --since {hours}h 2>&1")
-    if not raw.strip():
-        return {"error": "no output from Stack Auth container"}
-
-    response_times: list[int] = []
-    status_counts: dict[int, int] = defaultdict(int)
-    errors: dict[str, int] = defaultdict(int)
-    slow: list[tuple[int, int, str, str, str]] = []
-
-    for line in raw.splitlines():
-        stamp, _, line = line.partition(" ")
-        # Response lines: [    RES] [...] METHOD url: STATUS (in Xms)
-        m = re.search(r"\[\s+RES\].*?(\w+)\s+(https?://\S+):\s+(\d+)\s+\(in\s+(\d+)ms\)", line)
-        if m:
-            method, url, status, ms = m.group(1), m.group(2), int(m.group(3)), int(m.group(4))
-            response_times.append(ms)
-            status_counts[status] += 1
-            if ms > 1000:
-                path = url.split("0.0.0.0:8102")[-1] if "0.0.0.0:8102" in url else url
-                slow.append((ms, status, method, path[:80], _when(stamp)))
-            continue
-
-        # Error lines
-        m2 = re.search(r"Captured error.*?:\s+(.*)", line)
-        if m2:
-            errors[m2.group(1)[:80]] += 1
-
-    if not response_times:
-        return {"requests": 0, "errors": dict(errors)}
-
-    response_times.sort()
-    n = len(response_times)
-    return {
-        "requests": n,
-        "p50": response_times[n // 2],
-        "p95": response_times[int(n * 0.95)],
-        "p99": response_times[int(n * 0.99)],
-        "max": response_times[-1],
-        "status_counts": dict(sorted(status_counts.items())),
-        "slow_requests": sorted(slow, reverse=True)[:10],
-        "errors": dict(sorted(errors.items(), key=lambda x: -x[1])),
-    }
 
 
 def parse_traefik(host: str, hours: int) -> dict:
@@ -174,39 +120,6 @@ def parse_traefik(host: str, hours: int) -> dict:
     }
 
 
-def print_stack_auth(data: dict, plain: bool) -> None:
-    if "error" in data:
-        print(f"  Stack Auth: {data['error']}")
-        return
-
-    header = "# Stack Auth" if plain else "Stack Auth"
-    print(header)
-    if not plain:
-        print("─" * 50)
-
-    if data["requests"] == 0:
-        print("  requests=0")
-        for msg, count in data["errors"].items():
-            print(f"  error: {count}x {msg}")
-        return
-
-    print(
-        f"  requests={data['requests']} p50={data['p50']}ms p95={data['p95']}ms p99={data['p99']}ms max={data['max']}ms"
-    )
-
-    if data["status_counts"]:
-        codes = " ".join(f"{s}:{c}" for s, c in data["status_counts"].items())
-        print(f"  status: {codes}")
-
-    for msg, count in data["errors"].items():
-        print(f"  error: {count}x {msg}")
-
-    for ms, status, method, path, when in data["slow_requests"]:
-        print(f"  slow: {when}Z {ms}ms {status} {method} {path}")
-
-    print()
-
-
 def print_traefik(data: dict, plain: bool) -> None:
     if "error" in data:
         print(f"  Traefik: {data['error']}")
@@ -251,13 +164,7 @@ def main(args: Args) -> None:
         print(f"\nProxy Diagnostics — last {window}")
     print()
 
-    if args.section in ("all", "stack-auth"):
-        data = parse_stack_auth(host, args.hours)
-        print_stack_auth(data, args.plain)
-
-    if args.section in ("all", "traefik"):
-        data = parse_traefik(host, args.hours)
-        print_traefik(data, args.plain)
+    print_traefik(parse_traefik(host, args.hours), args.plain)
 
 
 if __name__ == "__main__":

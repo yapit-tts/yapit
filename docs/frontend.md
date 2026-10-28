@@ -117,8 +117,6 @@ Check `index.css` for existing color variables before adding new colors. Prefer 
 
 **Gotcha — `text-primary` in dark mode:** Changes from green to gray between modes. Use `--accent-success` for text that should stay green in both modes.
 
-**Gotcha — Stack Auth theme detection:** Needs explicit `color-scheme` CSS property on `:root`. Chrome returns raw oklch from `getComputedStyle`, breaking Stack Auth's luminance-based detection fallback.
-
 **Gotcha — dark theme contrast:** Test switch thumbs, audio highlights, and borders in all dark themes. `--muted` controls progress bar cached/pending distinction.
 
 ## Scroll Handling

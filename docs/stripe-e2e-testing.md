@@ -168,7 +168,6 @@ Card `4000000000000341` attaches but fails on charge. But Checkout charges immed
 - Cannot create payment methods with raw card numbers via API — use test tokens (`pm_card_visa`)
 
 ### Database Table Naming
-- Stack Auth tables: PascalCase (`User`, `Project`)
 - Yapit tables: snake_case (`usersubscription`, `ttsmodel`)
 
 ## Session Template

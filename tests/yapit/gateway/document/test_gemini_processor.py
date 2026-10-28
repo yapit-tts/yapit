@@ -4,9 +4,11 @@ Integration tests require GOOGLE_API_KEY. Run with: make test-gemini
 Unit tests for retry logic run without API key.
 """
 
+import asyncio
 import os
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -14,9 +16,19 @@ from google.genai import errors as genai_errors
 
 from yapit.contracts import YoloResult
 from yapit.gateway.backoff import API_MAX_RETRIES
+from yapit.gateway.document.processors import gemini
 from yapit.gateway.document.processors.gemini import GeminiExtractor
 from yapit.gateway.document.types import PreparedPage
 from yapit.gateway.storage import LocalImageStorage
+
+
+def gemini_asyncio(sleep):
+    """Asyncio as gemini sees it, with `sleep` faked.
+
+    Patching asyncio.sleep itself would fake it for every task on the session's event loop.
+    """
+    return SimpleNamespace(sleep=sleep, gather=asyncio.gather)
+
 
 FIXTURES_DIR = Path("tests/fixtures/documents")
 
@@ -202,7 +214,7 @@ class TestRetryBehavior:
             ]
         )
 
-        with patch("yapit.gateway.document.processors.gemini.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+        with patch.object(gemini, "asyncio", gemini_asyncio(mock_sleep := AsyncMock())):
             result = await mock_extractor._call_for_page(
                 page=make_prepared_page(),
                 content_hash="test-hash",
@@ -238,7 +250,7 @@ class TestRetryBehavior:
                 ]
             )
 
-            with patch("yapit.gateway.document.processors.gemini.asyncio.sleep", new_callable=AsyncMock):
+            with patch.object(gemini, "asyncio", gemini_asyncio(AsyncMock())):
                 result = await mock_extractor._call_for_page(
                     page=make_prepared_page(),
                     content_hash="test-hash",
@@ -302,7 +314,7 @@ class TestRetryBehavior:
             side_effect=genai_errors.APIError(code=503, response_json={"error": {"message": "Unavailable"}})
         )
 
-        with patch("yapit.gateway.document.processors.gemini.asyncio.sleep", new_callable=AsyncMock):
+        with patch.object(gemini, "asyncio", gemini_asyncio(AsyncMock())):
             result = await mock_extractor._call_for_page(
                 page=make_prepared_page(),
                 content_hash="test-hash",
@@ -335,7 +347,7 @@ class TestRetryBehavior:
             ]
         )
 
-        with patch("yapit.gateway.document.processors.gemini.asyncio.sleep", new_callable=AsyncMock):
+        with patch.object(gemini, "asyncio", gemini_asyncio(AsyncMock())):
             result = await mock_extractor._call_for_page(
                 page=make_prepared_page(),
                 content_hash="test-hash",

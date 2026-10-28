@@ -44,7 +44,7 @@ User-facing capabilities.
 
 ## Account & Billing
 
-- **Self-hosting** — `make self-host` (no auth, no billing) or `make self-host-auth` (Stack Auth multi-user). See [[infrastructure]]
+- **Self-hosting** — `make self-host`: single-user with no billing, or multi-user with email sign-in when `AUTH_ENABLED=true`. See [[infrastructure]] and [[auth]]
 - **Dark mode** with multiple theme variants
 - **Lifetime engagement stats** — per-voice listening time on account page (survives document deletion)
 - **Usage breakdown** — per-voice and per-document on subscription page
