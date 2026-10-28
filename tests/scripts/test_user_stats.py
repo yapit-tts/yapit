@@ -14,6 +14,9 @@ The seed, with each user's active days:
     frank  signed up 2026-10-27  google         nothing                           no subscription
     gina   signed up 2026-11-02  google                                           after the as-of day
 
+Last sign-in: alice 10-20 23:30 at UTC-2 = 10-21, carol 10-27, dave 09-15,
+frank 10-29 (after the as-of day, so blank); bob and erin never signed in.
+
     anon-1: doc 10-25, TTS 10-27.  anon-2: doc 09-01.  A deleted account's doc 10-27 counts for nobody.
 """
 
@@ -58,9 +61,17 @@ def seed(session: Session) -> None:
     session.add_all(plans.values())
     session.flush()
 
-    def user(name: str, signed_up: str, providers: tuple[str, ...] = ()) -> str:
+    def user(name: str, signed_up: str, providers: tuple[str, ...] = (), last_sign_in: str | None = None) -> str:
         uid = f"user-{name}"
-        session.add(UserAccount(id=uid, email=f"{name}@example.com", name=name.title(), created=at(signed_up)))
+        session.add(
+            UserAccount(
+                id=uid,
+                email=f"{name}@example.com",
+                name=name.title(),
+                created=at(signed_up),
+                last_sign_in=last_sign_in and at(last_sign_in),
+            )
+        )
         session.flush()
         for p in providers:
             session.add(OAuthIdentity(provider=p, provider_account_id=f"{p}-{name}", user_id=uid))
@@ -86,7 +97,7 @@ def seed(session: Session) -> None:
             )
         )
 
-    alice = user("alice", "2026-08-03", ("google",))
+    alice = user("alice", "2026-08-03", ("google",), last_sign_in="2026-10-20T23:30:00-02:00")
     doc(alice, "2026-08-03")
     doc(alice, "2026-09-10")
     tts(alice, "2026-10-20")
@@ -95,14 +106,14 @@ def seed(session: Session) -> None:
     bob = user("bob", "2026-08-20", ("github",))
     doc(bob, "2026-09-28T23:30:00-02:00")
 
-    carol = user("carol", "2026-09-05", ("google", "github"))
+    carol = user("carol", "2026-09-05", ("google", "github"), last_sign_in="2026-10-27")
     doc(carol, "2026-09-05")
     doc(carol, "2026-09-06")
     session_used(carol, AuthSessionKind.browser, "2026-10-27")
     session_used(carol, AuthSessionKind.api, "2026-10-01")
     subscribe(carol, PlanTier.basic, SubscriptionStatus.trialing)
 
-    dave = user("dave", "2026-09-15")
+    dave = user("dave", "2026-09-15", last_sign_in="2026-09-15")
     tts(dave, "2026-09-18")
     subscribe(dave, PlanTier.basic, SubscriptionStatus.past_due)
 
@@ -110,7 +121,7 @@ def seed(session: Session) -> None:
     doc(erin, "2026-10-26")
     subscribe(erin, PlanTier.free, SubscriptionStatus.active)
 
-    user("frank", "2026-10-27", ("google",))
+    user("frank", "2026-10-27", ("google",), last_sign_in="2026-10-29")
     user("gina", "2026-11-02", ("google",))
 
     doc("anon-1", "2026-10-25")
@@ -188,12 +199,21 @@ def test_user_table_counts_the_seed(database_url: str) -> None:
     }
     assert rows["carol"]["methods"] == ["github", "google"]
     assert rows["carol"]["signed_up"] == "2026-09-05"
+    assert {name: r["last_sign_in"] for name, r in rows.items()} == {
+        "alice": "2026-10-21",
+        "bob": None,
+        "carol": "2026-10-27",
+        "dave": "2026-09-15",
+        "erin": None,
+        "frank": None,
+    }
 
 
 @pytest.mark.parametrize(
     "args,names",
     [
         ((), ["frank", "erin", "dave", "carol", "bob", "alice"]),
+        (("--sort", "last-sign-in"), ["carol", "alice", "dave", "bob", "erin", "frank"]),
         (("--sort", "last-active"), ["carol", "frank", "erin", "alice", "bob", "dave"]),
         (("--sort", "documents", "--reverse"), ["dave", "frank", "bob", "erin", "alice", "carol"]),
         (("--sort", "email", "--limit", "2"), ["alice", "bob"]),
@@ -228,7 +248,8 @@ def test_retention_counts_the_seed(database_url: str) -> None:
         # Rich fits a wide table by squeezing columns to an ellipsis or dropping
         # them, so a row has to come out whole, not just short enough.
         ("overview", ["github + google", "1"]),
-        ("users", ["dave@example.com", "Dave", "2026-09-15", "email", "40d", "0", "0", "basic past due"]),
+        ("users", ["dave@example.com", "26-09-15", "26-09-15", "email", "40d", "0", "0", "basic past due"]),
+        ("users", ["bob@example.com", "26-08-20", "GH", "29d", "1", "1", "free"]),
         ("retention", ["2026-08", "2", "2 100%", "2 100%", "1  50%"]),
     ],
 )
@@ -249,7 +270,7 @@ def test_prod_reads_are_read_only_copies(tmp_path: Path) -> None:
     fake_ssh.write_text(
         "#!/bin/bash\n"
         f'n=$(ls {calls} | wc -l); printf "%s\\n" "$@" > {calls}/$n.args; cat > {calls}/$n.sql\n'
-        f'if grep -q useraccount {calls}/$n.sql; then echo "id,email,name,signed_up,providers,plan,status,documents";'
+        f'if grep -q useraccount {calls}/$n.sql; then echo "id,email,name,signed_up,last_sign_in,providers,plan,status,documents";'
         ' else echo "user_id,day"; fi\n'
     )
     fake_ssh.chmod(0o755)
@@ -267,3 +288,11 @@ def test_prod_reads_are_read_only_copies(tmp_path: Path) -> None:
         assert "PGOPTIONS='-c default_transaction_read_only=on'" in remote
         sql = a.with_suffix(".sql").read_text()
         assert sql.startswith("COPY (SELECT")
+
+
+def test_wide_user_table_shows_names(database_url: str) -> None:
+    done = user_stats(
+        "--database-url", database_url, "--as-of", AS_OF, "users", "--wide", env={**os.environ, "COLUMNS": "120"}
+    )
+    assert done.returncode == 0, done.stderr
+    assert re.search(r"dave@example\.com\s+Dave\s+26-09-15\s+26-09-15", done.stdout)

@@ -36,6 +36,7 @@ from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
+from functools import partial
 from typing import Annotated, Literal
 
 import tyro
@@ -65,17 +66,19 @@ class Overview:
     """Months of sign-ups to show, the current one included."""
 
 
-SortKey = Literal["signed-up", "last-active", "active-days", "documents", "email", "name", "methods", "plan"]
+SortKey = Literal[
+    "signed-up", "last-sign-in", "last-active", "active-days", "documents", "email", "name", "methods", "plan"
+]
 TEXT_SORTS = ("email", "name", "methods", "plan")
 
 
 @dataclass(frozen=True)
 class Users:
-    """One row per user: email, name, signed up, methods, last active, active days in the last 30, documents, plan.
+    """One row per user: email, name (with --wide), signed up, last sign-in, methods, last active, active days in the last 30, documents, plan.
 
     JSON schema (--json):
 
-        [{"email": "str", "name": "str", "signed_up": "YYYY-MM-DD", "methods": ["google|github"],
+        [{"email": "str", "name": "str", "signed_up": "YYYY-MM-DD", "last_sign_in": "YYYY-MM-DD|null", "methods": ["google|github"],
           "last_active": "YYYY-MM-DD", "last_active_days_ago": int, "active_days_30": int, "documents": int, "plan": "str"}]
     """
 
@@ -89,6 +92,8 @@ class Users:
     """Only users linked to this provider, or with none linked."""
     limit: int | None = None
     """Show at most this many rows."""
+    wide: bool = False
+    """Show the name column too; the table is then wider than 80 columns."""
 
 
 @dataclass(frozen=True)
@@ -141,7 +146,7 @@ def main(cli: Cli) -> None:
             render = render_overview
         case Users() as cmd:
             data = user_rows(people, cli.as_of, cmd)
-            render = render_users
+            render = partial(render_users, wide=cmd.wide)
         case Retention() as cmd:
             data = retention(people, cli.as_of, cmd.cohorts, cmd.months)
             render = render_retention
@@ -161,6 +166,7 @@ class User:
     email: str
     name: str
     signed_up: date
+    last_sign_in: date | None
     providers: tuple[str, ...]
     plan: str
     status: str
@@ -243,6 +249,7 @@ def user_rows(people: People, as_of: date, cmd: Users) -> list[dict]:
             "email": u.email,
             "name": u.name,
             "signed_up": u.signed_up.isoformat(),
+            "last_sign_in": u.last_sign_in and u.last_sign_in.isoformat(),
             "methods": list(u.providers),
             "last_active": max(u.active_days).isoformat(),
             "last_active_days_ago": (as_of - max(u.active_days)).days,
@@ -259,6 +266,7 @@ def user_rows(people: People, as_of: date, cmd: Users) -> list[dict]:
 
 SORT_KEYS = {
     "signed-up": lambda r: r["signed_up"],
+    "last-sign-in": lambda r: r["last_sign_in"] or "",
     "last-active": lambda r: r["last_active"],
     "active-days": lambda r: r["active_days_30"],
     "documents": lambda r: r["documents"],
@@ -348,32 +356,36 @@ def render_overview(console: Console, data: dict) -> None:
     console.print(count_table("Sign-in methods", "method", [(r["method"], r["users"]) for r in data["methods"]]))
 
 
-def render_users(console: Console, rows: list[dict]) -> None:
+def render_users(console: Console, rows: list[dict], wide: bool) -> None:
     table = Table(
         box=box.SIMPLE_HEAD, pad_edge=False, collapse_padding=True, caption=f"{len(rows)} users", caption_justify="left"
     )
-    table.add_column("email", overflow="ellipsis", no_wrap=True)
-    table.add_column("name", overflow="ellipsis", no_wrap=True, max_width=10)
-    table.add_column("signed up", min_width=10)
-    table.add_column("via", min_width=5)
-    table.add_column("last\nactive", justify="right", min_width=6)
-    table.add_column("days\n/30", justify="right", min_width=4)
-    table.add_column("docs", justify="right", min_width=4)
-    table.add_column("plan", min_width=14)
+    # Rich shrinks only the columns that may wrap, so email is the one that gives way.
+    table.add_column("email", overflow="ellipsis")
+    if wide:
+        table.add_column("name", no_wrap=True, max_width=10, overflow="ellipsis")
+    table.add_column("signed\nup", no_wrap=True)
+    table.add_column("last\nsign-in", no_wrap=True, min_width=8)
+    table.add_column("via", no_wrap=True)
+    table.add_column("idle", justify="right", no_wrap=True)
+    table.add_column("days\n/30", justify="right", no_wrap=True)
+    table.add_column("docs", justify="right", no_wrap=True)
+    table.add_column("plan", no_wrap=True)
     short = {"google": "G", "github": "GH"}
     for r in rows:
         table.add_row(
             r["email"],
-            r["name"],
-            r["signed_up"],
+            *([r["name"]] if wide else []),
+            r["signed_up"][2:],
+            (r["last_sign_in"] or "")[2:],
             "+".join(short.get(p, p) for p in r["methods"]) or "email",
-            f"{r['last_active_days_ago']}d" if r["last_active_days_ago"] else "today",
+            f"{r['last_active_days_ago']}d",
             str(r["active_days_30"]),
             str(r["documents"]),
             r["plan"],
         )
     console.print(table)
-    console.print("G Google, GH GitHub, email: email only. days/30: days active in the last 30.", style="dim")
+    console.print("Dates YY-MM-DD. G Google, GH GitHub. idle: days since active. days/30: of last 30.", style="dim")
 
 
 def render_retention(console: Console, data: dict) -> None:
@@ -405,6 +417,7 @@ def render_retention(console: Console, data: dict) -> None:
 USERS_SQL = """
 SELECT u.id, u.email, coalesce(u.name, '') AS name,
        (u.created AT TIME ZONE 'UTC')::date AS signed_up,
+       coalesce(to_char(u.last_sign_in AT TIME ZONE 'UTC', 'YYYY-MM-DD'), '') AS last_sign_in,
        coalesce((SELECT string_agg(o.provider, ' ' ORDER BY o.provider)
                  FROM oauthidentity o WHERE o.user_id = u.id), '') AS providers,
        coalesce(p.tier::text, '') AS plan, coalesce(s.status::text, '') AS status,
@@ -434,6 +447,7 @@ def load(fetch, as_of: date) -> People:
     users = []
     for row in fetch(USERS_SQL):
         signed_up = date.fromisoformat(row["signed_up"])
+        last_sign_in = date.fromisoformat(row["last_sign_in"]) if row["last_sign_in"] else None
         if signed_up > as_of:
             continue
         users.append(
@@ -441,6 +455,7 @@ def load(fetch, as_of: date) -> People:
                 email=row["email"],
                 name=row["name"],
                 signed_up=signed_up,
+                last_sign_in=last_sign_in if last_sign_in and last_sign_in <= as_of else None,
                 providers=tuple(row["providers"].split()),
                 plan=row["plan"],
                 status=row["status"],
