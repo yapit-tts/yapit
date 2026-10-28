@@ -5,13 +5,14 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from urllib.parse import urlsplit
 
-from fastapi import Response
+from fastapi import Request, Response
 from sqlmodel import col, delete, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from yapit.gateway.config import Settings
 from yapit.gateway.domain_models import AuthSession, AuthSessionKind, UserAccount
 
+SESSION_COOKIE = "yapit_session"
 SIGN_IN_PENDING_COOKIE = "yapit_signin_pending"
 SESSION_LIFETIME = timedelta(days=30)
 SESSION_RENEW_BELOW = timedelta(days=15)
@@ -90,25 +91,52 @@ def is_https(settings: Settings) -> bool:
     return settings.app_url.startswith("https://")
 
 
-def session_cookie_name(settings: Settings) -> str:
+def auth_cookie_name(name: str, settings: Settings) -> str:
     # The __Host- prefix stops a subdomain from planting or overwriting the cookie; browsers accept it only on a Secure cookie
-    return "__Host-yapit_session" if is_https(settings) else "yapit_session"
+    return f"__Host-{name}" if is_https(settings) else name
+
+
+def session_cookie_name(settings: Settings) -> str:
+    return auth_cookie_name(SESSION_COOKIE, settings)
+
+
+def read_auth_cookie(request: Request, name: str, settings: Settings) -> str | None:
+    return request.cookies.get(auth_cookie_name(name, settings))
 
 
 def set_auth_cookie(response: Response, name: str, value: str, max_age: int, settings: Settings) -> None:
     response.set_cookie(
-        name, value, max_age=max_age, path="/", httponly=True, samesite="lax", secure=is_https(settings)
+        auth_cookie_name(name, settings),
+        value,
+        max_age=max_age,
+        path="/",
+        httponly=True,
+        samesite="lax",
+        secure=is_https(settings),
     )
 
 
 def clear_auth_cookie(response: Response, name: str, settings: Settings) -> None:
-    response.delete_cookie(name, path="/", httponly=True, samesite="lax", secure=is_https(settings))
+    response.delete_cookie(
+        auth_cookie_name(name, settings), path="/", httponly=True, samesite="lax", secure=is_https(settings)
+    )
 
 
 def set_session_cookie(response: Response, token: str, expires: datetime, settings: Settings) -> None:
     max_age = round((expires - datetime.now(tz=dt.UTC)).total_seconds())
-    set_auth_cookie(response, session_cookie_name(settings), token, max_age, settings)
+    set_auth_cookie(response, SESSION_COOKIE, token, max_age, settings)
 
 
 def clear_session_cookie(response: Response, settings: Settings) -> None:
-    clear_auth_cookie(response, session_cookie_name(settings), settings)
+    clear_auth_cookie(response, SESSION_COOKIE, settings)
+
+
+async def start_browser_session(
+    db: AsyncSession, request: Request, response: Response, settings: Settings, user_id: str
+) -> None:
+    """Sign the browser in to the account with a new session, revoking the one its cookie held."""
+    if previous := read_auth_cookie(request, SESSION_COOKIE, settings):
+        await revoke_session(db, previous)
+    token, expires = create_browser_session(db, user_id)
+    await db.commit()
+    set_session_cookie(response, token, expires, settings)

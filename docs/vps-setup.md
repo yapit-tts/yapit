@@ -325,9 +325,13 @@ Seeds: TTS models, voices, document processors, subscription plans. Voice sync r
 The gateway signs people in itself ([[auth]]); nothing needs setting up after a deploy. What it needs from config:
 
 - `APP_URL=https://yapit.md` in `.env.prod`.
-- `PROD_SMTP_HOST`, `PROD_SMTP_PORT`, `PROD_SMTP_USERNAME`, `PROD_SMTP_PASSWORD` and `PROD_SMTP_SENDER` in `.env.sops`: Resend's SMTP credentials, port 587. Without them the gateway refuses to start.
+- `PROD_SMTP_HOST`, `PROD_SMTP_PORT`, `PROD_SMTP_USERNAME`, `PROD_SMTP_PASSWORD` and `PROD_SMTP_SENDER` in `.env.sops`: Resend's SMTP credentials, port 587.
+- `PROD_GOOGLE_CLIENT_ID`, `PROD_GOOGLE_CLIENT_SECRET`, `PROD_GITHUB_CLIENT_ID` and `PROD_GITHUB_CLIENT_SECRET` in `.env.sops`. A provider whose id is empty has no button on the sign-in page.
+- In each provider's OAuth app, the redirect URI `https://yapit.md/api/v1/auth/oauth/{google,github}/callback`. The GitHub app allows only one callback URL.
 
-A failed sign-in mail is an ERROR in the gateway log (`Sign-in email to an address at … failed`), which the daily report flags.
+The gateway refuses to start while any of these `.env.sops` entries is missing; an empty value is fine.
+
+A failed auth mail is an ERROR in the gateway log (`Auth email to an address at … failed`), which the daily report flags.
 
 ## Operations
 
@@ -360,6 +364,8 @@ ssh root@yapit-prod "docker service rollback yapit_gateway"
 # Rollback to specific commit
 GIT_COMMIT=<old_sha> ./scripts/deploy.sh
 ```
+
+Neither crosses the auth cutover: going back to before it is the dump restore under [Cutover from Stack Auth](#cutover-from-stack-auth).
 
 ### Traefik Recovery
 

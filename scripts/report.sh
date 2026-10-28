@@ -300,7 +300,7 @@ Read the actual error messages and investigate — a count alone is not analysis
 - Scan for ERROR and WARNING level entries within the recent window. Don't skip this even if metrics look clean — some errors only appear in logs.
 - For each distinct error, report: the error message, count, and time range.
 - ERROR level in logs — stack traces, exceptions (include request context: method, path, user_id, request_id)
-- `Sign-in email to an address at <domain> failed` — the gateway's SMTP send failed, so that person could not sign in by email. Always flag; the exception says whether SMTP rejected the credentials, the recipient or the connection.
+- `Auth email to an address at <domain> failed` — the gateway's SMTP send failed, so that person could not sign in by email or confirm an email change. Always flag; the exception says whether SMTP rejected the credentials, the recipient or the connection.
 
 ### Warnings
 - WARNING level in logs — library warnings, deprecations, near-failures
