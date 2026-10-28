@@ -42,7 +42,7 @@ const PlaybackPage = () => {
   const initialTitle: string | undefined = state?.documentTitle;
   const failedPages: number[] | undefined = state?.failedPages;
 
-  const { api, isAuthReady } = useApi();
+  const { api } = useApi();
   const { settings } = useSettings();
   const { autoImportSharedDocuments } = useUserPreferences();
   const scrollBlockPosition: ScrollLogicalPosition = settings.scrollPosition === "top" ? "start"
@@ -109,7 +109,6 @@ const PlaybackPage = () => {
   // --- Document fetching ---
 
   useEffect(() => {
-    if (!isAuthReady) return;
     if (!documentId) { setError("No document ID provided"); setIsLoading(false); return; }
 
     loadedDocumentIdRef.current = undefined;
@@ -141,7 +140,7 @@ const PlaybackPage = () => {
       }
     };
     fetchData();
-  }, [documentId, api, isAuthReady]);
+  }, [documentId, api]);
 
   // --- Position restore (mount-only, reads from server) ---
 

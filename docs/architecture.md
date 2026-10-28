@@ -10,8 +10,6 @@ flowchart TD
         Traefik["Traefik (TLS)"] --> Frontend["Frontend · React SPA · Nginx"]
         Traefik --> GW
 
-        Auth["Stack Auth"] -.->|tokens| GW
-
         subgraph GW ["Gateway (FastAPI)"]
             direction LR
             API["REST API · WebSocket"]

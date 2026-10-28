@@ -75,7 +75,7 @@ const PLAN_FEATURES: Partial<Record<PlanTier, React.ReactNode[]>> = {
 };
 
 const SubscriptionPage = () => {
-  const { api, isAuthReady, isAnonymous } = useApi();
+  const { api, isAnonymous } = useApi();
   const navigate = useNavigate();
 
   const [plans, setPlans] = useState<Plan[]>([]);
@@ -85,7 +85,6 @@ const SubscriptionPage = () => {
   const [actionLoading, setActionLoading] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!isAuthReady) return;
 
     const fetchData = async () => {
       try {
@@ -105,12 +104,12 @@ const SubscriptionPage = () => {
     };
 
     fetchData();
-  }, [api, isAuthReady, isAnonymous]);
+  }, [api, isAnonymous]);
 
   const handleSubscribe = async (tier: PlanTier) => {
     if (isAnonymous) {
       localStorage.setItem("returnAfterSignIn", "/pricing");
-      navigate("/handler/signin");
+      navigate("/auth/sign-in");
       return;
     }
 
@@ -276,7 +275,7 @@ const SubscriptionPage = () => {
 
       {isAnonymous && (
         <p className="text-muted-foreground mb-4">
-          <a href="/handler/signin" className="underline hover:text-foreground">Sign in</a> to subscribe to a plan
+          <a href="/auth/sign-in" className="underline hover:text-foreground">Sign in</a> to subscribe to a plan
         </p>
       )}
 

@@ -246,13 +246,9 @@ nginx longest-prefix matching means `/api/v1/ws/tts` hits the WS block (12 chars
 
 **uvicorn keepalive:** `--timeout-keep-alive 65` in `gateway/Dockerfile` must exceed nginx's upstream `keepalive_timeout` (60s default). If uvicorn's timeout is shorter, nginx reuses dead connections → intermittent 502s.
 
-### Stack Auth user IDs aren't directly queryable
+### Finding a user's ID
 
-Users are managed by Stack Auth. To find a user's ID for database operations:
-1. Authenticate as the user
-2. Create a temporary document
-3. Query `SELECT user_id FROM document WHERE id = '<doc_id>'`
-4. Delete the temp document
+`SELECT id FROM useraccount WHERE email = '<email>'` (emails are stored lowercased).
 
 ### Docker Swarm cannot bind ports to specific IPs
 

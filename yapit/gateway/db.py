@@ -89,6 +89,11 @@ def _table_exists(connection, table_name: str) -> bool:
     return inspect(connection).has_table(table_name)
 
 
+async def get_db_session() -> AsyncIterator[AsyncSession]:
+    async with create_session() as session:
+        yield session
+
+
 def get_engine() -> AsyncEngine:
     """Return the initialized engine. For use in tests and tooling."""
     assert _engine is not None, "Database not initialized — call init_db() first"

@@ -6,9 +6,10 @@ See [[security-audits]] for the consolidated findings, fix verification, and acc
 
 ## Auth & Trust Boundaries
 
-- **Anonymous sessions** are server-issued UUIDs with HMAC-SHA256 tokens. The server validates the token on every request (both HTTP and WebSocket) — not just on claim. This prevents forged anonymous IDs and closes the rate-limit bucket multiplication vector (each anonymous ID gets its own rate-limit bucket). Session endpoint: `POST /v1/users/anonymous-session`. Frontend auto-renews on 401 (handles secret rotation). See `gateway/auth.py`.
-- **Token-based auth** (Bearer tokens via Stack Auth), not cookie-based → CSRF not applicable. The gateway checks a token's ES256 signature and audience locally, so a token stays valid until it expires (Stack Auth's default is 10 minutes), after sign-out and after account deletion alike. Tokens of Stack Auth's anonymous and restricted users are signed with keys outside the project's key set and are rejected.
-- **WebSocket auth** uses query params (`?token=...`) — a known limitation since browsers don't support headers on WS upgrade. Tokens appear in proxy logs. Keep Stack Auth token expiry short.
+- **Anonymous sessions** are server-issued UUIDs with HMAC-SHA256 tokens. The server validates the token on every request (both HTTP and WebSocket) — not just on claim. This prevents forged anonymous IDs and closes the rate-limit bucket multiplication vector (each anonymous ID gets its own rate-limit bucket). Session endpoint: `POST /v1/users/anonymous-session`. Frontend auto-renews on 401 (handles secret rotation). See `gateway/auth/__init__.py`.
+- **Browser sessions are an opaque cookie** (`yapit_session`, HttpOnly, SameSite=Lax), looked up by its SHA-256 in `authsession` on every request, so sign-out and account deletion end a session at once. CSRF: SameSite=Lax plus an `Origin` check against `APP_URL` on cookie-authenticated unsafe methods and on the WebSocket handshake. See [[auth]].
+- **API tokens** (`yapit_…`, bearer header) are stored hashed, never expire, and skip the Origin check, since no browser attaches them on its own.
+- **Email sign-in** codes are 6 digits, so wrong guesses are capped per challenge, sign-in emails per address, and both endpoints per IP. See [[auth]].
 - **Content-addressed resources** (audio variants, images) have no per-user ownership check by design — they're shared cache keys (SHA256 of content). This is a deliberate tradeoff for cache efficiency, not a bug.
 
 ## SSRF

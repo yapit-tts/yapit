@@ -2,9 +2,10 @@ import { Link } from "react-router";
 import { Header } from "@/components/header";
 import { UnifiedInput } from "@/components/unifiedInput";
 import { GettingStarted } from "@/components/gettingStarted";
-import { authEnabled } from "@/auth";
+import { useAuth } from "@/hooks/useAuthUser";
 
 const TextInputPage = () => {
+  const { authEnabled } = useAuth();
   return (
     <div className="flex flex-col w-full px-4 min-h-[100dvh]">
       <Header />

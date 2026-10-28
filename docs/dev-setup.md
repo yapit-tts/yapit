@@ -16,7 +16,8 @@ cd frontend && npm run dev  # Start frontend separately
 
 - Use `make` commands, not raw `docker compose` — they handle env vars and build steps
 - Backend code changes require container restart (`make dev-cpu`)
-- `make dev-user` creates test account if login fails after startup (race condition with stack-auth health check)
+- Sign in at `localhost:5173/auth/sign-in`: with `SMTP_HOST` empty the sign-in email (link and code) is in the gateway log (`docker logs yapit-dev-gateway-1`)
+- `make dev-token` prints an API token for `dev@example.com`, for curl and scripts
 - See [[env-config]] for secrets management
 
 ## Testing

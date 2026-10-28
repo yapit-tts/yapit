@@ -1,17 +1,16 @@
 import { lazy, Suspense } from "react";
-import { Routes, Route, useLocation } from "react-router";
+import { Navigate, Routes, Route } from "react-router";
 import { Loader2 } from "lucide-react";
 import MainLayout from "../layouts/MainLayout";
 import TextInputPage from "@/pages/TextInputPage";
 import UrlCatchAllPage from "@/pages/UrlCatchAllPage";
-import { authEnabled, stackClientApp } from "@/auth";
+import { useAuth } from "@/hooks/useAuthUser";
 import { ChunkErrorBoundary } from "@/components/ChunkErrorBoundary";
 
 const PlaybackPage = lazy(() => import("@/pages/PlaybackPage"));
 const SubscriptionPage = lazy(() => import("@/pages/SubscriptionPage"));
 const TipsPage = lazy(() => import("@/pages/TipsPage"));
 const AccountPage = lazy(() => import("@/pages/AccountPage"));
-const AccountSettingsPage = lazy(() => import("@/pages/AccountSettingsPage"));
 const AboutPage = lazy(() => import("@/pages/AboutPage"));
 const CheckoutSuccessPage = lazy(() => import("@/pages/CheckoutSuccessPage"));
 const CheckoutCancelPage = lazy(() => import("@/pages/CheckoutCancelPage"));
@@ -19,11 +18,7 @@ const TermsPage = lazy(() => import("@/pages/TermsPage"));
 const PrivacyPage = lazy(() => import("@/pages/PrivacyPage"));
 const BatchStatusPage = lazy(() => import("@/pages/BatchStatusPage"));
 const SignInPage = lazy(() => import("@/pages/auth/SignInPage"));
-const SignUpPage = lazy(() => import("@/pages/auth/SignUpPage"));
-
-const LazyStackHandler = lazy(() =>
-	import("@stackframe/react").then((m) => ({ default: m.StackHandler })),
-);
+const EmailLinkPage = lazy(() => import("@/pages/auth/EmailLinkPage"));
 
 function Loading() {
 	return (
@@ -41,27 +36,16 @@ function Lazy({ children }: { children: React.ReactNode }) {
 	);
 }
 
-const AuthRoutes = () => {
-	const location = useLocation();
-
+const AppRoutes = () => {
+	const { authEnabled } = useAuth();
 	return (
-		<Lazy>
-			<LazyStackHandler
-				app={stackClientApp!}
-				location={location.pathname}
-				fullPage
-			/>
-		</Lazy>
-	);
-};
-
-const AppRoutes = () => (
 	<Routes>
 		{authEnabled && (
 			<>
-				<Route path="/handler/sign-in" element={<Lazy><SignInPage /></Lazy>} />
-				<Route path="/handler/sign-up" element={<Lazy><SignUpPage /></Lazy>} />
-				<Route path="/handler/*" element={<AuthRoutes />} />
+				<Route path="/auth/sign-in" element={<Lazy><SignInPage /></Lazy>} />
+				<Route path="/auth/email" element={<Lazy><EmailLinkPage /></Lazy>} />
+				{/* Bookmarks and links in older emails point at /handler/sign-in and its siblings */}
+				<Route path="/handler/*" element={<Navigate to="/auth/sign-in" replace />} />
 			</>
 		)}
 		<Route
@@ -103,14 +87,6 @@ const AppRoutes = () => (
 					element={
 						<MainLayout>
 							<Lazy><SubscriptionPage /></Lazy>
-						</MainLayout>
-					}
-				/>
-				<Route
-					path="/account/settings"
-					element={
-						<MainLayout>
-							<Lazy><AccountSettingsPage /></Lazy>
 						</MainLayout>
 					}
 				/>
@@ -160,6 +136,7 @@ const AppRoutes = () => (
 		<Route path="/privacy" element={<Lazy><PrivacyPage /></Lazy>} />
 		<Route path="*" element={<UrlCatchAllPage />} />
 	</Routes>
-);
+	);
+};
 
 export default AppRoutes;

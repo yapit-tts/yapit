@@ -34,8 +34,7 @@ import { Progress } from "@/components/ui/progress";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { ChevronUp, FileText, Loader2, MoreHorizontal, User2, LogOut, LogIn, Trash2, Pencil, CreditCard, Lightbulb, Settings, Info, Link2, Check, Sun, Moon } from "lucide-react";
 import { useApi } from "@/api";
-import { authEnabled } from "@/auth";
-import { useAuthUser } from "@/hooks/useAuthUser";
+import { useAuth } from "@/hooks/useAuthUser";
 import { useSubscription } from "@/hooks/useSubscription";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useSettings, useIsDark } from "@/hooks/useSettings";
@@ -89,22 +88,22 @@ function DocumentSidebar() {
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [subscription, setSubscription] = useState<SubscriptionSummary | null>(null);
   const [justSharedId, setJustSharedId] = useState<string | null>(null);
-  const { api, isAuthReady, isAnonymous } = useApi();
+  const { api, isAnonymous } = useApi();
   const navigate = useNavigate();
   const { documentId } = useParams();
-  const user = useAuthUser();
+  const { user, authEnabled, signOut } = useAuth();
   const { billingEnabled } = useSubscription();
   const isMobile = useIsMobile();
   const { setOpenMobile } = useSidebar();
   const closeMobileSheet = () => { if (isMobile) setOpenMobile(false); };
 
   useEffect(() => {
-    if (!isAuthReady || isAnonymous) return;
+    if (isAnonymous) return;
 
     api.get<SubscriptionSummary>("/v1/users/me/subscription")
       .then((r) => setSubscription(r.data))
       .catch(() => {});
-  }, [api, isAuthReady, isAnonymous, user]);
+  }, [api, isAnonymous, user]);
 
   useEffect(() => {
     const el = sentinelRef.current;
@@ -176,10 +175,13 @@ function DocumentSidebar() {
 
   const handleAuth = () => {
     if (!authEnabled) return;
+    closeMobileSheet();
     if (user) {
-      user.signOut();
+      signOut()
+        .then(() => navigate("/"))
+        .catch((err) => console.error("Sign-out failed:", err));
     } else {
-      navigate("/handler/signin");
+      navigate("/auth/sign-in");
     }
   };
 
@@ -379,7 +381,7 @@ function DocumentSidebar() {
                 <SidebarMenuButton size="lg">
                   <User2 />
                   <span className="truncate">
-                    {user?.displayName || user?.primaryEmail || (authEnabled ? "Guest" : "Settings")}
+                    {user?.name || user?.email || (authEnabled ? "Guest" : "Settings")}
                   </span>
                   <ChevronUp className="ml-auto" />
                 </SidebarMenuButton>

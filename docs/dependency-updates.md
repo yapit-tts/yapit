@@ -2,7 +2,7 @@
 
 ## Stack Auth Update Guide
 
-Stack Auth has two components: the Docker server image (`stackauth/server:<commit-sha>`) and the frontend SDK (`@stackframe/react`). See [[stack-auth]] for the full integration reference.
+The Docker server image (`stackauth/server:<commit-sha>`) runs as the rollback path for the gateway's own auth; no app code calls it ([[stack-auth]]).
 
 ### Pre-Update Checklist
 
@@ -20,11 +20,6 @@ Stack Auth has two components: the Docker server image (`stackauth/server:<commi
 3. Run `make dev-cpu` — let migrations run on dev DB
 4. Check Stack Auth container logs for migration output
 5. If schema changed significantly: regenerate `dev/init-db.sql` (see [[stack-auth]])
-
-**Client SDK:**
-1. `cd frontend && npm install @stackframe/react@<version>` (pin exact version, no `^`)
-2. Run `npm run typecheck` — new fields on user objects may affect types
-3. Test all auth flows
 
 **Deploy to prod:**
 1. Push to main → CI builds new stack-auth image
@@ -49,9 +44,6 @@ Stack Auth has two components: the Docker server image (`stackauth/server:<commi
 - **Env var drift** — They rename/remove env vars without deprecation. `STACK_DIRECT_DATABASE_CONNECTION_STRING` silently removed (Prisma v7). `STACK_RUN_MIGRATIONS` replaced by `STACK_SKIP_MIGRATIONS` (inverted logic). Always diff the current `.env` reference against ours.
 - **ClickHouse mandatory** — Since Jan 28, 2026 (`484c3a63`), the migration runner requires ClickHouse unconditionally. We run a lightweight container; see [[stack-auth]].
 - **`STACK_SERVER_SECRET` must be base64url** — Used for JWT signing, NOT the same as the API server key (`ssk_*`). The old server didn't validate this at runtime; the new one does. Generate with `openssl rand -base64 32 | tr '+/' '-_' | tr -d '='`.
-- **SDK and server must be upgraded together** — The SDK is semver-compatible but newer versions break auth without a matching server (causes `StackAssertionError`, blank page). Never update one without the other.
-- **Never run `npm audit fix` in frontend** — It bumps `@stackframe/react` (transitive deps have CVEs). Update direct deps individually with `npm install <pkg>@latest` and verify `npm ls @stackframe/react` is unchanged after each.
-- **NPM semver is loose** — All versions stay within `2.8.x` but internal deps have major bumps (jose 5→6, oauth4webapi 2→3). The SDK bundles these, so they shouldn't affect us directly, but behavior changes are possible.
 - **Migration backfills** — Some migrations backfill data across all rows (e.g., `lastActiveAt`). Safe for small DBs but could be slow on large ones.
 - **Swarm race condition on first deploy** — ClickHouse container may not be ready when stack-auth starts. Swarm doesn't support `depends_on`. A second deploy usually works. Also: Swarm bakes env_file into service specs — changing any var in `.env` restarts ALL services using that env_file (discovered during email setup debugging — Swarm env_file baking caused spurious postgres restarts).
 - **Old image + new migrations = seed crash** — If the old image runs new migrations (e.g., Swarm pulls wrong image), the seed may crash on config overrides the old code doesn't understand. The fix is in the new image (commit `dff0ddd1`). Ensure CI has built the new image before deploying.
@@ -63,7 +55,6 @@ See [[stack-auth]] for the full file reference. Critical ones for upgrades:
 | File | Why |
 |------|-----|
 | `docker/Dockerfile.stackauth` | Pin new commit SHA |
-| `frontend/package.json` | Pin new SDK version |
 | `.env.dev` / `.env.prod` / `.env.template` | Clean up dead env vars |
 | `frontend/src/pages/AccountSettingsPage.tsx` | CSS selector hack to verify |
 | `dev/init-db.sql` | Regenerate after major upgrades |

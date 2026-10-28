@@ -424,3 +424,79 @@ class UserPreferences(SQLModel, table=True):
         default_factory=lambda: datetime.now(tz=dt.UTC),
         sa_column=Column(DateTime(timezone=True)),
     )
+
+
+# Auth. Every other table keeps `user_id` as a plain string without a foreign key,
+# because anonymous ids (`anon-…`) share those columns and have no account row.
+
+
+class UserAccount(SQLModel, table=True):
+    """A signed-up user. Ids migrated from Stack Auth keep their Stack Auth value."""
+
+    id: str = Field(primary_key=True)
+    email: str = Field(unique=True)  # lowercased and trimmed
+    name: str | None = Field(default=None)
+    created: datetime = Field(
+        default_factory=lambda: datetime.now(tz=dt.UTC),
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+    last_sign_in: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
+
+
+class OAuthIdentity(SQLModel, table=True):
+    """A Google or GitHub account that signs in to a user."""
+
+    provider: str = Field(primary_key=True)
+    provider_account_id: str = Field(primary_key=True)
+    user_id: str = Field(foreign_key="useraccount.id", ondelete="CASCADE", index=True)
+    email: str | None = Field(default=None)
+    created: datetime = Field(
+        default_factory=lambda: datetime.now(tz=dt.UTC),
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
+
+class AuthSessionKind(StrEnum):
+    browser = auto()  # the session cookie
+    api = auto()  # a bearer API token
+
+
+class AuthSession(SQLModel, table=True):
+    """A browser session or an API token, stored by the SHA-256 of its secret."""
+
+    token_hash: str = Field(primary_key=True)
+    user_id: str = Field(foreign_key="useraccount.id", ondelete="CASCADE", index=True)
+    kind: AuthSessionKind
+    label: str | None = Field(default=None)
+    created: datetime = Field(
+        default_factory=lambda: datetime.now(tz=dt.UTC),
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+    expires: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
+    last_used: datetime = Field(
+        default_factory=lambda: datetime.now(tz=dt.UTC),
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
+
+class EmailChallengePurpose(StrEnum):
+    sign_in = auto()
+    change_email = auto()
+
+
+class EmailChallenge(SQLModel, table=True):
+    """One emailed sign-in link and code, usable once before `expires`."""
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    email: str = Field(index=True)
+    purpose: EmailChallengePurpose
+    user_id: str | None = Field(default=None, foreign_key="useraccount.id", ondelete="CASCADE")
+    token_hash: str = Field(unique=True)
+    code_hash: str
+    attempts: int = Field(default=0)
+    created: datetime = Field(
+        default_factory=lambda: datetime.now(tz=dt.UTC),
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+    expires: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
+    consumed: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))

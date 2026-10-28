@@ -6,7 +6,7 @@
 |------|---------|--------|
 | `.env.sops` | Encrypted secrets (SOPS + age) | Yes |
 | `.env` | Decrypted secrets for local dev | No |
-| `.env.dev` | Public dev config (ports, Stack Auth dev project) | Yes |
+| `.env.dev` | Public dev config | Yes |
 | `.env.prod` | Non-sensitive prod config | Yes |
 | `.env.template` | Documents required secrets | Yes |
 
@@ -14,7 +14,7 @@
 
 | File | Purpose |
 |------|---------|
-| `frontend/.env.development` | Local dev (API URLs, Stack Auth) |
+| `frontend/.env.development` | Local dev (API base URL; Vite proxies it) |
 | `frontend/.env.production` | Production build |
 
 ## Encrypted Secrets (.env.sops)
@@ -42,6 +42,3 @@ Age private key location: `~/.config/sops/age/yapit.txt`
 
 Read `.env.dev` in full — it has all public config with comments explaining each variable.
 
-## Frontend Client Keys
-
-Stack Auth CLIENT_KEY is intentionally public (embedded in JS bundle). Safe to commit in `frontend/.env.production`.

@@ -21,6 +21,7 @@ from yapit.contracts import (
 from yapit.gateway.api.v1 import routers as v1_routers
 from yapit.gateway.api_tts_dispatcher import run_api_tts_dispatcher
 from yapit.gateway.auth import ANONYMOUS_ID_PREFIX
+from yapit.gateway.auth.mailer import create_mailer
 from yapit.gateway.billing_consumer import run_billing_consumer
 from yapit.gateway.billing_sync import run_billing_sync_loop
 from yapit.gateway.cache import Cache
@@ -45,7 +46,6 @@ from yapit.gateway.metrics import init_metrics_db, start_metrics_writer, stop_me
 from yapit.gateway.openai_tts_adapter import OpenAITTSAdapter
 from yapit.gateway.rate_limit import limiter
 from yapit.gateway.result_consumer import run_result_consumer
-from yapit.gateway.stack_auth import close_stack_auth_client, init_stack_auth_client
 from yapit.gateway.storage import ImageStorage
 from yapit.gateway.supervision import supervised
 from yapit.gateway.visibility_scanner import run_visibility_scanner
@@ -83,8 +83,7 @@ async def lifespan(app: FastAPI):
     )
 
     init_defuddle_client(settings.defuddle_service_url)
-    if settings.stack_auth_api_host:
-        init_stack_auth_client(settings.stack_auth_api_host)
+    app.state.mailer = create_mailer(settings)
 
     # Document extractors
     if settings.ai_processor == "gemini":
@@ -237,7 +236,6 @@ async def lifespan(app: FastAPI):
     for cache in all_caches:
         await cache.close()
 
-    await close_stack_auth_client()
     await close_defuddle_client()
     await stop_metrics_writer()
     await close_db()
