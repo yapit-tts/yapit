@@ -17,9 +17,13 @@ The seed, with each user's active days:
 Last sign-in: alice 10-20 23:30 at UTC-2 = 10-21, carol 10-27, dave 09-15,
 frank 10-29 (after the as-of day, so blank); bob and erin never signed in.
 
+frank has a long email and a long name, which no table may cut short.
+
     anon-1: doc 10-25, TTS 10-27.  anon-2: doc 09-01.  A deleted account's doc 10-27 counts for nobody.
 """
 
+import csv
+import io
 import json
 import os
 import re
@@ -49,6 +53,8 @@ from yapit.gateway.domain_models import (
 
 USER_STATS = Path(__file__).resolve().parents[2] / "scripts" / "user_stats.py"
 AS_OF = "2026-10-28"
+FRANK_DOMAIN = "physics.example-university.org"
+EMAILS = [f"{n}@example.com" for n in ("alice", "bob", "carol", "dave", "erin")] + [f"frank@{FRANK_DOMAIN}"]
 
 
 def at(stamp: str) -> datetime:
@@ -61,13 +67,20 @@ def seed(session: Session) -> None:
     session.add_all(plans.values())
     session.flush()
 
-    def user(name: str, signed_up: str, providers: tuple[str, ...] = (), last_sign_in: str | None = None) -> str:
+    def user(
+        name: str,
+        signed_up: str,
+        providers: tuple[str, ...] = (),
+        last_sign_in: str | None = None,
+        domain: str = "example.com",
+        full_name: str | None = None,
+    ) -> str:
         uid = f"user-{name}"
         session.add(
             UserAccount(
                 id=uid,
-                email=f"{name}@example.com",
-                name=name.title(),
+                email=f"{name}@{domain}",
+                name=full_name or name.title(),
                 created=at(signed_up),
                 last_sign_in=last_sign_in and at(last_sign_in),
             )
@@ -121,7 +134,14 @@ def seed(session: Session) -> None:
     doc(erin, "2026-10-26")
     subscribe(erin, PlanTier.free, SubscriptionStatus.active)
 
-    user("frank", "2026-10-27", ("google",), last_sign_in="2026-10-29")
+    user(
+        "frank",
+        "2026-10-27",
+        ("google",),
+        last_sign_in="2026-10-29",
+        domain=FRANK_DOMAIN,
+        full_name="Frank Alexander Mustermann",
+    )
     user("gina", "2026-11-02", ("google",))
 
     doc("anon-1", "2026-10-25")
@@ -189,13 +209,16 @@ def test_overview_counts_the_seed(database_url: str) -> None:
 def test_user_table_counts_the_seed(database_url: str) -> None:
     rows = {r["email"].split("@")[0]: r for r in stats_json(database_url, "users")}
 
-    assert {name: (r["last_active"], r["active_days_30"], r["documents"], r["plan"]) for name, r in rows.items()} == {
-        "alice": ("2026-10-20", 1, 2, "plus"),
-        "bob": ("2026-09-29", 1, 1, "free"),
-        "carol": ("2026-10-27", 1, 2, "basic trialing"),
-        "dave": ("2026-09-18", 0, 0, "basic past due"),
-        "erin": ("2026-10-26", 1, 1, "free"),
-        "frank": ("2026-10-27", 1, 0, "free"),
+    assert {
+        name: (r["last_active"], r["active_days_30"], r["documents"], r["plan"], r["status"])
+        for name, r in rows.items()
+    } == {
+        "alice": ("2026-10-20", 1, 2, "plus", "active"),
+        "bob": ("2026-09-29", 1, 1, "free", ""),
+        "carol": ("2026-10-27", 1, 2, "basic", "trialing"),
+        "dave": ("2026-09-18", 0, 0, "basic", "past_due"),
+        "erin": ("2026-10-26", 1, 1, "free", "active"),
+        "frank": ("2026-10-27", 1, 0, "free", ""),
     }
     assert rows["carol"]["methods"] == ["github", "google"]
     assert rows["carol"]["signed_up"] == "2026-09-05"
@@ -248,8 +271,6 @@ def test_retention_counts_the_seed(database_url: str) -> None:
         # Rich fits a wide table by squeezing columns to an ellipsis or dropping
         # them, so a row has to come out whole, not just short enough.
         ("overview", ["github + google", "1"]),
-        ("users", ["dave@example.com", "26-09-15", "26-09-15", "email", "40d", "0", "0", "basic past due"]),
-        ("users", ["bob@example.com", "26-08-20", "GH", "29d", "1", "1", "free"]),
         ("retention", ["2026-08", "2", "2 100%", "2 100%", "1  50%"]),
     ],
 )
@@ -290,9 +311,86 @@ def test_prod_reads_are_read_only_copies(tmp_path: Path) -> None:
         assert sql.startswith("COPY (SELECT")
 
 
-def test_wide_user_table_shows_names(database_url: str) -> None:
+@pytest.mark.parametrize("wide", [False, True])
+def test_user_table_never_cuts_an_email(database_url: str, wide: bool) -> None:
+    """At 80 columns frank's 36-character email does not fit beside the other
+    columns, so the table runs wider than the terminal rather than cut it.
+    """
     done = user_stats(
-        "--database-url", database_url, "--as-of", AS_OF, "users", "--wide", env={**os.environ, "COLUMNS": "120"}
+        "--database-url",
+        database_url,
+        "--as-of",
+        AS_OF,
+        "users",
+        *(["--wide"] if wide else []),
+        env={**os.environ, "COLUMNS": "80"},
     )
     assert done.returncode == 0, done.stderr
-    assert re.search(r"dave@example\.com\s+Dave\s+26-09-15\s+26-09-15", done.stdout)
+    for email in EMAILS:
+        assert re.search(rf"(^|\s){re.escape(email)}\s", done.stdout, re.MULTILINE), email
+    # name is the column that gives way: cut short with --wide, absent without.
+    assert "Frank Alexander Mustermann" not in done.stdout
+    assert ("Frank…" in done.stdout) == wide
+    assert re.search(
+        r"dave@example\.com\s+(Dave\s+)?26-09-15\s+26-09-15\s+email\s+40d\s+0\s+0\s+basic past due", done.stdout
+    )
+
+
+def test_user_table_of_typical_emails_fits_80_columns(database_url: str) -> None:
+    done = user_stats(
+        "--database-url",
+        database_url,
+        "--as-of",
+        AS_OF,
+        "users",
+        "--method",
+        "github",
+        env={**os.environ, "COLUMNS": "80"},
+    )
+    assert done.returncode == 0, done.stderr
+    assert re.search(r"bob@example\.com\s+26-08-20\s+GH\s+29d\s+1\s+1\s+free", done.stdout)
+    assert max(len(line) for line in done.stdout.splitlines()) <= 80
+
+
+def test_users_csv(database_url: str) -> None:
+    done = user_stats("--database-url", database_url, "--as-of", AS_OF, "users", "--csv", "--sort", "email")
+    assert done.returncode == 0, done.stderr
+    rows = list(csv.reader(io.StringIO(done.stdout)))
+    assert rows[0] == [
+        "email",
+        "name",
+        "signed up",
+        "last sign-in",
+        "via",
+        "last active",
+        "days/30",
+        "docs",
+        "plan",
+        "status",
+    ]
+    assert rows[1] == [
+        "alice@example.com",
+        "Alice",
+        "2026-08-03",
+        "2026-10-21",
+        "google",
+        "2026-10-20",
+        "1",
+        "2",
+        "plus",
+        "active",
+    ]
+    assert rows[3] == [
+        "carol@example.com",
+        "Carol",
+        "2026-09-05",
+        "2026-10-27",
+        "github+google",
+        "2026-10-27",
+        "1",
+        "2",
+        "basic",
+        "trialing",
+    ]
+    assert rows[6][:5] == [f"frank@{FRANK_DOMAIN}", "Frank Alexander Mustermann", "2026-10-27", "", "google"]
+    assert len(rows) == 7

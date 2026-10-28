@@ -42,6 +42,7 @@ from typing import Annotated, Literal
 import tyro
 from rich import box
 from rich.console import Console
+from rich.measure import Measurement
 from rich.table import Table
 
 
@@ -79,7 +80,7 @@ class Users:
     JSON schema (--json):
 
         [{"email": "str", "name": "str", "signed_up": "YYYY-MM-DD", "last_sign_in": "YYYY-MM-DD|null", "methods": ["google|github"],
-          "last_active": "YYYY-MM-DD", "last_active_days_ago": int, "active_days_30": int, "documents": int, "plan": "str"}]
+          "last_active": "YYYY-MM-DD", "last_active_days_ago": int, "active_days_30": int, "documents": int, "plan": "str", "status": "str"}]
     """
 
     sort: SortKey = "signed-up"
@@ -92,6 +93,8 @@ class Users:
     """Only users linked to this provider, or with none linked."""
     limit: int | None = None
     """Show at most this many rows."""
+    csv: bool = False
+    """Print the table as CSV, with full dates and plan and status apart."""
     wide: bool = False
     """Show the name column too; the table is then wider than 80 columns."""
 
@@ -146,7 +149,7 @@ def main(cli: Cli) -> None:
             render = render_overview
         case Users() as cmd:
             data = user_rows(people, cli.as_of, cmd)
-            render = partial(render_users, wide=cmd.wide)
+            render = render_users_csv if cmd.csv else partial(render_users, wide=cmd.wide)
         case Retention() as cmd:
             data = retention(people, cli.as_of, cmd.cohorts, cmd.months)
             render = render_retention
@@ -232,9 +235,8 @@ def overview(people: People, as_of: date, weeks: int, months: int) -> dict:
     }
 
 
-def plan_label(user: User) -> str:
-    plan = user.plan or "free"
-    return plan if user.status in ("", "active") else f"{plan} {user.status.replace('_', ' ')}"
+def plan_label(row: dict) -> str:
+    return row["plan"] if row["status"] in ("", "active") else f"{row['plan']} {row['status'].replace('_', ' ')}"
 
 
 def user_rows(people: People, as_of: date, cmd: Users) -> list[dict]:
@@ -255,7 +257,8 @@ def user_rows(people: People, as_of: date, cmd: Users) -> list[dict]:
             "last_active_days_ago": (as_of - max(u.active_days)).days,
             "active_days_30": sum(as_of - timedelta(days=30) < d <= as_of for d in u.active_days),
             "documents": u.documents,
-            "plan": plan_label(u),
+            "plan": u.plan or "free",
+            "status": u.status,
         }
         for u in users
     ]
@@ -360,10 +363,10 @@ def render_users(console: Console, rows: list[dict], wide: bool) -> None:
     table = Table(
         box=box.SIMPLE_HEAD, pad_edge=False, collapse_padding=True, caption=f"{len(rows)} users", caption_justify="left"
     )
-    # Rich shrinks only the columns that may wrap, so email is the one that gives way.
-    table.add_column("email", overflow="ellipsis")
+    # Rich shrinks only the columns that may wrap, so name is the one that gives way.
+    table.add_column("email", no_wrap=True)
     if wide:
-        table.add_column("name", no_wrap=True, max_width=10, overflow="ellipsis")
+        table.add_column("name", max_width=12, no_wrap=True, overflow="ellipsis")
     table.add_column("signed\nup", no_wrap=True)
     table.add_column("last\nsign-in", no_wrap=True, min_width=8)
     table.add_column("via", no_wrap=True)
@@ -382,10 +385,43 @@ def render_users(console: Console, rows: list[dict], wide: bool) -> None:
             f"{r['last_active_days_ago']}d",
             str(r["active_days_30"]),
             str(r["documents"]),
-            r["plan"],
+            plan_label(r),
         )
+    # Rich squeezes every column, email included, to fit the terminal, so the
+    # table is printed at its own width: name shrinks first, then the table runs
+    # wider than the terminal rather than cut an email.
+    unbounded = console.options.update(width=10_000)
+    natural = Measurement.get(console, unbounded, table).maximum
+    if wide and natural > console.width:
+        name = table.columns[1]
+        name_width = min(12, max((len(r["name"]) for r in rows), default=4))
+        name.max_width = max(6, name_width - (natural - console.width))
+        natural = Measurement.get(console, unbounded, table).maximum
+    console = Console(width=max(natural, console.width))
     console.print(table)
-    console.print("Dates YY-MM-DD. G Google, GH GitHub. idle: days since active. days/30: of last 30.", style="dim")
+    console.print("G Google, GH GitHub. idle: days since active. days/30: active days of the last 30.", style="dim")
+
+
+def render_users_csv(console: Console, rows: list[dict]) -> None:
+    out = csv.writer(sys.stdout)
+    out.writerow(
+        ["email", "name", "signed up", "last sign-in", "via", "last active", "days/30", "docs", "plan", "status"]
+    )
+    for r in rows:
+        out.writerow(
+            [
+                r["email"],
+                r["name"],
+                r["signed_up"],
+                r["last_sign_in"] or "",
+                "+".join(r["methods"]) or "email",
+                r["last_active"],
+                r["active_days_30"],
+                r["documents"],
+                r["plan"],
+                r["status"],
+            ]
+        )
 
 
 def render_retention(console: Console, data: dict) -> None:
