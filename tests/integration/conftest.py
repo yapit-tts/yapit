@@ -1,11 +1,11 @@
 """Shared fixtures and utilities for integration tests."""
 
 import asyncio
+import importlib.util
 import json
-import subprocess
-import sys
 import uuid
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import httpx
 import pytest
@@ -38,42 +38,43 @@ async def provision_subscription(user_id: str, plan_id: int = 2) -> None:
     await engine.dispose()
 
 
-def create_unique_user() -> dict:
+def _load_create_user_script():
+    path = Path(__file__).resolve().parents[2] / "scripts" / "create_user.py"
+    spec = importlib.util.spec_from_file_location("create_user", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+# In-process, not a subprocess: each subprocess would import the whole gateway again, seconds per user
+create_user_script = _load_create_user_script()
+
+
+async def create_unique_user() -> dict:
     """A new user with an API token minted for it by scripts/create_user.py."""
     test_id = str(uuid.uuid4())[:8]
     email = f"test-{test_id}@example.com"
-    cmd = [
-        sys.executable,
-        "scripts/create_user.py",
-        "--email",
-        email,
-        "--name",
-        f"Test User {test_id}",
-        "--label",
-        "integration-test",
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
-    if result.returncode != 0:
-        raise RuntimeError(f"Failed to create user: {result.stdout}\n{result.stderr}")
-    return {
-        "id": result.stderr.strip().split("\n")[-1],
-        "email": email,
-        "token": result.stdout.strip().split("\n")[-1],
-    }
+    user_id, token = await create_user_script.create_user(
+        create_user_script.Args(
+            email=email, name=f"Test User {test_id}", label="integration-test", database_url=TEST_DATABASE_URL
+        )
+    )
+    return {"id": user_id, "email": email, "token": token}
 
 
 @pytest.fixture
 async def subscribed_user():
     """Create a test user with a Basic subscription (unlimited kokoro)."""
-    user_data = create_unique_user()
+    user_data = await create_unique_user()
     await provision_subscription(user_data["id"])
     return user_data
 
 
 @pytest.fixture
-def regular_user():
+async def regular_user():
     """Create a unique regular test user."""
-    return create_unique_user()
+    return await create_unique_user()
 
 
 async def make_client(auth_token: str | None = None):
