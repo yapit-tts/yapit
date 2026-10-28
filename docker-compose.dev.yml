@@ -17,12 +17,6 @@ services:
       - gateway-data:/data/gateway
       - images:/data/images
 
-  stack-auth:
-    env_file: ./.env.dev
-    ports:
-      - "8101:8101"
-      - "8102:8102"
-      
   redis:
     ports:
       - "127.0.0.1:6379:6379"
@@ -31,8 +25,6 @@ services:
     env_file: ./.env.dev
     ports:
       - "5432:5432"
-    volumes:
-      - "./dev/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql"
 
   metrics-db:
     ports:

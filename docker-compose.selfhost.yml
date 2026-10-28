@@ -6,7 +6,6 @@ volumes:
   extraction-cache:
   gateway-data:
   images:
-  clickhouse-data:
 
 services:
   frontend:
@@ -29,7 +28,6 @@ services:
     env_file: ./.env.selfhost
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./dev/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
     ports:
       - "5432:5432"
 
@@ -46,13 +44,6 @@ services:
       - images:/data/images
     ports:
       - "8000:8000"
-
-  stack-auth:
-    profiles: ["auth"]
-    env_file: ./.env.selfhost
-    ports:
-      - "8101:8101"
-      - "8102:8102"
 
   redis:
     # Real deployment, so unacked billing events must survive a container recreation.

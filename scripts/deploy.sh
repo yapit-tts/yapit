@@ -59,7 +59,6 @@ scp .env "$VPS_HOST:$DEPLOY_DIR/.env"
 scp .env.prod "$VPS_HOST:$DEPLOY_DIR/"
 ssh "$VPS_HOST" "mkdir -p $DEPLOY_DIR/docker"
 scp docker/metrics-init.sql "$VPS_HOST:$DEPLOY_DIR/docker/"
-scp docker/clickhouse-config.xml "$VPS_HOST:$DEPLOY_DIR/docker/"
 scp scripts/sync-cf-firewall.sh "$VPS_HOST:/opt/yapit/sync-cf-firewall.sh"
 
 # Snapshot gateway UpdateStatus before deploy so we can detect new updates vs stale state.
@@ -69,8 +68,10 @@ scp scripts/sync-cf-firewall.sh "$VPS_HOST:/opt/yapit/sync-cf-firewall.sh"
 GW_PRE_DEPLOY=$(ssh "$VPS_HOST" "docker service inspect ${STACK_NAME}_gateway --format '{{json .UpdateStatus}}' 2>/dev/null || echo null") || die "Failed to snapshot gateway state (SSH error)"
 
 # --- Deploy stack ---
+# --prune removes the stack's services that docker-compose.prod.yml no longer defines;
+# without it they keep running.
 log "Deploying stack for commit: ${GIT_COMMIT:0:12}"
-ssh "$VPS_HOST" "cd $DEPLOY_DIR && set -a && source .env && source .env.prod && set +a && GIT_COMMIT=${GIT_COMMIT} docker stack deploy -c docker-compose.prod.yml $STACK_NAME --with-registry-auth"
+ssh "$VPS_HOST" "cd $DEPLOY_DIR && set -a && source .env && source .env.prod && set +a && GIT_COMMIT=${GIT_COMMIT} docker stack deploy -c docker-compose.prod.yml $STACK_NAME --with-registry-auth --prune"
 
 # --- Verify ---
 if [ "${SKIP_VERIFY:-0}" = "1" ]; then
