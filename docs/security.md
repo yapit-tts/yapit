@@ -10,6 +10,7 @@ See [[security-audits]] for the consolidated findings, fix verification, and acc
 - **Browser sessions are an opaque cookie** (`__Host-yapit_session` over https, HttpOnly, SameSite=Lax), looked up by its SHA-256 in `authsession` on every request, so sign-out and account deletion end a session at once. CSRF: SameSite=Lax plus an `Origin` check against `APP_URL` on cookie-authenticated unsafe methods and on the WebSocket handshake. See [[auth]].
 - **API tokens** (`yapit_…`, bearer header) are stored hashed, never expire, and skip the Origin check, since no browser attaches them on its own.
 - **Email sign-in** codes are 6 digits, so wrong guesses are capped per challenge, sign-in emails per address, and both endpoints per IP. See [[auth]].
+- **Google/GitHub sign-in** binds each flow's state to the browser by cookie (login CSRF), uses PKCE, checks `iss` (RFC 9207, mix-up), and links an identity to an existing account by email only when the provider marks that email verified. See [[auth]].
 - **Content-addressed resources** (audio variants, images) have no per-user ownership check by design — they're shared cache keys (SHA256 of content). This is a deliberate tradeoff for cache efficiency, not a bug.
 
 ## SSRF
@@ -22,7 +23,7 @@ See [[security-audits]] for the consolidated findings, fix verification, and acc
 
 - **No `dangerouslySetInnerHTML`** anywhere. Frontend uses a typed AST renderer — backend parses markdown into AST, frontend renders via React components. Unknown node types return `null`. Raw `html_inline` nodes dropped in `transformer.py`.
 - **Link href sanitization** in `inlineContent.tsx`: rejects `javascript:`, `vbscript:`, `data:` URI schemes (defense-in-depth behind markdown-it's own filtering). All rendered links have `rel="noopener noreferrer"` and images have `referrerPolicy="no-referrer"`.
-- **CSP not deployed** (deferred since beta). Blocker: inline `<style>` in `AccountSettingsPage.tsx` needs refactoring to CSS file first.
+- **CSP not deployed** (deferred since beta). Blocker: inline `<style>` in `batchLoadingAnimations.tsx` needs refactoring to CSS file first.
 - Security headers in `frontend/nginx.conf`: HSTS, X-Frame-Options DENY, X-Content-Type-Options nosniff, Referrer-Policy.
 
 ## Infrastructure
