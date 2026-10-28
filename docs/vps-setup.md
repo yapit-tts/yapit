@@ -340,6 +340,15 @@ The deploy that first runs the gateway's auth also runs the revisions that copy 
 2. Deploy (`make prod-env && make deploy`).
 3. Once the gateway is up on the new auth, remove ClickHouse's volume: `ssh root@yapit-prod "docker volume rm yapit_clickhouse-data"`.
 
+To go back, restore the dump into an emptied database before deploying a commit from before the cutover, whose code knows neither the gateway's auth tables nor their Alembic revisions. Everything written since the dump is lost:
+
+```bash
+ssh root@yapit-prod "docker service scale yapit_gateway=0"
+ssh root@yapit-prod 'docker exec $(docker ps -qf "name=yapit_postgres") sh -c "dropdb -U yapit_prod --force yapit_prod && createdb -U yapit_prod yapit_prod"'
+ssh root@yapit-prod 'docker exec -i $(docker ps -qf "name=yapit_postgres") pg_restore -U yapit_prod -d yapit_prod' < yapit_prod-before-auth-cutover.dump
+GIT_COMMIT=<pre-cutover sha> ./scripts/deploy.sh
+```
+
 ## Operations
 
 ### Service status
@@ -368,7 +377,7 @@ ssh root@yapit-prod 'docker exec $(docker ps -qf "name=yapit_postgres") psql -U 
 # Quick rollback
 ssh root@yapit-prod "docker service rollback yapit_gateway"
 
-# Rollback to specific commit
+# Rollback to specific commit (one from before the auth cutover needs the dump restored first: Cutover from Stack Auth)
 GIT_COMMIT=<old_sha> ./scripts/deploy.sh
 ```
 

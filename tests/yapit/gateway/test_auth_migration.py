@@ -84,6 +84,7 @@ STACK_AUTH_TABLES_NOT_READ = (
     "ProjectWrapperCodes", "ProvisionedProject", "SchemaMigration", "SessionReplay", "SessionReplayChunk",
     "SubscriptionInvoice", "Team", "TeamMember", "TeamMemberDirectPermission", "Tenancy", "ThreadMessage",
     "UserNotificationPreference", "VerificationCode",
+    "_prisma_migrations",  # not on prod, but older Stack Auth builds a selfhost may have run kept it
 )  # fmt: skip
 STACK_AUTH_ENUM_TYPES_NOT_READ = (
     "CustomerType", "DraftThemeMode", "EmailOutboxCreatedWith", "EmailOutboxSimpleStatus", "EmailOutboxSkippedReason",
