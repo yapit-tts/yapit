@@ -6,8 +6,8 @@ DEV_COMPOSE = docker compose -p yapit-dev --profile auth --profile metrics --env
 SELFHOST_COMPOSE = docker compose --env-file .env.selfhost -f docker-compose.yml -f docker-compose.selfhost.yml
 
 define create-dev-user
-	@echo "Creating dev user..."
-	uv run --env-file=.env.dev python scripts/create_user.py
+	@echo "Creating dev user dev@example.com (prints an API token for it)..."
+	uv run python scripts/create_user.py
 endef
 
 check-dev-env:
@@ -52,13 +52,9 @@ self-host-down:
 dev-user:
 	$(call create-dev-user)
 
-token: dev-user
-	@curl -s -X POST http://localhost:8102/api/v1/auth/password/sign-in \
-	  -H "X-Stack-Access-Type: client" \
-	  -H "X-Stack-Project-Id: $$(grep STACK_AUTH_PROJECT_ID .env.dev | cut -d= -f2)" \
-	  -H "X-Stack-Publishable-Client-Key: $$(grep STACK_AUTH_CLIENT_KEY .env.dev | cut -d= -f2)" \
-	  -H "Content-Type: application/json" \
-	  -d '{"email": "dev@example.com", "password": "dev-password-123"}' | jq -r '.access_token'
+# A new API token for dev@example.com, alone on stdout: curl -H "Authorization: Bearer $$(make -s dev-token)" ...
+dev-token:
+	@uv run python scripts/create_user.py 2>/dev/null
 
 test: test-unit test-frontend test-integration
 

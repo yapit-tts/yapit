@@ -26,44 +26,6 @@ from reportlab.pdfgen import canvas
 from rich.console import Console
 
 
-def _load_env_file(path: Path) -> dict[str, str]:
-    env = {}
-    if path.exists():
-        for line in path.read_text().splitlines():
-            if "=" in line and not line.startswith("#"):
-                key, value = line.split("=", 1)
-                env[key.strip()] = value.strip()
-    return env
-
-
-def _load_stack_auth_creds() -> tuple[str, str]:
-    env_file = Path(__file__).parent.parent / "frontend" / ".env.production"
-    project_id, client_key = None, None
-    for line in env_file.read_text().splitlines():
-        if line.startswith("VITE_STACK_AUTH_PROJECT_ID="):
-            project_id = line.split("=", 1)[1]
-        elif line.startswith("VITE_STACK_AUTH_CLIENT_KEY="):
-            client_key = line.split("=", 1)[1]
-    assert project_id and client_key, f"Missing Stack Auth creds in {env_file}"
-    return project_id, client_key
-
-
-def get_auth_token(base_url: str, email: str, password: str) -> str:
-    project_id, client_key = _load_stack_auth_creds()
-    resp = httpx.post(
-        f"{base_url}/auth/api/v1/auth/password/sign-in",
-        headers={
-            "Content-Type": "application/json",
-            "X-Stack-Access-Type": "client",
-            "X-Stack-Project-Id": project_id,
-            "X-Stack-Publishable-Client-Key": client_key,
-        },
-        json={"email": email, "password": password},
-    )
-    resp.raise_for_status()
-    return resp.json()["access_token"]
-
-
 @dataclass
 class YoloTestResult:
     pages: int
@@ -253,39 +215,25 @@ async def run_yolo_test(
 
 
 def main(
+    token: str,
     base_url: str = "https://yapit.md",
-    token: str = "",
     pages: int = 300,
     concurrent: int = 1,
     ai_transform: bool = True,
     output_dir: Path = Path("scripts/stress_test_results"),
-    env_file: Path = Path(".env"),
 ) -> None:
     """YOLO stress test — submit large synthetic PDFs to stress test YOLO workers processing.
 
-    Auth: add PROD_TEST_EMAIL/PROD_TEST_PASSWORD to .env.sops, run make prod-env.
-    Or pass --token directly.
+    Auth: an API token of the account to test as.
 
     Args:
-        base_url: API base URL
-        token: Auth token (alternative to env file credentials)
+        token: API token (yapit_...) of the account to test as
+        base_url: The app's origin (the API is under /api)
         pages: Pages per PDF
         concurrent: Number of PDFs to upload concurrently
         ai_transform: Use Gemini+YOLO extraction (True) or free markitdown (False)
         output_dir: Directory for results
-        env_file: Env file with TEST_EMAIL/TEST_PASSWORD (run make prod-env first)
     """
-    env = _load_env_file(env_file)
-    email = env.get("TEST_EMAIL", "")
-    password = env.get("TEST_PASSWORD", "")
-
-    if not token and email and password:
-        token = get_auth_token(base_url, email, password)
-
-    if not token:
-        print("Error: Provide --token OR add TEST_EMAIL/TEST_PASSWORD to env file (run make prod-env)")
-        return
-
     console = Console()
     console.print("\n[bold]YOLO Stress Test[/bold]")
     console.print(f"  Pages: {pages}")

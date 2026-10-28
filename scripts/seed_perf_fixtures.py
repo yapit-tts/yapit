@@ -8,57 +8,17 @@ Creates documents at escalating block counts with different section structures.
 Idempotent — skips documents whose titles already exist.
 
 Usage:
-    uv run scripts/seed_perf_fixtures.py
-    uv run scripts/seed_perf_fixtures.py --base-url https://staging.example.com
-    uv run scripts/seed_perf_fixtures.py --sizes 100 500 1000  # custom sizes
+    uv run scripts/seed_perf_fixtures.py --token "$(make -s dev-token)"
+    uv run scripts/seed_perf_fixtures.py --token yapit_... --base-url https://staging.example.com
+    uv run scripts/seed_perf_fixtures.py --token yapit_... --sizes 100 500 1000  # custom sizes
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 
 import httpx
 import tyro
-
-# --- Auth ---
-
-
-def _load_stack_auth_creds(env: str = "development") -> tuple[str, str]:
-    env_file = Path(__file__).parent.parent / "frontend" / f".env.{env}"
-    project_id, client_key = None, None
-    for line in env_file.read_text().splitlines():
-        if line.startswith("VITE_STACK_AUTH_PROJECT_ID="):
-            project_id = line.split("=", 1)[1]
-        elif line.startswith("VITE_STACK_AUTH_CLIENT_KEY="):
-            client_key = line.split("=", 1)[1]
-    assert project_id and client_key, f"Missing Stack Auth creds in {env_file}"
-    return project_id, client_key
-
-
-def get_auth_token(base_url: str, email: str, password: str) -> str:
-    project_id, client_key = _load_stack_auth_creds()
-
-    # In dev, Stack Auth is at localhost:8102 directly.
-    # In prod, it's proxied at {base_url}/auth/.
-    if "localhost" in base_url:
-        auth_url = "http://localhost:8102/api/v1/auth/password/sign-in"
-    else:
-        auth_url = f"{base_url}/auth/api/v1/auth/password/sign-in"
-
-    resp = httpx.post(
-        auth_url,
-        headers={
-            "Content-Type": "application/json",
-            "X-Stack-Access-Type": "client",
-            "X-Stack-Project-Id": project_id,
-            "X-Stack-Publishable-Client-Key": client_key,
-        },
-        json={"email": email, "password": password},
-    )
-    resp.raise_for_status()
-    return resp.json()["access_token"]
-
 
 # --- Markdown generators ---
 
@@ -175,21 +135,18 @@ def create_document(client: httpx.Client, title: str, content: str) -> str:
 class Args:
     """Seed performance test fixtures into the dev environment."""
 
+    token: str
+    """API token (yapit_...) of the account to seed into."""
     base_url: str = "http://localhost:8000"
-    email: str = "dev@example.com"
-    password: str = "dev-password-123"
     sizes: tuple[int, ...] = (100, 500, 1000, 2000, 5000, 10000)
     variants: tuple[str, ...] = ("flat", "sectioned", "dense")
     dry_run: bool = False
 
 
 def main(args: Args) -> None:
-    print(f"Authenticating as {args.email}...")
-    token = get_auth_token(args.base_url, args.email, args.password)
-
     client = httpx.Client(
         base_url=args.base_url,
-        headers={"Authorization": f"Bearer {token}"},
+        headers={"Authorization": f"Bearer {args.token}"},
     )
 
     existing = get_existing_titles(client)

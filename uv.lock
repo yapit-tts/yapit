@@ -1991,6 +1991,7 @@ test = [
     { name = "pytest-asyncio" },
     { name = "python-dotenv" },
     { name = "testcontainers" },
+    { name = "tyro" },
     { name = "websockets" },
 ]
 
@@ -2029,6 +2030,7 @@ requires-dist = [
     { name = "stripe", specifier = "~=14.2.0" },
     { name = "testcontainers", marker = "extra == 'test'", specifier = "==4.10.0" },
     { name = "tyro", marker = "extra == 'dev'", specifier = ">=1.0.5" },
+    { name = "tyro", marker = "extra == 'test'", specifier = ">=1.0.5" },
     { name = "websockets", marker = "extra == 'test'", specifier = "~=15.0" },
 ]
 provides-extras = ["test", "dev"]

@@ -1,114 +1,80 @@
-#!/usr/bin/env python3
-"""Create a development test user in stack-auth."""
+"""Create a user, or find the one holding this email, and mint it a new API token.
 
-import argparse
-import os
+Prints the token on stdout and the user id on stderr, so `$(...)` captures just the token.
+Writes straight to the database; it waits until the gateway has created its tables.
+
+Examples:
+    uv run python scripts/create_user.py
+    uv run python scripts/create_user.py --email reader@example.com --name Reader --label laptop
+    curl -H "Authorization: Bearer $(uv run python scripts/create_user.py 2>/dev/null)" localhost:8000/v1/auth/session
+"""
+
+import asyncio
 import sys
 import time
+import uuid
+from dataclasses import dataclass
 
-import httpx
+import tyro
+from sqlalchemy import inspect
+from sqlalchemy.exc import DBAPIError
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlmodel import select
+from sqlmodel.ext.asyncio.session import AsyncSession
+
+from yapit.gateway.auth.email_sign_in import normalize_email
+from yapit.gateway.auth.sessions import create_api_token
+from yapit.gateway.domain_models import UserAccount
 
 
-def wait_for_stack_auth(api_host: str, max_attempts: int = 120):
-    """Wait for stack-auth to be ready."""
-    print(f"Waiting for stack-auth at {api_host}...")
-    for i in range(max_attempts):
+@dataclass
+class Args:
+    email: str = "dev@example.com"
+    """The user's email; an existing user with it gets the token."""
+    name: str = "Dev User"
+    """Display name for a user this creates."""
+    label: str = "dev"
+    """The API token's label."""
+    database_url: str = "postgresql+asyncpg://yapit:yapit@localhost:5432/yapit"
+    """The gateway's database (the dev Postgres by default)."""
+    wait_s: int = 120
+    """How long to wait for the gateway to create the useraccount table."""
+
+
+async def create_user(args: Args) -> tuple[str, str]:
+    """The user's id and a new API token for it."""
+    engine = create_async_engine(args.database_url)
+    try:
+        await wait_for_tables(engine, args.wait_s)
+        async with AsyncSession(engine, expire_on_commit=False) as db:
+            email = normalize_email(args.email)
+            account = (await db.exec(select(UserAccount).where(UserAccount.email == email))).first()
+            if account is None:
+                account = UserAccount(id=str(uuid.uuid4()), email=email, name=args.name)
+                db.add(account)
+                await db.flush()
+            token = create_api_token(db, account.id, args.label)
+            await db.commit()
+            return account.id, token
+    finally:
+        await engine.dispose()
+
+
+async def wait_for_tables(engine: AsyncEngine, wait_s: int) -> None:
+    deadline = time.monotonic() + wait_s
+    while True:
         try:
-            r = httpx.get(f"{api_host}/health", timeout=1)
-            if r.status_code == 200:
-                print("Stack-auth is ready!")
-                return True
-        except Exception as e:
-            if i == 0:
-                print(f"Connection error: {e}")
-        time.sleep(1)
-    return False
-
-
-def create_dev_user(
-    email: str = "dev@example.com",
-    password: str = "dev-password-123",
-    is_admin: bool = True,
-    display_name: str = "Dev User",
-):
-    """Create a test user for development."""
-    api_host = os.getenv("DEV_STACK_AUTH_API_HOST", "http://localhost:8102")
-    project_id = os.getenv("STACK_AUTH_PROJECT_ID")
-    server_key = os.getenv("STACK_AUTH_SERVER_KEY")
-
-    if not project_id or not server_key:
-        print("Error: STACK_AUTH_PROJECT_ID and STACK_AUTH_SERVER_KEY must be set")
-        sys.exit(1)
-
-    # Wait for stack-auth
-    if not wait_for_stack_auth(api_host):
-        print("Error: Stack-auth not responding")
-        sys.exit(1)
-
-    headers = {
-        "X-Stack-Access-Type": "server",
-        "X-Stack-Project-Id": project_id,
-        "X-Stack-Secret-Server-Key": server_key,
-    }
-
-    print(f"Using project_id: {project_id}")
-    print(f"Using server_key: {server_key[:10]}...")
-
-    # Try to create user (might already exist)
-    r = httpx.post(
-        f"{api_host}/api/v1/users",
-        headers=headers,
-        json={
-            "primary_email": email,
-            "password": password,
-            "primary_email_verified": True,
-            "primary_email_auth_enabled": True,
-            "display_name": display_name,
-            "server_metadata": {"is_admin": is_admin},
-        },
-    )
-
-    if r.status_code in [200, 201]:
-        user_id = r.json()["id"]
-        print(f"User created with ID: {user_id}")
-        return user_id
-    elif (r.status_code == 400 and "already exists" in r.text) or (r.status_code == 409):
-        print(f"User already exists: {email}")
-        # Try to find existing user
-        r = httpx.get(
-            f"{api_host}/api/v1/users",
-            headers=headers,
-        )
-        if r.status_code == 200:
-            users = r.json()["items"]
-            for user in users:
-                if user.get("primary_email") == email:
-                    return user["id"]
-        return None
-    else:
-        print(f"Error creating user: {r.status_code} {r.text}")
-        sys.exit(1)
-
-
-def main():
-    parser = argparse.ArgumentParser(description="Create a development test user in stack-auth")
-    parser.add_argument("--email", default="dev@example.com", help="User email (default: dev@example.com)")
-    parser.add_argument("--password", default="dev-password-123", help="User password (default: dev-password-123)")
-    parser.add_argument("--no-admin", action="store_true", help="Create regular user instead of admin")
-    parser.add_argument("--display-name", default="Dev User", help="User display name (default: Dev User)")
-
-    args = parser.parse_args()
-
-    user_id = create_dev_user(
-        email=args.email, password=args.password, is_admin=not args.no_admin, display_name=args.display_name
-    )
-
-    print(f"Dev user ready: {args.email} / {args.password}")
-
-    # Return user_id via exit code 0 and print to stderr for programmatic use
-    if user_id:
-        sys.stderr.write(user_id + "\n")
+            async with engine.connect() as conn:
+                if await conn.run_sync(lambda sync_conn: inspect(sync_conn).has_table("useraccount")):
+                    return
+        except (OSError, DBAPIError):
+            pass  # Postgres not accepting connections yet
+        if time.monotonic() > deadline:
+            raise SystemExit(f"No useraccount table after {wait_s}s: is the gateway running?")
+        await asyncio.sleep(1)
 
 
 if __name__ == "__main__":
-    main()
+    user_id, token = asyncio.run(create_user(tyro.cli(Args, description=__doc__)))
+    print(token)
+    sys.stderr.write(user_id + "\n")
