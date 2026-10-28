@@ -24,7 +24,7 @@ Yapit TTS - Open-source text-to-speech platform for reading documents, web pages
 - [[env-config]] — Secrets management, .env files, sops encryption.
 - [[dev-setup]] — **READ BEFORE TESTING.** Test commands, fixture gotchas, uv/pyproject structure. Tests WILL fail without proper env setup.
 - [[dependency-updates]] — Version-specific gotchas, license checking. Always read before updating/adding any dependencies.
-- [[metrics]] — TimescaleDB pipeline, event types, dashboard, health reports. Read when adding/modifying metrics.
+- [[metrics]] — TimescaleDB pipeline, event types, dashboard, health reports, sign-up and return stats (`make user-stats`). Read when adding/modifying metrics.
 - [[logging]] — Loguru JSON logging configuration.
 
 **Testing:** You can claim "all tests pass" if and only if `make test-local` passes (after `make dev-cpu` if you made backend changes).

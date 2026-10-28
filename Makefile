@@ -187,6 +187,11 @@ warm-cache:
 
 # Metrics
 
+# Sign-ups, sign-in methods and returns, read-only from prod Postgres.
+# make user-stats ARGS="users --sort last-active"; ARGS="retention"; ARGS="--help"
+user-stats:
+	@VPS_HOST="$(VPS_HOST)" uv run scripts/user_stats.py $(or $(ARGS),overview)
+
 # Sync metrics from prod TimescaleDB to local DuckDB
 sync-metrics:
 	@mkdir -p data
