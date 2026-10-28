@@ -1,5 +1,5 @@
-"""`scripts/user_stats.py` replaces Stack Auth's dashboard: who signed up, how,
-and whether they came back. These run it against a seeded Postgres and check
+"""`scripts/user_stats.py` shows who signed up, how, and whether they came
+back. These run it against a seeded Postgres and check
 its numbers against a hand count of the seed, as of 2026-10-28 (a Wednesday;
 its week starts Monday 2026-10-26).
 
@@ -19,6 +19,7 @@ The seed, with each user's active days:
 
 import json
 import os
+import re
 import subprocess
 import sys
 import uuid
@@ -196,6 +197,8 @@ def test_user_table_counts_the_seed(database_url: str) -> None:
         (("--sort", "last-active"), ["carol", "frank", "erin", "alice", "bob", "dave"]),
         (("--sort", "documents", "--reverse"), ["dave", "frank", "bob", "erin", "alice", "carol"]),
         (("--sort", "email", "--limit", "2"), ["alice", "bob"]),
+        (("--sort", "name", "--reverse"), ["frank", "erin", "dave", "carol", "bob", "alice"]),
+        (("--sort", "methods"), ["dave", "erin", "bob", "carol", "alice", "frank"]),
         (("--since", "2026-09-06"), ["frank", "erin", "dave"]),
         (("--method", "github"), ["carol", "bob"]),
         (("--method", "email-only"), ["erin", "dave"]),
@@ -224,15 +227,15 @@ def test_retention_counts_the_seed(database_url: str) -> None:
     [
         # Rich fits a wide table by squeezing columns to an ellipsis or dropping
         # them, so a row has to come out whole, not just short enough.
-        ("overview", "github + google   1"),
-        ("users", "dave@example.com   Dave   2026-09-15  email     40d     0     0  basic past due"),
-        ("retention", "2026-08       2   2 100%   2 100%   1  50%"),
+        ("overview", ["github + google", "1"]),
+        ("users", ["dave@example.com", "Dave", "2026-09-15", "email", "40d", "0", "0", "basic past due"]),
+        ("retention", ["2026-08", "2", "2 100%", "2 100%", "1  50%"]),
     ],
 )
-def test_tables_fit_80_columns(database_url: str, command: str, whole_row: str) -> None:
+def test_tables_fit_80_columns(database_url: str, command: str, whole_row: list[str]) -> None:
     done = user_stats("--database-url", database_url, "--as-of", AS_OF, command, env={**os.environ, "COLUMNS": "80"})
     assert done.returncode == 0, done.stderr
-    assert whole_row in done.stdout
+    assert re.search(r"\s+".join(map(re.escape, whole_row)), done.stdout)
     assert max(len(line) for line in done.stdout.splitlines()) <= 80
 
 

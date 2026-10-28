@@ -12,7 +12,9 @@ database instead (the dev stack, a test database).
 A user is a signed-up account; guests (anon-…) only ever appear as one
 aggregate line. A user is active on a day when they signed up that day, or
 created a document, used TTS or OCR (usagelog), or last used a browser session
-on it. Days are UTC.
+on it. Days are UTC. A session keeps only its latest use, so a day of reading
+that created no document and no usage counts only while it is that session's
+latest; with --as-of in the past, sessions used since then add nothing.
 
 Examples:
     make user-stats
@@ -63,7 +65,8 @@ class Overview:
     """Months of sign-ups to show, the current one included."""
 
 
-SortKey = Literal["signed-up", "last-active", "active-days", "documents", "email", "plan"]
+SortKey = Literal["signed-up", "last-active", "active-days", "documents", "email", "name", "methods", "plan"]
+TEXT_SORTS = ("email", "name", "methods", "plan")
 
 
 @dataclass(frozen=True)
@@ -77,7 +80,7 @@ class Users:
     """
 
     sort: SortKey = "signed-up"
-    """Column to sort by, largest or newest first (email: A to Z)."""
+    """Column to sort by. Dates and counts sort newest or largest first, text A to Z."""
     reverse: bool = False
     """Reverse the sort order."""
     since: date | None = None
@@ -124,7 +127,7 @@ class Cli:
     database_url: Annotated[str | None, tyro.conf.arg(metavar="URL")] = None
     """Read this database instead of prod, e.g. postgresql://yapit:yapit@localhost:5432/yapit."""
     as_of: date = field(default_factory=lambda: datetime.now(UTC).date())
-    """Count as if today were this day (YYYY-MM-DD): later sign-ups and activity are left out."""
+    """Count as if today were this day (YYYY-MM-DD), leaving out later sign-ups and activity."""
     json: bool = False
     """Print the numbers as JSON instead of tables."""
 
@@ -249,17 +252,21 @@ def user_rows(people: People, as_of: date, cmd: Users) -> list[dict]:
         }
         for u in users
     ]
-    key = {
-        "signed-up": "signed_up",
-        "last-active": "last_active",
-        "active-days": "active_days_30",
-        "documents": "documents",
-        "email": "email",
-        "plan": "plan",
-    }[cmd.sort]
     rows.sort(key=lambda r: r["email"])
-    rows.sort(key=lambda r: r[key], reverse=(cmd.sort != "email") != cmd.reverse)
+    rows.sort(key=SORT_KEYS[cmd.sort], reverse=(cmd.sort not in TEXT_SORTS) != cmd.reverse)
     return rows[: cmd.limit]
+
+
+SORT_KEYS = {
+    "signed-up": lambda r: r["signed_up"],
+    "last-active": lambda r: r["last_active"],
+    "active-days": lambda r: r["active_days_30"],
+    "documents": lambda r: r["documents"],
+    "email": lambda r: r["email"],
+    "name": lambda r: r["name"],
+    "methods": lambda r: method_label(tuple(r["methods"])),
+    "plan": lambda r: r["plan"],
+}
 
 
 def retention(people: People, as_of: date, cohorts: int, months: int) -> dict:
@@ -408,8 +415,8 @@ LEFT JOIN plan p ON p.id = s.plan_id
 """
 
 ACTIVITY_SQL = """
-SELECT user_id, (created AT TIME ZONE 'UTC')::date AS day FROM document
-UNION SELECT user_id, (created AT TIME ZONE 'UTC')::date FROM usagelog
+SELECT user_id, (created AT TIME ZONE 'UTC')::date AS day FROM document WHERE created IS NOT NULL
+UNION SELECT user_id, (created AT TIME ZONE 'UTC')::date FROM usagelog WHERE created IS NOT NULL
 UNION SELECT user_id, (last_used AT TIME ZONE 'UTC')::date FROM authsession WHERE kind = 'browser'
 """
 

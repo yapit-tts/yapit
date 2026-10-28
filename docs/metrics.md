@@ -114,9 +114,7 @@ make sync-metrics     # just sync, no dashboard
 
 ## Sign-ups and returns
 
-Who signs up, how (Google, GitHub, email), and whether they come back is not in the metrics DB: it comes straight from the main Postgres, through `make user-stats` (`scripts/user_stats.py`, `make user-stats ARGS=--help`). It has an overview, a per-user table and monthly retention cohorts. It reads prod read-only over ssh, or a local database with `--database-url`.
-
-"Active on a day" comes from rows the app writes anyway: the sign-up itself, `document.created`, `usagelog.created` and the browser session's `authsession.last_used`. A session keeps only its latest use, so browsing on days that created no document and no usage only shows up for the most recent day. Guests (`anon-…`) are one aggregate count, never users.
+Who signs up, how (Google, GitHub, email) and whether they come back comes from the main Postgres, not the metrics DB, through `make user-stats` (`scripts/user_stats.py`). It has an overview, a per-user table and monthly retention cohorts, and reads prod read-only over ssh. `make user-stats ARGS=--help` says what counts as active.
 
 ## Health Reports
 
