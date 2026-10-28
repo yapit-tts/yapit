@@ -168,7 +168,7 @@ async def create_subscription_checkout(
         )
 
     customer_id = existing_sub.stripe_customer_id if existing_sub else None
-    customer_email = user.primary_email or ""
+    customer_email = user.email or ""
 
     checkout_params: SessionCreateParams = {
         "line_items": [{"price": price_id, "quantity": 1}],

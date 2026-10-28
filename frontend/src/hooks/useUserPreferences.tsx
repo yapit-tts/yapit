@@ -34,7 +34,7 @@ interface PreferencesResponse {
 }
 
 export const UserPreferencesProvider: FC<PropsWithChildren> = ({ children }) => {
-  const { api, isAuthReady, isAnonymous } = useApi();
+  const { api, isAnonymous } = useApi();
   const [pinnedVoices, setPinnedVoices] = useState<string[]>(() => getPinnedVoices());
   const [autoImportSharedDocuments, setAutoImportSharedDocumentsState] = useState(false);
   const [defaultDocumentsPublic, setDefaultDocumentsPublicState] = useState(false);
@@ -52,7 +52,6 @@ export const UserPreferencesProvider: FC<PropsWithChildren> = ({ children }) => 
 
   // Fetch server preferences on init for authenticated users
   useEffect(() => {
-    if (!isAuthReady) return;
 
     if (isAnonymous) {
       // Anonymous users just use localStorage
@@ -93,7 +92,7 @@ export const UserPreferencesProvider: FC<PropsWithChildren> = ({ children }) => 
     };
 
     fetchPreferences();
-  }, [api, isAuthReady, isAnonymous]);
+  }, [api, isAnonymous]);
 
   const togglePinnedVoice = useCallback((slug: string): string[] => {
     const newPinned = [...pinnedRef.current];

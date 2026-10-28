@@ -33,7 +33,7 @@ from yapit.contracts import (
     MAX_STORAGE_PAID,
     RATELIMIT_EXTRACTION,
 )
-from yapit.gateway.auth import authenticate
+from yapit.gateway.auth import User, authenticate
 from yapit.gateway.cache import Cache
 from yapit.gateway.constants import SUPPORTED_WEB_MIME_TYPES, estimate_duration_ms
 from yapit.gateway.db import create_session
@@ -77,7 +77,6 @@ from yapit.gateway.exceptions import APIError, ResourceNotFoundError, UsageLimit
 from yapit.gateway.metrics import log_error, log_event
 from yapit.gateway.rate_limit import limiter
 from yapit.gateway.reservations import create_reservation, release_reservation
-from yapit.gateway.stack_auth.users import User
 from yapit.gateway.storage import ImageStorage
 from yapit.gateway.usage import check_usage_limit, get_available_usage
 

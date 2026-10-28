@@ -19,7 +19,7 @@ Cloudflare (edge SSL)
 VPS (Hetzner)
     ├── Docker Swarm (single node)
     ├── Traefik (reverse proxy, Cloudflare origin cert)
-    └── Services: gateway, frontend, kokoro-cpu, stack-auth, postgres, redis
+    └── Services: gateway, frontend, kokoro-cpu, postgres, redis
 ```
 
 ## VPS Details
@@ -246,13 +246,9 @@ nginx longest-prefix matching means `/api/v1/ws/tts` hits the WS block (12 chars
 
 **uvicorn keepalive:** `--timeout-keep-alive 65` in `gateway/Dockerfile` must exceed nginx's upstream `keepalive_timeout` (60s default). If uvicorn's timeout is shorter, nginx reuses dead connections → intermittent 502s.
 
-### Stack Auth user IDs aren't directly queryable
+### Finding a user's ID
 
-Users are managed by Stack Auth. To find a user's ID for database operations:
-1. Authenticate as the user
-2. Create a temporary document
-3. Query `SELECT user_id FROM document WHERE id = '<doc_id>'`
-4. Delete the temp document
+`SELECT id FROM useraccount WHERE email = '<email>'` (emails are stored lowercased).
 
 ### Docker Swarm cannot bind ports to specific IPs
 
@@ -300,9 +296,8 @@ Or remove and redeploy the entire stack.
 
 Create A records pointing to the VPS public IP (proxied):
 - `yapit.md`
-- `auth.yapit.md`
 
-(`www.yapit.md` and `api.yapit.md` also exist and point at the same IP, but Traefik only routes the two hosts above — the extra records return 404 at the origin.)
+(`www.yapit.md` and `api.yapit.md` also exist and point at the same IP, but Traefik only routes `yapit.md`, so the others return 404 at the origin.)
 
 ## Docker Compose Labels
 
@@ -325,38 +320,18 @@ After first deploy, run `seed_database()` once via `docker exec` on the gateway 
 
 Seeds: TTS models, voices, document processors, subscription plans. Voice sync runs automatically on every startup — no need to re-seed for voice changes.
 
-## Stack Auth Setup
+## Auth Setup
 
-Fresh install = new project credentials. After first deploy:
+The gateway signs people in itself ([[auth]]); nothing needs setting up after a deploy. What it needs from config:
 
-1. Access `https://auth.yapit.md`
-2. Log in with seed admin credentials
-3. Create new "yapit" project
-4. Copy credentials (Project ID, Client Key, Server Key)
-5. Update `.env.sops` and `frontend/.env.production`
-6. Configure project settings:
-   - **Domains** → Add `https://yapit.md` as trusted domain
-   - **Development Settings** → Disable "Allow all localhost callbacks"
-7. **Google OAuth** → Add `https://auth.yapit.md/api/v1/auth/oauth/callback/google` to authorized redirect URIs in Google Cloud Console
-8. Redeploy
+- `APP_URL=https://yapit.md` in `.env.prod`.
+- `PROD_SMTP_HOST`, `PROD_SMTP_PORT`, `PROD_SMTP_USERNAME`, `PROD_SMTP_PASSWORD` and `PROD_SMTP_SENDER` in `.env.sops`: Resend's SMTP credentials, port 587.
+- `PROD_GOOGLE_CLIENT_ID`, `PROD_GOOGLE_CLIENT_SECRET`, `PROD_GITHUB_CLIENT_ID` and `PROD_GITHUB_CLIENT_SECRET` in `.env.sops`. A provider whose id is empty has no button on the sign-in page.
+- In each provider's OAuth app, the redirect URI `https://yapit.md/api/v1/auth/oauth/{google,github}/callback`. The GitHub app allows only one callback URL.
 
-### Security Hardening
+The gateway refuses to start while any of these `.env.sops` entries is missing; an empty value is fine.
 
-After initial setup:
-
-1. **Enable production mode** in Stack Auth dashboard:
-   - Project Settings → scroll to bottom → Enable "Production Mode"
-   - Disables unsafe development features
-
-2. **Disable dashboard signups** - prevent others from creating admin accounts:
-   - Set `STACK_SEED_INTERNAL_PROJECT_SIGN_UP_ENABLED=false` in env
-   - Or disable via dashboard after creating your admin account
-
-3. **Dashboard behind Cloudflare Access** — `auth.yapit.md` is protected by Cloudflare Zero Trust Access. Two applications configured:
-   - `auth.yapit.md` → Allow policy (admin email only) — dashboard gets an auth wall at Cloudflare's edge
-   - `auth.yapit.md/api/` → Bypass policy (everyone) — SDK auth calls pass through unprotected
-   - Login via One-time PIN (email OTP) at Cloudflare's login page
-   - Config: Cloudflare Zero Trust dashboard → Access → Applications
+A failed auth mail is an ERROR in the gateway log (`Auth email to an address at … failed`), which the daily report flags.
 
 ## Operations
 

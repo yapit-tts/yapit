@@ -24,6 +24,12 @@ export default defineConfig(() => {
 				allow: [".", ".."],
 			},
 			proxy: {
+				// Same origin as in prod, so the session cookie reaches the gateway
+				"/api": {
+					target: "http://localhost:8000",
+					rewrite: (path) => path.replace(/^\/api/, ""),
+					ws: true,
+				},
 				"/images": {
 					target: "http://localhost:8000",
 					changeOrigin: true,

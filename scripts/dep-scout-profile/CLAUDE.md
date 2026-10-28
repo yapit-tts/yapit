@@ -61,15 +61,6 @@ from earlier CVE rounds live there)?
 
 ## Special cases
 
-**@stackframe/react** — exact pin, must match the self-hosted Stack Auth server.
-Vulns in its transitive tree cannot be fixed independently: "accepted risk — blocked
-by Stack Auth pin", and move on. Clear vulns by bumping the named package; `npm audit
-fix` walks into this pin and breaks auth.
-
-**Stack Auth server** — no semver, pinned by commit SHA. In the provided commit log,
-look for migrations, env var changes, entrypoint changes and security fixes; flag JWT
-claim changes, Prisma bumps and ClickHouse schema changes.
-
 **Playwright (defuddle)** — the Dockerfile downloads Chromium into the production
 image, and that service renders user-submitted URLs. The bundled Chromium version is
 the security surface, not the Playwright version: check which Chromium ships with the

@@ -2,12 +2,12 @@ SHELL := /bin/bash
 
 -include .env
 
-DEV_COMPOSE = docker compose -p yapit-dev --profile auth --profile metrics --env-file .env --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml
+DEV_COMPOSE = docker compose -p yapit-dev --profile metrics --env-file .env --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.yml
 SELFHOST_COMPOSE = docker compose --env-file .env.selfhost -f docker-compose.yml -f docker-compose.selfhost.yml
 
 define create-dev-user
-	@echo "Creating dev user..."
-	uv run --env-file=.env.dev python scripts/create_user.py
+	@echo "Creating dev user dev@example.com (prints an API token for it)..."
+	uv run python scripts/create_user.py
 endef
 
 check-dev-env:
@@ -28,9 +28,6 @@ down:
 self-host:
 	$(SELFHOST_COMPOSE) up -d --build
 
-self-host-auth:
-	VITE_ENV_FILE=.env.selfhost.auth COMPOSE_PROFILES=auth $(SELFHOST_COMPOSE) up -d --build
-
 # Boot from scratch and verify: healthchecks, a gateway restart (seeding must be
 # idempotent against the already-seeded DB), then the smoke checks.
 self-host-ci:
@@ -47,18 +44,14 @@ self-host-logs:
 	$(SELFHOST_COMPOSE) logs
 
 self-host-down:
-	$(SELFHOST_COMPOSE) --profile auth --profile metrics down
+	$(SELFHOST_COMPOSE) --profile metrics down
 
 dev-user:
 	$(call create-dev-user)
 
-token: dev-user
-	@curl -s -X POST http://localhost:8102/api/v1/auth/password/sign-in \
-	  -H "X-Stack-Access-Type: client" \
-	  -H "X-Stack-Project-Id: $$(grep STACK_AUTH_PROJECT_ID .env.dev | cut -d= -f2)" \
-	  -H "X-Stack-Publishable-Client-Key: $$(grep STACK_AUTH_CLIENT_KEY .env.dev | cut -d= -f2)" \
-	  -H "Content-Type: application/json" \
-	  -d '{"email": "dev@example.com", "password": "dev-password-123"}' | jq -r '.access_token'
+# A new API token for dev@example.com, alone on stdout: curl -H "Authorization: Bearer $$(make -s dev-token)" ...
+dev-token:
+	@uv run python scripts/create_user.py 2>/dev/null
 
 test: test-unit test-frontend test-integration
 
@@ -82,7 +75,7 @@ test-gemini:
 # Database migrations (for prod schema changes)
 # Resets DB to migration state, generates migration, auto-fixes known issues, and tests it
 # Usage: make migration-new MSG="add user preferences"
-# Uses yapit_test database for final verification to avoid conflicts with Stack Auth tables
+# The final check runs the migrations on a fresh yapit_test database
 migration-new:
 ifndef MSG
 	$(error MSG is required. Usage: make migration-new MSG="description")

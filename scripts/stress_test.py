@@ -29,35 +29,6 @@ def get_audio_duration_ms(audio_bytes: bytes) -> float:
     return OggOpus(io.BytesIO(audio_bytes)).info.length * 1000
 
 
-def _load_stack_auth_creds() -> tuple[str, str]:
-    """Load Stack Auth public credentials from frontend/.env.production."""
-    env_file = Path(__file__).parent.parent / "frontend" / ".env.production"
-    project_id, client_key = None, None
-    for line in env_file.read_text().splitlines():
-        if line.startswith("VITE_STACK_AUTH_PROJECT_ID="):
-            project_id = line.split("=", 1)[1]
-        elif line.startswith("VITE_STACK_AUTH_CLIENT_KEY="):
-            client_key = line.split("=", 1)[1]
-    assert project_id and client_key, f"Missing Stack Auth creds in {env_file}"
-    return project_id, client_key
-
-
-def get_auth_token(base_url: str, email: str, password: str) -> str:
-    project_id, client_key = _load_stack_auth_creds()
-    resp = httpx.post(
-        f"{base_url}/auth/api/v1/auth/password/sign-in",
-        headers={
-            "Content-Type": "application/json",
-            "X-Stack-Access-Type": "client",
-            "X-Stack-Project-Id": project_id,
-            "X-Stack-Publishable-Client-Key": client_key,
-        },
-        json={"email": email, "password": password},
-    )
-    resp.raise_for_status()
-    return resp.json()["access_token"]
-
-
 @dataclass
 class BlockArrival:
     idx: int
@@ -160,7 +131,7 @@ async def run_user_session(
     )
 
     try:
-        async with websockets.connect(f"{ws_url}?token={token}") as ws:
+        async with websockets.connect(ws_url, additional_headers={"Authorization": f"Bearer {token}"}) as ws:
             ws_dead = False
 
             async def handle_messages():
@@ -708,20 +679,9 @@ async def run_stress_test(
     return result
 
 
-def _load_env_file(path: Path) -> dict[str, str]:
-    """Load key=value pairs from an env file."""
-    env = {}
-    if path.exists():
-        for line in path.read_text().splitlines():
-            if "=" in line and not line.startswith("#"):
-                key, value = line.split("=", 1)
-                env[key.strip()] = value.strip()
-    return env
-
-
 def main(
+    token: str,
     base_url: str = "https://yapit.md",
-    token: str = "",
     users: int = 5,
     blocks: int = 20,
     model: str = "kokoro",
@@ -731,24 +691,21 @@ def main(
     stagger: float = 0.0,
     min_buffer: int = DEFAULT_MIN_BUFFER_TO_START,
     output_dir: Path = Path("scripts/stress_test_results"),
-    env_file: Path = Path(".env"),
 ) -> None:
     """Stress test for TTS synthesis pipeline. Simulates concurrent users with
     realistic playback (prefetching, buffering) matching the frontend algorithm.
     Captures per-block timing for TTFA analysis.
 
-    Auth: add PROD_TEST_EMAIL/PROD_TEST_PASSWORD to .env.sops, run make prod-env.
-    Or pass --token directly. Use --use-cached to test without credits.
+    Auth: an API token of the account to test as. Use --use-cached to test without credits.
 
-    Examples::
-
-        uv run scripts/stress_test.py --users 5
-        uv run scripts/stress_test.py --users 3 --speed 2 --min-buffer 1
-        uv run scripts/stress_test.py --users 1 --varied-lengths
+    Examples:
+        uv run scripts/stress_test.py --token yapit_... --users 5
+        uv run scripts/stress_test.py --token yapit_... --users 3 --speed 2 --min-buffer 1
+        uv run scripts/stress_test.py --token "$(make -s dev-token)" --base-url http://localhost:5173 --users 1
 
     Args:
-        base_url: API base URL
-        token: Auth token (alternative to env file credentials)
+        token: API token (yapit_...) of the account to test as
+        base_url: The app's origin (the API is under /api)
         users: Number of concurrent simulated playback sessions
         blocks: Number of blocks per session
         model: TTS model slug (voice auto-selected per model)
@@ -758,22 +715,10 @@ def main(
         stagger: Spread user starts over this many seconds (0=all start together)
         min_buffer: Blocks to buffer before starting playback (1=play immediately, 2=default)
         output_dir: Directory for JSON results
-        env_file: Env file with TEST_EMAIL/TEST_PASSWORD (run make prod-env first)
     """
     voice = MODEL_DEFAULT_VOICES.get(model)
     if not voice:
         print(f"Error: Unknown model '{model}'. Known models: {', '.join(MODEL_DEFAULT_VOICES)}")
-        return
-
-    env = _load_env_file(env_file)
-    email = env.get("TEST_EMAIL", "")
-    password = env.get("TEST_PASSWORD", "")
-
-    if not token and email and password:
-        token = get_auth_token(base_url, email, password)
-
-    if not token:
-        print("Error: Provide --token OR add TEST_EMAIL/TEST_PASSWORD to env file (run make prod-env)")
         return
 
     console = Console()

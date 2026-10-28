@@ -1,8 +1,10 @@
 import asyncio
 import datetime as dt
+import re
 import shutil
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timedelta
+from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import pytest
@@ -16,16 +18,27 @@ from testcontainers.postgres import PostgresContainer
 from testcontainers.redis import RedisContainer
 
 from yapit.gateway import create_app
-from yapit.gateway.auth import authenticate, authenticate_optional
+from yapit.gateway.auth import User, authenticate, authenticate_optional
+from yapit.gateway.auth.mailer import Email
 from yapit.gateway.cache import CacheConfig
-from yapit.gateway.config import Settings
+from yapit.gateway.config import Settings, get_settings
 from yapit.gateway.db import close_db, create_session, get_engine, init_db
 from yapit.gateway.deps import create_cache, create_image_storage
 from yapit.gateway.domain_models import Plan, PlanTier, SubscriptionStatus, UsagePeriod, UserSubscription
 from yapit.gateway.markdown.transformer import DocumentTransformer
-from yapit.gateway.stack_auth.users import User
 
 DEFAULT_TEST_USER = User(id="default-test-user", is_anonymous=False)
+APP_URL = "https://yapit.test"
+SAME_ORIGIN = {"Origin": APP_URL}
+SESSION_COOKIE = "__Host-yapit_session"  # APP_URL is https
+
+
+class RecordingMailer:
+    def __init__(self):
+        self.sent: list[Email] = []
+
+    async def send(self, email: Email) -> None:
+        self.sent.append(email)
 
 
 def _make_delete_statements():
@@ -73,9 +86,8 @@ def _test_settings(postgres_container, redis_container):
         redis_url=f"redis://{redis_container.get_container_host_ip()}:{redis_container.get_exposed_port(6379)}",
         audio_cache_config=CacheConfig(path="test_audio_cache"),
         document_cache_config=CacheConfig(path="test_document_cache"),
-        stack_auth_api_host="",
-        stack_auth_project_id="",
-        stack_auth_server_key="",
+        app_url=APP_URL,
+        smtp_host="",
         tts_processors_file="tests/empty_processors.json",
         ai_processor=None,
         auth_enabled=True,
@@ -112,6 +124,7 @@ async def _shared_app(_create_schema, _test_settings) -> FastAPI:
         )
         app.state.ai_extractor_config = None
         app.state.ai_extractor = None
+        app.state.mailer = RecordingMailer()
         yield
         for cache in [app.state.audio_cache, app.state.document_cache, app.state.extraction_cache]:
             await cache.close()
@@ -139,6 +152,7 @@ async def _clean_tables(_shared_app):
         for stmt in _delete_stmts:
             await conn.execute(stmt)
     await _shared_app.state.redis_client.flushdb()
+    _shared_app.state.mailer = RecordingMailer()
     for cache in [_shared_app.state.audio_cache, _shared_app.state.document_cache, _shared_app.state.extraction_cache]:
         writer = await cache._get_writer()
         await writer.execute("DELETE FROM cache")
@@ -153,7 +167,7 @@ def app(_shared_app):
 
 @pytest.fixture
 def test_user():
-    return User(id="test-user-123", is_anonymous=False, primary_email="test@example.com")
+    return User(id="test-user-123", is_anonymous=False, email="test@example.com")
 
 
 @pytest.fixture
@@ -224,3 +238,61 @@ async def subscribed_user(session):
         "subscription": subscription,
         "usage_period": usage_period,
     }
+
+
+@pytest.fixture
+def real_auth(app):
+    """Authenticate requests the way production does, instead of as a fixed test user."""
+    overrides = {dep: app.dependency_overrides.pop(dep) for dep in (authenticate, authenticate_optional)}
+    yield
+    app.dependency_overrides.update(overrides)
+
+
+@pytest_asyncio.fixture
+async def browser(app, real_auth):
+    """A client at the app's origin that keeps cookies, like the browser the frontend runs in."""
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=APP_URL) as client:
+        yield client
+
+
+# Signing in through the API, as the frontend does
+
+
+@contextmanager
+def settings_changed(app, **changes):
+    original = app.dependency_overrides[get_settings]
+    changed = original().model_copy(update=changes)
+    app.dependency_overrides[get_settings] = lambda: changed
+    try:
+        yield changed
+    finally:
+        app.dependency_overrides[get_settings] = original
+
+
+def mailed_link(app) -> str:
+    mail: Email = app.state.mailer.sent[-1]
+    return next(word for word in mail.text.split() if "/auth/email" in word)
+
+
+async def request_sign_in(browser, app, email: str) -> tuple[str, str]:
+    """Ask for a sign-in email; return the link's token and the code, read off the mail as a person would."""
+    response = await browser.post("/v1/auth/email/start", json={"email": email})
+    assert response.status_code == 202, response.text
+    mail: Email = app.state.mailer.sent[-1]
+    token = parse_qs(urlsplit(mailed_link(app)).fragment)["token"][0]
+    code = re.search(r"\b\d{6}\b", mail.text)
+    assert code is not None
+    return token, code.group()
+
+
+async def sign_in(browser, app, email: str) -> dict:
+    token, _ = await request_sign_in(browser, app, email)
+    response = await browser.post("/v1/auth/email/verify", json={"token": token}, headers=SAME_ORIGIN)
+    assert response.status_code == 200, response.text
+    return response.json()["user"]
+
+
+async def signed_in_user(browser) -> dict | None:
+    response = await browser.get("/v1/auth/session")
+    assert response.status_code == 200
+    return response.json()["user"]

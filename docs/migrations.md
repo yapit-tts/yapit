@@ -2,15 +2,9 @@
 
 Alembic database migrations for Yapit.
 
-## Shared Database
+## Tables alembic does not manage
 
-**Yapit and Stack Auth share the same Postgres database.**
-
-- Stack Auth tables: PascalCase (`Project`, `ProjectUser`, `Team`)
-- Yapit tables: snake_case (`ttsmodel`, `usersubscription`, `document`)
-- Stack Auth also creates `_prisma_migrations` table and enum types
-
-**Never drop all tables blindly.** The `env.py` filters to only include `MANAGED_TABLES` (tables from our SQLModel models), so alembic ignores Stack Auth. But raw SQL or `DROP SCHEMA` would destroy everything.
+The `env.py` filters to only include `MANAGED_TABLES` (tables from our SQLModel models), so alembic ignores any other table in the database.
 
 ## Creating a Migration
 
@@ -68,8 +62,6 @@ def include_object(object, name, type_, reflected, compare_to):
         return name in MANAGED_TABLES
     ...
 ```
-
-Only tables from our SQLModel models are included. Stack Auth tables are invisible to alembic.
 
 **Gotcha:** When you delete a model, the table disappears from `MANAGED_TABLES`, so alembic won't generate a drop. You must write it manually.
 

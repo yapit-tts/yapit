@@ -13,6 +13,14 @@ import { useSettings, useIsDark, type ContentWidth, type ScrollPosition, type Th
 import { cn } from "@/lib/utils";
 import { useIsMobile } from "@/hooks/use-mobile";
 
+export function SectionHeading({ children, first }: { children: React.ReactNode; first?: boolean }) {
+  return (
+    <div className={cn(!first && "mt-6", "mb-2 text-xs font-medium text-muted-foreground uppercase tracking-wide")}>
+      {children}
+    </div>
+  );
+}
+
 export function SettingRow({
   label,
   description,

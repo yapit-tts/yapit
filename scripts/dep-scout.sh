@@ -141,13 +141,6 @@ DEFUDDLE_AUDIT=$(cd docker/defuddle && npm audit --json 2>/dev/null || true)
 # --- Docker base images ---
 DOCKER_IMAGES=$(grep -rh '^FROM ' docker/ yapit/ frontend/Dockerfile 2>/dev/null | sort -u)
 
-# --- Stack Auth: pinned SHA and recent upstream commits ---
-STACKAUTH_SHA=$(grep '^FROM stackauth/server:' docker/Dockerfile.stackauth | cut -d: -f2)
-echo "Stack Auth pinned at: $STACKAUTH_SHA"
-echo "Fetching Stack Auth commit log..."
-STACKAUTH_COMMITS=$(gh api -X GET "repos/stack-auth/stack-auth/commits?per_page=30" \
-    --jq '.[] | "- \(.sha[0:7]) \(.commit.message | split("\n")[0])"' 2>/dev/null || echo "(failed to fetch)")
-
 # --- Latest PyPI versions ---
 echo "Checking latest PyPI versions..."
 PYPI_VERSIONS=$(uv run python -c "
@@ -217,11 +210,6 @@ $DEFUDDLE_AUDIT
 
 ### Docker base images
 $DOCKER_IMAGES
-
-### Stack Auth
-Pinned SHA: $STACKAUTH_SHA
-Recent upstream commits (newest first):
-$STACKAUTH_COMMITS
 
 ### Latest available versions (PyPI)
 $PYPI_VERSIONS

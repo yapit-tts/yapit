@@ -18,10 +18,19 @@ class Settings(BaseSettings):
     audio_cache_config: CacheConfig
 
     auth_enabled: bool
+    app_url: str  # the public origin: sign-in links, the Origin check, the session cookie's Secure flag
 
-    stack_auth_api_host: str | None = None
-    stack_auth_project_id: str | None = None
-    stack_auth_server_key: str | None = None
+    smtp_host: str  # empty: auth emails go to the gateway log instead
+    smtp_port: int
+    smtp_username: str
+    smtp_password: str
+    smtp_sender: str
+
+    # an empty client id hides the provider
+    google_client_id: str
+    google_client_secret: str
+    github_client_id: str
+    github_client_secret: str
 
     openai_tts_base_url: str | None = None
     openai_tts_api_key: str | None = None

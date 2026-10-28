@@ -94,7 +94,7 @@ stripe invoices list --customer=cus_XXXXX --limit=1 --api-key="$STRIPE_SECRET_KE
 
 1. Close Chrome (MCP needs to launch its own instance)
 2. Navigate to `localhost:5173`
-3. Login: `dev@example.com` / `dev-password-123`
+3. Sign in as `dev@example.com` at `/auth/sign-in`, with the code from the gateway log
 4. Use `take_snapshot` for DOM, `take_screenshot` for visual
 5. Use `fill`/`click` with UIDs from snapshot
 
@@ -168,7 +168,6 @@ Card `4000000000000341` attaches but fails on charge. But Checkout charges immed
 - Cannot create payment methods with raw card numbers via API — use test tokens (`pm_card_visa`)
 
 ### Database Table Naming
-- Stack Auth tables: PascalCase (`User`, `Project`)
 - Yapit tables: snake_case (`usersubscription`, `ttsmodel`)
 
 ## Session Template

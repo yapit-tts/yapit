@@ -1,32 +1,33 @@
 import datetime as dt
 import hashlib
-import hmac
 import uuid
 from datetime import datetime
 from typing import Annotated
 
 import stripe
-from fastapi import APIRouter, Header, HTTPException, Request, status
+from fastapi import APIRouter, Header, HTTPException, Request, Response, status
 from loguru import logger
 from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy import func, update
 from sqlmodel import col, delete, select
 
 from yapit.contracts import MAX_EXTRACTION_PROMPT_LENGTH
-from yapit.gateway.auth import ANONYMOUS_ID_PREFIX, verify_anonymous_token
+from yapit.gateway.auth import ANONYMOUS_ID_PREFIX, sign_anonymous_id, verify_anonymous_token
+from yapit.gateway.auth.sessions import clear_session_cookie
 from yapit.gateway.constants import estimate_duration_ms
-from yapit.gateway.deps import AuthenticatedUser, DbSession, SettingsDep, StripeClient
+from yapit.gateway.deps import AuthenticatedUser, DbSession, SettingsDep, SignedInAccount, StripeClient
 from yapit.gateway.domain_models import (
     Document,
+    EmailChallenge,
     SubscriptionStatus,
     UsageLog,
     UsagePeriod,
+    UserAccount,
     UserPreferences,
     UserSubscription,
     UserVoiceStats,
 )
 from yapit.gateway.rate_limit import limiter
-from yapit.gateway.stack_auth.users import delete_user as stack_auth_delete_user
 from yapit.gateway.usage import get_engagement_stats, get_usage_breakdown, get_usage_summary, get_user_subscription
 
 router = APIRouter(prefix="/v1/users", tags=["Users"])
@@ -242,10 +243,6 @@ async def get_user_stats(
 # Anonymous session tokens
 
 
-def _sign_anonymous_id(anonymous_id: str, secret: str) -> str:
-    return hmac.new(secret.encode(), anonymous_id.encode(), hashlib.sha256).hexdigest()
-
-
 class AnonymousSessionResponse(BaseModel):
     id: str
     token: str
@@ -259,7 +256,7 @@ async def create_anonymous_session(
 ) -> AnonymousSessionResponse:
     """Issue a server-signed anonymous session ID."""
     session_id = str(uuid.uuid4())
-    token = _sign_anonymous_id(session_id, settings.anonymous_session_secret)
+    token = sign_anonymous_id(session_id, settings.anonymous_session_secret)
     return AnonymousSessionResponse(id=session_id, token=token)
 
 
@@ -308,12 +305,24 @@ async def claim_anonymous_data(
     return ClaimResponse(claimed_documents=claimed_docs)
 
 
+class AccountUpdate(BaseModel):
+    name: Annotated[str, StringConstraints(strip_whitespace=True, max_length=100)] | None  # empty or null clears it
+
+
+@router.patch("/me", status_code=status.HTTP_204_NO_CONTENT)
+async def update_account(body: AccountUpdate, user: SignedInAccount, db: DbSession) -> None:
+    account = await db.get_one(UserAccount, user.id)
+    account.name = body.name or None
+    db.add(account)
+    await db.commit()
+
+
 # Account deletion
 
 
 @router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_account(
-    request: Request,
+    response: Response,
     auth_user: AuthenticatedUser,
     db: DbSession,
     settings: SettingsDep,
@@ -323,6 +332,7 @@ async def delete_account(
     This action is irreversible. Deletes:
     - All documents (cascades to blocks and block variants)
     - User preferences
+    - The account, with its sessions, API tokens and OAuth identities
 
     Anonymizes (for aggregate analysis):
     - Subscription records
@@ -356,16 +366,12 @@ async def delete_account(
     await db.exec(update(UsageLog).where(col(UsageLog.user_id) == user_id).values(user_id=anon_id))
     await db.exec(update(UserVoiceStats).where(col(UserVoiceStats.user_id) == user_id).values(user_id=anon_id))
 
-    await db.commit()
+    # 4. Delete the account: its sessions, API tokens and OAuth identities cascade
+    if settings.auth_enabled and not auth_user.is_anonymous:
+        await db.exec(delete(UserAccount).where(col(UserAccount.id) == user_id))
+        await db.exec(delete(EmailChallenge).where(col(EmailChallenge.email) == auth_user.email))
+        clear_session_cookie(response, settings)
 
-    # 4. Delete from Stack Auth (if configured)
-    if settings.auth_enabled:
-        access_token = request.headers.get("authorization", "").removeprefix("Bearer ")
-        try:
-            await stack_auth_delete_user(settings, access_token, user_id)
-            logger.info(f"Deleted user {user_id} from Stack Auth")
-        except Exception:
-            logger.exception("Failed to delete user from Stack Auth")
-            # Don't fail the request - data is already cleaned up
+    await db.commit()
 
     logger.info(f"Account deletion complete for user {user_id} (anonymized as {anon_id})")

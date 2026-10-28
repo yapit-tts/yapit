@@ -8,11 +8,10 @@ import pytest
 from sqlmodel import select
 
 from yapit.gateway.api.v1.documents import DocumentPrepareResponse, ExtractionAcceptedResponse
-from yapit.gateway.auth import authenticate, authenticate_optional
+from yapit.gateway.auth import User, authenticate, authenticate_optional
 from yapit.gateway.document.types import ExtractedPage, PageResult, ProcessorConfig
 from yapit.gateway.domain_models import UsageLog
 from yapit.gateway.reservations import get_reservation
-from yapit.gateway.stack_auth.users import User
 
 from .test_documents import poll_for_document
 

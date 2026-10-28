@@ -108,7 +108,7 @@ DISK_HISTORY=$(ssh "$VPS_HOST" "tail -50 /var/log/yapit-disk-history.log 2>/dev/
 echo "Gathering Cloudflare analytics..."
 CF_REPORT=$(uv run "$SCRIPT_DIR/cf_analytics.py" --plain 2>&1 || echo "(cf_analytics.py failed — is CLOUDFLARE_API_TOKEN set?)")
 
-# Capture proxy diagnostics (Stack Auth + Traefik from VPS container logs)
+# Capture proxy diagnostics (Traefik from VPS container logs)
 echo "Gathering proxy diagnostics..."
 PROXY_REPORT=$(uv run "$SCRIPT_DIR/proxy_diagnostics.py" 2>&1 || echo "(proxy_diagnostics.py failed — is VPS_HOST set and SSH working?)")
 
@@ -145,7 +145,7 @@ $DISK_HISTORY
 
 $CF_REPORT
 
-## PROXY DIAGNOSTICS (Stack Auth + Traefik from VPS container logs)
+## PROXY DIAGNOSTICS (Traefik from VPS container logs)
 
 $PROXY_REPORT
 
@@ -300,6 +300,7 @@ Read the actual error messages and investigate — a count alone is not analysis
 - Scan for ERROR and WARNING level entries within the recent window. Don't skip this even if metrics look clean — some errors only appear in logs.
 - For each distinct error, report: the error message, count, and time range.
 - ERROR level in logs — stack traces, exceptions (include request context: method, path, user_id, request_id)
+- `Auth email to an address at <domain> failed` — the gateway's SMTP send failed, so that person could not sign in by email or confirm an email change. Always flag; the exception says whether SMTP rejected the credentials, the recipient or the connection.
 
 ### Warnings
 - WARNING level in logs — library warnings, deprecations, near-failures
@@ -345,7 +346,6 @@ See the BILLING RECONCILIATION section — event counts and character totals are
 - **Background 504 rate ~10-12%** is a known baseline (CF edge ↔ Hetzner transient path issues). Flag if significantly higher.
 
 ### Proxy Diagnostics (see PROXY DIAGNOSTICS section)
-- **Stack Auth:** Response time distribution and status codes. `requests=0` is fine: nobody signed in. Baseline (Mar 2026): p50 ~90ms, p99 ~600ms, all 200s. Watch for: non-200 status codes, p99 >2s sustained. Error lines: "S3 is not configured" and "Missing environment variable: STACK_VERCEL_SANDBOX_TOKEN" are known-benign (unused features). Only flag *new* error patterns.
 - **Traefik:** Per-service latency breakdown. Slow and 5xx lines carry their UTC time (`MM-DD HH:MM`Z, same clock as `gateway.jsonl`), so an edge error can be lined up with what the gateway was doing. WebSocket connections (status 0) are excluded from latency stats. Note that Traefik logs upstream 5xx — a 500 on an API path is a gateway bug, while a 502 on any path means Traefik couldn't reach the upstream service. Slow static asset requests (JS/CSS) are usually slow client connections, not server issues.
 
 ## What's Normal vs Concerning

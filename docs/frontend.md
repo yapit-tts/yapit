@@ -67,9 +67,8 @@ Outliner navigation uses `scrollToBlock` → `findElementsByAudioIdx` which quer
 
 Use Chrome DevTools MCP to visually verify changes, test user flows, and debug issues.
 
-**Dev account:** `dev@example.com` / `dev-password-123` (from `scripts/create_user.py`)
-- MCP browser has separate session - login required on first use
-- Login: navigate to localhost:5173 → click Login → fill form → Sign In
+**Signing in:** any address at `localhost:5173/auth/sign-in`; the code and link are in the gateway log (`docker logs yapit-dev-gateway-1 | grep -A6 "not sent"`)
+- MCP browser has separate session - sign-in required on first use
 - If the browser is stale ("already running" error), ask the user to close it — don't try to pkill it yourself
 
 **Key commands:**
@@ -117,8 +116,6 @@ Light mode + multiple dark themes. All colors defined as oklch CSS variables in 
 Check `index.css` for existing color variables before adding new colors. Prefer theme variables over hardcoded Tailwind classes.
 
 **Gotcha — `text-primary` in dark mode:** Changes from green to gray between modes. Use `--accent-success` for text that should stay green in both modes.
-
-**Gotcha — Stack Auth theme detection:** Needs explicit `color-scheme` CSS property on `:root`. Chrome returns raw oklch from `getComputedStyle`, breaking Stack Auth's luminance-based detection fallback.
 
 **Gotcha — dark theme contrast:** Test switch thumbs, audio highlights, and borders in all dark themes. `--muted` controls progress bar cached/pending distinction.
 

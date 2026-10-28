@@ -1,10 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useAuthUser } from "@/hooks/useAuthUser";
-import { authEnabled } from "@/auth";
+import { useAuth } from "@/hooks/useAuthUser";
 import { getAnonymousToken, getOrCreateAnonymousId } from "@/lib/anonymousId";
 
-const WS_BASE_URL = import.meta.env.VITE_WS_BASE_URL ||
-	`${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/api`;
+const WS_BASE_URL = `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/api`;
 
 export interface WSMessage {
   type: "status" | "evicted" | "error";
@@ -24,7 +22,9 @@ export function useTTSWebSocket(
   onConnect?: () => void,
   isPlaybackActive?: () => boolean,
 ): UseTTSWebSocketReturn {
-  const user = useAuthUser();
+  const { user, authEnabled, refresh } = useAuth();
+  const refreshRef = useRef(refresh);
+  refreshRef.current = refresh;
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
   const reconnectAttemptsRef = useRef(0);
@@ -56,19 +56,12 @@ export function useTTSWebSocket(
 
   const getWebSocketUrl = useCallback(async (): Promise<string> => {
     const baseUrl = `${WS_BASE_URL}/v1/ws/tts`;
-    if (!authEnabled) return baseUrl;
-    if (user?.currentSession) {
-      // getTokens() refreshes the access token via the refresh token when expired.
-      // A failure here is transient (e.g. mobile network after backgrounding) — throw
-      // so connect() retries. Never downgrade a signed-in user to an anonymous identity.
-      const { accessToken } = await user.currentSession.getTokens();
-      if (!accessToken) throw new Error("No access token for signed-in session");
-      return `${baseUrl}?token=${encodeURIComponent(accessToken)}`;
-    }
+    // The handshake carries the session cookie of a signed-in browser
+    if (!authEnabled || user) return baseUrl;
     const anonymousId = await getOrCreateAnonymousId();
     const anonymousToken = getAnonymousToken();
     return `${baseUrl}?anonymous_id=${encodeURIComponent(anonymousId)}&anonymous_token=${encodeURIComponent(anonymousToken ?? "")}`;
-  }, [user]);
+  }, [user, authEnabled]);
 
   const connect = useCallback(async () => {
     // wsRef is set at creation, so non-null covers CONNECTING and OPEN;
@@ -98,7 +91,7 @@ export function useTTSWebSocket(
     try {
       const url = await getWebSocketUrl();
       if (epoch !== epochRef.current) {
-        // Unmounted or user changed while fetching the token — abandon this attempt
+        // Unmounted or user changed while fetching the anonymous session: abandon this attempt
         connectingRef.current = false;
         return;
       }
@@ -161,12 +154,14 @@ export function useTTSWebSocket(
         if (event.code === 1000) return;
 
         if (event.code === 1008) {
-          // Auth rejection is usually a stale access token — each reconnect fetches a
-          // fresh one via getTokens(). Only give up after repeated failures (dead session).
+          // Auth rejection: the session may have ended (signed out elsewhere, expired).
+          // Re-reading it turns this browser anonymous, which reconnects with an anonymous
+          // session. Only give up after repeated failures.
           authFailuresRef.current++;
+          void refreshRef.current();
           if (authFailuresRef.current >= MAX_AUTH_FAILURES) {
             setIsReconnecting(false);
-            setConnectionError("Authentication failed. Please log in again.");
+            setConnectionError("Authentication failed. Please sign in again.");
             return;
           }
         }

@@ -15,7 +15,7 @@ if config.config_file_name is not None:
 
 target_metadata = SQLModel.metadata
 
-# Tables we manage - everything else (like Stack Auth tables) is ignored
+# Tables we manage; alembic ignores every other table
 MANAGED_TABLES = {table.name for table in target_metadata.sorted_tables}
 
 
