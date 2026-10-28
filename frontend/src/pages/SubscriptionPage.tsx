@@ -275,7 +275,7 @@ const SubscriptionPage = () => {
 
       {isAnonymous && (
         <p className="text-muted-foreground mb-4">
-          <a href="/auth/sign-in" className="underline hover:text-foreground">Sign in</a> to subscribe to a plan
+          <a href="/auth/sign-in" className="underline hover:text-foreground">Sign in or sign up</a> to subscribe to a plan
         </p>
       )}
 

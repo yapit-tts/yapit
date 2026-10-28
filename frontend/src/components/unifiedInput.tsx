@@ -614,7 +614,7 @@ export function UnifiedInput() {
             {storageLimitError}{" "}
             {isAnonymous ? (
               <>
-                <Link to="/auth/sign-in" className="text-primary hover:underline">Sign in</Link>
+                <Link to="/auth/sign-in" className="text-primary hover:underline">Sign in or sign up</Link>
                 {" for more storage or "}
                 <Link to="/account" className="text-primary hover:underline">delete old documents</Link>.
               </>

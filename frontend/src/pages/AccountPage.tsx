@@ -158,7 +158,7 @@ const AccountPage = () => {
           Sign in to view your account settings and usage stats.
         </p>
 
-        <Button onClick={() => navigate("/auth/sign-in")}>Sign In</Button>
+        <Button onClick={() => navigate("/auth/sign-in")}>Sign in or sign up</Button>
       </div>
     );
   }
