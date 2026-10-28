@@ -1,4 +1,5 @@
-"""The Alembic revision that copies Stack Auth's users into the gateway's auth tables, keeping every user's id."""
+"""The Alembic revisions that copy Stack Auth's users into the gateway's auth tables, keeping every user's id,
+and then drop Stack Auth's data."""
 
 import uuid
 
@@ -72,6 +73,37 @@ CREATE TABLE "ProjectUserOAuthAccount" (
 );
 """
 
+# Every object Stack Auth held in prod's `public` schema on 2026-10-28, besides the ones above.
+STACK_AUTH_TABLES_NOT_READ = (
+    "ApiKeySet", "AuthMethod", "BranchConfigOverride", "CacheEntry", "CliAuthAttempt", "DataVaultEntry",
+    "DeletedRow", "EmailDraft", "EmailOutbox", "EmailOutboxProcessingMetadata", "EmailTemplate",
+    "EnvironmentConfigOverride", "Event", "EventIpInfo", "ExternalDbSyncMetadata", "IdPAccountToCdfcResultMapping",
+    "IdPAdapterData", "ItemQuantityChange", "OAuthAccessToken", "OAuthAuthMethod", "OAuthOuterInfo", "OAuthToken",
+    "OneTimePurchase", "OtpAuthMethod", "OutgoingRequest", "PasskeyAuthMethod", "ProductVersion", "Project",
+    "ProjectApiKey", "ProjectUserAuthorizationCode", "ProjectUserDirectPermission", "ProjectUserRefreshToken",
+    "ProjectWrapperCodes", "ProvisionedProject", "SchemaMigration", "SessionReplay", "SessionReplayChunk",
+    "SubscriptionInvoice", "Team", "TeamMember", "TeamMemberDirectPermission", "Tenancy", "ThreadMessage",
+    "UserNotificationPreference", "VerificationCode",
+    "_prisma_migrations",  # not on prod, but older Stack Auth builds a selfhost may have run kept it
+)  # fmt: skip
+STACK_AUTH_ENUM_TYPES_NOT_READ = (
+    "CustomerType", "DraftThemeMode", "EmailOutboxCreatedWith", "EmailOutboxSimpleStatus", "EmailOutboxSkippedReason",
+    "EmailOutboxStatus", "EmailTemplateType", "PurchaseCreationSource", "StandardOAuthProviderType",
+    "VerificationCodeType",
+)  # fmt: skip
+STACK_AUTH_REST_OF_SCHEMA = "\n".join(
+    [f'CREATE TABLE "{table}" (id uuid PRIMARY KEY);' for table in STACK_AUTH_TABLES_NOT_READ]
+    + [f'CREATE TYPE "{enum}" AS ENUM (\'A\');' for enum in STACK_AUTH_ENUM_TYPES_NOT_READ]
+    + [
+        "CREATE SEQUENCE global_seq_id;",
+        'CREATE TYPE "SubscriptionStatus" AS ENUM (\'active\');',
+        'CREATE TABLE "Subscription" (id uuid PRIMARY KEY, status "SubscriptionStatus",'
+        " seq bigint DEFAULT nextval('global_seq_id'));",
+        'ALTER TABLE "ContactChannel" ADD FOREIGN KEY ("tenancyId", "projectUserId")'
+        ' REFERENCES "ProjectUser" ("tenancyId", "projectUserId");',
+    ]
+)
+
 
 @pytest.fixture(scope="module")
 def postgres():
@@ -79,22 +111,62 @@ def postgres():
         yield postgres
 
 
-@pytest.fixture
-def database(postgres, monkeypatch) -> str:
-    """A fresh database in the container; its URL is the one Alembic's env.py reads."""
+def create_database(postgres) -> str:
     name = f"t_{uuid.uuid4().hex[:12]}"
     admin_url = postgres.get_connection_url().replace("postgresql+psycopg://", "postgresql://")
     with psycopg.connect(admin_url, autocommit=True) as conn:
         conn.execute(f"CREATE DATABASE {name}")
-    url = admin_url.rsplit("/", 1)[0] + f"/{name}"
+    return admin_url.rsplit("/", 1)[0] + f"/{name}"
+
+
+def use_database(monkeypatch, url: str) -> None:
+    """Points Alembic's env.py at the database."""
     monkeypatch.setenv("DATABASE_URL", url.replace("postgresql://", "postgresql+psycopg://"))
+
+
+@pytest.fixture
+def database(postgres, monkeypatch) -> str:
+    """A fresh database in the container, the one Alembic migrates."""
+    url = create_database(postgres)
+    use_database(monkeypatch, url)
     return url
 
 
-def upgrade_to_head() -> None:
+@pytest.fixture
+def yapit_schema(postgres, monkeypatch) -> dict[str, set[str]]:
+    """The schema objects of a database that never held Stack Auth's, migrated to head."""
+    url = create_database(postgres)
+    with monkeypatch.context() as patch:
+        use_database(patch, url)
+        upgrade_to_head()
+    return schema_objects(url)
+
+
+def alembic_config() -> config.Config:
     alembic_cfg = config.Config(str(ALEMBIC_INI))
     alembic_cfg.set_main_option("script_location", str(ALEMBIC_INI.parent / "migrations"))
-    command.upgrade(alembic_cfg, "head")
+    return alembic_cfg
+
+
+def upgrade_to_head() -> None:
+    command.upgrade(alembic_config(), "head")
+
+
+def schema_objects(url: str) -> dict[str, set[str]]:
+    with psycopg.connect(url) as conn:
+        return {
+            "tables": {row[0] for row in conn.execute("SELECT tablename FROM pg_tables WHERE schemaname = 'public'")},
+            "enum types": {
+                row[0]
+                for row in conn.execute(
+                    "SELECT typname FROM pg_type JOIN pg_namespace ON pg_namespace.oid = typnamespace"
+                    " WHERE nspname = 'public' AND typtype = 'e'"
+                )
+            },
+            "sequences": {
+                row[0] for row in conn.execute("SELECT sequencename FROM pg_sequences WHERE schemaname = 'public'")
+            },
+        }
 
 
 def add_user(
@@ -143,9 +215,10 @@ def add_user(
         )
 
 
-def test_revision_copies_stack_auth_users_keeping_their_ids(database):
+def test_revisions_copy_stack_auth_users_keeping_their_ids_then_drop_stack_auth(yapit_schema, database):
     with psycopg.connect(database, autocommit=True) as conn:
         conn.execute(STACK_AUTH_SCHEMA)
+        conn.execute(STACK_AUTH_REST_OF_SCHEMA)
         add_user(conn, PASSWORD_USER, email="Pat@Example.com", name="Pat", password=True)
         add_user(conn, GOOGLE_USER, email="gina@gmail.com", oauth=("google", "1001", "gina@gmail.com"))
         add_user(
@@ -186,6 +259,20 @@ def test_revision_copies_stack_auth_users_keeping_their_ids(database):
         ("google", "1001", GOOGLE_USER, "gina@gmail.com"),
         ("github", "42", BOTH_USER, "bo@users.gh"),
     }
+    assert "subscriptionstatus" in yapit_schema["enum types"]
+    assert schema_objects(database) == yapit_schema
+
+
+def test_drop_of_stack_auth_runs_again_on_a_database_it_already_cleared(yapit_schema, database):
+    with psycopg.connect(database, autocommit=True) as conn:
+        conn.execute(STACK_AUTH_SCHEMA)
+        conn.execute(STACK_AUTH_REST_OF_SCHEMA)
+    upgrade_to_head()
+
+    command.downgrade(alembic_config(), "5154eb03f6c9")
+    upgrade_to_head()
+
+    assert schema_objects(database) == yapit_schema
 
 
 def test_revision_without_stack_auth_tables_only_creates_the_auth_tables(database):

@@ -10,8 +10,8 @@ metadata that name that id stay theirs:
 
 A user without a primary email cannot sign in by email and is skipped. Two users
 sharing an email (case-insensitively) cannot both hold it; the one active most
-recently keeps it. Both kinds of skip are logged with their ids. Stack Auth's
-tables are left as they are.
+recently keeps it. Both kinds of skip are logged with their ids. The next
+revision drops Stack Auth's tables.
 
 Revision ID: 5154eb03f6c9
 Revises: c7d8e9f0a1b2
