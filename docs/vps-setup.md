@@ -329,8 +329,6 @@ The gateway signs people in itself ([[auth]]); nothing needs setting up after a 
 
 A failed sign-in mail is an ERROR in the gateway log (`Sign-in email to an address at … failed`), which the daily report flags.
 
-`make deploy` passes `--prune`, so the deploy that first runs a `docker-compose.prod.yml` without the `stack-auth` and `clickhouse` services removes them. Their volume, `yapit_clickhouse-data`, holds only Stack Auth's analytics and stays until someone removes it by hand.
-
 ## Operations
 
 ### Service status

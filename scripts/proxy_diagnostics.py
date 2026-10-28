@@ -11,7 +11,6 @@ but also useful for ad-hoc debugging.
 Requires VPS_HOST in .env and SSH access (Tailscale).
 
 Examples:
-
     uv run scripts/proxy_diagnostics.py
     uv run scripts/proxy_diagnostics.py --hours 4
 """
@@ -20,7 +19,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import subprocess
 import sys
 from collections import defaultdict
@@ -29,6 +27,7 @@ from pathlib import Path
 
 import tyro
 from dotenv import load_dotenv
+
 
 @dataclass
 class Args:

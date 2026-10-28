@@ -102,7 +102,7 @@ Before the gateway had auth of its own, a self-hosted Stack Auth container signe
 
 Since every id stays the same, the documents, subscriptions and Stripe `metadata.user_id` that name a user still name the same person. Password users sign in by email from then on, with the address their account has. The migration skips users of Stack Auth's internal (dashboard) project, users without a primary email, and, of two users sharing an email, the one active less recently. It logs the ids it skips. Stack Auth sessions do not carry over: everyone signs in once more.
 
-The migration leaves Stack Auth's tables (PascalCase: `ProjectUser`, `ContactChannel`, …) as they were. They are the rollback path: redeploying a commit from before the cutover, with its `stack-auth` image from ghcr, brings Stack Auth back on the same data. Users who signed up after the cutover exist only in `useraccount`.
+The migration leaves Stack Auth's tables (PascalCase: `ProjectUser`, `ContactChannel`, …) as they were. They are the rollback path: redeploying a commit from before the cutover brings Stack Auth back on the same data, provided its compose file names the image prod's `yapit_stack-auth` service ran, by digest. `ghcr.io/yapit-tts/stack-auth:latest` is a later stopgap build that exits on start. Users who signed up after the cutover exist only in `useraccount`.
 
 ## Dev and tests
 

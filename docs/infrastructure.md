@@ -27,7 +27,7 @@ Compose files — **prod is standalone, not an overlay on base**:
 
 - `docker-compose.yml` — Base services, used by dev and selfhost (NOT prod)
 - `docker-compose.dev.yml` — Dev overrides, layered on base via `-f`
-- `docker-compose.prod.yml` — **Standalone** production file for `docker stack deploy`. Duplicates service definitions with Swarm-specific config (Traefik labels, image refs, deploy constraints). Changes to base compose do NOT propagate to prod — both files must be updated independently.
+- `docker-compose.prod.yml` — **Standalone** production file for `docker stack deploy`. `make deploy` passes `--prune`, so a service deleted from this file is removed from prod on the next deploy, and the deploy's image cleanup then deletes its image from the VPS. Duplicates service definitions with Swarm-specific config (Traefik labels, image refs, deploy constraints). Changes to base compose do NOT propagate to prod — both files must be updated independently.
 - `docker-compose.selfhost.yml` — Self-hosting overlay on base (Alembic migrations, no billing, no SOPS)
 - `docker-compose.worker.yml` — External GPU workers (connects to prod Redis via Tailscale). A worker host failing the deploy with `unresolvable CDI devices nvidia.com/gpu=all` has an nvidia kernel module older than the userspace driver its last NixOS switch installed, so the CDI generator found no working NVML and wrote no spec — the host needs a reboot, not a regenerated spec.
 

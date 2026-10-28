@@ -12,7 +12,7 @@ services:
     build:
       context: ./frontend
       args:
-        VITE_ENV_FILE: ${VITE_ENV_FILE:-.env.selfhost}
+        VITE_ENV_FILE: .env.selfhost
     ports:
       - "80:8080"
     cap_drop: [ALL]
