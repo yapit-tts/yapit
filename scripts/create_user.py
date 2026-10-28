@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from yapit.gateway.auth.email_sign_in import normalize_email
+from yapit.gateway.auth.accounts import normalize_email
 from yapit.gateway.auth.sessions import create_api_token
 from yapit.gateway.domain_models import UserAccount
 

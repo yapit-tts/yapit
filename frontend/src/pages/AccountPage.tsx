@@ -20,7 +20,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Loader2, ArrowLeft, Trash2, AlertTriangle, Calendar, Sun, Moon, Monitor, Code2, RotateCcw } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
-import { SettingRow, darkThemes } from "@/components/settingsDialog";
+import { SectionHeading, SettingRow, darkThemes } from "@/components/settingsDialog";
+import { AccountSettingsCard } from "@/components/auth/AccountSettingsCard";
 import { useSettings, useIsDark, type ContentWidth, type ScrollPosition, type Theme } from "@/hooks/useSettings";
 import { useUserPreferences } from "@/hooks/useUserPreferences";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -269,7 +270,7 @@ const AccountPage = () => {
         </CardHeader>
         <CardContent>
           {/* Appearance */}
-          <div className="mb-2 text-xs font-medium text-muted-foreground uppercase tracking-wide">Appearance</div>
+          <SectionHeading first>Appearance</SectionHeading>
           <div className="flex flex-col">
             <SettingRow label="Theme" description="Light, dark, or match your system">
               <div className="flex gap-1">
@@ -323,7 +324,7 @@ const AccountPage = () => {
           </div>
 
           {/* Reading */}
-          <div className="mt-6 mb-2 text-xs font-medium text-muted-foreground uppercase tracking-wide">Reading</div>
+          <SectionHeading>Reading</SectionHeading>
           <div className="flex flex-col">
             <SettingRow label="Scroll on restore" description="Scroll to saved position when opening a document">
               <Switch
@@ -381,7 +382,7 @@ const AccountPage = () => {
           </div>
 
           {/* Sharing */}
-          <div className="mt-6 mb-2 text-xs font-medium text-muted-foreground uppercase tracking-wide">Sharing</div>
+          <SectionHeading>Sharing</SectionHeading>
           <div className="flex flex-col">
             <SettingRow label="Auto-import shared documents" description="Add to library automatically when opening">
               <Switch
@@ -399,7 +400,7 @@ const AccountPage = () => {
           </div>
 
           {/* Advanced */}
-          <div className="mt-6 mb-2 text-xs font-medium text-muted-foreground uppercase tracking-wide">Advanced</div>
+          <SectionHeading>Advanced</SectionHeading>
           <div className="flex flex-col">
             <SettingRow
               label="Extraction prompt"
@@ -446,6 +447,8 @@ const AccountPage = () => {
           </div>
         </CardContent>
       </Card>
+
+      {authEnabled && <AccountSettingsCard />}
 
       {/* Danger Zone */}
       <Card className="border-destructive/50">

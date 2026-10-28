@@ -4,13 +4,13 @@ import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useAuth } from "@/hooks/useAuthUser";
-import { isOtherBrowser, signInError, verifySignIn } from "@/lib/authApi";
+import { isOtherBrowser, authErrorMessage, verifySignIn } from "@/lib/authApi";
 import AuthPageLayout from "./AuthPageLayout";
 
 /** The link's token and email, which travel in the fragment so no server or proxy log ever sees them. */
-function readLink(): { token: string | null; email: string | null } {
+function readLink(): { token: string | null; email: string | null; isEmailChange: boolean } {
 	const params = new URLSearchParams(window.location.hash.slice(1));
-	return { token: params.get("token"), email: params.get("email") };
+	return { token: params.get("token"), email: params.get("email"), isEmailChange: params.get("change") === "1" };
 }
 
 /**
@@ -19,7 +19,7 @@ function readLink(): { token: string | null; email: string | null } {
  * opening the link uses nothing up.
  */
 export default function EmailLinkPage() {
-	const [{ token, email }] = useState(readLink);
+	const [{ token, email, isEmailChange }] = useState(readLink);
 	const { refresh } = useAuth();
 	const navigate = useNavigate();
 	const [state, setState] = useState<"trying" | "confirm" | "busy" | "error">(token ? "trying" : "error");
@@ -31,13 +31,13 @@ export default function EmailLinkPage() {
 		try {
 			await verifySignIn({ token, same_browser_only: sameBrowserOnly });
 			await refresh();
-			navigate("/", { replace: true });
+			navigate(isEmailChange ? "/account" : "/", { replace: true });
 		} catch (err) {
 			if (sameBrowserOnly && isOtherBrowser(err)) {
 				setState("confirm");
 				return;
 			}
-			setError(signInError(err));
+			setError(authErrorMessage(err));
 			setState("error");
 		}
 	};
@@ -54,8 +54,8 @@ export default function EmailLinkPage() {
 		<AuthPageLayout>
 			<Card>
 				<CardHeader>
-					<CardTitle className="text-2xl">Sign in to Yapit</CardTitle>
-					{email && <CardDescription>as {email}</CardDescription>}
+					<CardTitle className="text-2xl">{isEmailChange ? "Confirm your new email" : "Sign in to Yapit"}</CardTitle>
+					{email && <CardDescription>{isEmailChange ? email : `as ${email}`}</CardDescription>}
 				</CardHeader>
 				<CardContent className="flex flex-col gap-4">
 					{state === "trying" && <Loader2 className="h-6 w-6 animate-spin text-muted-foreground mx-auto" />}
@@ -68,14 +68,18 @@ export default function EmailLinkPage() {
 							disabled={state === "busy"}
 							autoFocus
 						>
-							{email ? `Continue as ${email}` : "Continue"}
+							{isEmailChange ? "Confirm" : email ? `Continue as ${email}` : "Continue"}
 						</Button>
 					)}
 					{state === "error" && (
 						<>
 							<p className="text-sm text-destructive">{error}</p>
 							<Button asChild variant="outline">
-								<Link to="/auth/sign-in">Get a new sign-in email</Link>
+								{isEmailChange ? (
+									<Link to="/account">Go to your account</Link>
+								) : (
+									<Link to="/auth/sign-in">Get a new sign-in email</Link>
+								)}
 							</Button>
 						</>
 					)}

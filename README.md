@@ -44,7 +44,7 @@ By default, yapit runs in **single-user mode** — no login required, all featur
 
 Note: in single-user mode, all requests share one user — everyone on the network sees the same document library.
 
-If you want user accounts with login (e.g., for a family or small team), set `AUTH_ENABLED=true` in `.env.selfhost` and follow the comments below it. People sign in with an emailed link or code, so fill in `APP_URL` and `SMTP_*` (with `SMTP_HOST` empty, the gateway writes the sign-in emails to its log). [docs/auth.md](docs/auth.md#multi-user-selfhost) has the steps, and how to give the [CLI](https://github.com/yapit-tts/yapit-cli) an API token.
+If you want user accounts with login (e.g., for a family or small team), set `AUTH_ENABLED=true` in `.env.selfhost` and follow the comments below it. People sign in with an emailed link or code, so fill in `APP_URL` and `SMTP_*` (with `SMTP_HOST` empty, the gateway writes the sign-in emails to its log). Google and GitHub sign-in are optional: fill in a provider's `*_CLIENT_ID` and `*_CLIENT_SECRET` to offer it. [docs/auth.md](docs/auth.md#multi-user-selfhost) has the steps, and how to give the [CLI](https://github.com/yapit-tts/yapit-cli) an API token.
 
 ### Custom TTS voices
 

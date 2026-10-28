@@ -1,20 +1,31 @@
 import { useState, type FormEvent } from "react";
-import { useNavigate } from "react-router";
+import { useNavigate, useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAuth } from "@/hooks/useAuthUser";
+import { ProviderIcon } from "@/components/auth/ProviderIcon";
 import AuthPageLayout from "./AuthPageLayout";
-import { emailSignInLink, signInError, verifySignIn } from "@/lib/authApi";
+import {
+	PROVIDER_NAMES,
+	emailSignInLink,
+	oauthErrorMessage,
+	oauthStartUrl,
+	authErrorMessage,
+	NOT_AN_EMAIL,
+	verifySignIn,
+} from "@/lib/authApi";
 
 export default function SignInPage() {
-	const { refresh } = useAuth();
+	const { refresh, providers } = useAuth();
 	const navigate = useNavigate();
+	const [searchParams] = useSearchParams();
 	const [email, setEmail] = useState("");
 	const [sentTo, setSentTo] = useState<string | null>(null);
 	const [code, setCode] = useState("");
-	const [error, setError] = useState<string | null>(null);
+	const oauthError = searchParams.get("error");
+	const [error, setError] = useState<string | null>(oauthError && oauthErrorMessage(oauthError));
 	const [busy, setBusy] = useState(false);
 
 	const sendEmail = async (address: string) => {
@@ -25,7 +36,7 @@ export default function SignInPage() {
 			setSentTo(address);
 			setCode("");
 		} catch (err) {
-			setError(signInError(err));
+			setError(authErrorMessage(err, NOT_AN_EMAIL));
 		} finally {
 			setBusy(false);
 		}
@@ -46,7 +57,7 @@ export default function SignInPage() {
 			await refresh();
 			navigate("/", { replace: true });
 		} catch (err) {
-			setError(signInError(err));
+			setError(authErrorMessage(err));
 			setBusy(false);
 		}
 	};
@@ -59,10 +70,31 @@ export default function SignInPage() {
 						<CardHeader>
 							<CardTitle className="text-2xl">Sign in to Yapit</CardTitle>
 							<CardDescription>
-								We'll email you a link and a code. No password needed, and a new address gets a new account.
+								{providers.length > 0
+									? `No password needed: continue with ${providers.map((p) => PROVIDER_NAMES[p]).join(" or ")}, or we'll email you a link and a code.`
+									: "We'll email you a link and a code. No password needed, and a new address gets a new account."}
 							</CardDescription>
 						</CardHeader>
-						<CardContent>
+						<CardContent className="flex flex-col gap-4">
+							{providers.length > 0 && (
+								<>
+									<div className="flex flex-col gap-2">
+										{providers.map((provider) => (
+											<Button key={provider} variant="outline" asChild>
+												<a href={oauthStartUrl(provider, "sign_in", "/")}>
+													<ProviderIcon provider={provider} className="h-4 w-4" />
+													Continue with {PROVIDER_NAMES[provider]}
+												</a>
+											</Button>
+										))}
+									</div>
+									<div className="flex items-center gap-3 text-xs text-muted-foreground">
+										<div className="h-px flex-1 bg-border" />
+										or
+										<div className="h-px flex-1 bg-border" />
+									</div>
+								</>
+							)}
 							<form onSubmit={onSubmitEmail} className="flex flex-col gap-4">
 								<div className="flex flex-col gap-2">
 									<Label htmlFor="email">Email</Label>

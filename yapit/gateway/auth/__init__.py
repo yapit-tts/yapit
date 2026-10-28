@@ -78,6 +78,11 @@ def require_app_origin(origin: str | None, settings: Settings) -> None:
         raise AuthRefused(status.HTTP_403_FORBIDDEN, "cross-origin request refused")
 
 
+def require_auth_enabled(settings: Settings) -> None:
+    if not settings.auth_enabled:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sign-in is disabled (AUTH_ENABLED=false).")
+
+
 async def resolve_caller(db: AsyncSession, settings: Settings, credentials: Credentials) -> Caller:
     """Who sent the request: a bearer API token wins over the session cookie, which wins over an anonymous session.
 
@@ -108,6 +113,17 @@ async def resolve_caller(db: AsyncSession, settings: Settings, credentials: Cred
         return Caller(create_anonymous_user(credentials.anonymous_id))
 
     return Caller(None)
+
+
+async def signed_in_user_id(db: AsyncSession, settings: Settings, credentials: Credentials) -> str | None:
+    """The account the request is signed in to, or None for anyone else, wrong credentials included."""
+    try:
+        caller = await resolve_caller(db, settings, credentials)
+    except AuthRefused:
+        return None
+    if caller.user is None or caller.user.is_anonymous:
+        return None
+    return caller.user.id
 
 
 def request_credentials(
@@ -159,6 +175,17 @@ async def authenticate(user: Annotated[User | None, Depends(authenticate_optiona
             detail="not authenticated",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    return user
+
+
+async def authenticate_account(
+    user: Annotated[User, Depends(authenticate)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> User:
+    """The caller, who must be signed in to an account: not anonymous, and not the selfhost user without auth."""
+    require_auth_enabled(settings)
+    if user.is_anonymous:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Sign in first.")
     return user
 
 
