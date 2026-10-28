@@ -37,6 +37,13 @@ export async function emailSignInLink(email: string): Promise<void> {
 	await axios.post(`${baseURL}/v1/auth/email/start`, { email });
 }
 
-export async function verifySignIn(body: { token: string } | { email: string; code: string }): Promise<void> {
+export async function verifySignIn(
+	body: { token: string; same_browser_only?: boolean } | { email: string; code: string },
+): Promise<void> {
 	await axios.post(`${baseURL}/v1/auth/email/verify`, body);
+}
+
+/** Whether the gateway refused a link because another browser asked for it, which a click overrides. */
+export function isOtherBrowser(err: unknown): boolean {
+	return axios.isAxiosError(err) && err.response?.status === 409;
 }

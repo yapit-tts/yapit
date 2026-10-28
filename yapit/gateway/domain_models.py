@@ -493,6 +493,7 @@ class EmailChallenge(SQLModel, table=True):
     user_id: str | None = Field(default=None, foreign_key="useraccount.id", ondelete="CASCADE")
     token_hash: str = Field(unique=True)
     code_hash: str
+    browser_nonce_hash: str | None = Field(default=None)  # the requesting browser's, for a link opened in it
     attempts: int = Field(default=0)
     created: datetime = Field(
         default_factory=lambda: datetime.now(tz=dt.UTC),

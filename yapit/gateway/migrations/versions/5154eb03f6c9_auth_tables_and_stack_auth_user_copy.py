@@ -82,6 +82,7 @@ def upgrade() -> None:
         sa.Column("user_id", sa.String(), nullable=True),
         sa.Column("token_hash", sa.String(), nullable=False),
         sa.Column("code_hash", sa.String(), nullable=False),
+        sa.Column("browser_nonce_hash", sa.String(), nullable=True),
         sa.Column("attempts", sa.Integer(), nullable=False),
         sa.Column("created", sa.DateTime(timezone=True), nullable=False),
         sa.Column("expires", sa.DateTime(timezone=True), nullable=False),

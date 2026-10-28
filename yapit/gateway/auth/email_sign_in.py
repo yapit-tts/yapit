@@ -25,6 +25,10 @@ class TooManyChallenges(Exception):
     pass
 
 
+class OtherBrowser(Exception):
+    """The link was opened in a browser other than the one that asked for it, so it waits for a click."""
+
+
 def normalize_email(email: str) -> str:
     return email.strip().lower()
 
@@ -34,10 +38,12 @@ def hash_code(challenge_id: uuid.UUID, code: str) -> str:
     return hash_secret(f"{challenge_id}:{code}")
 
 
-async def start_sign_in(db: AsyncSession, mailer: Mailer, settings: Settings, email: str) -> None:
+async def start_sign_in(db: AsyncSession, mailer: Mailer, settings: Settings, email: str, browser_nonce: str) -> None:
     """Mail a sign-in link and code to the address, whether or not an account holds it.
 
-    The challenge is committed only once the mail is out, so a failed send leaves nothing behind.
+    `browser_nonce` is the secret of the browser that asked, kept in its pending cookie; a link
+    opened where that cookie comes along signs in without a click. The challenge is committed only
+    once the mail is out, so a failed send leaves nothing behind.
     """
     email = normalize_email(email)
     now = datetime.now(tz=dt.UTC)
@@ -61,6 +67,7 @@ async def start_sign_in(db: AsyncSession, mailer: Mailer, settings: Settings, em
             purpose=EmailChallengePurpose.sign_in,
             token_hash=hash_secret(token),
             code_hash=hash_code(challenge_id, code),
+            browser_nonce_hash=hash_secret(browser_nonce),
             created=now,
             expires=now + CHALLENGE_LIFETIME,
         )
@@ -70,14 +77,30 @@ async def start_sign_in(db: AsyncSession, mailer: Mailer, settings: Settings, em
     await db.commit()
 
 
-async def verify_sign_in_token(db: AsyncSession, token: str) -> UserAccount | None:
-    """Consume the challenge behind a sign-in link and sign its address in."""
+async def verify_sign_in_token(
+    db: AsyncSession, token: str, *, browser_nonce: str | None, same_browser_only: bool
+) -> UserAccount | None:
+    """Consume the challenge behind a sign-in link and sign its address in.
+
+    With `same_browser_only`, a browser whose nonce is not the challenge's gets OtherBrowser and consumes nothing.
+    """
     challenge = (
         await db.exec(_live_challenges().where(EmailChallenge.token_hash == hash_secret(token)).with_for_update())
     ).first()
     if challenge is None:
         return None
+    if same_browser_only and not _same_browser(challenge, browser_nonce):
+        await db.rollback()
+        raise OtherBrowser
     return await _complete(db, challenge)
+
+
+def _same_browser(challenge: EmailChallenge, browser_nonce: str | None) -> bool:
+    return (
+        browser_nonce is not None
+        and challenge.browser_nonce_hash is not None
+        and hmac.compare_digest(challenge.browser_nonce_hash, hash_secret(browser_nonce))
+    )
 
 
 async def verify_sign_in_code(db: AsyncSession, email: str, code: str) -> UserAccount | None:
@@ -123,7 +146,8 @@ async def _complete(db: AsyncSession, challenge: EmailChallenge) -> UserAccount:
 
 
 def sign_in_email(settings: Settings, email: str, token: str, code: str) -> Email:
-    link = f"{settings.app_url.rstrip('/')}/auth/email?{urlencode({'token': token, 'email': email})}"
+    # In the fragment, which browsers never send, the token stays out of every proxy's access log
+    link = f"{settings.app_url.rstrip('/')}/auth/email#{urlencode({'token': token, 'email': email})}"
     minutes = int(CHALLENGE_LIFETIME.total_seconds() // 60)
     text = (
         f"Open this link to sign in to Yapit:\n{link}\n\n"
@@ -132,7 +156,8 @@ def sign_in_email(settings: Settings, email: str, token: str, code: str) -> Emai
         "If you did not ask to sign in, ignore this email."
     )
     html = (
-        f'<p><a href="{escape(link)}">Sign in to Yapit</a></p>'
+        f'<p><a href="{escape(link)}" style="display:inline-block;padding:10px 20px;border-radius:6px;'
+        f'background:#4d8b5c;color:#ffffff;text-decoration:none;font-weight:600">Sign in to Yapit</a></p>'
         f"<p>Or enter this code on the sign-in page: <strong>{code}</strong></p>"
         f"<p>The link and the code work once, within {minutes} minutes. "
         "If you did not ask to sign in, ignore this email.</p>"
