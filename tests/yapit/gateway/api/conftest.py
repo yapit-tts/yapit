@@ -1,8 +1,10 @@
 import asyncio
 import datetime as dt
+import re
 import shutil
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timedelta
+from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import pytest
@@ -19,7 +21,7 @@ from yapit.gateway import create_app
 from yapit.gateway.auth import User, authenticate, authenticate_optional
 from yapit.gateway.auth.mailer import Email
 from yapit.gateway.cache import CacheConfig
-from yapit.gateway.config import Settings
+from yapit.gateway.config import Settings, get_settings
 from yapit.gateway.db import close_db, create_session, get_engine, init_db
 from yapit.gateway.deps import create_cache, create_image_storage
 from yapit.gateway.domain_models import Plan, PlanTier, SubscriptionStatus, UsagePeriod, UserSubscription
@@ -27,6 +29,8 @@ from yapit.gateway.markdown.transformer import DocumentTransformer
 
 DEFAULT_TEST_USER = User(id="default-test-user", is_anonymous=False)
 APP_URL = "https://yapit.test"
+SAME_ORIGIN = {"Origin": APP_URL}
+SESSION_COOKIE = "__Host-yapit_session"  # APP_URL is https
 
 
 class RecordingMailer:
@@ -249,3 +253,46 @@ async def browser(app, real_auth):
     """A client at the app's origin that keeps cookies, like the browser the frontend runs in."""
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=APP_URL) as client:
         yield client
+
+
+# Signing in through the API, as the frontend does
+
+
+@contextmanager
+def settings_changed(app, **changes):
+    original = app.dependency_overrides[get_settings]
+    changed = original().model_copy(update=changes)
+    app.dependency_overrides[get_settings] = lambda: changed
+    try:
+        yield changed
+    finally:
+        app.dependency_overrides[get_settings] = original
+
+
+def mailed_link(app) -> str:
+    mail: Email = app.state.mailer.sent[-1]
+    return next(word for word in mail.text.split() if "/auth/email" in word)
+
+
+async def request_sign_in(browser, app, email: str) -> tuple[str, str]:
+    """Ask for a sign-in email; return the link's token and the code, read off the mail as a person would."""
+    response = await browser.post("/v1/auth/email/start", json={"email": email})
+    assert response.status_code == 202, response.text
+    mail: Email = app.state.mailer.sent[-1]
+    token = parse_qs(urlsplit(mailed_link(app)).fragment)["token"][0]
+    code = re.search(r"\b\d{6}\b", mail.text)
+    assert code is not None
+    return token, code.group()
+
+
+async def sign_in(browser, app, email: str) -> dict:
+    token, _ = await request_sign_in(browser, app, email)
+    response = await browser.post("/v1/auth/email/verify", json={"token": token}, headers=SAME_ORIGIN)
+    assert response.status_code == 200, response.text
+    return response.json()["user"]
+
+
+async def signed_in_user(browser) -> dict | None:
+    response = await browser.get("/v1/auth/session")
+    assert response.status_code == 200
+    return response.json()["user"]

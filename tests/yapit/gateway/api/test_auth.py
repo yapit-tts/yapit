@@ -3,7 +3,6 @@
 import datetime as dt
 import hashlib
 import re
-from contextlib import contextmanager
 from datetime import datetime, timedelta
 from urllib.parse import parse_qs, urlsplit
 
@@ -13,20 +12,26 @@ import pytest_asyncio
 from fastapi import WebSocketException
 from loguru import logger
 from sqlalchemy import event
-from sqlmodel import select, update
+from sqlmodel import delete, select, update
 from starlette.websockets import WebSocket
 
-from tests.yapit.gateway.api.conftest import APP_URL
+from tests.yapit.gateway.api.conftest import (
+    APP_URL,
+    SAME_ORIGIN,
+    SESSION_COOKIE,
+    mailed_link,
+    request_sign_in,
+    settings_changed,
+    sign_in,
+    signed_in_user,
+)
 from yapit.gateway.auth import SELFHOST_USER, authenticate_ws, sign_anonymous_id
 from yapit.gateway.auth.mailer import Email, MailDeliveryError, SmtpMailer
 from yapit.gateway.auth.sessions import create_api_token
-from yapit.gateway.config import get_settings
 from yapit.gateway.db import get_engine
 from yapit.gateway.domain_models import AuthSession, Document, EmailChallenge, UserAccount
 
-SAME_ORIGIN = {"Origin": APP_URL}
 THIRTY_DAYS_S = 30 * 24 * 3600
-SESSION_COOKIE = "__Host-yapit_session"  # APP_URL is https
 PENDING_COOKIE = "yapit_signin_pending"
 
 
@@ -47,46 +52,6 @@ async def api_token(session) -> str:
     token = create_api_token(session, "cli-user", "laptop")
     await session.commit()
     return token
-
-
-@contextmanager
-def settings_changed(app, **changes):
-    original = app.dependency_overrides[get_settings]
-    changed = original().model_copy(update=changes)
-    app.dependency_overrides[get_settings] = lambda: changed
-    try:
-        yield changed
-    finally:
-        app.dependency_overrides[get_settings] = original
-
-
-def mailed_link(app) -> str:
-    mail: Email = app.state.mailer.sent[-1]
-    return next(word for word in mail.text.split() if "/auth/email" in word)
-
-
-async def request_sign_in(browser, app, email: str) -> tuple[str, str]:
-    """Ask for a sign-in email; return the link's token and the code, read off the mail as a person would."""
-    response = await browser.post("/v1/auth/email/start", json={"email": email})
-    assert response.status_code == 202, response.text
-    mail: Email = app.state.mailer.sent[-1]
-    token = parse_qs(urlsplit(mailed_link(app)).fragment)["token"][0]
-    code = re.search(r"\b\d{6}\b", mail.text)
-    assert code is not None
-    return token, code.group()
-
-
-async def sign_in(browser, app, email: str) -> dict:
-    token, _ = await request_sign_in(browser, app, email)
-    response = await browser.post("/v1/auth/email/verify", json={"token": token}, headers=SAME_ORIGIN)
-    assert response.status_code == 200, response.text
-    return response.json()["user"]
-
-
-async def signed_in_user(browser) -> dict | None:
-    response = await browser.get("/v1/auth/session")
-    assert response.status_code == 200
-    return response.json()["user"]
 
 
 # Signing in and out
@@ -623,6 +588,27 @@ async def test_email_changes_only_once_the_link_sent_to_the_new_address_is_opene
     assert before["email"] == "old@example.com"
     assert confirmed.status_code == 200, confirmed.text
     assert await signed_in_user(browser) == {**user, "email": "new@example.com"}
+    await browser.post("/v1/auth/sign-out", headers=SAME_ORIGIN)
+    assert (await sign_in(browser, app, "new@example.com"))["id"] == user["id"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("by", ["link", "code"])
+async def test_email_change_used_where_its_requester_is_not_signed_in_changes_nothing(browser, app, by):
+    """Whoever holds the new address cannot pull it into the requester's account by confirming the mail."""
+    user = await sign_in(browser, app, "requester@example.com")
+    token, code = await request_email_change(browser, app, "holder@example.com")
+    body = {"token": token} if by == "link" else {"email": "holder@example.com", "code": code}
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=APP_URL) as holder:
+        refused = await holder.post("/v1/auth/email/verify", json=body, headers=SAME_ORIGIN)
+        holder_user = await signed_in_user(holder)
+    confirmed_by_requester = await browser.post("/v1/auth/email/verify", json=body, headers=SAME_ORIGIN)
+
+    assert refused.status_code == 403
+    assert holder_user is None
+    assert confirmed_by_requester.status_code == 200, "the refusal consumed nothing"
+    assert (await signed_in_user(browser))["id"] == user["id"]
 
 
 @pytest.mark.asyncio
@@ -637,16 +623,6 @@ async def test_email_change_is_confirmed_by_code_too(browser, app):
     assert confirmed.status_code == 200, confirmed.text
     assert (await signed_in_user(browser))["id"] == user["id"]
     assert (await signed_in_user(browser))["email"] == "new@example.com"
-
-
-@pytest.mark.asyncio
-async def test_after_an_email_change_the_new_address_signs_in_to_the_same_account(browser, app):
-    user = await sign_in(browser, app, "old@example.com")
-    token, _ = await request_email_change(browser, app, "new@example.com")
-    await browser.post("/v1/auth/email/verify", json={"token": token}, headers=SAME_ORIGIN)
-    await browser.post("/v1/auth/sign-out", headers=SAME_ORIGIN)
-
-    assert (await sign_in(browser, app, "new@example.com"))["id"] == user["id"]
 
 
 @pytest.mark.asyncio
@@ -682,12 +658,16 @@ class FailingMailer:
 
 
 @pytest.mark.asyncio
-async def test_failed_sign_in_email_fails_the_request_and_logs_an_error(browser, app, session):
+@pytest.mark.parametrize("endpoint", ["/v1/auth/email/start", "/v1/auth/email/change"])
+async def test_failed_auth_email_fails_the_request_and_logs_an_error(browser, app, session, endpoint):
+    await sign_in(browser, app, "me@example.com")
+    await session.exec(delete(EmailChallenge))
+    await session.commit()
     app.state.mailer = FailingMailer()
     errors: list[str] = []
     sink = logger.add(lambda message: errors.append(message), level="ERROR")
     try:
-        response = await browser.post("/v1/auth/email/start", json={"email": "reader@example.com"})
+        response = await browser.post(endpoint, json={"email": "reader@example.com"}, headers=SAME_ORIGIN)
     finally:
         logger.remove(sink)
 
@@ -717,7 +697,7 @@ async def test_auth_disabled_makes_every_request_the_selfhost_user_without_readi
     engine = get_engine().sync_engine
     event.listen(engine, "before_cursor_execute", record)
     try:
-        with settings_changed(app, auth_enabled=False):
+        with settings_changed(app, auth_enabled=False, github_client_id="github-client"):
             async with httpx.AsyncClient(
                 transport=httpx.ASGITransport(app=app),
                 base_url=APP_URL,
@@ -726,11 +706,21 @@ async def test_auth_disabled_makes_every_request_the_selfhost_user_without_readi
             ) as client:
                 session_state = await client.get("/v1/auth/session")
                 preferences = await client.patch("/v1/users/me/preferences", json={"pinned_voices": ["a"]})
+                sign_in_endpoints = [
+                    await client.get("/v1/auth/oauth/github/start"),
+                    await client.post("/v1/auth/email/start", json={"email": "a@example.com"}),
+                    await client.post("/v1/auth/email/change", json={"email": "a@example.com"}),
+                    await client.get("/v1/auth/tokens"),
+                    await client.post("/v1/auth/tokens", json={"label": "x"}),
+                    await client.delete("/v1/auth/identities/github"),
+                    await client.patch("/v1/users/me", json={"name": "x"}),
+                ]
     finally:
         event.remove(engine, "before_cursor_execute", record)
 
     assert session_state.json() == {"auth_enabled": False, "providers": [], "user": None}
     assert preferences.status_code == 200
+    assert [r.status_code for r in sign_in_endpoints] == [404] * len(sign_in_endpoints)
     assert statements, "the preferences write should have reached the database"
     auth_tables = ("useraccount", "authsession", "emailchallenge", "oauthidentity")
     assert not [s for s in statements if any(table in s for table in auth_tables)]

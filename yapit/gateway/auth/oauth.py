@@ -35,13 +35,13 @@ class OAuthMode(StrEnum):
 
 
 class OAuthError(StrEnum):
-    """The codes the callback redirects with, as `?error=<code>`; the frontend words each one."""
+    """The codes the callback redirects with, as `?error=<code>`; the frontend's `oauthErrorMessage` words them."""
 
     state = auto()  # unknown, expired or used state, or another browser's
     issuer = auto()  # the callback's `iss` is not the provider's (RFC 9207)
     denied = auto()  # the person cancelled at the provider
     provider = auto()  # the provider failed or answered something unusable
-    email_unverified = auto()  # the provider does not vouch for the email, so it signs in to nothing (P5)
+    email_unverified = auto()  # the provider does not vouch for the email, so it is refused
     identity_taken = auto()  # link mode: the identity already signs in to another user
     not_signed_in = auto()  # link mode without, or no longer with, the user who started it
 
@@ -249,7 +249,8 @@ async def resolve_account(
     """The account this identity signs in to, attaching it where it is new. Commits.
 
     Sign-in mode: a known identity signs in its user; else a provider-verified email signs in the
-    account holding it, created if none does (P5); an unverified email signs in to nothing.
+    account holding it, created if none does; an unverified or missing email is refused, since an
+    account created under an address its owner never proved would be the owner's on their first email sign-in.
     Link mode: the identity attaches to the user who started the flow, unless it belongs to another.
     """
     now = datetime.now(tz=dt.UTC)

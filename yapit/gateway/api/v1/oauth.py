@@ -5,9 +5,8 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
 from loguru import logger
-from sqlmodel.ext.asyncio.session import AsyncSession
 
-from yapit.gateway.auth import AuthRefused, Credentials, request_credentials, resolve_caller
+from yapit.gateway.auth import Credentials, request_credentials, require_auth_enabled, signed_in_user_id
 from yapit.gateway.auth.oauth import (
     OAUTH_STATE_COOKIE,
     PROVIDERS,
@@ -44,7 +43,8 @@ SIGN_IN_PAGE = "/auth/sign-in"
 
 
 def enabled_provider(provider: str, settings: SettingsDep) -> Provider:
-    if not settings.auth_enabled or provider not in enabled_providers(settings):
+    require_auth_enabled(settings)
+    if provider not in enabled_providers(settings):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Sign-in with {provider} is not enabled.")
     return PROVIDERS[provider]
 
@@ -69,7 +69,7 @@ async def start_oauth(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="return_to must be a path on this site.")
     user_id = None
     if mode == OAuthMode.link:
-        user_id = await _signed_in_user_id(db, settings, credentials)
+        user_id = await signed_in_user_id(db, settings, credentials)
         if user_id is None:
             return _redirect(settings, SIGN_IN_PAGE, OAuthError.not_signed_in)
     authorize_url, state = await begin(redis, settings, provider, mode, return_to, user_id)
@@ -93,7 +93,7 @@ async def oauth_callback(
     try:
         pending = await take_pending(redis, provider, params.get("state"), request.cookies.get(OAUTH_STATE_COOKIE))
         profile = await fetch_profile(http, settings, provider, pending, params)
-        current_user_id = await _signed_in_user_id(db, settings, credentials)
+        current_user_id = await signed_in_user_id(db, settings, credentials)
         account = await resolve_account(db, provider, profile, pending, current_user_id)
     except OAuthFailed as failed:
         logger.info(f"OAuth with {provider.name} refused: {failed.error}")
@@ -113,16 +113,6 @@ async def oauth_callback(
     else:
         logger.info(f"User {account.id} connected {provider.name}")
     return response
-
-
-async def _signed_in_user_id(db: AsyncSession, settings: Settings, credentials: Credentials) -> str | None:
-    try:
-        caller = await resolve_caller(db, settings, credentials)
-    except AuthRefused:
-        return None
-    if caller.user is None or caller.user.is_anonymous:
-        return None
-    return caller.user.id
 
 
 def _error_page(pending: PendingOAuth | None) -> str:

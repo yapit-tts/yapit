@@ -10,10 +10,16 @@ import httpx
 import pytest
 from sqlmodel import select
 
-from tests.yapit.gateway.api.conftest import APP_URL
-from tests.yapit.gateway.api.test_auth import SAME_ORIGIN, SESSION_COOKIE, settings_changed, sign_in, signed_in_user
+from tests.yapit.gateway.api.conftest import (
+    APP_URL,
+    SAME_ORIGIN,
+    SESSION_COOKIE,
+    settings_changed,
+    sign_in,
+    signed_in_user,
+)
 from yapit.gateway.auth.oauth import provider_http
-from yapit.gateway.domain_models import AuthSession, OAuthIdentity, UserAccount
+from yapit.gateway.domain_models import OAuthIdentity, UserAccount
 
 ISSUERS = {"google": "https://accounts.google.com", "github": "https://github.com/login/oauth"}
 CLIENTS = {"google": ("google-client", "google-secret"), "github": ("github-client", "github-secret")}
@@ -49,7 +55,10 @@ class StubProvider:
         return {"code": code, "state": query["state"], "iss": ISSUERS[provider]}
 
     def handle(self, request: httpx.Request) -> httpx.Response:
-        if request.url.path in ("/token", "/login/oauth/access_token"):
+        if (request.url.host, request.url.path) in (
+            ("oauth2.googleapis.com", "/token"),
+            ("github.com", "/login/oauth/access_token"),
+        ):
             return self._token(request)
         if request.headers.get("authorization") != "Bearer access-token":
             return httpx.Response(401)
@@ -142,7 +151,9 @@ async def test_known_identity_signs_its_user_in_whatever_email_the_provider_now_
     landed = await oauth_sign_in(browser, provider, return_to="/listen/abc")
 
     assert landed == "/listen/abc"
-    assert (await signed_in_user(browser))["id"] == "stack-auth-id"
+    user = await signed_in_user(browser)
+    assert user["id"] == "stack-auth-id"
+    assert user["identities"] == [{"provider": "github", "email": "new@example.com"}]
 
 
 @pytest.mark.asyncio
@@ -208,7 +219,10 @@ async def test_oauth_sign_in_sets_the_session_cookie_and_revokes_the_browsers_pr
 
     assert browser.cookies[SESSION_COOKIE] != previous
     assert (await signed_in_user(browser))["email"] == "reader@example.com"
-    assert len((await session.exec(select(AuthSession))).all()) == 1
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url=APP_URL, cookies={SESSION_COOKIE: previous}
+    ) as replay:
+        assert await signed_in_user(replay) is None
 
 
 # The callback's iss (RFC 9207) and state
@@ -244,6 +258,15 @@ async def test_callback_in_a_browser_that_did_not_start_the_flow_is_refused(brow
         landed = await callback(victim, "github", query)
         assert landed == "/auth/sign-in?error=state"
         assert await signed_in_user(victim) is None
+
+
+@pytest.mark.asyncio
+async def test_callback_at_another_providers_endpoint_is_refused(browser, provider):
+    started = await start(browser, "github")
+
+    landed = await callback(browser, "google", provider.authorize(started.headers["location"]))
+
+    assert landed == "/auth/sign-in?error=state"
 
 
 @pytest.mark.asyncio
@@ -357,7 +380,23 @@ async def test_link_mode_refuses_when_the_user_signed_out_in_between(browser, ap
 
 
 @pytest.mark.asyncio
-async def test_disconnecting_a_provider_removes_its_identity(browser, app, provider, session):
+async def test_link_mode_refuses_when_another_user_signed_in_in_between(browser, app, provider, session):
+    await sign_in(browser, app, "starter@example.com")
+    started = await start(browser, "github", mode="link", return_to="/account/settings")
+    await sign_in(browser, app, "someone-else@example.com")
+
+    landed = await callback(browser, "github", provider.authorize(started.headers["location"]))
+
+    assert landed == "/account/settings?error=not_signed_in"
+    assert await identities(session) == []
+
+
+@pytest.mark.asyncio
+async def test_disconnecting_a_provider_removes_only_the_users_own_identity(browser, app, provider, session):
+    session.add(UserAccount(id="other", email="other@example.com"))
+    await session.flush()
+    session.add(OAuthIdentity(provider="github", provider_account_id="999", user_id="other"))
+    await session.commit()
     await sign_in(browser, app, "me@example.com")
     await oauth_sign_in(browser, provider, mode="link", return_to="/account/settings")
 
@@ -365,7 +404,7 @@ async def test_disconnecting_a_provider_removes_its_identity(browser, app, provi
     second = await browser.delete("/v1/auth/identities/github", headers=SAME_ORIGIN)
 
     assert (first.status_code, second.status_code) == (204, 404)
-    assert await identities(session) == []
+    assert await identities(session) == [("github", "999", "other")]
     assert (await signed_in_user(browser))["email"] == "me@example.com"
 
 

@@ -9,10 +9,19 @@ from pydantic import BaseModel, EmailStr, StringConstraints
 from sqlmodel import col, delete, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from yapit.gateway.auth import AuthRefused, Credentials, request_credentials, require_app_origin, resolve_caller
+from yapit.gateway.auth import (
+    AuthRefused,
+    Credentials,
+    request_credentials,
+    require_app_origin,
+    require_auth_enabled,
+    resolve_caller,
+    signed_in_user_id,
+)
 from yapit.gateway.auth.email_sign_in import (
     CHALLENGE_LIFETIME,
     EmailTaken,
+    NotTheRequester,
     OtherBrowser,
     TooManyChallenges,
     start_email_change,
@@ -127,7 +136,7 @@ async def start_email_sign_in(
     mailer: Annotated[Mailer, Depends(get_mailer)],
 ) -> None:
     """Email a sign-in link and code. Signing in with a new address creates its account."""
-    _require_auth_enabled(settings)
+    require_auth_enabled(settings)
     # One nonce per browser, so the links of every mail it asked for sign it in without a click
     browser_nonce = request.cookies.get(SIGN_IN_PENDING_COOKIE) or new_secret()
     with _sending_challenge_to(body.email):
@@ -164,13 +173,16 @@ async def verify_email_sign_in(
     body: VerifyByToken | VerifyByCode,
     settings: SettingsDep,
     db: DbSession,
+    credentials: Annotated[Credentials, Depends(request_credentials)],
 ) -> SessionState:
     """Sign in with the link's token or the emailed code, and start a browser session.
 
-    A link or code from an email change switches the account to the new address and signs it in.
+    A link or code from an email change switches the account to the new address, but only in a
+    request signed in to that account.
     """
-    _require_auth_enabled(settings)
+    require_auth_enabled(settings)
     _refuse_other_origins(request, settings)
+    signed_in = await signed_in_user_id(db, settings, credentials)
     try:
         if isinstance(body, VerifyByToken):
             try:
@@ -179,6 +191,7 @@ async def verify_email_sign_in(
                     body.token,
                     browser_nonce=request.cookies.get(SIGN_IN_PENDING_COOKIE),
                     same_browser_only=body.same_browser_only,
+                    signed_in_user_id=signed_in,
                 )
             except OtherBrowser:
                 raise HTTPException(
@@ -186,7 +199,12 @@ async def verify_email_sign_in(
                     detail="This browser did not ask for the link; confirm to sign in.",
                 )
         else:
-            account = await verify_sign_in_code(db, body.email, body.code.strip())
+            account = await verify_sign_in_code(db, body.email, body.code.strip(), signed_in_user_id=signed_in)
+    except NotTheRequester:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Open this link in the browser where you are signed in to Yapit, or enter the code on the account page.",
+        )
     except EmailTaken:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Another account has taken this address since."
@@ -208,7 +226,7 @@ async def verify_email_sign_in(
 
 @router.post("/sign-out", status_code=status.HTTP_204_NO_CONTENT)
 async def sign_out(request: Request, response: Response, settings: SettingsDep, db: DbSession) -> None:
-    _require_auth_enabled(settings)
+    require_auth_enabled(settings)
     if token := request.cookies.get(session_cookie_name(settings)):
         _refuse_other_origins(request, settings)
         await revoke_session(db, token)
@@ -220,11 +238,6 @@ def _refuse_other_origins(request: Request, settings: Settings) -> None:
         require_app_origin(request.headers.get("origin"), settings)
     except AuthRefused as refused:
         raise HTTPException(status_code=refused.status_code, detail=refused.reason)
-
-
-def _require_auth_enabled(settings: Settings) -> None:
-    if not settings.auth_enabled:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sign-in is disabled (AUTH_ENABLED=false).")
 
 
 @router.delete("/identities/{provider}", status_code=status.HTTP_204_NO_CONTENT)
