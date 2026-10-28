@@ -8,7 +8,7 @@ The gateway signs people in itself (`yapit/gateway/auth/`): passwordless email s
 
 1. **Selfhost**: with `AUTH_ENABLED=false`, every request is the static `SELFHOST_USER` and no auth table is read. Default for `make self-host`.
 2. **Bearer API token**: `Authorization: Bearer yapit_…`, an `authsession` row of kind `api`. No expiry; exempt from the Origin check. For the CLI, scripts and tests.
-3. **Session cookie**: `yapit_session` (HttpOnly, SameSite=Lax, Path=/, Secure when `APP_URL` is https), an `authsession` row of kind `browser`. Its expiry slides: a request on a session with under `SESSION_RENEW_BELOW` left extends it to `SESSION_LIFETIME` and re-sets the cookie (`gateway/auth/sessions.py`). A cookie that opens no live session is ignored.
+3. **Session cookie**: `__Host-yapit_session` when `APP_URL` is https, so no subdomain can plant or overwrite it, and `yapit_session` over plain http (HttpOnly, SameSite=Lax, Path=/, Secure with https), an `authsession` row of kind `browser`. Its expiry slides: a request on a session with under `SESSION_RENEW_BELOW` left extends it to `SESSION_LIFETIME` and re-sets the cookie (`gateway/auth/sessions.py`). A cookie that opens no live session is ignored.
 4. **Anonymous session**: `X-Anonymous-ID` + `X-Anonymous-Token` headers → an anonymous user with id `anon-{uuid}`.
 
 Session and API tokens, sign-in link tokens and codes are stored only as SHA-256 hashes.
@@ -23,12 +23,12 @@ The frontend and the API share an origin everywhere, so the browser sends the co
 
 ## Email sign-in
 
-1. `POST /v1/auth/email/start {email}` (202) creates an `emailchallenge` and mails one message holding a link (`{APP_URL}/auth/email?token=…`) and a 6-digit code. The answer is the same whether or not an account holds the address.
-2. `POST /v1/auth/email/verify {token}` or `{email, code}` signs in: it starts a browser session, sets the cookie and answers like `GET /v1/auth/session`. The first sign-in with a new address creates the account; emails are stored lowercased and trimmed.
+1. `POST /v1/auth/email/start {email}` (202) creates an `emailchallenge` and mails one message holding a link (`{APP_URL}/auth/email#token=…&email=…`) and a 6-digit code. The token sits in the URL fragment, which browsers never send, so no access log holds it. `start` also sets the httpOnly `yapit_signin_pending` cookie, a nonce whose hash the challenge stores; a browser keeps one nonce for every link it asks for. The answer is the same whether or not an account holds the address.
+2. `POST /v1/auth/email/verify {token, same_browser_only?}` or `{email, code}` signs in: it starts a browser session, sets the cookie and answers like `GET /v1/auth/session`. The first sign-in with a new address creates the account; emails are stored lowercased and trimmed.
 
 Limits: a link or code works once, before its challenge expires (`CHALLENGE_LIFETIME`); `MAX_CODE_ATTEMPTS` wrong codes kill the address's live challenges; an address gets at most `MAX_CHALLENGES_PER_ADDRESS` challenges per `CHALLENGE_LIFETIME` (429), all in `gateway/auth/email_sign_in.py`. Both endpoints carry a per-IP slowapi limit (`api/v1/auth.py`).
 
-The link's page (`/auth/email`) signs in only when the person clicks "Continue", so mail scanners that open links use nothing up.
+The link's page (`/auth/email`) first posts the token with `same_browser_only`: in the browser that asked for the link, the pending cookie comes along and it signs in at once. Anywhere else (a mail scanner opening every link, another device) the gateway answers 409 and consumes nothing, and the page shows a "Continue as <email>" button that posts the token alone.
 
 ## Email delivery
 

@@ -19,13 +19,20 @@ from starlette.websockets import WebSocket
 from tests.yapit.gateway.api.conftest import APP_URL
 from yapit.gateway.auth import SELFHOST_USER, authenticate_ws, sign_anonymous_id
 from yapit.gateway.auth.mailer import Email, MailDeliveryError, SmtpMailer
-from yapit.gateway.auth.sessions import SESSION_COOKIE, create_api_token
+from yapit.gateway.auth.sessions import create_api_token
 from yapit.gateway.config import get_settings
 from yapit.gateway.db import get_engine
 from yapit.gateway.domain_models import AuthSession, Document, EmailChallenge, UserAccount
 
 SAME_ORIGIN = {"Origin": APP_URL}
 THIRTY_DAYS_S = 30 * 24 * 3600
+SESSION_COOKIE = "__Host-yapit_session"  # APP_URL is https
+PENDING_COOKIE = "yapit_signin_pending"
+
+
+def set_cookie(response: httpx.Response, name: str) -> str:
+    """The Set-Cookie header the response sends for this cookie."""
+    return next(header for header in response.headers.get_list("set-cookie") if header.startswith(f"{name}="))
 
 
 def sha256(value: str) -> str:
@@ -60,13 +67,17 @@ def settings_changed(app, **changes):
         app.dependency_overrides[get_settings] = original
 
 
+def mailed_link(app) -> str:
+    mail: Email = app.state.mailer.sent[-1]
+    return next(word for word in mail.text.split() if "/auth/email" in word)
+
+
 async def request_sign_in(browser, app, email: str) -> tuple[str, str]:
     """Ask for a sign-in email; return the link's token and the code, read off the mail as a person would."""
     response = await browser.post("/v1/auth/email/start", json={"email": email})
     assert response.status_code == 202, response.text
     mail: Email = app.state.mailer.sent[-1]
-    link = next(word for word in mail.text.split() if "/auth/email?" in word)
-    token = parse_qs(urlsplit(link).query)["token"][0]
+    token = parse_qs(urlsplit(mailed_link(app)).fragment)["token"][0]
     code = re.search(r"\b\d{6}\b", mail.text)
     assert code is not None
     return token, code.group()
@@ -285,6 +296,69 @@ async def test_api_token_is_stored_only_as_its_hash(api_token, session):
     assert api_token not in repr(stored.model_dump())
 
 
+# The link and the browser that asked for it
+
+
+@pytest.mark.asyncio
+async def test_link_carries_its_token_in_the_fragment_only(browser, app):
+    token, _ = await request_sign_in(browser, app, "reader@example.com")
+
+    link = urlsplit(mailed_link(app))
+
+    assert link.path == "/auth/email"
+    assert link.query == ""
+    assert parse_qs(link.fragment) == {"token": [token], "email": ["reader@example.com"]}
+
+
+@pytest.mark.asyncio
+async def test_start_sets_an_httponly_pending_cookie_whose_nonce_is_stored_hashed(browser, session):
+    response = await browser.post("/v1/auth/email/start", json={"email": "reader@example.com"})
+
+    assert "HttpOnly" in set_cookie(response, PENDING_COOKIE)
+    nonce = browser.cookies[PENDING_COOKIE]
+    challenge = (await session.exec(select(EmailChallenge))).one()
+    assert challenge.browser_nonce_hash == sha256(nonce)
+
+
+@pytest.mark.asyncio
+async def test_link_opened_in_the_browser_that_asked_signs_in_without_a_click(browser, app):
+    token, _ = await request_sign_in(browser, app, "reader@example.com")
+
+    response = await browser.post(
+        "/v1/auth/email/verify", json={"token": token, "same_browser_only": True}, headers=SAME_ORIGIN
+    )
+
+    assert response.status_code == 200
+    assert response.json()["user"]["email"] == "reader@example.com"
+    assert PENDING_COOKIE not in browser.cookies
+
+
+@pytest.mark.asyncio
+async def test_link_opened_in_another_browser_waits_for_a_click_and_consumes_nothing(browser, app, real_auth):
+    token, _ = await request_sign_in(browser, app, "reader@example.com")
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=APP_URL) as other_browser:
+        automatic = await other_browser.post(
+            "/v1/auth/email/verify", json={"token": token, "same_browser_only": True}, headers=SAME_ORIGIN
+        )
+        clicked = await other_browser.post("/v1/auth/email/verify", json={"token": token}, headers=SAME_ORIGIN)
+
+    assert automatic.status_code == 409
+    assert clicked.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_every_link_a_browser_asked_for_signs_it_in_without_a_click(browser, app):
+    first_token, _ = await request_sign_in(browser, app, "reader@example.com")
+    await request_sign_in(browser, app, "reader@example.com")
+
+    response = await browser.post(
+        "/v1/auth/email/verify", json={"token": first_token, "same_browser_only": True}, headers=SAME_ORIGIN
+    )
+
+    assert response.status_code == 200
+
+
 # The session cookie
 
 
@@ -294,8 +368,7 @@ async def test_session_cookie_flags(browser, app):
 
     response = await browser.post("/v1/auth/email/verify", json={"token": token}, headers=SAME_ORIGIN)
 
-    cookie = response.headers["set-cookie"]
-    assert cookie.startswith(f"{SESSION_COOKIE}=")
+    cookie = set_cookie(response, SESSION_COOKIE)
     assert "HttpOnly" in cookie
     assert "SameSite=lax" in cookie
     assert "Path=/" in cookie
@@ -315,7 +388,7 @@ async def test_session_cookie_is_not_secure_on_a_plain_http_app(app, real_auth):
             )
 
     assert response.status_code == 200
-    assert "Secure" not in response.headers["set-cookie"]
+    assert "Secure" not in set_cookie(response, "yapit_session")
 
 
 async def set_session_expiry(session, days_left: float) -> datetime:

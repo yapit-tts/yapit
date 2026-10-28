@@ -95,10 +95,10 @@ async def test_cross_user_audio_sharing():
     shared_text = "This exact text will be synthesized by user A and cached for user B."
 
     # Create two separate subscribed users
-    user_a_data = create_unique_user()
+    user_a_data = await create_unique_user()
     await provision_subscription(user_a_data["id"])
 
-    user_b_data = create_unique_user()
+    user_b_data = await create_unique_user()
     await provision_subscription(user_b_data["id"])
 
     # User A: create document and synthesize

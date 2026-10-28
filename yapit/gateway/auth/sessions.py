@@ -12,7 +12,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from yapit.gateway.config import Settings
 from yapit.gateway.domain_models import AuthSession, AuthSessionKind, UserAccount
 
-SESSION_COOKIE = "yapit_session"
+SIGN_IN_PENDING_COOKIE = "yapit_signin_pending"
 SESSION_LIFETIME = timedelta(days=30)
 SESSION_RENEW_BELOW = timedelta(days=15)
 API_TOKEN_PREFIX = "yapit_"
@@ -86,23 +86,29 @@ def app_origin(settings: Settings) -> str:
     return f"{url.scheme}://{url.netloc}"
 
 
-def set_session_cookie(response: Response, token: str, expires: datetime, settings: Settings) -> None:
+def is_https(settings: Settings) -> bool:
+    return settings.app_url.startswith("https://")
+
+
+def session_cookie_name(settings: Settings) -> str:
+    # The __Host- prefix stops a subdomain from planting or overwriting the cookie; browsers accept it only on a Secure cookie
+    return "__Host-yapit_session" if is_https(settings) else "yapit_session"
+
+
+def set_auth_cookie(response: Response, name: str, value: str, max_age: int, settings: Settings) -> None:
     response.set_cookie(
-        SESSION_COOKIE,
-        token,
-        max_age=round((expires - datetime.now(tz=dt.UTC)).total_seconds()),
-        path="/",
-        httponly=True,
-        samesite="lax",
-        secure=settings.app_url.startswith("https://"),
+        name, value, max_age=max_age, path="/", httponly=True, samesite="lax", secure=is_https(settings)
     )
+
+
+def clear_auth_cookie(response: Response, name: str, settings: Settings) -> None:
+    response.delete_cookie(name, path="/", httponly=True, samesite="lax", secure=is_https(settings))
+
+
+def set_session_cookie(response: Response, token: str, expires: datetime, settings: Settings) -> None:
+    max_age = round((expires - datetime.now(tz=dt.UTC)).total_seconds())
+    set_auth_cookie(response, session_cookie_name(settings), token, max_age, settings)
 
 
 def clear_session_cookie(response: Response, settings: Settings) -> None:
-    response.delete_cookie(
-        SESSION_COOKIE,
-        path="/",
-        httponly=True,
-        samesite="lax",
-        secure=settings.app_url.startswith("https://"),
-    )
+    clear_auth_cookie(response, session_cookie_name(settings), settings)

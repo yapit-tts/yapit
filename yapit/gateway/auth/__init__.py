@@ -10,7 +10,7 @@ from loguru import logger
 from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from yapit.gateway.auth.sessions import SESSION_COOKIE, app_origin, find_session, set_session_cookie
+from yapit.gateway.auth.sessions import app_origin, find_session, session_cookie_name, set_session_cookie
 from yapit.gateway.config import Settings, get_settings
 from yapit.gateway.db import create_session, get_db_session
 from yapit.gateway.domain_models import AuthSessionKind, UserAccount
@@ -112,13 +112,14 @@ async def resolve_caller(db: AsyncSession, settings: Settings, credentials: Cred
 
 def request_credentials(
     request: Request,
+    settings: Annotated[Settings, Depends(get_settings)],
     creds: HTTPAuthorizationCredentials | None = Security(bearer),
     x_anonymous_id: str | None = Header(None, alias="X-Anonymous-ID"),
     x_anonymous_token: str | None = Header(None, alias="X-Anonymous-Token"),
 ) -> Credentials:
     return Credentials(
         bearer_token=creds.credentials if creds is not None else None,
-        session_token=request.cookies.get(SESSION_COOKIE),
+        session_token=request.cookies.get(session_cookie_name(settings)),
         origin=request.headers.get("origin"),
         changes_state=request.method not in SAFE_METHODS,
         anonymous_id=x_anonymous_id,
@@ -169,7 +170,7 @@ async def authenticate_ws(
     scheme, _, token = (websocket.headers.get("authorization") or "").partition(" ")
     credentials = Credentials(
         bearer_token=token if scheme.lower() == "bearer" else None,
-        session_token=websocket.cookies.get(SESSION_COOKIE),
+        session_token=websocket.cookies.get(session_cookie_name(settings)),
         origin=websocket.headers.get("origin"),
         changes_state=True,
         anonymous_id=websocket.query_params.get("anonymous_id"),

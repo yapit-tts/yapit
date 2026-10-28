@@ -9,6 +9,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from yapit.gateway.auth import AuthRefused, Credentials, request_credentials, require_app_origin, resolve_caller
 from yapit.gateway.auth.email_sign_in import (
     CHALLENGE_LIFETIME,
+    OtherBrowser,
     TooManyChallenges,
     start_sign_in,
     verify_sign_in_code,
@@ -16,10 +17,14 @@ from yapit.gateway.auth.email_sign_in import (
 )
 from yapit.gateway.auth.mailer import MailDeliveryError, Mailer, get_mailer
 from yapit.gateway.auth.sessions import (
-    SESSION_COOKIE,
+    SIGN_IN_PENDING_COOKIE,
+    clear_auth_cookie,
     clear_session_cookie,
     create_browser_session,
+    new_secret,
     revoke_session,
+    session_cookie_name,
+    set_auth_cookie,
     set_session_cookie,
 )
 from yapit.gateway.config import Settings
@@ -53,6 +58,7 @@ class EmailStartRequest(BaseModel):
 
 class VerifyByToken(BaseModel):
     token: str
+    same_browser_only: bool = False  # sign in only if this browser asked for the link; else 409, consuming nothing
 
 
 class VerifyByCode(BaseModel):
@@ -90,6 +96,7 @@ async def get_session(
 @limiter.limit("10/hour")
 async def start_email_sign_in(
     request: Request,
+    response: Response,
     body: EmailStartRequest,
     settings: SettingsDep,
     db: DbSession,
@@ -97,8 +104,10 @@ async def start_email_sign_in(
 ) -> None:
     """Email a sign-in link and code. Signing in with a new address creates its account."""
     _require_auth_enabled(settings)
+    # One nonce per browser, so the links of every mail it asked for sign it in without a click
+    browser_nonce = request.cookies.get(SIGN_IN_PENDING_COOKIE) or new_secret()
     try:
-        await start_sign_in(db, mailer, settings, body.email)
+        await start_sign_in(db, mailer, settings, body.email, browser_nonce)
     except TooManyChallenges:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -107,6 +116,7 @@ async def start_email_sign_in(
     except MailDeliveryError:
         logger.exception(f"Sign-in email to an address at {body.email.rpartition('@')[2]} failed")
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Could not send the sign-in email.")
+    set_auth_cookie(response, SIGN_IN_PENDING_COOKIE, browser_nonce, int(CHALLENGE_LIFETIME.total_seconds()), settings)
 
 
 @router.post("/email/verify")
@@ -122,7 +132,18 @@ async def verify_email_sign_in(
     _require_auth_enabled(settings)
     _refuse_other_origins(request, settings)
     if isinstance(body, VerifyByToken):
-        account = await verify_sign_in_token(db, body.token)
+        try:
+            account = await verify_sign_in_token(
+                db,
+                body.token,
+                browser_nonce=request.cookies.get(SIGN_IN_PENDING_COOKIE),
+                same_browser_only=body.same_browser_only,
+            )
+        except OtherBrowser:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This browser did not ask for the link; confirm to sign in.",
+            )
     else:
         account = await verify_sign_in_code(db, body.email, body.code.strip())
     if account is None:
@@ -130,11 +151,12 @@ async def verify_email_sign_in(
             status_code=status.HTTP_400_BAD_REQUEST, detail="This sign-in link or code is invalid, used or expired."
         )
 
-    if previous := request.cookies.get(SESSION_COOKIE):
+    if previous := request.cookies.get(session_cookie_name(settings)):
         await revoke_session(db, previous)
     token, expires = create_browser_session(db, account.id)
     await db.commit()
     set_session_cookie(response, token, expires, settings)
+    clear_auth_cookie(response, SIGN_IN_PENDING_COOKIE, settings)
     logger.info(f"User {account.id} signed in by email")
     return await _session_state(db, account.id)
 
@@ -142,7 +164,7 @@ async def verify_email_sign_in(
 @router.post("/sign-out", status_code=status.HTTP_204_NO_CONTENT)
 async def sign_out(request: Request, response: Response, settings: SettingsDep, db: DbSession) -> None:
     _require_auth_enabled(settings)
-    if token := request.cookies.get(SESSION_COOKIE):
+    if token := request.cookies.get(session_cookie_name(settings)):
         _refuse_other_origins(request, settings)
         await revoke_session(db, token)
     clear_session_cookie(response, settings)
