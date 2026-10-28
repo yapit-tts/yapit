@@ -7,6 +7,7 @@ which is the log-and-metrics flood the backoff exists to bound.
 """
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
@@ -44,7 +45,9 @@ async def test_backoff_escalates_when_commit_keeps_failing(monkeypatch):
         if len(delays) >= 4:
             raise asyncio.CancelledError
 
-    monkeypatch.setattr("yapit.gateway.backoff.asyncio.sleep", fake_sleep)
+    # Only backoff's view of asyncio: faking asyncio.sleep itself would also fake it for every other task on the
+    # session-wide event loop, and the cache's LRU flush loop would spin forever without yielding.
+    monkeypatch.setattr("yapit.gateway.backoff.asyncio", SimpleNamespace(sleep=fake_sleep))
     monkeypatch.setattr("yapit.gateway.cache_persister.log_error", _noop)
     monkeypatch.setattr("yapit.gateway.cache_persister.log_event", _noop)
 
