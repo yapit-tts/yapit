@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Annotated
 from uuid import UUID
@@ -11,10 +10,10 @@ from redis.asyncio import Redis
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from yapit.gateway.auth import authenticate, authenticate_optional
+from yapit.gateway.auth import User, authenticate, authenticate_optional
 from yapit.gateway.cache import Cache, CacheConfig, Caches, SqliteCache
 from yapit.gateway.config import Settings, get_settings
-from yapit.gateway.db import create_session, get_or_404
+from yapit.gateway.db import get_db_session, get_or_404
 from yapit.gateway.document.types import Extractor, ProcessorConfig
 from yapit.gateway.domain_models import (
     BlockVariant,
@@ -24,7 +23,6 @@ from yapit.gateway.domain_models import (
 )
 from yapit.gateway.exceptions import ResourceNotFoundError
 from yapit.gateway.markdown.transformer import DocumentTransformer
-from yapit.gateway.stack_auth.users import User
 from yapit.gateway.storage import ImageStorage, LocalImageStorage, R2ImageStorage
 
 SettingsDep = Annotated[Settings, Depends(get_settings)]
@@ -74,11 +72,6 @@ async def get_extraction_cache(request: Request) -> Cache:
 
 async def get_image_storage(request: Request) -> ImageStorage:
     return request.app.state.image_storage
-
-
-async def get_db_session() -> AsyncIterator[AsyncSession]:
-    async with create_session() as session:
-        yield session
 
 
 DbSession = Annotated[AsyncSession, Depends(get_db_session)]

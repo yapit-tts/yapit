@@ -23,7 +23,7 @@ from yapit.contracts import (
     get_pubsub_channel,
     get_queue_name,
 )
-from yapit.gateway.auth import authenticate_ws
+from yapit.gateway.auth import User, authenticate_ws
 from yapit.gateway.backoff import Backoff
 from yapit.gateway.cache import Cache
 from yapit.gateway.config import Settings, get_settings
@@ -32,7 +32,6 @@ from yapit.gateway.deps import get_model, get_voice
 from yapit.gateway.domain_models import Document
 from yapit.gateway.exceptions import ResourceNotFoundError
 from yapit.gateway.metrics import log_error, log_event
-from yapit.gateway.stack_auth.users import User
 from yapit.gateway.synthesis import CachedResult, ErrorResult, request_synthesis
 
 router = APIRouter(tags=["websocket"])

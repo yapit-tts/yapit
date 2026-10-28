@@ -16,16 +16,25 @@ from testcontainers.postgres import PostgresContainer
 from testcontainers.redis import RedisContainer
 
 from yapit.gateway import create_app
-from yapit.gateway.auth import authenticate, authenticate_optional
+from yapit.gateway.auth import User, authenticate, authenticate_optional
+from yapit.gateway.auth.mailer import Email
 from yapit.gateway.cache import CacheConfig
 from yapit.gateway.config import Settings
 from yapit.gateway.db import close_db, create_session, get_engine, init_db
 from yapit.gateway.deps import create_cache, create_image_storage
 from yapit.gateway.domain_models import Plan, PlanTier, SubscriptionStatus, UsagePeriod, UserSubscription
 from yapit.gateway.markdown.transformer import DocumentTransformer
-from yapit.gateway.stack_auth.users import User
 
 DEFAULT_TEST_USER = User(id="default-test-user", is_anonymous=False)
+APP_URL = "https://yapit.test"
+
+
+class RecordingMailer:
+    def __init__(self):
+        self.sent: list[Email] = []
+
+    async def send(self, email: Email) -> None:
+        self.sent.append(email)
 
 
 def _make_delete_statements():
@@ -73,9 +82,8 @@ def _test_settings(postgres_container, redis_container):
         redis_url=f"redis://{redis_container.get_container_host_ip()}:{redis_container.get_exposed_port(6379)}",
         audio_cache_config=CacheConfig(path="test_audio_cache"),
         document_cache_config=CacheConfig(path="test_document_cache"),
-        stack_auth_api_host="",
-        stack_auth_project_id="",
-        stack_auth_server_key="",
+        app_url=APP_URL,
+        smtp_host="",
         tts_processors_file="tests/empty_processors.json",
         ai_processor=None,
         auth_enabled=True,
@@ -112,6 +120,7 @@ async def _shared_app(_create_schema, _test_settings) -> FastAPI:
         )
         app.state.ai_extractor_config = None
         app.state.ai_extractor = None
+        app.state.mailer = RecordingMailer()
         yield
         for cache in [app.state.audio_cache, app.state.document_cache, app.state.extraction_cache]:
             await cache.close()
@@ -139,6 +148,7 @@ async def _clean_tables(_shared_app):
         for stmt in _delete_stmts:
             await conn.execute(stmt)
     await _shared_app.state.redis_client.flushdb()
+    _shared_app.state.mailer = RecordingMailer()
     for cache in [_shared_app.state.audio_cache, _shared_app.state.document_cache, _shared_app.state.extraction_cache]:
         writer = await cache._get_writer()
         await writer.execute("DELETE FROM cache")
@@ -153,7 +163,7 @@ def app(_shared_app):
 
 @pytest.fixture
 def test_user():
-    return User(id="test-user-123", is_anonymous=False, primary_email="test@example.com")
+    return User(id="test-user-123", is_anonymous=False, email="test@example.com")
 
 
 @pytest.fixture
@@ -224,3 +234,11 @@ async def subscribed_user(session):
         "subscription": subscription,
         "usage_period": usage_period,
     }
+
+
+@pytest.fixture
+def real_auth(app):
+    """Authenticate requests the way production does, instead of as a fixed test user."""
+    overrides = {dep: app.dependency_overrides.pop(dep) for dep in (authenticate, authenticate_optional)}
+    yield
+    app.dependency_overrides.update(overrides)

@@ -1,4 +1,5 @@
 from yapit.gateway.api.v1.audio import router as audio_router
+from yapit.gateway.api.v1.auth import router as auth_router
 from yapit.gateway.api.v1.billing import router as billing_router
 from yapit.gateway.api.v1.documents import public_router as documents_public_router
 from yapit.gateway.api.v1.documents import router as documents_router
@@ -9,6 +10,7 @@ from yapit.gateway.api.v1.ws import router as ws_router
 
 __all__ = ["routers"]
 routers = [
+    auth_router,
     audio_router,
     ws_router,
     documents_public_router,
