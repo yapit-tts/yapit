@@ -1,7 +1,10 @@
 """Tests for the shared exponential backoff schedule."""
 
+from types import SimpleNamespace
+
 import pytest
 
+from yapit.gateway import backoff as backoff_module
 from yapit.gateway.backoff import Backoff, delay_for
 
 
@@ -13,7 +16,9 @@ def slept(monkeypatch):
     async def fake_sleep(seconds):
         recorded.append(seconds)
 
-    monkeypatch.setattr("yapit.gateway.backoff.asyncio.sleep", fake_sleep)
+    # Replaces backoff's own name for asyncio: patching asyncio.sleep itself would make every
+    # background loop on the session's event loop spin without yielding.
+    monkeypatch.setattr(backoff_module, "asyncio", SimpleNamespace(sleep=fake_sleep))
     return recorded
 
 
