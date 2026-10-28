@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { SectionHeading, SettingRow } from "@/components/settingsDialog";
 import { ProviderIcon } from "@/components/auth/ProviderIcon";
+import { CODE_LENGTH, CodeInput } from "@/components/auth/CodeInput";
 import { useAuth, type AuthUser } from "@/hooks/useAuthUser";
 import {
 	PROVIDER_NAMES,
@@ -114,19 +115,25 @@ function EmailRow({ user }: { user: AuthUser }) {
 		}
 	};
 
-	const confirm = async (e: FormEvent) => {
-		e.preventDefault();
+	const confirmCode = async (fullCode: string) => {
+		if (busy) return;
 		setBusy(true);
 		setError(null);
 		try {
-			await verifySignIn({ email: newEmail.trim(), code: code.trim() });
+			await verifySignIn({ email: newEmail.trim(), code: fullCode });
 			await refresh();
 			reset();
 		} catch (err) {
 			setError(authErrorMessage(err));
+			setCode("");
 		} finally {
 			setBusy(false);
 		}
+	};
+
+	const confirm = (e: FormEvent) => {
+		e.preventDefault();
+		void confirmCode(code);
 	};
 
 	return (
@@ -170,21 +177,15 @@ function EmailRow({ user }: { user: AuthUser }) {
 						We sent a link and a 6-digit code to <strong>{newEmail.trim()}</strong>. Your email changes once you open
 						the link or enter the code.
 					</p>
-					<div className="flex gap-2">
-						<Input
-							aria-label="Code"
-							inputMode="numeric"
-							autoComplete="one-time-code"
-							pattern="[0-9]{6}"
-							maxLength={6}
-							placeholder="Code"
-							required
-							autoFocus
-							className="h-8 w-32"
+					<div className="flex items-center gap-2">
+						<CodeInput
 							value={code}
-							onChange={(e) => setCode(e.target.value)}
+							onChange={setCode}
+							onComplete={(fullCode) => void confirmCode(fullCode)}
+							disabled={busy}
+							className="[&>*]:h-8 [&>*]:w-8"
 						/>
-						<Button type="submit" size="sm" className="h-8" disabled={busy}>
+						<Button type="submit" size="sm" className="h-8" disabled={busy || code.length < CODE_LENGTH}>
 							Confirm
 						</Button>
 					</div>

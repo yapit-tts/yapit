@@ -161,7 +161,7 @@ export function useTTSWebSocket(
           void refreshRef.current();
           if (authFailuresRef.current >= MAX_AUTH_FAILURES) {
             setIsReconnecting(false);
-            setConnectionError("Authentication failed. Please log in again.");
+            setConnectionError("Authentication failed. Please sign in again.");
             return;
           }
         }

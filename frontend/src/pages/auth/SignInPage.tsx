@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAuth } from "@/hooks/useAuthUser";
 import { ProviderIcon } from "@/components/auth/ProviderIcon";
+import { CODE_LENGTH, CodeInput } from "@/components/auth/CodeInput";
 import AuthPageLayout from "./AuthPageLayout";
 import {
 	PROVIDER_NAMES,
@@ -47,19 +48,24 @@ export default function SignInPage() {
 		void sendEmail(email.trim());
 	};
 
-	const onSubmitCode = async (e: FormEvent) => {
-		e.preventDefault();
-		if (!sentTo) return;
+	const submitCode = async (fullCode: string) => {
+		if (!sentTo || busy) return;
 		setBusy(true);
 		setError(null);
 		try {
-			await verifySignIn({ email: sentTo, code: code.trim() });
+			await verifySignIn({ email: sentTo, code: fullCode });
 			await refresh();
 			navigate("/", { replace: true });
 		} catch (err) {
 			setError(authErrorMessage(err));
+			setCode("");
 			setBusy(false);
 		}
+	};
+
+	const onSubmitCode = (e: FormEvent) => {
+		e.preventDefault();
+		void submitCode(code);
 	};
 
 	return (
@@ -68,12 +74,7 @@ export default function SignInPage() {
 				{sentTo === null ? (
 					<>
 						<CardHeader>
-							<CardTitle className="text-2xl">Sign in to Yapit</CardTitle>
-							<CardDescription>
-								{providers.length > 0
-									? `No password needed: continue with ${providers.map((p) => PROVIDER_NAMES[p]).join(" or ")}, or we'll email you a link and a code.`
-									: "We'll email you a link and a code. No password needed, and a new address gets a new account."}
-							</CardDescription>
+							<CardTitle className="text-2xl">Sign in or sign up</CardTitle>
 						</CardHeader>
 						<CardContent className="flex flex-col gap-4">
 							{providers.length > 0 && (
@@ -126,22 +127,16 @@ export default function SignInPage() {
 						</CardHeader>
 						<CardContent>
 							<form onSubmit={onSubmitCode} className="flex flex-col gap-4">
-								<div className="flex flex-col gap-2">
-									<Label htmlFor="code">Code</Label>
-									<Input
-										id="code"
-										inputMode="numeric"
-										autoComplete="one-time-code"
-										pattern="[0-9]{6}"
-										maxLength={6}
-										autoFocus
-										required
+								<div className="flex justify-center">
+									<CodeInput
 										value={code}
-										onChange={(e) => setCode(e.target.value)}
+										onChange={setCode}
+										onComplete={(fullCode) => void submitCode(fullCode)}
+										disabled={busy}
 									/>
 								</div>
 								{error && <p className="text-sm text-destructive">{error}</p>}
-								<Button type="submit" disabled={busy}>
+								<Button type="submit" disabled={busy || code.length < CODE_LENGTH}>
 									Sign in
 								</Button>
 								<div className="flex justify-between text-sm text-muted-foreground">

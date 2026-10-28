@@ -415,7 +415,7 @@ function DocumentSidebar() {
                       ) : (
                         <>
                           <LogIn className="mr-2 h-4 w-4" />
-                          Sign in
+                          Sign in or sign up
                         </>
                       )}
                     </DropdownMenuItem>
