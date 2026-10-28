@@ -88,7 +88,7 @@ function DocumentSidebar() {
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [subscription, setSubscription] = useState<SubscriptionSummary | null>(null);
   const [justSharedId, setJustSharedId] = useState<string | null>(null);
-  const { api, isAuthReady, isAnonymous } = useApi();
+  const { api, isAnonymous } = useApi();
   const navigate = useNavigate();
   const { documentId } = useParams();
   const { user, authEnabled, signOut } = useAuth();
@@ -98,12 +98,12 @@ function DocumentSidebar() {
   const closeMobileSheet = () => { if (isMobile) setOpenMobile(false); };
 
   useEffect(() => {
-    if (!isAuthReady || isAnonymous) return;
+    if (isAnonymous) return;
 
     api.get<SubscriptionSummary>("/v1/users/me/subscription")
       .then((r) => setSubscription(r.data))
       .catch(() => {});
-  }, [api, isAuthReady, isAnonymous, user]);
+  }, [api, isAnonymous, user]);
 
   useEffect(() => {
     const el = sentinelRef.current;
@@ -177,7 +177,9 @@ function DocumentSidebar() {
     if (!authEnabled) return;
     closeMobileSheet();
     if (user) {
-      void signOut().then(() => navigate("/"));
+      signOut()
+        .then(() => navigate("/"))
+        .catch((err) => console.error("Sign-out failed:", err));
     } else {
       navigate("/auth/sign-in");
     }

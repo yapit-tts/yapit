@@ -49,7 +49,7 @@ interface EngagementStats {
 }
 
 const AccountPage = () => {
-  const { api, isAuthReady, isAnonymous } = useApi();
+  const { api, isAnonymous } = useApi();
   const navigate = useNavigate();
   const { user, authEnabled } = useAuth();
   const { settings, setSettings } = useSettings();
@@ -79,7 +79,6 @@ const AccountPage = () => {
   const [promptSaveError, setPromptSaveError] = useState(false);
 
   useEffect(() => {
-    if (!isAuthReady) return;
     if (isAnonymous) {
       setIsLoading(false);
       return;
@@ -89,7 +88,7 @@ const AccountPage = () => {
       .then((r) => setEngagement(r.data))
       .catch((e) => console.error("Failed to fetch engagement stats:", e))
       .finally(() => setIsLoading(false));
-  }, [api, isAuthReady, isAnonymous]);
+  }, [api, isAnonymous]);
 
   // Group voices by model for display
   const voicesByModel = useMemo(() => {

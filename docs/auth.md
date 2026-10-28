@@ -6,14 +6,14 @@ The gateway signs people in itself (`yapit/gateway/auth/`): passwordless email s
 
 `identify_caller` (`gateway/auth/__init__.py`) checks, in order:
 
-1. **Selfhost** — with `AUTH_ENABLED=false`, every request is the static `SELFHOST_USER` and no auth table is read. Default for `make self-host`.
-2. **Bearer API token** — `Authorization: Bearer yapit_…`, an `authsession` row of kind `api`. No expiry; exempt from the Origin check. For the CLI, scripts and tests.
-3. **Session cookie** — `yapit_session` (HttpOnly, SameSite=Lax, Path=/, Secure when `APP_URL` is https), an `authsession` row of kind `browser`. 30 days, sliding: a request with under 15 days left extends it to 30 and re-sets the cookie. A cookie that opens no live session is ignored.
-4. **Anonymous session** — `X-Anonymous-ID` + `X-Anonymous-Token` headers → an anonymous user with id `anon-{uuid}`.
+1. **Selfhost**: with `AUTH_ENABLED=false`, every request is the static `SELFHOST_USER` and no auth table is read. Default for `make self-host`.
+2. **Bearer API token**: `Authorization: Bearer yapit_…`, an `authsession` row of kind `api`. No expiry; exempt from the Origin check. For the CLI, scripts and tests.
+3. **Session cookie**: `yapit_session` (HttpOnly, SameSite=Lax, Path=/, Secure when `APP_URL` is https), an `authsession` row of kind `browser`. Its expiry slides: a request on a session with under `SESSION_RENEW_BELOW` left extends it to `SESSION_LIFETIME` and re-sets the cookie (`gateway/auth/sessions.py`). A cookie that opens no live session is ignored.
+4. **Anonymous session**: `X-Anonymous-ID` + `X-Anonymous-Token` headers → an anonymous user with id `anon-{uuid}`.
 
 Session and API tokens, sign-in link tokens and codes are stored only as SHA-256 hashes.
 
-`authenticate_optional` returns `None` instead of 401 when there are no credentials — used for endpoints that serve both public/shared and private documents.
+`authenticate_optional` returns `None` instead of 401 when there are no credentials, for endpoints that serve both public/shared and private documents.
 
 **CSRF:** a cookie-authenticated request with an unsafe method (anything but GET/HEAD/OPTIONS) needs `Origin` equal to `APP_URL`'s origin, else 403. Signing in (`/v1/auth/email/verify`) and signing out check it too.
 
@@ -26,21 +26,21 @@ The frontend and the API share an origin everywhere, so the browser sends the co
 1. `POST /v1/auth/email/start {email}` (202) creates an `emailchallenge` and mails one message holding a link (`{APP_URL}/auth/email?token=…`) and a 6-digit code. The answer is the same whether or not an account holds the address.
 2. `POST /v1/auth/email/verify {token}` or `{email, code}` signs in: it starts a browser session, sets the cookie and answers like `GET /v1/auth/session`. The first sign-in with a new address creates the account; emails are stored lowercased and trimmed.
 
-Limits: a link or code works once, within 15 minutes; 5 wrong codes kill the address's live challenges; 3 challenges per address per 15 minutes (429), plus 10 per IP per hour (slowapi).
+Limits: a link or code works once, before its challenge expires (`CHALLENGE_LIFETIME`); `MAX_CODE_ATTEMPTS` wrong codes kill the address's live challenges; an address gets at most `MAX_CHALLENGES_PER_ADDRESS` challenges per `CHALLENGE_LIFETIME` (429), all in `gateway/auth/email_sign_in.py`. Both endpoints carry a per-IP slowapi limit (`api/v1/auth.py`).
 
 The link's page (`/auth/email`) signs in only when the person clicks "Continue", so mail scanners that open links use nothing up.
 
 ## Email delivery
 
-`SMTP_*` configure stdlib `smtplib` (STARTTLS, or TLS on port 465). With `SMTP_HOST` empty the message goes to the gateway log instead — dev reads its sign-in links there. A failed send fails the request with 502 and logs an error; nothing is queued.
+`SMTP_*` configure stdlib `smtplib` (STARTTLS, or TLS on port 465). With `SMTP_HOST` empty the message goes to the gateway log instead, which is where dev reads its sign-in links. A failed send fails the request with 502 and logs an error; nothing is queued.
 
 ## Endpoints
 
 - `GET /v1/auth/session` → always 200 `{auth_enabled, user: {id, email, name, identities} | null}`. The frontend's `AuthProvider` (`frontend/src/hooks/useAuthUser.tsx`) reads it on load; it also refreshes the cookie.
-- `POST /v1/auth/email/start`, `POST /v1/auth/email/verify` — above.
+- `POST /v1/auth/email/start`, `POST /v1/auth/email/verify`: above.
 - `POST /v1/auth/sign-out` → 204, deletes the session row and the cookie.
 
-## Anonymous → Registered Flow
+## Anonymous to registered flow
 
 1. User browses anonymously with `X-Anonymous-ID` header
 2. Creates documents, uses browser TTS
@@ -48,9 +48,9 @@ The link's page (`/auth/email`) signs in only when the person clicks "Continue",
 4. Frontend calls `POST /v1/users/claim-anonymous` with both tokens
 5. Documents transferred from `anon-{uuid}` to real user ID
 
-## Account Deletion
+## Account deletion
 
-`DELETE /v1/users/me` — cancels Stripe subscription, deletes documents (cascades), anonymizes billing data, deletes the `useraccount` row (its sessions, API tokens and OAuth identities cascade).
+`DELETE /v1/users/me` cancels Stripe subscription, deletes documents (cascades), anonymizes billing data, deletes the `useraccount` row (its sessions, API tokens and OAuth identities cascade).
 
 ## Users migrated from Stack Auth
 

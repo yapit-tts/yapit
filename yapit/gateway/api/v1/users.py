@@ -1,6 +1,5 @@
 import datetime as dt
 import hashlib
-import hmac
 import uuid
 from datetime import datetime
 from typing import Annotated
@@ -13,7 +12,7 @@ from sqlalchemy import func, update
 from sqlmodel import col, delete, select
 
 from yapit.contracts import MAX_EXTRACTION_PROMPT_LENGTH
-from yapit.gateway.auth import ANONYMOUS_ID_PREFIX, verify_anonymous_token
+from yapit.gateway.auth import ANONYMOUS_ID_PREFIX, sign_anonymous_id, verify_anonymous_token
 from yapit.gateway.auth.sessions import clear_session_cookie
 from yapit.gateway.constants import estimate_duration_ms
 from yapit.gateway.deps import AuthenticatedUser, DbSession, SettingsDep, StripeClient
@@ -244,10 +243,6 @@ async def get_user_stats(
 # Anonymous session tokens
 
 
-def _sign_anonymous_id(anonymous_id: str, secret: str) -> str:
-    return hmac.new(secret.encode(), anonymous_id.encode(), hashlib.sha256).hexdigest()
-
-
 class AnonymousSessionResponse(BaseModel):
     id: str
     token: str
@@ -261,7 +256,7 @@ async def create_anonymous_session(
 ) -> AnonymousSessionResponse:
     """Issue a server-signed anonymous session ID."""
     session_id = str(uuid.uuid4())
-    token = _sign_anonymous_id(session_id, settings.anonymous_session_secret)
+    token = sign_anonymous_id(session_id, settings.anonymous_session_secret)
     return AnonymousSessionResponse(id=session_id, token=token)
 
 
@@ -325,7 +320,6 @@ async def delete_account(
     This action is irreversible. Deletes:
     - All documents (cascades to blocks and block variants)
     - User preferences
-
     - The account, with its sessions, API tokens and OAuth identities
 
     Anonymizes (for aggregate analysis):
@@ -363,8 +357,7 @@ async def delete_account(
     # 4. Delete the account: its sessions, API tokens and OAuth identities cascade
     if settings.auth_enabled and not auth_user.is_anonymous:
         await db.exec(delete(UserAccount).where(col(UserAccount.id) == user_id))
-        if auth_user.email:
-            await db.exec(delete(EmailChallenge).where(col(EmailChallenge.email) == auth_user.email))
+        await db.exec(delete(EmailChallenge).where(col(EmailChallenge.email) == auth_user.email))
         clear_session_cookie(response, settings)
 
     await db.commit()

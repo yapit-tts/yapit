@@ -75,7 +75,7 @@ const PLAN_FEATURES: Partial<Record<PlanTier, React.ReactNode[]>> = {
 };
 
 const SubscriptionPage = () => {
-  const { api, isAuthReady, isAnonymous } = useApi();
+  const { api, isAnonymous } = useApi();
   const navigate = useNavigate();
 
   const [plans, setPlans] = useState<Plan[]>([]);
@@ -85,7 +85,6 @@ const SubscriptionPage = () => {
   const [actionLoading, setActionLoading] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!isAuthReady) return;
 
     const fetchData = async () => {
       try {
@@ -105,7 +104,7 @@ const SubscriptionPage = () => {
     };
 
     fetchData();
-  }, [api, isAuthReady, isAnonymous]);
+  }, [api, isAnonymous]);
 
   const handleSubscribe = async (tier: PlanTier) => {
     if (isAnonymous) {

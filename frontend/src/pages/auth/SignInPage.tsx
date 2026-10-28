@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAuth } from "@/hooks/useAuthUser";
 import AuthPageLayout from "./AuthPageLayout";
-import { emailSignInLink, signInError, verifySignIn } from "./signInApi";
+import { emailSignInLink, signInError, verifySignIn } from "@/lib/authApi";
 
 export default function SignInPage() {
 	const { refresh } = useAuth();

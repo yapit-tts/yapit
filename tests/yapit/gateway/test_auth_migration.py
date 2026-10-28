@@ -1,4 +1,4 @@
-"""The Alembic revision that copies Stack Auth's users into the gateway's auth tables (P1: ids never change)."""
+"""The Alembic revision that copies Stack Auth's users into the gateway's auth tables, keeping every user's id."""
 
 import uuid
 
@@ -104,6 +104,7 @@ def add_user(
     tenancy: str = YAPIT_TENANCY,
     project: str = "yapit-project",
     email: str | None = None,
+    other_email: str | None = None,
     name: str | None = None,
     password: bool = False,
     oauth: tuple[str, str, str] | None = None,
@@ -120,6 +121,12 @@ def add_user(
             'INSERT INTO "ContactChannel" ("tenancyId", "projectUserId", id, type, "isPrimary", "usedForAuth",'
             ' "isVerified", value) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)',
             (tenancy, user_id, str(uuid.uuid4()), "EMAIL", "TRUE", "TRUE" if password else None, True, email),
+        )
+    if other_email is not None:
+        conn.execute(
+            'INSERT INTO "ContactChannel" ("tenancyId", "projectUserId", id, type, "isVerified", value)'
+            " VALUES (%s, %s, %s, %s, %s, %s)",
+            (tenancy, user_id, str(uuid.uuid4()), "EMAIL", True, other_email),
         )
     if password:
         conn.execute(
@@ -142,12 +149,18 @@ def test_revision_copies_stack_auth_users_keeping_their_ids(database):
         add_user(conn, PASSWORD_USER, email="Pat@Example.com", name="Pat", password=True)
         add_user(conn, GOOGLE_USER, email="gina@gmail.com", oauth=("google", "1001", "gina@gmail.com"))
         add_user(
-            conn, BOTH_USER, email="bo@example.com", name="Bo", password=True, oauth=("github", "42", "bo@users.gh")
+            conn,
+            BOTH_USER,
+            email="bo@example.com",
+            other_email="aaa-bo-old@example.com",
+            name="Bo",
+            password=True,
+            oauth=("github", "42", "bo@users.gh"),
         )
         add_user(conn, NO_EMAIL_USER, oauth=("github", "77", None))
         add_user(conn, STALE_TWIN, email="twin@example.com", last_active="2026-01-01")
         add_user(conn, ACTIVE_TWIN, email="Twin@example.com", last_active="2026-09-01")
-        add_user(conn, STACK_AUTH_GUEST, anonymous=True)
+        add_user(conn, STACK_AUTH_GUEST, email="guest@example.com", anonymous=True)
         add_user(
             conn,
             INTERNAL_ADMIN,

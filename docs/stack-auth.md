@@ -1,6 +1,6 @@
 # Stack Auth
 
-Self-hosted auth provider the gateway used before it signed people in itself ([[auth]]). Nothing in `yapit/` or `frontend/src` talks to it any more; its users were copied into the gateway's tables by revision `5154eb03f6c9`, and its container and tables stay as the rollback path until they are removed. Runs as a Docker container (`stackauth/server:<commit-sha>`), provides user management, OAuth, session tokens, and an admin dashboard at `auth.yapit.md`. `make self-host-auth` still starts it, though multi-user selfhost no longer needs it.
+Self-hosted auth provider whose container and tables are the rollback path for the gateway's own auth ([[auth]]): revision `5154eb03f6c9` copied its users into the gateway's tables, and no code in `yapit/` or `frontend/src` calls it. Runs as a Docker container (`stackauth/server:<commit-sha>`), provides user management, OAuth, session tokens, and an admin dashboard at `auth.yapit.md`. `make self-host-auth` starts it; multi-user selfhost runs without it.
 
 ## Architecture
 

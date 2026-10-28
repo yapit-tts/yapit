@@ -28,7 +28,7 @@ export function DocumentsProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const [hasMore, setHasMore] = useState(false);
   const [isFetchingMore, setIsFetchingMore] = useState(false);
-  const { api, isAuthReady } = useApi();
+  const { api } = useApi();
   const user = useAuthUser();
   const location = useLocation();
 
@@ -37,7 +37,6 @@ export function DocumentsProvider({ children }: { children: React.ReactNode }) {
   const isFetchingMoreRef = useRef(false);
 
   useEffect(() => {
-    if (!isAuthReady) return;
 
     api.get<DocumentItem[]>("/v1/documents", { params: { offset: 0, limit: PAGE_SIZE } })
       .then((r) => {
@@ -46,7 +45,7 @@ export function DocumentsProvider({ children }: { children: React.ReactNode }) {
       })
       .catch((err) => console.error("Failed to fetch documents:", err))
       .finally(() => setIsLoading(false));
-  }, [api, isAuthReady, user, location.pathname]);
+  }, [api, user, location.pathname]);
 
   useEffect(() => {
     const handleTitleChanged = (e: Event) => {

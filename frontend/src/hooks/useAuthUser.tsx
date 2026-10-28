@@ -7,20 +7,9 @@ import {
 	type FC,
 	type PropsWithChildren,
 } from "react";
+import { fetchSession, signOut as requestSignOut, type AuthUser, type SessionState } from "@/lib/authApi";
 
-const baseURL = import.meta.env.VITE_API_BASE_URL;
-
-export interface AuthUser {
-	id: string;
-	email: string;
-	name: string | null;
-	identities: { provider: string; email: string | null }[];
-}
-
-interface SessionState {
-	auth_enabled: boolean;
-	user: AuthUser | null;
-}
+export type { AuthUser };
 
 export interface Auth {
 	user: AuthUser | null;
@@ -31,14 +20,6 @@ export interface Auth {
 }
 
 const AuthContext = createContext<Auth | null>(null);
-
-async function fetchSession(): Promise<SessionState> {
-	const response = await fetch(`${baseURL}/v1/auth/session`, {
-		credentials: "same-origin",
-	});
-	if (!response.ok) throw new Error(`GET /v1/auth/session answered ${response.status}`);
-	return response.json();
-}
 
 /** Renders its children once the gateway has said who is signed in. */
 export const AuthProvider: FC<PropsWithChildren> = ({ children }) => {
@@ -76,10 +57,7 @@ export const AuthProvider: FC<PropsWithChildren> = ({ children }) => {
 	}, []);
 
 	const signOut = useCallback(async () => {
-		await fetch(`${baseURL}/v1/auth/sign-out`, {
-			method: "POST",
-			credentials: "same-origin",
-		});
+		await requestSignOut();
 		await refresh();
 	}, [refresh]);
 

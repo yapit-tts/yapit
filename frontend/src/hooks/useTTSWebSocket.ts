@@ -92,7 +92,7 @@ export function useTTSWebSocket(
     try {
       const url = await getWebSocketUrl();
       if (epoch !== epochRef.current) {
-        // Unmounted or user changed while fetching the anonymous session — abandon this attempt
+        // Unmounted or user changed while fetching the anonymous session: abandon this attempt
         connectingRef.current = false;
         return;
       }

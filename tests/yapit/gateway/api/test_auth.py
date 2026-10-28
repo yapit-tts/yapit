@@ -2,7 +2,6 @@
 
 import datetime as dt
 import hashlib
-import hmac
 import re
 from contextlib import contextmanager
 from datetime import datetime, timedelta
@@ -18,8 +17,8 @@ from sqlmodel import select, update
 from starlette.websockets import WebSocket
 
 from tests.yapit.gateway.api.conftest import APP_URL
-from yapit.gateway.auth import authenticate_ws
-from yapit.gateway.auth.mailer import Email, MailDeliveryError
+from yapit.gateway.auth import SELFHOST_USER, authenticate_ws, sign_anonymous_id
+from yapit.gateway.auth.mailer import Email, MailDeliveryError, SmtpMailer
 from yapit.gateway.auth.sessions import SESSION_COOKIE, create_api_token
 from yapit.gateway.config import get_settings
 from yapit.gateway.db import get_engine
@@ -38,6 +37,16 @@ async def browser(app, real_auth):
     """A client at the app's origin that keeps cookies, like the browser the frontend runs in."""
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=APP_URL) as client:
         yield client
+
+
+@pytest_asyncio.fixture
+async def api_token(session) -> str:
+    """An API token of the user cli-user."""
+    session.add(UserAccount(id="cli-user", email="cli@example.com"))
+    await session.flush()
+    token = create_api_token(session, "cli-user", "laptop")
+    await session.commit()
+    return token
 
 
 @contextmanager
@@ -88,7 +97,7 @@ async def test_new_address_signs_up_by_link_and_stays_signed_in(browser, app):
 
 
 @pytest.mark.asyncio
-async def test_migrated_address_signs_in_by_code_to_its_existing_account(browser, app, session):
+async def test_existing_account_signs_in_by_code_whatever_the_case_and_spacing_of_its_address(browser, app, session):
     session.add(UserAccount(id="0b5c5bd8-stack-auth-id", email="reader@example.com"))
     await session.commit()
 
@@ -103,7 +112,7 @@ async def test_migrated_address_signs_in_by_code_to_its_existing_account(browser
 
 
 @pytest.mark.asyncio
-async def test_sign_out_revokes_the_session(browser, app, session):
+async def test_sign_out_revokes_the_session(browser, app):
     await sign_in(browser, app, "reader@example.com")
     cookie = browser.cookies[SESSION_COOKIE]
 
@@ -113,10 +122,20 @@ async def test_sign_out_revokes_the_session(browser, app, session):
     assert await signed_in_user(browser) is None
     browser.cookies.set(SESSION_COOKIE, cookie)
     assert await signed_in_user(browser) is None
-    assert (await session.exec(select(AuthSession))).all() == []
 
 
-# P3: a link or code works once, within 15 minutes, and 5 wrong codes kill the challenge
+@pytest.mark.asyncio
+async def test_signing_in_again_revokes_the_browsers_previous_session(browser, app):
+    await sign_in(browser, app, "reader@example.com")
+    first_cookie = browser.cookies[SESSION_COOKIE]
+
+    await sign_in(browser, app, "other@example.com")
+
+    browser.cookies.set(SESSION_COOKIE, first_cookie)
+    assert await signed_in_user(browser) is None
+
+
+# A link or code works once, within its lifetime, and wrong codes kill the challenge
 
 
 @pytest.mark.asyncio
@@ -145,6 +164,8 @@ async def test_code_works_once(browser, app):
 @pytest.mark.asyncio
 async def test_link_and_code_expire_after_15_minutes(browser, app, session):
     token, code = await request_sign_in(browser, app, "reader@example.com")
+    challenge = (await session.exec(select(EmailChallenge))).one()
+    assert challenge.expires - challenge.created == timedelta(minutes=15)
     sixteen_minutes_ago = datetime.now(tz=dt.UTC) - timedelta(minutes=16)
     await session.exec(
         update(EmailChallenge).values(created=sixteen_minutes_ago, expires=sixteen_minutes_ago + timedelta(minutes=15))
@@ -197,7 +218,7 @@ async def test_fifth_wrong_code_kills_the_challenge(browser, app):
     assert by_link.status_code == 400
 
 
-# P4: "email me a sign-in link" answers the same whether or not the address has an account
+# "Email me a sign-in link" answers the same whether or not the address has an account
 
 
 @pytest.mark.asyncio
@@ -224,7 +245,20 @@ async def test_fourth_sign_in_email_to_an_address_within_15_minutes_is_refused(b
     assert other_address.status_code == 202
 
 
-# P2: secrets are stored only as SHA-256 hashes
+@pytest.mark.asyncio
+async def test_sign_in_emails_older_than_15_minutes_stop_counting(browser, app, session):
+    for _ in range(3):
+        await request_sign_in(browser, app, "reader@example.com")
+    sixteen_minutes_ago = datetime.now(tz=dt.UTC) - timedelta(minutes=16)
+    await session.exec(update(EmailChallenge).values(created=sixteen_minutes_ago))
+    await session.commit()
+
+    response = await browser.post("/v1/auth/email/start", json={"email": "reader@example.com"})
+
+    assert response.status_code == 202
+
+
+# Secrets are stored only as SHA-256 hashes
 
 
 @pytest.mark.asyncio
@@ -243,17 +277,12 @@ async def test_link_token_code_and_session_token_are_stored_only_as_hashes(brows
 
 
 @pytest.mark.asyncio
-async def test_api_token_is_stored_only_as_its_hash(session):
-    session.add(UserAccount(id="cli-user", email="cli@example.com"))
-    await session.flush()
-    token = create_api_token(session, "cli-user", "laptop")
-    await session.commit()
-
+async def test_api_token_is_stored_only_as_its_hash(api_token, session):
     stored = (await session.exec(select(AuthSession))).one()
 
-    assert token.startswith("yapit_")
-    assert stored.token_hash == sha256(token)
-    assert token not in repr(stored.model_dump())
+    assert api_token.startswith("yapit_")
+    assert stored.token_hash == sha256(api_token)
+    assert api_token not in repr(stored.model_dump())
 
 
 # The session cookie
@@ -337,7 +366,7 @@ async def test_expired_session_signs_nobody_in(browser, app, session):
     assert (await browser.get("/v1/users/me/preferences")).status_code == 401
 
 
-# P6: cookie-authenticated state changes only from the app's origin
+# Cookie-authenticated state changes only from the app's origin
 
 
 @pytest.mark.asyncio
@@ -382,12 +411,8 @@ async def test_sign_in_from_another_origin_is_refused(browser, app):
 
 
 @pytest.mark.asyncio
-async def test_api_token_authenticates_without_an_origin(app, real_auth, session):
-    session.add(UserAccount(id="cli-user", email="cli@example.com"))
-    await session.flush()
-    token = create_api_token(session, "cli-user", "laptop")
-    await session.commit()
-
+async def test_api_token_authenticates_without_an_origin(app, real_auth, api_token):
+    token = api_token
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://cli", headers={"Authorization": f"Bearer {token}"}
     ) as cli:
@@ -396,6 +421,35 @@ async def test_api_token_authenticates_without_an_origin(app, real_auth, session
 
     assert changed.status_code == 200
     assert whoami.json()["user"]["id"] == "cli-user"
+
+
+@pytest.mark.asyncio
+async def test_browser_session_token_is_not_an_api_token(browser, app):
+    await sign_in(browser, app, "reader@example.com")
+    cookie = browser.cookies[SESSION_COOKIE]
+    browser.cookies.clear()
+
+    response = await browser.get("/v1/users/me/preferences", headers={"Authorization": f"Bearer {cookie}"})
+
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_api_token_is_not_a_session_cookie(browser, api_token):
+    browser.cookies.set(SESSION_COOKIE, api_token)
+
+    assert await signed_in_user(browser) is None
+
+
+@pytest.mark.asyncio
+async def test_session_answers_signed_out_to_an_unknown_api_token(app, real_auth):
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://cli", headers={"Authorization": "Bearer yapit_nope"}
+    ) as cli:
+        response = await cli.get("/v1/auth/session")
+
+    assert response.status_code == 200
+    assert response.json()["user"] is None
 
 
 @pytest.mark.asyncio
@@ -408,12 +462,12 @@ async def test_unknown_api_token_is_refused(app, real_auth):
     assert response.status_code == 401
 
 
-# P7: a failed auth email fails the request and is logged
+# A failed auth email fails the request and is logged
 
 
 class FailingMailer:
     async def send(self, email: Email) -> None:
-        raise MailDeliveryError("SMTP delivery via smtp.test:587 failed: ConnectionRefusedError()")
+        raise MailDeliveryError("SMTP delivery failed")
 
 
 @pytest.mark.asyncio
@@ -427,11 +481,19 @@ async def test_failed_sign_in_email_fails_the_request_and_logs_an_error(browser,
         logger.remove(sink)
 
     assert response.status_code == 502
-    assert any("ConnectionRefusedError" in error for error in errors)
+    assert any("Sign-in email to an address at example.com failed" in error for error in errors)
     assert (await session.exec(select(EmailChallenge))).all() == []
 
 
-# P8: with auth disabled every request is the selfhost user and no auth table is read
+@pytest.mark.asyncio
+async def test_smtp_mailer_reports_an_unreachable_server_as_a_delivery_error():
+    mailer = SmtpMailer(host="127.0.0.1", port=1, username="", password="", sender="yapit@example.com")
+
+    with pytest.raises(MailDeliveryError):
+        await mailer.send(Email(to="reader@example.com", subject="s", text="t", html="h"))
+
+
+# With auth disabled every request is the selfhost user and no auth table is read
 
 
 @pytest.mark.asyncio
@@ -474,7 +536,7 @@ async def test_account_deletion_deletes_the_account_and_its_sessions(browser, ap
 
     assert response.status_code == 204
     assert await session.get(UserAccount, user["id"]) is None
-    assert (await session.exec(select(AuthSession))).all() == []
+    assert (await session.exec(select(EmailChallenge))).all() == []
     assert await signed_in_user(browser) is None
     assert (await sign_in(browser, app, "reader@example.com"))["id"] != user["id"]
 
@@ -482,9 +544,7 @@ async def test_account_deletion_deletes_the_account_and_its_sessions(browser, ap
 @pytest.mark.asyncio
 async def test_documents_made_anonymously_are_claimed_on_sign_in(browser, app, _test_settings, session):
     anonymous_id = "4f1c-guest"
-    anonymous_token = hmac.new(
-        _test_settings.anonymous_session_secret.encode(), anonymous_id.encode(), hashlib.sha256
-    ).hexdigest()
+    anonymous_token = sign_anonymous_id(anonymous_id, _test_settings.anonymous_session_secret)
     created = await browser.post(
         "/v1/documents/text",
         json={"content": "Written before signing up."},
@@ -542,12 +602,15 @@ async def test_websocket_with_the_session_cookie_from_another_origin_is_refused(
 
 
 @pytest.mark.asyncio
-async def test_websocket_accepts_an_api_token(session, _test_settings):
-    session.add(UserAccount(id="cli-user", email="cli@example.com"))
-    await session.flush()
-    token = create_api_token(session, "cli-user", "laptop")
-    await session.commit()
-
+async def test_websocket_accepts_an_api_token(api_token, _test_settings):
+    token = api_token
     ws_user = await authenticate_ws(websocket({"Authorization": f"Bearer {token}"}), _test_settings)
 
     assert ws_user.id == "cli-user"
+
+
+@pytest.mark.asyncio
+async def test_websocket_with_auth_disabled_is_the_selfhost_user(_test_settings):
+    settings = _test_settings.model_copy(update={"auth_enabled": False})
+
+    assert await authenticate_ws(websocket({}), settings) == SELFHOST_USER

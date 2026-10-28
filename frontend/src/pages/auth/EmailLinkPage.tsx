@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useAuth } from "@/hooks/useAuthUser";
 import AuthPageLayout from "./AuthPageLayout";
-import { signInError, verifySignIn } from "./signInApi";
+import { signInError, verifySignIn } from "@/lib/authApi";
 
 /** Where a sign-in email's link lands. Signing in waits for a click, so a mail scanner opening the link uses nothing up. */
 export default function EmailLinkPage() {

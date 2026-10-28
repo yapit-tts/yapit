@@ -36,17 +36,12 @@ class FoundSession:
     renewed: bool
 
 
-def create_browser_session(db: AsyncSession, user_id: str) -> tuple[str, AuthSession]:
-    """A new session for the cookie: the token goes to the browser, only its hash is stored."""
+def create_browser_session(db: AsyncSession, user_id: str) -> tuple[str, datetime]:
+    """A new session for the cookie, and when it expires: the token goes to the browser, only its hash is stored."""
     token = new_secret()
-    session = AuthSession(
-        token_hash=hash_secret(token),
-        user_id=user_id,
-        kind=AuthSessionKind.browser,
-        expires=datetime.now(tz=dt.UTC) + SESSION_LIFETIME,
-    )
-    db.add(session)
-    return token, session
+    expires = datetime.now(tz=dt.UTC) + SESSION_LIFETIME
+    db.add(AuthSession(token_hash=hash_secret(token), user_id=user_id, kind=AuthSessionKind.browser, expires=expires))
+    return token, expires
 
 
 def create_api_token(db: AsyncSession, user_id: str, label: str) -> str:

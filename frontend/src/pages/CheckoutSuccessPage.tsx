@@ -12,14 +12,13 @@ interface SubscriptionSummary {
 
 const CheckoutSuccessPage = () => {
   const navigate = useNavigate();
-  const { api, isAuthReady } = useApi();
+  const { api } = useApi();
 
   const [status, setStatus] = useState<"loading" | "success" | "failed">("loading");
   const [planName, setPlanName] = useState<string | null>(null);
   const [isTrialing, setIsTrialing] = useState(false);
 
   useEffect(() => {
-    if (!isAuthReady) return;
 
     let attempts = 0;
     const maxAttempts = 15;
@@ -53,7 +52,7 @@ const CheckoutSuccessPage = () => {
     };
 
     checkSubscription();
-  }, [api, isAuthReady]);
+  }, [api]);
 
   return (
     <div className="container max-w-lg mx-auto py-16 px-4">

@@ -26,7 +26,7 @@ interface SubscriptionResponse {
 }
 
 export const SubscriptionProvider: FC<PropsWithChildren> = ({ children }) => {
-  const { api, isAuthReady, isAnonymous } = useApi();
+  const { api, isAnonymous } = useApi();
   const [state, setState] = useState<SubscriptionState>({
     tier: "free",
     hasActivePlan: false,
@@ -36,7 +36,6 @@ export const SubscriptionProvider: FC<PropsWithChildren> = ({ children }) => {
   });
 
   useEffect(() => {
-    if (!isAuthReady) return;
 
     if (isAnonymous) {
       setState({ tier: "free", hasActivePlan: false, canUseCloudKokoro: false, billingEnabled: true, isLoading: false });
@@ -72,7 +71,7 @@ export const SubscriptionProvider: FC<PropsWithChildren> = ({ children }) => {
         console.error("Failed to fetch subscription:", err);
         setState({ tier: "free", hasActivePlan: false, canUseCloudKokoro: false, billingEnabled: true, isLoading: false });
       });
-  }, [api, isAuthReady, isAnonymous]);
+  }, [api, isAnonymous]);
 
   return (
     <SubscriptionContext.Provider value={state}>

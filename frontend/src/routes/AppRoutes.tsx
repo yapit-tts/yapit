@@ -44,7 +44,7 @@ const AppRoutes = () => {
 			<>
 				<Route path="/auth/sign-in" element={<Lazy><SignInPage /></Lazy>} />
 				<Route path="/auth/email" element={<Lazy><EmailLinkPage /></Lazy>} />
-				{/* Stack Auth's pages lived here; old bookmarks and links land on sign-in */}
+				{/* Bookmarks and links in older emails point at /handler/sign-in and its siblings */}
 				<Route path="/handler/*" element={<Navigate to="/auth/sign-in" replace />} />
 			</>
 		)}

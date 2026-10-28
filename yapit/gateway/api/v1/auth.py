@@ -6,8 +6,9 @@ from pydantic import BaseModel, EmailStr
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from yapit.gateway.auth import Caller, identify_caller, require_app_origin
+from yapit.gateway.auth import AuthRefused, Credentials, request_credentials, require_app_origin, resolve_caller
 from yapit.gateway.auth.email_sign_in import (
+    CHALLENGE_LIFETIME,
     TooManyChallenges,
     start_sign_in,
     verify_sign_in_code,
@@ -61,18 +62,24 @@ class VerifyByCode(BaseModel):
 
 @router.get("/session")
 async def get_session(
-    request: Request,
     response: Response,
     settings: SettingsDep,
     db: DbSession,
-    caller: Annotated[Caller, Depends(identify_caller)],
+    credentials: Annotated[Credentials, Depends(request_credentials)],
 ) -> SessionState:
-    """Who the browser is signed in as. Also refreshes the session cookie, or clears one that opens no session."""
+    """Who the browser is signed in as; `user` is null for anyone else, wrong credentials included.
+
+    Also refreshes the session cookie, or clears one that opens no session.
+    """
     if not settings.auth_enabled:
         return SessionState(auth_enabled=False, user=None)
-    if caller.browser_session is not None and caller.browser_session.expires is not None:
-        set_session_cookie(response, request.cookies[SESSION_COOKIE], caller.browser_session.expires, settings)
-    elif SESSION_COOKIE in request.cookies:
+    try:
+        caller = await resolve_caller(db, settings, credentials)
+    except AuthRefused:
+        return SessionState(auth_enabled=True, user=None)
+    if caller.session_expires is not None and credentials.session_token:
+        set_session_cookie(response, credentials.session_token, caller.session_expires, settings)
+    elif credentials.session_token:
         clear_session_cookie(response, settings)
     if caller.user is None or caller.user.is_anonymous:
         return SessionState(auth_enabled=True, user=None)
@@ -95,7 +102,7 @@ async def start_email_sign_in(
     except TooManyChallenges:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Too many sign-in emails to this address. Try again in 15 minutes.",
+            detail=f"Too many sign-in emails to this address. Try again in {CHALLENGE_LIFETIME.seconds // 60} minutes.",
         )
     except MailDeliveryError:
         logger.exception(f"Sign-in email to an address at {body.email.rpartition('@')[2]} failed")
@@ -103,6 +110,7 @@ async def start_email_sign_in(
 
 
 @router.post("/email/verify")
+@limiter.limit("20/hour")
 async def verify_email_sign_in(
     request: Request,
     response: Response,
@@ -112,7 +120,7 @@ async def verify_email_sign_in(
 ) -> SessionState:
     """Sign in with the link's token or the emailed code, and start a browser session."""
     _require_auth_enabled(settings)
-    require_app_origin(request, settings)
+    _refuse_other_origins(request, settings)
     if isinstance(body, VerifyByToken):
         account = await verify_sign_in_token(db, body.token)
     else:
@@ -124,10 +132,9 @@ async def verify_email_sign_in(
 
     if previous := request.cookies.get(SESSION_COOKIE):
         await revoke_session(db, previous)
-    token, session = create_browser_session(db, account.id)
+    token, expires = create_browser_session(db, account.id)
     await db.commit()
-    assert session.expires is not None
-    set_session_cookie(response, token, session.expires, settings)
+    set_session_cookie(response, token, expires, settings)
     logger.info(f"User {account.id} signed in by email")
     return await _session_state(db, account.id)
 
@@ -136,9 +143,16 @@ async def verify_email_sign_in(
 async def sign_out(request: Request, response: Response, settings: SettingsDep, db: DbSession) -> None:
     _require_auth_enabled(settings)
     if token := request.cookies.get(SESSION_COOKIE):
-        require_app_origin(request, settings)
+        _refuse_other_origins(request, settings)
         await revoke_session(db, token)
     clear_session_cookie(response, settings)
+
+
+def _refuse_other_origins(request: Request, settings: Settings) -> None:
+    try:
+        require_app_origin(request.headers.get("origin"), settings)
+    except AuthRefused as refused:
+        raise HTTPException(status_code=refused.status_code, detail=refused.reason)
 
 
 def _require_auth_enabled(settings: Settings) -> None:

@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Annotated
 
 from fastapi import Depends, Header, HTTPException, Request, Response, Security, WebSocket, WebSocketException, status
@@ -12,7 +13,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from yapit.gateway.auth.sessions import SESSION_COOKIE, app_origin, find_session, set_session_cookie
 from yapit.gateway.config import Settings, get_settings
 from yapit.gateway.db import create_session, get_db_session
-from yapit.gateway.domain_models import AuthSession, AuthSessionKind, UserAccount
+from yapit.gateway.domain_models import AuthSessionKind, UserAccount
 
 bearer = HTTPBearer(auto_error=False)
 
@@ -31,14 +32,36 @@ SELFHOST_USER = User(id="selfhost", is_anonymous=False)
 
 
 @dataclass
+class Credentials:
+    """What a request or WebSocket handshake carries that could say who sent it."""
+
+    bearer_token: str | None
+    session_token: str | None
+    origin: str | None
+    changes_state: bool  # an unsafe HTTP method, or a WebSocket handshake
+    anonymous_id: str | None
+    anonymous_token: str | None
+
+
+@dataclass
 class Caller:
     user: User | None
-    browser_session: AuthSession | None = None  # set when the session cookie authenticated the request
+    session_expires: datetime | None = None  # set when the session cookie authenticated the request
+    session_renewed: bool = False
+
+
+class AuthRefused(Exception):
+    def __init__(self, status_code: int, reason: str):
+        self.status_code = status_code
+        self.reason = reason
+
+
+def sign_anonymous_id(anonymous_id: str, secret: str) -> str:
+    return hmac.new(secret.encode(), anonymous_id.encode(), hashlib.sha256).hexdigest()
 
 
 def verify_anonymous_token(anonymous_id: str, token: str, secret: str) -> bool:
-    expected = hmac.new(secret.encode(), anonymous_id.encode(), hashlib.sha256).hexdigest()
-    return hmac.compare_digest(expected, token)
+    return hmac.compare_digest(sign_anonymous_id(anonymous_id, secret), token)
 
 
 def create_anonymous_user(anonymous_id: str) -> User:
@@ -49,55 +72,77 @@ def account_user(account: UserAccount) -> User:
     return User(id=account.id, is_anonymous=False, email=account.email)
 
 
-def require_app_origin(request: Request, settings: Settings) -> None:
+def require_app_origin(origin: str | None, settings: Settings) -> None:
     """Refuse a cookie-authenticated state change sent from another site (CSRF)."""
-    if request.method not in SAFE_METHODS and request.headers.get("origin") != app_origin(settings):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="cross-origin request refused")
+    if origin != app_origin(settings):
+        raise AuthRefused(status.HTTP_403_FORBIDDEN, "cross-origin request refused")
 
 
-async def identify_caller(
-    request: Request,
-    response: Response,
-    settings: Annotated[Settings, Depends(get_settings)],
-    db: Annotated[AsyncSession, Depends(get_db_session)],
-    creds: HTTPAuthorizationCredentials | None = Security(bearer),
-    x_anonymous_id: str | None = Header(None, alias="X-Anonymous-ID"),
-    x_anonymous_token: str | None = Header(None, alias="X-Anonymous-Token"),
-) -> Caller:
+async def resolve_caller(db: AsyncSession, settings: Settings, credentials: Credentials) -> Caller:
     """Who sent the request: a bearer API token wins over the session cookie, which wins over an anonymous session.
 
     A session cookie that opens no live session is ignored, so a browser holding a stale
-    cookie can still act anonymously.
+    cookie can still act anonymously. Raises AuthRefused for credentials that are present but wrong.
     """
     if not settings.auth_enabled:
         return Caller(SELFHOST_USER)
 
-    if creds is not None:
-        found = await find_session(db, creds.credentials, AuthSessionKind.api)
+    if credentials.bearer_token is not None:
+        found = await find_session(db, credentials.bearer_token, AuthSessionKind.api)
         if found is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="invalid API token",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
+            raise AuthRefused(status.HTTP_401_UNAUTHORIZED, "invalid API token")
         return Caller(account_user(found.user))
 
-    session_token = request.cookies.get(SESSION_COOKIE)
-    if session_token and (found := await find_session(db, session_token, AuthSessionKind.browser)):
-        require_app_origin(request, settings)
-        if found.renewed:
-            assert found.session.expires is not None
-            set_session_cookie(response, session_token, found.session.expires, settings)
-        return Caller(account_user(found.user), browser_session=found.session)
+    if credentials.session_token and (
+        found := await find_session(db, credentials.session_token, AuthSessionKind.browser)
+    ):
+        if credentials.changes_state:
+            require_app_origin(credentials.origin, settings)
+        return Caller(account_user(found.user), session_expires=found.session.expires, session_renewed=found.renewed)
 
-    if x_anonymous_id is not None:
-        if not x_anonymous_token or not verify_anonymous_token(
-            x_anonymous_id, x_anonymous_token, settings.anonymous_session_secret
+    if credentials.anonymous_id is not None:
+        if not credentials.anonymous_token or not verify_anonymous_token(
+            credentials.anonymous_id, credentials.anonymous_token, settings.anonymous_session_secret
         ):
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid anonymous session")
-        return Caller(create_anonymous_user(x_anonymous_id))
+            raise AuthRefused(status.HTTP_401_UNAUTHORIZED, "invalid anonymous session")
+        return Caller(create_anonymous_user(credentials.anonymous_id))
 
     return Caller(None)
+
+
+def request_credentials(
+    request: Request,
+    creds: HTTPAuthorizationCredentials | None = Security(bearer),
+    x_anonymous_id: str | None = Header(None, alias="X-Anonymous-ID"),
+    x_anonymous_token: str | None = Header(None, alias="X-Anonymous-Token"),
+) -> Credentials:
+    return Credentials(
+        bearer_token=creds.credentials if creds is not None else None,
+        session_token=request.cookies.get(SESSION_COOKIE),
+        origin=request.headers.get("origin"),
+        changes_state=request.method not in SAFE_METHODS,
+        anonymous_id=x_anonymous_id,
+        anonymous_token=x_anonymous_token,
+    )
+
+
+async def identify_caller(
+    response: Response,
+    settings: Annotated[Settings, Depends(get_settings)],
+    db: Annotated[AsyncSession, Depends(get_db_session)],
+    credentials: Annotated[Credentials, Depends(request_credentials)],
+) -> Caller:
+    try:
+        caller = await resolve_caller(db, settings, credentials)
+    except AuthRefused as refused:
+        raise HTTPException(
+            status_code=refused.status_code,
+            detail=refused.reason,
+            headers={"WWW-Authenticate": "Bearer"} if refused.status_code == status.HTTP_401_UNAUTHORIZED else None,
+        )
+    if caller.session_renewed and caller.session_expires is not None and credentials.session_token:
+        set_session_cookie(response, credentials.session_token, caller.session_expires, settings)
+    return caller
 
 
 async def authenticate_optional(caller: Annotated[Caller, Depends(identify_caller)]) -> User | None:
@@ -121,34 +166,20 @@ async def authenticate_ws(
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> User:
     """The WebSocket's caller: a bearer API token, the session cookie, or an anonymous session in the query."""
-    if not settings.auth_enabled:
-        return SELFHOST_USER
-
-    authorization = websocket.headers.get("authorization")
-    if authorization:
-        scheme, _, token = authorization.partition(" ")
+    scheme, _, token = (websocket.headers.get("authorization") or "").partition(" ")
+    credentials = Credentials(
+        bearer_token=token if scheme.lower() == "bearer" else None,
+        session_token=websocket.cookies.get(SESSION_COOKIE),
+        origin=websocket.headers.get("origin"),
+        changes_state=True,
+        anonymous_id=websocket.query_params.get("anonymous_id"),
+        anonymous_token=websocket.query_params.get("anonymous_token"),
+    )
+    try:
         async with create_session() as db:
-            found = await find_session(db, token, AuthSessionKind.api) if scheme.lower() == "bearer" else None
-        if found is None:
-            raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid API token")
-        return account_user(found.user)
-
-    session_token = websocket.cookies.get(SESSION_COOKIE)
-    if session_token:
-        if websocket.headers.get("origin") != app_origin(settings):
-            raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION, reason="Cross-origin connection refused")
-        async with create_session() as db:
-            found = await find_session(db, session_token, AuthSessionKind.browser)
-        if found is not None:
-            return account_user(found.user)
-
-    anonymous_id = websocket.query_params.get("anonymous_id")
-    anonymous_token = websocket.query_params.get("anonymous_token")
-    if anonymous_id:
-        if not anonymous_token or not verify_anonymous_token(
-            anonymous_id, anonymous_token, settings.anonymous_session_secret
-        ):
-            raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid anonymous session")
-        return create_anonymous_user(anonymous_id)
-
-    raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION, reason="Not authenticated")
+            caller = await resolve_caller(db, settings, credentials)
+    except AuthRefused as refused:
+        raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION, reason=refused.reason)
+    if caller.user is None:
+        raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION, reason="Not authenticated")
+    return caller.user

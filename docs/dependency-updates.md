@@ -2,7 +2,7 @@
 
 ## Stack Auth Update Guide
 
-The Docker server image (`stackauth/server:<commit-sha>`) still runs, though nothing in the app talks to it ([[stack-auth]]).
+The Docker server image (`stackauth/server:<commit-sha>`) runs as the rollback path for the gateway's own auth; no app code calls it ([[stack-auth]]).
 
 ### Pre-Update Checklist
 

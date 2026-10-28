@@ -21,13 +21,11 @@ const baseURL = import.meta.env.VITE_API_BASE_URL;
 
 export type Api = {
 	api: Axios;
-	isAuthReady: boolean;
 	isAnonymous: boolean;
 };
 
 const ApiContext = createContext<Api>({
 	api: axios.create({ baseURL }),
-	isAuthReady: false,
 	isAnonymous: true,
 });
 
@@ -97,7 +95,7 @@ export const ApiProvider: FC<PropsWithChildren> = ({ children }) => {
 	}, [user, api]);
 
 	return (
-		<ApiContext.Provider value={{ api, isAuthReady: true, isAnonymous }}>
+		<ApiContext.Provider value={{ api, isAnonymous }}>
 			{children}
 		</ApiContext.Provider>
 	);
