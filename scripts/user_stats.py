@@ -18,6 +18,8 @@ latest; with --as-of in the past, sessions used since then add nothing.
 
 Examples:
     make user-stats
+    make users
+    make retention
     make user-stats ARGS="users --sort last-active --since 2026-09-01"
     uv run scripts/user_stats.py --database-url postgresql://yapit:yapit@localhost:5432/yapit retention
     uv run scripts/user_stats.py overview --json | jq .methods
@@ -41,9 +43,13 @@ from typing import Annotated, Literal
 
 import tyro
 from rich import box
+from rich.color import Color, blend_rgb
+from rich.color_triplet import ColorTriplet
 from rich.console import Console
 from rich.measure import Measurement
+from rich.style import Style
 from rich.table import Table
+from rich.text import Text
 
 
 @dataclass(frozen=True)
@@ -75,7 +81,7 @@ TEXT_SORTS = ("email", "name", "methods", "plan")
 
 @dataclass(frozen=True)
 class Users:
-    """One row per user: email, name (with --wide), signed up, last sign-in, methods, last active, active days in the last 30, documents, plan.
+    """One row per user: email, name, signed up, last sign-in, methods, last active, active days in the last 30, documents, plan.
 
     JSON schema (--json):
 
@@ -95,8 +101,6 @@ class Users:
     """Show at most this many rows."""
     csv: bool = False
     """Print the table as CSV, with full dates and plan and status apart."""
-    wide: bool = False
-    """Show the name column too; the table is then wider than 80 columns."""
 
 
 @dataclass(frozen=True)
@@ -149,14 +153,14 @@ def main(cli: Cli) -> None:
             render = render_overview
         case Users() as cmd:
             data = user_rows(people, cli.as_of, cmd)
-            render = render_users_csv if cmd.csv else partial(render_users, wide=cmd.wide)
+            render = render_users_csv if cmd.csv else partial(render_users, as_of=cli.as_of)
         case Retention() as cmd:
             data = retention(people, cli.as_of, cmd.cohorts, cmd.months)
             render = render_retention
     if cli.json:
         print(json.dumps(data, indent=2))
     else:
-        render(Console(), data)
+        render(Console(highlight=False), data)
 
 
 # --- The numbers ---------------------------------------------------------------
@@ -183,8 +187,11 @@ class People:
     guest_days: dict[str, frozenset[date]]
 
 
+PROVIDER_NAMES = {"google": "Google", "github": "GitHub"}
+
+
 def method_label(providers: tuple[str, ...]) -> str:
-    return " + ".join(providers) if providers else "email only"
+    return " + ".join(PROVIDER_NAMES.get(p, p) for p in providers) if providers else "Email"
 
 
 def active_within(days: Iterable[date], as_of: date, window: int) -> bool:
@@ -315,20 +322,62 @@ def month_after(month: str, k: int) -> str:
 
 BAR_WIDTH = 30
 EIGHTHS = " ▏▎▍▌▋▊▉"
+# Heat runs from 0 (old, few) through yellow to 1 (recent, many).
+COLD, WARM, HOT = ColorTriplet(175, 60, 60), ColorTriplet(215, 175, 0), ColorTriplet(0, 255, 95)
+FADE_DAYS = 90
 
 
-def bar(n: int, top: int) -> str:
+def heat(fraction: float) -> Style:
+    f = min(max(fraction, 0.0), 1.0)
+    rgb = blend_rgb(COLD, WARM, f * 2) if f < 0.5 else blend_rgb(WARM, HOT, f * 2 - 1)
+    return Style(color=Color.from_triplet(rgb))
+
+
+def recency(days_ago: int) -> Style:
+    """Bright green today, yellow at about three weeks, dim red past FADE_DAYS."""
+    return heat(1 - (min(days_ago, FADE_DAYS) / FADE_DAYS) ** 0.5)
+
+
+def dated(day: str | None, as_of: date) -> Text:
+    if not day:
+        return Text("")
+    return Text(day, style=recency((as_of - date.fromisoformat(day)).days))
+
+
+def plan_style(row: dict) -> str:
+    if row["status"] == "trialing":
+        return "cyan"
+    if row["status"] == "canceled":
+        return "dim red"
+    if row["plan"] not in ("", "free") and row["status"] in ("active", "past_due"):
+        return "green"
+    return "grey50"
+
+
+def print_whole(console: Console, table: Table) -> None:
+    """Print table at its natural width, wider than the terminal if need be.
+
+    Rich squeezes columns to an ellipsis to fit the console, and the console's
+    width is a guess off a terminal (80 columns): so the table is measured
+    unbounded and the console widened to it.
+    """
+    natural = Measurement.get(console, console.options.update(width=10_000), table).maximum
+    console.width = max(natural, console.width)
+    console.print(table)
+
+
+def bar(n: int, top: int) -> Text:
     if not top:
-        return ""
+        return Text("")
     eighths = round(n / top * BAR_WIDTH * 8)
-    return "█" * (eighths // 8) + EIGHTHS[eighths % 8].strip()
+    return Text("█" * (eighths // 8) + EIGHTHS[eighths % 8].strip(), style=heat(n / top))
 
 
 def count_table(title: str, label: str, rows: list[tuple[str, int]]) -> Table:
     table = Table(title=title, title_justify="left", box=box.SIMPLE_HEAD, pad_edge=False)
-    table.add_column(label)
-    table.add_column("n", justify="right")
-    table.add_column("", style="green", no_wrap=True)
+    table.add_column(label, no_wrap=True)
+    table.add_column("n", justify="right", no_wrap=True)
+    table.add_column("", no_wrap=True)
     top = max((n for _, n in rows), default=0)
     for name, n in rows:
         table.add_row(name, str(n), bar(n, top))
@@ -345,61 +394,52 @@ def render_overview(console: Console, data: dict) -> None:
         )
     plans = ", ".join(f"{plan} {n}" for plan, n in data["paying"]["by_plan"].items())
     console.print(
-        f"  paying: [bold]{data['paying']['total']}[/]"
+        f"  paying: [bold green]{data['paying']['total']}[/]"
         + (f" ({plans})" if plans else "")
-        + f"   trialing: {data['trialing']}"
+        + f"   trialing: [cyan]{data['trialing']}[/]"
     )
     console.print()
-    console.print(
-        count_table("Sign-ups per week", "week of", [(r["week"], r["signups"]) for r in data["signups_weekly"]])
+    print_whole(
+        console,
+        count_table("Sign-ups per week", "week of", [(r["week"], r["signups"]) for r in data["signups_weekly"]]),
     )
-    console.print(
-        count_table("Sign-ups per month", "month", [(r["month"], r["signups"]) for r in data["signups_monthly"]])
+    print_whole(
+        console,
+        count_table("Sign-ups per month", "month", [(r["month"], r["signups"]) for r in data["signups_monthly"]]),
     )
-    console.print(count_table("Sign-in methods", "method", [(r["method"], r["users"]) for r in data["methods"]]))
+    print_whole(console, count_table("Sign-in methods", "method", [(r["method"], r["users"]) for r in data["methods"]]))
 
 
-def render_users(console: Console, rows: list[dict], wide: bool) -> None:
+def render_users(console: Console, rows: list[dict], as_of: date) -> None:
     table = Table(
         box=box.SIMPLE_HEAD, pad_edge=False, collapse_padding=True, caption=f"{len(rows)} users", caption_justify="left"
     )
-    # Rich shrinks only the columns that may wrap, so name is the one that gives way.
-    table.add_column("email", no_wrap=True)
-    if wide:
-        table.add_column("name", max_width=12, no_wrap=True, overflow="ellipsis")
-    table.add_column("signed\nup", no_wrap=True)
-    table.add_column("last\nsign-in", no_wrap=True, min_width=8)
-    table.add_column("via", no_wrap=True)
-    table.add_column("idle", justify="right", no_wrap=True)
-    table.add_column("days\n/30", justify="right", no_wrap=True)
-    table.add_column("docs", justify="right", no_wrap=True)
-    table.add_column("plan", no_wrap=True)
-    short = {"google": "G", "github": "GH"}
+    for header, justify in [
+        ("email", "left"),
+        ("name", "left"),
+        ("signed up", "left"),
+        ("last sign-in", "left"),
+        ("via", "left"),
+        ("idle", "right"),
+        ("days/30", "right"),
+        ("docs", "right"),
+        ("plan", "left"),
+    ]:
+        table.add_column(header, justify=justify, no_wrap=True)
     for r in rows:
         table.add_row(
             r["email"],
-            *([r["name"]] if wide else []),
-            r["signed_up"][2:],
-            (r["last_sign_in"] or "")[2:],
-            "+".join(short.get(p, p) for p in r["methods"]) or "email",
-            f"{r['last_active_days_ago']}d",
+            r["name"],
+            dated(r["signed_up"], as_of),
+            dated(r["last_sign_in"], as_of),
+            method_label(tuple(r["methods"])),
+            Text(f"{r['last_active_days_ago']}d", style=recency(r["last_active_days_ago"])),
             str(r["active_days_30"]),
             str(r["documents"]),
-            plan_label(r),
+            Text(plan_label(r), style=plan_style(r)),
         )
-    # Rich squeezes every column, email included, to fit the terminal, so the
-    # table is printed at its own width: name shrinks first, then the table runs
-    # wider than the terminal rather than cut an email.
-    unbounded = console.options.update(width=10_000)
-    natural = Measurement.get(console, unbounded, table).maximum
-    if wide and natural > console.width:
-        name = table.columns[1]
-        name_width = min(12, max((len(r["name"]) for r in rows), default=4))
-        name.max_width = max(6, name_width - (natural - console.width))
-        natural = Measurement.get(console, unbounded, table).maximum
-    console = Console(width=max(natural, console.width))
-    console.print(table)
-    console.print("G Google, GH GitHub. idle: days since active. days/30: active days of the last 30.", style="dim")
+    print_whole(console, table)
+    console.print("idle: days since active. days/30: active days of the last 30.", style="dim")
 
 
 def render_users_csv(console: Console, rows: list[dict]) -> None:
@@ -414,7 +454,7 @@ def render_users_csv(console: Console, rows: list[dict]) -> None:
                 r["name"],
                 r["signed_up"],
                 r["last_sign_in"] or "",
-                "+".join(r["methods"]) or "email",
+                method_label(tuple(r["methods"])),
                 r["last_active"],
                 r["active_days_30"],
                 r["documents"],
@@ -432,14 +472,17 @@ def render_retention(console: Console, data: dict) -> None:
         box=box.SIMPLE_HEAD,
         pad_edge=False,
     )
-    table.add_column("cohort")
-    table.add_column("users", justify="right")
+    table.add_column("cohort", no_wrap=True)
+    table.add_column("users", justify="right", no_wrap=True)
     for k in range(width):
-        table.add_column(f"M+{k}", justify="right")
+        table.add_column(f"M+{k}", justify="right", no_wrap=True)
     for r in data["cohorts"]:
-        cells = [f"{n} [dim]{n * 100 // r['signups']:>3}%[/]" if r["signups"] else "" for n in r["active"]]
+        cells = [
+            Text.assemble(f"{n} ", (f"{n * 100 // r['signups']:>3}%", heat(n / r["signups"]))) if r["signups"] else ""
+            for n in r["active"]
+        ]
         table.add_row(r["month"], str(r["signups"]), *cells, *[""] * (width - len(cells)))
-    console.print(table)
+    print_whole(console, table)
     back = data["came_back"]
     share = f"{back['came_back'] * 100 // back['eligible']}%" if back["eligible"] else "–"
     console.print(

@@ -192,6 +192,12 @@ warm-cache:
 user-stats:
 	@VPS_HOST="$(VPS_HOST)" uv run scripts/user_stats.py $(or $(ARGS),overview)
 
+users:
+	@VPS_HOST="$(VPS_HOST)" uv run scripts/user_stats.py users --sort last-sign-in $(ARGS)
+
+retention:
+	@VPS_HOST="$(VPS_HOST)" uv run scripts/user_stats.py retention $(ARGS)
+
 # Sync metrics from prod TimescaleDB to local DuckDB
 sync-metrics:
 	@mkdir -p data

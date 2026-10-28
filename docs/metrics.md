@@ -114,7 +114,7 @@ make sync-metrics     # just sync, no dashboard
 
 ## Sign-ups and returns
 
-Who signs up, how (Google, GitHub, email) and whether they come back comes from the main Postgres, not the metrics DB, through `make user-stats` (`scripts/user_stats.py`). It has an overview, a per-user table and monthly retention cohorts, and reads prod read-only over ssh. `make user-stats ARGS=--help` says what counts as active.
+Who signs up, how (Google, GitHub, email) and whether they come back comes from the main Postgres, not the metrics DB, through `scripts/user_stats.py`: `make user-stats` for the overview, `make users` for the per-user table and `make retention` for monthly cohorts. It reads prod read-only over ssh. `make user-stats ARGS=--help` says what counts as active.
 
 ## Health Reports
 

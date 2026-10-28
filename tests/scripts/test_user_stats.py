@@ -195,10 +195,10 @@ def test_overview_counts_the_seed(database_url: str) -> None:
     assert next(iter(monthly)) == "2025-11"
     assert {m: n for m, n in monthly.items() if n} == {"2026-08": 2, "2026-09": 2, "2026-10": 2}
     assert {r["method"]: r["users"] for r in data["methods"]} == {
-        "google": 2,
-        "github": 1,
-        "github + google": 1,
-        "email only": 2,
+        "Google": 2,
+        "GitHub": 1,
+        "GitHub + Google": 1,
+        "Email": 2,
     }
     assert data["active"] == {"7": 3, "30": 5, "90": 6}
     assert data["guests_active"] == {"7": 1, "30": 1, "90": 2}
@@ -265,20 +265,43 @@ def test_retention_counts_the_seed(database_url: str) -> None:
     assert data["came_back"] == {"eligible": 4, "came_back": 3}
 
 
+@pytest.mark.parametrize("columns", ["40", "80", "300"])
 @pytest.mark.parametrize(
-    "command,whole_row",
+    "args,whole_row",
     [
         # Rich fits a wide table by squeezing columns to an ellipsis or dropping
-        # them, so a row has to come out whole, not just short enough.
-        ("overview", ["github + google", "1"]),
-        ("retention", ["2026-08", "2", "2 100%", "2 100%", "1  50%"]),
+        # them, so a row has to come out whole whatever the terminal's width.
+        (("overview",), ["GitHub + Google", "1"]),
+        (("retention",), ["2026-08", "2", "2 100%", "2 100%", "1  50%"]),
+        (
+            ("users",),
+            [f"frank@{FRANK_DOMAIN}", "Frank Alexander Mustermann", "2026-10-27", "", "Google", "1d", "1", "0", "free"],
+        ),
+        (
+            ("users",),
+            ["dave@example.com", "Dave", "2026-09-15", "2026-09-15", "Email", "40d", "0", "0", "basic past due"],
+        ),
+        (("users",), ["carol@example.com", "Carol", "2026-09-05", "2026-10-27", "GitHub + Google", "1d"]),
     ],
 )
-def test_tables_fit_80_columns(database_url: str, command: str, whole_row: list[str]) -> None:
-    done = user_stats("--database-url", database_url, "--as-of", AS_OF, command, env={**os.environ, "COLUMNS": "80"})
+def test_tables_are_never_cut(database_url: str, columns: str, args: tuple[str, ...], whole_row: list[str]) -> None:
+    done = user_stats("--database-url", database_url, "--as-of", AS_OF, *args, env={**os.environ, "COLUMNS": columns})
     assert done.returncode == 0, done.stderr
-    assert re.search(r"\s+".join(map(re.escape, whole_row)), done.stdout)
-    assert max(len(line) for line in done.stdout.splitlines()) <= 80
+    assert re.search(r"\s+".join(map(re.escape, filter(None, whole_row))), done.stdout)
+    assert "…" not in done.stdout
+
+
+def test_colour_follows_no_color_and_force_color(database_url: str) -> None:
+    def run(**env: str) -> str:
+        clean = {k: v for k, v in os.environ.items() if k not in ("NO_COLOR", "FORCE_COLOR")}
+        done = user_stats("--database-url", database_url, "--as-of", AS_OF, "users", env={**clean, **env})
+        assert done.returncode == 0, done.stderr
+        return done.stdout
+
+    # NO_COLOR drops colour (38;…) and keeps bold and dim.
+    assert "\x1b[" not in run()
+    assert "38;" in run(FORCE_COLOR="1")
+    assert "38;" not in run(FORCE_COLOR="1", NO_COLOR="1")
 
 
 def test_prod_reads_are_read_only_copies(tmp_path: Path) -> None:
@@ -311,47 +334,6 @@ def test_prod_reads_are_read_only_copies(tmp_path: Path) -> None:
         assert sql.startswith("COPY (SELECT")
 
 
-@pytest.mark.parametrize("wide", [False, True])
-def test_user_table_never_cuts_an_email(database_url: str, wide: bool) -> None:
-    """At 80 columns frank's 36-character email does not fit beside the other
-    columns, so the table runs wider than the terminal rather than cut it.
-    """
-    done = user_stats(
-        "--database-url",
-        database_url,
-        "--as-of",
-        AS_OF,
-        "users",
-        *(["--wide"] if wide else []),
-        env={**os.environ, "COLUMNS": "80"},
-    )
-    assert done.returncode == 0, done.stderr
-    for email in EMAILS:
-        assert re.search(rf"(^|\s){re.escape(email)}\s", done.stdout, re.MULTILINE), email
-    # name is the column that gives way: cut short with --wide, absent without.
-    assert "Frank Alexander Mustermann" not in done.stdout
-    assert ("Frank…" in done.stdout) == wide
-    assert re.search(
-        r"dave@example\.com\s+(Dave\s+)?26-09-15\s+26-09-15\s+email\s+40d\s+0\s+0\s+basic past due", done.stdout
-    )
-
-
-def test_user_table_of_typical_emails_fits_80_columns(database_url: str) -> None:
-    done = user_stats(
-        "--database-url",
-        database_url,
-        "--as-of",
-        AS_OF,
-        "users",
-        "--method",
-        "github",
-        env={**os.environ, "COLUMNS": "80"},
-    )
-    assert done.returncode == 0, done.stderr
-    assert re.search(r"bob@example\.com\s+26-08-20\s+GH\s+29d\s+1\s+1\s+free", done.stdout)
-    assert max(len(line) for line in done.stdout.splitlines()) <= 80
-
-
 def test_users_csv(database_url: str) -> None:
     done = user_stats("--database-url", database_url, "--as-of", AS_OF, "users", "--csv", "--sort", "email")
     assert done.returncode == 0, done.stderr
@@ -373,7 +355,7 @@ def test_users_csv(database_url: str) -> None:
         "Alice",
         "2026-08-03",
         "2026-10-21",
-        "google",
+        "Google",
         "2026-10-20",
         "1",
         "2",
@@ -385,12 +367,12 @@ def test_users_csv(database_url: str) -> None:
         "Carol",
         "2026-09-05",
         "2026-10-27",
-        "github+google",
+        "GitHub + Google",
         "2026-10-27",
         "1",
         "2",
         "basic",
         "trialing",
     ]
-    assert rows[6][:5] == [f"frank@{FRANK_DOMAIN}", "Frank Alexander Mustermann", "2026-10-27", "", "google"]
+    assert rows[6][:5] == [f"frank@{FRANK_DOMAIN}", "Frank Alexander Mustermann", "2026-10-27", "", "Google"]
     assert len(rows) == 7
