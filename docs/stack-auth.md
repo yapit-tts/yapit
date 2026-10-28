@@ -1,18 +1,14 @@
 # Stack Auth
 
-Self-hosted auth provider. Runs as a Docker container (`stackauth/server:<commit-sha>`), provides user management, OAuth, session tokens, and an admin dashboard at `auth.yapit.md`. **Optional for selfhost** — `make self-host` runs without Stack Auth (gateway uses static `SELFHOST_USER`); `make self-host-auth` activates it for multi-user setups.
+Self-hosted auth provider the gateway used before it signed people in itself ([[auth]]). Nothing in `yapit/` or `frontend/src` talks to it any more; its users were copied into the gateway's tables by revision `5154eb03f6c9`, and its container and tables stay as the rollback path until they are removed. Runs as a Docker container (`stackauth/server:<commit-sha>`), provides user management, OAuth, session tokens, and an admin dashboard at `auth.yapit.md`. `make self-host-auth` still starts it, though multi-user selfhost no longer needs it.
 
 ## Architecture
 
 ```
-Frontend (React)
-  └── @stackframe/react SDK → Stack Auth API (port 8102)
-                                    ↑
-Gateway (Python)                    │
-  └── gateway/auth.py → fetches token signing keys ─┘
-
 Dashboard (Next.js, inside stack-auth container)
   └── port 8101 → auth.yapit.md (Cloudflare Access protected)
+API
+  └── port 8102
 ```
 
 **Two projects exist in the Stack Auth DB:**
@@ -35,37 +31,8 @@ Stack Auth is primarily a SaaS product. Self-hosting is second-class. Known issu
 
 - **ClickHouse required** — Since Jan 28, 2026, the migration runner unconditionally requires ClickHouse. We run a lightweight container that sits idle. Filed [#1228](https://github.com/stack-auth/stack-auth/issues/1228), closed 2026-03-10 as won't-fix: Stack Auth is moving core features onto ClickHouse, so the container stays. Requires version `25.10+` (JSON column type) and `SYS_KILL` capability (init scripts).
 - **ClickHouse self-telemetry grows unbounded** — Default config has no TTL on `system.*_log` tables; an idle server writes ~600MB/day of profiler traces + metrics (hit 97GB on prod, July 2026). `docker/clickhouse-config.xml` (mounted into `config.d/` by both compose files) disables all introspection logs and puts a 7-day TTL on `query_log`. Version upgrades that change a log table's schema rename the old table to `*_log_0` and leave its data forever — check for those after upgrades.
-- **No S3 = hidden avatar upload** — Without S3 configured, the AccountSettings profile image upload 500s. We hide it with a CSS selector hack: `div.flex.flex-col.sm\:flex-row.gap-2:has(span.rounded-full)`. Verify this selector survives every SDK upgrade.
 - **`STACK_SERVER_SECRET` must be base64url** — Used for JWT signing. NOT the same as the API server key (`ssk_*`). Generate with `openssl rand -base64 32 | tr '+/' '-_' | tr -d '='`.
-- **Session replay spam** — The SDK sends `POST /api/v1/session-replays/batch` requests that return "Analytics is not enabled". Harmless log noise, no way to disable.
 - **Env var drift** — They rename/remove env vars without deprecation. Always diff the [upstream .env reference](https://github.com/stack-auth/stack-auth/blob/main/docker/server/.env) against ours when upgrading.
-- **SDK and server must upgrade together** — SDK 2.8.65+ expects response format the old server doesn't provide (causes `StackAssertionError`, blank page). Never update one without the other. See [[dependency-updates]] for the full upgrade guide.
-
-## Auth Integration
-
-### Auth Modes
-
-Two ways to authenticate (`gateway/auth.py`):
-1. **Bearer token** — a Stack Auth access token, verified in the gateway against the project's public signing keys (`verify_access_token`) → returns `User`. Stack Auth is only asked for the key set, on first use and when a token names a key id the gateway hasn't seen
-2. **Anonymous ID** — `X-Anonymous-ID` header → creates anonymous user with `anon-{uuid}` ID
-
-WebSocket uses query params (`?token=...` or `?anonymous_id=...`).
-
-### User Model
-
-`gateway/stack_auth/users.py` — `User` holds what the gateway reads: `id`, `is_anonymous`, `primary_email` (from the token's `email` claim, used to pre-fill Stripe checkout).
-
-### Anonymous → Registered Flow
-
-1. User browses anonymously with `X-Anonymous-ID` header
-2. Creates documents, uses browser TTS
-3. Signs up via Stack Auth
-4. Frontend calls `POST /v1/users/claim-anonymous` with both tokens
-5. Documents transferred from `anon-{uuid}` to real user ID
-
-### Account Deletion
-
-`DELETE /v1/users/me` — cancels Stripe subscription, deletes documents (cascades), anonymizes billing data, deletes from Stack Auth.
 
 ## Email
 
@@ -96,24 +63,6 @@ Docker Swarm env_file baking caused spurious postgres restarts during initial em
 - Production mode enabled in dashboard settings
 
 ## Key Files
-
-**Backend:**
-| File | Purpose |
-|------|---------|
-| `gateway/auth.py` | `authenticate()` / `authenticate_ws()` |
-| `gateway/stack_auth/users.py` | User model, token verification, user deletion |
-| `gateway/stack_auth/api.py` | `build_headers()` for server API |
-| `gateway/config.py` | `stack_auth_api_host`, `stack_auth_project_id`, `stack_auth_server_key` |
-| `scripts/create_user.py` | Dev user creation |
-
-**Frontend:**
-| File | Purpose |
-|------|---------|
-| `frontend/src/auth.ts` | `StackClientApp` constructor |
-| `frontend/src/App.tsx` | `StackProvider`, `StackTheme` |
-| `frontend/src/routes/AppRoutes.tsx` | `StackHandler` auth callbacks |
-| `frontend/src/pages/AccountSettingsPage.tsx` | `AccountSettings` + CSS selector hack |
-| `frontend/src/api.tsx` | `useUser()` token management |
 
 **Infrastructure:**
 | File | Purpose |
