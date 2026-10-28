@@ -2,8 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "@/hooks/useAuthUser";
 import { getAnonymousToken, getOrCreateAnonymousId } from "@/lib/anonymousId";
 
-const WS_BASE_URL = import.meta.env.VITE_WS_BASE_URL ||
-	`${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/api`;
+const WS_BASE_URL = `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/api`;
 
 export interface WSMessage {
   type: "status" | "evicted" | "error";

@@ -285,10 +285,10 @@ async def test_callback_whose_state_is_not_the_browsers_is_refused(browser, prov
 async def test_callback_works_once(browser, provider):
     started = await start(browser, "github")
     query = provider.authorize(started.headers["location"])
-    state_cookie = browser.cookies["yapit_oauth_state"]
+    state_cookie = browser.cookies["__Host-yapit_oauth_state"]
     await callback(browser, "github", query)
     await browser.post("/v1/auth/sign-out", headers=SAME_ORIGIN)
-    browser.cookies.set("yapit_oauth_state", state_cookie)
+    browser.cookies.set("__Host-yapit_oauth_state", state_cookie)
 
     landed = await callback(browser, "github", query)
 
@@ -334,9 +334,9 @@ async def test_link_mode_connects_the_identity_to_the_signed_in_user(browser, ap
     session_cookie = browser.cookies[SESSION_COOKIE]
     provider.account = ProviderAccount(id="77", email="someone-else@example.com", verified=False)
 
-    landed = await oauth_sign_in(browser, provider, mode="link", return_to="/account/settings")
+    landed = await oauth_sign_in(browser, provider, mode="link", return_to="/account")
 
-    assert landed == "/account/settings"
+    assert landed == "/account"
     assert browser.cookies[SESSION_COOKIE] == session_cookie
     assert (await signed_in_user(browser))["identities"] == [
         {"provider": "github", "email": "someone-else@example.com"}
@@ -352,9 +352,9 @@ async def test_link_mode_refuses_an_identity_that_belongs_to_another_user(browse
     await session.commit()
     await sign_in(browser, app, "me@example.com")
 
-    landed = await oauth_sign_in(browser, provider, mode="link", return_to="/account/settings")
+    landed = await oauth_sign_in(browser, provider, mode="link", return_to="/account")
 
-    assert landed == "/account/settings?error=identity_taken"
+    assert landed == "/account?error=identity_taken"
     assert (await signed_in_user(browser))["identities"] == []
     assert await identities(session) == [("github", "4242", "owner")]
 
@@ -370,24 +370,24 @@ async def test_link_mode_needs_a_signed_in_user(browser, provider):
 @pytest.mark.asyncio
 async def test_link_mode_refuses_when_the_user_signed_out_in_between(browser, app, provider, session):
     await sign_in(browser, app, "me@example.com")
-    started = await start(browser, "github", mode="link", return_to="/account/settings")
+    started = await start(browser, "github", mode="link", return_to="/account")
     await browser.post("/v1/auth/sign-out", headers=SAME_ORIGIN)
 
     landed = await callback(browser, "github", provider.authorize(started.headers["location"]))
 
-    assert landed == "/account/settings?error=not_signed_in"
+    assert landed == "/account?error=not_signed_in"
     assert await identities(session) == []
 
 
 @pytest.mark.asyncio
 async def test_link_mode_refuses_when_another_user_signed_in_in_between(browser, app, provider, session):
     await sign_in(browser, app, "starter@example.com")
-    started = await start(browser, "github", mode="link", return_to="/account/settings")
+    started = await start(browser, "github", mode="link", return_to="/account")
     await sign_in(browser, app, "someone-else@example.com")
 
     landed = await callback(browser, "github", provider.authorize(started.headers["location"]))
 
-    assert landed == "/account/settings?error=not_signed_in"
+    assert landed == "/account?error=not_signed_in"
     assert await identities(session) == []
 
 
@@ -398,7 +398,7 @@ async def test_disconnecting_a_provider_removes_only_the_users_own_identity(brow
     session.add(OAuthIdentity(provider="github", provider_account_id="999", user_id="other"))
     await session.commit()
     await sign_in(browser, app, "me@example.com")
-    await oauth_sign_in(browser, provider, mode="link", return_to="/account/settings")
+    await oauth_sign_in(browser, provider, mode="link", return_to="/account")
 
     first = await browser.delete("/v1/auth/identities/github", headers=SAME_ORIGIN)
     second = await browser.delete("/v1/auth/identities/github", headers=SAME_ORIGIN)

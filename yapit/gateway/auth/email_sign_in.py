@@ -40,7 +40,7 @@ class NotTheRequester(Exception):
 
 
 def hash_code(challenge_id: uuid.UUID, code: str) -> str:
-    # Salted with the challenge id: a million codes would otherwise hash to a million shared values.
+    # Salted with the challenge id, so no single table of the million code hashes reads every challenge at once.
     return hash_secret(f"{challenge_id}:{code}")
 
 

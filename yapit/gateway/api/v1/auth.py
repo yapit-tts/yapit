@@ -32,17 +32,18 @@ from yapit.gateway.auth.email_sign_in import (
 from yapit.gateway.auth.mailer import MailDeliveryError, Mailer, get_mailer
 from yapit.gateway.auth.oauth import PROVIDERS, disconnect, enabled_providers
 from yapit.gateway.auth.sessions import (
+    SESSION_COOKIE,
     SIGN_IN_PENDING_COOKIE,
     clear_auth_cookie,
     clear_session_cookie,
     create_api_token,
-    create_browser_session,
     hash_secret,
     new_secret,
+    read_auth_cookie,
     revoke_session,
-    session_cookie_name,
     set_auth_cookie,
     set_session_cookie,
+    start_browser_session,
 )
 from yapit.gateway.config import Settings
 from yapit.gateway.deps import DbSession, SettingsDep, SignedInAccount
@@ -138,7 +139,7 @@ async def start_email_sign_in(
     """Email a sign-in link and code. Signing in with a new address creates its account."""
     require_auth_enabled(settings)
     # One nonce per browser, so the links of every mail it asked for sign it in without a click
-    browser_nonce = request.cookies.get(SIGN_IN_PENDING_COOKIE) or new_secret()
+    browser_nonce = read_auth_cookie(request, SIGN_IN_PENDING_COOKIE, settings) or new_secret()
     with _sending_challenge_to(body.email):
         await start_sign_in(db, mailer, settings, body.email, browser_nonce)
     set_auth_cookie(response, SIGN_IN_PENDING_COOKIE, browser_nonce, int(CHALLENGE_LIFETIME.total_seconds()), settings)
@@ -156,7 +157,7 @@ async def change_email(
     mailer: Annotated[Mailer, Depends(get_mailer)],
 ) -> None:
     """Email a link and code to the new address; `/email/verify` with either switches the account to it."""
-    browser_nonce = request.cookies.get(SIGN_IN_PENDING_COOKIE) or new_secret()
+    browser_nonce = read_auth_cookie(request, SIGN_IN_PENDING_COOKIE, settings) or new_secret()
     with _sending_challenge_to(body.email):
         try:
             await start_email_change(db, mailer, settings, user.id, body.email, browser_nonce)
@@ -189,7 +190,7 @@ async def verify_email_sign_in(
                 account = await verify_sign_in_token(
                     db,
                     body.token,
-                    browser_nonce=request.cookies.get(SIGN_IN_PENDING_COOKIE),
+                    browser_nonce=read_auth_cookie(request, SIGN_IN_PENDING_COOKIE, settings),
                     same_browser_only=body.same_browser_only,
                     signed_in_user_id=signed_in,
                 )
@@ -214,11 +215,7 @@ async def verify_email_sign_in(
             status_code=status.HTTP_400_BAD_REQUEST, detail="This sign-in link or code is invalid, used or expired."
         )
 
-    if previous := request.cookies.get(session_cookie_name(settings)):
-        await revoke_session(db, previous)
-    token, expires = create_browser_session(db, account.id)
-    await db.commit()
-    set_session_cookie(response, token, expires, settings)
+    await start_browser_session(db, request, response, settings, account.id)
     clear_auth_cookie(response, SIGN_IN_PENDING_COOKIE, settings)
     logger.info(f"User {account.id} signed in by email")
     return await _session_state(db, settings, account.id)
@@ -227,7 +224,7 @@ async def verify_email_sign_in(
 @router.post("/sign-out", status_code=status.HTTP_204_NO_CONTENT)
 async def sign_out(request: Request, response: Response, settings: SettingsDep, db: DbSession) -> None:
     require_auth_enabled(settings)
-    if token := request.cookies.get(session_cookie_name(settings)):
+    if token := read_auth_cookie(request, SESSION_COOKIE, settings):
         _refuse_other_origins(request, settings)
         await revoke_session(db, token)
     clear_session_cookie(response, settings)
@@ -295,7 +292,7 @@ def _sending_challenge_to(email: str) -> Iterator[None]:
     except TooManyChallenges:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=f"Too many emails to this address. Try again in {CHALLENGE_LIFETIME.seconds // 60} minutes.",
+            detail=f"Too many emails to this address. Try again in {int(CHALLENGE_LIFETIME.total_seconds() // 60)} minutes.",
         )
     except MailDeliveryError:
         logger.exception(f"Auth email to an address at {email.rpartition('@')[2]} failed")

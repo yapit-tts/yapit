@@ -1,5 +1,6 @@
 """The Alembic revisions that copy Stack Auth's users into the gateway's auth tables, keeping every user's id,
-and then drop Stack Auth's data."""
+and then drop Stack Auth's data.
+"""
 
 import uuid
 
@@ -17,8 +18,9 @@ PASSWORD_USER = "a0000000-0000-0000-0000-000000000001"
 GOOGLE_USER = "a0000000-0000-0000-0000-000000000002"
 BOTH_USER = "a0000000-0000-0000-0000-000000000003"
 NO_EMAIL_USER = "a0000000-0000-0000-0000-000000000004"
-STALE_TWIN = "a0000000-0000-0000-0000-000000000005"
-ACTIVE_TWIN = "a0000000-0000-0000-0000-000000000006"
+# The active twin is also the older row with the smaller id, so only lastActiveAt can pick it
+ACTIVE_TWIN = "a0000000-0000-0000-0000-000000000005"
+STALE_TWIN = "a0000000-0000-0000-0000-000000000006"
 STACK_AUTH_GUEST = "a0000000-0000-0000-0000-000000000007"
 INTERNAL_ADMIN = "b0000000-0000-0000-0000-000000000001"
 
@@ -93,14 +95,18 @@ STACK_AUTH_ENUM_TYPES_NOT_READ = (
 )  # fmt: skip
 STACK_AUTH_REST_OF_SCHEMA = "\n".join(
     [f'CREATE TABLE "{table}" (id uuid PRIMARY KEY);' for table in STACK_AUTH_TABLES_NOT_READ]
-    + [f'CREATE TYPE "{enum}" AS ENUM (\'A\');' for enum in STACK_AUTH_ENUM_TYPES_NOT_READ]
+    + [f"CREATE TYPE \"{enum}\" AS ENUM ('A');" for enum in STACK_AUTH_ENUM_TYPES_NOT_READ]
     + [
         "CREATE SEQUENCE global_seq_id;",
-        'CREATE TYPE "SubscriptionStatus" AS ENUM (\'active\');',
-        'CREATE TABLE "Subscription" (id uuid PRIMARY KEY, status "SubscriptionStatus",'
-        " seq bigint DEFAULT nextval('global_seq_id'));",
-        'ALTER TABLE "ContactChannel" ADD FOREIGN KEY ("tenancyId", "projectUserId")'
-        ' REFERENCES "ProjectUser" ("tenancyId", "projectUserId");',
+        "CREATE TYPE \"SubscriptionStatus\" AS ENUM ('active');",
+        (
+            'CREATE TABLE "Subscription" (id uuid PRIMARY KEY, status "SubscriptionStatus",'
+            " seq bigint DEFAULT nextval('global_seq_id'));"
+        ),
+        (
+            'ALTER TABLE "ContactChannel" ADD FOREIGN KEY ("tenancyId", "projectUserId")'
+            ' REFERENCES "ProjectUser" ("tenancyId", "projectUserId");'
+        ),
     ]
 )
 
@@ -231,8 +237,8 @@ def test_revisions_copy_stack_auth_users_keeping_their_ids_then_drop_stack_auth(
             oauth=("github", "42", "bo@users.gh"),
         )
         add_user(conn, NO_EMAIL_USER, oauth=("github", "77", None))
-        add_user(conn, STALE_TWIN, email="twin@example.com", last_active="2026-01-01")
         add_user(conn, ACTIVE_TWIN, email="Twin@example.com", last_active="2026-09-01")
+        add_user(conn, STALE_TWIN, email="twin@example.com", last_active="2026-01-01")
         add_user(conn, STACK_AUTH_GUEST, email="guest@example.com", anonymous=True)
         add_user(
             conn,

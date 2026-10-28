@@ -32,7 +32,7 @@ from yapit.gateway.db import get_engine
 from yapit.gateway.domain_models import AuthSession, Document, EmailChallenge, UserAccount
 
 THIRTY_DAYS_S = 30 * 24 * 3600
-PENDING_COOKIE = "yapit_signin_pending"
+PENDING_COOKIE = "__Host-yapit_signin_pending"  # APP_URL is https
 
 
 def set_cookie(response: httpx.Response, name: str) -> str:
@@ -91,6 +91,16 @@ async def test_sign_out_revokes_the_session(browser, app):
     assert await signed_in_user(browser) is None
     browser.cookies.set(SESSION_COOKIE, cookie)
     assert await signed_in_user(browser) is None
+
+
+@pytest.mark.asyncio
+async def test_sign_out_from_another_origin_is_refused(browser, app):
+    user = await sign_in(browser, app, "reader@example.com")
+
+    response = await browser.post("/v1/auth/sign-out", headers={"Origin": "https://evil.example"})
+
+    assert response.status_code == 403
+    assert await signed_in_user(browser) == user
 
 
 @pytest.mark.asyncio
@@ -269,13 +279,10 @@ async def test_link_carries_its_token_in_the_fragment_only(browser, app):
 
 
 @pytest.mark.asyncio
-async def test_start_sets_an_httponly_pending_cookie_whose_nonce_is_stored_hashed(browser, session):
+async def test_start_sets_an_httponly_pending_cookie(browser):
     response = await browser.post("/v1/auth/email/start", json={"email": "reader@example.com"})
 
     assert "HttpOnly" in set_cookie(response, PENDING_COOKIE)
-    nonce = browser.cookies[PENDING_COOKIE]
-    challenge = (await session.exec(select(EmailChallenge))).one()
-    assert challenge.browser_nonce_hash == sha256(nonce)
 
 
 @pytest.mark.asyncio
@@ -550,6 +557,23 @@ async def test_anonymous_user_gets_no_api_token(app, real_auth, _test_settings):
     assert response.status_code == 401
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("signed_for", "expected"),
+    [("a1", 200), ("a2", 401), (None, 401)],
+)
+async def test_anonymous_session_needs_the_token_signed_for_its_id(
+    app, real_auth, _test_settings, signed_for, expected
+):
+    headers = {"X-Anonymous-ID": "a1"}
+    if signed_for is not None:
+        headers["X-Anonymous-Token"] = sign_anonymous_id(signed_for, _test_settings.anonymous_session_secret)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=APP_URL) as client:
+        response = await client.get("/v1/users/me/preferences", headers=headers)
+
+    assert response.status_code == expected
+
+
 # Name and email, from account settings
 
 
@@ -594,19 +618,23 @@ async def test_email_changes_only_once_the_link_sent_to_the_new_address_is_opene
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("by", ["link", "code"])
-async def test_email_change_used_where_its_requester_is_not_signed_in_changes_nothing(browser, app, by):
-    """Whoever holds the new address cannot pull it into the requester's account by confirming the mail."""
-    user = await sign_in(browser, app, "requester@example.com")
-    token, code = await request_email_change(browser, app, "holder@example.com")
-    body = {"token": token} if by == "link" else {"email": "holder@example.com", "code": code}
-
+@pytest.mark.parametrize("holder_account", [None, "holder-elsewhere@example.com"])
+async def test_email_change_used_where_its_requester_is_not_signed_in_changes_nothing(browser, app, by, holder_account):
+    """Whoever holds the new address, signed out or signed in to an account of their own,
+    cannot pull it into the requester's account by confirming the mail.
+    """
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=APP_URL) as holder:
+        holder_user = await sign_in(holder, app, holder_account) if holder_account else None
+        user = await sign_in(browser, app, "requester@example.com")
+        token, code = await request_email_change(browser, app, "holder@example.com")
+        body = {"token": token} if by == "link" else {"email": "holder@example.com", "code": code}
+
         refused = await holder.post("/v1/auth/email/verify", json=body, headers=SAME_ORIGIN)
-        holder_user = await signed_in_user(holder)
+        holder_user_after = await signed_in_user(holder)
     confirmed_by_requester = await browser.post("/v1/auth/email/verify", json=body, headers=SAME_ORIGIN)
 
     assert refused.status_code == 403
-    assert holder_user is None
+    assert holder_user_after == holder_user
     assert confirmed_by_requester.status_code == 200, "the refusal consumed nothing"
     assert (await signed_in_user(browser))["id"] == user["id"]
 

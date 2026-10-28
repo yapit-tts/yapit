@@ -27,11 +27,9 @@ from yapit.gateway.auth.oauth import (
 from yapit.gateway.auth.sessions import (
     app_origin,
     clear_auth_cookie,
-    create_browser_session,
-    revoke_session,
-    session_cookie_name,
+    read_auth_cookie,
     set_auth_cookie,
-    set_session_cookie,
+    start_browser_session,
 )
 from yapit.gateway.config import Settings
 from yapit.gateway.deps import DbSession, RedisClient, SettingsDep
@@ -91,7 +89,9 @@ async def oauth_callback(
     """Where the provider sends the browser back: sign in (or link) and go on to `return_to`, or to an error."""
     params = dict(request.query_params)
     try:
-        pending = await take_pending(redis, provider, params.get("state"), request.cookies.get(OAUTH_STATE_COOKIE))
+        pending = await take_pending(
+            redis, provider, params.get("state"), read_auth_cookie(request, OAUTH_STATE_COOKIE, settings)
+        )
         profile = await fetch_profile(http, settings, provider, pending, params)
         current_user_id = await signed_in_user_id(db, settings, credentials)
         account = await resolve_account(db, provider, profile, pending, current_user_id)
@@ -104,11 +104,7 @@ async def oauth_callback(
     response = _redirect(settings, pending.return_to)
     clear_auth_cookie(response, OAUTH_STATE_COOKIE, settings)
     if pending.mode == OAuthMode.sign_in:
-        if previous := request.cookies.get(session_cookie_name(settings)):
-            await revoke_session(db, previous)
-        token, expires = create_browser_session(db, account.id)
-        await db.commit()
-        set_session_cookie(response, token, expires, settings)
+        await start_browser_session(db, request, response, settings, account.id)
         logger.info(f"User {account.id} signed in with {provider.name}")
     else:
         logger.info(f"User {account.id} connected {provider.name}")
