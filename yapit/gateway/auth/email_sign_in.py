@@ -206,14 +206,14 @@ class MailWording:
 
 MAIL_WORDING = {
     EmailChallengePurpose.sign_in: MailWording(
-        subject="Sign in to Yapit",
+        subject="Yapit sign-in code",
         action="Open this link to sign in to Yapit",
         button="Sign in to Yapit",
         code_where="the sign-in page",
         if_not_asked="If you did not ask to sign in, ignore this email.",
     ),
     EmailChallengePurpose.change_email: MailWording(
-        subject="Confirm your new email for Yapit",
+        subject="Yapit email change code",
         action="To make this your Yapit sign-in address, open this link in the browser where you are signed in to Yapit",
         button="Confirm this address",
         code_where="the account page",
@@ -241,4 +241,4 @@ def challenge_email(settings: Settings, purpose: EmailChallengePurpose, email: s
         f"<p>Or enter this code on {words.code_where}: <strong>{code}</strong></p>"
         f"<p>The link and the code work once, within {minutes} minutes. {words.if_not_asked}</p>"
     )
-    return Email(to=email, subject=words.subject, text=text, html=html)
+    return Email(to=email, subject=f"{words.subject}: {code}", text=text, html=html)
