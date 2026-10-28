@@ -365,8 +365,6 @@ ssh root@yapit-prod "docker service rollback yapit_gateway"
 GIT_COMMIT=<old_sha> ./scripts/deploy.sh
 ```
 
-Neither crosses the auth cutover: going back to before it is the dump restore under [Cutover from Stack Auth](#cutover-from-stack-auth).
-
 ### Traefik Recovery
 
 ```bash
