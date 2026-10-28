@@ -3,9 +3,10 @@
 ## Unreleased
 
 * **Breaking for selfhosters:** Yapit now signs people in itself, and the Stack Auth and ClickHouse containers are gone. `make self-host-auth` is removed: a multi-user selfhost is `make self-host` with `AUTH_ENABLED=true` and SMTP settings (`docs/auth.md`, Multi-user selfhost). The gateway refuses to start until `.env.selfhost` holds `APP_URL`, `SMTP_*`, `GOOGLE_*` and `GITHUB_*`, empty where unused; copy them from `.env.selfhost.example`. On a database that ran Stack Auth, the upgrade copies its users with their ids and then drops Stack Auth's tables, so take a `pg_dump` first. Everyone signs in once more.
-* Replaced passwords with sign-in by an emailed link or 6-digit code, beside Google and GitHub. Password users sign in by email to the same account. GitHub sign-in works again.
+* Replaced passwords with sign-in by an emailed link or 6-digit code, beside Google and GitHub. The code is in the email's subject, so it shows in a notification without opening the mail. Password users sign in by email to the same account. GitHub sign-in works again.
 * Added account settings to the account page: name, email change, connecting and disconnecting Google and GitHub, and API tokens for scripts and yapit-cli, which reads its token from `YAPIT_TOKEN`.
 * A sign-in email that fails to send now fails the request and logs an error, where Stack Auth's queue kept failed emails without a word.
+* Added `make users`, `make user-stats` and `make retention`: a terminal view of who signed up and when, how they sign in, when they were last active, and how many come back, read from the database (`scripts/user_stats.py`, `--database-url` for a selfhost).
 
 ## v0.4.9 — 2026-10-26
 
