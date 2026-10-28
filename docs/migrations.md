@@ -2,14 +2,9 @@
 
 Alembic database migrations for Yapit.
 
-## Shared Database
+## Tables alembic does not manage
 
-**Prod's Postgres database also holds Stack Auth's tables**, kept as the auth rollback path ([[auth]]). So does a selfhost database that once ran `make self-host-auth`.
-
-- Stack Auth tables: PascalCase (`Project`, `ProjectUser`, `Team`), plus a `_prisma_migrations` table and enum types
-- Yapit tables: snake_case (`ttsmodel`, `usersubscription`, `document`)
-
-**Never drop all tables blindly.** The `env.py` filters to only include `MANAGED_TABLES` (tables from our SQLModel models), so alembic ignores Stack Auth's. But raw SQL or `DROP SCHEMA` would destroy them too.
+The `env.py` filters to only include `MANAGED_TABLES` (tables from our SQLModel models), so alembic ignores any other table in the database. Stack Auth's tables (PascalCase) used to share prod's database; revision `d4b8c97a743c` drops them ([[auth]]).
 
 ## Creating a Migration
 

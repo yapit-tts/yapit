@@ -31,7 +31,7 @@ Yapit TTS - Open-source text-to-speech platform for reading documents, web pages
 
 ### Other domains
 
-- [[auth]] — Sign-in, sessions, API tokens, CSRF Origin check, anonymous users, account deletion, multi-user selfhost, the users migrated from Stack Auth and its rollback path. Read for any login, 401/403, user-account or SMTP work.
+- [[auth]] — Sign-in, sessions, API tokens, CSRF Origin check, anonymous users, account deletion, multi-user selfhost, the users migrated from Stack Auth. Read for any login, 401/403, user-account or SMTP work.
 - [[stripe-integration]] — Token-based billing, waterfall consumption, Stripe SDK gotchas, webhook handling. Read for billing bugs, subscription issues.
 - [[security]] — SSRF (Smokescreen proxy), auth trust boundaries, anonymous sessions, frontend XSS architecture, infrastructure hardening, billing security. Read for any security-related work.
 - [[licensing]] — Dependency license checking.

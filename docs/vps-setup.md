@@ -297,7 +297,7 @@ Or remove and redeploy the entire stack.
 Create A records pointing to the VPS public IP (proxied):
 - `yapit.md`
 
-(`www.yapit.md`, `api.yapit.md` and `auth.yapit.md` also exist and point at the same IP, but Traefik only routes `yapit.md`, so the others return 404 at the origin. `auth.yapit.md` was Stack Auth's host; it and its Cloudflare Access applications stay until Stack Auth's tables are dropped, as the rollback path in [[auth]].)
+(`www.yapit.md`, `api.yapit.md` and `auth.yapit.md` also exist and point at the same IP, but Traefik only routes `yapit.md`, so the others return 404 at the origin. `auth.yapit.md` was Stack Auth's host; max removes it and its Cloudflare Access applications after the cutover.)
 
 ## Docker Compose Labels
 
@@ -328,6 +328,17 @@ The gateway signs people in itself ([[auth]]); nothing needs setting up after a 
 - `PROD_SMTP_HOST`, `PROD_SMTP_PORT`, `PROD_SMTP_USERNAME`, `PROD_SMTP_PASSWORD` and `PROD_SMTP_SENDER` in `.env.sops`: Resend's SMTP credentials, port 587. Without them the gateway refuses to start.
 
 A failed sign-in mail is an ERROR in the gateway log (`Sign-in email to an address at … failed`), which the daily report flags.
+
+### Cutover from Stack Auth
+
+The deploy that first runs the gateway's auth also runs the revisions that copy Stack Auth's users and then drop Stack Auth's data ([[auth]]). In this order:
+
+1. Dump the database; the dump is the only way back:
+   ```bash
+   ssh root@yapit-prod 'docker exec $(docker ps -qf "name=yapit_postgres") pg_dump -U yapit_prod -Fc yapit_prod' > yapit_prod-before-auth-cutover.dump
+   ```
+2. Deploy (`make prod-env && make deploy`).
+3. Once the gateway is up on the new auth, remove ClickHouse's volume: `ssh root@yapit-prod "docker volume rm yapit_clickhouse-data"`.
 
 ## Operations
 
