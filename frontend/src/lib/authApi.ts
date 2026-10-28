@@ -9,8 +9,14 @@ export interface AuthUser {
 	identities: { provider: string; email: string | null }[];
 }
 
+export type OAuthProvider = "google" | "github";
+
+export const PROVIDER_NAMES: Record<OAuthProvider, string> = { google: "Google", github: "GitHub" };
+
 export interface SessionState {
 	auth_enabled: boolean;
+	/** The OAuth providers this server offers; one without a client id is left out. */
+	providers: OAuthProvider[];
 	user: AuthUser | null;
 }
 
@@ -46,4 +52,28 @@ export async function verifySignIn(
 /** Whether the gateway refused a link because another browser asked for it, which a click overrides. */
 export function isOtherBrowser(err: unknown): boolean {
 	return axios.isAxiosError(err) && err.response?.status === 409;
+}
+
+/** Where to send the browser to sign in with (or, signed in, connect) a Google or GitHub account. */
+export function oauthStartUrl(provider: OAuthProvider, mode: "sign_in" | "link", returnTo: string): string {
+	const params = new URLSearchParams({ mode, return_to: returnTo });
+	return `${baseURL}/v1/auth/oauth/${provider}/start?${params}`;
+}
+
+/** The words for an `?error=` code the OAuth callback redirects with. */
+export function oauthErrorMessage(code: string): string {
+	switch (code) {
+		case "denied":
+			return "Sign-in was cancelled.";
+		case "state":
+			return "That sign-in took too long or was started in another browser. Please try again.";
+		case "email_unverified":
+			return "Your Google or GitHub account has no verified email address. Verify it there, or sign in with email.";
+		case "identity_taken":
+			return "That account already signs in to another Yapit account.";
+		case "not_signed_in":
+			return "Sign in first, then connect the account.";
+		default:
+			return "Signing in with Google or GitHub failed. Please try again, or sign in with email.";
+	}
 }

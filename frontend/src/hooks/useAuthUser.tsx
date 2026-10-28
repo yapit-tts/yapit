@@ -7,13 +7,20 @@ import {
 	type FC,
 	type PropsWithChildren,
 } from "react";
-import { fetchSession, signOut as requestSignOut, type AuthUser, type SessionState } from "@/lib/authApi";
+import {
+	fetchSession,
+	signOut as requestSignOut,
+	type AuthUser,
+	type OAuthProvider,
+	type SessionState,
+} from "@/lib/authApi";
 
 export type { AuthUser };
 
 export interface Auth {
 	user: AuthUser | null;
 	authEnabled: boolean;
+	providers: OAuthProvider[];
 	signOut: () => Promise<void>;
 	/** Re-reads who the session cookie belongs to, e.g. after signing in. */
 	refresh: () => Promise<void>;
@@ -79,6 +86,7 @@ export const AuthProvider: FC<PropsWithChildren> = ({ children }) => {
 			value={{
 				user: session.user,
 				authEnabled: session.auth_enabled,
+				providers: session.providers,
 				signOut,
 				refresh,
 			}}

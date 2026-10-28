@@ -21,6 +21,7 @@ import {
 import { Loader2, ArrowLeft, Trash2, AlertTriangle, Calendar, Sun, Moon, Monitor, Code2, RotateCcw } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { SettingRow, darkThemes } from "@/components/settingsDialog";
+import { AccountSettingsCard } from "@/components/auth/AccountSettingsCard";
 import { useSettings, useIsDark, type ContentWidth, type ScrollPosition, type Theme } from "@/hooks/useSettings";
 import { useUserPreferences } from "@/hooks/useUserPreferences";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -446,6 +447,8 @@ const AccountPage = () => {
           </div>
         </CardContent>
       </Card>
+
+      {authEnabled && <AccountSettingsCard />}
 
       {/* Danger Zone */}
       <Card className="border-destructive/50">
