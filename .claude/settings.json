@@ -16,7 +16,7 @@
       "Bash(make test-integration-local *)",
       "Bash(make test-local *)",
       "Bash(make test-unit *)",
-      "Bash(make token *)",
+      "Bash(make -s dev-token*)",
       "Bash(npx eslint *)",
       "Bash(npx remotion *)",
       "Bash(npx vite build *)",
