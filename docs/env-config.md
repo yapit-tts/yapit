@@ -36,6 +36,14 @@ SOPS_AGE_KEY_FILE=~/.config/sops/age/yapit.txt sops .env.sops
 
 Age private key location: `~/.config/sops/age/yapit.txt`
 
+`.env.sops` is encrypted whole, in sops' binary format stored as JSON (`{"data": …, "sops": …}`), which is why the plain `sops -d .env.sops` in the Makefile reads it. A scripted edit decrypts it, changes the plaintext in a file under `/dev/shm`, and encrypts it back in the same format, or `make dev-env` / `make prod-env` can no longer read it:
+
+```bash
+sops -e --input-type binary --output-type json --filename-override .env.sops <plaintext> > .env.sops.new
+```
+
+Check the round trip (`sops -d .env.sops.new | cmp - <plaintext>`) before replacing `.env.sops`. Comment lines in the file can hold secrets too, so filter them out (`grep -v '^\s*#'`) when listing variable names.
+
 ## Dev vs Prod
 
 **For dev:** `make dev-env` decrypts `.env.sops`, applies convention (removes `PROD_*` and `_*`, strips `DEV_` prefix), creates `.env`.
