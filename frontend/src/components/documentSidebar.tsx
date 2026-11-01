@@ -5,7 +5,6 @@ import {
   SidebarContent,
   SidebarGroup,
   SidebarGroupContent,
-  SidebarGroupLabel,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
@@ -32,13 +31,15 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
-import { ChevronUp, FileText, Loader2, MoreHorizontal, User2, LogOut, LogIn, Trash2, Pencil, CreditCard, Lightbulb, Settings, Info, Link2, Check, Sun, Moon } from "lucide-react";
+import { ChevronUp, FileText, Loader2, MoreHorizontal, User2, LogOut, LogIn, Trash2, Pencil, CreditCard, Lightbulb, Settings, Info, Link2, Check, Sun, Moon, Search } from "lucide-react";
 import { useApi } from "@/api";
 import { useAuth } from "@/hooks/useAuthUser";
 import { useSubscription } from "@/hooks/useSubscription";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useSettings, useIsDark } from "@/hooks/useSettings";
 import { useDocuments, type DocumentItem } from "@/hooks/useDocuments";
+
+const IS_MAC = /Mac|iPhone|iPad/.test(navigator.userAgent);
 
 const formatCompact = (n: number): string => {
   const abs = Math.abs(n);
@@ -213,7 +214,18 @@ function DocumentSidebar() {
 
       <SidebarContent>
         <SidebarGroup>
-          <SidebarGroupLabel>Documents</SidebarGroupLabel>
+          <button
+            type="button"
+            aria-label="Search documents"
+            onClick={() => {
+              closeMobileSheet();
+              window.dispatchEvent(new CustomEvent("open-command-palette"));
+            }}
+            className="text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground ring-sidebar-ring flex h-8 w-full shrink-0 items-center gap-2 rounded-md px-2 text-xs outline-hidden focus-visible:ring-2"
+          >
+            <Search className="size-4" />
+            {!isMobile && <kbd className="ml-auto font-sans">{IS_MAC ? "⌘K" : "Ctrl K"}</kbd>}
+          </button>
           <SidebarGroupContent>
             <SidebarMenu>
               {isLoading ? (

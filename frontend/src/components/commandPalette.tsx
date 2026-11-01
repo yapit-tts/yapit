@@ -29,6 +29,12 @@ export function CommandPalette() {
   const isMobile = useIsMobile();
 
   useEffect(() => {
+    const onOpen = () => setOpen(true);
+    window.addEventListener("open-command-palette", onOpen);
+    return () => window.removeEventListener("open-command-palette", onOpen);
+  }, []);
+
+  useEffect(() => {
     if (isMobile) return;
 
     const onKeyDown = (e: KeyboardEvent) => {
