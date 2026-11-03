@@ -86,7 +86,7 @@ def main(args: Args) -> None:
         print("No data found.")
         return
 
-    liveness = con.sql("""
+    liveness = con.execute("""
         SELECT
             (SELECT MAX(timestamp) FROM metrics_event
              WHERE event_type = 'synthesis_complete') AS last_synth,
