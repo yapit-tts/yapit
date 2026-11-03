@@ -51,9 +51,12 @@ log_run() {  # outcome [reason] [stats-json]
 
 # Parse flags
 AFTER_DEPLOY=false
+# The timer runs this weekly, so the edge and proxy sections cover the week since
+# the last run; a post-deploy report looks at the last day.
+WINDOW_HOURS=168
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --after-deploy) AFTER_DEPLOY=true; shift ;;
+        --after-deploy) AFTER_DEPLOY=true; WINDOW_HOURS=24; shift ;;
         --classify) classify; exit 0 ;;
         -h|--help)
             echo "Usage: $0 [--after-deploy | --classify]"
@@ -106,11 +109,11 @@ DISK_HISTORY=$(ssh "$VPS_HOST" "tail -50 /var/log/yapit-disk-history.log 2>/dev/
 
 # Capture Cloudflare analytics (edge traffic, cache, errors, 504 diagnostics)
 echo "Gathering Cloudflare analytics..."
-CF_REPORT=$(uv run "$SCRIPT_DIR/cf_analytics.py" --plain 2>&1 || echo "(cf_analytics.py failed — is CLOUDFLARE_API_TOKEN set?)")
+CF_REPORT=$(uv run "$SCRIPT_DIR/cf_analytics.py" --plain --hours "$WINDOW_HOURS" 2>&1 || echo "(cf_analytics.py failed — is CLOUDFLARE_API_TOKEN set?)")
 
 # Capture proxy diagnostics (Traefik from VPS container logs)
 echo "Gathering proxy diagnostics..."
-PROXY_REPORT=$(uv run "$SCRIPT_DIR/proxy_diagnostics.py" 2>&1 || echo "(proxy_diagnostics.py failed — is VPS_HOST set and SSH working?)")
+PROXY_REPORT=$(uv run "$SCRIPT_DIR/proxy_diagnostics.py" --hours "$WINDOW_HOURS" 2>&1 || echo "(proxy_diagnostics.py failed — is VPS_HOST set and SSH working?)")
 
 # Billing reconciliation (synthesis events vs billing events)
 echo "Running billing reconciliation..."
@@ -124,7 +127,7 @@ DEPLOY_LOG=$(tail -10 "$PROJECT_DIR/.deploys.log" 2>/dev/null || echo "(no deplo
 if $AFTER_DEPLOY; then
     BASE_CONTEXT="CONTEXT: You were triggered shortly after a deploy. Focus on: Are there new errors since the deploy? Any anomalies compared to before?"
 else
-    BASE_CONTEXT="CONTEXT: Daily health check. Look for patterns, anomalies, degradation."
+    BASE_CONTEXT="CONTEXT: Weekly health check, covering the 7 days since the last one. Look for patterns, anomalies, degradation."
 fi
 
 EXTRA_CONTEXT="$BASE_CONTEXT
@@ -296,7 +299,7 @@ Read the actual error messages and investigate — a count alone is not analysis
 - `job_requeued` — occasional is fine (transient), sustained pattern = worker issues.
 
 **Log file errors (data/logs/*.jsonl):**
-- **Check the time range of gateway.jsonl first** (first and last entry timestamps). The file can span weeks. Start analysis with the last 24-48h — filter by `.record.time.repr > "YYYY-MM-DD"`. Total error counts across the whole file are misleading without date context. Older entries are useful for establishing baselines or investigating trends when something looks suspicious.
+- **Check the time range of gateway.jsonl first** (first and last entry timestamps). The file can span weeks. Start analysis with the last 7 days — filter by `.record.time.repr > "YYYY-MM-DD"`. Total error counts across the whole file are misleading without date context. Older entries are useful for establishing baselines or investigating trends when something looks suspicious.
 - Scan for ERROR and WARNING level entries within the recent window. Don't skip this even if metrics look clean — some errors only appear in logs.
 - For each distinct error, report: the error message, count, and time range.
 - ERROR level in logs — stack traces, exceptions (include request context: method, path, user_id, request_id)
@@ -366,7 +369,7 @@ See the BILLING RECONCILIATION section — event counts and character totals are
 | CF cache hit ratio | Low (unique content) | <1% sustained (cache rule broken) |
 | Doc extraction errors | 0 | Any (check processor_slug + data.error) |
 
-Events older than 3-7 days can be ignored unless part of a larger pattern / investigation.
+Events older than 7 days can be ignored unless part of a larger pattern / investigation.
 E.g. items on the DLQ from >7 days ago are almost certainly already taken care of.
 
 One-time short Redis blips coincide with deploys and are not worth flagging; flag them when their cadence exceeds deploy frequency or doesn't line up with deploy times.
