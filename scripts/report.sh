@@ -123,16 +123,14 @@ BILLING_RECON=$(uv run "$SCRIPT_DIR/billing_reconciliation.py" --days 14 2>&1 ||
 GIT_LOG=$(git log -30 --date=format-local:'%Y-%m-%d %H:%M' --format='%ad  %h  %s')
 DEPLOY_LOG=$(tail -10 "$PROJECT_DIR/.deploys.log" 2>/dev/null || echo "(no deploy log)")
 
-# Build context
+# The task line goes last, after the data it is about
 if $AFTER_DEPLOY; then
-    BASE_CONTEXT="CONTEXT: You were triggered shortly after a deploy. Focus on: Are there new errors since the deploy? Any anomalies compared to before?"
+    TASK="This run follows a deploy. Report what changed since it: new errors, and anything that behaves differently than before."
 else
-    BASE_CONTEXT="CONTEXT: Weekly health check, covering the 7 days since the last one. Look for patterns, anomalies, degradation."
+    TASK="This is the weekly health check. Report on the last 7 days."
 fi
 
-EXTRA_CONTEXT="$BASE_CONTEXT
-
-## METRICS FRESHNESS (newest metrics event vs the writer's heartbeat interval, pre-computed)
+EXTRA_CONTEXT="## METRICS FRESHNESS (newest metrics event vs the writer's heartbeat interval, pre-computed)
 
 $METRICS_FRESHNESS
 
@@ -162,328 +160,141 @@ $GIT_LOG
 
 ## DEPLOYS (last 10, local time — when a commit reached prod; FAILED = deploy aborted, code did not ship)
 
-$DEPLOY_LOG"
+$DEPLOY_LOG
+
+---
+
+$TASK"
 
 # The analysis prompt
 read -r -d '' PROMPT << 'EOF' || true
-You are a diagnostic agent analyzing system health for Yapit TTS.
+You are the health check for Yapit TTS, a text-to-speech platform in production. The message holds data collected from production just before this run, and the metrics database and logs are synced into this checkout. Your final message is the report: a person reads it on its own to decide whether anything needs doing, and the run ends with it. Do the whole analysis in this run and write the report last.
 
-**Infra note (2026-08-02):** prod migrated to a smaller Hetzner server (CPX32: 4 vCPU, 8 GB RAM + 8 GB swap, 160 GB disk). kokoro-cpu replicas 4→2, yolo-cpu 4→1 (external GPU workers unchanged); cache caps now audio 30 GB / extraction 30 GB / document 5 GB. Disk history restarted with the new server — "(no history yet)" or a short history is expected, not data loss. Don't compare absolute disk totals or worker counts against pre-migration values.
+The window is the 7 days before the newest log entry, or the time since the deploy when the message says this run follows one. Older data is the baseline for what normal looks like.
 
-## System Architecture
+## Tools
 
-Yapit is a text-to-speech platform with these components:
+- **Metrics:** `duckdb -readonly -safe data/metrics.duckdb "<SQL>"`. This exact prefix is the only form in which Bash runs DuckDB. Start with `DESCRIBE metrics_event`.
+- **Logs:** `data/logs/*.jsonl`, searched with Grep and read with Read.
+- **Code and history:** Read and Grep over this checkout, `git log` and `git show`.
 
-**TTS Pipeline:**
-- Users submit text blocks for synthesis
-- Jobs go to Redis queues, one per model (e.g., `tts:queue:kokoro`)
-- TTS workers pull jobs, synthesize audio, push results
-- Gateway consumes results and streams to clients via WebSocket
+Bash runs one plain command per call, starting with the command's name, and refuses anything else. You work from synced data, so live Redis queues and live worker state are out of reach.
 
-**Detection Pipeline:**
-- PDF pages get rendered to images
-- YOLO workers detect figures/bounding boxes
-- Results feed into Gemini extraction
+## System
 
-**Reliability mechanisms:**
-- **Visibility timeout**: If worker takes too long (TTS: 20s, YOLO: 10s), job is requeued
-- **DLQ (Dead Letter Queue)**: Jobs that fail after max retries — indicates systematic failure
+- **TTS:** users submit text blocks. Jobs go to one Redis queue per model (`tts:queue:kokoro`), TTS workers synthesize them and push results, and the gateway consumes the results and streams audio to clients over WebSocket. Models: `kokoro` (local) and `openai-tts` (not configured in production).
+- **Detection:** PDF pages are rendered to images, YOLO workers find figures in them, and the results feed Gemini extraction.
+- **Reliability:** a job a worker holds past its visibility timeout (TTS 20 s, YOLO 10 s) is requeued. A job that exhausts its retries goes to the dead letter queue (DLQ), which means something is systematically broken.
+- **Background loops** in the gateway: billing-consumer, result-consumer, cache-persister, tts-visibility, yolo-visibility, batch-poller, cache-lru-flush, cache-maintenance, usage-log-cleanup, guest-cleanup, billing-sync, openai-tts-dispatcher, metrics-writer.
+- **Cache caps** in production: audio 30 GB, extraction 30 GB, document 5 GB.
 
-**Models:**
-- `kokoro` — local Kokoro TTS
-- `openai-tts` — OpenAI-compatible TTS API. Jobs dispatched in parallel. Currently not configured in production.
-- YOLO — local object detection
+## Data
 
-## Data Locations
+**Metrics** (`data/metrics.duckdb`, timestamps in CET). `metrics_event` holds raw events for 30 days; `metrics_hourly` and `metrics_daily` are aggregates. Fields such as `queue_wait_ms`, `worker_latency_ms`, `worker_id`, `model_slug`, `processor_slug`, `duration_ms` and `status_code` are top-level columns; the `data` JSON column holds only the rest (`data->>'error'`).
 
-- **Metrics DB**: data/metrics.duckdb
-  - `metrics_event` — raw events (30-day retention)
-  - `metrics_hourly` — hourly aggregates
-  - `metrics_daily` — daily aggregates
-
-**Schema note**: Fields like queue_wait_ms, worker_latency_ms, worker_id, model_slug, etc. are TOP-LEVEL COLUMNS on metrics_event, NOT nested inside the `data` JSON column. Use `SELECT queue_wait_ms FROM metrics_event`, NOT `data->>'queue_wait_ms'`. The `data` column is only for unstructured/overflow fields. Run `DESCRIBE metrics_event` first to see all available columns.
-- **Logs**: data/logs/*.jsonl (JSON lines, multiple rotated files)
-- **Disk Report**: See DISK_USAGE section below (captured at report time)
-
-**Timezones**: Metrics DB uses CET (Europe/Vienna). Logs use UTC. Report times in CET, converting as needed.
-
-## Event Types in Metrics
-
-**TTS flow:**
-- `synthesis_queued` — job entered queue (has `queue_depth`)
-- `synthesis_complete` — successful synthesis (has `queue_wait_ms`, `worker_latency_ms`, `worker_id`)
-- `synthesis_error` — synthesis failed
-
-**Detection flow:**
+Event types:
+- `synthesis_queued` (`queue_depth`), `synthesis_complete` (`queue_wait_ms`, `worker_latency_ms`, `worker_id`), `synthesis_error`
 - `detection_queued`, `detection_complete`, `detection_error`
+- `job_requeued` (a visibility timeout fired), `job_dlq`
+- `heartbeat`: written by the metrics writer whenever its interval passes with no other write. Leave it out of activity counts.
+- `document_extraction_complete` (`processor_slug`: pymupdf, epub, passthrough, defuddle:static, defuddle:static-bot, defuddle:playwright, gemini; `duration_ms`; `data.chars`, `data.images`, `data.pages`) and `document_extraction_error` (`processor_slug`, `data.error`, `data.content_type`)
+- `extraction_estimate`; `page_extraction_complete` and `page_extraction_error`, one per Gemini page call, with token counts
+- `api_rate_limit`: every 429 from an external API, before the retry (`data.api_name`, `retry_count`)
+- `error` and `warning`: failures and near-failures the gateway caught itself (`data.message`). An `error` can mean work was silently dropped, such as audio that was synthesized but never cached.
+- `stripe_webhook` (`duration_ms`, `data.event_type`, `status_code` 500 when the handler crashed; Stripe gives up at 20 s), `billing_sync_drift` (a missed webhook: `data.user_id`, `data.drift`), `billing_processed` (`duration_ms`, `text_length`, `data.events_count`, `data.users_count`)
+- `url_fetch` (`duration_ms`, `data.content_type`, `data.size_bytes`, or `data.error`)
 
-**Reliability events:**
-- `job_requeued` — visibility timeout fired, job retrying
-- `job_dlq` — job exceeded max retries, moved to dead letter queue (BAD)
+**Logs** (`data/logs/*.jsonl`, timestamps in UTC). Loguru JSON, one record per line. `gateway.jsonl` is the newest file and can span weeks; rotated files carry their start time in the name. Each record has `record.level.name`, `record.name` (the module), `record.message`, `record.time.repr`, `record.exception`, and context in `record.extra`: `request_id` on HTTP requests, `user_id`, `job_id`, `variant_hash`, `model_slug` and `worker_id` on TTS jobs, `extraction_id` and `content_hash` on extractions, `document_id`, and `method` and `path` on unhandled exceptions. These ids follow one request, job or extraction across components. `user_id` `cache-warmer` is the job that pre-synthesizes voice previews.
 
-**Liveness:**
-- `heartbeat` — written by the metrics writer whenever its heartbeat interval (printed in the METRICS FRESHNESS section) passes without any other write, so a live pipeline never leaves a longer gap in metrics_event. Carries no other fields; leave it out of activity counts.
+## What to check
 
-**Document extraction:**
-- `document_extraction_complete` — emitted for every document extraction (all paths)
-  - `processor_slug` — which method: pymupdf, epub, passthrough, defuddle:static, defuddle:static-bot, defuddle:playwright, gemini
-  - `duration_ms` — wall time
-  - `data.chars`, `data.images`, `data.pages` — output stats
-- `document_extraction_error` — extraction failed
-  - `processor_slug`, `data.error`, `data.content_type`
-- `extraction_estimate` — pre-check token estimate
-- `page_extraction_complete`, `page_extraction_error` — per-page Gemini API calls (incl. token counts)
+Work through these in order. Every distinct error message in the window ends up in the report: as an issue, as a pattern, as matched to a fix, or as a known pattern.
 
-**API rate limits:**
-- `api_rate_limit` — emitted on every 429 response from external APIs before retry
-  - `data.api_name` — which API (e.g. "gemini")
-  - `status_code` — always 429
-  - `retry_count` — 0-indexed attempt number when the 429 occurred
-  - Any occurrence means we're hitting rate limits. Occasional is expected under load; sustained = need to throttle or increase quota.
+1. **Metrics freshness.** The METRICS FRESHNESS verdict is deterministic and stands as given. STALE leads the report as a P0: the metrics pipeline is down, and the time after the gap is unobserved, not quiet. Analyse that time from the logs, and label each finding metrics-based or log-based. In the logs (module `yapit.gateway.metrics`), `Metrics DB unavailable at startup` or `Metrics DB write failed` starts an outage, `Metrics DB still unavailable after Xs` repeats while it lasts, and `Metrics DB recovered after Xs; flushed N buffered events (M dropped)` ends it; the M dropped events are a permanent gap. A start with no recovery means the pipeline is down now.
+2. **Errors.** From the metrics: each `error`, `synthesis_error`, `detection_error`, `document_extraction_error`, `page_extraction_error` and `job_dlq`. From the logs: each ERROR and WARNING. For each distinct message, give what it says, its count, its first and last time, and its request context, and read the code path behind it.
+   - `Background task <name> crashed` or `Background task <name> exited unexpectedly`: that loop is gone until the gateway restarts. It is a P0; say what has stopped (billing-consumer gone means nothing is billed).
+   - A stuck loop backs off from 1 s to 60 s, so it logs about one error a minute. Judge it by the span from first to last occurrence, since a low count can still be a dead loop.
+   - `Auth email to an address at <domain> failed`: someone could not sign in by email or confirm an email change. Always an issue; the exception says whether SMTP rejected the credentials, the recipient or the connection.
+   - Warnings that climb toward errors are a pattern to report.
+3. **Queues and workers.** Queue depth and wait against the thresholds below. Latency, throughput and error rate per `worker_id`, and any outlier among them. Requeues that cluster on one worker or one error.
+4. **Documents and extraction.** Volume and errors per `processor_slug`, and duration outliers per processor. Gemini 429s, 5xx responses and token spikes.
+5. **Billing.** BILLING RECONCILIATION is pre-computed. A non-zero delta on a completed day is lost billing events; today's partial day may still be in flight. A liveness flag means billing fell more than an hour behind synthesis. A shift in the billed-to-synthesized character ratio with no change in model mix is a billing bug. Also check `stripe_webhook` latency and 500s, and any `billing_sync_drift`.
+6. **Edge and proxy.** In CLOUDFLARE ANALYTICS, a 504 with `originResponseStatus` 0 (origin_unreachable) is the Cloudflare-to-Hetzner path; a non-zero origin status is the origin failing. Line up 5xx hours with DEPLOYS and the gateway logs. In PROXY DIAGNOSTICS, slow and 5xx lines carry UTC times on the gateway log's clock. A 500 on an API path is a gateway bug; a 502 is Traefik failing to reach the service.
+7. **Disk.** Growth in DISK_USAGE and DISK_HISTORY, against the cache caps.
 
-**Gateway-internal errors and warnings:**
-- `error` — gateway-side failures caught by exception handlers (e.g., cache write failures, DB errors during result processing). These are NOT pipeline-specific errors — they indicate something broke inside the gateway itself. Check `data.message` for details.
-- `warning` — non-fatal issues worth tracking (e.g., near-failures, degraded behavior)
-- ANY `error` event is a red flag. These represent failures that may silently drop work — e.g., a synthesis result that completed but couldn't be cached, leaving the user with no audio.
-- **`Background task <name> crashed` / `Background task <name> exited unexpectedly`** — a long-lived loop (billing-consumer, result-consumer, cache-persister, tts-visibility, yolo-visibility, batch-poller, cache-lru-flush, cache-maintenance, usage-log-cleanup, guest-cleanup, billing-sync, openai-tts-dispatcher, metrics-writer) is **gone** and is not coming back. Whatever that loop does has stopped silently for the rest of the process lifetime. **P0 — a gateway restart is required to recover.** Identify the loop from the name and report what has stopped (e.g. billing-consumer = nothing is being billed).
-- **`Billing consumer group missing (Redis reset?), re-creating`** (WARNING, `yapit.gateway.billing_consumer`) — Redis was recreated and the consumer group was rebuilt automatically. One occurrence per Redis restart is expected and self-healing; nothing to do. A *repeating* pattern means Redis is restarting in a loop — investigate that instead.
-- Stuck-loop retries back off exponentially (1s→60s), so a stuck loop produces roughly 1 error/minute. Judge such errors by the span between first and last occurrence — a low count can still be a dead loop.
+## Fix check
 
-**Billing/Webhooks:**
-- `stripe_webhook` — Stripe webhook processing
-  - `duration_ms` — handler latency. Nominal: <1s. Stripe times out at 20s.
-  - `data.event_type` — which event (invoice.paid, subscription.updated, etc.)
-  - `status_code=500` — handler crashed
-- `billing_sync_drift` — periodic reconciliation found local DB out of sync with Stripe
-  - `data.user_id` — affected user
-  - `data.drift` — what drifted (list of field names, or "sub_gone")
-  - Any occurrence means a webhook was missed. Occasional is expected; sustained = webhook issues.
-- `billing_processed` — TTS billing consumer batch processed
-  - `duration_ms` — batch processing time
-  - `text_length` — total characters billed in batch
-  - `data.events_count` — number of synthesis events in the batch
-  - `data.users_count` — unique users in the batch
+Before writing up an incident, match it against RECENT COMMITS. An incident that a deployed commit fixes is not news: leave it out of the report entirely, including the summary and the status line.
 
-**URL fetching (transport-level):**
-- `url_fetch` — document URL downloads
-  - `duration_ms`, `data.content_type`, `data.size_bytes` on success
-  - `data.error` on failure (http_status or request_error)
+Judge the match on substance. `git show <sha>` gives the full message and diff, and this checkout is the code the fix landed in: read both until you can name the failing path the commit changed. Two things break a match, and both belong in the report: the commit is not in DEPLOYS yet (the bug is still live; say the fix awaits deploy), or the failure recurs after that deploy (the fix did not take).
 
-## What to Analyze
+Recovery is not a fix. An outage that ended, a loop that came back after a restart, or a queue that drained, with no commit behind it, stays in the report as an issue.
 
-### Fix check (before writing up any incident)
+## Known patterns
 
-Match every incident against RECENT COMMITS first. An incident that an already-deployed commit fixes is not news — drop it from the report entirely: no issue, no pattern, no line in the summary, no bearing on the status line.
+These are expected, and become issues only when they change shape:
+- `Usage limit exceeded for ocr_tokens`: user quota enforcement. `limit 0` is any anonymous user or a free user who used theirs up, and extraction falls back to pymupdf.
+- Gemini batch poller 503 UNAVAILABLE: Google-side capacity. The poller retries every 15 s. It is an issue once a batch has waited over 24 h since its `batch_job_submitted` event.
+- No vacuum events: the gateway vacuums the SQLite cache only past 2.0× bloat, checked daily, so none means it is under that.
+- `Billing consumer group missing (Redis reset?), re-creating`: once per Redis restart, and self-healing. A run of them means Redis restarts in a loop.
+- Short Redis blips at deploy times. They matter when they come more often than deploys, or away from deploy times.
+- Cloudflare 504s on about 10–12% of requests, all origin_unreachable.
+- A low cache hit ratio: most requests are unique text × voice × model.
+- Slow static assets (JS, CSS) in Traefik: slow client connections.
+- Little or no traffic, unless it changed suddenly.
 
-Judge the match on substance rather than on a plausible-looking subject line. `git show <sha>` gives the full message and diff, and the checked-out tree is the code that fix landed in — read both until you can name the failing path the commit changed. Two things break a match, and both are worth reporting: the commit is not in DEPLOYS yet (the bug is still live in prod — report it and say the fix is awaiting deploy), or the failure recurs after that deploy (the fix did not take — report that it did not).
-
-Recovery is not a fix. An outage that ended, a background loop that came back after a restart, a queue that drained — with no commit behind it, nobody has addressed the cause, and it stays in the report as an issue.
-
-### Metrics freshness
-The METRICS FRESHNESS verdict is deterministic: the writer's `heartbeat` means a live pipeline never leaves a gap longer than its heartbeat interval in metrics_event, so FRESH is not to be second-guessed and STALE is never a quiet day. A STALE verdict is the lead issue of the report (P0): the metrics pipeline is down, and the metrics DB only covers the period before the gap — the window after it is unobserved, not quiet. Analyze that window from logs, and label each finding metrics-based or log-based.
-
-The metrics writer self-heals: it buffers events (bounded, 10k) and retries with backoff when the metrics DB is unreachable. Log lines to know (module `yapit.gateway.metrics`):
-- `Metrics DB unavailable at startup (...); writer will keep retrying` / `Metrics DB write failed (...); buffering events and retrying` (ERROR) — outage started
-- `Metrics DB still unavailable after Xs (...)` (ERROR, repeated ~every 10 min while down) — ongoing outage
-- `Metrics DB recovered after Xs; flushed N buffered events (M dropped)` (INFO) + a `warning` metrics event `Metrics DB outage recovered` — outage over; run the Fix check on it, and where it stays in the report, state the dropped events as a permanent gap
-An outage-start ERROR with no matching recovery = the pipeline is down right now.
-
-### Errors — HIGHEST PRIORITY
-Read the actual error messages and investigate — a count alone is not analysis.
-
-**Metrics DB errors:**
-- `error` events (gateway-internal) — ANY nonzero count is a red flag. Read `data.message` for each. These represent silent failures that may cause user-visible breakage (e.g., audio not playing, results disappearing).
-- `synthesis_error` events — worker-reported failures. Check `data.error` for each distinct error message.
-- `detection_error`, `page_extraction_error` — same: read the actual error messages.
-- `job_dlq` — ANY entry means something is systematically broken. Investigate immediately.
-- `job_requeued` — occasional is fine (transient), sustained pattern = worker issues.
-
-**Log file errors (data/logs/*.jsonl):**
-- **Check the time range of gateway.jsonl first** (first and last entry timestamps). The file can span weeks. Start analysis with the last 7 days — filter by `.record.time.repr > "YYYY-MM-DD"`. Total error counts across the whole file are misleading without date context. Older entries are useful for establishing baselines or investigating trends when something looks suspicious.
-- Scan for ERROR and WARNING level entries within the recent window. Don't skip this even if metrics look clean — some errors only appear in logs.
-- For each distinct error, report: the error message, count, and time range.
-- ERROR level in logs — stack traces, exceptions (include request context: method, path, user_id, request_id)
-- `Auth email to an address at <domain> failed` — the gateway's SMTP send failed, so that person could not sign in by email or confirm an email change. Always flag; the exception says whether SMTP rejected the credentials, the recipient or the connection.
-
-### Warnings
-- WARNING level in logs — library warnings, deprecations, near-failures
-- How often do they occur? Any patterns by module or time?
-- Warnings often precede errors — look for escalation patterns
-
-### Queue Health
-- `queue_depth` in `synthesis_queued`, `queue_wait_ms` in `synthesis_complete` — thresholds in the Normal vs Concerning table; sustained breaches = capacity issue
-
-### Worker Performance
-- `worker_latency_ms` per `worker_id` — compare workers, find outliers
-- Throughput: count of completions per worker
-- Error rate per worker — one worker failing more than others?
-
-### Document Processing
-- `document_extraction_complete` — volume by `processor_slug` (pymupdf, epub, passthrough, defuddle:*, gemini)
-- `document_extraction_error` — any errors? Check `data.error` for each. Group by processor.
-- Duration outliers per processor — compare against typical ranges
-
-### Extraction (Gemini)
-- `page_extraction_error` — rate limit (429), server errors (5xx)?
-- Token counts — unusual spikes?
-- **OCR token quota warnings** (`Usage limit exceeded for ocr_tokens`): These are **expected user-level quota enforcement**, NOT system errors. `limit 0` means the user has no AI extraction quota (all anonymous users, free-tier users who exhausted theirs). The extraction falls back to pymupdf (non-OCR). Do NOT flag these as issues or recommend checking the Google Cloud console — they are working as designed.
-- **Batch poller 503s:** The Gemini batch GET endpoint intermittently returns 503 UNAVAILABLE (Google-side capacity issues, well-documented on their forums). The poller retries every 15s automatically. Only flag if a batch has been stuck for >24h — check time since `batch_job_submitted` event.
-
-### Billing Health
-See the BILLING RECONCILIATION section — event counts and character totals are pre-computed.
-- **Event delta**: should be 0 for completed days. Non-zero on the current (partial) day is OK (in-flight). Non-zero on past days = lost billing events.
-- **Consumer liveness**: flagged automatically if synthesis runs ahead of billing by >1h.
-- **Character ratio** (billed/synth): varies by model mix (usage_multiplier per model). A sudden ratio shift without a model mix change = billing bug.
-- billing_processed errors: any `error` events with billing context indicate billing consumer failures.
-
-### Cache
-
-- Vacuum runs as a background task in the gateway, checking every 24h. It only vacuums if `bloat_ratio` (file_size / data_size) exceeds 2.0x. **No vacuum events = bloat is under threshold = healthy.** This is not a missing cron. SQLite WAL mode with steady insert/delete keeps fragmentation low naturally.
-
-### Cloudflare Edge (see CLOUDFLARE ANALYTICS section)
-- **504 errors**: Check total count, origin response status, and affected hosts/IPs.
-  - `origin_unreachable` (originResponseStatus=0) means CF couldn't reach origin — this is a CF/network issue, not an origin bug.
-  - Non-zero originResponseStatus means origin responded with an error — investigate origin.
-- **Cache hit ratio**: Low by design — most requests are unique text×voice×model. Hits only on shared/preview docs or replayed blocks. Ratio <1% would suggest the cache rule is broken.
-- **5xx by hour**: Correlate spikes with deploy log times and metrics events.
-- **Background 504 rate ~10-12%** is a known baseline (CF edge ↔ Hetzner transient path issues). Flag if significantly higher.
-
-### Proxy Diagnostics (see PROXY DIAGNOSTICS section)
-- **Traefik:** Per-service latency breakdown. Slow and 5xx lines carry their UTC time (`MM-DD HH:MM`Z, same clock as `gateway.jsonl`), so an edge error can be lined up with what the gateway was doing. WebSocket connections (status 0) are excluded from latency stats. Note that Traefik logs upstream 5xx — a 500 on an API path is a gateway bug, while a 502 on any path means Traefik couldn't reach the upstream service. Slow static asset requests (JS/CSS) are usually slow client connections, not server issues.
-
-## What's Normal vs Concerning
+## Thresholds
 
 | Metric | Normal | Concerning |
 |--------|--------|------------|
-| `error` events | 0 | Any (investigate — read data.message) |
-| DLQ entries | 0 | Any (investigate immediately) |
-| Error rate (synthesis) | 0% | >0% sustained |
-| Log ERROR entries | 0 | Any (read the actual messages) |
+| Synthesis error rate | 0% | >0% sustained |
 | Queue depth | <10 | >20 sustained |
-| Queue wait (TTS) | <15s | >25s sustained |
-| Queue wait (YOLO) | <5s | >8s sustained |
-| Requeues | Rare/isolated | Pattern (same worker, same error) |
-| Billing sync drift | 0 | Any (check which webhooks are being missed) |
-| Billing reconciliation delta | 0 (past days) | Any non-zero on completed days |
-| CF 504 rate | <15% | >20% or originResponseStatus != 0 |
-| CF cache hit ratio | Low (unique content) | <1% sustained (cache rule broken) |
-| Doc extraction errors | 0 | Any (check processor_slug + data.error) |
+| Queue wait, TTS | <15 s | >25 s sustained |
+| Queue wait, YOLO | <5 s | >8 s sustained |
+| Requeues | rare, isolated | a pattern (same worker, same error) |
+| Cloudflare 504 rate | <15% | >20%, or any non-zero origin status |
+| Cloudflare cache hit ratio | low | <1% sustained (the cache rule is broken) |
 
-Events older than 7 days can be ignored unless part of a larger pattern / investigation.
-E.g. items on the DLQ from >7 days ago are almost certainly already taken care of.
+## Report
 
-One-time short Redis blips coincide with deploys and are not worth flagging; flag them when their cadence exceeds deploy frequency or doesn't line up with deploy times.
-
-## Log Investigation
-
-Logs are JSON lines (loguru format). Key fields:
-- `.record.level.name` — ERROR, WARNING, INFO
-- `.record.name` — module path (e.g., "yapit.gateway.api.v1.documents", "uvicorn.error")
-- `.record.message` — log message
-- `.record.exception` — stack trace (when present)
-
-**Structured context in `.record.extra`:**
-Fields vary by component. Discover available fields with:
-\`\`\`bash
-jq -r '[.record.extra | keys[]] | .[]' gateway.jsonl | sort | uniq -c | sort -rn
-\`\`\`
-
-Common fields:
-- `request_id` — 8-char hex, auto-added to all HTTP request logs (middleware)
-- `user_id` — present on TTS jobs, WebSocket, extraction, billing, and error logs
-- `job_id`, `variant_hash`, `model_slug`, `voice_slug`, `worker_id` — TTS pipeline logs
-- `extraction_id`, `content_hash` — document extraction logs
-- `document_id` — WebSocket and extraction logs
-- `queue_type`, `model_slug` — scanner logs
-- `method`, `path` — unhandled exception logs
-
-**Correlation strategies:**
-- HTTP requests: correlate by `request_id` to see full request timeline
-- TTS jobs: correlate by `job_id` or `variant_hash` across tts_loop → result_consumer
-- Extractions: correlate by `extraction_id` across the full extraction lifecycle
-- User issues: filter by `user_id` across all components
-- Cache warming: filter by `user_id == "cache-warmer"`
-
-**Useful jq patterns:**
-\`\`\`bash
-# All errors
-jq 'select(.record.level.name == "ERROR")' gateway.jsonl
-
-# All warnings
-jq 'select(.record.level.name == "WARNING")' gateway.jsonl
-
-# Correlate by request_id (full HTTP request timeline)
-jq 'select(.record.extra.request_id == "a1b2c3d4")' gateway.jsonl
-
-# All logs for a specific user
-jq 'select(.record.extra.user_id == "user_123")' gateway.jsonl
-
-# TTS job lifecycle (queue → worker → result)
-jq 'select(.record.extra.variant_hash == "abc...")' gateway.jsonl
-
-# Extraction lifecycle
-jq 'select(.record.extra.extraction_id == "xyz")' gateway.jsonl
-
-# Cache warming activity (pre-synthesizes voice previews so they're free and instant for users)
-jq 'select(.record.extra.user_id == "cache-warmer")' gateway.jsonl
-
-# Library warnings (uvicorn, sqlalchemy, etc.)
-jq 'select(.record.level.name == "WARNING" and (.record.name | startswith("yapit") | not))' gateway.jsonl
-
-# Discover which structured fields exist and how often (run this first when investigating)
-jq -r '[.record.extra | keys[]] | .[]' gateway.jsonl | sort | uniq -c | sort -rn
-\`\`\`
-
-**Investigation workflow:**
-1. Start with ERROR/WARNING counts and patterns
-2. For suspicious errors, correlate by request_id or job_id to see full context
-3. If patterns emerge by user_id, check if user-specific (bad input? specific document?)
-4. Check INFO logs around the error time for additional context
-
-## Output Format
-
-Open with the status line (no throat-clearing preamble):
+The first line is exactly one of these status lines, which a script reads to decide whether to notify:
 - ✅ **All nominal** — no issues
-- ⚠️ **Issues detected** — problems found
-- 🔍 **Anomalies noted** — unusual patterns worth noting (no/low traffic is not an anomaly, unless there's a sudden change)
+- ⚠️ **Issues detected** — problems that need someone
+- 🔍 **Anomalies noted** — something unusual, nothing to act on yet
 
-Then:
-1. **Summary** (2-3 sentences)
-2. **Key Metrics** (bullets: counts, rates, latencies)
-3. **Issues** (if any — what, severity, details)
-4. **Patterns** (correlations, clusters, trends)
-5. **Recommendations** (if actionable)
-
-Be concise but complete. This is a diagnostic report.
-
-## Limitations
-
-You have access to **synced static data** (metrics DB + logs up to sync time) and **the repository** at the current checkout — source and full git history, for the Fix check and for reading the code behind any failure.
-You do NOT have:
-- Live Redis access (no current queue depths)
-- Live worker status (only historical metrics)
-- Interactive prod access
-
-If any of these would help future analysis, note them:
-- Additional **metrics or log fields**
-- **Analysis tools/utilities** (scripts, queries, anything reusable)
-- **Tool permissions** you were missing
-
-**Important**:
-- DO NOT request live/interactive prod access — that's out of scope by design.
-- DO NOT include comments before bash commands — they won't match allowed tool patterns and will be blocked.
-- DO NOT use subagents.
+Then, with times in CET:
+1. **Summary**: 2–3 sentences.
+2. **Key metrics**: counts, rates and latencies for the window.
+3. **Issues**: what, severity (P0 to P3), and the evidence.
+4. **Patterns**: correlations, clusters, trends.
+5. **Recommendations**, where something is actionable.
+6. **Tooling gaps**: commands that were refused, and data, fields or a reusable query that would have made this analysis better within this offline setup. Leave the section out when there are none.
 EOF
 
 echo "Running Claude analysis..."
 
+# The agent runs on this machine, so its reach is set here. --restricted keeps
+# Read, Grep and Glob inside this checkout and refuses every write; .env holds
+# prod secrets and is denied. Bash runs only the commands allowed below, and
+# DuckDB's -safe mode shuts it out of every file but the database, of the
+# environment and of extensions. Every run is logged by model-runs.
 run_analysis() {
-    clankr run "$PROJECT_DIR" -p "$SCRIPT_DIR/report-profile" \
-        -- --system-prompt "$PROMPT" \
-        --output-format json \
-        -p "$EXTRA_CONTEXT" \
-        2>>"$REPORT_DIR/claude-stderr.log"
+    CLAUDECODE= model-runs run --site yapit-health-report --timeout 1800 --json -- \
+        claude -p --model opus --effort high --system-prompt "$PROMPT" \
+        --setting-sources "" --strict-mcp-config --disable-slash-commands \
+        --settings '{"autoMemoryEnabled": false}' --restricted \
+        --tools "Read,Grep,Glob,Bash" \
+        --allowedTools "Bash(duckdb -readonly -safe data/metrics.duckdb *)" \
+            "Bash(git log)" "Bash(git log *)" "Bash(git show *)" \
+        --disallowedTools "Read(./.env*)" "Bash(git *--output*)" \
+        --permission-mode manual --permission-prompts none \
+        <<<"$EXTRA_CONTEXT" 2>>"$REPORT_DIR/claude-stderr.log"
 }
+
+# The agent's commands inherit this environment, so .env's secrets leave it first.
+if [[ -f "$PROJECT_DIR/.env" ]]; then
+    unset $(sed -n 's/^\(export \)\{0,1\}\([A-Za-z_][A-Za-z0-9_]*\)=.*/\2/p' "$PROJECT_DIR/.env")
+fi
 
 : > "$REPORT_DIR/claude-stderr.log"
 
@@ -500,7 +311,7 @@ for attempt in 1 2 3; do
 done
 
 if [[ -z "$output" ]]; then
-    # A night the report could not run is recorded, not notified: one bad night
+    # A run the report could not finish is recorded, not notified: one bad run
     # says nothing, and a run of them is what the overdue watchdog is for.
     echo "Claude analysis failed after 3 attempts. stderr:"
     cat "$REPORT_DIR/claude-stderr.log"
@@ -508,8 +319,8 @@ if [[ -z "$output" ]]; then
     exit 1
 fi
 
-# --output-format json returns a JSON array of events; extract the result event
-result_event=$(echo "$output" | jq -c '.[] | select(.type == "result")' 2>/dev/null || echo "$output" | jq -c 'select(.type == "result")' 2>/dev/null || echo '{}')
+# model-runs --json prints claude's result object
+result_event=$(echo "$output" | jq -c 'select(.type == "result")' 2>/dev/null || echo '{}')
 session_id=$(echo "$result_event" | jq -r '.session_id // "unknown"')
 result=$(echo "$result_event" | jq -r '.result // "No result"')
 denials=$(echo "$result_event" | jq -r '.permission_denials | if length > 0 then .[] | "- \(.tool_name): \(.tool_input.command // .tool_input | tostring)" else empty end')

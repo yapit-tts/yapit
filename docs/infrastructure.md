@@ -118,7 +118,7 @@ When **adding or removing** config files or Settings fields, check ALL of these:
 **Operations:**
 - `disk-usage.sh` — Comprehensive disk report (volumes, caches, DBs, logs). Appends history to VPS.
 - `document_storage.py` — Per-document storage breakdown (DB + images)
-- `report.sh` — Weekly health diagnostics agent (`make report` runs it on demand). Runs in a clankr container (sandboxed Claude) with DuckDB init script. Syncs prod data, runs analysis, saves to `~/logs/yapit-reports/`, notifies only on ⚠️ issues.
+- `report.sh` — Weekly health diagnostics agent (`make report` runs it on demand). Runs Claude Code headless on the host with read-only tools; the script says what it may reach. Syncs prod data, runs analysis, saves to `~/logs/yapit-reports/`, notifies only on ⚠️ issues.
 
 **Billing:**
 - `stripe_setup.py` — Stripe IaC (products, prices, coupons, portal)
