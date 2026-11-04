@@ -118,7 +118,7 @@ When **adding or removing** config files or Settings fields, check ALL of these:
 **Operations:**
 - `disk-usage.sh` — Comprehensive disk report (volumes, caches, DBs, logs). Appends history to VPS.
 - `document_storage.py` — Per-document storage breakdown (DB + images)
-- `report.sh` — Daily health diagnostics agent. Runs in a clankr container (sandboxed Claude) with DuckDB init script. Syncs prod data, runs analysis, saves to `~/logs/yapit-reports/`, notifies only on ⚠️ issues.
+- `report.sh` — Weekly health diagnostics agent (`make report` runs it on demand). Runs Claude Code headless on the host with read-only tools; the script says what it may reach. Syncs prod data, runs analysis, saves to `~/logs/yapit-reports/`, notifies only on ⚠️ issues.
 
 **Billing:**
 - `stripe_setup.py` — Stripe IaC (products, prices, coupons, portal)
@@ -133,9 +133,6 @@ When **adding or removing** config files or Settings fields, check ALL of these:
 **Monitoring:**
 - `cf_analytics.py` — Cloudflare analytics via GraphQL (traffic, cache, errors, DNS, hourly, 504 diagnostics)
 - `proxy_diagnostics.py` — Traefik diagnostics from VPS container logs (latency, errors, slow requests)
-
-**Dependencies:**
-- `dep-scout.sh` — Agent-driven dependency report on a timer (checks versions, changelogs, relevance). Notifies nobody; saved to `~/logs/yapit-reports/`.
 
 **Stress testing:**
 - `stress_test.py` — TTS stress testing
