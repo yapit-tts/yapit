@@ -24,15 +24,15 @@ VPS (Hetzner)
 
 ## VPS Details
 
-- **Provider:** Hetzner (Nuremberg, server name `yapit-prod-2`)
-- **Type:** CPX32 (4 vCPU, 8 GB RAM, 160 GB SSD)
+- **Provider:** Hetzner (Falkenstein `fsn1`, server name `yapit-prod-3`, tailnet name `yapit-prod`)
+- **Type:** CX33 (4 vCPU, 8 GB RAM, 80 GB SSD). Hetzner's cost-optimized CX plans are often out of stock; the API's `server_types` endpoint says per location when one is orderable.
 - **Domain:** yapit.md
-- **Address:** everything goes by name — `VPS_HOST=yapit-prod` in `.env.sops` (all scripts read it from `.env`), which resolves via the `yapit-prod` ssh alias (dotfiles, `nix/home/common.nix`) for ssh/scp and via Tailscale MagicDNS for direct connections (`WORKER_REDIS_URL=redis://yapit-prod:6379/0`). The raw Tailscale IP lives in exactly one place: the dotfiles ssh alias. On server migration, update that alias + the tailnet hostname and nothing else. Public IP: Hetzner console or `hcloud server list` (only Cloudflare DNS references it).
-- **Swap:** 4 GB swapfile (`/swapfile`, swappiness 10) — Hetzner images ship without swap; the stack idles at ~6.5 GB so this is OOM headroom, not working memory
+- **Address:** scripts reach the VPS as `VPS_HOST=yapit-prod` (from `.env`), which the `yapit-prod` ssh alias in the dotfiles (`nix/home/common.nix`) maps to the Tailscale IP. The external workers connect by IP too: `WORKER_REDIS_URL` in `.env.sops` holds `redis://<tailscale-ip>:6379/0`, because pc runs Tailscale with `--accept-dns=false` and its containers cannot resolve MagicDNS names. The public IP is referenced only by the three Cloudflare A records.
+- **Swap:** 4 GB swapfile (`/swapfile`, swappiness 10) — Hetzner images ship without swap; the stack idles at ~3.5 GB, so this is OOM headroom, not working memory
 - **Docker log rotation:** `/etc/docker/daemon.json` — 50MB x 3 files per container
 - **`no-new-privileges: true`** in daemon.json — prevents privilege escalation via setuid binaries in all containers. Required because Swarm ignores per-service `security_opt`.
 
-Migrated 2026-08-02 from a CPX62 (16 vCPU/32 GB/640 GB, `yapit-prod`) to cut cost ~€21/mo; worker replicas and cache limits were sized down to fit (see `.env.prod`). Final pre-migration snapshot: image 415528056. The old server is retired; delete it (and the snapshot, eventually) once the new box has proven itself.
+**Backups:** no Hetzner backups. max's laptop backs the VPS up daily to rsync.net with restic (`yapit-rsyncnet` timer in the dotfiles: `backup/sshfs_backup.sh`, which first runs `backup/yapit_stage.sh` on the VPS to dump both databases and the SQLite caches into `/opt/yapit/backup/current`). The audio cache is left out; it refills from synthesis.
 
 ## Initial Setup
 
@@ -59,7 +59,7 @@ curl -fsSL https://get.docker.com | sh
 ### 3. Initialize Swarm + Network
 
 ```bash
-docker swarm init
+docker swarm init --advertise-addr <public-ipv4>  # the box has a Tailscale IP too, so swarm asks which
 docker network create --driver overlay --attachable yapit-network
 ```
 
@@ -68,6 +68,19 @@ docker network create --driver overlay --attachable yapit-network
 ```bash
 mkdir -p /opt/yapit/traefik/dynamic /opt/yapit/traefik/certs /opt/yapit/deploy
 ```
+
+### 5. Tailscale, then the firewall
+
+`firewall-1` has no port 22, so a new server is created without it and gets it only once Tailscale ssh works.
+
+```bash
+curl -fsSL https://tailscale.com/install.sh | sh
+tailscale up --hostname=yapit-prod --accept-dns=false --advertise-tags=tag:server
+```
+
+`tailscale up` prints a login URL. The tailnet has Tailnet Lock on, so the new node stays locked out after login until a node with a trusted key (max's laptop) signs it: `tailscale lock status` on the new node prints the `tailscale lock sign …` command to run there. `tag:server` disables key expiry. If the name `yapit-prod` is still held by the old server, Tailscale assigns `yapit-prod-1` and keeps it; rename the machine in the admin console.
+
+Then attach `firewall-1` to the server (Hetzner console or `hcloud firewall apply-to-resource`) and add the firewall sync cron (see Firewall below).
 
 ## Cloudflare Setup
 
@@ -217,7 +230,7 @@ Script: fetches CF IPs from `api.cloudflare.com/client/v4/ips`, validates, atomi
 
 VPS paths:
 - Script: `/opt/yapit/sync-cf-firewall.sh` (synced automatically by `deploy.sh`)
-- Env (token, firewall name, ALERT_* email settings): `/opt/yapit/.env.firewall` (mode 600)
+- Env (token, firewall name, ALERT_* email settings): `/opt/yapit/.env.firewall` (mode 600). The token is `_HCLOUD_TOKEN` in `.env.sops`.
 - Log: `/var/log/cf-firewall-sync.log`
 - Cron: `0 * * * *` (hourly) — **created manually** (`crontab -e`), deploy.sh only syncs the script; on a fresh server the crontab entry must be added by hand
 
@@ -288,6 +301,10 @@ Or remove and redeploy the entire stack.
 
 `docker image prune -af` doesn't work in Swarm — all pulled `:latest` digests are considered "in use" by service specs. Deploy script compares each image ID against running container image IDs and removes non-matching ones.
 
+### TimescaleDB dumps restore only into their own version
+
+`metrics-db` runs `timescale/timescaledb:latest-pg16`, so a fresh server pulls a newer TimescaleDB than the one that wrote an existing dump, and `pg_restore` fails with a catalog version mismatch. Restore on the dump's version (`timescale/timescaledb:<version>-pg16`, between `timescaledb_pre_restore()` and `timescaledb_post_restore()`), then start `latest-pg16` on the same volume and run `ALTER EXTENSION timescaledb UPDATE` as the first command of a `psql -X` session.
+
 ## Cloudflare Zone
 
 **Zone ID:** `e307c22342c2d1dada1d4d45da3e1bce`
@@ -296,6 +313,8 @@ Or remove and redeploy the entire stack.
 
 Create A records pointing to the VPS public IP (proxied):
 - `yapit.md`
+
+The `CLOUDFLARE_API_TOKEN` in `.env.sops` can read DNS records but not edit them, so moving them to a new server is done in the Cloudflare dashboard.
 
 (`www.yapit.md` and `api.yapit.md` also exist and point at the same IP, but Traefik only routes `yapit.md`, so the others return 404 at the origin.)
 
