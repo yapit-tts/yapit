@@ -14,6 +14,7 @@ import {
 	type OAuthProvider,
 	type SessionState,
 } from "@/lib/authApi";
+import { passkeysSupported } from "@/lib/passkeys";
 
 export type { AuthUser };
 
@@ -21,6 +22,8 @@ export interface Auth {
 	user: AuthUser | null;
 	authEnabled: boolean;
 	providers: OAuthProvider[];
+	/** Whether this server and browser can sign in with passkeys. */
+	passkeys: boolean;
 	signOut: () => Promise<void>;
 	/** Re-reads who the session cookie belongs to, e.g. after signing in. */
 	refresh: () => Promise<void>;
@@ -87,6 +90,7 @@ export const AuthProvider: FC<PropsWithChildren> = ({ children }) => {
 				user: session.user,
 				authEnabled: session.auth_enabled,
 				providers: session.providers,
+				passkeys: session.passkeys && passkeysSupported(),
 				signOut,
 				refresh,
 			}}

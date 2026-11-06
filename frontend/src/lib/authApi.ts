@@ -17,6 +17,8 @@ export interface SessionState {
 	auth_enabled: boolean;
 	/** The OAuth providers this server offers; one without a client id is left out. */
 	providers: OAuthProvider[];
+	/** Whether the server offers passkeys: sign-in on, and https or localhost. */
+	passkeys: boolean;
 	user: AuthUser | null;
 }
 

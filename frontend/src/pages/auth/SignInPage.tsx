@@ -1,4 +1,5 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import { KeyRound } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -17,9 +18,10 @@ import {
 	NOT_AN_EMAIL,
 	verifySignIn,
 } from "@/lib/authApi";
+import { passkeyAutofillAvailable, passkeyErrorMessage, signInWithPasskey } from "@/lib/passkeys";
 
 export default function SignInPage() {
-	const { refresh, providers } = useAuth();
+	const { refresh, providers, passkeys } = useAuth();
 	const navigate = useNavigate();
 	const [searchParams] = useSearchParams();
 	const [email, setEmail] = useState("");
@@ -28,6 +30,43 @@ export default function SignInPage() {
 	const oauthError = searchParams.get("error");
 	const [error, setError] = useState<string | null>(oauthError && oauthErrorMessage(oauthError));
 	const [busy, setBusy] = useState(false);
+	// The autofill request waits in the background; a click on the passkey button replaces it
+	const autofill = useRef<AbortController | null>(null);
+
+	const signedIn = async () => {
+		await refresh();
+		navigate("/", { replace: true });
+	};
+
+	useEffect(() => {
+		if (!passkeys || sentTo !== null) return;
+		const controller = new AbortController();
+		autofill.current = controller;
+		void (async () => {
+			if (!(await passkeyAutofillAvailable()) || controller.signal.aborted) return;
+			try {
+				await signInWithPasskey({ autofill: true, signal: controller.signal });
+				await signedIn();
+			} catch (err) {
+				if (!controller.signal.aborted) setError(passkeyErrorMessage(err));
+			}
+		})();
+		return () => controller.abort();
+		// eslint-disable-next-line react-hooks/exhaustive-deps -- one background request per visit to the email step
+	}, [passkeys, sentTo]);
+
+	const onPasskey = async () => {
+		autofill.current?.abort();
+		setBusy(true);
+		setError(null);
+		try {
+			await signInWithPasskey();
+			await signedIn();
+		} catch (err) {
+			setError(passkeyErrorMessage(err));
+			setBusy(false);
+		}
+	};
 
 	const sendEmail = async (address: string) => {
 		setBusy(true);
@@ -77,9 +116,15 @@ export default function SignInPage() {
 							<CardTitle className="text-2xl">Sign in or sign up</CardTitle>
 						</CardHeader>
 						<CardContent className="flex flex-col gap-4">
-							{providers.length > 0 && (
+							{(providers.length > 0 || passkeys) && (
 								<>
 									<div className="flex flex-col gap-2">
+										{passkeys && (
+											<Button variant="outline" onClick={() => void onPasskey()} disabled={busy}>
+												<KeyRound className="h-4 w-4" />
+												Sign in with a passkey
+											</Button>
+										)}
 										{providers.map((provider) => (
 											<Button key={provider} variant="outline" asChild>
 												<a href={oauthStartUrl(provider, "sign_in", "/")}>
@@ -102,7 +147,7 @@ export default function SignInPage() {
 									<Input
 										id="email"
 										type="email"
-										autoComplete="email"
+										autoComplete={passkeys ? "email webauthn" : "email"}
 										autoFocus
 										required
 										value={email}
