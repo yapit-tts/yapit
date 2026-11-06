@@ -31,6 +31,7 @@ from yapit.gateway.auth.email_sign_in import (
 )
 from yapit.gateway.auth.mailer import MailDeliveryError, Mailer, get_mailer
 from yapit.gateway.auth.oauth import PROVIDERS, disconnect, enabled_providers
+from yapit.gateway.auth.passkeys import relying_party
 from yapit.gateway.auth.sessions import (
     SESSION_COOKIE,
     SIGN_IN_PENDING_COOKIE,
@@ -68,6 +69,7 @@ class SessionUser(BaseModel):
 class SessionState(BaseModel):
     auth_enabled: bool
     providers: list[str]  # the OAuth providers sign-in offers
+    passkeys: bool  # whether passkeys work here: sign-in on, and https or localhost
     user: SessionUser | None
 
 
@@ -112,18 +114,22 @@ async def get_session(
     Also refreshes the session cookie, or clears one that opens no session.
     """
     if not settings.auth_enabled:
-        return SessionState(auth_enabled=False, providers=[], user=None)
+        return SessionState(auth_enabled=False, providers=[], passkeys=False, user=None)
     try:
         caller = await resolve_caller(db, settings, credentials)
     except AuthRefused:
-        return SessionState(auth_enabled=True, providers=enabled_providers(settings), user=None)
+        return SessionState(
+            auth_enabled=True, providers=enabled_providers(settings), passkeys=passkeys_offered(settings), user=None
+        )
     if caller.session_expires is not None and credentials.session_token:
         set_session_cookie(response, credentials.session_token, caller.session_expires, settings)
     elif credentials.session_token:
         clear_session_cookie(response, settings)
     if caller.user is None or caller.user.is_anonymous:
-        return SessionState(auth_enabled=True, providers=enabled_providers(settings), user=None)
-    return await _session_state(db, settings, caller.user.id)
+        return SessionState(
+            auth_enabled=True, providers=enabled_providers(settings), passkeys=passkeys_offered(settings), user=None
+        )
+    return await session_state(db, settings, caller.user.id)
 
 
 @router.post("/email/start", status_code=status.HTTP_202_ACCEPTED)
@@ -182,7 +188,7 @@ async def verify_email_sign_in(
     request signed in to that account.
     """
     require_auth_enabled(settings)
-    _refuse_other_origins(request, settings)
+    refuse_other_origins(request, settings)
     signed_in = await signed_in_user_id(db, settings, credentials)
     try:
         if isinstance(body, VerifyByToken):
@@ -218,19 +224,23 @@ async def verify_email_sign_in(
     await start_browser_session(db, request, response, settings, account.id)
     clear_auth_cookie(response, SIGN_IN_PENDING_COOKIE, settings)
     logger.info(f"User {account.id} signed in by email")
-    return await _session_state(db, settings, account.id)
+    return await session_state(db, settings, account.id)
 
 
 @router.post("/sign-out", status_code=status.HTTP_204_NO_CONTENT)
 async def sign_out(request: Request, response: Response, settings: SettingsDep, db: DbSession) -> None:
     require_auth_enabled(settings)
     if token := read_auth_cookie(request, SESSION_COOKIE, settings):
-        _refuse_other_origins(request, settings)
+        refuse_other_origins(request, settings)
         await revoke_session(db, token)
     clear_session_cookie(response, settings)
 
 
-def _refuse_other_origins(request: Request, settings: Settings) -> None:
+def passkeys_offered(settings: Settings) -> bool:
+    return relying_party(settings) is not None
+
+
+def refuse_other_origins(request: Request, settings: Settings) -> None:
     try:
         require_app_origin(request.headers.get("origin"), settings)
     except AuthRefused as refused:
@@ -299,13 +309,14 @@ def _sending_challenge_to(email: str) -> Iterator[None]:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Could not send the email.")
 
 
-async def _session_state(db: AsyncSession, settings: Settings, user_id: str) -> SessionState:
+async def session_state(db: AsyncSession, settings: Settings, user_id: str) -> SessionState:
     account = await db.get(UserAccount, user_id)
     assert account is not None
     identities = (await db.exec(select(OAuthIdentity).where(OAuthIdentity.user_id == user_id))).all()
     return SessionState(
         auth_enabled=True,
         providers=enabled_providers(settings),
+        passkeys=passkeys_offered(settings),
         user=SessionUser(
             id=account.id,
             email=account.email,

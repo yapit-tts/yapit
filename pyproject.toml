@@ -38,6 +38,7 @@ dependencies = [
   "aioboto3>=15.5.0",
   "openai>=2.0.0",
   "av>=14.0.0",
+  "webauthn~=3.0.1",
 ]
 
 [project.optional-dependencies]
