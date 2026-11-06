@@ -25,12 +25,25 @@ dev-ci: down
 down:
 	$(DEV_COMPOSE) --profile stripe down -v --remove-orphans
 
-self-host:
+# Settings has no defaults, so a key added to the example since .env.selfhost was copied
+# stops the gateway at startup; name the missing keys here instead.
+check-selfhost-env:
+	@test -f .env.selfhost || { echo "Error: no .env.selfhost. Run 'cp .env.selfhost.example .env.selfhost' first."; exit 1; }
+	@missing=$$(comm -23 <(grep -oE '^[A-Z][A-Z0-9_]*=' .env.selfhost.example | tr -d = | sort -u) \
+	                     <(grep -oE '^[A-Z][A-Z0-9_]*=' .env.selfhost | tr -d = | sort -u)); \
+	if [ -n "$$missing" ]; then \
+		echo "Error: .env.selfhost lacks keys that .env.selfhost.example has (added by an upgrade, see CHANGELOG.md):"; \
+		echo "$$missing" | sed 's/^/  /'; \
+		echo "Copy them over from .env.selfhost.example; for a key you don't use, leave the value as the example has it."; \
+		exit 1; \
+	fi
+
+self-host: check-selfhost-env
 	$(SELFHOST_COMPOSE) up -d --build
 
 # Boot from scratch and verify: healthchecks, a gateway restart (seeding must be
 # idempotent against the already-seeded DB), then the smoke checks.
-self-host-ci:
+self-host-ci: check-selfhost-env
 	$(SELFHOST_COMPOSE) up -d --build --wait --wait-timeout 900
 	$(SELFHOST_COMPOSE) restart gateway
 	timeout 120 bash -c 'until curl -fsS http://localhost:8000/health; do sleep 2; done'
