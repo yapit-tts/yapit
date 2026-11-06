@@ -48,7 +48,10 @@ export default function SignInPage() {
 				await signInWithPasskey({ autofill: true, signal: controller.signal });
 				await signedIn();
 			} catch (err) {
-				if (!controller.signal.aborted) setError(passkeyErrorMessage(err));
+				// The browser failing a request nobody asked for (no authenticator, unsupported) is not news;
+				// the server refusing a passkey the person picked is
+				if (controller.signal.aborted || err instanceof DOMException) return;
+				setError(passkeyErrorMessage(err));
 			}
 		})();
 		return () => controller.abort();
