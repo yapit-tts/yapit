@@ -11,7 +11,8 @@ from yapit.gateway import domain_models  # noqa: F401
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # uvicorn reports a failed startup on a logger that exists by now
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = SQLModel.metadata
 
