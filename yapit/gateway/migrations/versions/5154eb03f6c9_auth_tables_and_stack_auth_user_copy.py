@@ -13,6 +13,12 @@ sharing an email (case-insensitively) cannot both hold it; the one active most
 recently keeps it. Both kinds of skip are logged with their ids. The next
 revision drops Stack Auth's tables.
 
+Before v1.0.0 every selfhost database was initialised from a 2025 dump of Stack
+Auth's schema, auth or no auth. That schema lacks columns the copy reads, and
+holds only Stack Auth's internal user, so such a database has nothing to copy.
+With real users on a schema the copy cannot read, the revision fails rather than
+letting the next one drop them.
+
 Revision ID: 5154eb03f6c9
 Revises: c7d8e9f0a1b2
 Create Date: 2026-10-28
@@ -32,9 +38,13 @@ depends_on: str | Sequence[str] | None = None
 
 STACK_AUTH_TABLES = ("ProjectUser", "ContactChannel", "ProjectUserOAuthAccount")
 
-# Users of non-internal projects who signed up (Stack Auth's anonymous users never did),
-# each with its primary email when it has one.
-STACK_AUTH_USERS = """
+# Users of non-internal projects who signed up (Stack Auth's anonymous users never did).
+SIGNED_UP = """(pu."mirroredProjectId" <> 'internal' AND NOT pu."isAnonymous")"""
+
+STACK_AUTH_USER_COUNT = f"""SELECT count(*) FROM "ProjectUser" pu WHERE {SIGNED_UP}"""
+
+# Each signed-up user, with its primary email when it has one.
+STACK_AUTH_USERS = f"""
     SELECT pu."projectUserId"::text AS id,
            lower(trim(cc.value)) AS email,
            pu."displayName" AS name,
@@ -44,7 +54,7 @@ STACK_AUTH_USERS = """
     LEFT JOIN "ContactChannel" cc
       ON cc."tenancyId" = pu."tenancyId" AND cc."projectUserId" = pu."projectUserId"
      AND cc.type = 'EMAIL' AND cc."isPrimary" = 'TRUE'
-    WHERE pu."mirroredProjectId" <> 'internal' AND NOT pu."isAnonymous"
+    WHERE {SIGNED_UP}
 """
 
 
@@ -106,7 +116,8 @@ def upgrade() -> None:
     # ### end Alembic commands ###
 
     bind = op.get_bind()
-    if all(sa.inspect(bind).has_table(table) for table in STACK_AUTH_TABLES):
+    has_stack_auth = all(sa.inspect(bind).has_table(table) for table in STACK_AUTH_TABLES)
+    if has_stack_auth and bind.execute(sa.text(STACK_AUTH_USER_COUNT)).scalar():
         copy_stack_auth_users(bind)
 
 

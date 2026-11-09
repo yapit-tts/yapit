@@ -2,10 +2,12 @@
 and then drop Stack Auth's data.
 """
 
+import logging
 import uuid
 
 import psycopg
 import pytest
+import sqlalchemy as sa
 from alembic import command, config
 from testcontainers.postgres import PostgresContainer
 
@@ -109,6 +111,11 @@ STACK_AUTH_REST_OF_SCHEMA = "\n".join(
         ),
     ]
 )
+
+# The Stack Auth schema every selfhost database started from before v1.0.0, with or without auth: a dump from 2025.
+STACK_AUTH_SCHEMA_OF_THE_SELFHOST_DUMP = STACK_AUTH_SCHEMA.replace(
+    '    "lastActiveAt" timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,\n', ""
+).replace('"configOAuthProviderId"', '"oauthProviderConfigId"')
 
 
 @pytest.fixture(scope="module")
@@ -290,3 +297,44 @@ def test_revision_without_stack_auth_tables_only_creates_the_auth_tables(databas
             for table in ("useraccount", "oauthidentity", "authsession", "emailchallenge")
         }
     assert counts == {table: (0,) for table in counts}
+
+
+def add_dump_user(conn, user_id: str, *, project: str) -> None:
+    conn.execute(
+        'INSERT INTO "ProjectUser" ("tenancyId", "projectUserId", "mirroredProjectId", "mirroredBranchId")'
+        " VALUES (%s, %s, %s, %s)",
+        (INTERNAL_TENANCY, user_id, project, "main"),
+    )
+
+
+def test_selfhost_that_only_holds_the_stack_auth_dump_upgrades_with_no_users_to_copy(database):
+    with psycopg.connect(database, autocommit=True) as conn:
+        conn.execute(STACK_AUTH_SCHEMA_OF_THE_SELFHOST_DUMP)
+        add_dump_user(conn, INTERNAL_ADMIN, project="internal")
+
+    upgrade_to_head()
+
+    with psycopg.connect(database) as conn:
+        assert conn.execute("SELECT count(*) FROM useraccount").fetchone() == (0,)
+    assert "ProjectUser" not in schema_objects(database)["tables"]
+
+
+def test_real_users_on_a_schema_the_copy_cannot_read_stop_the_upgrade_before_stack_auth_is_dropped(database):
+    with psycopg.connect(database, autocommit=True) as conn:
+        conn.execute(STACK_AUTH_SCHEMA_OF_THE_SELFHOST_DUMP)
+        add_dump_user(conn, PASSWORD_USER, project="yapit-project")
+
+    with pytest.raises(sa.exc.ProgrammingError):
+        upgrade_to_head()
+
+    with psycopg.connect(database) as conn:
+        assert conn.execute('SELECT count(*) FROM "ProjectUser"').fetchone() == (1,)
+
+
+def test_migrations_leave_uvicorn_able_to_log_a_failed_startup(database):
+    uvicorn_error = logging.getLogger("uvicorn.error")
+    uvicorn_error.disabled = False
+
+    upgrade_to_head()
+
+    assert not uvicorn_error.disabled
