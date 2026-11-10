@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.0.1 — 2026-11-10
 
 * Fixed upgrading a selfhost from before v1.0.0: its database still held the Stack Auth schema every selfhost was set up with, auth or no auth, and the v1.0.0 migration crashed on it, so the gateway never became healthy. #99
 * `make self-host` now stops before starting anything when `.env.selfhost` lacks a key that `.env.selfhost.example` has, and names each missing key.
