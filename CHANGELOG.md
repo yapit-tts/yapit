@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+* Fixed upgrading a selfhost from before v1.0.0: its database still held the Stack Auth schema every selfhost was set up with, auth or no auth, and the v1.0.0 migration crashed on it, so the gateway never became healthy. #99
+* `make self-host` now stops before starting anything when `.env.selfhost` lacks a key that `.env.selfhost.example` has, and names each missing key.
+* A migration that fails while the gateway starts now shows its traceback in the gateway log; before, the gateway died without an error.
+* Added a search button to the sidebar that opens the command palette.
+* Updated dependencies with open security alerts, among them Pillow, vite and undici in defuddle.
+
 ## v1.0.0 — 2026-10-28
 
 * **Breaking for selfhosters:** Yapit now signs people in itself, and the Stack Auth and ClickHouse containers are gone. `make self-host-auth` is removed: a multi-user selfhost is `make self-host` with `AUTH_ENABLED=true` and SMTP settings (`docs/auth.md`, Multi-user selfhost). The gateway refuses to start until `.env.selfhost` holds `APP_URL`, `SMTP_*`, `GOOGLE_*` and `GITHUB_*`, empty where unused; copy them from `.env.selfhost.example`. On a database that ran Stack Auth, the upgrade copies its users with their ids and then drops Stack Auth's tables, so take a `pg_dump` first. Everyone signs in once more.
