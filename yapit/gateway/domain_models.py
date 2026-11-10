@@ -8,7 +8,7 @@ from typing import Any
 
 from pydantic import BaseModel as PydanticModel
 from pydantic import field_validator
-from sqlalchemy import Index, UniqueConstraint
+from sqlalchemy import Index, LargeBinary, UniqueConstraint
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.types import JSON
 from sqlmodel import TEXT, Column, DateTime, Field, Relationship, SQLModel
@@ -454,6 +454,24 @@ class OAuthIdentity(SQLModel, table=True):
         default_factory=lambda: datetime.now(tz=dt.UTC),
         sa_column=Column(DateTime(timezone=True), nullable=False),
     )
+
+
+class Passkey(SQLModel, table=True):
+    """A WebAuthn credential (a security key, or a platform or synced passkey) that signs in to a user."""
+
+    credential_id: str = Field(primary_key=True)  # base64url, as the browser reports it
+    user_id: str = Field(foreign_key="useraccount.id", ondelete="CASCADE", index=True)
+    public_key: bytes = Field(sa_column=Column(LargeBinary, nullable=False))  # COSE-encoded
+    sign_count: int  # 0 for authenticators that keep no counter, synced passkeys among them
+    transports: list[str] = Field(
+        default_factory=list, sa_column=Column(JSON().with_variant(postgresql.JSONB(), "postgresql"), nullable=False)
+    )
+    label: str
+    created: datetime = Field(
+        default_factory=lambda: datetime.now(tz=dt.UTC),
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+    last_used: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
 
 
 class AuthSessionKind(StrEnum):

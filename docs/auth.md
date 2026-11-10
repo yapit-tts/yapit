@@ -1,6 +1,6 @@
 # Auth
 
-The gateway signs people in itself (`yapit/gateway/auth/`): passwordless email sign-in, Google and GitHub sign-in, browser sessions in a cookie, and API tokens for scripts. The tables are `useraccount`, `oauthidentity`, `authsession` and `emailchallenge` (`gateway/domain_models.py`).
+The gateway signs people in itself (`yapit/gateway/auth/`): passwordless email sign-in, Google and GitHub sign-in, passkeys, browser sessions in a cookie, and API tokens for scripts. The tables are `useraccount`, `oauthidentity`, `passkey`, `authsession` and `emailchallenge` (`gateway/domain_models.py`).
 
 ## Who a request is
 
@@ -65,6 +65,18 @@ Which account an identity signs in to (`resolve_account`):
 
 A provider whose `*_CLIENT_ID` is empty is left out of `/v1/auth/session`'s `providers` and refused at `start` (404). Each provider's OAuth app registers the redirect URI `{APP_URL}/api/v1/auth/oauth/{provider}/callback`.
 
+## Passkeys
+
+`gateway/auth/passkeys.py`, routes in `api/v1/passkeys.py`; py_webauthn verifies the browser's answers. A passkey is a WebAuthn credential: a security key such as a YubiKey, or a platform or synced passkey (Touch ID, Windows Hello, iCloud Keychain, Google Password Manager).
+
+- **Adding one** needs a signed-in account (account page, Passkeys). A passkey never creates an account, and email sign-in always stays, so losing every passkey locks no one out.
+- **Signing in** needs no email: the options list no credentials, so the browser offers every passkey it holds for the site, and the sign-in page also offers them in the email field's autofill (`autocomplete="email webauthn"`, conditional mediation). The credential's id finds its `passkey` row; the `userHandle` it answers with must be its user's id.
+- Passkeys are discoverable (`residentKey: required`) and require user verification (PIN, fingerprint or face), since they replace email as the only factor.
+- Each ceremony is two requests: the options carry a challenge kept in Redis for `CEREMONY_LIFETIME` under a random `flow` id, which the answer brings back; each challenge works once.
+- The sign counter is checked only when the authenticator keeps one: synced passkeys always report 0. A counter that goes backwards is refused as a cloned key.
+- The relying party is `APP_URL`'s host, so a passkey works only on the origin it was added on (prod's do not work in dev). Browsers allow WebAuthn only over https or on `localhost`; elsewhere (`AUTH_ENABLED=false`, or a selfhost at `http://192.168.…`) the endpoints answer 404 and `/v1/auth/session` reports `passkeys: false`, which hides the passkey controls.
+- Removing a passkey stops it from signing in; the authenticator keeps its copy until it is deleted there.
+
 ## Email change
 
 `POST /v1/auth/email/change {email}` (202) mails a link and code to the new address, in an `emailchallenge` of purpose `change_email`; an address another account holds is refused (409). `/v1/auth/email/verify` with that link or code switches the account to the new address, but only in a request signed in to the account that asked (403 elsewhere, consuming nothing): otherwise whoever holds the new address could confirm it into the requester's account, and their own sign-ins would land there. Until then the account keeps its address.
@@ -77,10 +89,12 @@ Prod sends through Resend on port 587; the Hetzner firewall blocks outgoing port
 
 ## Endpoints
 
-- `GET /v1/auth/session` → always 200 `{auth_enabled, providers, user: {id, email, name, identities} | null}`; `providers` are the OAuth providers sign-in offers. The frontend's `AuthProvider` (`frontend/src/hooks/useAuthUser.tsx`) reads it on load.
+- `GET /v1/auth/session` → always 200 `{auth_enabled, providers, passkeys, user: {id, email, name, identities} | null}`; `providers` are the OAuth providers sign-in offers, `passkeys` whether passkeys work here. The frontend's `AuthProvider` (`frontend/src/hooks/useAuthUser.tsx`) reads it on load.
 - `POST /v1/auth/email/start`, `POST /v1/auth/email/verify`: above.
 - `POST /v1/auth/sign-out` → 204, deletes the session row and the cookie.
 - `GET /v1/auth/oauth/{provider}/start`, `GET /v1/auth/oauth/{provider}/callback`, `POST /v1/auth/email/change`: above.
+- `POST /v1/auth/passkeys/sign-in/options`, `POST /v1/auth/passkeys/sign-in {flow, credential}`: sign in with a passkey; the second answers like `GET /v1/auth/session`.
+- `GET /v1/auth/passkeys`, `POST /v1/auth/passkeys/register/options`, `POST /v1/auth/passkeys {flow, credential, label}` (201), `PATCH /v1/auth/passkeys/{id} {label}`, `DELETE /v1/auth/passkeys/{id}`: the user's passkeys. A passkey's id is its credential id.
 - `DELETE /v1/auth/identities/{provider}` → 204, disconnects the user's Google or GitHub account; email sign-in always stays.
 - `GET /v1/auth/tokens`, `POST /v1/auth/tokens {label}` (201; the token appears in this answer only), `DELETE /v1/auth/tokens/{id}`: the user's API tokens. A token's id is its stored hash.
 - `PATCH /v1/users/me {name}` → 204.
@@ -97,7 +111,7 @@ These are on the account page's Account card (`frontend/src/components/auth/Acco
 
 ## Account deletion
 
-`DELETE /v1/users/me` cancels Stripe subscription, deletes documents (cascades), anonymizes billing data, deletes the `useraccount` row (its sessions, API tokens and OAuth identities cascade).
+`DELETE /v1/users/me` cancels Stripe subscription, deletes documents (cascades), anonymizes billing data, deletes the `useraccount` row (its sessions, API tokens, OAuth identities and passkeys cascade).
 
 ## Multi-user selfhost
 

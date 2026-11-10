@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useSearchParams } from "react-router";
-import { Check, Copy, KeyRound, Mail } from "lucide-react";
+import { Check, Copy, Fingerprint, KeyRound, Mail } from "lucide-react";
 import { useApi } from "@/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -18,12 +18,20 @@ import {
 	verifySignIn,
 	type OAuthProvider,
 } from "@/lib/authApi";
+import {
+	addPasskey,
+	listPasskeys,
+	passkeyErrorMessage,
+	removePasskey,
+	renamePasskey,
+	type PasskeyInfo,
+} from "@/lib/passkeys";
 
 const RETURN_TO = "/account";
 
 /** Name, email, the ways to sign in, and API tokens. */
 export function AccountSettingsCard() {
-	const { user } = useAuth();
+	const { user, passkeys } = useAuth();
 	if (!user) return null;
 	return (
 		<Card className="mb-10">
@@ -38,6 +46,12 @@ export function AccountSettingsCard() {
 				</div>
 				<SectionHeading>Sign-in methods</SectionHeading>
 				<SignInMethods user={user} />
+				{passkeys && (
+					<>
+						<SectionHeading>Passkeys</SectionHeading>
+						<Passkeys />
+					</>
+				)}
 				<SectionHeading>API tokens</SectionHeading>
 				<ApiTokens />
 			</CardContent>
@@ -399,6 +413,142 @@ function ApiTokens() {
 				/>
 				<Button type="submit" size="sm" variant="outline" className="h-8 shrink-0" disabled={!label.trim()}>
 					Create token
+				</Button>
+			</form>
+			{error && <p className="mt-2 text-xs text-destructive">{error}</p>}
+		</div>
+	);
+}
+
+function Passkeys() {
+	const [passkeys, setPasskeys] = useState<PasskeyInfo[] | null>(null);
+	const [label, setLabel] = useState("");
+	const [adding, setAdding] = useState(false);
+	const [renaming, setRenaming] = useState<{ id: string; label: string } | null>(null);
+	const [confirmingRemove, setConfirmingRemove] = useState<string | null>(null);
+	const [error, setError] = useState<string | null>(null);
+
+	useEffect(() => {
+		listPasskeys()
+			.then(setPasskeys)
+			.catch((err) => setError(authErrorMessage(err)));
+	}, []);
+
+	const add = async (e: FormEvent) => {
+		e.preventDefault();
+		setAdding(true);
+		setError(null);
+		try {
+			const added = await addPasskey(label.trim());
+			setPasskeys((current) => [...(current ?? []), added]);
+			setLabel("");
+		} catch (err) {
+			setError(passkeyErrorMessage(err));
+		} finally {
+			setAdding(false);
+		}
+	};
+
+	const saveLabel = async (e: FormEvent) => {
+		e.preventDefault();
+		if (!renaming) return;
+		setError(null);
+		try {
+			await renamePasskey(renaming.id, renaming.label.trim());
+			setPasskeys((current) =>
+				(current ?? []).map((p) => (p.id === renaming.id ? { ...p, label: renaming.label.trim() } : p)),
+			);
+			setRenaming(null);
+		} catch (err) {
+			setError(authErrorMessage(err));
+		}
+	};
+
+	const remove = async (id: string) => {
+		setError(null);
+		try {
+			await removePasskey(id);
+			setPasskeys((current) => (current ?? []).filter((p) => p.id !== id));
+		} catch (err) {
+			setError(authErrorMessage(err));
+		} finally {
+			setConfirmingRemove(null);
+		}
+	};
+
+	return (
+		<div className="flex flex-col">
+			<p className="text-xs text-muted-foreground py-2">
+				Sign in with a security key, or with your device's fingerprint, face or PIN, without an email. Removing a
+				passkey here stops it from signing in; delete it on the device too to free its slot.
+			</p>
+			{passkeys?.map((p) => (
+				<div key={p.id} className="flex items-center justify-between gap-4 py-3 border-b border-border">
+					<div className="flex items-center gap-3 min-w-0">
+						<Fingerprint className="h-4 w-4 shrink-0 text-muted-foreground" />
+						{renaming?.id === p.id ? (
+							<form onSubmit={saveLabel} className="flex gap-2">
+								<Input
+									aria-label="Passkey name"
+									autoFocus
+									required
+									maxLength={100}
+									className="h-8 w-48"
+									value={renaming.label}
+									onChange={(e) => setRenaming({ id: p.id, label: e.target.value })}
+								/>
+								<Button type="submit" size="sm" variant="outline" className="h-8" disabled={!renaming.label.trim()}>
+									Save
+								</Button>
+								<Button type="button" size="sm" variant="ghost" className="h-8" onClick={() => setRenaming(null)}>
+									Cancel
+								</Button>
+							</form>
+						) : (
+							<div className="flex flex-col gap-0.5 min-w-0">
+								<button
+									type="button"
+									className="text-sm font-medium truncate text-left hover:underline"
+									title="Rename"
+									onClick={() => setRenaming({ id: p.id, label: p.label })}
+								>
+									{p.label}
+								</button>
+								<span className="text-xs text-muted-foreground">
+									Added {formatDate(p.created)} · {p.last_used ? `last used ${formatDate(p.last_used)}` : "not used yet"}
+								</span>
+							</div>
+						)}
+					</div>
+					{renaming?.id !== p.id &&
+						(confirmingRemove === p.id ? (
+							<div className="flex gap-1">
+								<Button size="sm" variant="ghost" className="h-8" onClick={() => setConfirmingRemove(null)}>
+									Keep
+								</Button>
+								<Button size="sm" variant="destructive" className="h-8" onClick={() => void remove(p.id)}>
+									Remove
+								</Button>
+							</div>
+						) : (
+							<Button size="sm" variant="outline" className="h-8" onClick={() => setConfirmingRemove(p.id)}>
+								Remove
+							</Button>
+						))}
+				</div>
+			))}
+			<form onSubmit={add} className="mt-3 flex gap-2">
+				<Input
+					aria-label="Passkey name"
+					placeholder="Passkey name, e.g. YubiKey"
+					required
+					maxLength={100}
+					className="h-8"
+					value={label}
+					onChange={(e) => setLabel(e.target.value)}
+				/>
+				<Button type="submit" size="sm" variant="outline" className="h-8 shrink-0" disabled={adding || !label.trim()}>
+					{adding ? "Waiting for the passkey…" : "Add passkey"}
 				</Button>
 			</form>
 			{error && <p className="mt-2 text-xs text-destructive">{error}</p>}

@@ -746,7 +746,7 @@ async def test_auth_disabled_makes_every_request_the_selfhost_user_without_readi
     finally:
         event.remove(engine, "before_cursor_execute", record)
 
-    assert session_state.json() == {"auth_enabled": False, "providers": [], "user": None}
+    assert session_state.json() == {"auth_enabled": False, "providers": [], "passkeys": False, "user": None}
     assert preferences.status_code == 200
     assert [r.status_code for r in sign_in_endpoints] == [404] * len(sign_in_endpoints)
     assert statements, "the preferences write should have reached the database"
