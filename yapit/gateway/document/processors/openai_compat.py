@@ -7,6 +7,7 @@ most VLMs don't accept native PDF.
 
 import asyncio
 import base64
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 import openai
@@ -77,9 +78,16 @@ class OpenAIExtractor(VisionExtractor):
         prompt_path: Path,
         redis: Redis,
         image_storage: ImageStorage,
+        on_out_of_credit: Callable[[], Awaitable[None]] | None = None,
         max_tokens: int = 8192,
     ):
-        super().__init__(model=model, prompt_path=prompt_path, redis=redis, image_storage=image_storage)
+        super().__init__(
+            model=model,
+            prompt_path=prompt_path,
+            redis=redis,
+            image_storage=image_storage,
+            on_out_of_credit=on_out_of_credit,
+        )
         self._client = openai.AsyncOpenAI(base_url=base_url, api_key=api_key)
         self._max_tokens = max_tokens
 

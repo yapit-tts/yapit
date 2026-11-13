@@ -65,6 +65,9 @@ def extractor_kwargs(prompt_file, tmp_path):
     }
 
 
+DEPLETED = genai_errors.ClientError(
+    402, {"error": {"code": 402, "message": "prepayment credits are depleted", "status": "RESOURCE_EXHAUSTED"}}
+)
 GOOD_RESULT = VisionCallResult(text="# Hello\n\nWorld", input_tokens=100, output_tokens=50)
 PDF_CONTENT = Path("tests/fixtures/documents/minimal.pdf").read_bytes()
 
@@ -171,16 +174,38 @@ class TestErrorHandling:
 
     @pytest.mark.asyncio
     async def test_provider_status_carried_on_failed_page(self, extractor_kwargs):
-        depleted = genai_errors.ClientError(
-            402, {"error": {"code": 402, "message": "prepayment credits are depleted", "status": "RESOURCE_EXHAUSTED"}}
-        )
-        ext = FailingExtractor(error=depleted, **extractor_kwargs)
+        ext = FailingExtractor(error=DEPLETED, **extractor_kwargs)
 
         with patch("yapit.gateway.document.processors.base.prepare_page", return_value=fake_prepared_page()):
             results = await collect(ext.extract(PDF_CONTENT, "application/pdf", "hash1"))
 
         assert results[0].page is None
         assert results[0].error_status == 402
+
+    @pytest.mark.asyncio
+    async def test_out_of_credit_raises_alarm(self, extractor_kwargs):
+        on_out_of_credit = AsyncMock()
+        ext = FailingExtractor(error=DEPLETED, on_out_of_credit=on_out_of_credit, **extractor_kwargs)
+
+        results = await collect(ext.extract(b"png", "image/png", "hash1"))
+
+        assert results[0].error_status == 402
+        on_out_of_credit.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_other_failures_raise_no_alarm(self, extractor_kwargs):
+        on_out_of_credit = AsyncMock()
+        ext = FailingExtractor(
+            error=genai_errors.ServerError(503, {"error": {"code": 503, "message": "overloaded"}}),
+            on_out_of_credit=on_out_of_credit,
+            **extractor_kwargs,
+        )
+
+        with patch("yapit.gateway.document.processors.base.prepare_page", return_value=fake_prepared_page()):
+            results = await collect(ext.extract(PDF_CONTENT, "application/pdf", "hash1"))
+
+        assert results[0].error_status == 503
+        on_out_of_credit.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_image_error_returns_failed_page_result(self, extractor_kwargs):

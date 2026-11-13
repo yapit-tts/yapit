@@ -126,6 +126,8 @@ Automated analysis via `make report`:
 4. Saves the full report to `~/logs/yapit-reports/` and records the run in `~/logs/runs/yapit-health-report.jsonl`
 5. Notifies (email, via the dotfiles `alert-send`) only when the report opened with ⚠️ issues, or when its status line could not be read at all — a green day and an anomaly note are read from the laptop's yapit dashboard instead. `scripts/report.sh --classify < report.md` prints the verdict that decides this.
 
+The weekly report is too slow for an outage only the operator can end. For those the gateway emails `OPS_ALERT_EMAIL` itself, through the same SMTP settings as sign-in emails, at most once an hour per outage (`yapit/gateway/ops_alert.py`). Today that is one outage: the AI Transform provider answering HTTP 402, out of credit.
+
 ```bash
 make sync-logs        # rsync + decompress logs from prod
 make sync-data        # sync metrics + logs
