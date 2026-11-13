@@ -1091,9 +1091,15 @@ async def _run_extraction(
             return
 
         if not extraction_result.pages:
+            error = (
+                "AI Transform is unavailable right now. Turn it off to import the document without it, "
+                "or try again later."
+                if extraction_result.provider_out_of_credit
+                else "Document extraction failed. Please try again later."
+            )
             await redis.set(
                 result_key,
-                json.dumps({"error": "Document extraction failed. Please try again later."}),
+                json.dumps({"error": error}),
                 ex=ASYNC_EXTRACTION_RESULT_TTL,
             )
             return

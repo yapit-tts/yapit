@@ -29,6 +29,7 @@ class DocumentExtractionResult(BaseModel):
     pages: dict[int, ExtractedPage]
     extraction_method: str
     failed_pages: list[int] = []
+    provider_out_of_credit: bool = False
 
 
 class CachedDocument(BaseModel):
@@ -65,6 +66,7 @@ class PageResult:
     thoughts_tokens: int
     is_fallback: bool
     cancelled: bool
+    error_status: int | None = None  # HTTP status of the provider call that failed this page
 
 
 @dataclass(frozen=True)

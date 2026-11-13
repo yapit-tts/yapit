@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from google.genai import errors as genai_errors
 
 from yapit.contracts import DetectedFigure
 from yapit.gateway.document.processors.base import VisionCallResult, VisionExtractor
@@ -167,6 +168,19 @@ class TestErrorHandling:
         assert len(results) == 1
         assert results[0].page is None
         assert results[0].cancelled is False
+
+    @pytest.mark.asyncio
+    async def test_provider_status_carried_on_failed_page(self, extractor_kwargs):
+        depleted = genai_errors.ClientError(
+            402, {"error": {"code": 402, "message": "prepayment credits are depleted", "status": "RESOURCE_EXHAUSTED"}}
+        )
+        ext = FailingExtractor(error=depleted, **extractor_kwargs)
+
+        with patch("yapit.gateway.document.processors.base.prepare_page", return_value=fake_prepared_page()):
+            results = await collect(ext.extract(PDF_CONTENT, "application/pdf", "hash1"))
+
+        assert results[0].page is None
+        assert results[0].error_status == 402
 
     @pytest.mark.asyncio
     async def test_image_error_returns_failed_page_result(self, extractor_kwargs):
