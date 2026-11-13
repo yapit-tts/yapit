@@ -43,7 +43,7 @@ async def fake_extractor(pages_to_yield: list[tuple[int, str]]):
         )
 
 
-async def failing_extractor(fail_pages: set[int], total_pages: int):
+async def failing_extractor(fail_pages: set[int], total_pages: int, error_status: int | None = None):
     """Fake extractor where specified pages fail."""
     for page_idx in range(total_pages):
         if page_idx in fail_pages:
@@ -55,6 +55,7 @@ async def failing_extractor(fail_pages: set[int], total_pages: int):
                 thoughts_tokens=0,
                 is_fallback=False,
                 cancelled=False,
+                error_status=error_status,
             )
         else:
             yield PageResult(
@@ -243,6 +244,22 @@ class TestFailedPages:
 
         assert set(result.pages.keys()) == {0, 2}
         assert result.failed_pages == [1]
+        assert result.provider_out_of_credit is False
+
+    @pytest.mark.asyncio
+    async def test_flags_provider_out_of_credit(self, mock_cache):
+        result = await process_with_billing(
+            config=make_config(),
+            extractor=failing_extractor(fail_pages={0, 1}, total_pages=2, error_status=402),
+            user_id="user-1",
+            content_type="application/pdf",
+            content_hash="abc123",
+            total_pages=2,
+            extraction_cache=mock_cache,
+        )
+
+        assert result.pages == {}
+        assert result.provider_out_of_credit is True
 
 
 class TestCancellation:

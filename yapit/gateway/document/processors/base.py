@@ -254,13 +254,14 @@ class VisionExtractor(ABC):
             result = await self._call_api_for_page(page.page_bytes, prompt, page_idx, content_hash, user_id)
         except Exception as e:
             duration_ms = int((time.monotonic() - start_time) * 1000)
+            status_code = getattr(e, "code", getattr(e, "status_code", None))
             log.error(f"Page {page_idx + 1} failed: {e}")
             await log_event(
                 "page_extraction_error",
                 processor_slug=self._model,
                 page_idx=page_idx,
                 duration_ms=duration_ms,
-                status_code=getattr(e, "code", getattr(e, "status_code", None)),
+                status_code=status_code,
                 user_id=user_id,
                 data={"error": str(e), "content_hash": content_hash},
             )
@@ -272,6 +273,7 @@ class VisionExtractor(ABC):
                 thoughts_tokens=0,
                 is_fallback=False,
                 cancelled=False,
+                error_status=status_code,
             )
 
         duration_ms = int((time.monotonic() - start_time) * 1000)

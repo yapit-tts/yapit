@@ -108,6 +108,7 @@ async def process_with_billing(
     # 3. Extract and cache pages
     fresh_pages: dict[int, ExtractedPage] = {}
     failed_pages: list[int] = []
+    provider_out_of_credit = False
     billing_records: list[dict] = []
 
     async for result in extractor:
@@ -117,6 +118,7 @@ async def process_with_billing(
 
         if result.page is None:
             failed_pages.append(result.page_idx)
+            provider_out_of_credit |= result.error_status == 402
             continue
 
         fresh_pages[result.page_idx] = result.page
@@ -169,6 +171,7 @@ async def process_with_billing(
         pages=sorted_pages,
         extraction_method=config.slug,
         failed_pages=failed_pages,
+        provider_out_of_credit=provider_out_of_credit,
     )
 
 
