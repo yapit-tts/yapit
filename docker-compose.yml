@@ -88,7 +88,9 @@ services:
       PROXY_URL: http://smokescreen:4750
     expose: ["8001"]
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://localhost:8001/health').then(r => { if (!r.ok) process.exit(1) })"]
+      # CMD-SHELL, not CMD: podman before 5.8 splits a CMD test's arguments on whitespace
+      # when compose reaches it through its Docker API.
+      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:8001/health').then(r => { if (!r.ok) process.exit(1) })\""]
       start_period: 30s
       start_interval: 1s
       interval: 30s
@@ -123,7 +125,8 @@ services:
       - worker-net
     expose: ["8000"]
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()"]
+      # CMD-SHELL for podman, as for defuddle above.
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()\""]
       start_period: 80s
       start_interval: 1s
       interval: 30s
