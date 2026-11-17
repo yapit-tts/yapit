@@ -10,7 +10,7 @@ from yapit.gateway.auth.mailer import Email, MailDeliveryError, Mailer
 OPS_ALERT_COOLDOWN_S = 3600
 
 
-async def send_ops_alert(redis: Redis, mailer: Mailer, to: str | None, key: str, subject: str, text: str) -> None:
+async def send_ops_alert(redis: Redis, mailer: Mailer, to: str, key: str, subject: str, text: str) -> None:
     """Email the operator, at most once an hour per key.
 
     Every request that hits the outage calls this; the first one of the hour sends

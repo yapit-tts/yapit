@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     smtp_username: str
     smtp_password: str
     smtp_sender: str
-    ops_alert_email: str | None = None  # unset: outages that need the operator are only logged
+    ops_alert_email: str  # empty: outages that need the operator are only logged
 
     # an empty client id hides the provider
     google_client_id: str

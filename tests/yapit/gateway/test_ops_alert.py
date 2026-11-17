@@ -57,7 +57,7 @@ async def test_each_key_has_its_own_cooldown():
 async def test_no_recipient_sends_nothing():
     redis, mailer = FakeRedis(), RecordingMailer()
 
-    await alert(redis, mailer, to=None)
+    await alert(redis, mailer, to="")
 
     assert mailer.sent == []
     assert redis.keys == set()
