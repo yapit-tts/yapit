@@ -132,7 +132,7 @@ uv run python scripts/create_user.py --email you@example.org --label cli \
   --database-url postgresql+asyncpg://yapit:yapit@localhost:5432/yapit
 ```
 
-The gateway refuses to start while any of `APP_URL`, `SMTP_*`, `GOOGLE_*` and `GITHUB_*` is missing (empty is fine) from `.env.selfhost`, since `Settings` has no defaults. An `.env.selfhost` from before these variables existed needs them copied in from `.env.selfhost.example`; `make self-host` names any key the example has and `.env.selfhost` lacks, before it starts anything.
+The gateway refuses to start while any of `APP_URL`, `SMTP_*`, `GOOGLE_*` and `GITHUB_*` is missing (empty is fine) from `.env.selfhost`, since `Settings` has no defaults. `make self-host` appends any key the example has and `.env.selfhost` lacks, with the example's value, before it starts anything, so an `.env.selfhost` from an older version keeps starting.
 
 ## Users migrated from Stack Auth
 

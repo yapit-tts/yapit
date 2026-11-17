@@ -3,7 +3,7 @@
 import asyncio
 import time
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -49,11 +49,26 @@ class VisionExtractor(ABC):
     - _call_api_for_image: encode image + call API + parse response
     """
 
-    def __init__(self, model: str, prompt_path: Path, redis: Redis, image_storage: ImageStorage):
+    def __init__(
+        self,
+        model: str,
+        prompt_path: Path,
+        redis: Redis,
+        image_storage: ImageStorage,
+        on_out_of_credit: Callable[[], Awaitable[None]] | None = None,
+    ):
         self._model = model
         self._prompt = prompt_path.read_text().strip()
         self._redis = redis
         self._image_storage = image_storage
+        self._on_out_of_credit = on_out_of_credit
+
+    async def provider_failed(self, error: Exception) -> int | None:
+        """Return the HTTP status of a failed provider call, raising the out-of-credit alarm on a 402."""
+        status = getattr(error, "code", getattr(error, "status_code", None))
+        if status == 402 and self._on_out_of_credit:
+            await self._on_out_of_credit()
+        return status
 
     # --- Public interface ---
 
@@ -120,13 +135,14 @@ class VisionExtractor(ABC):
             result = await self._call_api_for_image(content, content_type, base_prompt, content_hash, user_id)
         except Exception as e:
             duration_ms = int((time.monotonic() - start_time) * 1000)
+            status_code = await self.provider_failed(e)
             log.error(f"Image extraction failed: {e}")
             await log_event(
                 "page_extraction_error",
                 processor_slug=self._model,
                 page_idx=0,
                 duration_ms=duration_ms,
-                status_code=getattr(e, "code", getattr(e, "status_code", None)),
+                status_code=status_code,
                 user_id=user_id,
                 data={"error": str(e), "content_hash": content_hash},
             )
@@ -138,6 +154,7 @@ class VisionExtractor(ABC):
                 thoughts_tokens=0,
                 is_fallback=False,
                 cancelled=False,
+                error_status=status_code,
             )
 
         duration_ms = int((time.monotonic() - start_time) * 1000)
@@ -254,7 +271,7 @@ class VisionExtractor(ABC):
             result = await self._call_api_for_page(page.page_bytes, prompt, page_idx, content_hash, user_id)
         except Exception as e:
             duration_ms = int((time.monotonic() - start_time) * 1000)
-            status_code = getattr(e, "code", getattr(e, "status_code", None))
+            status_code = await self.provider_failed(e)
             log.error(f"Page {page_idx + 1} failed: {e}")
             await log_event(
                 "page_extraction_error",

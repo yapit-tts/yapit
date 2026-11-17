@@ -1,6 +1,7 @@
 """Gemini-based document extraction with YOLO figure detection."""
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 import pymupdf
@@ -85,8 +86,15 @@ class GeminiExtractor(VisionExtractor):
         resolution: str = "high",
         media_first: bool = False,
         thinking_level: types.ThinkingLevel = types.ThinkingLevel.MINIMAL,
+        on_out_of_credit: Callable[[], Awaitable[None]] | None = None,
     ):
-        super().__init__(model=model, prompt_path=prompt_path, redis=redis, image_storage=image_storage)
+        super().__init__(
+            model=model,
+            prompt_path=prompt_path,
+            redis=redis,
+            image_storage=image_storage,
+            on_out_of_credit=on_out_of_credit,
+        )
         self._client = genai.Client(api_key=api_key)
         self._resolution = RESOLUTION_MAP[resolution]
         self._media_first = media_first

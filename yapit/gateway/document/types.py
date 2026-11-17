@@ -126,6 +126,8 @@ class BatchExtractor(Extractor, Protocol):
     @property
     def client(self) -> Any: ...
 
+    async def provider_failed(self, error: Exception) -> int | None: ...
+
 
 @dataclass
 class ProcessedDocument:

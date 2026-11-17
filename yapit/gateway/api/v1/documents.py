@@ -938,15 +938,19 @@ async def _prepare_and_submit_batch(
     except Exception as e:
         logger.exception(f"Batch preparation failed for {content_hash}")
         await log_error(f"Batch preparation failed: {e}", content_hash=content_hash, user_id=user_id)
+        out_of_credit = await ai_extractor.provider_failed(e) == 402
         await release_reservation(redis, user_id, content_hash)
         job = await get_batch_job(redis, content_hash)
         if job:
             job.status = BatchJobStatus.FAILED
-            job.error = "Batch preparation failed. Please try again."
+            job.error = AI_OUT_OF_CREDIT_MESSAGE if out_of_credit else "Batch preparation failed. Please try again."
             await save_batch_job(redis, job)
 
 
 ASYNC_EXTRACTION_RESULT_TTL = 3600
+AI_OUT_OF_CREDIT_MESSAGE = (
+    "AI Transform is unavailable right now. Turn it off to import the document without it, or try again later."
+)
 
 
 def _async_extraction_key(extraction_id: str) -> str:
@@ -1092,8 +1096,7 @@ async def _run_extraction(
 
         if not extraction_result.pages:
             error = (
-                "AI Transform is unavailable right now. Turn it off to import the document without it, "
-                "or try again later."
+                AI_OUT_OF_CREDIT_MESSAGE
                 if extraction_result.provider_out_of_credit
                 else "Document extraction failed. Please try again later."
             )

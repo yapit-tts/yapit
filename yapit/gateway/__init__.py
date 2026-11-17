@@ -44,6 +44,7 @@ from yapit.gateway.logging_config import (
 from yapit.gateway.markdown.transformer import DocumentTransformer
 from yapit.gateway.metrics import init_metrics_db, start_metrics_writer, stop_metrics_writer
 from yapit.gateway.openai_tts_adapter import OpenAITTSAdapter
+from yapit.gateway.ops_alert import send_ops_alert
 from yapit.gateway.rate_limit import limiter
 from yapit.gateway.result_consumer import run_result_consumer
 from yapit.gateway.storage import ImageStorage
@@ -85,6 +86,21 @@ async def lifespan(app: FastAPI):
     init_defuddle_client(settings.defuddle_service_url)
     app.state.mailer = create_mailer(settings)
 
+    async def alert_ai_out_of_credit() -> None:
+        await send_ops_alert(
+            app.state.redis_client,
+            app.state.mailer,
+            settings.ops_alert_email,
+            key="ai-out-of-credit",
+            subject=f"yapit: AI Transform is down, {settings.ai_processor} is out of credit",
+            text=(
+                f"The {settings.ai_processor} API answered HTTP 402: the account has no credit left. "
+                "Every AI Transform upload fails until it is topped up "
+                "(Gemini: https://aistudio.google.com/billing, Buy credits). "
+                "This alert repeats at most once an hour while uploads keep failing."
+            ),
+        )
+
     # Document extractors
     if settings.ai_processor == "gemini":
         app.state.ai_extractor_config = create_gemini_config()
@@ -93,6 +109,7 @@ async def lifespan(app: FastAPI):
             redis=app.state.redis_client,
             image_storage=app.state.image_storage,
             prompt_path=EXTRACTION_PROMPT_PATH,
+            on_out_of_credit=alert_ai_out_of_credit,
         )
         logger.info("AI extractor: gemini")
     elif settings.ai_processor == "openai":
@@ -107,6 +124,7 @@ async def lifespan(app: FastAPI):
             prompt_path=EXTRACTION_PROMPT_PATH,
             redis=app.state.redis_client,
             image_storage=app.state.image_storage,
+            on_out_of_credit=alert_ai_out_of_credit,
         )
         logger.info(f"AI extractor: openai ({settings.ai_processor_model} @ {settings.ai_processor_base_url})")
     else:
