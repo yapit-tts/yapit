@@ -14,3 +14,8 @@ dependencies = [
   "loguru~=0.7.3",
   "PyMuPDF~=1.28.2",
 ]
+
+[tool.uv]
+# The image is built only for these, and uv skips any release without a wheel for each of them.
+environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
+required-environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]

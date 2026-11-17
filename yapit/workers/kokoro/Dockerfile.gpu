@@ -11,8 +11,8 @@ RUN useradd -m -u 1000 appuser && mkdir -p /models /app && chown appuser:appuser
 WORKDIR /app
 USER appuser
 
-COPY --chown=appuser:appuser yapit/workers/kokoro/pyproject.gpu.toml ./pyproject.toml
-RUN uv sync
+COPY --chown=appuser:appuser yapit/workers/kokoro/gpu/pyproject.toml yapit/workers/kokoro/gpu/uv.lock ./
+RUN uv sync --locked
 
 ENV HF_HOME=/models
 RUN uv run python -c "from huggingface_hub import snapshot_download; snapshot_download('hexgrad/Kokoro-82M');"

@@ -23,6 +23,10 @@ curl -s https://raw.githubusercontent.com/microsoft/playwright/v<tag>/packages/p
 
 Verify all four extraction paths against the running container, not just one: static, static-bot (`github.com`), Playwright (any `text/plain` URL, e.g. an RFC or a raw GitHub file — the static path rejects the content type, Chromium renders it), and `html-direct` (POST `html` instead of `url`).
 
+## Worker Images
+
+Each worker image (`yapit/workers/{kokoro,yolo}/{cpu,gpu}/`) is its own uv project with a committed `uv.lock`, and its Dockerfile runs `uv sync --locked`, so a build installs exactly what was locked and a stale lock fails the build. To change a worker's dependencies, edit its `pyproject.toml` and run `uv lock` in that directory. `required-environments` lists the platforms the image is built for, so `uv lock` passes over any release without a wheel for each of them.
+
 ## Adding New Dependencies
 
 When adding new packages, verify license compatibility with AGPL-3.0. See [[licensing]] for verification commands and compatible licenses.
