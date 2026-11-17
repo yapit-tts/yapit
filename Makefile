@@ -26,8 +26,9 @@ down:
 	$(DEV_COMPOSE) --profile stripe down -v --remove-orphans
 
 # Settings has no defaults, so a key added to the example since .env.selfhost was copied would
-# stop the gateway at startup. Missing keys are appended with the example's value instead, which
-# holds only because every value in .env.selfhost.example is safe to run with unchanged.
+# stop the gateway at startup. Missing keys are appended with the example's value. A key with no
+# safe value has SET_ME as its value in the example; any SET_ME left in .env.selfhost, fresh copy
+# or appended, stops here and is named, before anything starts.
 sync-selfhost-env:
 	@test -f .env.selfhost || { echo "Error: no .env.selfhost. Run 'cp .env.selfhost.example .env.selfhost' first."; exit 1; }
 	@missing=$$(comm -23 <(grep -oE '^[A-Z][A-Z0-9_]*=' .env.selfhost.example | tr -d = | sort -u) \
@@ -37,6 +38,12 @@ sync-selfhost-env:
 		  for key in $$missing; do grep -m1 "^$$key=" .env.selfhost.example; done; } >> .env.selfhost; \
 		echo "Added to .env.selfhost with the example's values (CHANGELOG.md says what each one is for):"; \
 		echo "$$missing" | sed 's/^/  /'; \
+	fi
+	@unset_keys=$$(grep -oE '^[A-Z][A-Z0-9_]*=SET_ME' .env.selfhost | cut -d= -f1); \
+	if [ -n "$$unset_keys" ]; then \
+		echo "Error: .env.selfhost has keys still set to SET_ME; give them values (comments in .env.selfhost.example say what):"; \
+		echo "$$unset_keys" | sed 's/^/  /'; \
+		exit 1; \
 	fi
 
 self-host: sync-selfhost-env
