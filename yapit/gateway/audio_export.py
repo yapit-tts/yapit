@@ -95,8 +95,8 @@ class _Build:
 _builds: dict[str, _Build] = {}
 
 
-def export_key(fmt: ExportFormat, title: str, chapters: list[Chapter]) -> str:
-    content = json.dumps([fmt, title, [[c.title, c.variant_hashes] for c in chapters]])
+def export_key(fmt: ExportFormat, chapters: list[Chapter]) -> str:
+    content = json.dumps([fmt, [[c.title, c.variant_hashes] for c in chapters]])
     return hashlib.sha256(content.encode()).hexdigest()
 
 
@@ -122,11 +122,10 @@ async def request_export(
     user_id: str,
     document_id: uuid.UUID,
     fmt: ExportFormat,
-    title: str,
     chapters: list[Chapter],
 ) -> AudioExportState:
     """The export's state, starting its build if no file is stored. Raises AudioNotCached if a block's audio is missing."""
-    key = export_key(fmt, title, chapters)
+    key = export_key(fmt, chapters)
     if stored_export(export_dir, key, fmt):
         return AudioExportState(key=key, format=fmt, status=ExportStatus.ready)
     if build := _builds.get(key):
@@ -138,7 +137,7 @@ async def request_export(
     if missing:
         raise AudioNotCached(f"{missing} of the {len(hashes)} blocks have no audio prepared in this voice")
 
-    task = asyncio.create_task(_build(redis, cache, export_dir, key, fmt, title, chapters))
+    task = asyncio.create_task(_build(redis, cache, export_dir, key, fmt, chapters))
     _builds[key] = _Build(task=task, waiters={(user_id, document_id)})
     return AudioExportState(key=key, format=fmt, status=ExportStatus.building)
 
@@ -161,7 +160,7 @@ def sweep_exports(export_dir: Path) -> None:
 
 
 async def _build(
-    redis: Redis, cache: Cache, export_dir: Path, key: str, fmt: ExportFormat, title: str, chapters: list[Chapter]
+    redis: Redis, cache: Cache, export_dir: Path, key: str, fmt: ExportFormat, chapters: list[Chapter]
 ) -> None:
     loop = asyncio.get_running_loop()
 
@@ -173,7 +172,7 @@ async def _build(
     try:
         export_dir.mkdir(parents=True, exist_ok=True)
         await loop.run_in_executor(
-            cpu_executor, write_audio_file, export_path(export_dir, key, fmt), fmt, title, chapters, fetch
+            cpu_executor, write_audio_file, export_path(export_dir, key, fmt), fmt, chapters, fetch
         )
         logger.info(f"Audio export {key[:12]} ({fmt}) built in {time.monotonic() - started:.1f}s")
     except AudioNotCached as e:
@@ -200,7 +199,7 @@ async def _fetch_audio(redis: Redis, cache: Cache, hashes: list[str]) -> list[by
 
 
 def write_audio_file(
-    path: Path, fmt: ExportFormat, title: str, chapters: list[Chapter], fetch: Callable[[list[str]], list[bytes]]
+    path: Path, fmt: ExportFormat, chapters: list[Chapter], fetch: Callable[[list[str]], list[bytes]]
 ) -> None:
     """Decode the chapters' Ogg Opus blocks in order and encode them as one stream, then add the chapters.
 
@@ -212,7 +211,7 @@ def write_audio_file(
     encoded, chaptered = path.parent / f"{scratch}.encoded", path.parent / f"{scratch}.chaptered"
     try:
         marks = _encode(encoded, ENCODINGS[fmt], chapters, fetch)
-        _remux_with_chapters(encoded, chaptered, ENCODINGS[fmt], title, marks)
+        _remux_with_chapters(encoded, chaptered, ENCODINGS[fmt], marks)
         os.replace(chaptered, path)
     finally:
         encoded.unlink(missing_ok=True)
@@ -295,12 +294,11 @@ def _head(frame: av.AudioFrame, samples: int) -> av.AudioFrame:
     return head
 
 
-def _remux_with_chapters(src_path: Path, dst_path: Path, encoding: Encoding, title: str, marks: list[dict]) -> None:
+def _remux_with_chapters(src_path: Path, dst_path: Path, encoding: Encoding, marks: list[dict]) -> None:
     with av.open(str(src_path), "r") as src:
         src_stream = src.streams.audio[0]
         dst = av.open(str(dst_path), "w", format=encoding.container)
         dst_stream = dst.add_stream_from_template(src_stream)
-        dst.metadata["title"] = title
         dst.set_chapters(
             [
                 {

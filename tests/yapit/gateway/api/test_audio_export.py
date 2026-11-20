@@ -134,13 +134,12 @@ async def test_an_export_is_the_ticked_sections_in_their_order_with_a_chapter_ea
 
 async def test_a_second_export_within_a_day_is_the_stored_file(client, app, book):
     first = await exported(client, app, book, [(0, 5, "Whole book")])
-    stored = list(Path(app.dependency_overrides[get_settings]().audio_export_dir).iterdir())
 
     response = await export(client, book, [(0, 5, "Whole book")])
+    again = await client.get(f"/v1/documents/{book}/audio-export/{response.json()['key']}.m4b")
 
     assert response.json()["status"] == "ready"
-    assert await exported(client, app, book, [(0, 5, "Whole book")]) == first
-    assert list(Path(app.dependency_overrides[get_settings]().audio_export_dir).iterdir()) == stored
+    assert again.content == first
 
 
 async def test_an_export_older_than_a_day_is_gone(client, app, book):

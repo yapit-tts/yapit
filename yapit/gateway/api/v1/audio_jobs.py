@@ -1,8 +1,9 @@
-import re
 from pathlib import Path
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import Path as PathParam
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, ValidationError
 
@@ -224,23 +225,25 @@ async def export_audio(
             user.id,
             document_id,
             request.format,
-            doc.title or "Document",
             chapters,
         )
     except AudioNotCached as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Prepare the audio first: {e}")
 
 
-@router.get("/{document_id}/audio-export/{file_name}")
+@router.get("/{document_id}/audio-export/{key}.{fmt}")
 async def get_audio_export(
-    document_id: UUID, file_name: str, user: AuthenticatedUser, db: DbSession, settings: SettingsDep
+    document_id: UUID,
+    key: Annotated[str, PathParam(pattern=r"^[0-9a-f]{64}$")],
+    fmt: ExportFormat,
+    user: AuthenticatedUser,
+    db: DbSession,
+    settings: SettingsDep,
 ) -> FileResponse:
-    """An exported file, by the key and format its export answered with: `{key}.{format}`."""
+    """An exported file, by the key and format its export answered with."""
     doc = await _readable_document(db, document_id, user.id)
-    match = re.fullmatch(r"([0-9a-f]{64})\.(m4b|mp3)", file_name)
-    fmt = ExportFormat(match[2]) if match else None
-    path = stored_export(Path(settings.audio_export_dir), match[1], fmt) if match and fmt else None
-    if path is None or fmt is None:
+    path = stored_export(Path(settings.audio_export_dir), key, fmt)
+    if path is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No such audio file, or it has expired")
     return FileResponse(path, media_type=ENCODINGS[fmt].media_type, filename=f"{doc.title or 'Document'}.{fmt}")
 
