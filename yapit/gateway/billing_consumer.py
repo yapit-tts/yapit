@@ -22,9 +22,10 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from yapit.contracts import TTS_BILLING_CONSUMER, TTS_BILLING_GROUP, TTS_BILLING_STREAM
 from yapit.gateway.backoff import Backoff
-from yapit.gateway.domain_models import BlockVariant, UsageType, UserVoiceStats
+from yapit.gateway.domain_models import BlockVariant, UserVoiceStats
 from yapit.gateway.metrics import log_error, log_event
 from yapit.gateway.result_consumer import BillingEvent
+from yapit.gateway.synthesis import usage_type_for
 from yapit.gateway.usage import record_usage
 
 MAX_BATCH = 200
@@ -188,7 +189,7 @@ async def _bill_user(
     month_start = date.today().replace(day=1)
 
     for _, event in entries:
-        usage_type = UsageType.server_kokoro if event.model_slug.startswith("kokoro") else UsageType.premium_voice
+        usage_type = usage_type_for(event.model_slug)
         characters_used = int(event.text_length * event.usage_multiplier)
 
         inserted = await record_usage(

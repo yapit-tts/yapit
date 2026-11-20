@@ -40,9 +40,11 @@ export interface AudioExportState {
   error: string | null;
 }
 
-export interface WSAudioExportMessage extends AudioExportState {
+/** Sent only once a build ends. */
+export interface WSAudioExportMessage extends Omit<AudioExportState, "status"> {
   type: "audio_export";
   document_id: string;
+  status: "ready" | "failed";
 }
 
 export type WSAudioDocumentMessage = WSAudioJobMessage | WSAudioExportMessage;

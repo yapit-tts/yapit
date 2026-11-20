@@ -80,6 +80,7 @@ class AudioJob:
     spec: AudioJobSpec
     status: AudioJobStatus
     error: str | None
+    next: int  # the position in spec.blocks of the next block to queue
 
 
 class AudioJobState(BaseModel):
@@ -182,6 +183,7 @@ async def load_job(redis: Redis, user_id: str) -> AudioJob | None:
         spec=AudioJobSpec.model_validate_json(fields[b"spec"]),
         status=AudioJobStatus(fields[b"status"].decode()),
         error=error.decode() if error else None,
+        next=int(fields[b"next"]),
     )
 
 
@@ -218,6 +220,26 @@ async def run_audio_job_feeder(redis: Redis, cache: Cache, settings: Settings) -
             await backoff.sleep()
 
 
+async def feed_job(redis: Redis, cache: Cache, settings: Settings, user_id: str) -> None:
+    """Top the job up, then tell its tabs where it stands.
+
+    Every top-up follows a result the job awaited, or a reconcile, so it is when the job's progress changed.
+    """
+    await top_up(redis, cache, settings, user_id)
+    job = await load_job(redis, user_id)
+    if job is not None:
+        await publish_job_state(redis, cache, user_id, job.spec.document_id)
+
+
+async def _feed_job_logged(redis: Redis, cache: Cache, settings: Settings, user_id: str) -> None:
+    """One job's failure is the next reconcile's to retry, not every other job's to wait on."""
+    try:
+        await feed_job(redis, cache, settings, user_id)
+    except Exception as e:
+        logger.bind(user_id=user_id).exception(f"Audio job top-up failed: {e}")
+        await log_error(f"Audio job top-up failed: {e}", user_id=user_id)
+
+
 async def top_up(redis: Redis, cache: Cache, settings: Settings, user_id: str) -> None:
     """Queue the job's next blocks until SLICE_SIZE of its variants are in flight."""
     if not await redis.sismember(AUDIO_JOBS_RUNNING, user_id):
@@ -232,7 +254,7 @@ async def top_up(redis: Redis, cache: Cache, settings: Settings, user_id: str) -
     lost_key = AUDIO_JOB_LOST.format(user_id=user_id)
     await redis.expire(job_key, STATE_TTL_S)
     waiters_of = AUDIO_JOB_WAITERS.format
-    next_position = int(await redis.hget(job_key, "next") or 0)
+    next_position = job.next
 
     async with create_session() as db:
         access = (
@@ -315,13 +337,8 @@ async def _collect_wakes(redis: Redis) -> set[str]:
     result = await redis.brpop(AUDIO_JOB_WAKE, timeout=RECONCILE_INTERVAL_S)
     if result is None:
         return set()
-    users = {result[1].decode()}
-    while len(users) < MAX_WAKE_BATCH:
-        raw = await redis.rpop(AUDIO_JOB_WAKE)
-        if raw is None:
-            break
-        users.add(raw.decode())
-    return users
+    more = await redis.rpop(AUDIO_JOB_WAKE, MAX_WAKE_BATCH - 1) or []
+    return {result[1].decode(), *(raw.decode() for raw in more)}
 
 
 async def _reconcile(redis: Redis, cache: Cache, settings: Settings) -> None:
@@ -334,11 +351,12 @@ async def _reconcile(redis: Redis, cache: Cache, settings: Settings) -> None:
     for raw_user in await redis.smembers(AUDIO_JOBS_RUNNING):
         user_id = raw_user.decode()
         awaited_key = AUDIO_JOB_AWAITED.format(user_id=user_id)
-        for raw_hash, entry in (await redis.hgetall(awaited_key)).items():
-            variant_hash = raw_hash.decode()
+        awaited = {raw_hash.decode(): entry for raw_hash, entry in (await redis.hgetall(awaited_key)).items()}
+        prepared = await prepared_mask(redis, cache, list(awaited))
+        for (variant_hash, entry), is_prepared in zip(awaited.items(), prepared):
             position, job_id = _parse_awaited(entry)
             inflight_key = TTS_INFLIGHT.format(hash=variant_hash)
-            if await _is_cached(redis, cache, variant_hash):
+            if is_prepared:
                 await redis.hdel(awaited_key, variant_hash)
             elif job_id and await redis.hexists(TTS_JOBS, job_id):
                 held = await redis.set(inflight_key, job_id, ex=INFLIGHT_TTL_S, nx=True)
@@ -354,30 +372,6 @@ def _parse_awaited(entry: bytes) -> tuple[int, str]:
     """An awaited entry is "<position in spec.blocks>:<queued job id, empty if it joined another's>"."""
     position, job_id = entry.decode().split(":", 1)
     return int(position), job_id
-
-
-async def _is_cached(redis: Redis, cache: Cache, variant_hash: str) -> bool:
-    return bool(await redis.exists(TTS_AUDIO_CACHE.format(hash=variant_hash))) or await cache.exists(variant_hash)
-
-
-async def feed_job(redis: Redis, cache: Cache, settings: Settings, user_id: str) -> None:
-    """Top the job up, then tell its tabs where it stands.
-
-    Every top-up follows a result the job awaited, or a reconcile, so it is when the job's progress changed.
-    """
-    await top_up(redis, cache, settings, user_id)
-    job = await load_job(redis, user_id)
-    if job is not None:
-        await publish_job_state(redis, cache, user_id, job.spec.document_id)
-
-
-async def _feed_job_logged(redis: Redis, cache: Cache, settings: Settings, user_id: str) -> None:
-    """One job's failure is the next reconcile's to retry, not every other job's to wait on."""
-    try:
-        await feed_job(redis, cache, settings, user_id)
-    except Exception as e:
-        logger.bind(user_id=user_id).exception(f"Audio job top-up failed: {e}")
-        await log_error(f"Audio job top-up failed: {e}", user_id=user_id)
 
 
 async def _is_current(redis: Redis, user_id: str, job_id: str) -> bool:
