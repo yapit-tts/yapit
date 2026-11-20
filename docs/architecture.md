@@ -33,7 +33,7 @@ flowchart TD
 
 **Gateway** is a FastAPI process handling all HTTP/WebSocket traffic,
 sign-in included, plus background tasks (result consumer, billing consumer, cache persister,
-OpenAI-compat TTS dispatchers, visibility scanners).
+audio job feeder, OpenAI-compat TTS dispatchers, visibility scanners).
 
 **Workers** pull jobs from Redis queues and push results back. The gateway
 never pushes to workers directly — any machine with Redis access can be a

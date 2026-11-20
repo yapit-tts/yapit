@@ -1,6 +1,7 @@
 """YOLO figure detection client - enqueues jobs and waits for results."""
 
 import base64
+import time
 import uuid
 
 from redis.asyncio import Redis
@@ -36,7 +37,7 @@ async def enqueue_detection(redis: Redis, page_pdf: bytes) -> str:
         job_id=job_id,
         page_pdf_base64=base64.b64encode(page_pdf).decode(),
     )
-    await push_job(redis, _yolo_config, str(job_id), job.model_dump_json().encode())
+    await push_job(redis, _yolo_config, str(job_id), job.model_dump_json().encode(), score=time.time())
 
     queue_depth = await redis.zcard(YOLO_QUEUE)
     await log_event(

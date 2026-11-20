@@ -12,6 +12,7 @@ from sqlmodel import select
 from starlette.applications import Starlette
 
 from yapit.contracts import (
+    AUDIO_JOB_WAITERS,
     MAX_TTS_BLOCKS_PER_MINUTE,
     RATELIMIT_TTS,
     TTS_INFLIGHT,
@@ -220,6 +221,7 @@ async def _handle_synthesize(
                     document_id=msg.document_id,
                     block_idx=idx,
                     track_for_websocket=True,
+                    background=False,
                 )
 
                 # Fetch word timestamps for cache hits
@@ -316,8 +318,15 @@ async def _handle_cursor_moved(
         else:
             parsed.append((job_id_str, index_key, None))
 
+    # A queued job whose variant a background audio job awaits stays queued for that job
+    queued = [(jid, ik, job) for jid, ik, job in parsed if job is not None]
+    async with redis.pipeline() as pipe:
+        for _, _, job in queued:
+            pipe.exists(AUDIO_JOB_WAITERS.format(hash=job.variant_hash))
+        awaited = await pipe.execute()
+    has_job = [entry for entry, is_awaited in zip(queued, awaited) if not is_awaited]
+
     # Pipeline 3: remove from queues (1:1 with parsed entries that have jobs)
-    has_job = [(jid, ik, job) for jid, ik, job in parsed if job is not None]
     async with redis.pipeline() as pipe:
         for job_id_str, _, job in has_job:
             pipe.zrem(get_queue_name(job.model_slug), job_id_str)
@@ -325,10 +334,10 @@ async def _handle_cursor_moved(
 
     # Pipeline 4: clean up index + job keys
     async with redis.pipeline() as pipe:
-        for job_id_str, index_key, job in parsed:
+        for _, index_key, _ in parsed:
             pipe.hdel(TTS_JOB_INDEX, index_key)
-            if job is not None:
-                pipe.hdel(TTS_JOBS, job_id_str)
+        for job_id_str, _, _ in has_job:
+            pipe.hdel(TTS_JOBS, job_id_str)
         await pipe.execute()
 
     # Pipeline 5: clean up inflight keys for jobs that were still in the queue
