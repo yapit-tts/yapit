@@ -1,0 +1,15 @@
+tls:
+  certificates:
+    - certFile: /etc/traefik/certs/origin.crt
+      keyFile: /etc/traefik/certs/origin.key
+  stores:
+    default:
+      defaultCertificate:
+        certFile: /etc/traefik/certs/origin.crt
+        keyFile: /etc/traefik/certs/origin.key
+  options:
+    default:
+      clientAuth:
+        caFiles:
+          - /etc/traefik/certs/aop-ca.crt
+        clientAuthType: RequireAndVerifyClientCert

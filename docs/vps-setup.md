@@ -118,87 +118,36 @@ Use "Full" (not "Full strict") with Origin Certificates.
 
 ## Traefik Setup
 
-### Config: `/opt/yapit/traefik/traefik.yml`
+Traefik runs beside the Swarm stack as its own Compose project, `edge`, because it publishes ports 80 and 443 on the host. Its files are in `docker/traefik/` and live on the VPS in `/opt/yapit/traefik/`:
 
-```yaml
-global:
-  sendAnonymousUsage: false
+| File | Purpose |
+|------|---------|
+| `compose.yml` | Traefik and the socket proxy it reads Swarm through |
+| `traefik.yml` | Static config: providers, entrypoints, access log |
+| `dynamic/certs.yml` | The origin certificate and the client certificate Cloudflare must present |
+| `certs/` | `origin.crt`, `origin.key`, `aop-ca.crt` (on the VPS only) |
 
-log:
-  level: INFO
+Traefik runs as uid 65532 with every capability dropped and a read-only filesystem, and never sees Docker's socket: `socket-proxy` holds it and answers only the read calls Traefik's Swarm provider makes (services, tasks, networks, nodes). `origin.key` must be readable by that group:
 
-providers:
-  swarm:
-    exposedByDefault: false
-    watch: true
-    network: yapit-network
-  file:
-    directory: /etc/traefik/dynamic
-    watch: true
-
-entryPoints:
-  web:
-    address: :80
-    http:
-      redirections:
-        entryPoint:
-          to: websecure
-          scheme: https
-  websecure:
-    address: :443
-
-api:
-  insecure: false
-
-accessLog:
-  filePath: "/dev/stdout"
-  format: json
-  fields:
-    headers:
-      defaultMode: keep
+```bash
+chown root:65532 /opt/yapit/traefik/certs/origin.key && chmod 640 /opt/yapit/traefik/certs/origin.key
 ```
 
-### TLS Config: `/opt/yapit/traefik/dynamic/certs.yml`
+The `default` TLS option name is special in Traefik: it applies to all routers, with no per-router labels. Its `clientAuth` block is Authenticated Origin Pulls (mTLS): only connections presenting a client cert signed by our CA are accepted. See [[security]] for why.
 
-```yaml
-tls:
-  certificates:
-    - certFile: /etc/traefik/certs/origin.crt
-      keyFile: /etc/traefik/certs/origin.key
-  stores:
-    default:
-      defaultCertificate:
-        certFile: /etc/traefik/certs/origin.crt
-        keyFile: /etc/traefik/certs/origin.key
-  options:
-    default:
-      clientAuth:
-        caFiles:
-          - /etc/traefik/certs/aop-ca.crt
-        clientAuthType: RequireAndVerifyClientCert
-```
-
-The `default` TLS option name is special in Traefik — applies to all routers automatically, no per-router labels needed. The `options` block configures Authenticated Origin Pulls (mTLS): only connections presenting a client cert signed by our CA are accepted. See [[security]] for why.
-
-Dynamic config changes (including TLS options) are hot-reloaded by the file provider (`watch: true`) without restart. Static config changes (log level, API settings, entrypoints) require container recreation.
+The file provider hot-reloads `dynamic/` (`watch: true`). A change to `traefik.yml` needs the container recreated.
 
 ### Start Traefik
 
 ```bash
-docker run -d \
-  --name traefik \
-  --restart always \
-  -p 80:80 -p 443:443 \
-  -v /var/run/docker.sock:/var/run/docker.sock:ro \
-  -v /opt/yapit/traefik:/etc/traefik:rw \
-  --network yapit-network \
-  -e DOCKER_API_VERSION=1.44 \
-  traefik:v3.6
+scp docker/traefik/compose.yml docker/traefik/traefik.yml yapit-prod:/opt/yapit/traefik/
+scp docker/traefik/dynamic/certs.yml yapit-prod:/opt/yapit/traefik/dynamic/
+ssh yapit-prod 'cd /opt/yapit/traefik && docker compose -p edge -f compose.yml up -d'
 ```
 
 **Notes:**
-- `DOCKER_API_VERSION=1.44` is required — newer Docker versions have API changes that break older Traefik images.
-- Pinned to `v3.6` (not `latest`) to prevent breaking changes on container recreation. Patch updates within v3.6.x are safe.
+- Traefik is pinned to `v3.6`, not `latest`, so recreating the container cannot cross a minor version.
+- `socket-proxy` is pinned by digest: its project publishes only floating tags.
 
 ## Security Hardening
 
@@ -214,7 +163,7 @@ Key-only auth. X11 forwarding disabled (headless server, no GUI needed).
 
 ### Firewall
 
-**Two layers:** Hetzner Cloud Firewall (edge) + UFW (host).
+**One layer:** the Hetzner Cloud Firewall. UFW is installed and inactive (see below).
 
 **Hetzner Cloud Firewall (`firewall-1`)** — managed automatically by `scripts/sync-cf-firewall.sh` (hourly cron). Do not hand-edit rules in Console — next cron run overwrites them.
 
@@ -280,7 +229,7 @@ ports:
     mode: host
 ```
 
-**Security model:** Use firewalls (Hetzner + UFW) to block external access. Tailscale bypasses UFW by design, allowing VPN-connected workers to reach services.
+**Security model:** the Hetzner firewall blocks external access to these ports; workers reach them over Tailscale.
 
 ### Container IP caching after redeploy
 
@@ -387,36 +336,16 @@ GIT_COMMIT=<old_sha> ./scripts/deploy.sh
 ### Traefik Recovery
 
 ```bash
-docker ps | grep traefik
-
-# If not running:
-docker run -d \
-  --name traefik \
-  --restart always \
-  -p 80:80 -p 443:443 \
-  -v /var/run/docker.sock:/var/run/docker.sock:ro \
-  -v /opt/yapit/traefik:/etc/traefik:rw \
-  --network yapit-network \
-  -e DOCKER_API_VERSION=1.44 \
-  traefik:v3.6
+ssh yapit-prod 'cd /opt/yapit/traefik && docker compose -p edge -f compose.yml ps'
+ssh yapit-prod 'cd /opt/yapit/traefik && docker compose -p edge -f compose.yml up -d'
+ssh yapit-prod 'docker logs traefik --tail 50'
 ```
+
+A 404 on every route with `403 Forbidden` in Traefik's log means `socket-proxy` refuses a call the Swarm provider needs; the calls it allows are the `environment` of `socket-proxy` in `compose.yml`.
 
 ### Debug Traefik
 
-Enable API temporarily:
-```yaml
-# In traefik.yml
-api:
-  insecure: true
-  dashboard: true
-```
-
-Then restart with port 8080 exposed:
-```bash
-docker stop traefik && docker rm traefik
-docker run -d --name traefik ... -p 8080:8080 ... traefik:v3.6
-curl http://localhost:8080/api/http/routers
-```
+Set `api: {insecure: true, dashboard: true}` in `traefik.yml`, add `"127.0.0.1:8080:8080"` to Traefik's `ports` in `compose.yml`, recreate it (`up -d`), then `curl http://localhost:8080/api/http/routers` on the VPS. Revert both afterwards.
 
 ## Files
 
@@ -426,6 +355,5 @@ curl http://localhost:8080/api/http/routers
 | `scripts/deploy.sh` | Deploy to VPS via Tailscale SSH |
 | `.env.prod` | Non-sensitive config (committed) |
 | `.env.sops` | Encrypted secrets |
-| `/opt/yapit/traefik/traefik.yml` | Traefik config (on VPS) |
-| `/opt/yapit/traefik/dynamic/certs.yml` | TLS cert config (on VPS) |
+| `docker/traefik/` | Traefik's Compose project and config, copied to `/opt/yapit/traefik/` |
 | `/opt/yapit/traefik/certs/` | Origin cert + key + AOP CA cert (on VPS) |
