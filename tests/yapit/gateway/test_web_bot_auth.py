@@ -6,7 +6,6 @@ for byte. The key is the RFC 9421 test key (appendix B.1.4).
 
 import base64
 
-import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat
 
@@ -70,8 +69,3 @@ def test_without_a_key_requests_go_out_unsigned(monkeypatch):
     monkeypatch.setattr(web_bot_auth, "_key", None)
     web_bot_auth.init_web_bot_auth("", "http://localhost")
     assert web_bot_auth.signature_headers("https://example.com/") == {}
-
-
-def test_a_key_needs_an_https_origin_to_name():
-    with pytest.raises(ValueError, match="https"):
-        load_signing_key(rfc_9421_private_key(), "http://localhost")

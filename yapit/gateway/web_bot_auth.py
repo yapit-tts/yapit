@@ -20,8 +20,6 @@ DIRECTORY_PATH = "/.well-known/http-message-signatures-directory"
 DIRECTORY_CONTENT_TYPE = "application/http-message-signatures-directory+json"
 REQUEST_LIFETIME_S = 60
 DIRECTORY_LIFETIME_S = 3600
-# Shorter than the signature's lifetime, so a cached copy is always served with a signature still valid.
-DIRECTORY_MAX_AGE_S = 300
 
 
 @dataclass(frozen=True)
@@ -90,7 +88,6 @@ def directory_response(
         "Content-Digest": content_digest,
         "Signature-Input": f"binding0={params}",
         "Signature": f"binding0=:{_sign(key, base)}:",
-        "Cache-Control": f"max-age={DIRECTORY_MAX_AGE_S}",
     }
 
 

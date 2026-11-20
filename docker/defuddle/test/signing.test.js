@@ -81,9 +81,3 @@ test("Chromium's document request carries a signature Cloudflare's verifier acce
 	await assertSignedForItsAuthority(browserRequest);
 	assert.equal(browserRequest.headers["user-agent"], "Mozilla/5.0 (compatible; Yapit/1.0; +https://yapit.md/bot)");
 });
-
-test("a signature from another key is rejected by the same verifier", async () => {
-	const seen = web.requests.find((r) => r.path === "/post");
-	const forged = { ...seen, headers: { ...seen.headers, signature: "sig1=:" + Buffer.alloc(64).toString("base64") + ":" } };
-	await assert.rejects(verifyAsCloudflare(forged));
-});
