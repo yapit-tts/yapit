@@ -37,6 +37,18 @@ describe("exportRows", () => {
     ]);
   });
 
+  it("adds no prelude row to a document that opens with a heading", () => {
+    const opensWithHeading = {
+      version: "1",
+      blocks: [heading("Introduction", 0), paragraph("p1", 1), heading("Methods", 2)],
+    } as unknown as StructuredDocument;
+    const threeBlocks = blocks.slice(0, 3);
+
+    const titles = exportRows(buildSectionIndex(opensWithHeading, threeBlocks), threeBlocks, new Set()).map(r => r.title);
+
+    expect(titles).toEqual(["Introduction", "Methods"]);
+  });
+
   it("gives a document without headings one row over every block", () => {
     expect(exportRows([], blocks, new Set())).toMatchObject([{ firstBlock: 0, lastBlock: 6, durationMs: 28000 }]);
   });
@@ -50,5 +62,11 @@ describe("exportTotals", () => {
     const totals = exportTotals([rows[0], rows[2]], uncached);
 
     expect(totals).toEqual({ durationMs: 3000 + 18000, blocks: 5, blocksToSynthesize: 2, charactersToSynthesize: 80 });
+  });
+
+  it("counts duration and blocks while the estimate is still on its way", () => {
+    const rows = exportRows(sections, blocks, new Set());
+
+    expect(exportTotals(rows, null)).toEqual({ durationMs: 28000, blocks: 7, blocksToSynthesize: 0, charactersToSynthesize: 0 });
   });
 });

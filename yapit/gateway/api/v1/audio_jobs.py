@@ -29,7 +29,12 @@ from yapit.gateway.deps import (
 )
 from yapit.gateway.domain_models import BlockVariant, Document
 from yapit.gateway.synthesis import billed_characters, usage_type_for
-from yapit.gateway.usage import get_available_usage
+from yapit.gateway.usage import (
+    get_available_usage,
+    get_effective_plan,
+    get_limit_for_usage_type,
+    get_user_subscription,
+)
 
 router = APIRouter(prefix="/v1/documents", tags=["Audio jobs"], dependencies=[Depends(authenticate)])
 
@@ -56,6 +61,7 @@ class AudioJobEstimate(BaseModel):
     uncached_characters: list[int] = Field(
         description="Per audio block, the characters synthesizing it would count against the quota; 0 where cached"
     )
+    plan_includes_voice: bool = Field(description="Whether the user's plan includes this voice's usage type at all")
     available_characters: int | None = Field(description="Characters left this period; None where unlimited")
     daily_blocks_left: int | None = Field(
         description="Blocks a job may still synthesize today; None where the quota bounds jobs instead"
@@ -139,12 +145,13 @@ async def estimate_audio_job(
         for text in texts
     ]
     cached = await cached_mask(redis, cache, hashes)
-    available, _ = await get_available_usage(
-        user.id, usage_type_for(tts_model.slug), db, billing_enabled=settings.billing_enabled
-    )
+    usage_type = usage_type_for(tts_model.slug)
+    available, _ = await get_available_usage(user.id, usage_type, db, billing_enabled=settings.billing_enabled)
+    plan = await get_effective_plan(await get_user_subscription(user.id, db), db)
     running = await load_job(redis, user.id)
     return AudioJobEstimate(
         uncached_characters=[0 if hit else billed_characters(text, tts_model) for text, hit in zip(texts, cached)],
+        plan_includes_voice=not settings.billing_enabled or get_limit_for_usage_type(plan, usage_type) != 0,
         available_characters=available,
         daily_blocks_left=await daily_allowance(redis, db, settings, user.id, tts_model.slug),
         running_job_document_id=running.spec.document_id

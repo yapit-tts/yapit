@@ -95,7 +95,7 @@ async def get_or_create_usage_period(
     return result.one()
 
 
-def _get_limit_for_usage_type(plan: Plan, usage_type: UsageType) -> int | None:
+def get_limit_for_usage_type(plan: Plan, usage_type: UsageType) -> int | None:
     """Get the limit for a usage type from a plan. None means unlimited."""
     match usage_type:
         case UsageType.server_kokoro:
@@ -177,7 +177,7 @@ async def get_available_usage(
     subscription = await get_user_subscription(user_id, db)
     plan = await get_effective_plan(subscription, db)
 
-    limit = _get_limit_for_usage_type(plan, usage_type)
+    limit = get_limit_for_usage_type(plan, usage_type)
     if limit is None:
         return None, 0
 
@@ -231,7 +231,7 @@ def _consume_from_tiers(
     """Consume usage from subscription → rollover → purchased. Returns breakdown."""
     # Get current period usage and limit
     current = _get_current_usage(usage_period, usage_type)
-    limit = _get_limit_for_usage_type(plan, usage_type) or 0
+    limit = get_limit_for_usage_type(plan, usage_type) or 0
 
     subscription_remaining = max(0, limit - current)
     from_subscription = min(amount, subscription_remaining)

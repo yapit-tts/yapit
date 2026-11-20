@@ -1,5 +1,3 @@
-// Background audio jobs: the dialog's sections and totals, and the API's shapes.
-
 import type { Section } from "./sectionIndex";
 
 export type AudioJobStatus = "running" | "done" | "cancelled" | "usage_limit" | "daily_limit" | "failed";
@@ -9,6 +7,9 @@ export interface BlockRange {
   last_block: number; // inclusive
   title: string;
 }
+
+/** The gateway's `BlockRange.title` max_length. */
+export const MAX_RANGE_TITLE = 500;
 
 export interface AudioJob {
   document_id: string;
@@ -24,6 +25,7 @@ export interface AudioJob {
 
 export interface AudioJobEstimate {
   uncached_characters: number[]; // per audio block; 0 where cached
+  plan_includes_voice: boolean;
   available_characters: number | null; // null: unlimited
   daily_blocks_left: number | null; // null: no daily ceiling applies
   running_job_document_id: string | null;
@@ -93,7 +95,7 @@ export function exportTotals(rows: ExportRow[], uncachedCharacters: number[] | n
     totals.blocks += row.lastBlock - row.firstBlock + 1;
     if (!uncachedCharacters) continue;
     for (let idx = row.firstBlock; idx <= row.lastBlock; idx++) {
-      const characters = uncachedCharacters[idx] ?? 0;
+      const characters = uncachedCharacters[idx];
       if (characters > 0) {
         totals.blocksToSynthesize++;
         totals.charactersToSynthesize += characters;

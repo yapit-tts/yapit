@@ -17,6 +17,7 @@ import {
   type AudioJobEstimate,
   type BlockRange,
   type ExportRow,
+  MAX_RANGE_TITLE,
   exportRows,
   exportTotals,
 } from "@/lib/audioJob";
@@ -104,7 +105,7 @@ function PrepareAudioForm({
   const prepare = async () => {
     setIsStarting(true);
     setRefusal(null);
-    const ranges = tickedRows.map(r => ({ first_block: r.firstBlock, last_block: r.lastBlock, title: r.title.slice(0, 500) }));
+    const ranges = tickedRows.map(r => ({ first_block: r.firstBlock, last_block: r.lastBlock, title: r.title.slice(0, MAX_RANGE_TITLE) }));
     const reason = await onStart(model, voiceSlug, ranges);
     setIsStarting(false);
     if (reason) setRefusal(reason);
@@ -126,9 +127,7 @@ function PrepareAudioForm({
       </div>
 
       <div role="group" aria-labelledby="prepare-audio-sections" className="flex flex-col min-h-0 min-w-0 gap-2">
-        <div className="flex items-center justify-between">
-          <span id="prepare-audio-sections" className="text-sm font-medium">Sections</span>
-        </div>
+        <span id="prepare-audio-sections" className="text-sm font-medium">Sections</span>
         <div className="overflow-y-auto min-h-0 max-h-[40dvh] -mx-2 px-2">
           {rows.map(row => (
             <SectionRow key={row.id} row={row} ticked={ticked.has(row.id)} onToggle={() => toggle(row.id)} />
@@ -205,11 +204,11 @@ function jobBlocker(estimate: AudioJobEstimate | null, totals: ReturnType<typeof
     return <>You are already preparing audio for <Link className="font-medium text-primary hover:underline" to={`/listen/${running}`}>another document</Link>. Stop it there, or wait until it is done.</>;
   }
   if (totals.blocksToSynthesize === 0) return null;
-  const available = estimate.available_characters;
-  if (available === 0) {
-    return isKokoroModel(model)
-      ? <>Server Kokoro is not on your plan. <Link className="font-medium text-primary hover:underline" to="/subscription">See plans</Link>, or listen with Kokoro in your browser.</>
-      : <>You have no characters left for this voice this period. <Link className="font-medium text-primary hover:underline" to="/subscription">See plans</Link>.</>;
+  if (!estimate.plan_includes_voice) {
+    return <>{isKokoroModel(model) ? "Server Kokoro is" : "This voice is"} not on your plan. <Link className="font-medium text-primary hover:underline" to="/subscription">See plans</Link>, or listen with Kokoro in your browser.</>;
+  }
+  if (estimate.available_characters === 0) {
+    return <>You have no characters left for this voice this period. <Link className="font-medium text-primary hover:underline" to="/subscription">See plans</Link>.</>;
   }
   if (estimate.daily_blocks_left !== null && estimate.daily_blocks_left <= 0) {
     return <>You have prepared as much audio as one day allows. Try again tomorrow (the limit resets at midnight UTC).</>;

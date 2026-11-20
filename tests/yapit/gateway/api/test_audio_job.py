@@ -519,10 +519,6 @@ async def test_the_feeder_queues_a_new_jobs_first_slice(client, kokoro, app, set
     assert SynthesisJob.model_validate_json(pulled.raw_job).block_idx == 0
 
 
-def paragraph_characters(i: int) -> int:
-    return len(f"Paragraph {i} of the book is read aloud.")
-
-
 async def estimate(client, document_id) -> dict:
     response = await client.get(
         f"/v1/documents/{document_id}/audio-job/estimate", params={"model": "kokoro", "voice": "af_heart"}
@@ -531,22 +527,47 @@ async def estimate(client, document_id) -> dict:
     return response.json()
 
 
-async def test_the_estimate_counts_the_characters_of_uncached_blocks_only(client, kokoro, pipeline, app, settings):
+async def test_the_estimate_counts_the_billed_characters_of_uncached_blocks_only(
+    client, kokoro, pipeline, app, settings, session
+):
+    model = await session.get(TTSModel, kokoro.model_id)
+    assert model is not None
+    model.usage_multiplier = 2.0
+    await session.commit()
     await subscribe(DEFAULT_TEST_USER.id, server_kokoro_characters=100_000)
     document_id = await create_document(client, 12)
     await listen(app, settings, document_id, block_idx=10)
     await pipeline.run()
+    # As the cache persister leaves it past the hot cache's lifetime: on disk only
+    variant_hash = pipeline.synthesized[0].variant_hash
+    await app.state.audio_cache.store(variant_hash, b"OggS")
+    await app.state.redis_client.delete(TTS_AUDIO_CACHE.format(hash=variant_hash))
 
     result = await estimate(client, document_id)
 
-    assert result["uncached_characters"] == [paragraph_characters(i) if i != 10 else 0 for i in range(12)]
+    # "Paragraph 1 of the book is read aloud." is 38 characters, "Paragraph 11 ..." 39, each billed twice
+    assert result["uncached_characters"] == [76] * 10 + [0, 78]
     assert (result["available_characters"], result["daily_blocks_left"]) == (100_000, None)
 
 
 async def test_the_estimate_shows_no_server_kokoro_on_the_free_plan(client, kokoro):
     document_id = await create_document(client, 3)
 
-    assert (await estimate(client, document_id))["available_characters"] == 0
+    result = await estimate(client, document_id)
+
+    assert (result["plan_includes_voice"], result["available_characters"]) == (False, 0)
+
+
+async def test_the_estimate_tells_a_used_up_quota_from_a_plan_without_server_kokoro(client, kokoro, session):
+    await subscribe(DEFAULT_TEST_USER.id, server_kokoro_characters=1_000)
+    usage = (await session.exec(select(UsagePeriod))).one()
+    usage.server_kokoro_characters = 1_000
+    await session.commit()
+    document_id = await create_document(client, 3)
+
+    result = await estimate(client, document_id)
+
+    assert (result["plan_includes_voice"], result["available_characters"]) == (True, 0)
 
 
 async def test_the_estimate_shows_the_daily_ceiling_left_on_an_unlimited_plan(client, kokoro, app):
@@ -566,12 +587,15 @@ async def test_the_estimate_shows_the_daily_ceiling_left_on_an_unlimited_plan(cl
     assert (result["available_characters"], result["daily_blocks_left"]) == (None, 15)
 
 
-async def test_the_estimate_names_the_document_of_a_running_job(client, kokoro):
+async def test_the_estimate_names_the_document_of_a_running_job_until_it_ends(client, kokoro):
     running = await create_document(client, 20)
     other = await create_document(client, 20)
     await start(client, running, 0, 19)
 
     assert (await estimate(client, other))["running_job_document_id"] == str(running)
+
+    await client.delete(f"/v1/documents/{running}/audio-job")
+    assert (await estimate(client, other))["running_job_document_id"] is None
 
 
 async def test_a_running_jobs_pending_blocks_are_those_not_yet_cached(client, kokoro, pipeline):

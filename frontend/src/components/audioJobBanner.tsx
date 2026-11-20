@@ -20,11 +20,11 @@ export function AudioJobBanner({ job, onCancel }: { job: AudioJob | null; onCanc
     setDismissed(false);
   }
 
-  if (!job || dismissed) return null;
-  if (status !== "running" && (!sawRunning || status === "cancelled" || status === "done")) return null;
+  if (!job || dismissed || job.status === "cancelled" || job.status === "done") return null;
+  if (status !== "running" && !sawRunning) return null;
 
   const progress = `${numberFormat.format(job.cached_blocks)} of ${numberFormat.format(job.total_blocks)} blocks`;
-  const isProblem = status !== "running";
+  const isProblem = job.status !== "running";
   const Icon = isProblem ? AlertTriangle : AudioLines;
 
   return (
@@ -34,7 +34,7 @@ export function AudioJobBanner({ job, onCancel }: { job: AudioJob | null; onCanc
     >
       <Icon className={`h-4 w-4 shrink-0 ${isProblem ? "text-destructive" : "text-primary animate-pulse"}`} />
       <span className="text-foreground font-medium">
-        {isProblem ? endedReason(job) : "Preparing audio"}
+        {job.status === "running" ? "Preparing audio" : endedReason(job.status, job.error)}
       </span>
       <span className="text-muted-foreground">·</span>
       <span className="text-muted-foreground tabular-nums">{progress}</span>
@@ -56,10 +56,10 @@ export function AudioJobBanner({ job, onCancel }: { job: AudioJob | null; onCanc
   );
 }
 
-function endedReason(job: AudioJob): string {
-  switch (job.status) {
+function endedReason(status: "usage_limit" | "daily_limit" | "failed", error: string | null): string {
+  switch (status) {
     case "usage_limit": return "Preparing stopped: your plan's characters ran out";
     case "daily_limit": return "Preparing stopped at today's limit; start it again tomorrow";
-    default: return `Preparing stopped${job.error ? `: ${job.error}` : ""}`;
+    case "failed": return `Preparing stopped${error ? `: ${error}` : ""}`;
   }
 }
