@@ -169,10 +169,12 @@ function PrepareAudioForm({
       )}
       {exportErrors.map(error => <Notice key={error} tone="warning">{error}</Notice>)}
 
-      <DialogFooter className="sm:items-center">
-        {onServer && estimate !== null && totals.blocks > 0 && !allPrepared && (
-          <span className="text-sm text-muted-foreground sm:mr-auto">Download once the ticked sections are prepared.</span>
-        )}
+      {onServer && estimate !== null && totals.blocks > 0 && !allPrepared && (
+        <p className="text-sm text-muted-foreground">Download once the ticked sections are prepared.</p>
+      )}
+
+      {/* Not reversed on phones, so the formats read in order and the main action ends the column */}
+      <DialogFooter className="flex-col">
         {EXPORT_FORMATS.map(format => {
           const building = exportProgress[format]?.building === true;
           return (
