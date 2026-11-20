@@ -26,6 +26,8 @@ from yapit.contracts import (
     TTS_PENDING,
     TTS_PERSIST,
     TTS_RESULTS,
+    TTS_SKIPPED,
+    TTS_SKIPPED_TTL_S,
     TTS_SUBSCRIBERS,
     TTS_TIMESTAMPS_CACHE,
     WorkerResult,
@@ -127,6 +129,7 @@ async def _handle_success(redis: Redis, result: WorkerResult) -> None:
 
     if not result.audio_base64:
         log.info("Empty audio, marking as skipped")
+        await redis.set(TTS_SKIPPED.format(hash=result.variant_hash), 1, ex=TTS_SKIPPED_TTL_S)
         await _release_inflight(redis, result)
         await _notify_subscribers(redis, result, status="skipped")
         await _wake_audio_jobs(redis, result.variant_hash)

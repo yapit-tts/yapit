@@ -11,6 +11,10 @@ TTS_INFLIGHT: Final[str] = "tts:inflight:{hash}"
 # synthesize it again. Outlives every job for the variant that can still be queued or in flight.
 TTS_FINALIZED: Final[str] = "tts:finalized:{hash}"
 TTS_FINALIZED_TTL_S: Final[int] = 24 * 3600
+# A variant whose synthesis came back with no audio (whitespace, markup): playback skips it, a job counts
+# it as prepared, and an export leaves it out.
+TTS_SKIPPED: Final[str] = "tts:skipped:{hash}"
+TTS_SKIPPED_TTL_S: Final[int] = 24 * 3600
 TTS_SUBSCRIBERS: Final[str] = "tts:subscribers:{hash}"
 TTS_CURSOR: Final[str] = "tts:cursor:{user_id}:{document_id}"
 TTS_PENDING: Final[str] = "tts:pending:{user_id}:{document_id}"

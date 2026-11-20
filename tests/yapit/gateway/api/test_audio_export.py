@@ -16,7 +16,7 @@ import av
 import numpy as np
 import pytest
 
-from yapit.contracts import TTS_AUDIO_CACHE, TTS_JOBS, get_pubsub_channel, get_queue_name
+from yapit.contracts import TTS_AUDIO_CACHE, TTS_JOBS, TTS_SKIPPED, get_pubsub_channel, get_queue_name
 from yapit.gateway.audio_export import EXPORT_TTL_S, sweep_exports
 from yapit.gateway.cache import CacheConfig
 from yapit.gateway.config import get_settings
@@ -194,6 +194,21 @@ async def test_an_export_with_a_block_not_prepared_is_refused(client, app, book,
 
     assert response.status_code == 409
     assert "1 of the 6 blocks" in response.json()["detail"]
+
+
+async def test_an_export_leaves_out_a_block_with_no_audio(client, app, book, session, kokoro):
+    texts = (await session.get(Document, book)).audio_texts
+    silent = BlockVariant.get_hash(
+        text=texts[2], model_slug="kokoro", voice_slug="af_heart", parameters=kokoro.parameters
+    )
+    await app.state.audio_cache.delete(silent)
+    # As the result consumer leaves a block the worker returned no audio for
+    await app.state.redis_client.set(TTS_SKIPPED.format(hash=silent), 1)
+
+    duration, chapters = probe(await exported(client, app, book, [(0, 2, "One"), (3, 5, "Two")]))
+
+    assert duration == pytest.approx(seconds(0, 1) + seconds(3, 5), abs=0.001)
+    assert [start for _, start, _ in chapters] == pytest.approx([0, seconds(0, 1)], abs=0.001)
 
 
 @contextmanager

@@ -24,11 +24,11 @@ from yapit.gateway.audio_job import (
     AudioJobStatus,
     BlockRange,
     block_indices,
-    cached_mask,
     cancel_job,
     document_job,
     job_state,
     load_job,
+    prepared_mask,
     publish_job_state,
     start_job,
 )
@@ -155,7 +155,7 @@ async def estimate_audio_job(
         )
         for text in texts
     ]
-    cached = await cached_mask(redis, cache, hashes)
+    cached = await prepared_mask(redis, cache, hashes)
     usage_type = usage_type_for(tts_model.slug)
     available, _ = await get_available_usage(user.id, usage_type, db, billing_enabled=settings.billing_enabled)
     plan = await get_effective_plan(await get_user_subscription(user.id, db), db)

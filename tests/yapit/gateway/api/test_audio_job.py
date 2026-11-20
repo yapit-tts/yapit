@@ -105,10 +105,10 @@ class Pipeline:
         pulled = await pull_job(self.redis, QUEUE_CONFIG, timeout=1)
         return SynthesisJob.model_validate_json(pulled.raw_job) if pulled else None
 
-    async def finish(self, job: SynthesisJob, error: str | None = None) -> None:
+    async def finish(self, job: SynthesisJob, error: str | None = None, silent: bool = False) -> None:
         """The worker's result for a job, then the feeder's step for every job it woke."""
         self.synthesized.append(job)
-        await _process_result(self.redis, _result_of(job, error))
+        await _process_result(self.redis, _result_of(job, error, silent))
         await self.feed()
 
     async def feed(self) -> None:
@@ -127,7 +127,8 @@ class Pipeline:
             await self.finish(job)
 
 
-def _result_of(job: SynthesisJob, error: str | None) -> WorkerResult:
+def _result_of(job: SynthesisJob, error: str | None, silent: bool) -> WorkerResult:
+    has_audio = error is None and not silent
     return WorkerResult(
         job_id=job.job_id,
         variant_hash=job.variant_hash,
@@ -141,8 +142,8 @@ def _result_of(job: SynthesisJob, error: str | None) -> WorkerResult:
         worker_id="stub",
         processing_time_ms=1,
         queue_wait_ms=1,
-        audio_base64=None if error else base64.b64encode(f"OggS {job.variant_hash}".encode()).decode(),
-        duration_ms=None if error else 1000,
+        audio_base64=base64.b64encode(f"OggS {job.variant_hash}".encode()).decode() if has_audio else None,
+        duration_ms=1000 if has_audio else None,
         error=error,
     )
 
@@ -477,7 +478,23 @@ async def test_a_block_the_worker_fails_does_not_stall_the_job(client, kokoro, p
     await pipeline.run()
 
     job = (await client.get(f"/v1/documents/{document_id}/audio-job")).json()
-    assert (job["status"], job["cached_blocks"]) == ("done", 29)
+    assert (job["status"], job["cached_blocks"], job["pending_blocks"]) == ("failed", 29, [failing.block_idx])
+    assert job["error"].startswith("1 of the blocks could not be synthesized")
+
+
+async def test_a_block_with_no_audio_to_synthesize_counts_as_prepared(client, kokoro, pipeline):
+    document_id = await create_document(client, 30)
+    await start(client, document_id, 0, 29)
+    await pipeline.feed()
+    silent = await pipeline.pull()
+    assert silent is not None
+
+    await pipeline.finish(silent, silent=True)
+    await pipeline.run()
+
+    job = (await client.get(f"/v1/documents/{document_id}/audio-job")).json()
+    assert (job["status"], job["cached_blocks"], job["pending_blocks"]) == ("done", 30, [])
+    assert (await estimate(client, document_id))["uncached_characters"] == [0] * 30
 
 
 async def test_the_feeder_queues_a_new_jobs_first_slice(client, kokoro, app, settings):

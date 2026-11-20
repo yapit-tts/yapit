@@ -28,6 +28,7 @@ from yapit.contracts import (
     TTS_AUDIO_CACHE,
     TTS_INFLIGHT,
     TTS_JOBS,
+    TTS_SKIPPED,
     TTS_SUBSCRIBERS,
     get_pubsub_channel,
     get_queue_name,
@@ -111,18 +112,18 @@ def variant_hashes(spec: AudioJobSpec) -> list[str]:
     ]
 
 
-async def cached_mask(redis: Redis, cache: Cache, hashes: list[str]) -> list[bool]:
-    """Whether each variant's audio is cached, in the order of hashes."""
+async def prepared_mask(redis: Redis, cache: Cache, hashes: list[str]) -> list[bool]:
+    """Whether each variant is prepared, in the order of hashes: its audio is cached, or it has none to cache."""
     async with redis.pipeline(transaction=False) as pipe:
         for h in hashes:
-            pipe.exists(TTS_AUDIO_CACHE.format(hash=h))
+            pipe.exists(TTS_AUDIO_CACHE.format(hash=h), TTS_SKIPPED.format(hash=h))
         in_redis = await pipe.execute()
     in_cache = await cache.batch_exists([h for h, hot in zip(hashes, in_redis) if not hot])
     return [bool(hot) or h in in_cache for h, hot in zip(hashes, in_redis)]
 
 
 async def job_state(redis: Redis, cache: Cache, job: AudioJob) -> AudioJobState:
-    cached = await cached_mask(redis, cache, variant_hashes(job.spec))
+    cached = await prepared_mask(redis, cache, variant_hashes(job.spec))
     return AudioJobState(
         document_id=job.spec.document_id,
         model=job.spec.model,
@@ -295,7 +296,13 @@ async def top_up(redis: Redis, cache: Cache, settings: Settings, user_id: str) -
                 return
 
     if next_position >= len(spec.blocks) and await redis.hlen(awaited_key) == 0 and await redis.llen(lost_key) == 0:
-        await _finish(redis, user_id, AudioJobStatus.done)
+        # A block whose synthesis failed is settled too, but not prepared: done says every block is
+        missing = len(spec.blocks) - sum(await prepared_mask(redis, cache, variant_hashes(spec)))
+        if missing:
+            error = f"{missing} of the blocks could not be synthesized. Prepare the audio again to retry them"
+            await _finish(redis, user_id, AudioJobStatus.failed, error)
+        else:
+            await _finish(redis, user_id, AudioJobStatus.done)
 
 
 async def _collect_wakes(redis: Redis) -> set[str]:
