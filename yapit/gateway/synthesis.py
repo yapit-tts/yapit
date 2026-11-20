@@ -117,7 +117,7 @@ async def request_synthesis(
         return CachedResult(variant_hash=variant_hash, duration_ms=variant.duration_ms)
 
     usage_type = usage_type_for(model.slug)
-    block_chars = int(len(text) * model.usage_multiplier)
+    block_chars = billed_characters(text, model)
     try:
         await check_usage_limit(user_id, usage_type, block_chars, db, billing_enabled=billing_enabled)
     except UsageLimitExceededError as e:
@@ -137,6 +137,10 @@ async def request_synthesis(
         track_for_websocket=track_for_websocket,
         background=background,
     )
+
+
+def billed_characters(text: str, model: TTSModel) -> int:
+    return int(len(text) * model.usage_multiplier)
 
 
 def usage_type_for(model_slug: str) -> UsageType:

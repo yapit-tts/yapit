@@ -517,3 +517,71 @@ async def test_the_feeder_queues_a_new_jobs_first_slice(client, kokoro, app, set
 
     assert pulled is not None
     assert SynthesisJob.model_validate_json(pulled.raw_job).block_idx == 0
+
+
+def paragraph_characters(i: int) -> int:
+    return len(f"Paragraph {i} of the book is read aloud.")
+
+
+async def estimate(client, document_id) -> dict:
+    response = await client.get(
+        f"/v1/documents/{document_id}/audio-job/estimate", params={"model": "kokoro", "voice": "af_heart"}
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+async def test_the_estimate_counts_the_characters_of_uncached_blocks_only(client, kokoro, pipeline, app, settings):
+    await subscribe(DEFAULT_TEST_USER.id, server_kokoro_characters=100_000)
+    document_id = await create_document(client, 12)
+    await listen(app, settings, document_id, block_idx=10)
+    await pipeline.run()
+
+    result = await estimate(client, document_id)
+
+    assert result["uncached_characters"] == [paragraph_characters(i) if i != 10 else 0 for i in range(12)]
+    assert (result["available_characters"], result["daily_blocks_left"]) == (100_000, None)
+
+
+async def test_the_estimate_shows_no_server_kokoro_on_the_free_plan(client, kokoro):
+    document_id = await create_document(client, 3)
+
+    assert (await estimate(client, document_id))["available_characters"] == 0
+
+
+async def test_the_estimate_shows_the_daily_ceiling_left_on_an_unlimited_plan(client, kokoro, app):
+    await subscribe(DEFAULT_TEST_USER.id, server_kokoro_characters=None)
+    base = app.dependency_overrides[get_settings]
+    settings = base().model_copy(update={"audio_job_daily_block_limit": 20})
+    app.dependency_overrides[get_settings] = lambda: settings
+    try:
+        document_id = await create_document(client, 30)
+        await start(client, document_id, 0, 4)
+        await Pipeline(app, settings).run()
+
+        result = await estimate(client, document_id)
+    finally:
+        app.dependency_overrides[get_settings] = base
+
+    assert (result["available_characters"], result["daily_blocks_left"]) == (None, 15)
+
+
+async def test_the_estimate_names_the_document_of_a_running_job(client, kokoro):
+    running = await create_document(client, 20)
+    other = await create_document(client, 20)
+    await start(client, running, 0, 19)
+
+    assert (await estimate(client, other))["running_job_document_id"] == str(running)
+
+
+async def test_a_running_jobs_pending_blocks_are_those_not_yet_cached(client, kokoro, pipeline):
+    document_id = await create_document(client, 40)
+    await start(client, document_id, 5, 24)
+    await pipeline.feed()
+    first = await pipeline.pull()
+    assert first is not None
+    await pipeline.finish(first)
+
+    job = (await client.get(f"/v1/documents/{document_id}/audio-job")).json()
+
+    assert job["pending_blocks"] == [i for i in range(5, 25) if i != first.block_idx]

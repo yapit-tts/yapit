@@ -9,16 +9,27 @@ from yapit.gateway.audio_job import (
     AudioJobStatus,
     BlockRange,
     block_indices,
+    cached_mask,
     cancel_job,
-    count_cached,
+    daily_allowance,
     load_job,
     start_job,
     variant_hashes,
 )
 from yapit.gateway.auth import authenticate
 from yapit.gateway.cache import Cache
-from yapit.gateway.deps import AudioCache, AuthenticatedUser, DbSession, RedisClient, get_model, get_voice
-from yapit.gateway.domain_models import Document
+from yapit.gateway.deps import (
+    AudioCache,
+    AuthenticatedUser,
+    DbSession,
+    RedisClient,
+    SettingsDep,
+    get_model,
+    get_voice,
+)
+from yapit.gateway.domain_models import BlockVariant, Document
+from yapit.gateway.synthesis import billed_characters, usage_type_for
+from yapit.gateway.usage import get_available_usage
 
 router = APIRouter(prefix="/v1/documents", tags=["Audio jobs"], dependencies=[Depends(authenticate)])
 
@@ -38,6 +49,18 @@ class AudioJobResponse(BaseModel):
     error: str | None
     total_blocks: int
     cached_blocks: int
+    pending_blocks: list[int] = Field(description="The job's audio block indices whose audio is not cached yet")
+
+
+class AudioJobEstimate(BaseModel):
+    uncached_characters: list[int] = Field(
+        description="Per audio block, the characters synthesizing it would count against the quota; 0 where cached"
+    )
+    available_characters: int | None = Field(description="Characters left this period; None where unlimited")
+    daily_blocks_left: int | None = Field(
+        description="Blocks a job may still synthesize today; None where the quota bounds jobs instead"
+    )
+    running_job_document_id: UUID | None = Field(description="The document of the user's running job, if any")
 
 
 @router.post("/{document_id}/audio-job", status_code=status.HTTP_201_CREATED)
@@ -93,6 +116,43 @@ async def get_audio_job(
     return await _response(job, redis, cache)
 
 
+@router.get("/{document_id}/audio-job/estimate")
+async def estimate_audio_job(
+    document_id: UUID,
+    model: str,
+    voice: str,
+    user: AuthenticatedUser,
+    db: DbSession,
+    redis: RedisClient,
+    cache: AudioCache,
+    settings: SettingsDep,
+) -> AudioJobEstimate:
+    """What a job over the document in this voice would cost, block by block, and what the user has left."""
+    doc = await _readable_document(db, document_id, user.id)
+    tts_model = await get_model(db, model)
+    tts_voice = await get_voice(db, model, voice)
+    texts = _audio_texts(doc)
+    hashes = [
+        BlockVariant.get_hash(
+            text=text, model_slug=tts_model.slug, voice_slug=tts_voice.slug, parameters=tts_voice.parameters
+        )
+        for text in texts
+    ]
+    cached = await cached_mask(redis, cache, hashes)
+    available, _ = await get_available_usage(
+        user.id, usage_type_for(tts_model.slug), db, billing_enabled=settings.billing_enabled
+    )
+    running = await load_job(redis, user.id)
+    return AudioJobEstimate(
+        uncached_characters=[0 if hit else billed_characters(text, tts_model) for text, hit in zip(texts, cached)],
+        available_characters=available,
+        daily_blocks_left=await daily_allowance(redis, db, settings, user.id, tts_model.slug),
+        running_job_document_id=running.spec.document_id
+        if running is not None and running.status == AudioJobStatus.running
+        else None,
+    )
+
+
 @router.delete("/{document_id}/audio-job", status_code=status.HTTP_204_NO_CONTENT)
 async def cancel_audio_job(document_id: UUID, user: AuthenticatedUser, redis: RedisClient) -> Response:
     """Stop the document's audio job. Blocks a worker already took are finished and cached."""
@@ -126,7 +186,7 @@ async def _document_job(redis: RedisClient, user_id: str, document_id: UUID) -> 
 
 
 async def _response(job: AudioJob, redis: RedisClient, cache: Cache) -> AudioJobResponse:
-    hashes = variant_hashes(job.spec)
+    cached = await cached_mask(redis, cache, variant_hashes(job.spec))
     return AudioJobResponse(
         document_id=job.spec.document_id,
         model=job.spec.model,
@@ -135,5 +195,6 @@ async def _response(job: AudioJob, redis: RedisClient, cache: Cache) -> AudioJob
         status=job.status,
         error=job.error,
         total_blocks=len(job.spec.blocks),
-        cached_blocks=await count_cached(redis, cache, hashes),
+        cached_blocks=sum(cached),
+        pending_blocks=[idx for idx, hit in zip(job.spec.blocks, cached) if not hit],
     )

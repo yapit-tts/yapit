@@ -93,13 +93,14 @@ def variant_hashes(spec: AudioJobSpec) -> list[str]:
     ]
 
 
-async def count_cached(redis: Redis, cache: Cache, hashes: list[str]) -> int:
+async def cached_mask(redis: Redis, cache: Cache, hashes: list[str]) -> list[bool]:
+    """Whether each variant's audio is cached, in the order of hashes."""
     async with redis.pipeline(transaction=False) as pipe:
         for h in hashes:
             pipe.exists(TTS_AUDIO_CACHE.format(hash=h))
         in_redis = await pipe.execute()
-    missing = [h for h, hot in zip(hashes, in_redis) if not hot]
-    return len(hashes) - len(missing) + len(await cache.batch_exists(missing))
+    in_cache = await cache.batch_exists([h for h, hot in zip(hashes, in_redis) if not hot])
+    return [bool(hot) or h in in_cache for h, hot in zip(hashes, in_redis)]
 
 
 async def start_job(redis: Redis, user_id: str, spec: AudioJobSpec) -> bool:
@@ -196,7 +197,7 @@ async def top_up(redis: Redis, cache: Cache, settings: Settings, user_id: str) -
             await _finish(redis, user_id, AudioJobStatus.failed, str(e))
             return
 
-        allowance = await _daily_allowance(redis, db, settings, user_id, model.slug)
+        allowance = await daily_allowance(redis, db, settings, user_id, model.slug)
         while await redis.hlen(awaited_key) < SLICE_SIZE:
             retried = await redis.lindex(lost_key, 0)
             position = int(retried) if retried is not None else next_position
@@ -317,7 +318,7 @@ async def _top_up_logged(redis: Redis, cache: Cache, settings: Settings, user_id
         await log_error(f"Audio job top-up failed: {e}", user_id=user_id)
 
 
-async def _daily_allowance(redis: Redis, db, settings: Settings, user_id: str, model_slug: str) -> int | None:
+async def daily_allowance(redis: Redis, db, settings: Settings, user_id: str, model_slug: str) -> int | None:
     """Blocks the job may still queue today; None where the usage check already bounds the job.
 
     The ceiling guards plans with unlimited usage for the model. Self-hosting (billing off) has none.
