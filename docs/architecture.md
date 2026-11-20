@@ -128,7 +128,7 @@ flowchart TD
     PW --> RESOLVE
 ```
 
-All fetches go through Smokescreen SSRF proxy. Static path handles most content sites.
+All fetches go through Smokescreen SSRF proxy, under one user agent, after a `robots.txt` check, and signed where a key is set ([[web-bot-auth]]); a refusal ends the cascade. Static path handles most content sites.
 Playwright fallback reserved for JS-rendered SPAs where HTML is an empty shell.
 
 ### AI extraction
