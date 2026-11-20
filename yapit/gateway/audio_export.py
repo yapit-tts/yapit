@@ -21,7 +21,6 @@ from pathlib import Path
 from typing import Literal
 
 import av
-import numpy as np
 from loguru import logger
 from pydantic import BaseModel
 from redis.asyncio import Redis
@@ -289,12 +288,10 @@ def _encoded_samples(audio: bytes, opus_head: bytes) -> int:
 
 
 def _head(frame: av.AudioFrame, samples: int) -> av.AudioFrame:
-    data = frame.to_ndarray()
-    width = samples if frame.format.is_planar else samples * len(frame.layout.channels)
-    head = av.AudioFrame.from_ndarray(
-        np.ascontiguousarray(data[:, :width]), format=frame.format.name, layout=frame.layout.name
-    )
-    head.sample_rate = frame.sample_rate
+    fifo = av.AudioFifo()
+    fifo.write(frame)
+    head = fifo.read(samples)
+    assert head is not None
     return head
 
 
