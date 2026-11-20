@@ -1,0 +1,46 @@
+# The edge proxy on the production server, outside the Swarm stack because it
+# publishes on the host. Run from /opt/yapit/traefik:
+#   docker compose -p edge -f compose.yml up -d
+#
+# Traefik reads Swarm's services through socket-proxy, which answers the read
+# calls named below and refuses every write, so a compromised Traefik cannot
+# start a container or read a secret. Only socket-proxy mounts Docker's socket.
+services:
+  socket-proxy:
+    image: tecnativa/docker-socket-proxy:lts@sha256:be1ac64f33bd82043beb504822a17ba6b71668ea1ad7cf51a9a01d27bb7ab047
+    restart: always
+    environment:
+      SERVICES: 1
+      TASKS: 1
+      NETWORKS: 1
+      NODES: 1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [socket]
+    read_only: true
+    tmpfs: [/run, /tmp]
+    cap_drop: [ALL]
+
+  traefik:
+    image: traefik:v3.6
+    # The name the daily report reads logs by (scripts/proxy_diagnostics.py).
+    container_name: traefik
+    restart: always
+    depends_on: [socket-proxy]
+    # Any non-root uid; origin.key must be readable by this gid.
+    user: "65532:65532"
+    cap_drop: [ALL]
+    read_only: true
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./dynamic:/etc/traefik/dynamic:ro
+      - ./certs:/etc/traefik/certs:ro
+    networks: [socket, yapit-network]
+
+networks:
+  # No route out, so socket-proxy is reachable from Traefik alone.
+  socket:
+    internal: true
+  yapit-network:
+    external: true
