@@ -84,13 +84,6 @@ test("Chromium checks every redirect hop of the page against robots.txt", async 
 	assert.equal(web.requestsFor("/private").length, 0);
 });
 
-test("Chromium follows an allowed redirect to the page it renders", async () => {
-	const response = await extract("http://spa.test/app-to-page");
-	assert.equal(response.status, 200);
-	assert.equal(response.body.extraction_method, "playwright");
-	assert.match(response.body.markdown, /Ringstrasse/);
-});
-
 test("the gateway's robots check answers for a URL without fetching it", async () => {
 	assert.equal((await service.post("/robots", { url: "http://spa.test/fine" })).status, 200);
 	assertRefusedByRobots(await service.post("/robots", { url: "http://spa.test/private/x" }));
@@ -98,8 +91,9 @@ test("the gateway's robots check answers for a URL without fetching it", async (
 });
 
 test("without a key, every request goes out unsigned", async () => {
-	assert.equal((await extract("http://unsigned.test/app-to-page")).status, 200);
+	const response = await extract("http://unsigned.test/app-to-page");
+	assert.equal(response.body.extraction_method, "playwright");
+	assert.match(response.body.markdown, /Ringstrasse/, "Chromium followed the redirect to the page");
 	const seen = web.requests.filter((r) => r.host === "unsigned.test");
-	assert.ok(seen.some((r) => r.path === "/page"), "Chromium reached the page");
 	for (const r of seen) assert.equal(r.headers["signature"] ?? r.headers["signature-input"] ?? r.headers["signature-agent"], undefined);
 });
