@@ -24,6 +24,7 @@ from yapit.contracts import (
     get_pubsub_channel,
     get_queue_name,
 )
+from yapit.gateway.audio_job import publish_job_state
 from yapit.gateway.auth import User, authenticate_ws
 from yapit.gateway.backoff import Backoff
 from yapit.gateway.cache import Cache
@@ -48,6 +49,13 @@ class WSSynthesizeRequest(BaseModel):
     block_indices: list[int] = Field(max_length=32)  # frontend sends batches of 8; cap is a safety bound
     model: str
     voice: str
+
+
+class WSWatchDocument(BaseModel):
+    """Sent when a tab opens a document: it hears of the user's audio job over it from then on."""
+
+    type: Literal["watch"] = "watch"
+    document_id: uuid.UUID
 
 
 class WSCursorMoved(BaseModel):
@@ -117,6 +125,11 @@ async def tts_websocket(
                     msg = WSSynthesizeRequest.model_validate(data)
                     await ensure_doc_subscribed(msg.document_id)
                     await _handle_synthesize(ws, msg, user, redis, cache, settings)
+                elif msg_type == "watch":
+                    msg = WSWatchDocument.model_validate(data)
+                    await ensure_doc_subscribed(msg.document_id)
+                    # Through the channel, so it reaches the tab in order with the feeder's updates
+                    await publish_job_state(redis, cache, user.id, msg.document_id)
                 elif msg_type == "cursor_moved":
                     msg = WSCursorMoved.model_validate(data)
                     await _handle_cursor_moved(ws, msg, user, redis)

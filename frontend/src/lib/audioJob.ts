@@ -23,6 +23,12 @@ export interface AudioJob {
   pending_blocks: number[];
 }
 
+export interface WSAudioJobMessage {
+  type: "audio_job";
+  document_id: string;
+  job: AudioJob | null;
+}
+
 export interface AudioJobEstimate {
   uncached_characters: number[]; // per audio block; 0 where cached
   plan_includes_voice: boolean;

@@ -65,7 +65,6 @@ const PlaybackPage = () => {
   const [showKeybindings, setShowKeybindings] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   const [showPrepareAudio, setShowPrepareAudio] = useState(false);
-  const audioJob = useAudioJob(documentId);
 
   // Outliner state
   const [sections, setSections] = useState<Section[]>([]);
@@ -87,6 +86,8 @@ const PlaybackPage = () => {
   const sourceUrl = document?.metadata_dict?.url ?? null;
   const markdownContent = document?.original_text ?? null;
 
+  const audioJob = useAudioJob(documentId);
+
   // --- Playback engine (no snapshot subscription — that lives in PlaybackOverlay) ---
   const { engine, ws, getServerTTSStatus, getBrowserTTSStatus } = usePlaybackEngine(
     documentId,
@@ -94,6 +95,7 @@ const PlaybackPage = () => {
     voiceSelection,
     sections,
     expandedSections,
+    audioJob.receive,
   );
 
   // Sync playback speed and volume into engine/audio
