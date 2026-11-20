@@ -9,7 +9,8 @@ import { useFilteredPlayback } from '@/hooks/useFilteredPlayback';
 import { useApi } from '@/api';
 import { AudioLines, X } from "lucide-react";
 import type { Section } from '@/lib/sectionIndex';
-import type { PlaybackEngine, Block } from '@/lib/playbackEngine';
+import type { PlaybackEngine, Block, BlockVisualState } from '@/lib/playbackEngine';
+import type { AudioJob } from '@/lib/audioJob';
 import type { VoiceSelection } from '@/lib/voiceSelection';
 import type { UsePlaybackEngineReturn } from '@/hooks/usePlaybackEngine';
 
@@ -39,6 +40,8 @@ interface PlaybackOverlayProps {
   // Ref bridges: overlay writes, shell reads
   scrollToBlockRef: React.MutableRefObject<(blockIdx: number, behavior?: ScrollBehavior) => void>;
   handleBackToReadingRef: React.MutableRefObject<() => void>;
+  audioJob: AudioJob | null;
+  onCancelAudioJob: () => Promise<void>;
 }
 
 export function PlaybackOverlay({
@@ -65,6 +68,8 @@ export function PlaybackOverlay({
   slugMap,
   scrollToBlockRef,
   handleBackToReadingRef,
+  audioJob,
+  onCancelAudioJob,
 }: PlaybackOverlayProps) {
   const snapshot = useSyncExternalStore(engine.subscribe, engine.getSnapshot);
   const { api } = useApi();
@@ -296,11 +301,16 @@ export function PlaybackOverlay({
     engine.seekToBlock(newBlock);
   }, [engine]);
 
+  const blockStates = useMemo(
+    () => withAudioJob(snapshot.blockStates, audioJob, voiceSelection),
+    [snapshot.blockStates, audioJob, voiceSelection],
+  );
+
   const filteredPlayback = useFilteredPlayback(
     documentBlocks,
     sections,
     expandedSections,
-    snapshot.blockStates,
+    blockStates,
     currentBlock,
   );
 
@@ -324,9 +334,9 @@ export function PlaybackOverlay({
       setCurrentBlock: handleBlockChange,
       onBlockHover: handleBlockHover,
       audioProgress: snapshot.audioProgress,
-      blockStates: snapshot.blockStates,
+      blockStates,
     };
-  }, [shouldShowOutliner, filteredPlayback, snapshot, estimated_ms, documentBlocks.length, currentBlock, handleBlockChange, handleBlockHover]);
+  }, [shouldShowOutliner, filteredPlayback, snapshot, blockStates, estimated_ms, documentBlocks.length, currentBlock, handleBlockChange, handleBlockHover]);
 
   // --- Outliner navigation ---
 
@@ -395,6 +405,8 @@ export function PlaybackOverlay({
         serverTTSRecoverable={serverTTS.recoverable}
         browserTTSError={browserTTS.error}
         browserTTSDevice={browserTTS.device}
+        audioJob={audioJob}
+        onCancelAudioJob={onCancelAudioJob}
       />
       {shouldShowOutliner && (
         <OutlinerSidebar>
@@ -411,4 +423,18 @@ export function PlaybackOverlay({
       )}
     </>
   );
+}
+
+/** The bar shows a job in the voice playing as playback's own synthesis: its cached blocks cached, its waiting ones synthesizing. */
+function withAudioJob(states: BlockVisualState[], job: AudioJob | null, voice: VoiceSelection): BlockVisualState[] {
+  if (!job || job.model !== voice.model || job.voice !== voice.voiceSlug) return states;
+  const pending = new Set(job.pending_blocks);
+  const merged = [...states];
+  for (const range of job.ranges) {
+    for (let idx = range.first_block; idx <= range.last_block && idx < merged.length; idx++) {
+      if (!pending.has(idx)) merged[idx] = "cached";
+      else if (job.status === "running" && merged[idx] === "pending") merged[idx] = "synthesizing";
+    }
+  }
+  return merged;
 }

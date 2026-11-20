@@ -39,9 +39,11 @@ Frontend connects via WebSocket for real-time synthesis control:
 |-----------|------|---------|
 | Client→Server | `synthesize` | Request synthesis for block indices |
 | Client→Server | `cursor_moved` | Evict blocks outside playback window |
+| Client→Server | `watch` | Hear of the user's audio job over a document; sent on each connect and on opening a document |
 | Server→Client | `status` | Per-block status update (queued/processing/cached/error/skipped). Includes `recoverable` bool — `false` only for session-level errors (usage limit). Playback engine advances past recoverable errors. |
 | Server→Client | `evicted` | Blocks evicted after cursor move |
 | Server→Client | `error` | Document-level errors (not found, invalid model) |
+| Server→Client | `audio_job` | The document's audio job as it stands (`job` is null for none), after a `watch` and after each change |
 
 **Cursor-aware eviction:** When cursor moves (`cursor_moved` message), backend evicts ALL pending blocks — clean slate. The frontend is the sole authority on what blocks to synthesize; the next `synthesize` message fills the queue fresh. Uses sorted set for O(log N) eviction.
 
@@ -124,7 +126,7 @@ Redis Streams consumer group on `tts:billing:stream`. At-least-once delivery: ev
 
 ### 7. Background audio jobs
 
-A job synthesizes a chosen set of a document's blocks with no tab open, so playback later finds them in the cache. `POST /v1/documents/{id}/audio-job` takes a model, a voice and block ranges with titles; `GET` reports the job's status and its cached and total blocks; `DELETE` cancels it. The API is in `gateway/api/v1/audio_jobs.py`, the job in `gateway/audio_job.py`.
+A job synthesizes a chosen set of a document's blocks with no tab open, so playback later finds them in the cache. `POST /v1/documents/{id}/audio-job` takes a model, a voice and block ranges with titles; `GET` reports the job's status, its cached and total blocks and the blocks it still waits on, or null where the document has none; `DELETE` cancels it. `GET .../audio-job/estimate` gives, for a voice, the characters each block would bill (0 where cached) and what the user has left. A tab on the document hears of the job over the WebSocket: the feeder publishes its state on the document's channel after each top-up, the cancel endpoint after a cancel, and a `watch` publishes it once for the tab that sent it. The API is in `gateway/api/v1/audio_jobs.py`, the job in `gateway/audio_job.py`.
 
 - **State** lives in Redis: `tts:audio_job:{user_id}` holds the job's spec (with each block's text, so the document is parsed once, at the POST), progress and status; `tts:audio_job:{user_id}:awaited` holds the variants it waits on. A user has one running job (`tts:audio_jobs_running`).
 - **Slices:** at most 16 of a job's variants are in flight. The in-flight marker lives 600 s, so a book queued at once would outlive it.

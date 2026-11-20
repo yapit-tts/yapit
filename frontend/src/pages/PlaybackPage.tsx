@@ -1,6 +1,8 @@
 import { StructuredDocumentView } from '@/components/structuredDocument';
 import { PlaybackOverlay } from '@/components/playbackOverlay';
+import { PrepareAudioDialog } from '@/components/prepareAudioDialog';
 import { useOutliner } from '@/hooks/useOutliner';
+import { useAudioJob } from '@/hooks/useAudioJob';
 import { usePlaybackEngine, type Block } from '@/hooks/usePlaybackEngine';
 import { useParams, useLocation, Link, useNavigate } from "react-router";
 import { useRef, useState, useEffect, useCallback } from "react";
@@ -62,6 +64,7 @@ const PlaybackPage = () => {
   const [showFailedPagesBanner, setShowFailedPagesBanner] = useState(true);
   const [showKeybindings, setShowKeybindings] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
+  const [showPrepareAudio, setShowPrepareAudio] = useState(false);
 
   // Outliner state
   const [sections, setSections] = useState<Section[]>([]);
@@ -83,6 +86,8 @@ const PlaybackPage = () => {
   const sourceUrl = document?.metadata_dict?.url ?? null;
   const markdownContent = document?.original_text ?? null;
 
+  const audioJob = useAudioJob(documentId);
+
   // --- Playback engine (no snapshot subscription — that lives in PlaybackOverlay) ---
   const { engine, ws, getServerTTSStatus, getBrowserTTSStatus } = usePlaybackEngine(
     documentId,
@@ -90,6 +95,7 @@ const PlaybackPage = () => {
     voiceSelection,
     sections,
     expandedSections,
+    audioJob.receive,
   );
 
   // Sync playback speed and volume into engine/audio
@@ -178,6 +184,7 @@ const PlaybackPage = () => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement;
       if (["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName) || el.isContentEditable) return;
+      if (el.closest('[role="dialog"]')) return;
 
       switch (e.key) {
         case " ":
@@ -362,6 +369,8 @@ const PlaybackPage = () => {
     engine.seekToBlock(audioBlockIdx);
   }, [engine]);
 
+  const openPrepareAudio = useCallback(() => setShowPrepareAudio(true), []);
+
   const canCollapseSection = useCallback((section: Section) => {
     const idx = engine.getSnapshot().currentBlock;
     if (idx < 0) return true;
@@ -490,6 +499,7 @@ const PlaybackPage = () => {
           expandedSections={shouldShowOutliner ? expandedSections : undefined}
           onSectionExpand={shouldShowOutliner ? handleSectionToggle : undefined}
           canCollapseSection={shouldShowOutliner ? canCollapseSection : undefined}
+          onPrepareAudio={documentBlocks.length > 0 ? openPrepareAudio : undefined}
         />
         <PlaybackOverlay
           engine={engine}
@@ -515,8 +525,25 @@ const PlaybackPage = () => {
           slugMap={slugMap}
           scrollToBlockRef={scrollToBlockRef}
           handleBackToReadingRef={handleBackToReadingRef}
+          audioJob={audioJob.job}
+          onCancelAudioJob={audioJob.cancel}
         />
       </div>
+
+      {documentId && (
+        <PrepareAudioDialog
+          open={showPrepareAudio}
+          onOpenChange={setShowPrepareAudio}
+          documentId={documentId}
+          sections={sections}
+          documentBlocks={documentBlocks}
+          expandedSections={expandedSections}
+          voiceSelection={voiceSelection}
+          onVoiceChange={setVoiceSelection}
+          job={audioJob.job}
+          onStart={audioJob.start}
+        />
+      )}
 
       {showKeybindings && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={() => setShowKeybindings(false)}>
