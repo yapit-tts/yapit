@@ -540,7 +540,6 @@ const PlaybackPage = () => {
           onVoiceChange={setVoiceSelection}
           job={audioJob.job}
           onStart={audioJob.start}
-          onCancelJob={audioJob.cancel}
         />
       )}
 

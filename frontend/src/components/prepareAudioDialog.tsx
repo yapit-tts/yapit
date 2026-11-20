@@ -34,7 +34,6 @@ interface PrepareAudioDialogProps {
   onVoiceChange: (selection: VoiceSelection) => void;
   job: AudioJob | null;
   onStart: (model: string, voice: string, ranges: BlockRange[]) => Promise<string | null>;
-  onCancelJob: () => Promise<void>;
 }
 
 export function PrepareAudioDialog(props: PrepareAudioDialogProps) {
@@ -59,7 +58,6 @@ function PrepareAudioForm({
   onVoiceChange,
   job,
   onStart,
-  onCancelJob,
 }: PrepareAudioDialogProps) {
   const { api } = useApi();
   const rows = exportRows(sections, documentBlocks, expandedSections);
@@ -130,12 +128,6 @@ function PrepareAudioForm({
       <div role="group" aria-labelledby="prepare-audio-sections" className="flex flex-col min-h-0 min-w-0 gap-2">
         <div className="flex items-center justify-between">
           <span id="prepare-audio-sections" className="text-sm font-medium">Sections</span>
-          {rows.length > 1 && (
-            <div className="flex gap-1">
-              <Button variant="ghost" size="sm" onClick={() => setTicked(new Set(rows.map(r => r.id)))}>All</Button>
-              <Button variant="ghost" size="sm" onClick={() => setTicked(new Set())}>None</Button>
-            </div>
-          )}
         </div>
         <div className="overflow-y-auto min-h-0 max-h-[40dvh] -mx-2 px-2">
           {rows.map(row => (
@@ -161,13 +153,10 @@ function PrepareAudioForm({
       {shortfall && <Notice tone="warning">{shortfall}</Notice>}
       {refusal && <Notice tone="warning">{refusal}</Notice>}
       {jobRunsHere && !blocker && (
-        <Notice>Audio is being prepared for this document. Its progress shows on the playback bar.</Notice>
+        <Notice>Audio is being prepared for this document. Its progress, and its Stop button, are on the playback bar.</Notice>
       )}
 
       <DialogFooter>
-        {jobRunsHere && (
-          <Button variant="outline" onClick={() => void onCancelJob()}>Stop preparing</Button>
-        )}
         <Button onClick={() => void prepare()} disabled={!canPrepare}>
           {isStarting && <Loader2 className="animate-spin" />}
           Prepare audio
