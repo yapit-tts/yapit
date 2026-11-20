@@ -269,8 +269,10 @@ async def top_up(redis: Redis, cache: Cache, settings: Settings, user_id: str) -
         except ResourceNotFoundError as e:
             await _finish(redis, user_id, job.id, AudioJobStatus.failed, str(e))
             return
+        if not await _is_current(redis, user_id, job.id):
+            return
 
-        while await _is_current(redis, user_id, job.id) and await redis.hlen(awaited_key) < SLICE_SIZE:
+        while await redis.hlen(awaited_key) < SLICE_SIZE:
             retried = await redis.lindex(lost_key, 0)
             position = int(retried) if retried is not None else next_position
             if position >= len(spec.blocks):
