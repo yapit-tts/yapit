@@ -32,6 +32,7 @@ repomix-output.xml
 
 # Frontend
 frontend/node_modules/
+docker/defuddle/node_modules/
 frontend/dist/
 frontend/.next/
 frontend/build/

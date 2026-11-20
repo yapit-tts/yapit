@@ -6,6 +6,10 @@
   "dependencies": {
     "defuddle": "0.19.6",
     "playwright": "1.64.0",
+    "robots-parser": "3.0.1",
     "undici": "^8.12.3"
+  },
+  "devDependencies": {
+    "web-bot-auth": "0.2.0"
   }
 }

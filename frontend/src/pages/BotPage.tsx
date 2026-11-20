@@ -41,6 +41,24 @@ const BotPage = () => {
         </section>
 
         <section>
+          <h2 className="text-2xl font-semibold mb-3">How to block it</h2>
+          <p>
+            Yapit reads your <code>robots.txt</code> before it requests any page of your site, and on every redirect,
+            and fetches nothing it disallows. Its product token is <code>Yapit</code>. To keep it off your whole site:
+          </p>
+          <pre className="mt-3 overflow-x-auto"><code>{"User-agent: Yapit\nDisallow: /"}</code></pre>
+          <ul className="list-disc pl-6 space-y-1 mt-3">
+            <li>Rules for <code>User-agent: *</code> apply to yapit when no group names it.</li>
+            <li>Yapit keeps a site's <code>robots.txt</code> for up to an hour, so a change can take that long to apply.</li>
+            <li>
+              While your <code>robots.txt</code> cannot be read (a server error or no answer), yapit fetches nothing
+              from your site. One that does not exist (a 404) allows everything.
+            </li>
+            <li>The reader is told that your <code>robots.txt</code> does not allow yapit to fetch the page.</li>
+          </ul>
+        </section>
+
+        <section>
           <h2 className="text-2xl font-semibold mb-3">Contact</h2>
           <p>
             Questions or problems with the fetcher? Email{" "}

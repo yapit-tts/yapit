@@ -995,7 +995,11 @@ async def _run_extraction(
     try:
         if arxiv_id and not ai_transform:
             arxiv_html_url = f"https://arxiv.org/html/{arxiv_id}"
-            markdown, _, defuddle_method = await extract_website(arxiv_html_url)
+            try:
+                markdown, _, defuddle_method = await extract_website(arxiv_html_url)
+            except HTTPException as e:
+                ext_log.info(f"arXiv HTML for {arxiv_id} not fetched ({e.detail}), falling back to pymupdf")
+                markdown, defuddle_method = "", None
             if markdown.strip():
                 markdown = resolve_relative_urls(markdown, arxiv_html_url)
                 extraction_result = DocumentExtractionResult(
