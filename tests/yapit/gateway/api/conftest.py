@@ -85,6 +85,7 @@ def _test_settings(postgres_container, redis_container):
         database_url=postgres_container.get_connection_url(),
         redis_url=f"redis://{redis_container.get_container_host_ip()}:{redis_container.get_exposed_port(6379)}",
         audio_cache_config=CacheConfig(path="test_audio_cache"),
+        audio_export_dir="test_audio_exports",
         document_cache_config=CacheConfig(path="test_document_cache"),
         app_url=APP_URL,
         smtp_host="",
@@ -141,7 +142,7 @@ async def _shared_app(_create_schema, _test_settings) -> FastAPI:
 
 
 @pytest_asyncio.fixture(autouse=True)
-async def _clean_tables(_shared_app):
+async def _clean_tables(_shared_app, _test_settings):
     """Clear all state between tests: DB rows, Redis, and SQLite caches."""
     global _delete_stmts
     if _delete_stmts is None:
@@ -153,6 +154,7 @@ async def _clean_tables(_shared_app):
             await conn.execute(stmt)
     await _shared_app.state.redis_client.flushdb()
     _shared_app.state.mailer = RecordingMailer()
+    shutil.rmtree(_test_settings.audio_export_dir, ignore_errors=True)
     for cache in [_shared_app.state.audio_cache, _shared_app.state.document_cache, _shared_app.state.extraction_cache]:
         writer = await cache._get_writer()
         await writer.execute("DELETE FROM cache")

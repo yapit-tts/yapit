@@ -10,7 +10,7 @@ import { isServerSideModel, type VoiceSelection } from "@/lib/voiceSelection";
 import type { Section } from "@/lib/sectionIndex";
 import { createServerSynthesizer, type ServerSynthesizerInstance, type WSBlockStatusMessage, type WSEvictedMessage } from "@/lib/serverSynthesizer";
 import { createBrowserSynthesizer, type BrowserSynthesizerInstance } from "@/lib/browserSynthesizer";
-import type { WSAudioJobMessage } from "@/lib/audioJob";
+import type { WSAudioDocumentMessage } from "@/lib/audioJob";
 import { useTTSWebSocket, type WSMessage } from "./useTTSWebSocket";
 
 export type { Block };
@@ -35,11 +35,14 @@ export function usePlaybackEngine(
   voiceSelection: VoiceSelection,
   sections: Section[],
   expandedSections: Set<string>,
-  onAudioJob: (message: WSAudioJobMessage) => void,
+  onAudioMessage: (message: WSAudioDocumentMessage) => void,
+  onConnect: () => void,
 ): UsePlaybackEngineReturn {
   const { api } = useApi();
-  const onAudioJobRef = useRef(onAudioJob);
-  onAudioJobRef.current = onAudioJob;
+  const onAudioMessageRef = useRef(onAudioMessage);
+  onAudioMessageRef.current = onAudioMessage;
+  const onConnectRef = useRef(onConnect);
+  onConnectRef.current = onConnect;
   const documentIdRef = useRef(documentId);
   documentIdRef.current = documentId;
 
@@ -57,9 +60,9 @@ export function usePlaybackEngine(
 
   // WS message handler — forwards to server synthesizer
   const handleWSMessage = useCallback((data: WSMessage) => {
-    if (data.type === "audio_job") {
-      const message = data as unknown as WSAudioJobMessage;
-      if (message.document_id === documentIdRef.current) onAudioJobRef.current(message);
+    if (data.type === "audio_job" || data.type === "audio_export") {
+      const message = data as unknown as WSAudioDocumentMessage;
+      if (message.document_id === documentIdRef.current) onAudioMessageRef.current(message);
       return;
     }
     if (!serverSynthRef.current) return;
@@ -76,6 +79,7 @@ export function usePlaybackEngine(
   // where it stands, for what a dropped socket missed), and retry all pending synthesis requests
   const handleWSConnect = useCallback(() => {
     if (documentIdRef.current) sendWSRef.current({ type: "watch", document_id: documentIdRef.current });
+    onConnectRef.current();
     serverSynthRef.current?.retryAllPending();
   }, []);
 

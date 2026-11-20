@@ -44,6 +44,7 @@ Frontend connects via WebSocket for real-time synthesis control:
 | Server→Client | `evicted` | Blocks evicted after cursor move |
 | Server→Client | `error` | Document-level errors (not found, invalid model) |
 | Server→Client | `audio_job` | The document's audio job as it stands (`job` is null for none), after a `watch` and after each change |
+| Server→Client | `audio_export` | An audio file the user asked for is built (`status` `ready`) or could not be (`failed`, with `error`) |
 
 **Cursor-aware eviction:** When cursor moves (`cursor_moved` message), backend evicts ALL pending blocks — clean slate. The frontend is the sole authority on what blocks to synthesize; the next `synthesize` message fills the queue fresh. Uses sorted set for O(log N) eviction.
 
@@ -134,6 +135,9 @@ A job synthesizes a chosen set of a document's blocks with no tab open, so playb
 - **Priority:** job blocks are scored 120 s late, so a listener's block is pulled before every job block queued in the two minutes before it. A listener asking for a variant whose job block waits moves that job to now (`ZADD XX LT` on the marker's job id). Cursor eviction skips a queued job an audio job awaits.
 - **Bounds:** a job ends at `usage_limit` when the usage check refuses a block, and at `daily_limit` once the user's jobs queued `AUDIO_JOB_DAILY_BLOCK_LIMIT` blocks that UTC day; the ceiling applies only with billing on and where the plan's usage for the model is unlimited. A deactivated voice or a deleted document ends it at `failed`.
 - **Cancel** stops the job queueing and takes its queued blocks off the queue unless a listener or another job waits on them. Blocks a worker already took are finished, cached and billed.
+- **Cache cap:** the POST refuses a selection whose estimated audio is larger than `AUDIO_CACHE_CONFIG__MAX_SIZE_MB`, since the cache would evict its first blocks before its last are made.
+
+**Export** (`gateway/audio_export.py`): `POST /v1/documents/{id}/audio-export` takes a model, a voice, block ranges with titles and a format (`m4b`, AAC with a chapter per range; `mp3`, with ID3 chapters) and joins the ranges' cached blocks into one file. It is refused (409) while any block has no audio in that voice, and while another file of the user's is being built. The file is built once, in `cpu_executor`, into `AUDIO_EXPORT_DIR` under a name hashed from its content, and kept 24 hours: the answer is `ready` when the file is stored, or `building`, and the tabs on the document hear `audio_export` when the build ends. `GET .../audio-export/{key}.{format}` serves it. Each block is decoded and cut to the length it was encoded from (FFmpeg leaves the encoder's padding on a block of one Ogg page), so the joins carry no gap.
 
 ### 8. Cache & Storage
 
@@ -183,7 +187,8 @@ Built-in model: kokoro. Model/voice definitions in `yapit/gateway/seed.py`.
 | `gateway/billing_consumer.py` | Cold path: BlockVariant update, usage billing, engagement stats |
 | `gateway/visibility_scanner.py` | Re-queues stuck jobs |
 | `gateway/audio_job.py` | Background audio jobs: state, feeder, cancel |
-| `gateway/api/v1/audio_jobs.py` | Audio job endpoints |
+| `gateway/api/v1/audio_jobs.py` | Audio job and export endpoints |
+| `gateway/audio_export.py` | Export: the join into one file, its storage and expiry |
 | `workers/tts_loop.py` | Pull-based worker main loop (worker image) |
 | `gateway/api_tts_dispatcher.py` | Parallel dispatcher for API models (gateway image) |
 | `queue.py` | Shared queue utilities (push, pull, requeue) |

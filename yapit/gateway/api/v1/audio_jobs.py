@@ -1,8 +1,23 @@
+from pathlib import Path
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import Path as PathParam
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, ValidationError
 
+from yapit.contracts import KOKORO_OPUS_BITRATE, OPENAI_TTS_OPUS_BITRATE
+from yapit.gateway.audio_export import (
+    ENCODINGS,
+    AudioExportState,
+    AudioNotCached,
+    Chapter,
+    ExportBusy,
+    ExportFormat,
+    request_export,
+    stored_export,
+)
 from yapit.gateway.audio_job import (
     AudioJobSpec,
     AudioJobState,
@@ -19,6 +34,7 @@ from yapit.gateway.audio_job import (
     start_job,
 )
 from yapit.gateway.auth import authenticate
+from yapit.gateway.constants import estimate_duration_ms
 from yapit.gateway.deps import (
     AudioCache,
     AuthenticatedUser,
@@ -46,6 +62,10 @@ class AudioJobRequest(BaseModel):
     ranges: list[BlockRange] = Field(min_length=1, max_length=1000)
 
 
+class AudioExportRequest(AudioJobRequest):
+    format: ExportFormat
+
+
 class AudioJobEstimate(BaseModel):
     uncached_characters: list[int] = Field(
         description="Per audio block, the characters synthesizing it would count against the quota; 0 where cached"
@@ -66,21 +86,27 @@ async def start_audio_job(
     db: DbSession,
     redis: RedisClient,
     cache: AudioCache,
+    settings: SettingsDep,
 ) -> AudioJobState:
     """Synthesize the given block ranges of a document in the background, with no tab open."""
     doc = await _readable_document(db, document_id, user.id)
     model = await get_model(db, request.model)
     voice = await get_voice(db, request.model, request.voice)
     texts = _audio_texts(doc)
-    for r in request.ranges:
-        if r.first_block > r.last_block or r.last_block >= len(texts):
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail=f"Range {r.title!r} ({r.first_block}-{r.last_block}) is not within the document's "
-                f"{len(texts)} audio blocks",
-            )
+    _check_ranges(request.ranges, len(texts))
 
     blocks = block_indices(request.ranges)
+    # The cache evicts least recently played first, so a selection larger than the cache would
+    # evict its own first blocks before the last are synthesized.
+    cap_mb = settings.audio_cache_config.max_size_mb
+    bitrate = KOKORO_OPUS_BITRATE if model.slug.startswith("kokoro") else OPENAI_TTS_OPUS_BITRATE
+    estimated_bytes = sum(estimate_duration_ms(len(texts[idx])) for idx in blocks) * bitrate // 8 // 1000
+    if cap_mb is not None and estimated_bytes > cap_mb * 1024 * 1024:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"That is about {estimated_bytes // (1024 * 1024):,} MB of audio, more than the server's "
+            f"{cap_mb:,} MB audio cache holds. Pick fewer sections.",
+        )
     spec = AudioJobSpec(
         document_id=document_id,
         model=model.slug,
@@ -159,6 +185,82 @@ async def cancel_audio_job(
     await cancel_job(redis, user.id)
     await publish_job_state(redis, cache, user.id, document_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/{document_id}/audio-export")
+async def export_audio(
+    document_id: UUID,
+    request: AudioExportRequest,
+    user: AuthenticatedUser,
+    db: DbSession,
+    redis: RedisClient,
+    cache: AudioCache,
+    settings: SettingsDep,
+) -> AudioExportState:
+    """Join the ranges' prepared audio into one file, a chapter per range.
+
+    Status `ready`: the file is stored and can be fetched. `building`: the document's WebSocket
+    channel hears an `audio_export` message when it is.
+    """
+    doc = await _readable_document(db, document_id, user.id)
+    model = await get_model(db, request.model)
+    voice = await get_voice(db, request.model, request.voice)
+    texts = _audio_texts(doc)
+    _check_ranges(request.ranges, len(texts))
+
+    def variant_hash(idx: int) -> str:
+        return BlockVariant.get_hash(
+            text=texts[idx], model_slug=model.slug, voice_slug=voice.slug, parameters=voice.parameters
+        )
+
+    chapters = [
+        Chapter(title=r.title, variant_hashes=[variant_hash(idx) for idx in range(r.first_block, r.last_block + 1)])
+        for r in request.ranges
+    ]
+    try:
+        return await request_export(
+            redis,
+            cache,
+            Path(settings.audio_export_dir),
+            user.id,
+            document_id,
+            request.format,
+            chapters,
+        )
+    except AudioNotCached as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Prepare the audio first: {e}")
+    except ExportBusy:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An audio file of yours is being built. Download this one once it is done.",
+        )
+
+
+@router.get("/{document_id}/audio-export/{key}.{fmt}")
+async def get_audio_export(
+    document_id: UUID,
+    key: Annotated[str, PathParam(pattern=r"^[0-9a-f]{64}$")],
+    fmt: ExportFormat,
+    user: AuthenticatedUser,
+    db: DbSession,
+    settings: SettingsDep,
+) -> FileResponse:
+    """An exported file, by the key and format its export answered with."""
+    doc = await _readable_document(db, document_id, user.id)
+    path = stored_export(Path(settings.audio_export_dir), key, fmt)
+    if path is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No such audio file, or it has expired")
+    return FileResponse(path, media_type=ENCODINGS[fmt].media_type, filename=f"{doc.title or 'Document'}.{fmt}")
+
+
+def _check_ranges(ranges: list[BlockRange], block_count: int) -> None:
+    for r in ranges:
+        if r.first_block > r.last_block or r.last_block >= block_count:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"Range {r.title!r} ({r.first_block}-{r.last_block}) is not within the document's "
+                f"{block_count} audio blocks",
+            )
 
 
 async def _readable_document(db: DbSession, document_id: UUID, user_id: str) -> Document:
