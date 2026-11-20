@@ -10,6 +10,8 @@ const ROBOTS = {
 	"spa.test": "User-agent: *\nDisallow: /private\n",
 };
 
+const FRAMED = `<!doctype html><title>Framed</title><iframe src="/frame-a"></iframe><iframe src="/frame-b"></iframe>`;
+
 const web = await stubWeb((req, res) => {
 	const host = req.headers.host.split(":")[0];
 	if (req.url === "/robots.txt") {
@@ -23,6 +25,8 @@ const web = await stubWeb((req, res) => {
 	const browser = req.headers.accept?.includes("image/");
 	if (req.url === "/app-to-private") return browser ? redirect(res, "/private") : html(res, SHELL);
 	if (req.url === "/app-to-page") return browser ? redirect(res, "/page") : html(res, SHELL);
+	if (req.url === "/framed-moved") return browser ? redirect(res, "/framed") : html(res, SHELL);
+	if (req.url === "/framed") return html(res, browser ? FRAMED : SHELL);
 	html(res, ARTICLE);
 });
 const service = await web.start();
@@ -82,6 +86,13 @@ test("a redirect into a disallowed path is refused before the request to it", as
 test("Chromium checks every redirect hop of the page against robots.txt", async () => {
 	assertRefusedByRobots(await extract("http://spa.test/app-to-private"));
 	assert.equal(web.requestsFor("/private").length, 0);
+});
+
+test("one extraction reads a site's robots.txt once, across its redirect and Chromium's frames", async () => {
+	await extract("http://framed.test/framed-moved");
+	const seen = web.requests.filter((r) => r.host === "framed.test");
+	for (const path of ["/framed", "/frame-a", "/frame-b"]) assert.ok(seen.some((r) => r.path === path), `Chromium requested ${path}`);
+	assert.equal(seen.filter((r) => r.path === "/robots.txt").length, 1);
 });
 
 test("the gateway's robots check answers for a URL without fetching it", async () => {

@@ -42,13 +42,13 @@ let browserSlots = MAX_CONCURRENT_BROWSER;
 
 // --- Static extraction (fetch + linkedom + defuddle) ---
 
-async function fetchPage(url, userAgent, timeoutMs) {
+async function fetchPage(call, url, userAgent, timeoutMs) {
 	const fetchTimeout = Math.min(timeoutMs, STATIC_FETCH_TIMEOUT_MS);
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), fetchTimeout);
 
 	try {
-		const { response } = await fetcher.send(url, {
+		const { response } = await call.send(url, {
 			userAgent,
 			accept: "text/html,application/xhtml+xml",
 			signal: controller.signal,
@@ -75,8 +75,8 @@ async function fetchPage(url, userAgent, timeoutMs) {
 	}
 }
 
-async function extractStatic(url, userAgent, timeoutMs) {
-	const html = await fetchPage(url, userAgent, timeoutMs);
+async function extractStatic(call, url, userAgent, timeoutMs) {
+	const html = await fetchPage(call, url, userAgent, timeoutMs);
 	const result = await Defuddle(html, url, { markdown: true });
 	return {
 		markdown: result.content || "",
@@ -106,7 +106,7 @@ async function getBrowser() {
 	return browserLaunchPromise;
 }
 
-async function extractPlaywright(url, timeoutMs) {
+async function extractPlaywright(call, url, timeoutMs) {
 	const b = await getBrowser();
 	const context = await b.newContext({ proxy: { server: PROXY_URL }, userAgent: USER_AGENT });
 	await context.addInitScript(bundle);
@@ -121,7 +121,7 @@ async function extractPlaywright(url, timeoutMs) {
 		if (!request.isNavigationRequest()) return route.continue();
 		const isTopDocument = request.frame().parentFrame() === null;
 		try {
-			await fetcher.assertAllowed(request.url());
+			await call.assertAllowed(request.url());
 		} catch (err) {
 			if (isTopDocument) refusal = err;
 			return route.abort("blockedbyclient");
@@ -186,10 +186,11 @@ function getInitialUA(url) {
 async function extract(url, timeoutMs) {
 	const t0 = performance.now();
 	const remaining = () => Math.max(0, timeoutMs - (performance.now() - t0));
+	const call = fetcher.forCall();
 
 	const initialUA = getInitialUA(url);
 	try {
-		const result = await extractStatic(url, initialUA, remaining());
+		const result = await extractStatic(call, url, initialUA, remaining());
 		if (result.wordCount > 0) {
 			const method = initialUA === BOT_UA ? "static-bot" : "static";
 			log(method, url, t0, result);
@@ -202,7 +203,7 @@ async function extract(url, timeoutMs) {
 
 	if (initialUA !== BOT_UA && remaining() > 1000) {
 		try {
-			const result = await extractStatic(url, BOT_UA, remaining());
+			const result = await extractStatic(call, url, BOT_UA, remaining());
 			if (result.wordCount > 0) {
 				log("static-bot", url, t0, result);
 				return { markdown: result.markdown, title: result.title, extraction_method: "static-bot" };
@@ -220,7 +221,7 @@ async function extract(url, timeoutMs) {
 
 	browserSlots--;
 	try {
-		const result = await extractPlaywright(url, remaining());
+		const result = await extractPlaywright(call, url, remaining());
 		log("playwright", url, t0, result);
 		return { ...result, extraction_method: "playwright" };
 	} catch (e) {
@@ -272,7 +273,7 @@ async function handleRequest(req, res) {
 		const parsed = await readJson(req, res);
 		if (!parsed) return;
 		try {
-			await fetcher.assertAllowed(parsed.url);
+			await fetcher.forCall().assertAllowed(parsed.url);
 			respond(res, 200, {});
 		} catch (e) {
 			if (e instanceof Refusal) respond(res, 422, { error: e.message });

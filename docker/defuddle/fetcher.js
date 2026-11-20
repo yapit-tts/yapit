@@ -41,52 +41,64 @@ export function createFetcher(proxyUrl, signerUrl) {
 		return response.json();
 	}
 
-	/** One request, redirects followed by hand so every hop is checked. Resolves to the final response. */
-	async function send(url, { userAgent = USER_AGENT, accept, signal, checkRobots = true }) {
-		for (let hop = 0; ; hop++) {
-			if (checkRobots) await assertAllowed(url);
-			const response = await proxyFetch(url, {
-				headers: { "User-Agent": userAgent, Accept: accept, ...(await signatureHeaders(url)) },
-				redirect: "manual",
-				signal,
-				dispatcher,
-			});
-			const location = response.headers.get("location");
-			if (response.status < 300 || response.status >= 400 || !location) return { response, url };
-			await response.body?.cancel();
-			if (hop === MAX_REDIRECTS) throw new Error("Too many redirects");
-			url = new URL(location, url).href;
-		}
-	}
-
-	/** Throws a Refusal when robots.txt keeps yapit from `url`. */
-	async function assertAllowed(url) {
-		const rules = await readRobots(new URL(url).origin);
-		if (rules.isAllowed(url, ROBOTS_PRODUCT_TOKEN) === false) throw new Refusal(ROBOTS_DISALLOWED);
-	}
-
 	/**
-	 * The site's rules (RFC 9309, 2.3.1): a robots.txt answering 4xx allows everything; one that
-	 * answers 5xx or 429, or not in time, disallows everything, as a Refusal.
+	 * The fetcher for one call of the service: its requests share one robots.txt read per site, memoised
+	 * for the call alone, a failed read included.
 	 */
-	async function readRobots(origin) {
-		const robotsUrl = `${origin}/robots.txt`;
-		let response;
-		try {
-			({ response } = await send(robotsUrl, { accept: "text/plain", signal: AbortSignal.timeout(ROBOTS_TIMEOUT_MS), checkRobots: false }));
-			if (response.ok) return robotsParser(robotsUrl, new TextDecoder().decode(await readCapped(response.body, ROBOTS_MAX_BYTES)));
-		} catch (err) {
-			console.log(`robots.txt unreachable for ${origin}: ${err.message}`);
-			// fetch fails with a TypeError when no answer came at all (no such host, a refused connection,
-			// the proxy refusing the host): a link nobody can fetch, not a robots.txt that is down.
-			throw new Refusal(err instanceof TypeError ? SITE_UNREACHABLE : ROBOTS_UNREACHABLE);
+	function forCall() {
+		const robots = new Map();
+
+		/** One request, redirects followed by hand so every hop is checked. Resolves to the final response. */
+		async function send(url, { userAgent = USER_AGENT, accept, signal, checkRobots = true }) {
+			for (let hop = 0; ; hop++) {
+				if (checkRobots) await assertAllowed(url);
+				const response = await proxyFetch(url, {
+					headers: { "User-Agent": userAgent, Accept: accept, ...(await signatureHeaders(url)) },
+					redirect: "manual",
+					signal,
+					dispatcher,
+				});
+				const location = response.headers.get("location");
+				if (response.status < 300 || response.status >= 400 || !location) return { response, url };
+				await response.body?.cancel();
+				if (hop === MAX_REDIRECTS) throw new Error("Too many redirects");
+				url = new URL(location, url).href;
+			}
 		}
-		await response.body?.cancel();
-		if (response.status >= 400 && response.status < 500 && response.status !== 429) return robotsParser(robotsUrl, "");
-		throw new Refusal(ROBOTS_UNREACHABLE);
+
+		/** Throws a Refusal when robots.txt keeps yapit from `url`. */
+		async function assertAllowed(url) {
+			const origin = new URL(url).origin;
+			if (!robots.has(origin)) robots.set(origin, readRobots(origin));
+			const rules = await robots.get(origin);
+			if (rules.isAllowed(url, ROBOTS_PRODUCT_TOKEN) === false) throw new Refusal(ROBOTS_DISALLOWED);
+		}
+
+		/**
+		 * The site's rules (RFC 9309, 2.3.1): a robots.txt answering 4xx allows everything; one that
+		 * answers 5xx or 429, or not in time, disallows everything, as a Refusal.
+		 */
+		async function readRobots(origin) {
+			const robotsUrl = `${origin}/robots.txt`;
+			let response;
+			try {
+				({ response } = await send(robotsUrl, { accept: "text/plain", signal: AbortSignal.timeout(ROBOTS_TIMEOUT_MS), checkRobots: false }));
+				if (response.ok) return robotsParser(robotsUrl, new TextDecoder().decode(await readCapped(response.body, ROBOTS_MAX_BYTES)));
+			} catch (err) {
+				console.log(`robots.txt unreachable for ${origin}: ${err.message}`);
+				// fetch fails with a TypeError when no answer came at all (no such host, a refused connection,
+				// the proxy refusing the host): a link nobody can fetch, not a robots.txt that is down.
+				throw new Refusal(err instanceof TypeError ? SITE_UNREACHABLE : ROBOTS_UNREACHABLE);
+			}
+			await response.body?.cancel();
+			if (response.status >= 400 && response.status < 500 && response.status !== 429) return robotsParser(robotsUrl, "");
+			throw new Refusal(ROBOTS_UNREACHABLE);
+		}
+
+		return { send, assertAllowed };
 	}
 
-	return { send, assertAllowed, signatureHeaders };
+	return { forCall, signatureHeaders };
 }
 
 // fetch decompresses transparently, so a few KB of gzip can expand to gigabytes:
