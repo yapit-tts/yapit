@@ -9,6 +9,7 @@ import asyncio
 import base64
 import time
 import uuid
+from enum import IntEnum
 
 from loguru import logger
 from pydantic import BaseModel
@@ -118,26 +119,28 @@ async def _handle_success(redis: Redis, result: WorkerResult) -> None:
         worker_id=result.worker_id,
     )
 
-    inflight_key = TTS_INFLIGHT.format(hash=result.variant_hash)
-    if await redis.delete(inflight_key) == 0:
-        log.info("Variant already finalized, skipping duplicate result")
-        return
-
     finalize_start = time.time()
 
     if not result.audio_base64:
         log.info("Empty audio, marking as skipped")
+        await _release_inflight(redis, result)
         await _notify_subscribers(redis, result, status="skipped")
         return
 
     audio = base64.b64decode(result.audio_base64)
 
+    # The first result to store a variant's audio finalizes it: it alone is billed and persisted.
     audio_key = TTS_AUDIO_CACHE.format(hash=result.variant_hash)
-    await redis.set(audio_key, audio, ex=AUDIO_CACHE_TTL_S)
+    if not await redis.set(audio_key, audio, ex=AUDIO_CACHE_TTL_S, nx=True):
+        log.info("Variant already finalized, skipping duplicate result")
+        await _release_inflight(redis, result)
+        return
 
     if result.word_timestamps_json:
         ts_key = TTS_TIMESTAMPS_CACHE.format(hash=result.variant_hash)
         await redis.set(ts_key, result.word_timestamps_json.encode(), ex=AUDIO_CACHE_TTL_S)
+
+    await _release_inflight(redis, result)
 
     await _notify_subscribers(
         redis,
@@ -193,9 +196,11 @@ async def _handle_error(redis: Redis, result: WorkerResult) -> None:
         worker_id=result.worker_id,
     )
 
-    inflight_key = TTS_INFLIGHT.format(hash=result.variant_hash)
-    if await redis.delete(inflight_key) == 0:
+    if await redis.exists(TTS_AUDIO_CACHE.format(hash=result.variant_hash)):
         log.info("Variant already finalized, skipping duplicate error result")
+        return
+    if await _release_inflight(redis, result) == InflightOwner.other_job:
+        log.info("Another job for this variant is in flight, leaving the error to it")
         return
 
     await log_event(
@@ -214,6 +219,32 @@ async def _handle_error(redis: Redis, result: WorkerResult) -> None:
     )
 
     await _notify_subscribers(redis, result, status="error", error=result.error)
+
+
+class InflightOwner(IntEnum):
+    none = 0
+    this_job = 1
+    other_job = 2
+
+
+# Deletes the in-flight marker only when this result's job holds it: a marker can expire while its
+# job waits, and the next request for the variant then holds a marker of its own.
+_RELEASE_INFLIGHT = """
+local owner = redis.call('GET', KEYS[1])
+if owner == ARGV[1] then
+    redis.call('DEL', KEYS[1])
+    return 1
+end
+if owner then
+    return 2
+end
+return 0
+"""
+
+
+async def _release_inflight(redis: Redis, result: WorkerResult) -> InflightOwner:
+    inflight_key = TTS_INFLIGHT.format(hash=result.variant_hash)
+    return InflightOwner(await redis.eval(_RELEASE_INFLIGHT, 1, inflight_key, str(result.job_id)))
 
 
 async def _notify_subscribers(
