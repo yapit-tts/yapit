@@ -172,11 +172,15 @@ async def run_audio_job_feeder(redis: Redis, cache: Cache, settings: Settings) -
 
 async def top_up(redis: Redis, cache: Cache, settings: Settings, user_id: str) -> None:
     """Queue the job's next blocks until SLICE_SIZE of its variants are in flight."""
+    if not await redis.sismember(AUDIO_JOBS_RUNNING, user_id):
+        return
     job = await load_job(redis, user_id)
-    if job is None or not await redis.sismember(AUDIO_JOBS_RUNNING, user_id):
+    if job is None:
+        await redis.srem(AUDIO_JOBS_RUNNING, user_id)
         return
     spec = job.spec
     awaited_key = AUDIO_JOB_AWAITED.format(user_id=user_id)
+    await redis.expire(AUDIO_JOB.format(user_id=user_id), STATE_TTL_S)
     waiters_of = AUDIO_JOB_WAITERS.format
 
     async with create_session() as db:
@@ -195,6 +199,8 @@ async def top_up(redis: Redis, cache: Cache, settings: Settings, user_id: str) -
 
         allowance = await _daily_allowance(redis, db, settings, user_id, model.slug)
         while await redis.hlen(awaited_key) < SLICE_SIZE:
+            if await _claim_next(redis, user_id, peek=True) is None:
+                break
             if allowance is not None and allowance <= 0:
                 await _finish(redis, user_id, AudioJobStatus.daily_limit, "Daily limit for audio jobs reached")
                 return
@@ -335,6 +341,7 @@ async def _finish(redis: Redis, user_id: str, status: AudioJobStatus, error: str
     job_key = AUDIO_JOB.format(user_id=user_id)
     await redis.hset(job_key, mapping={"status": status.value, "error": error or ""})
     await redis.expire(job_key, STATE_TTL_S)
+    await redis.expire(AUDIO_JOB_AWAITED.format(user_id=user_id), STATE_TTL_S)
     logger.bind(user_id=user_id).info(f"Audio job ended: {status.value}")
     return True
 

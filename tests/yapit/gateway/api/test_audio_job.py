@@ -285,6 +285,19 @@ async def test_a_job_past_the_daily_ceiling_queues_nothing_further(client, kokor
     assert (job["status"], job["cached_blocks"]) == ("daily_limit", 20)
 
 
+async def test_a_job_that_queued_its_last_block_at_the_daily_ceiling_ends_done(client, kokoro, app):
+    await subscribe(DEFAULT_TEST_USER.id, server_kokoro_characters=None)
+    settings = app.dependency_overrides[get_settings]().model_copy(update={"audio_job_daily_block_limit": 20})
+    pipeline = Pipeline(app, settings)
+    document_id = await create_document(client, 20)
+
+    await start(client, document_id, 0, 19)
+    await pipeline.run()
+
+    job = (await client.get(f"/v1/documents/{document_id}/audio-job")).json()
+    assert (job["status"], job["cached_blocks"]) == ("done", 20)
+
+
 async def test_a_job_whose_usage_runs_out_queues_nothing_further(client, kokoro, app, session):
     await subscribe(DEFAULT_TEST_USER.id, server_kokoro_characters=100_000)
     pipeline = Pipeline(app, app.dependency_overrides[get_settings]())
