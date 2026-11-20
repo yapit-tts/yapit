@@ -19,7 +19,7 @@ const PORT = 8001;
 const MAX_CONCURRENT_BROWSER = 50;
 const STATIC_FETCH_TIMEOUT_MS = 5_000;
 const MAX_PAGE_SIZE = 20 * 1024 * 1024;
-const DEFAULT_UA = "Mozilla/5.0 (compatible; Yapit/1.0; +https://yapit.md)";
+const DEFAULT_UA = "Mozilla/5.0 (compatible; Yapit/1.0; +https://yapit.md/bot)";
 const BOT_UA = DEFAULT_UA + " bot";
 const BOT_UA_DOMAINS = ["github.com"];
 
@@ -120,7 +120,7 @@ async function getBrowser() {
 
 async function extractPlaywright(url, timeoutMs) {
 	const b = await getBrowser();
-	const context = await b.newContext({ proxy: { server: PROXY_URL } });
+	const context = await b.newContext({ proxy: { server: PROXY_URL }, userAgent: DEFAULT_UA });
 	await context.addInitScript(bundle);
 	const page = await context.newPage();
 
