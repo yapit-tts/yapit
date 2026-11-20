@@ -87,6 +87,9 @@ class Settings(BaseSettings):
     stripe_price_max_yearly: str | None = None
 
     defuddle_service_url: str
+    # Base64 PKCS#8 DER Ed25519 key (docs/web-bot-auth.md); empty: page requests go out unsigned and
+    # /.well-known/http-message-signatures-directory answers 404
+    web_bot_auth_private_key: str
 
     anonymous_session_secret: str
 

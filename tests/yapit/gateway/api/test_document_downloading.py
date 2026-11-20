@@ -1,10 +1,14 @@
+import base64
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import httpx
 import pytest
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat
 from fastapi import HTTPException
 
+from yapit.gateway import web_bot_auth
 from yapit.gateway.api.v1.documents import _extract_document_info
 from yapit.gateway.document import http as http_module
 from yapit.gateway.document.http import download_document
@@ -18,10 +22,11 @@ def web(monkeypatch):
 
     Tests set `web.routes[url] = httpx.Response(...)` and `web.refused` to the URLs robots.txt refuses.
     """
-    web = SimpleNamespace(routes={}, refused=set(), requested=[], robots_asked=[])
+    web = SimpleNamespace(routes={}, refused=set(), requested=[], robots_asked=[], seen=[])
 
     def handle(request: httpx.Request) -> httpx.Response:
         web.requested.append(str(request.url))
+        web.seen.append(request)
         if str(request.url) not in web.routes:
             raise httpx.ConnectError("unreachable", request=request)
         return web.routes[str(request.url)]
@@ -139,6 +144,26 @@ class TestDownloadDocument:
         with pytest.raises(HTTPException, match="bot protection") as exc_info:
             await download_document("https://protected.example/post", MAX_SIZE)
         assert exc_info.value.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_with_a_key_each_hop_is_signed_for_its_own_authority(self, web, monkeypatch):
+        private = Ed25519PrivateKey.generate()
+        der = private.private_bytes(Encoding.DER, PrivateFormat.PKCS8, NoEncryption())
+        monkeypatch.setattr(
+            web_bot_auth, "_key", web_bot_auth.load_signing_key(base64.b64encode(der).decode(), "https://yapit.md")
+        )
+        web.routes["https://short.example/x"] = httpx.Response(301, headers={"location": "https://example.com/doc"})
+        web.routes["https://example.com/doc"] = httpx.Response(200, headers={"content-type": "application/pdf"})
+
+        await download_document("https://short.example/x", MAX_SIZE)
+
+        for request in web.seen:
+            assert request.headers["signature-agent"] == '"https://yapit.md"'
+            params = request.headers["signature-input"].removeprefix("sig1=")
+            base = f'"@authority": {request.url.host}\n"signature-agent": "https://yapit.md"\n"@signature-params": {params}'
+            signature = base64.b64decode(request.headers["signature"].removeprefix("sig1=:").removesuffix(":"))
+            private.public_key().verify(signature, base.encode())
+        assert [r.url.host for r in web.seen] == ["short.example", "example.com"]
 
 
 class TestExtractDocumentInfo:

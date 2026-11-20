@@ -39,6 +39,7 @@ dependencies = [
   "openai>=2.0.0",
   "av>=14.0.0",
   "webauthn~=3.0.1",
+  "cryptography~=50.0.2",
 ]
 
 [project.optional-dependencies]

@@ -38,6 +38,20 @@ const BotPage = () => {
           <h2 className="text-2xl font-semibold mb-3">How it identifies itself</h2>
           <p>Every request, from the plain fetch and from the headless browser alike, carries this user agent:</p>
           <pre className="mt-3 overflow-x-auto"><code>{USER_AGENT}</code></pre>
+          <p className="mt-3">
+            Requests from yapit.md are also signed with{" "}
+            <a href="https://developers.cloudflare.com/bots/reference/bot-verification/web-bot-auth/" className="text-primary hover:underline">Web Bot Auth</a>{" "}
+            (HTTP Message Signatures, RFC 9421). Each carries <code>Signature</code>, <code>Signature-Input</code> and{" "}
+            <code>Signature-Agent: "https://yapit.md"</code>, and the public key is listed at{" "}
+            <a href="/.well-known/http-message-signatures-directory" className="text-primary hover:underline">
+              https://yapit.md/.well-known/http-message-signatures-directory
+            </a>
+            . A request with this user agent and no valid signature does not come from yapit.md.
+          </p>
+          <p className="mt-3">
+            Yapit is open source, so anyone can run their own copy. A self-hosted copy sends the same user agent and
+            obeys <code>robots.txt</code> the same way, but it cannot sign as yapit.md.
+          </p>
         </section>
 
         <section>

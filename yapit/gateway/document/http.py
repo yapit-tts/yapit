@@ -11,6 +11,7 @@ from pydantic import HttpUrl
 
 from yapit.gateway.document.defuddle_client import assert_robots_allow
 from yapit.gateway.metrics import log_event
+from yapit.gateway.web_bot_auth import signature_headers
 
 # The extraction service (docker/defuddle/app.js) sends the same one: a site sees one fetcher.
 USER_AGENT = "Mozilla/5.0 (compatible; Yapit/1.0; +https://yapit.md/bot)"
@@ -26,7 +27,8 @@ def fetch_client() -> httpx.AsyncClient:
 async def download_document(url: HttpUrl, max_size: int) -> tuple[bytes, str]:
     """Download a document from URL within size limits.
 
-    Redirects are followed one hop at a time, each hop checked against its site's robots.txt first.
+    Redirects are followed one hop at a time, each hop checked against its site's robots.txt first and signed
+    for its own authority where a key is configured.
 
     Returns:
         tuple of (content bytes, content-type header)
@@ -105,10 +107,10 @@ async def download_document(url: HttpUrl, max_size: int) -> tuple[bytes, str]:
 
 
 async def _get(client: httpx.AsyncClient, url: str) -> httpx.Response:
-    """GET url, streamed, following redirects by hand so robots.txt is asked before every hop."""
+    """GET url, streamed, following redirects by hand so robots.txt is asked and the request signed for every hop."""
     for _ in range(MAX_REDIRECTS + 1):
         await assert_robots_allow(url)
-        response = await client.send(client.build_request("GET", url), stream=True)
+        response = await client.send(client.build_request("GET", url, headers=signature_headers(url)), stream=True)
         if response.next_request is None:
             return response
         await response.aclose()
