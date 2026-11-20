@@ -38,6 +38,10 @@ make self-host
 Open [http://localhost](http://localhost). Data persists across restarts.
 To stop: `make self-host-down`.
 
+### Audio cache
+
+Audio synthesized on the server is cached by its text and voice, so listening again, at any speed, plays from the cache without synthesizing. `AUDIO_CACHE_CONFIG__MAX_SIZE_MB` in `.env.selfhost` caps the cache; past it, the least recently played audio is deleted first. The default, 1024 MB, holds about 45 hours of Kokoro audio. To keep more, raise it and run `make self-host` again. Browser-side Kokoro audio is never stored on the server, and `docker compose down -v` deletes the cache with its volume.
+
 ### Multi-user mode
 
 By default, yapit runs in **single-user mode** — no login required, all features unlocked. `.env.selfhost` is self-documenting — see the comments for optional features (AI extraction, custom TTS models).

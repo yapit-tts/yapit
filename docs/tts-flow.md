@@ -64,7 +64,7 @@ See `BlockVariant.get_hash()` in `domain_models.py` and `request_synthesis()` in
 Pull-based workers instead of HTTP-based. Workers pull jobs from Redis, gateway only pushes jobs and consumes results.
 
 **Queue structure:**
-- `tts:queue:{model}` — Sorted set with job_id as member, timestamp as score
+- `tts:queue:{model}` — Sorted set with job_id as member, a timestamp as score; workers pop the lowest. Listener blocks are scored now, background audio job blocks now + 120 s (`BACKGROUND_DELAY_S` in `synthesis.py`). A retried job keeps the score it was pulled with.
 - `tts:jobs` — Hash mapping job_id to job JSON
 - `tts:job_index` — Hash mapping "user:doc:block" to job_id (for eviction)
 - `tts:results` — List for completed results
@@ -91,11 +91,12 @@ Three consumers with complete resource isolation:
 **Result consumer (hot path)** — `yapit/gateway/result_consumer.py`
 
 Pops from `tts:results`, spawns a task per result. No Postgres, no SQLite.
-1. Atomically claim result (inflight key dedup)
-2. Redis SET audio (`tts:audio:{hash}`, 300s TTL) — sub-ms
+1. Claim the variant: `SET NX` of the audio (`tts:audio:{hash}`, 300s TTL) — the first result to store it finalizes it; a later one is a duplicate and stops here
+2. Release the in-flight marker if this result's job holds it
 3. Notify subscribers via Redis pubsub (user sees audio here)
 4. XADD `BillingEvent` to `tts:billing:stream` (Redis Stream)
 5. Push variant_hash to `tts:persist` for background SQLite persistence
+6. Wake every background audio job awaiting the variant
 
 **Cache persister** — `yapit/gateway/cache_persister.py`
 
@@ -121,14 +122,25 @@ Redis Streams consumer group on `tts:billing:stream`. At-least-once delivery: ev
 
 **Dead letter queue:** `tts:dlq:{model}` (per-model). DLQ entries push error results so result_consumer cleans up.
 
-### 7. Cache & Storage
+### 7. Background audio jobs
+
+A job synthesizes a chosen set of a document's blocks with no tab open, so playback later finds them in the cache. `POST /v1/documents/{id}/audio-job` takes a model, a voice and block ranges with titles; `GET` reports the job's status and its cached and total blocks; `DELETE` cancels it. The API is in `gateway/api/v1/audio_jobs.py`, the job in `gateway/audio_job.py`.
+
+- **State** lives in Redis: `tts:audio_job:{user_id}` holds the job's spec (with each block's text, so the document is parsed once, at the POST), progress and status; `tts:audio_job:{user_id}:awaited` holds the variants it waits on. A user has one running job (`tts:audio_jobs_running`).
+- **Slices:** at most 16 of a job's variants are in flight. The in-flight marker lives 600 s, so a book queued at once would outlive it.
+- **Feeder:** a gateway task blocks on `tts:audio_job_wake`; the result consumer pushes a user there for each result their job awaited (`tts:audio_job_waiters:{hash}`). The feeder then queues the job's next blocks through `request_synthesis(..., track_for_websocket=False, background=True)`: cache hits cost nothing, a variant already in flight is joined rather than queued twice, and the usage check runs per block. Once a minute it also reconciles every running job, forgetting variants no result will report (lost with a gateway restart, or an expired marker).
+- **Priority:** job blocks are scored 120 s late, so a listener's block is pulled before every job block queued in the two minutes before it. A listener asking for a variant whose job block waits moves that job to now (`ZADD XX LT` on the marker's job id). Cursor eviction skips a queued job an audio job awaits.
+- **Bounds:** a job ends at `usage_limit` when the usage check refuses a block, and at `daily_limit` once the user's jobs queued `AUDIO_JOB_DAILY_BLOCK_LIMIT` blocks that UTC day; the ceiling applies only with billing on and where the plan's usage for the model is unlimited. A deactivated voice or a deleted document ends it at `failed`.
+- **Cancel** stops the job queueing and takes its queued blocks off the queue unless a listener or another job waits on them. Blocks a worker already took are finished, cached and billed.
+
+### 8. Cache & Storage
 
 - **Audio hot cache:** Redis (`tts:audio:{hash}`, 300s TTL). All recently synthesized audio lives here. Sub-ms reads.
 - **Audio cold cache:** SQLite (`cache.py`) keyed by variant_hash. Dual persistent connections (reader for reads, writer for mutations) with WAL mode. LRU updates batched in-memory, flushed every ~10s. Populated by the cache persister.
 - **Metadata:** BlockVariant in Postgres tracks duration_ms
 - **Usage:** Characters recorded for billing on synthesis complete
 
-### 8. Audio Fetch
+### 9. Audio Fetch
 
 Frontend fetches via HTTP:
 
@@ -168,6 +180,8 @@ Built-in model: kokoro. Model/voice definitions in `yapit/gateway/seed.py`.
 | `gateway/cache_persister.py` | Drain-on-wake batched Redis→SQLite persistence |
 | `gateway/billing_consumer.py` | Cold path: BlockVariant update, usage billing, engagement stats |
 | `gateway/visibility_scanner.py` | Re-queues stuck jobs |
+| `gateway/audio_job.py` | Background audio jobs: state, feeder, cancel |
+| `gateway/api/v1/audio_jobs.py` | Audio job endpoints |
 | `workers/tts_loop.py` | Pull-based worker main loop (worker image) |
 | `gateway/api_tts_dispatcher.py` | Parallel dispatcher for API models (gateway image) |
 | `queue.py` | Shared queue utilities (push, pull, requeue) |
@@ -185,11 +199,11 @@ Built-in model: kokoro. Model/voice definitions in `yapit/gateway/seed.py`.
 - **Empty audio / per-block failures:** Some blocks produce empty audio (whitespace-only text, garbage markup from extraction). Marked as "skipped" or "error" with `recoverable: true`. Frontend tracks these in a `resolvedEmpty` set so buffer readiness checks still work, and auto-advances past them. Only session-level errors (`recoverable: false`, e.g. usage limit) stop playback.
 - **Usage multiplier:** Different models have different character costs. `TTSModel.usage_multiplier` in database. Passed in job to avoid DB query on finalization.
 - **Voice change race condition:** WebSocket status messages include `model_slug` and `voice_slug` to prevent stale cache hits when user changes voice mid-playback. Without this, status messages from old voice arriving after reset would incorrectly mark blocks as cached.
-- **Double synthesis prevention:** Inflight key deletion happens at START of result processing. First result atomically deletes key and proceeds; duplicates (from visibility timeout requeue + original completion) see delete() return 0 and skip. This prevents duplicate BillingEvents from being produced. On the consumer side, `record_usage` has its own idempotency via `UsageLog.event_id` (keyed on `job_id`) as a second line of defense.
+- **Double synthesis prevention:** The first result to `SET NX` a variant's audio finalizes it; duplicates (from visibility timeout requeue + original completion, or a second job queued after the first's marker expired) find the audio there and skip. This prevents duplicate BillingEvents from being produced. A result whose marker expired is still kept. On the consumer side, `record_usage` has its own idempotency via `UsageLog.event_id` (keyed on `job_id`) as a second line of defense.
 - **Cache warming:** `yapit/gateway/warm_cache.py` is a one-shot CLI (not a background task). Run via `make warm-cache` when voices or showcase content change. Pinned entries are exempt from LRU eviction.
 - **OpenAI TTS audio format:** Requests `response_format="opus"`. If server returns OGG Opus (`OggS` magic bytes), passed through. Otherwise transcoded to OGG Opus via PyAV at 96kbps. Duration read from container metadata, falls back to byte-size estimate. Transcoding runs in executor to avoid blocking the event loop.
 - **Codec is not part of variant hash:** In normal dev flow, `make dev-cpu` clears cache (`down -v`). If you run experiments without full teardown, stale cached blobs can make codec/endpoint A/B tests invalid.
 - **Per-document pubsub channels:** Pubsub scoped to `tts:done:{user_id}:{document_id}` — prevents cross-tab contamination.
-- **Eviction orphaning:** Inflight key stores `job_id`. On eviction, inflight key is conditionally deleted only if its value matches the evicted job — prevents orphaned semaphores from blocking future requests.
+- **Eviction orphaning:** Inflight key stores `job_id`. On eviction and on a result, the inflight key is deleted only if its value matches that job — prevents orphaned semaphores from blocking future requests, and one job's result from releasing another's marker.
 - **WS reconnect resilience:** `ServerSynthesizer` retries pending blocks on reconnect. `useTTSWebSocket` queues messages while disconnected, drains on connect.
 - **Out-of-order block notifications:** Blocks are enqueued and processed in index order, but `result_consumer.py` spawns a concurrent task per result. Two tasks racing through their Redis calls can cause notifications to reach the frontend out of order. Cosmetic only (progress bar), playback is unaffected. Serializing the consumer would fix it but kill throughput for the parallel API dispatcher.
