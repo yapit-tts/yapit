@@ -1,6 +1,6 @@
 import type { Section } from "./sectionIndex";
 
-export type AudioJobStatus = "running" | "done" | "cancelled" | "usage_limit" | "daily_limit" | "failed";
+export type AudioJobStatus = "running" | "done" | "cancelled" | "usage_limit" | "failed";
 
 export interface BlockRange {
   first_block: number;
@@ -51,7 +51,6 @@ export interface AudioJobEstimate {
   uncached_characters: number[]; // per audio block; 0 where cached
   plan_includes_voice: boolean;
   available_characters: number | null; // null: unlimited
-  daily_blocks_left: number | null; // null: no daily ceiling applies
   running_job_document_id: string | null;
 }
 

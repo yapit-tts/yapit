@@ -56,10 +56,9 @@ export function AudioJobBanner({ job, onCancel }: { job: AudioJob | null; onCanc
   );
 }
 
-function endedReason(status: "usage_limit" | "daily_limit" | "failed", error: string | null): string {
+function endedReason(status: "usage_limit" | "failed", error: string | null): string {
   switch (status) {
     case "usage_limit": return "Preparing stopped: your plan's characters ran out";
-    case "daily_limit": return "Preparing stopped at today's limit; start it again tomorrow";
     case "failed": return `Preparing stopped${error ? `: ${error}` : ""}`;
   }
 }

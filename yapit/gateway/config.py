@@ -92,7 +92,6 @@ class Settings(BaseSettings):
     anonymous_session_secret: str
 
     billing_enabled: bool  # Self-hosting: set False to disable subscription/usage limits
-    audio_job_daily_block_limit: int  # blocks a user's audio jobs may queue per UTC day, where usage is unlimited
     ratelimit_enabled: bool  # False in dev/CI: the integration suite makes all requests from one IP
 
     metrics_database_url: str | None = None

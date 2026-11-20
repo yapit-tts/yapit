@@ -303,47 +303,20 @@ async def test_a_second_job_is_refused_while_one_runs(client, kokoro):
     assert (await start(client, second, 0, 39)).status_code == 409
 
 
-async def test_a_job_past_the_daily_ceiling_queues_nothing_further(client, kokoro, app):
+async def test_a_job_on_an_unlimited_plan_runs_to_its_last_block(client, kokoro, app):
     await subscribe(DEFAULT_TEST_USER.id, server_kokoro_characters=None)
-    settings = app.dependency_overrides[get_settings]().model_copy(update={"audio_job_daily_block_limit": 20})
+    settings = app.dependency_overrides[get_settings]()
     pipeline = Pipeline(app, settings)
     document_id = await create_document(client, 50)
-
-    await start(client, document_id, 0, 49)
-    await pipeline.run()
-
-    assert len(pipeline.synthesized) == 20
-    job = (await client.get(f"/v1/documents/{document_id}/audio-job")).json()
-    assert (job["status"], job["cached_blocks"]) == ("daily_limit", 20)
-
-
-async def test_a_job_that_queued_its_last_block_at_the_daily_ceiling_ends_done(client, kokoro, app):
-    await subscribe(DEFAULT_TEST_USER.id, server_kokoro_characters=None)
-    settings = app.dependency_overrides[get_settings]().model_copy(update={"audio_job_daily_block_limit": 20})
-    pipeline = Pipeline(app, settings)
-    document_id = await create_document(client, 20)
-
-    await start(client, document_id, 0, 19)
-    await pipeline.run()
-
-    job = (await client.get(f"/v1/documents/{document_id}/audio-job")).json()
-    assert (job["status"], job["cached_blocks"]) == ("done", 20)
-
-
-async def test_a_job_at_the_daily_ceiling_still_ends_done_over_blocks_already_cached(client, kokoro, app):
-    await subscribe(DEFAULT_TEST_USER.id, server_kokoro_characters=None)
-    settings = app.dependency_overrides[get_settings]().model_copy(update={"audio_job_daily_block_limit": 20})
-    pipeline = Pipeline(app, settings)
-    document_id = await create_document(client, 30)
-    for block_idx in range(20, 30):
+    for block_idx in range(10):
         await listen(app, settings, document_id, block_idx)
     await pipeline.run()
 
-    await start(client, document_id, 0, 29)
+    await start(client, document_id, 10, 49)
     await pipeline.run()
 
     job = (await client.get(f"/v1/documents/{document_id}/audio-job")).json()
-    assert (job["status"], job["cached_blocks"]) == ("done", 30)
+    assert (job["status"], job["cached_blocks"], len(pipeline.synthesized)) == ("done", 40, 50)
 
 
 async def test_a_job_whose_usage_runs_out_queues_nothing_further(client, kokoro, app, session):
@@ -548,7 +521,7 @@ async def test_the_estimate_counts_the_billed_characters_of_uncached_blocks_only
 
     # "Paragraph 1 of the book is read aloud." is 38 characters, "Paragraph 11 ..." 39, each billed twice
     assert result["uncached_characters"] == [76] * 10 + [0, 78]
-    assert (result["available_characters"], result["daily_blocks_left"]) == (100_000, None)
+    assert result["available_characters"] == 100_000
 
 
 async def test_the_estimate_shows_no_server_kokoro_on_the_free_plan(client, kokoro):
@@ -569,23 +542,6 @@ async def test_the_estimate_tells_a_used_up_quota_from_a_plan_without_server_kok
     result = await estimate(client, document_id)
 
     assert (result["plan_includes_voice"], result["available_characters"]) == (True, 0)
-
-
-async def test_the_estimate_shows_the_daily_ceiling_left_on_an_unlimited_plan(client, kokoro, app):
-    await subscribe(DEFAULT_TEST_USER.id, server_kokoro_characters=None)
-    base = app.dependency_overrides[get_settings]
-    settings = base().model_copy(update={"audio_job_daily_block_limit": 20})
-    app.dependency_overrides[get_settings] = lambda: settings
-    try:
-        document_id = await create_document(client, 30)
-        await start(client, document_id, 0, 4)
-        await Pipeline(app, settings).run()
-
-        result = await estimate(client, document_id)
-    finally:
-        app.dependency_overrides[get_settings] = base
-
-    assert (result["available_characters"], result["daily_blocks_left"]) == (None, 15)
 
 
 async def test_the_estimate_names_the_document_of_a_running_job_until_it_ends(client, kokoro):

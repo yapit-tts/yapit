@@ -59,7 +59,6 @@ AUDIO_JOB_LOST: Final[str] = "tts:audio_job:{user_id}:lost"  # list: positions t
 AUDIO_JOB_WAITERS: Final[str] = "tts:audio_job_waiters:{hash}"  # set: user_ids whose job awaits the variant
 AUDIO_JOBS_RUNNING: Final[str] = "tts:audio_jobs_running"  # set: user_ids
 AUDIO_JOB_WAKE: Final[str] = "tts:audio_job_wake"  # list: user_ids whose job may queue more
-AUDIO_JOB_DAILY: Final[str] = "tts:audio_job_daily:{user_id}:{day}"  # counter: blocks queued that UTC day
 
 YOLO_QUEUE: Final[str] = "yolo:queue"  # sorted set: job_id -> timestamp
 YOLO_JOBS: Final[str] = "yolo:jobs"  # hash: job_id -> job_json
