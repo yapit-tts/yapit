@@ -105,6 +105,7 @@ const PlaybackPage = () => {
     sections,
     expandedSections,
     onAudioMessage,
+    audioExport.resume,
   );
 
   // Sync playback speed and volume into engine/audio

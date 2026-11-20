@@ -36,10 +36,13 @@ export function usePlaybackEngine(
   sections: Section[],
   expandedSections: Set<string>,
   onAudioMessage: (message: WSAudioDocumentMessage) => void,
+  onConnect: () => void,
 ): UsePlaybackEngineReturn {
   const { api } = useApi();
   const onAudioMessageRef = useRef(onAudioMessage);
   onAudioMessageRef.current = onAudioMessage;
+  const onConnectRef = useRef(onConnect);
+  onConnectRef.current = onConnect;
   const documentIdRef = useRef(documentId);
   documentIdRef.current = documentId;
 
@@ -76,6 +79,7 @@ export function usePlaybackEngine(
   // where it stands, for what a dropped socket missed), and retry all pending synthesis requests
   const handleWSConnect = useCallback(() => {
     if (documentIdRef.current) sendWSRef.current({ type: "watch", document_id: documentIdRef.current });
+    onConnectRef.current();
     serverSynthRef.current?.retryAllPending();
   }, []);
 

@@ -12,6 +12,8 @@ export interface UseAudioExportReturn {
   receive: (message: WSAudioExportMessage) => void;
   /** Asks for the file; it downloads now if stored, or once the gateway says it is built. */
   download: (format: ExportFormat, model: string, voice: string, ranges: BlockRange[]) => Promise<void>;
+  /** Asks again for each file still awaited, for a socket that reconnected and may have missed its message. */
+  resume: () => void;
 }
 
 export function useAudioExport(documentId: string | undefined, documentTitle: string | undefined): UseAudioExportReturn {
@@ -23,11 +25,13 @@ export function useAudioExport(documentId: string | undefined, documentTitle: st
   }, [documentId]);
   // The key each format's build was answered with, so a message for an older selection is ignored
   const awaitedKeys = useRef<Partial<Record<ExportFormat, string>>>({});
+  const awaitedRequests = useRef<Partial<Record<ExportFormat, { model: string; voice: string; ranges: BlockRange[] }>>>({});
   // A build can end before its POST is answered, so each message is kept until then
   const ended = useRef<Record<string, WSAudioExportMessage>>({});
 
   const settle = useCallback((format: ExportFormat, error: string | null) => {
     delete awaitedKeys.current[format];
+    delete awaitedRequests.current[format];
     setProgress(prev => {
       const next = { ...prev };
       if (error) next[format] = { building: false, error };
@@ -68,6 +72,7 @@ export function useAudioExport(documentId: string | undefined, documentTitle: st
   const download = useCallback(async (format: ExportFormat, model: string, voice: string, ranges: BlockRange[]) => {
     if (!documentId) return;
     setProgress(prev => ({ ...prev, [format]: { building: true } }));
+    awaitedRequests.current[format] = { model, voice, ranges };
     try {
       const { data } = await api.post<AudioExportState>(`/v1/documents/${documentId}/audio-export`, { model, voice, ranges, format });
       awaitedKeys.current[format] = data.key;
@@ -80,5 +85,11 @@ export function useAudioExport(documentId: string | undefined, documentTitle: st
     }
   }, [api, documentId, save, settle, setProgress, conclude]);
 
-  return { progress, receive, download };
+  const resume = useCallback(() => {
+    for (const [format, request] of Object.entries(awaitedRequests.current)) {
+      void download(format as ExportFormat, request.model, request.voice, request.ranges);
+    }
+  }, [download]);
+
+  return { progress, receive, download, resume };
 }

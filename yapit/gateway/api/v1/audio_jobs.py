@@ -7,11 +7,13 @@ from fastapi import Path as PathParam
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, ValidationError
 
+from yapit.contracts import KOKORO_OPUS_BITRATE, OPENAI_TTS_OPUS_BITRATE
 from yapit.gateway.audio_export import (
     ENCODINGS,
     AudioExportState,
     AudioNotCached,
     Chapter,
+    ExportBusy,
     ExportFormat,
     request_export,
     stored_export,
@@ -50,9 +52,6 @@ from yapit.gateway.usage import (
     get_limit_for_usage_type,
     get_user_subscription,
 )
-
-# Kokoro's cached audio is 48 kbps Opus
-CACHED_AUDIO_BYTES_PER_S = 6_000
 
 router = APIRouter(prefix="/v1/documents", tags=["Audio jobs"], dependencies=[Depends(authenticate)])
 
@@ -100,7 +99,8 @@ async def start_audio_job(
     # The cache evicts least recently played first, so a selection larger than the cache would
     # evict its own first blocks before the last are synthesized.
     cap_mb = settings.audio_cache_config.max_size_mb
-    estimated_bytes = sum(estimate_duration_ms(len(texts[idx])) for idx in blocks) * CACHED_AUDIO_BYTES_PER_S // 1000
+    bitrate = KOKORO_OPUS_BITRATE if model.slug.startswith("kokoro") else OPENAI_TTS_OPUS_BITRATE
+    estimated_bytes = sum(estimate_duration_ms(len(texts[idx])) for idx in blocks) * bitrate // 8 // 1000
     if cap_mb is not None and estimated_bytes > cap_mb * 1024 * 1024:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -229,6 +229,11 @@ async def export_audio(
         )
     except AudioNotCached as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Prepare the audio first: {e}")
+    except ExportBusy:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An audio file of yours is being built. Download this one once it is done.",
+        )
 
 
 @router.get("/{document_id}/audio-export/{key}.{fmt}")

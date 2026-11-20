@@ -15,6 +15,10 @@ TTS_SUBSCRIBERS: Final[str] = "tts:subscribers:{hash}"
 TTS_CURSOR: Final[str] = "tts:cursor:{user_id}:{document_id}"
 TTS_PENDING: Final[str] = "tts:pending:{user_id}:{document_id}"
 
+# The bitrates the cached Ogg Opus is written at: Kokoro's worker, and the gateway's transcode of OpenAI-compatible TTS
+KOKORO_OPUS_BITRATE: Final[int] = 48_000
+OPENAI_TTS_OPUS_BITRATE: Final[int] = 96_000
+
 # Rate limiting
 RATELIMIT_EXTRACTION: Final[str] = "ratelimit:extraction:{user_id}"
 MAX_CONCURRENT_EXTRACTIONS: Final[int] = 10

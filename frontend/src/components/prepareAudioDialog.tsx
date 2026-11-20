@@ -99,7 +99,7 @@ function PrepareAudioForm({
   const allPrepared = onServer && estimate !== null && totals.blocks > 0 && totals.blocksToSynthesize === 0;
   const exportErrors = EXPORT_FORMATS.flatMap(format => {
     const progress = exportProgress[format];
-    return progress && !progress.building ? [progress.error] : [];
+    return progress && !progress.building ? [{ format, error: progress.error }] : [];
   });
 
   const toggle = (id: string) => setTicked(prev => {
@@ -167,7 +167,7 @@ function PrepareAudioForm({
       {jobRunsHere && !blocker && (
         <Notice>Audio is being prepared for this document. Its progress, and its Stop button, are on the playback bar.</Notice>
       )}
-      {exportErrors.map(error => <Notice key={error} tone="warning">{error}</Notice>)}
+      {exportErrors.map(({ format, error }) => <Notice key={format} tone="warning">{error}</Notice>)}
 
       {onServer && estimate !== null && totals.blocks > 0 && !allPrepared && (
         <p className="text-sm text-muted-foreground">Download once the ticked sections are prepared.</p>

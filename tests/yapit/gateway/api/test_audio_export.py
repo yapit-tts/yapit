@@ -132,6 +132,30 @@ async def test_an_export_is_the_ticked_sections_in_their_order_with_a_chapter_ea
     assert chapters[-1][2] == pytest.approx(duration, abs=0.001)
 
 
+def pitches(data: bytes, spans: list[tuple[float, float]]) -> list[int]:
+    """The pitch (as _ogg_opus numbers it) heard in the middle of each span, from the decoded audio's zero crossings."""
+    with av.open(io.BytesIO(data), "r") as container:
+        rate = container.streams.audio[0].rate
+        pcm = np.concatenate([frame.to_ndarray()[0] for frame in container.decode(audio=0)])
+    heard = []
+    for start, end in spans:
+        middle = int((start + end) / 2 * rate)
+        window = pcm[middle - rate // 10 : middle + rate // 10]
+        crossings = np.count_nonzero(np.diff(np.signbit(window)))
+        hz = crossings / 2 / 0.2
+        heard.append(round(hz / (0.03 * RATE / (2 * np.pi))))
+    return heard
+
+
+@pytest.mark.parametrize("fmt", ["m4b", "mp3"])
+async def test_an_export_plays_a_sections_blocks_in_their_order(client, app, book, fmt):
+    data = await exported(client, app, book, [(0, 5, "Whole book")], fmt)
+
+    starts = [seconds(0, idx - 1) if idx else 0.0 for idx in range(len(BLOCK_SAMPLES))]
+    spans = [(start, start + samples / RATE) for start, samples in zip(starts, BLOCK_SAMPLES)]
+    assert pitches(data, spans) == [1, 2, 3, 4, 5, 6]
+
+
 async def test_a_second_export_within_a_day_is_the_stored_file(client, app, book):
     first = await exported(client, app, book, [(0, 5, "Whole book")])
 
@@ -142,19 +166,21 @@ async def test_a_second_export_within_a_day_is_the_stored_file(client, app, book
     assert again.content == first
 
 
-async def test_an_export_older_than_a_day_is_gone(client, app, book):
-    await exported(client, app, book, [(0, 5, "Whole book")])
-    key = (await export(client, book, [(0, 5, "Whole book")])).json()["key"]
+async def test_an_export_older_than_a_day_is_gone_and_a_fresh_one_stays(client, app, book):
+    await exported(client, app, book, [(0, 5, "Whole book")], "m4b")
+    await exported(client, app, book, [(0, 5, "Whole book")], "mp3")
+    old_key = (await export(client, book, [(0, 5, "Whole book")], "m4b")).json()["key"]
+    fresh_key = (await export(client, book, [(0, 5, "Whole book")], "mp3")).json()["key"]
     export_dir = Path(app.dependency_overrides[get_settings]().audio_export_dir)
-    (path,) = export_dir.iterdir()
     a_day_ago = time.time() - EXPORT_TTL_S - 1
-    os.utime(path, (a_day_ago, a_day_ago))
+    os.utime(export_dir / f"{old_key}.m4b", (a_day_ago, a_day_ago))
 
-    response = await client.get(f"/v1/documents/{book}/audio-export/{key}.m4b")
+    old = await client.get(f"/v1/documents/{book}/audio-export/{old_key}.m4b")
     sweep_exports(export_dir)
 
-    assert response.status_code == 404
-    assert list(export_dir.iterdir()) == []
+    assert old.status_code == 404
+    assert [p.name for p in export_dir.iterdir()] == [f"{fresh_key}.mp3"]
+    assert (await client.get(f"/v1/documents/{book}/audio-export/{fresh_key}.mp3")).status_code == 200
 
 
 async def test_an_export_with_a_block_not_prepared_is_refused(client, app, book, session, kokoro):
@@ -186,22 +212,24 @@ def audio_cache_of(app, max_size_mb: int):
 async def test_a_job_whose_audio_would_not_fit_the_audio_cache_is_refused_before_any_block_is_queued(
     client, app, kokoro, session
 ):
-    # About 3.7 hours at the estimate's speaking rate: some 80 MB of 48 kbps Opus
+    # 270,000 characters at the estimate's 14 a second: 5.4 hours, some 110 MiB of 48 kbps Opus
     content = "\n\n".join("A sentence of about fifty characters, read aloud here." * 5 for _ in range(1000))
     document_id = uuid.UUID((await client.post("/v1/documents/text", json={"content": content})).json()["id"])
     blocks = len((await session.get(Document, document_id)).audio_texts)
 
-    with audio_cache_of(app, max_size_mb=50):
-        response = await client.post(
-            f"/v1/documents/{document_id}/audio-job",
-            json={
-                "model": "kokoro",
-                "voice": "af_heart",
-                "ranges": [{"first_block": 0, "last_block": blocks - 1, "title": "All"}],
-            },
-        )
+    whole = {
+        "model": "kokoro",
+        "voice": "af_heart",
+        "ranges": [{"first_block": 0, "last_block": blocks - 1, "title": "All"}],
+    }
 
-    assert response.status_code == 422
-    assert "50 MB audio cache" in response.json()["detail"]
-    assert await app.state.redis_client.zcard(get_queue_name("kokoro")) == 0
-    assert await app.state.redis_client.hlen(TTS_JOBS) == 0
+    with audio_cache_of(app, max_size_mb=100):
+        refused = await client.post(f"/v1/documents/{document_id}/audio-job", json=whole)
+    queued = await app.state.redis_client.zcard(get_queue_name("kokoro")), await app.state.redis_client.hlen(TTS_JOBS)
+    with audio_cache_of(app, max_size_mb=150):
+        accepted = await client.post(f"/v1/documents/{document_id}/audio-job", json=whole)
+
+    assert refused.status_code == 422
+    assert "100 MB audio cache" in refused.json()["detail"]
+    assert queued == (0, 0)
+    assert accepted.status_code == 201

@@ -1,10 +1,4 @@
-"""Audio export: a selection's cached blocks joined into one audio file, with a chapter per section.
-
-A file is built once, in a thread, and kept for EXPORT_TTL_S under a name derived from its content;
-a request within that time is served the stored file. An MP4 cannot be streamed while it is
-written (its index comes last), and a join of a long book takes minutes of CPU, so a request that
-finds no file starts the build and hears of its end on the document's WebSocket channel.
-"""
+"""Audio export: a selection's cached blocks joined into one audio file, with a chapter per section."""
 
 import asyncio
 import hashlib
@@ -86,8 +80,13 @@ class AudioNotCached(Exception):
     pass
 
 
+class ExportBusy(Exception):
+    """The user already has a build running; each holds a CPU thread for minutes."""
+
+
 @dataclass
 class _Build:
+    user_id: str
     task: asyncio.Task
     waiters: set[tuple[str, uuid.UUID]]
 
@@ -124,7 +123,10 @@ async def request_export(
     fmt: ExportFormat,
     chapters: list[Chapter],
 ) -> AudioExportState:
-    """The export's state, starting its build if no file is stored. Raises AudioNotCached if a block's audio is missing."""
+    """The export's state, starting its build if no file is stored.
+
+    Raises AudioNotCached if a block's audio is missing, and ExportBusy if the user's own build of another file runs.
+    """
     key = export_key(fmt, chapters)
     if stored_export(export_dir, key, fmt):
         return AudioExportState(key=key, format=fmt, status=ExportStatus.ready)
@@ -132,13 +134,15 @@ async def request_export(
         build.waiters.add((user_id, document_id))
         return AudioExportState(key=key, format=fmt, status=ExportStatus.building)
 
+    if any(b.user_id == user_id for b in _builds.values()):
+        raise ExportBusy
     hashes = list(dict.fromkeys(h for c in chapters for h in c.variant_hashes))
     missing = len(hashes) - sum(await cached_mask(redis, cache, hashes))
     if missing:
         raise AudioNotCached(f"{missing} of the {len(hashes)} blocks have no audio prepared in this voice")
 
     task = asyncio.create_task(_build(redis, cache, export_dir, key, fmt, chapters))
-    _builds[key] = _Build(task=task, waiters={(user_id, document_id)})
+    _builds[key] = _Build(user_id=user_id, task=task, waiters={(user_id, document_id)})
     return AudioExportState(key=key, format=fmt, status=ExportStatus.building)
 
 
@@ -280,10 +284,22 @@ def _encoded_samples(audio: bytes, opus_head: bytes) -> int:
     FFmpeg's Ogg muxer, which wrote every block the Kokoro worker and the gateway cache, sets the
     last page's granule position to the PCM's length plus twice the OpusHead's pre-skip.
     """
-    last_page = audio.rfind(b"OggS")
+    last_page = _last_page(audio)
     granule = int.from_bytes(audio[last_page + 6 : last_page + 14], "little", signed=True)
     pre_skip = int.from_bytes(opus_head[10:12], "little")
     return granule - 2 * pre_skip
+
+
+def _last_page(audio: bytes) -> int:
+    """Offset of the last Ogg page: the "OggS" whose header and segments end the stream, not one inside a payload."""
+    at = len(audio)
+    while (at := audio.rfind(b"OggS", 0, at)) >= 0:
+        if at + 27 > len(audio) or audio[at + 4] != 0:
+            continue
+        segments = audio[at + 27 : at + 27 + audio[at + 26]]
+        if at + 27 + len(segments) + sum(segments) == len(audio):
+            return at
+    raise ValueError("No Ogg page ends the block")
 
 
 def _head(frame: av.AudioFrame, samples: int) -> av.AudioFrame:
