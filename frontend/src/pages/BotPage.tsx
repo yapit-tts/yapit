@@ -55,6 +55,10 @@ const BotPage = () => {
               from your site. One that does not exist (a 404) allows everything.
             </li>
             <li>The reader is told that your <code>robots.txt</code> does not allow yapit to fetch the page.</li>
+            <li>
+              When your bot protection challenges yapit, yapit does not try to get past it, in disguise or otherwise,
+              and tells the reader that your bot protection blocked it.
+            </li>
           </ul>
         </section>
 

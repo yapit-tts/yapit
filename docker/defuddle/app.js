@@ -12,7 +12,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Defuddle } from "defuddle/node";
 import { chromium } from "playwright";
-import { USER_AGENT, Refusal, createFetcher, readCapped } from "./fetcher.js";
+import { USER_AGENT, Refusal, assertNotChallenged, createFetcher, readCapped } from "./fetcher.js";
 
 const PROXY_URL = process.env.PROXY_URL;
 if (!PROXY_URL) throw new Error("PROXY_URL is required (e.g. http://smokescreen:4750)");
@@ -52,6 +52,7 @@ async function fetchPage(url, userAgent, timeoutMs) {
 			signal: controller.signal,
 		});
 
+		assertNotChallenged(response.headers.get("cf-mitigated"));
 		if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
 		const contentType = response.headers.get("content-type") || "";
@@ -149,6 +150,7 @@ async function extractPlaywright(url, timeoutMs) {
 			if (hop === MAX_BROWSER_REDIRECTS) throw new Error("Too many redirects");
 			target = redirect;
 		}
+		if (resp) assertNotChallenged(resp.headers()["cf-mitigated"]);
 		if (resp && resp.status() >= 400) {
 			console.log(`Playwright got HTTP ${resp.status()} for ${url}`);
 			return { markdown: "", title: null };

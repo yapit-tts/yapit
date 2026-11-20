@@ -128,6 +128,18 @@ class TestDownloadDocument:
 
         assert web.requested == ["https://example.com/old"]
 
+    @pytest.mark.asyncio
+    async def test_a_cloudflare_challenge_is_reported_as_bot_protection(self, web):
+        web.routes["https://protected.example/post"] = httpx.Response(
+            403,
+            headers={"content-type": "text/html", "cf-mitigated": "challenge"},
+            content=b"<title>Just a moment...</title>",
+        )
+
+        with pytest.raises(HTTPException, match="bot protection") as exc_info:
+            await download_document("https://protected.example/post", MAX_SIZE)
+        assert exc_info.value.status_code == 422
+
 
 class TestExtractDocumentInfo:
     """Test _extract_document_info function."""

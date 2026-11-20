@@ -47,7 +47,7 @@ Why this exists: Swarm deploys race the gateway (`update_config: start-first`) a
 - `cache_hit` — Variant already synthesized (audio cache)
 
 ### URL Fetching
-- `url_fetch` — HTTP download (duration_ms, content_type, size_bytes, errors)
+- `url_fetch` — HTTP download (duration_ms, content_type, size_bytes, errors: `http_status`, `request_error`, `bot_protection` for a Cloudflare challenge)
 - `markxiv_error` — arXiv extraction failures
 
 ### WebSocket

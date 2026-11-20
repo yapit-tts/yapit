@@ -19,8 +19,15 @@ const ROBOTS_CACHE_ORIGINS = 10_000;
 const ROBOTS_DISALLOWED = "This site's robots.txt does not allow yapit to fetch this page";
 const ROBOTS_UNREACHABLE = "This site's robots.txt could not be read, and yapit fetches nothing from a site until it can";
 
+const CHALLENGED = "This site's bot protection (Cloudflare) blocked yapit from reading the page";
+
 /** A page yapit will not fetch, or a site that refused yapit: its message is for the reader. */
 export class Refusal extends Error {}
+
+/** Cloudflare answers a request it challenges with `cf-mitigated: challenge` in place of the page. */
+export function assertNotChallenged(cfMitigated) {
+	if (cfMitigated === "challenge") throw new Refusal(CHALLENGED);
+}
 
 export function createFetcher(proxyUrl) {
 	const dispatcher = new ProxyAgent(proxyUrl);
