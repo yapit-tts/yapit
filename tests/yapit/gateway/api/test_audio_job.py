@@ -307,16 +307,17 @@ async def test_a_job_on_an_unlimited_plan_runs_to_its_last_block(client, kokoro,
     await subscribe(DEFAULT_TEST_USER.id, server_kokoro_characters=None)
     settings = app.dependency_overrides[get_settings]()
     pipeline = Pipeline(app, settings)
+    earlier = await create_document(client, 40)
+    await start(client, earlier, 0, 39)
+    await pipeline.run()
     document_id = await create_document(client, 50)
-    for block_idx in range(10):
-        await listen(app, settings, document_id, block_idx)
+
+    await start(client, document_id, 0, 49)
     await pipeline.run()
 
-    await start(client, document_id, 10, 49)
-    await pipeline.run()
-
+    # Both documents' paragraphs read the same text, so the second job synthesizes only blocks 40 to 49
     job = (await client.get(f"/v1/documents/{document_id}/audio-job")).json()
-    assert (job["status"], job["cached_blocks"], len(pipeline.synthesized)) == ("done", 40, 50)
+    assert (job["status"], job["cached_blocks"], len(pipeline.synthesized)) == ("done", 50, 50)
 
 
 async def test_a_job_whose_usage_runs_out_queues_nothing_further(client, kokoro, app, session):
