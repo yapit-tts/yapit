@@ -9,7 +9,7 @@ import robotsParser from "robots-parser";
 
 export const USER_AGENT = "Mozilla/5.0 (compatible; Yapit/1.0; +https://yapit.md/bot)";
 const ROBOTS_PRODUCT_TOKEN = "Yapit";
-const MAX_REDIRECTS = 10;
+export const MAX_REDIRECTS = 10;
 const ROBOTS_MAX_REDIRECTS = 5;
 const ROBOTS_TIMEOUT_MS = 5_000;
 // RFC 9309 asks a crawler to parse at least 500 KiB of a robots.txt and to keep it no longer than a day.
@@ -19,6 +19,7 @@ const ROBOTS_CACHE_ORIGINS = 10_000;
 
 const ROBOTS_DISALLOWED = "This site's robots.txt does not allow yapit to fetch this page";
 const ROBOTS_UNREACHABLE = "This site's robots.txt could not be read, and yapit fetches nothing from a site until it can";
+const SITE_UNREACHABLE = "Unable to reach URL - check it's correct and accessible";
 
 const CHALLENGED = "This site's bot protection (Cloudflare) blocked yapit from reading the page";
 
@@ -64,17 +65,17 @@ export function createFetcher(proxyUrl, sign) {
 			robotsCache.set(origin, entry);
 		}
 		const rules = await entry.rules;
-		if (rules === null) {
+		if (typeof rules === "string") {
 			// Not kept: the next page from this site asks again rather than staying refused for an hour.
 			if (robotsCache.get(origin) === entry) robotsCache.delete(origin);
-			throw new Refusal(ROBOTS_UNREACHABLE);
+			throw new Refusal(rules);
 		}
 		if (rules.isAllowed(url, ROBOTS_PRODUCT_TOKEN) === false) throw new Refusal(ROBOTS_DISALLOWED);
 	}
 
 	/**
-	 * The site's rules (RFC 9309, 2.3.1): a robots.txt answering 4xx allows everything,
-	 * one that cannot be reached, answers 5xx or 429, disallows everything (null).
+	 * The site's rules (RFC 9309, 2.3.1): a robots.txt answering 4xx allows everything; one that
+	 * answers 5xx or 429, or not in time, disallows everything. Either refusal comes back as its message.
 	 */
 	async function readRobots(origin) {
 		const robotsUrl = `${origin}/robots.txt`;
@@ -93,8 +94,11 @@ export function createFetcher(proxyUrl, sign) {
 			if (response.status >= 400 && response.status < 500 && response.status !== 429) return robotsParser(robotsUrl, "");
 		} catch (err) {
 			console.log(`robots.txt unreachable for ${origin}: ${err.message}`);
+			// fetch fails with a TypeError when no answer came at all (no such host, a refused connection,
+			// the proxy refusing the host): a link nobody can fetch, not a robots.txt that is down.
+			if (err instanceof TypeError) return SITE_UNREACHABLE;
 		}
-		return null;
+		return ROBOTS_UNREACHABLE;
 	}
 
 	return { send, assertAllowed, signatureHeaders };

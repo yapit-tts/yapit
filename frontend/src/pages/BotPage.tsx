@@ -2,6 +2,7 @@ import { useNavigate } from "react-router";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft } from "lucide-react";
 
+// The fetcher sends it from docker/defuddle/fetcher.js and yapit/gateway/document/http.py.
 const USER_AGENT = "Mozilla/5.0 (compatible; Yapit/1.0; +https://yapit.md/bot)";
 
 const BotPage = () => {

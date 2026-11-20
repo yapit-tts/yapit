@@ -12,7 +12,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Defuddle } from "defuddle/node";
 import { chromium } from "playwright";
-import { USER_AGENT, Refusal, assertNotChallenged, createFetcher, readCapped } from "./fetcher.js";
+import { MAX_REDIRECTS, USER_AGENT, Refusal, assertNotChallenged, createFetcher, readCapped } from "./fetcher.js";
 import { requestSigner } from "./signature.js";
 
 const PROXY_URL = process.env.PROXY_URL;
@@ -20,7 +20,6 @@ if (!PROXY_URL) throw new Error("PROXY_URL is required (e.g. http://smokescreen:
 
 const PORT = 8001;
 const MAX_CONCURRENT_BROWSER = 50;
-const MAX_BROWSER_REDIRECTS = 10;
 const STATIC_FETCH_TIMEOUT_MS = 5_000;
 const MAX_PAGE_SIZE = 20 * 1024 * 1024;
 const BOT_UA = USER_AGENT + " bot";
@@ -163,7 +162,7 @@ export async function renderPage(url, timeoutMs, read) {
 				});
 			if (refusal) throw refusal;
 			if (!redirect) break;
-			if (hop === MAX_BROWSER_REDIRECTS) throw new Error("Too many redirects");
+			if (hop === MAX_REDIRECTS) throw new Error("Too many redirects");
 			target = redirect;
 		}
 		if (resp) assertNotChallenged(resp.headers()["cf-mitigated"]);

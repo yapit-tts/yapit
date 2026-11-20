@@ -19,8 +19,8 @@ def throwaway_key(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_the_directory_serves_its_key_with_a_proof_over_the_host_asked(client, throwaway_key):
-    response = await client.get(DIRECTORY, headers={"Host": "yapit.example"})
+async def test_the_directory_proves_its_key_for_app_urls_host_whatever_host_is_asked(client, throwaway_key):
+    response = await client.get(DIRECTORY, headers={"Host": "mirror.example"})
 
     assert response.status_code == 200
     assert response.headers["content-type"] == "application/http-message-signatures-directory+json"

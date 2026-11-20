@@ -27,7 +27,7 @@ class SigningKey:
     private: Ed25519PrivateKey
     x: str  # the public key, base64url without padding
     keyid: str  # its JWK thumbprint (RFC 8037, appendix A.3)
-    signature_agent: str  # the https origin serving the key directory, as a structured-field string
+    authority: str  # APP_URL's host, which serves the key directory
 
 
 def load_signing_key(private_key: str, app_url: str) -> SigningKey | None:
@@ -47,7 +47,7 @@ def load_signing_key(private_key: str, app_url: str) -> SigningKey | None:
         private=key,
         x=x,
         keyid=_b64url(thumbprint.digest()),
-        signature_agent=f'"https://{origin.netloc}"',
+        authority=_authority(app_url),
     )
 
 
@@ -58,21 +58,22 @@ def request_signature_headers(key: SigningKey, url: str, now: float, nonce: str)
         f'("@authority" "signature-agent");created={created};keyid="{key.keyid}";alg="ed25519"'
         f';expires={created + REQUEST_LIFETIME_S};nonce="{nonce}";tag="web-bot-auth"'
     )
-    base = f'"@authority": {_authority(url)}\n"signature-agent": {key.signature_agent}\n"@signature-params": {params}'
+    signature_agent = f'"https://{key.authority}"'
+    base = f'"@authority": {_authority(url)}\n"signature-agent": {signature_agent}\n"@signature-params": {params}'
     return {
-        "Signature-Agent": key.signature_agent,
+        "Signature-Agent": signature_agent,
         "Signature-Input": f"sig1={params}",
         "Signature": f"sig1=:{_sign(key, base)}:",
     }
 
 
 def directory_response(
-    key: SigningKey, authority: str, now: float, lifetime_s: int = DIRECTORY_LIFETIME_S
+    key: SigningKey, now: float, lifetime_s: int = DIRECTORY_LIFETIME_S
 ) -> tuple[bytes, dict[str, str]]:
     """The key directory's body and headers.
 
-    The proof is signed over the authority the request named and the body's digest, so no one can mirror the
-    directory or swap its keys.
+    The proof is signed over APP_URL's host, whatever host the request named, and over the body's digest, so a
+    copy served from another host or with other keys does not verify.
     """
     jwk = {"kty": "OKP", "crv": "Ed25519", "kid": key.keyid, "x": key.x, "use": "sig"}
     body = json.dumps({"keys": [jwk]}, separators=(",", ":")).encode()
@@ -82,7 +83,7 @@ def directory_response(
         f'("@authority";req "content-digest");created={created};keyid="{key.keyid}";alg="ed25519"'
         f';expires={created + lifetime_s};tag="http-message-signatures-directory"'
     )
-    base = f'"@authority";req: {authority.lower()}\n"content-digest": {content_digest}\n"@signature-params": {params}'
+    base = f'"@authority";req: {key.authority}\n"content-digest": {content_digest}\n"@signature-params": {params}'
     return body, {
         "Content-Type": DIRECTORY_CONTENT_TYPE,
         "Content-Digest": content_digest,

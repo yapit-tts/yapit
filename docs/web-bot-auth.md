@@ -24,7 +24,7 @@ An Ed25519 private key, as base64 PKCS#8 DER on one line:
 openssl genpkey -algorithm ed25519 -outform DER | base64 -w0
 ```
 
-It lives in `.env.sops` as `PROD_WEB_BOT_AUTH_PRIVATE_KEY` ([[env-config]]), so prod alone signs; `.env.dev` and `.env.selfhost.example` leave `WEB_BOT_AUTH_PRIVATE_KEY` empty. On the VPS it reaches two containers and no image: the gateway reads it from `.env`, and the extraction service gets it through compose interpolation (`docker-compose.prod.yml`), with `APP_URL`, the https origin its `Signature-Agent` names. The gateway does not start without the variable, empty or not, since Settings has no defaults.
+It lives in `.env.sops` as `PROD_WEB_BOT_AUTH_PRIVATE_KEY` ([[env-config]]), so prod alone signs; `.env.dev` and `.env.selfhost.example` leave `WEB_BOT_AUTH_PRIVATE_KEY` empty. On the VPS it reaches two containers and no image. The gateway reads it from `.env`. The extraction service gets it through compose interpolation (`docker-compose.prod.yml`), together with `APP_URL`, the https origin its `Signature-Agent` names. The gateway does not start without the variable, empty or not, since Settings has no defaults.
 
 Cloudflare registers the keys it finds in the directory. A new key means submitting again (Cloudflare's docs: a key already registered is rotated with them), so changing it is an operation, not a deploy.
 

@@ -13,7 +13,7 @@ from yapit.gateway.document.defuddle_client import assert_robots_allow
 from yapit.gateway.metrics import log_event
 from yapit.gateway.web_bot_auth import signature_headers
 
-# The extraction service (docker/defuddle/app.js) sends the same one: a site sees one fetcher.
+# docker/defuddle/fetcher.js sends the same one: a site sees one fetcher.
 USER_AGENT = "Mozilla/5.0 (compatible; Yapit/1.0; +https://yapit.md/bot)"
 
 

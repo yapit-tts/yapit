@@ -406,11 +406,11 @@ def create_app(
         return {"commit": commit}
 
     @app.get(DIRECTORY_PATH, include_in_schema=False)
-    async def key_directory(request: Request):
+    async def key_directory():
         key = signing_key()
         if key is None:
             return Response(status_code=404)
-        body, headers = directory_response(key, request.headers["host"], time.time())
+        body, headers = directory_response(key, time.time())
         return Response(content=body, headers=headers)
 
     @app.get("/v1/extraction-prompt")

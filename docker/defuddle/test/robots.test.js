@@ -10,11 +10,15 @@ const ROBOTS = {
 	"spa.test": "User-agent: *\nDisallow: /private\n",
 };
 
+let flakyRobotsAnswers = 0;
+
 const web = await stubWeb((req, res) => {
 	const host = req.headers.host.split(":")[0];
 	if (req.url === "/robots.txt") {
 		if (host === "missing.test") return text(res, "not found", 404);
 		if (host === "down.test") return text(res, "unavailable", 503);
+		if (host === "busy.test") return text(res, "slow down", 429);
+		if (host === "flaky.test" && flakyRobotsAnswers++ === 0) return text(res, "unavailable", 503);
 		return text(res, ROBOTS[host] ?? "");
 	}
 	if (req.url === "/old") return redirect(res, "/private");
@@ -66,6 +70,23 @@ test("a site whose robots.txt cannot be read is refused", async () => {
 	assert.equal(web.requests.filter((r) => r.host === "down.test" && r.path === "/page").length, 0);
 });
 
+test("a site whose robots.txt answers 429 is refused", async () => {
+	assertRefusedByRobots(await extract("http://busy.test/page"));
+	assert.equal(web.requests.filter((r) => r.host === "busy.test" && r.path === "/page").length, 0);
+});
+
+test("a robots.txt that could not be read is asked again for the next page", async () => {
+	assertRefusedByRobots(await extract("http://flaky.test/page"));
+	assert.equal((await extract("http://flaky.test/page")).status, 200);
+});
+
+test("a site that does not answer at all reads as a link that cannot be reached, not as robots.txt", async () => {
+	const response = await extract("https://gone.test/page");
+	assert.equal(response.status, 422);
+	assert.match(response.body.error, /Unable to reach URL/);
+	assert.equal(web.requests.filter((r) => r.host === "gone.test" && r.path === "/page").length, 0);
+});
+
 test("a redirect into a disallowed path is refused before the request to it", async () => {
 	assertRefusedByRobots(await extract("http://spa.test/old"));
 	assert.equal(web.requestsFor("/private").length, 0);
@@ -90,6 +111,8 @@ test("the gateway's robots check answers for a URL without fetching it", async (
 });
 
 test("without a key, every request goes out unsigned", async () => {
-	assert.ok(web.requests.length > 0);
-	for (const r of web.requests) assert.equal(r.headers["signature"] ?? r.headers["signature-input"] ?? r.headers["signature-agent"], undefined);
+	assert.equal((await extract("http://unsigned.test/app-to-page")).status, 200);
+	const seen = web.requests.filter((r) => r.host === "unsigned.test");
+	assert.deepEqual(seen.map((r) => r.path), ["/robots.txt", "/app-to-page", "/app-to-page", "/app-to-page", "/page"]);
+	for (const r of seen) assert.equal(r.headers["signature"] ?? r.headers["signature-input"] ?? r.headers["signature-agent"], undefined);
 });

@@ -1,6 +1,7 @@
 /**
  * A stand-in for the web and for smokescreen: every host the service asks the proxy for
- * is answered by one handler, which sees the host in the request's Host header.
+ * is answered by one handler, which sees the host in the request's Host header, except
+ * gone.test, which the proxy cannot reach.
  * `start()` then imports the service against that proxy and serves it on a free port.
  */
 
@@ -16,7 +17,7 @@ export async function stubWeb(handler) {
 	await listen(site);
 
 	const proxy = http.createServer((req, res) => {
-		// Chromium sends a plain-http request to the proxy in absolute form.
+		// A plain-http request comes to the proxy in absolute form, from undici and Chromium alike.
 		const target = new URL(req.url);
 		const upstream = http.request(
 			{ host: "127.0.0.1", port: site.address().port, path: target.pathname + target.search, method: req.method, headers: req.headers },
@@ -28,6 +29,8 @@ export async function stubWeb(handler) {
 		req.pipe(upstream);
 	});
 	proxy.on("connect", (req, socket, head) => {
+		// What smokescreen answers for a host it cannot resolve or reach.
+		if (req.url.startsWith("gone.test:")) return socket.end("HTTP/1.1 502 Bad Gateway\r\n\r\n");
 		const upstream = net.connect(site.address().port, "127.0.0.1", () => {
 			socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
 			upstream.write(head);

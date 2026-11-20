@@ -1,4 +1,5 @@
 import base64
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -10,6 +11,7 @@ from fastapi import HTTPException
 
 from yapit.gateway import web_bot_auth
 from yapit.gateway.api.v1.documents import _extract_document_info
+from yapit.gateway.document import defuddle_client
 from yapit.gateway.document import http as http_module
 from yapit.gateway.document.http import download_document
 
@@ -18,28 +20,37 @@ MAX_SIZE = 100 * 1024 * 1024
 
 @pytest.fixture
 def web(monkeypatch):
-    """A stub site behind the download's client, and robots.txt answered by a stub extraction service.
+    """A stub site behind the download's client, and a stub extraction service answering its robots.txt checks.
 
-    Tests set `web.routes[url] = httpx.Response(...)` and `web.refused` to the URLs robots.txt refuses.
+    Tests set `web.routes[url] = httpx.Response(...)`, `web.refused` to the URLs robots.txt refuses, and
+    `web.extraction_service_down` to make the extraction service unreachable.
     """
-    web = SimpleNamespace(routes={}, refused=set(), requested=[], robots_asked=[], seen=[])
+    web = SimpleNamespace(
+        routes={}, refused=set(), requested=[], robots_asked=[], seen=[], extraction_service_down=False
+    )
 
-    def handle(request: httpx.Request) -> httpx.Response:
+    def site(request: httpx.Request) -> httpx.Response:
         web.requested.append(str(request.url))
         web.seen.append(request)
         if str(request.url) not in web.routes:
             raise httpx.ConnectError("unreachable", request=request)
         return web.routes[str(request.url)]
 
-    async def robots(url: str) -> None:
+    def extraction_service(request: httpx.Request) -> httpx.Response:
+        if web.extraction_service_down:
+            raise httpx.ConnectError("defuddle is restarting", request=request)
+        url = json.loads(request.content)["url"]
         web.robots_asked.append(url)
         if url in web.refused:
-            raise HTTPException(
-                status_code=422, detail="This site's robots.txt does not allow yapit to fetch this page"
-            )
+            return httpx.Response(422, json={"error": "This site's robots.txt does not allow yapit to fetch this page"})
+        return httpx.Response(200, json={})
 
-    monkeypatch.setattr(http_module, "fetch_client", lambda: httpx.AsyncClient(transport=httpx.MockTransport(handle)))
-    monkeypatch.setattr(http_module, "assert_robots_allow", robots)
+    monkeypatch.setattr(http_module, "fetch_client", lambda: httpx.AsyncClient(transport=httpx.MockTransport(site)))
+    monkeypatch.setattr(
+        defuddle_client,
+        "_client",
+        httpx.AsyncClient(base_url="http://defuddle", transport=httpx.MockTransport(extraction_service)),
+    )
     monkeypatch.setattr(http_module, "log_event", AsyncMock())
     return web
 
@@ -164,6 +175,27 @@ class TestDownloadDocument:
             signature = base64.b64decode(request.headers["signature"].removeprefix("sig1=:").removesuffix(":"))
             private.public_key().verify(signature, base.encode())
         assert [r.url.host for r in web.seen] == ["short.example", "example.com"]
+
+    @pytest.mark.asyncio
+    async def test_a_redirect_loop_stops(self, web):
+        web.routes["https://example.com/loop"] = httpx.Response(302, headers={"location": "/loop"})
+
+        with pytest.raises(HTTPException, match="Too many redirects"):
+            await download_document("https://example.com/loop", MAX_SIZE)
+
+        assert len(web.requested) == http_module.MAX_REDIRECTS + 1
+
+    @pytest.mark.asyncio
+    async def test_the_extraction_service_down_does_not_read_as_a_broken_link(self, web):
+        web.routes["https://example.com/doc.pdf"] = httpx.Response(200, content=b"%PDF")
+        web.extraction_service_down = True
+
+        with pytest.raises(HTTPException) as exc_info:
+            await download_document("https://example.com/doc.pdf", MAX_SIZE)
+
+        assert exc_info.value.status_code == 503
+        assert "robots.txt" in exc_info.value.detail
+        assert web.requested == []
 
 
 class TestExtractDocumentInfo:

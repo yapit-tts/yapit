@@ -19,7 +19,9 @@ const web = await stubWeb((req, res) => {
 	if (req.url === "/robots.txt") return text(res, "User-agent: *\nAllow: /\n");
 	if (req.url === "/moved") return redirect(res, "http://elsewhere.test/page");
 	// Chromium names image types in Accept; the plain fetch does not.
-	if (req.url === "/app") return html(res, req.headers.accept?.includes("image/") ? ARTICLE : SHELL);
+	const browser = req.headers.accept?.includes("image/");
+	if (req.url === "/app") return html(res, browser ? ARTICLE : SHELL);
+	if (req.url === "/app-moved") return browser ? redirect(res, "http://elsewhere.test/app") : html(res, SHELL);
 	html(res, ARTICLE);
 });
 const service = await web.start({
@@ -65,7 +67,8 @@ test("the plain fetch's page request carries a signature Cloudflare's verifier a
 });
 
 test("robots.txt is requested signed too", async () => {
-	await assertSignedForItsAuthority(web.requests.find((r) => r.host === "signed.test" && r.path === "/robots.txt"));
+	assert.equal((await extract("http://robots-signed.test/post")).status, 200);
+	await assertSignedForItsAuthority(web.requests.find((r) => r.host === "robots-signed.test" && r.path === "/robots.txt"));
 });
 
 test("each redirect hop is signed for its own authority", async () => {
@@ -80,4 +83,12 @@ test("Chromium's document request carries a signature Cloudflare's verifier acce
 	const browserRequest = web.requests.find((r) => r.path === "/app" && r.headers.accept.includes("image/"));
 	await assertSignedForItsAuthority(browserRequest);
 	assert.equal(browserRequest.headers["user-agent"], "Mozilla/5.0 (compatible; Yapit/1.0; +https://yapit.md/bot)");
+});
+
+test("Chromium signs a redirect to another host for that host", async () => {
+	const response = await extract("http://chromium-moves.test/app-moved");
+	assert.equal(response.body.extraction_method, "playwright");
+	const browserHop = (host, path) => web.requests.find((r) => r.host === host && r.path === path && r.headers.accept.includes("image/"));
+	await assertSignedForItsAuthority(browserHop("chromium-moves.test", "/app-moved"));
+	await assertSignedForItsAuthority(browserHop("elsewhere.test", "/app"));
 });

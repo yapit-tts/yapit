@@ -41,6 +41,6 @@ export function requestSigner(privateKey, appUrl) {
 }
 
 /** RFC 7638 thumbprint of an OKP public JWK, as RFC 8037 appendix A.3 computes it. */
-export function jwkThumbprint({ crv, kty, x }) {
+function jwkThumbprint({ crv, kty, x }) {
 	return createHash("sha256").update(JSON.stringify({ crv, kty, x })).digest("base64url");
 }

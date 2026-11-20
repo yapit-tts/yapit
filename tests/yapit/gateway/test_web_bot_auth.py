@@ -28,7 +28,7 @@ def test_the_key_directory_matches_cloudflares_test_vector():
     key = load_signing_key(rfc_9421_private_key(), "https://signature-agent.test")
     assert key is not None
 
-    body, headers = directory_response(key, "signature-agent.test", now=1735689600, lifetime_s=4889289600 - 1735689600)
+    body, headers = directory_response(key, now=1735689600, lifetime_s=4889289600 - 1735689600)
 
     assert body == (
         b'{"keys":[{"kty":"OKP","crv":"Ed25519","kid":"poqkLGiymh_W0uP6PZFw-dvez3QJT5SolqXBCW38r0U",'
@@ -65,7 +65,20 @@ def test_a_request_signature_matches_cloudflares_signer():
     )
 
 
-def test_without_a_key_requests_go_out_unsigned(monkeypatch):
-    monkeypatch.setattr(web_bot_auth, "_key", None)
+def test_a_port_other_than_the_default_is_part_of_the_signed_authority():
+    # web-bot-auth 0.2.0's sign(), as above, for https://example.com:8443/post.
+    key = load_signing_key(rfc_9421_private_key(), "https://yapit.md")
+    assert key is not None
+    nonce = base64.b64encode(bytes([7] * 64)).decode()
+
+    headers = request_signature_headers(key, "https://example.com:8443/post", now=1795210000, nonce=nonce)
+
+    assert headers["Signature"] == (
+        "sig1=:QTFzF9wZuNEjhIz7ZicjWyY+XU9LSZKvs2+E38xxddkl/eHVcA+7eoe4g9NEW9qdMJ535OMW9VJjxhKlVGQWAQ==:"
+    )
+
+
+def test_a_self_hosted_instance_without_a_key_sends_requests_unsigned(monkeypatch):
+    monkeypatch.setattr(web_bot_auth, "_key", load_signing_key(rfc_9421_private_key(), "https://yapit.md"))
     web_bot_auth.init_web_bot_auth("", "http://localhost")
     assert web_bot_auth.signature_headers("https://example.com/") == {}
