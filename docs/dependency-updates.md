@@ -4,7 +4,7 @@
 
 npm package in `docker/defuddle/`. Dockerfile uses `npm ci`, so the lockfile must match package.json.
 
-Dependabot (`.github/dependabot.yml`) opens a PR for each defuddle release once it is 7 days old. On any PR that changes the pinned version, the `defuddle bump check` workflow runs `scripts/defuddle-bump-check.mjs` and posts its report as a PR comment:
+Dependabot (`.github/dependabot.yml`) keeps one PR open for the newest defuddle release that is at least 2 days old, replacing it when a newer one comes of age, and merges nothing itself. On any PR that changes the pinned version, the `defuddle bump check` workflow runs `scripts/defuddle-bump-check.mjs` and posts its report as a PR comment:
 
 - **Supply chain.** The lockfile pins the registry's tarball, the package declares no install scripts, its provenance says upstream's release workflow built it from the version's tag, and its `dist/` rebuilds byte for byte from that commit.
 - **Extraction A/B.** Both versions extract each page in `scripts/defuddle-ab-corpus.txt` from the same HTML. The comment lists which pages changed and shows the changes; the run's artifact holds every page's HTML, both outputs and the diffs.
