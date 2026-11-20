@@ -86,6 +86,9 @@ services:
       - browser-net
     environment:
       PROXY_URL: http://smokescreen:4750
+      # Signs every request it sends when set (empty: unsigned); APP_URL serves the matching key directory.
+      WEB_BOT_AUTH_PRIVATE_KEY: ${WEB_BOT_AUTH_PRIVATE_KEY:-}
+      APP_URL: ${APP_URL}
     expose: ["8001"]
     healthcheck:
       # CMD-SHELL, not CMD: podman before 5.8 splits a CMD test's arguments on whitespace

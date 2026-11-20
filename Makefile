@@ -90,6 +90,11 @@ test-extraction:
 	docker build -f docker/defuddle/Dockerfile --target test -t yapit-defuddle-test .
 	docker run --rm --network none yapit-defuddle-test
 
+# Request signing against Cloudflare Research's live verifier; needs the internet, so not part of `make test`.
+test-extraction-live:
+	docker build -f docker/defuddle/Dockerfile --target test -t yapit-defuddle-test .
+	docker run --rm yapit-defuddle-test node test/cloudflare-research.check.js
+
 test-integration:
 	uv run pytest tests/integration -v
 

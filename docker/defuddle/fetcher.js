@@ -1,6 +1,7 @@
 /**
  * How yapit's fetcher reaches a site: through the egress proxy, under one user agent,
- * and only where the site's robots.txt allows it, checked on every redirect hop.
+ * signed where a key is configured, and only where the site's robots.txt allows it,
+ * checked on every redirect hop.
  */
 
 import { ProxyAgent, fetch as proxyFetch } from "undici";
@@ -29,16 +30,18 @@ export function assertNotChallenged(cfMitigated) {
 	if (cfMitigated === "challenge") throw new Refusal(CHALLENGED);
 }
 
-export function createFetcher(proxyUrl) {
+/** `sign` maps a request URL to its signature headers (signature.js), or is null to send unsigned. */
+export function createFetcher(proxyUrl, sign) {
 	const dispatcher = new ProxyAgent(proxyUrl);
 	const robotsCache = new Map();
+	const signatureHeaders = (url) => (sign ? sign(url) : {});
 
 	/** One request, redirects followed by hand so every hop is checked. Resolves to the final response. */
 	async function send(url, { userAgent = USER_AGENT, accept, signal, maxRedirects = MAX_REDIRECTS, checkRobots = true }) {
 		for (let hop = 0; ; hop++) {
 			if (checkRobots) await assertAllowed(url);
 			const response = await proxyFetch(url, {
-				headers: { "User-Agent": userAgent, Accept: accept },
+				headers: { "User-Agent": userAgent, Accept: accept, ...signatureHeaders(url) },
 				redirect: "manual",
 				signal,
 				dispatcher,
@@ -94,7 +97,7 @@ export function createFetcher(proxyUrl) {
 		return null;
 	}
 
-	return { send, assertAllowed };
+	return { send, assertAllowed, signatureHeaders };
 }
 
 // fetch decompresses transparently, so a few KB of gzip can expand to gigabytes:

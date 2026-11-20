@@ -88,3 +88,8 @@ test("the gateway's robots check answers for a URL without fetching it", async (
 	assertRefusedByRobots(await service.post("/robots", { url: "http://spa.test/private/x" }));
 	assert.equal(web.requestsFor("/fine").length, 0);
 });
+
+test("without a key, every request goes out unsigned", async () => {
+	assert.ok(web.requests.length > 0);
+	for (const r of web.requests) assert.equal(r.headers["signature"] ?? r.headers["signature-input"] ?? r.headers["signature-agent"], undefined);
+});

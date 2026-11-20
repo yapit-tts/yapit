@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import { Defuddle } from "defuddle/node";
 import { chromium } from "playwright";
 import { USER_AGENT, Refusal, assertNotChallenged, createFetcher, readCapped } from "./fetcher.js";
+import { requestSigner } from "./signature.js";
 
 const PROXY_URL = process.env.PROXY_URL;
 if (!PROXY_URL) throw new Error("PROXY_URL is required (e.g. http://smokescreen:4750)");
@@ -25,7 +26,8 @@ const MAX_PAGE_SIZE = 20 * 1024 * 1024;
 const BOT_UA = USER_AGENT + " bot";
 const BOT_UA_DOMAINS = ["github.com"];
 
-const fetcher = createFetcher(PROXY_URL);
+// Empty WEB_BOT_AUTH_PRIVATE_KEY: requests go out unsigned, as on a self-hosted instance.
+const fetcher = createFetcher(PROXY_URL, requestSigner(process.env.WEB_BOT_AUTH_PRIVATE_KEY, process.env.APP_URL));
 const bundle = readFileSync(new URL("defuddle_bundle.js", import.meta.url), "utf-8");
 
 class CapacityError extends Error {
@@ -104,7 +106,18 @@ async function getBrowser() {
 	return browserLaunchPromise;
 }
 
-async function extractPlaywright(url, timeoutMs) {
+function extractPlaywright(url, timeoutMs) {
+	return renderPage(url, timeoutMs, (page) =>
+		page.evaluate(async (u) => {
+			const d = new Defuddle(document, { url: u, markdown: true });
+			const r = await d.parseAsync();
+			return { markdown: r.content || "", title: r.title || null };
+		}, url),
+	);
+}
+
+/** Opens `url` in Chromium as yapit's fetcher and resolves to `read(page)`; an HTTP error page reads as empty. */
+export async function renderPage(url, timeoutMs, read) {
 	const b = await getBrowser();
 	const context = await b.newContext({ proxy: { server: PROXY_URL }, userAgent: USER_AGENT });
 	await context.addInitScript(bundle);
@@ -124,7 +137,10 @@ async function extractPlaywright(url, timeoutMs) {
 			if (isTopDocument) refusal = err;
 			return route.abort("blockedbyclient");
 		}
-		const response = await route.fetch({ maxRedirects: 0 });
+		const response = await route.fetch({
+			headers: { ...request.headers(), ...fetcher.signatureHeaders(request.url()) },
+			maxRedirects: 0,
+		});
 		const location = response.headers().location;
 		if (response.status() >= 300 && response.status() < 400 && location) {
 			if (isTopDocument) redirect = new URL(location, request.url()).href;
@@ -156,11 +172,7 @@ async function extractPlaywright(url, timeoutMs) {
 			return { markdown: "", title: null };
 		}
 
-		return await page.evaluate(async (u) => {
-			const d = new Defuddle(document, { url: u, markdown: true });
-			const r = await d.parseAsync();
-			return { markdown: r.content || "", title: r.title || null };
-		}, url);
+		return await read(page);
 	} finally {
 		await page.close();
 		await context.close();
