@@ -29,6 +29,24 @@ export interface WSAudioJobMessage {
   job: AudioJob | null;
 }
 
+export type ExportFormat = "m4b" | "mp3";
+
+export const EXPORT_FORMATS: ExportFormat[] = ["m4b", "mp3"];
+
+export interface AudioExportState {
+  key: string;
+  format: ExportFormat;
+  status: "building" | "ready" | "failed";
+  error: string | null;
+}
+
+export interface WSAudioExportMessage extends AudioExportState {
+  type: "audio_export";
+  document_id: string;
+}
+
+export type WSAudioDocumentMessage = WSAudioJobMessage | WSAudioExportMessage;
+
 export interface AudioJobEstimate {
   uncached_characters: number[]; // per audio block; 0 where cached
   plan_includes_voice: boolean;

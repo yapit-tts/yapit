@@ -16,11 +16,14 @@ import {
   type AudioJob,
   type AudioJobEstimate,
   type BlockRange,
+  EXPORT_FORMATS,
+  type ExportFormat,
   type ExportRow,
   MAX_RANGE_TITLE,
   exportRows,
   exportTotals,
 } from "@/lib/audioJob";
+import type { ExportProgress } from "@/hooks/useAudioExport";
 import { formatDuration, type Section } from "@/lib/sectionIndex";
 import { KOKORO_SLUG, isKokoroModel, isServerSideModel, setVoiceSelection, type VoiceSelection } from "@/lib/voiceSelection";
 
@@ -35,6 +38,8 @@ interface PrepareAudioDialogProps {
   onVoiceChange: (selection: VoiceSelection) => void;
   job: AudioJob | null;
   onStart: (model: string, voice: string, ranges: BlockRange[]) => Promise<string | null>;
+  exportProgress: ExportProgress;
+  onDownload: (format: ExportFormat, model: string, voice: string, ranges: BlockRange[]) => Promise<void>;
 }
 
 export function PrepareAudioDialog(props: PrepareAudioDialogProps) {
@@ -59,6 +64,8 @@ function PrepareAudioForm({
   onVoiceChange,
   job,
   onStart,
+  exportProgress,
+  onDownload,
 }: PrepareAudioDialogProps) {
   const { api } = useApi();
   const rows = exportRows(sections, documentBlocks, expandedSections);
@@ -89,6 +96,11 @@ function PrepareAudioForm({
   const blocker = onServer ? jobBlocker(estimate, totals, model, documentId) : null;
   const shortfall = onServer && blocker === null ? jobShortfall(estimate, totals) : null;
   const canPrepare = onServer && estimate !== null && blocker === null && !jobRunsHere && totals.blocksToSynthesize > 0 && !isStarting;
+  const allPrepared = onServer && estimate !== null && totals.blocks > 0 && totals.blocksToSynthesize === 0;
+  const exportErrors = EXPORT_FORMATS.flatMap(format => {
+    const progress = exportProgress[format];
+    return progress && !progress.building ? [progress.error] : [];
+  });
 
   const toggle = (id: string) => setTicked(prev => {
     const next = new Set(prev);
@@ -102,11 +114,12 @@ function PrepareAudioForm({
     setVoiceSelection(selection);
   };
 
+  const tickedRanges = () => tickedRows.map(r => ({ first_block: r.firstBlock, last_block: r.lastBlock, title: r.title.slice(0, MAX_RANGE_TITLE) }));
+
   const prepare = async () => {
     setIsStarting(true);
     setRefusal(null);
-    const ranges = tickedRows.map(r => ({ first_block: r.firstBlock, last_block: r.lastBlock, title: r.title.slice(0, MAX_RANGE_TITLE) }));
-    const reason = await onStart(model, voiceSlug, ranges);
+    const reason = await onStart(model, voiceSlug, tickedRanges());
     setIsStarting(false);
     if (reason) setRefusal(reason);
     else onOpenChange(false);
@@ -117,7 +130,7 @@ function PrepareAudioForm({
       <DialogHeader>
         <DialogTitle>Prepare audio</DialogTitle>
         <DialogDescription>
-          Synthesize the sections you pick on the server, so playback never waits. It keeps going with this tab closed.
+          Synthesize the sections you pick on the server, so playback never waits. It keeps going with this tab closed. Once they are prepared, download them as one audio file with a chapter per section.
         </DialogDescription>
       </DialogHeader>
 
@@ -154,8 +167,21 @@ function PrepareAudioForm({
       {jobRunsHere && !blocker && (
         <Notice>Audio is being prepared for this document. Its progress, and its Stop button, are on the playback bar.</Notice>
       )}
+      {exportErrors.map(error => <Notice key={error} tone="warning">{error}</Notice>)}
 
-      <DialogFooter>
+      <DialogFooter className="sm:items-center">
+        {onServer && estimate !== null && totals.blocks > 0 && !allPrepared && (
+          <span className="text-sm text-muted-foreground sm:mr-auto">Download once the ticked sections are prepared.</span>
+        )}
+        {EXPORT_FORMATS.map(format => {
+          const building = exportProgress[format]?.building === true;
+          return (
+            <Button key={format} variant="outline" onClick={() => void onDownload(format, model, voiceSlug, tickedRanges())} disabled={!allPrepared || building}>
+              {building && <Loader2 className="animate-spin" />}
+              {building ? `Building ${format.toUpperCase()}…` : `Download ${format.toUpperCase()}`}
+            </Button>
+          );
+        })}
         <Button onClick={() => void prepare()} disabled={!canPrepare}>
           {isStarting && <Loader2 className="animate-spin" />}
           Prepare audio

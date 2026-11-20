@@ -5,7 +5,7 @@ import { getAnonymousToken, getOrCreateAnonymousId } from "@/lib/anonymousId";
 const WS_BASE_URL = `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/api`;
 
 export interface WSMessage {
-  type: "status" | "evicted" | "error" | "audio_job";
+  type: "status" | "evicted" | "error" | "audio_job" | "audio_export";
   [key: string]: unknown;
 }
 

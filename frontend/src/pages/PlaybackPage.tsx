@@ -2,6 +2,7 @@ import { StructuredDocumentView } from '@/components/structuredDocument';
 import { PlaybackOverlay } from '@/components/playbackOverlay';
 import { PrepareAudioDialog } from '@/components/prepareAudioDialog';
 import { useOutliner } from '@/hooks/useOutliner';
+import { useAudioExport } from '@/hooks/useAudioExport';
 import { useAudioJob } from '@/hooks/useAudioJob';
 import { usePlaybackEngine, type Block } from '@/hooks/usePlaybackEngine';
 import { useParams, useLocation, Link, useNavigate } from "react-router";
@@ -9,6 +10,7 @@ import { useRef, useState, useEffect, useCallback } from "react";
 import { useApi } from '@/api';
 import { Loader2, FileQuestion, Download, X, AlertTriangle } from "lucide-react";
 import { AxiosError } from "axios";
+import type { WSAudioDocumentMessage } from '@/lib/audioJob';
 import { buildSectionIndex, findSectionForBlock, type Section } from '@/lib/sectionIndex';
 import { buildSlugMap } from '@/components/structuredDocument';
 import { type VoiceSelection, getVoiceSelection, getPlaybackSpeed, setPlaybackSpeed as savePlaybackSpeed, getVolume, setVolume as saveVolume } from '@/lib/voiceSelection';
@@ -87,6 +89,13 @@ const PlaybackPage = () => {
   const markdownContent = document?.original_text ?? null;
 
   const audioJob = useAudioJob(documentId);
+  const audioExport = useAudioExport(documentId, documentTitle);
+  const { receive: receiveAudioJob } = audioJob;
+  const { receive: receiveAudioExport } = audioExport;
+  const onAudioMessage = useCallback((message: WSAudioDocumentMessage) => {
+    if (message.type === "audio_job") receiveAudioJob(message);
+    else receiveAudioExport(message);
+  }, [receiveAudioJob, receiveAudioExport]);
 
   // --- Playback engine (no snapshot subscription — that lives in PlaybackOverlay) ---
   const { engine, ws, getServerTTSStatus, getBrowserTTSStatus } = usePlaybackEngine(
@@ -95,7 +104,7 @@ const PlaybackPage = () => {
     voiceSelection,
     sections,
     expandedSections,
-    audioJob.receive,
+    onAudioMessage,
   );
 
   // Sync playback speed and volume into engine/audio
@@ -542,6 +551,8 @@ const PlaybackPage = () => {
           onVoiceChange={setVoiceSelection}
           job={audioJob.job}
           onStart={audioJob.start}
+          exportProgress={audioExport.progress}
+          onDownload={audioExport.download}
         />
       )}
 
