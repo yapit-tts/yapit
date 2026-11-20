@@ -7,6 +7,6 @@ updates:
     allow:
       - dependency-name: defuddle
     cooldown:
-      default-days: 7
+      default-days: 2
     commit-message:
       prefix: deps
