@@ -218,6 +218,3 @@ scripts/stress_test_results
 test_logs
 TODO
 docker/defuddle/experiments
-
-# Extraction service dependencies, installed for local runs
-docker/defuddle/node_modules/

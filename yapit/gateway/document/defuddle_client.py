@@ -29,19 +29,9 @@ async def close_defuddle_client() -> None:
 async def assert_robots_allow(url: str) -> None:
     """Raise a 422 naming robots.txt where the site's robots.txt keeps yapit from fetching url."""
     assert _client is not None, "Call init_defuddle_client() during app startup"
-    try:
-        resp = await _client.post("/robots", json={"url": url}, timeout=15)
-    except httpx.RequestError:
-        logger.exception(f"Defuddle service unreachable for the robots.txt check of {url}")
-        resp = None
-    if resp is not None:
-        _raise_refusal(resp)
-    # Our own service failing is not the page's failure, so it must not read as one to the reader.
-    if resp is None or not resp.is_success:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Could not check this site's robots.txt right now - please try again in a moment",
-        )
+    resp = await _client.post("/robots", json={"url": url}, timeout=15)
+    _raise_refusal(resp)
+    resp.raise_for_status()
 
 
 def _raise_refusal(resp: httpx.Response) -> None:

@@ -202,7 +202,7 @@ Event types:
 - `api_rate_limit`: every 429 from an external API, before the retry (`data.api_name`, `retry_count`)
 - `error` and `warning`: failures and near-failures the gateway caught itself (`data.message`). An `error` can mean work was silently dropped, such as audio that was synthesized but never cached.
 - `stripe_webhook` (`duration_ms`, `data.event_type`, `status_code` 500 when the handler crashed; Stripe gives up at 20 s), `billing_sync_drift` (a missed webhook: `data.user_id`, `data.drift`), `billing_processed` (`duration_ms`, `text_length`, `data.events_count`, `data.users_count`)
-- `url_fetch` (`duration_ms`, `data.content_type`, `data.size_bytes`, or `data.error`: `http_status`, `request_error`, or `bot_protection` when a site's Cloudflare challenged yapit; that is the site's choice, not a fault of ours, and only its rate is worth reporting)
+- `url_fetch` (`duration_ms`, `data.content_type`, `data.size_bytes`, or `data.error`)
 
 **Logs** (`data/logs/*.jsonl`, timestamps in UTC). Loguru JSON, one record per line. `gateway.jsonl` is the newest file and can span weeks; rotated files carry their start time in the name. Each record has `record.level.name`, `record.name` (the module), `record.message`, `record.time.repr`, `record.exception`, and context in `record.extra`: `request_id` on HTTP requests, `user_id`, `job_id`, `variant_hash`, `model_slug` and `worker_id` on TTS jobs, `extraction_id` and `content_hash` on extractions, `document_id`, and `method` and `path` on unhandled exceptions. These ids follow one request, job or extraction across components. `user_id` `cache-warmer` is the job that pre-synthesizes voice previews.
 

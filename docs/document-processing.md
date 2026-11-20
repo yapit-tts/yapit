@@ -49,7 +49,7 @@ For large documents (auto-toggled at >100 pages), extraction uses the Gemini Bat
 
 ### arXiv URLs
 
-arXiv URLs (arxiv.org, alphaxiv.org, ar5iv) are detected in `documents.py` via `_detect_arxiv_id()`. In `prepare`, the URL is rewritten to `arxiv.org/pdf/{id}` so it downloads as a PDF (surfacing the free vs AI toggle). On the free path, `_run_extraction` tries `arxiv.org/html/{id}` via Playwright+defuddle first. If the HTML version doesn't exist (HTTP ≥400) or is refused, falls back to pymupdf on the downloaded PDF.
+arXiv URLs (arxiv.org, alphaxiv.org, ar5iv) are detected in `documents.py` via `_detect_arxiv_id()`. In `prepare`, the URL is rewritten to `arxiv.org/pdf/{id}` so it downloads as a PDF (surfacing the free vs AI toggle). On the free path, `_run_extraction` tries `arxiv.org/html/{id}` via Playwright+defuddle first. If the HTML version doesn't exist (HTTP ≥400), falls back to pymupdf on the downloaded PDF.
 
 ## Website Extraction
 

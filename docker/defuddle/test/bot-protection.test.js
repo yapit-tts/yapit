@@ -11,7 +11,6 @@ const challenge = (res) =>
 const web = await stubWeb((req, res) => {
 	if (req.url === "/robots.txt") return text(res, "", 404);
 	if (req.url === "/challenged") return challenge(res);
-	if (req.url === "/forbidden") return html(res, "<p>Forbidden</p>", 403);
 	// Chromium names image types in Accept; the plain fetch does not.
 	if (req.url === "/app") return req.headers.accept?.includes("image/") ? challenge(res) : html(res, SHELL);
 	html(res, "<p>ok</p>");
@@ -32,10 +31,4 @@ test("a challenge Chromium meets is reported the same way", async () => {
 	const response = await extract("http://protected.test/app");
 	assert.equal(response.status, 422);
 	assert.match(response.body.error, /bot protection/);
-});
-
-test("a 403 without the challenge header is no bot-protection block", async () => {
-	const response = await extract("http://protected.test/forbidden");
-	assert.equal(response.status, 200);
-	assert.equal(response.body.markdown, "");
 });

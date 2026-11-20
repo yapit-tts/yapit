@@ -28,7 +28,7 @@ const BOT_UA = USER_AGENT + " bot";
 const BOT_UA_DOMAINS = ["github.com"];
 
 const fetcher = createFetcher(PROXY_URL, SIGNER_URL);
-const bundle = readFileSync(new URL("defuddle_bundle.js", import.meta.url), "utf-8");
+const bundle = readFileSync("defuddle_bundle.js", "utf-8");
 
 class CapacityError extends Error {
 	constructor() {
@@ -106,18 +106,7 @@ async function getBrowser() {
 	return browserLaunchPromise;
 }
 
-function extractPlaywright(url, timeoutMs) {
-	return renderPage(url, timeoutMs, (page) =>
-		page.evaluate(async (u) => {
-			const d = new Defuddle(document, { url: u, markdown: true });
-			const r = await d.parseAsync();
-			return { markdown: r.content || "", title: r.title || null };
-		}, url),
-	);
-}
-
-/** Opens `url` in Chromium as yapit's fetcher and resolves to `read(page)`; an HTTP error page reads as empty. */
-export async function renderPage(url, timeoutMs, read) {
+async function extractPlaywright(url, timeoutMs) {
 	const b = await getBrowser();
 	const context = await b.newContext({ proxy: { server: PROXY_URL }, userAgent: USER_AGENT });
 	await context.addInitScript(bundle);
@@ -172,7 +161,11 @@ export async function renderPage(url, timeoutMs, read) {
 			return { markdown: "", title: null };
 		}
 
-		return await read(page);
+		return await page.evaluate(async (u) => {
+			const d = new Defuddle(document, { url: u, markdown: true });
+			const r = await d.parseAsync();
+			return { markdown: r.content || "", title: r.title || null };
+		}, url);
 	} finally {
 		await page.close();
 		await context.close();

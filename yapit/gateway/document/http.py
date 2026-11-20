@@ -15,8 +15,6 @@ from yapit.gateway.web_bot_auth import signature_headers
 
 # docker/defuddle/fetcher.js sends the same one: a site sees one fetcher.
 USER_AGENT = "Mozilla/5.0 (compatible; Yapit/1.0; +https://yapit.md/bot)"
-
-
 MAX_REDIRECTS = 10
 
 
@@ -43,12 +41,6 @@ async def download_document(url: HttpUrl, max_size: int) -> tuple[bytes, str]:
             try:
                 # Cloudflare answers a request it challenges with this header in place of the page.
                 if response.headers.get("cf-mitigated") == "challenge":
-                    await log_event(
-                        "url_fetch",
-                        duration_ms=int((time.monotonic() - start) * 1000),
-                        status_code=response.status_code,
-                        data={"error": "bot_protection"},
-                    )
                     raise HTTPException(
                         status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                         detail="This site's bot protection (Cloudflare) blocked yapit from reading the page",

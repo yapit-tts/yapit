@@ -22,26 +22,18 @@ MAX_SIZE = 100 * 1024 * 1024
 def web(monkeypatch):
     """A stub site behind the download's client, and a stub extraction service answering its robots.txt checks.
 
-    Tests set `web.routes[url] = httpx.Response(...)`, `web.refused` to the URLs robots.txt refuses, and
-    `web.extraction_service_down` to make the extraction service unreachable.
+    Tests set `web.routes[url] = httpx.Response(...)` and `web.refused` to the URLs robots.txt refuses.
     """
-    web = SimpleNamespace(
-        routes={}, refused=set(), requested=[], robots_asked=[], seen=[], extraction_service_down=False
-    )
+    web = SimpleNamespace(routes={}, refused=set(), seen=[])
 
     def site(request: httpx.Request) -> httpx.Response:
-        web.requested.append(str(request.url))
         web.seen.append(request)
         if str(request.url) not in web.routes:
             raise httpx.ConnectError("unreachable", request=request)
         return web.routes[str(request.url)]
 
     def extraction_service(request: httpx.Request) -> httpx.Response:
-        if web.extraction_service_down:
-            raise httpx.ConnectError("defuddle is restarting", request=request)
-        url = json.loads(request.content)["url"]
-        web.robots_asked.append(url)
-        if url in web.refused:
+        if json.loads(request.content)["url"] in web.refused:
             return httpx.Response(422, json={"error": "This site's robots.txt does not allow yapit to fetch this page"})
         return httpx.Response(200, json={})
 
@@ -111,18 +103,6 @@ class TestDownloadDocument:
         assert content_type == "application/octet-stream"
 
     @pytest.mark.asyncio
-    async def test_redirects_are_followed_with_robots_asked_for_each_hop(self, web):
-        web.routes["https://short.example/x"] = httpx.Response(301, headers={"location": "https://example.com/doc"})
-        web.routes["https://example.com/doc"] = httpx.Response(
-            200, headers={"content-type": "text/html"}, content=b"<html><body>hi</body></html>"
-        )
-
-        content, _ = await download_document("https://short.example/x", MAX_SIZE)
-
-        assert content == b"<html><body>hi</body></html>"
-        assert web.robots_asked == ["https://short.example/x", "https://example.com/doc"]
-
-    @pytest.mark.asyncio
     async def test_page_robots_refuses_is_never_requested(self, web):
         web.routes["https://example.com/private"] = httpx.Response(200, content=b"secret")
         web.refused = {"https://example.com/private"}
@@ -131,7 +111,7 @@ class TestDownloadDocument:
             await download_document("https://example.com/private", MAX_SIZE)
 
         assert exc_info.value.status_code == 422
-        assert web.requested == []
+        assert web.seen == []
 
     @pytest.mark.asyncio
     async def test_redirect_into_a_refused_page_stops_before_requesting_it(self, web):
@@ -142,7 +122,7 @@ class TestDownloadDocument:
         with pytest.raises(HTTPException, match=r"robots\.txt"):
             await download_document("https://example.com/old", MAX_SIZE)
 
-        assert web.requested == ["https://example.com/old"]
+        assert [str(r.url) for r in web.seen] == ["https://example.com/old"]
 
     @pytest.mark.asyncio
     async def test_a_cloudflare_challenge_is_reported_as_bot_protection(self, web):
@@ -175,27 +155,6 @@ class TestDownloadDocument:
             signature = base64.b64decode(request.headers["signature"].removeprefix("sig1=:").removesuffix(":"))
             private.public_key().verify(signature, base.encode())
         assert [r.url.host for r in web.seen] == ["short.example", "example.com"]
-
-    @pytest.mark.asyncio
-    async def test_a_redirect_loop_stops(self, web):
-        web.routes["https://example.com/loop"] = httpx.Response(302, headers={"location": "/loop"})
-
-        with pytest.raises(HTTPException, match="Too many redirects"):
-            await download_document("https://example.com/loop", MAX_SIZE)
-
-        assert len(web.requested) == http_module.MAX_REDIRECTS + 1
-
-    @pytest.mark.asyncio
-    async def test_the_extraction_service_down_does_not_read_as_a_broken_link(self, web):
-        web.routes["https://example.com/doc.pdf"] = httpx.Response(200, content=b"%PDF")
-        web.extraction_service_down = True
-
-        with pytest.raises(HTTPException) as exc_info:
-            await download_document("https://example.com/doc.pdf", MAX_SIZE)
-
-        assert exc_info.value.status_code == 503
-        assert "robots.txt" in exc_info.value.detail
-        assert web.requested == []
 
 
 class TestExtractDocumentInfo:

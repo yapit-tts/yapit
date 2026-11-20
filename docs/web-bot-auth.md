@@ -59,4 +59,4 @@ The application is submitted in the Cloudflare dashboard, under Application secu
 
 **Traffic**
 
-> Two to four requests to the page per link a reader adds (a download that tells a PDF from a web page, then extraction, which may retry once and then render the page in Chromium), plus the site's robots.txt, kept for up to an hour per site. Requests come from yapit's server; verification is by signature, not by address.
+> Two to four requests to the page per link a reader adds (a download that tells a PDF from a web page, then extraction, which may retry once and then render the page in Chromium), each preceded by a read of the site's robots.txt. Requests come from yapit's server; verification is by signature, not by address.
