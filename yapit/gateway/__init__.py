@@ -20,6 +20,7 @@ from yapit.contracts import (
 )
 from yapit.gateway.api.v1 import routers as v1_routers
 from yapit.gateway.api_tts_dispatcher import run_api_tts_dispatcher
+from yapit.gateway.audio_job import run_audio_job_feeder
 from yapit.gateway.auth import ANONYMOUS_ID_PREFIX
 from yapit.gateway.auth.mailer import create_mailer
 from yapit.gateway.billing_consumer import run_billing_consumer
@@ -144,6 +145,15 @@ async def lifespan(app: FastAPI):
         supervised("cache-persister", run_cache_persister(app.state.redis_client, app.state.audio_cache))
     )
     background_tasks.append(cache_persister_task)
+
+    background_tasks.append(
+        asyncio.create_task(
+            supervised(
+                "audio-job-feeder",
+                run_audio_job_feeder(app.state.redis_client, app.state.audio_cache, settings),
+            )
+        )
+    )
 
     # TTS billing consumer (cold path: Postgres on own connection pool)
     billing_consumer_task = asyncio.create_task(

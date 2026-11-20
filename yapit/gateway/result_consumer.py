@@ -16,6 +16,9 @@ from pydantic import BaseModel
 from redis.asyncio import Redis
 
 from yapit.contracts import (
+    AUDIO_JOB_AWAITED,
+    AUDIO_JOB_WAITERS,
+    AUDIO_JOB_WAKE,
     TTS_AUDIO_CACHE,
     TTS_BILLING_STREAM,
     TTS_INFLIGHT,
@@ -125,6 +128,7 @@ async def _handle_success(redis: Redis, result: WorkerResult) -> None:
         log.info("Empty audio, marking as skipped")
         await _release_inflight(redis, result)
         await _notify_subscribers(redis, result, status="skipped")
+        await _wake_audio_jobs(redis, result.variant_hash)
         return
 
     audio = base64.b64decode(result.audio_base64)
@@ -164,6 +168,7 @@ async def _handle_success(redis: Redis, result: WorkerResult) -> None:
     )
     await redis.xadd(TTS_BILLING_STREAM, {"data": billing_event.model_dump_json()})
     await redis.lpush(TTS_PERSIST, result.variant_hash)
+    await _wake_audio_jobs(redis, result.variant_hash)
 
     finalize_ms = int((time.time() - finalize_start) * 1000)
 
@@ -219,6 +224,20 @@ async def _handle_error(redis: Redis, result: WorkerResult) -> None:
     )
 
     await _notify_subscribers(redis, result, status="error", error=result.error)
+    await _wake_audio_jobs(redis, result.variant_hash)
+
+
+async def _wake_audio_jobs(redis: Redis, variant_hash: str) -> None:
+    """Tell the audio job feeder that every job awaiting this variant has room for another block."""
+    waiters_key = AUDIO_JOB_WAITERS.format(hash=variant_hash)
+    async with redis.pipeline(transaction=True) as pipe:
+        pipe.smembers(waiters_key)
+        pipe.delete(waiters_key)
+        users, _ = await pipe.execute()
+    for raw_user in users:
+        user_id = raw_user.decode()
+        await redis.hdel(AUDIO_JOB_AWAITED.format(user_id=user_id), variant_hash)
+        await redis.lpush(AUDIO_JOB_WAKE, user_id)
 
 
 class InflightOwner(IntEnum):
