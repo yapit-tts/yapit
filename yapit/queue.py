@@ -17,7 +17,7 @@ from loguru import logger
 class QueueConfig:
     """Configuration for a job queue."""
 
-    queue_name: str  # sorted set: job_id -> timestamp
+    queue_name: str  # sorted set: job_id -> score, lowest pulled first
     jobs_key: str  # hash: job_id -> {retry_count, job}
     processing_pattern: str | None = None  # e.g. "tts:processing:{worker_id}" (only needed for workers)
     results_key: str | None = None  # list for result queue (TTS), None for direct key storage (YOLO)
@@ -32,6 +32,7 @@ class PulledJob:
     raw_job: bytes
     retry_count: int
     queued_at: float
+    score: float
 
 
 async def push_job(
@@ -39,7 +40,7 @@ async def push_job(
     config: QueueConfig,
     job_id: str,
     raw_job: bytes,
-    retry_count: int = 0,
+    score: float,
     index_key: str | None = None,
 ) -> None:
     """Push a job to the queue.
@@ -49,19 +50,16 @@ async def push_job(
         config: Queue configuration
         job_id: Unique job identifier
         raw_job: Serialized job data (caller handles serialization)
-        retry_count: Number of times this job has been retried
+        score: Position in the queue; workers pull the lowest score first. A timestamp, so
+            a job scored in the future waits behind every job pushed before that time.
         index_key: Optional key for job index (for deduplication/eviction)
     """
-    now = time.time()
-    wrapper_data: dict = {"retry_count": retry_count, "job": raw_job.decode(), "queued_at": now}
-    if index_key:
-        wrapper_data["index_key"] = index_key
-    job_wrapper = json.dumps(wrapper_data)
+    job_wrapper = json.dumps({"retry_count": 0, "job": raw_job.decode(), "queued_at": time.time()})
 
     await client.hset(config.jobs_key, job_id, job_wrapper)
     if index_key and config.job_index_key:
         await client.hset(config.job_index_key, index_key, job_id)
-    await client.zadd(config.queue_name, {job_id: now})
+    await client.zadd(config.queue_name, {job_id: score})
 
 
 async def pull_job(
@@ -81,7 +79,7 @@ async def pull_job(
     if result is None:
         return None
 
-    _, job_id_bytes, _ = result
+    _, job_id_bytes, score = result
     job_id = job_id_bytes.decode() if isinstance(job_id_bytes, bytes) else job_id_bytes
 
     wrapper_json = await client.hget(config.jobs_key, job_id)
@@ -98,6 +96,7 @@ async def pull_job(
         raw_job=wrapper["job"].encode(),
         retry_count=wrapper["retry_count"],
         queued_at=wrapper.get("queued_at", time.time()),
+        score=score,
     )
 
 
@@ -107,18 +106,21 @@ async def track_processing(
     job_id: str,
     raw_job: bytes,
     retry_count: int,
+    score: float,
     queue_name: str,
     dlq_key: str,
 ) -> None:
     """Track a job as being processed.
 
     Stores processing entry with timestamp for visibility timeout scanning.
-    Includes queue_name and dlq_key so scanner can requeue without parsing job.
+    Includes queue_name, dlq_key and the job's score so the scanner can requeue it
+    where it was without parsing the job.
     """
     entry = json.dumps(
         {
             "processing_started": time.time(),
             "retry_count": retry_count,
+            "score": score,
             "job": raw_job.decode(),
             "queue_name": queue_name,
             "dlq_key": dlq_key,
@@ -134,17 +136,17 @@ async def requeue_job(
     job_id: str,
     raw_job: bytes,
     retry_count: int,
+    score: float,
 ) -> None:
-    """Requeue a job with incremented retry count.
+    """Requeue a job with incremented retry count, at the score it was pulled with.
 
     Called by visibility scanner when a job times out.
     """
     new_retry_count = retry_count + 1
-    now = time.time()
-    job_wrapper = json.dumps({"retry_count": new_retry_count, "job": raw_job.decode(), "queued_at": now})
+    job_wrapper = json.dumps({"retry_count": new_retry_count, "job": raw_job.decode(), "queued_at": time.time()})
 
     await client.hset(jobs_key, job_id, job_wrapper)
-    await client.zadd(queue_name, {job_id: now})
+    await client.zadd(queue_name, {job_id: score})
     logger.info(f"Re-queued job {job_id}, retry_count={new_retry_count}")
 
 

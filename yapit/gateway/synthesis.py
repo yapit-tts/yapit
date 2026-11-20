@@ -1,6 +1,7 @@
 """Core synthesis logic, decoupled from transport (WebSocket, REST)."""
 
 import asyncio
+import time
 import uuid
 from dataclasses import dataclass
 from typing import Literal
@@ -195,7 +196,9 @@ async def _queue_job(
     index_key = f"{user_id}:{document_id}:{block_idx}" if track_for_websocket else None
 
     tts_config = QueueConfig(queue_name=queue_name, jobs_key=TTS_JOBS, job_index_key=TTS_JOB_INDEX)
-    await push_job(redis, tts_config, job_id_str, job.model_dump_json().encode(), index_key=index_key)
+    await push_job(
+        redis, tts_config, job_id_str, job.model_dump_json().encode(), score=time.time(), index_key=index_key
+    )
 
     queue_depth = await redis.zcard(queue_name)
     await log_event(

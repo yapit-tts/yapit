@@ -130,7 +130,9 @@ async def _check_processing_set(
                 data={"job_id": job_id, "stuck_seconds": age},
             )
         else:
-            await requeue_job(redis, queue_name, jobs_key, job_id, raw_job, retry_count)
+            # A worker on an image older than the score field tracks no score; it requeues at now
+            score = entry.get("score", now)
+            await requeue_job(redis, queue_name, jobs_key, job_id, raw_job, retry_count, score)
             await log_event(
                 "job_requeued",
                 queue_type=queue_type,
