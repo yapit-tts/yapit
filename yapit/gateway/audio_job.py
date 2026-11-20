@@ -22,6 +22,7 @@ from yapit.contracts import (
     AUDIO_JOB,
     AUDIO_JOB_AWAITED,
     AUDIO_JOB_DAILY,
+    AUDIO_JOB_LOST,
     AUDIO_JOB_WAITERS,
     AUDIO_JOB_WAKE,
     AUDIO_JOBS_RUNNING,
@@ -39,7 +40,7 @@ from yapit.gateway.deps import get_model, get_voice
 from yapit.gateway.domain_models import BlockVariant, Document
 from yapit.gateway.exceptions import ResourceNotFoundError
 from yapit.gateway.metrics import log_error
-from yapit.gateway.synthesis import CachedResult, ErrorResult, request_synthesis, usage_type_for
+from yapit.gateway.synthesis import INFLIGHT_TTL_S, CachedResult, ErrorResult, request_synthesis, usage_type_for
 from yapit.gateway.usage import get_available_usage
 
 SLICE_SIZE = 16
@@ -106,17 +107,11 @@ async def start_job(redis: Redis, user_id: str, spec: AudioJobSpec) -> bool:
     if not await redis.sadd(AUDIO_JOBS_RUNNING, user_id):
         return False
     job_key = AUDIO_JOB.format(user_id=user_id)
-    awaited_key = AUDIO_JOB_AWAITED.format(user_id=user_id)
     async with redis.pipeline(transaction=True) as pipe:
-        pipe.delete(job_key, awaited_key)
+        pipe.delete(job_key, AUDIO_JOB_AWAITED.format(user_id=user_id), AUDIO_JOB_LOST.format(user_id=user_id))
         pipe.hset(
             job_key,
-            mapping={
-                "spec": spec.model_dump_json(),
-                "status": AudioJobStatus.running.value,
-                "next": 0,
-                "total": len(spec.blocks),
-            },
+            mapping={"spec": spec.model_dump_json(), "status": AudioJobStatus.running.value, "next": 0},
         )
         pipe.expire(job_key, STATE_TTL_S)
         pipe.lpush(AUDIO_JOB_WAKE, user_id)
@@ -144,9 +139,10 @@ async def cancel_job(redis: Redis, user_id: str) -> None:
     if job is None:
         return
     awaited = await redis.hgetall(AUDIO_JOB_AWAITED.format(user_id=user_id))
-    for variant_hash, job_id in awaited.items():
-        await _withdraw(redis, user_id, job.spec.model, variant_hash.decode(), job_id.decode())
-    await redis.delete(AUDIO_JOB_AWAITED.format(user_id=user_id))
+    for variant_hash, entry in awaited.items():
+        _, job_id = _parse_awaited(entry)
+        await _withdraw(redis, user_id, job.spec.model, variant_hash.decode(), job_id)
+    await redis.delete(AUDIO_JOB_AWAITED.format(user_id=user_id), AUDIO_JOB_LOST.format(user_id=user_id))
 
 
 async def run_audio_job_feeder(redis: Redis, cache: Cache, settings: Settings) -> None:
@@ -179,9 +175,12 @@ async def top_up(redis: Redis, cache: Cache, settings: Settings, user_id: str) -
         await redis.srem(AUDIO_JOBS_RUNNING, user_id)
         return
     spec = job.spec
+    job_key = AUDIO_JOB.format(user_id=user_id)
     awaited_key = AUDIO_JOB_AWAITED.format(user_id=user_id)
-    await redis.expire(AUDIO_JOB.format(user_id=user_id), STATE_TTL_S)
+    lost_key = AUDIO_JOB_LOST.format(user_id=user_id)
+    await redis.expire(job_key, STATE_TTL_S)
     waiters_of = AUDIO_JOB_WAITERS.format
+    next_position = int(await redis.hget(job_key, "next") or 0)
 
     async with create_session() as db:
         access = (
@@ -199,23 +198,27 @@ async def top_up(redis: Redis, cache: Cache, settings: Settings, user_id: str) -
 
         allowance = await _daily_allowance(redis, db, settings, user_id, model.slug)
         while await redis.hlen(awaited_key) < SLICE_SIZE:
-            if await _claim_next(redis, user_id, peek=True) is None:
-                break
-            if allowance is not None and allowance <= 0:
-                await _finish(redis, user_id, AudioJobStatus.daily_limit, "Daily limit for audio jobs reached")
-                return
-            position = await _claim_next(redis, user_id)
-            if position is None:
+            retried = await redis.lindex(lost_key, 0)
+            position = int(retried) if retried is not None else next_position
+            if position >= len(spec.blocks):
                 break
             block_idx, text = spec.blocks[position], spec.texts[position]
             variant_hash = BlockVariant.get_hash(
                 text=text, model_slug=model.slug, voice_slug=voice.slug, parameters=voice.parameters
             )
+            if allowance is not None and allowance <= 0 and not await _is_cached(redis, cache, variant_hash):
+                await _finish(redis, user_id, AudioJobStatus.daily_limit, "Daily limit for audio jobs reached")
+                return
+            if retried is not None:
+                await redis.lpop(lost_key)
+            else:
+                next_position += 1
+                await redis.hset(job_key, "next", next_position)
             if await redis.hexists(awaited_key, variant_hash):
                 continue
 
             # Registered before the request, so a result that lands during it still wakes this job
-            await redis.hset(awaited_key, variant_hash, "")
+            await redis.hset(awaited_key, variant_hash, f"{position}:")
             await redis.sadd(waiters_of(hash=variant_hash), user_id)
             await redis.expire(waiters_of(hash=variant_hash), STATE_TTL_S)
             result = await request_synthesis(
@@ -241,7 +244,9 @@ async def top_up(redis: Redis, cache: Cache, settings: Settings, user_id: str) -
                 continue
 
             if result.job_id is not None:
-                await redis.hset(awaited_key, variant_hash, result.job_id)
+                await redis.hset(awaited_key, variant_hash, f"{position}:{result.job_id}")
+                # A result of another job for the variant may have cleared the waiters during the request
+                await redis.sadd(waiters_of(hash=variant_hash), user_id)
                 if allowance is not None:
                     await _count_daily(redis, user_id)
                     allowance -= 1
@@ -250,7 +255,7 @@ async def top_up(redis: Redis, cache: Cache, settings: Settings, user_id: str) -
                 await _withdraw(redis, user_id, spec.model, variant_hash, result.job_id or "")
                 return
 
-    if await redis.hlen(awaited_key) == 0 and await _claim_next(redis, user_id, peek=True) is None:
+    if next_position >= len(spec.blocks) and await redis.hlen(awaited_key) == 0 and await redis.llen(lost_key) == 0:
         await _finish(redis, user_id, AudioJobStatus.done)
 
 
@@ -268,20 +273,39 @@ async def _collect_wakes(redis: Redis) -> set[str]:
 
 
 async def _reconcile(redis: Redis, cache: Cache, settings: Settings) -> None:
-    """Forget awaited variants no result will report, then top up every running job."""
+    """Settle what no wake reported, then top up every running job.
+
+    An awaited variant that is cached is forgotten. One whose job still waits in the queue gets its
+    in-flight marker renewed, so a slow queue never outlives it. One with neither a queued job nor a
+    marker was lost (with the gateway, or a worker), and goes back to the job to be queued again.
+    """
     for raw_user in await redis.smembers(AUDIO_JOBS_RUNNING):
         user_id = raw_user.decode()
         awaited_key = AUDIO_JOB_AWAITED.format(user_id=user_id)
-        for raw_hash in await redis.hkeys(awaited_key):
+        for raw_hash, entry in (await redis.hgetall(awaited_key)).items():
             variant_hash = raw_hash.decode()
-            settled = (
-                await redis.exists(TTS_AUDIO_CACHE.format(hash=variant_hash))
-                or not await redis.exists(TTS_INFLIGHT.format(hash=variant_hash))
-                or await cache.exists(variant_hash)
-            )
-            if settled:
+            position, job_id = _parse_awaited(entry)
+            inflight_key = TTS_INFLIGHT.format(hash=variant_hash)
+            if await _is_cached(redis, cache, variant_hash):
                 await redis.hdel(awaited_key, variant_hash)
+            elif job_id and await redis.hexists(TTS_JOBS, job_id):
+                held = await redis.set(inflight_key, job_id, ex=INFLIGHT_TTL_S, nx=True)
+                if not held and await redis.get(inflight_key) == job_id.encode():
+                    await redis.expire(inflight_key, INFLIGHT_TTL_S)
+            elif not await redis.exists(inflight_key):
+                await redis.hdel(awaited_key, variant_hash)
+                await redis.rpush(AUDIO_JOB_LOST.format(user_id=user_id), position)
         await _top_up_logged(redis, cache, settings, user_id)
+
+
+def _parse_awaited(entry: bytes) -> tuple[int, str]:
+    """An awaited entry is "<position in spec.blocks>:<queued job id, empty if it joined another's>"."""
+    position, job_id = entry.decode().split(":", 1)
+    return int(position), job_id
+
+
+async def _is_cached(redis: Redis, cache: Cache, variant_hash: str) -> bool:
+    return bool(await redis.exists(TTS_AUDIO_CACHE.format(hash=variant_hash))) or await cache.exists(variant_hash)
 
 
 async def _top_up_logged(redis: Redis, cache: Cache, settings: Settings, user_id: str) -> None:
@@ -315,23 +339,6 @@ async def _count_daily(redis: Redis, user_id: str) -> None:
 
 def _daily_key(user_id: str) -> str:
     return AUDIO_JOB_DAILY.format(user_id=user_id, day=dt.datetime.now(dt.UTC).date().isoformat())
-
-
-_CLAIM_NEXT = """
-if redis.call('SISMEMBER', KEYS[1], ARGV[1]) == 0 then return -1 end
-local next = tonumber(redis.call('HGET', KEYS[2], 'next'))
-if next >= tonumber(redis.call('HGET', KEYS[2], 'total')) then return -1 end
-if ARGV[2] == '0' then redis.call('HINCRBY', KEYS[2], 'next', 1) end
-return next
-"""
-
-
-async def _claim_next(redis: Redis, user_id: str, peek: bool = False) -> int | None:
-    """The position in spec.blocks of the job's next block, or None once the job ran out or stopped."""
-    position = await redis.eval(
-        _CLAIM_NEXT, 2, AUDIO_JOBS_RUNNING, AUDIO_JOB.format(user_id=user_id), user_id, "1" if peek else "0"
-    )
-    return None if position < 0 else position
 
 
 async def _finish(redis: Redis, user_id: str, status: AudioJobStatus, error: str | None = None) -> bool:

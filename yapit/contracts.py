@@ -46,7 +46,8 @@ TTS_DLQ: Final[str] = "tts:dlq:{model}"
 
 # Background audio jobs (yapit/gateway/audio_job.py), one per user
 AUDIO_JOB: Final[str] = "tts:audio_job:{user_id}"  # hash: the job's spec, progress and status
-AUDIO_JOB_AWAITED: Final[str] = "tts:audio_job:{user_id}:awaited"  # hash: variant_hash -> queued job_id or ""
+AUDIO_JOB_AWAITED: Final[str] = "tts:audio_job:{user_id}:awaited"  # hash: variant_hash -> "position:job_id"
+AUDIO_JOB_LOST: Final[str] = "tts:audio_job:{user_id}:lost"  # list: positions to queue again
 AUDIO_JOB_WAITERS: Final[str] = "tts:audio_job_waiters:{hash}"  # set: user_ids whose job awaits the variant
 AUDIO_JOBS_RUNNING: Final[str] = "tts:audio_jobs_running"  # set: user_ids
 AUDIO_JOB_WAKE: Final[str] = "tts:audio_job_wake"  # list: user_ids whose job may queue more

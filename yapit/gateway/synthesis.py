@@ -32,6 +32,7 @@ from yapit.queue import QueueConfig, push_job
 # A background job's blocks are scored this far in the future, so a worker pulls every listener's
 # block queued in that window ahead of them; under the in-flight marker's 600 s lifetime.
 BACKGROUND_DELAY_S = 120
+INFLIGHT_TTL_S = 600
 
 
 @dataclass
@@ -184,7 +185,7 @@ async def _queue_job(
     queue_name = get_queue_name(model.slug)
     now = time.time()
     # TTL is a safety net for orphaned keys; result_consumer DELETE is the normal cleanup path
-    was_set = await redis.set(TTS_INFLIGHT.format(hash=variant_hash), job_id_str, ex=600, nx=True)
+    was_set = await redis.set(TTS_INFLIGHT.format(hash=variant_hash), job_id_str, ex=INFLIGHT_TTL_S, nx=True)
     if not was_set:
         if not background:
             owner = await redis.get(TTS_INFLIGHT.format(hash=variant_hash))

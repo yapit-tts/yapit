@@ -5,6 +5,7 @@ feeder's step is the real top_up, run for every wake the result consumer pushed.
 them by hand, so the queue's order is observed exactly rather than raced.
 """
 
+import asyncio
 import base64
 import datetime as dt
 import json
@@ -25,13 +26,12 @@ from yapit.contracts import (
     WorkerResult,
     get_queue_name,
 )
-from yapit.gateway.api.v1.ws import WSCursorMoved, _handle_cursor_moved
-from yapit.gateway.audio_job import SLICE_SIZE, _reconcile, top_up
+from yapit.gateway.api.v1.ws import WSCursorMoved, WSSynthesizeRequest, _handle_cursor_moved, _handle_synthesize
+from yapit.gateway.audio_job import SLICE_SIZE, _reconcile, run_audio_job_feeder, top_up
 from yapit.gateway.auth import User, authenticate, authenticate_optional
 from yapit.gateway.config import get_settings
 from yapit.gateway.db import create_session
 from yapit.gateway.domain_models import (
-    Document,
     Plan,
     PlanTier,
     SubscriptionStatus,
@@ -41,7 +41,6 @@ from yapit.gateway.domain_models import (
     Voice,
 )
 from yapit.gateway.result_consumer import _process_result
-from yapit.gateway.synthesis import request_synthesis
 from yapit.queue import QueueConfig, pull_job
 
 from .conftest import DEFAULT_TEST_USER
@@ -104,10 +103,10 @@ class Pipeline:
         pulled = await pull_job(self.redis, QUEUE_CONFIG, timeout=1)
         return SynthesisJob.model_validate_json(pulled.raw_job) if pulled else None
 
-    async def finish(self, job: SynthesisJob) -> None:
+    async def finish(self, job: SynthesisJob, error: str | None = None) -> None:
         """The worker's result for a job, then the feeder's step for every job it woke."""
         self.synthesized.append(job)
-        await _process_result(self.redis, _result_of(job))
+        await _process_result(self.redis, _result_of(job, error))
         await self.feed()
 
     async def feed(self) -> None:
@@ -126,7 +125,7 @@ class Pipeline:
             await self.finish(job)
 
 
-def _result_of(job: SynthesisJob) -> WorkerResult:
+def _result_of(job: SynthesisJob, error: str | None) -> WorkerResult:
     return WorkerResult(
         job_id=job.job_id,
         variant_hash=job.variant_hash,
@@ -140,8 +139,9 @@ def _result_of(job: SynthesisJob) -> WorkerResult:
         worker_id="stub",
         processing_time_ms=1,
         queue_wait_ms=1,
-        audio_base64=base64.b64encode(f"OggS {job.variant_hash}".encode()).decode(),
-        duration_ms=1000,
+        audio_base64=None if error else base64.b64encode(f"OggS {job.variant_hash}".encode()).decode(),
+        duration_ms=None if error else 1000,
+        error=error,
     )
 
 
@@ -219,48 +219,61 @@ async def test_a_block_cached_before_the_job_is_not_billed(client, kokoro, pipel
     assert await billed_blocks(app.state.redis_client) == list(range(20))
 
 
-async def test_a_listener_is_pulled_before_every_job_block_queued(client, kokoro, pipeline, app, session):
+async def test_a_listener_is_pulled_before_every_job_block_queued(client, kokoro, pipeline, app, settings):
     document_id = await create_document(client, 120)
     await start(client, document_id, 0, 99)
     await pipeline.feed()
     assert len(await pipeline.queued_jobs()) == 16
 
-    await listen(app, session, document_id, block_idx=110)
+    await listen(app, settings, document_id, block_idx=110)
 
     assert [job.block_idx for job in await pipeline.queued_jobs()][:2] == [110, 0]
 
 
-async def test_a_block_playback_asks_for_while_its_job_block_waits_is_moved_up(client, kokoro, pipeline, app, session):
+async def test_a_block_playback_asks_for_while_its_job_block_waits_is_moved_up(client, kokoro, pipeline, app, settings):
     document_id = await create_document(client, 50)
     await start(client, document_id, 0, 49)
     await pipeline.feed()
 
-    await listen(app, session, document_id, block_idx=12)
+    await listen(app, settings, document_id, block_idx=12)
 
     queue_order = [job.block_idx for job in await pipeline.queued_jobs()]
     assert queue_order[0] == 12
     assert len(queue_order) == 16
 
 
-async def listen(app, session, document_id: uuid.UUID, block_idx: int) -> None:
-    """What the WebSocket does when playback asks for a block."""
-    doc = await session.get(Document, document_id)
-    voice = (await session.exec(select(Voice))).one()
-    model = await session.get(TTSModel, voice.model_id)
-    await request_synthesis(
-        db=session,
-        redis=app.state.redis_client,
-        cache=app.state.audio_cache,
-        user_id="listener",
-        text=doc.audio_texts[block_idx],
-        model=model,
-        voice=voice,
-        billing_enabled=False,
-        document_id=document_id,
-        block_idx=block_idx,
-        track_for_websocket=True,
-        background=False,
+class FakeWebSocket:
+    async def send_json(self, data) -> None:
+        pass
+
+
+async def listen(app, settings, document_id: uuid.UUID, block_idx: int) -> None:
+    """Playback asking for a block, as the WebSocket's synthesize message does."""
+    await _handle_synthesize(
+        FakeWebSocket(),
+        WSSynthesizeRequest(document_id=document_id, block_indices=[block_idx], model="kokoro", voice="af_heart"),
+        DEFAULT_TEST_USER,
+        app.state.redis_client,
+        app.state.audio_cache,
+        settings,
     )
+
+
+async def test_a_block_a_worker_already_took_is_not_queued_again_when_playback_asks_for_it(
+    client, kokoro, pipeline, app, settings
+):
+    document_id = await create_document(client, 30)
+    await start(client, document_id, 0, 29)
+    await pipeline.feed()
+    taken = await pipeline.pull()
+    assert taken is not None
+
+    await listen(app, settings, document_id, block_idx=taken.block_idx)
+
+    assert taken.block_idx not in [job.block_idx for job in await pipeline.queued_jobs()]
+    await pipeline.finish(taken)
+    await pipeline.run()
+    assert sorted(job.block_idx for job in pipeline.synthesized) == list(range(30))
 
 
 async def test_a_second_job_is_refused_while_one_runs(client, kokoro):
@@ -296,6 +309,22 @@ async def test_a_job_that_queued_its_last_block_at_the_daily_ceiling_ends_done(c
 
     job = (await client.get(f"/v1/documents/{document_id}/audio-job")).json()
     assert (job["status"], job["cached_blocks"]) == ("done", 20)
+
+
+async def test_a_job_at_the_daily_ceiling_still_ends_done_over_blocks_already_cached(client, kokoro, app):
+    await subscribe(DEFAULT_TEST_USER.id, server_kokoro_characters=None)
+    settings = app.dependency_overrides[get_settings]().model_copy(update={"audio_job_daily_block_limit": 20})
+    pipeline = Pipeline(app, settings)
+    document_id = await create_document(client, 30)
+    for block_idx in range(20, 30):
+        await listen(app, settings, document_id, block_idx)
+    await pipeline.run()
+
+    await start(client, document_id, 0, 29)
+    await pipeline.run()
+
+    job = (await client.get(f"/v1/documents/{document_id}/audio-job")).json()
+    assert (job["status"], job["cached_blocks"]) == ("done", 30)
 
 
 async def test_a_job_whose_usage_runs_out_queues_nothing_further(client, kokoro, app, session):
@@ -346,6 +375,34 @@ async def test_cancel_takes_the_jobs_waiting_blocks_off_the_queue(client, kokoro
     assert (job["status"], job["cached_blocks"]) == ("cancelled", 1)
 
 
+async def test_cancel_leaves_a_block_a_listener_waits_on(client, kokoro, pipeline, app, settings):
+    document_id = await create_document(client, 50)
+    await start(client, document_id, 0, 49)
+    await pipeline.feed()
+    await listen(app, settings, document_id, block_idx=7)
+
+    await client.delete(f"/v1/documents/{document_id}/audio-job")
+
+    assert [job.block_idx for job in await pipeline.queued_jobs()] == [7]
+
+
+async def test_cancel_leaves_the_blocks_another_users_job_awaits(client, kokoro, pipeline, app):
+    document_id = await create_document(client, 10)
+    await client.patch(f"/v1/documents/{document_id}", json={"is_public": True})
+    await start(client, document_id, 0, 9)
+    with signed_in_as(app, "second-reader"):
+        await start(client, document_id, 0, 9)
+    await pipeline.feed()
+
+    await client.delete(f"/v1/documents/{document_id}/audio-job")
+    await pipeline.run()
+
+    assert len(pipeline.synthesized) == 10
+    with signed_in_as(app, "second-reader"):
+        job = (await client.get(f"/v1/documents/{document_id}/audio-job")).json()
+    assert (job["status"], job["cached_blocks"]) == ("done", 10)
+
+
 async def test_two_jobs_over_the_same_blocks_synthesize_and_bill_each_block_once(client, kokoro, pipeline, app):
     document_id = await create_document(client, 10)
     await client.patch(f"/v1/documents/{document_id}", json={"is_public": True})
@@ -363,41 +420,82 @@ async def test_two_jobs_over_the_same_blocks_synthesize_and_bill_each_block_once
             assert (await client.get(f"/v1/documents/{document_id}/audio-job")).json()["status"] == "done"
 
 
-async def test_a_cursor_move_leaves_a_block_a_job_awaits_in_the_queue(client, kokoro, pipeline, app, session):
+async def test_a_cursor_move_leaves_a_block_a_job_awaits_in_the_queue(client, kokoro, pipeline, app, settings):
     document_id = await create_document(client, 30)
-    await listen(app, session, document_id, block_idx=3)
+    await listen(app, settings, document_id, block_idx=3)
     await start(client, document_id, 0, 9)
     await pipeline.feed()
 
     await _handle_cursor_moved(
         FakeWebSocket(),
         WSCursorMoved(document_id=document_id, cursor=20),
-        User(id="listener", is_anonymous=False),
+        DEFAULT_TEST_USER,
         app.state.redis_client,
     )
 
-    assert not await app.state.redis_client.exists(TTS_PENDING.format(user_id="listener", document_id=document_id))
+    pending = TTS_PENDING.format(user_id=DEFAULT_TEST_USER.id, document_id=document_id)
+    assert not await app.state.redis_client.exists(pending)
     assert 3 in [job.block_idx for job in await pipeline.queued_jobs()]
     await pipeline.run()
     assert (await client.get(f"/v1/documents/{document_id}/audio-job")).json()["cached_blocks"] == 10
 
 
-class FakeWebSocket:
-    async def send_json(self, data) -> None:
-        pass
-
-
-async def test_a_job_whose_queued_blocks_were_lost_with_the_gateway_carries_on(client, kokoro, pipeline, app):
+async def test_a_job_whose_queued_blocks_were_lost_with_the_gateway_queues_them_again(client, kokoro, pipeline, app):
     redis = app.state.redis_client
     document_id = await create_document(client, 40)
     await start(client, document_id, 0, 39)
     await pipeline.feed()
     for job in await pipeline.queued_jobs():
         await redis.zrem(QUEUE, str(job.job_id))
+        await redis.hdel(TTS_JOBS, str(job.job_id))
         await redis.delete(TTS_INFLIGHT.format(hash=job.variant_hash))
 
     await _reconcile(redis, app.state.audio_cache, pipeline.settings)
     await pipeline.run()
 
-    assert len(pipeline.synthesized) == 24
-    assert (await client.get(f"/v1/documents/{document_id}/audio-job")).json()["status"] == "done"
+    job = (await client.get(f"/v1/documents/{document_id}/audio-job")).json()
+    assert (job["status"], job["cached_blocks"]) == ("done", 40)
+
+
+async def test_a_job_block_that_outwaits_its_marker_keeps_its_place_in_the_slice(client, kokoro, pipeline, app):
+    redis = app.state.redis_client
+    document_id = await create_document(client, 40)
+    await start(client, document_id, 0, 39)
+    await pipeline.feed()
+    queued = await pipeline.queued_jobs()
+    for job in queued:
+        await redis.delete(TTS_INFLIGHT.format(hash=job.variant_hash))
+
+    await _reconcile(redis, app.state.audio_cache, pipeline.settings)
+
+    assert await pipeline.queued_jobs() == queued
+    for job in queued:
+        assert await redis.get(TTS_INFLIGHT.format(hash=job.variant_hash)) == str(job.job_id).encode()
+
+
+async def test_a_block_the_worker_fails_does_not_stall_the_job(client, kokoro, pipeline):
+    document_id = await create_document(client, 30)
+    await start(client, document_id, 0, 29)
+    await pipeline.feed()
+    failing = await pipeline.pull()
+    assert failing is not None
+
+    await pipeline.finish(failing, error="Synthesis failed")
+    await pipeline.run()
+
+    job = (await client.get(f"/v1/documents/{document_id}/audio-job")).json()
+    assert (job["status"], job["cached_blocks"]) == ("done", 29)
+
+
+async def test_the_feeder_queues_a_new_jobs_first_slice(client, kokoro, app, settings):
+    document_id = await create_document(client, 30)
+    feeder = asyncio.create_task(run_audio_job_feeder(app.state.redis_client, app.state.audio_cache, settings))
+    try:
+        await start(client, document_id, 0, 29)
+        pulled = await pull_job(app.state.redis_client, QUEUE_CONFIG, timeout=10)
+    finally:
+        feeder.cancel()
+        await asyncio.gather(feeder, return_exceptions=True)
+
+    assert pulled is not None
+    assert SynthesisJob.model_validate_json(pulled.raw_job).block_idx == 0
