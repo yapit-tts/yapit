@@ -91,6 +91,11 @@ class DocumentMetadata(PydanticModel):
         return v[:MAX_DOCUMENT_FILE_NAME_LENGTH] if isinstance(v, str) else v
 
 
+def readable_by(user_id: str, owner_id: str, is_public: bool) -> bool:
+    """Whether a user may read, play and prepare audio for a document: its owner's, or a public one."""
+    return owner_id == user_id or is_public
+
+
 class Document(SQLModel, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     user_id: str = Field()

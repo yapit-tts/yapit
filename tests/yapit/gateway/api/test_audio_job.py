@@ -353,6 +353,24 @@ async def test_a_job_whose_voice_is_deactivated_queues_nothing_further(client, k
     assert (await client.get(f"/v1/documents/{document_id}/audio-job")).json()["status"] == "failed"
 
 
+async def test_a_job_over_a_document_its_user_can_no_longer_read_queues_nothing_further(client, kokoro, pipeline, app):
+    document_id = await create_document(client, 50)
+    await client.patch(f"/v1/documents/{document_id}", json={"is_public": True})
+    with signed_in_as(app, "second-reader"):
+        await start(client, document_id, 0, 49)
+    await pipeline.feed()
+
+    await client.patch(f"/v1/documents/{document_id}", json={"is_public": False})
+    await pipeline.run()
+
+    assert len(pipeline.synthesized) == 16
+    # Public again only so the second reader can read the job's state
+    await client.patch(f"/v1/documents/{document_id}", json={"is_public": True})
+    with signed_in_as(app, "second-reader"):
+        job = (await client.get(f"/v1/documents/{document_id}/audio-job")).json()
+    assert (job["status"], job["error"]) == ("failed", "The document is no longer available")
+
+
 async def test_cancel_takes_the_jobs_waiting_blocks_off_the_queue(client, kokoro, pipeline):
     document_id = await create_document(client, 50)
     await start(client, document_id, 0, 49)

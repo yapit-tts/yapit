@@ -38,7 +38,7 @@ from yapit.gateway.cache import Cache
 from yapit.gateway.config import Settings
 from yapit.gateway.db import create_session
 from yapit.gateway.deps import get_model, get_voice
-from yapit.gateway.domain_models import BlockVariant, Document
+from yapit.gateway.domain_models import BlockVariant, Document, readable_by
 from yapit.gateway.exceptions import ResourceNotFoundError
 from yapit.gateway.metrics import log_error
 from yapit.gateway.synthesis import INFLIGHT_TTL_S, CachedResult, ErrorResult, QueuedResult, request_synthesis
@@ -238,7 +238,7 @@ async def top_up(redis: Redis, cache: Cache, settings: Settings, user_id: str) -
         access = (
             await db.exec(select(Document.user_id, Document.is_public).where(Document.id == spec.document_id))
         ).first()
-        if access is None or (access[0] != user_id and not access[1]):
+        if access is None or not readable_by(user_id, *access):
             await _finish(redis, user_id, job.id, AudioJobStatus.failed, "The document is no longer available")
             return
         try:

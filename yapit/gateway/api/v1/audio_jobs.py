@@ -43,7 +43,7 @@ from yapit.gateway.deps import (
     get_model,
     get_voice,
 )
-from yapit.gateway.domain_models import BlockVariant, Document
+from yapit.gateway.domain_models import BlockVariant, Document, readable_by
 from yapit.gateway.synthesis import billed_characters, usage_type_for
 from yapit.gateway.usage import (
     get_available_usage,
@@ -260,7 +260,7 @@ def _check_ranges(ranges: list[BlockRange], block_count: int) -> None:
 
 async def _readable_document(db: DbSession, document_id: UUID, user_id: str) -> Document:
     doc = await db.get(Document, document_id)
-    if doc is None or (doc.user_id != user_id and not doc.is_public):
+    if doc is None or not readable_by(user_id, doc.user_id, doc.is_public):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
     return doc
 
