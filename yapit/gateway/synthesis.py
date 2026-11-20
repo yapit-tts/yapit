@@ -13,6 +13,8 @@ from sqlmodel import select
 
 from yapit.contracts import (
     TTS_AUDIO_CACHE,
+    TTS_FINALIZED,
+    TTS_FINALIZED_TTL_S,
     TTS_INFLIGHT,
     TTS_JOB_INDEX,
     TTS_JOBS,
@@ -193,6 +195,8 @@ async def _queue_job(
                 # lt: only ever moves a job up; xx: a job already pulled is not put back
                 await redis.zadd(queue_name, {owner.decode(): now}, xx=True, lt=True)
         return QueuedResult(variant_hash=variant_hash)
+    # The variant was finalized once and is gone from the cache since: this job may finalize it again
+    await redis.set(TTS_FINALIZED.format(hash=variant_hash), f"open:{job_id_str}", ex=TTS_FINALIZED_TTL_S, xx=True)
 
     job = SynthesisJob(
         job_id=job_id,

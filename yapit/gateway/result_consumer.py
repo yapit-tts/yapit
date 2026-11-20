@@ -20,6 +20,8 @@ from yapit.contracts import (
     AUDIO_JOB_WAKE,
     TTS_AUDIO_CACHE,
     TTS_BILLING_STREAM,
+    TTS_FINALIZED,
+    TTS_FINALIZED_TTL_S,
     TTS_INFLIGHT,
     TTS_PENDING,
     TTS_PERSIST,
@@ -130,14 +132,16 @@ async def _handle_success(redis: Redis, result: WorkerResult) -> None:
         await _wake_audio_jobs(redis, result.variant_hash)
         return
 
-    audio = base64.b64decode(result.audio_base64)
-
-    # The first result to store a variant's audio finalizes it: it alone is billed and persisted.
-    audio_key = TTS_AUDIO_CACHE.format(hash=result.variant_hash)
-    if not await redis.set(audio_key, audio, ex=AUDIO_CACHE_TTL_S, nx=True):
+    # The first result to arrive finalizes the variant: it alone is stored, billed and persisted.
+    if not await redis.eval(
+        _FINALIZE, 1, TTS_FINALIZED.format(hash=result.variant_hash), str(result.job_id), TTS_FINALIZED_TTL_S
+    ):
         log.info("Variant already finalized, skipping duplicate result")
         await _release_inflight(redis, result)
         return
+
+    audio = base64.b64decode(result.audio_base64)
+    await redis.set(TTS_AUDIO_CACHE.format(hash=result.variant_hash), audio, ex=AUDIO_CACHE_TTL_S)
 
     if result.word_timestamps_json:
         ts_key = TTS_TIMESTAMPS_CACHE.format(hash=result.variant_hash)
@@ -200,7 +204,8 @@ async def _handle_error(redis: Redis, result: WorkerResult) -> None:
         worker_id=result.worker_id,
     )
 
-    if await redis.exists(TTS_AUDIO_CACHE.format(hash=result.variant_hash)):
+    finalized = await redis.get(TTS_FINALIZED.format(hash=result.variant_hash))
+    if finalized is not None and finalized.decode() != f"open:{result.job_id}":
         log.info("Variant already finalized, skipping duplicate error result")
         return
     if await _release_inflight(redis, result):
@@ -237,6 +242,17 @@ async def _wake_audio_jobs(redis: Redis, variant_hash: str) -> None:
         user_id = raw_user.decode()
         await redis.hdel(AUDIO_JOB_AWAITED.format(user_id=user_id), variant_hash)
         await redis.lpush(AUDIO_JOB_WAKE, user_id)
+
+
+# Claims the variant for this result's job unless another job's result finalized it first.
+_FINALIZE = """
+local finalized = redis.call('GET', KEYS[1])
+if finalized and finalized ~= 'open:' .. ARGV[1] then
+    return 0
+end
+redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
+return 1
+"""
 
 
 # Deletes the in-flight marker only when this result's job holds it: a marker can expire while its

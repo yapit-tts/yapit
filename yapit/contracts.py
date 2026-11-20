@@ -7,6 +7,10 @@ import annotated_types
 from pydantic import BaseModel, ConfigDict, Field
 
 TTS_INFLIGHT: Final[str] = "tts:inflight:{hash}"
+# The job whose result finalized the variant, or "open:<job_id>" for the one job queued since to
+# synthesize it again. Outlives every job for the variant that can still be queued or in flight.
+TTS_FINALIZED: Final[str] = "tts:finalized:{hash}"
+TTS_FINALIZED_TTL_S: Final[int] = 24 * 3600
 TTS_SUBSCRIBERS: Final[str] = "tts:subscribers:{hash}"
 TTS_CURSOR: Final[str] = "tts:cursor:{user_id}:{document_id}"
 TTS_PENDING: Final[str] = "tts:pending:{user_id}:{document_id}"

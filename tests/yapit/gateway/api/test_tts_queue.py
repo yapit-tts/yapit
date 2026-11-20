@@ -132,3 +132,14 @@ async def test_an_error_result_leaves_the_marker_of_another_job_for_its_variant(
     await _process_result(redis, failed)
 
     assert await redis.get(TTS_INFLIGHT.format(hash="shared")) == str(current_job).encode()
+
+
+async def test_two_jobs_for_one_variant_bill_once_with_their_results_past_the_hot_caches_lifetime_apart(app):
+    redis = app.state.redis_client
+    first_job, second_job = uuid.uuid4(), uuid.uuid4()
+
+    await _process_result(redis, worker_result(first_job, "twice-queued"))
+    await redis.delete(TTS_AUDIO_CACHE.format(hash="twice-queued"))  # the hot cache's 300 s run out
+    await _process_result(redis, worker_result(second_job, "twice-queued"))
+
+    assert await redis.xlen(TTS_BILLING_STREAM) == 1

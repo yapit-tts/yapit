@@ -91,8 +91,8 @@ Three consumers with complete resource isolation:
 **Result consumer (hot path)** — `yapit/gateway/result_consumer.py`
 
 Pops from `tts:results`, spawns a task per result. No Postgres, no SQLite.
-1. Claim the variant: `SET NX` of the audio (`tts:audio:{hash}`, 300s TTL) — the first result to store it finalizes it; a later one is a duplicate and stops here
-2. Release the in-flight marker if this result's job holds it
+1. Claim the variant: the first result to arrive sets `tts:finalized:{hash}` (its job id, kept a day) and finalizes it; a later one is a duplicate and stops here
+2. Redis SET audio (`tts:audio:{hash}`, 300s TTL) — sub-ms, then release the in-flight marker if this result's job holds it
 3. Notify subscribers via Redis pubsub (user sees audio here)
 4. XADD `BillingEvent` to `tts:billing:stream` (Redis Stream)
 5. Push variant_hash to `tts:persist` for background SQLite persistence
@@ -199,7 +199,7 @@ Built-in model: kokoro. Model/voice definitions in `yapit/gateway/seed.py`.
 - **Empty audio / per-block failures:** Some blocks produce empty audio (whitespace-only text, garbage markup from extraction). Marked as "skipped" or "error" with `recoverable: true`. Frontend tracks these in a `resolvedEmpty` set so buffer readiness checks still work, and auto-advances past them. Only session-level errors (`recoverable: false`, e.g. usage limit) stop playback.
 - **Usage multiplier:** Different models have different character costs. `TTSModel.usage_multiplier` in database. Passed in job to avoid DB query on finalization.
 - **Voice change race condition:** WebSocket status messages include `model_slug` and `voice_slug` to prevent stale cache hits when user changes voice mid-playback. Without this, status messages from old voice arriving after reset would incorrectly mark blocks as cached.
-- **Double synthesis prevention:** The first result to `SET NX` a variant's audio finalizes it; duplicates (from visibility timeout requeue + original completion, or a second job queued after the first's marker expired) find the audio there and skip. This prevents duplicate BillingEvents from being produced. A result whose marker expired is still kept. On the consumer side, `record_usage` has its own idempotency via `UsageLog.event_id` (keyed on `job_id`) as a second line of defense.
+- **Double synthesis prevention:** The first result for a variant finalizes it by setting `tts:finalized:{hash}` to its job id, kept a day, longer than any job for the variant can still be queued or in flight; duplicates (from visibility timeout requeue + original completion, or a second job queued after the first's marker expired) find it set and skip. A job queued once the variant is gone from the cache reopens it (`open:<job_id>`), so that job alone may finalize it again. This prevents duplicate BillingEvents from being produced. A result whose marker expired is still kept. On the consumer side, `record_usage` has its own idempotency via `UsageLog.event_id` (keyed on `job_id`) as a second line of defense.
 - **Cache warming:** `yapit/gateway/warm_cache.py` is a one-shot CLI (not a background task). Run via `make warm-cache` when voices or showcase content change. Pinned entries are exempt from LRU eviction.
 - **OpenAI TTS audio format:** Requests `response_format="opus"`. If server returns OGG Opus (`OggS` magic bytes), passed through. Otherwise transcoded to OGG Opus via PyAV at 96kbps. Duration read from container metadata, falls back to byte-size estimate. Transcoding runs in executor to avoid blocking the event loop.
 - **Codec is not part of variant hash:** In normal dev flow, `make dev-cpu` clears cache (`down -v`). If you run experiments without full teardown, stale cached blobs can make codec/endpoint A/B tests invalid.

@@ -18,6 +18,7 @@ from sqlmodel import select
 
 from yapit.contracts import (
     AUDIO_JOB_WAKE,
+    TTS_AUDIO_CACHE,
     TTS_BILLING_STREAM,
     TTS_INFLIGHT,
     TTS_JOBS,
@@ -274,6 +275,23 @@ async def test_a_block_a_worker_already_took_is_not_queued_again_when_playback_a
     await pipeline.finish(taken)
     await pipeline.run()
     assert sorted(job.block_idx for job in pipeline.synthesized) == list(range(30))
+
+
+async def test_a_block_gone_from_the_cache_since_it_was_synthesized_is_synthesized_again(
+    client, kokoro, pipeline, app, settings
+):
+    redis = app.state.redis_client
+    document_id = await create_document(client, 5)
+    await listen(app, settings, document_id, block_idx=0)
+    await pipeline.run()
+    variant_hash = pipeline.synthesized[0].variant_hash
+    await redis.delete(TTS_AUDIO_CACHE.format(hash=variant_hash))
+
+    await listen(app, settings, document_id, block_idx=0)
+    await pipeline.run()
+
+    assert await redis.exists(TTS_AUDIO_CACHE.format(hash=variant_hash))
+    assert await billed_blocks(redis) == [0, 0]
 
 
 async def test_a_second_job_is_refused_while_one_runs(client, kokoro):
