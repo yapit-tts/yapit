@@ -238,9 +238,6 @@ function jobBlocker(estimate: AudioJobEstimate | null, totals: ReturnType<typeof
   if (estimate.available_characters === 0) {
     return <>You have no characters left for this voice this period. <Link className="font-medium text-primary hover:underline" to="/subscription">See plans</Link>.</>;
   }
-  if (estimate.daily_blocks_left !== null && estimate.daily_blocks_left <= 0) {
-    return <>You have prepared as much audio as one day allows. Try again tomorrow (the limit resets at midnight UTC).</>;
-  }
   return null;
 }
 
@@ -250,10 +247,6 @@ function jobShortfall(estimate: AudioJobEstimate | null, totals: ReturnType<type
   const available = estimate.available_characters;
   if (available !== null && available < totals.charactersToSynthesize) {
     return `That is more than the ${numberFormat.format(available)} characters left on your plan, so preparing stops when they run out.`;
-  }
-  const dailyLeft = estimate.daily_blocks_left;
-  if (dailyLeft !== null && dailyLeft < totals.blocksToSynthesize) {
-    return `Today's limit covers ${numberFormat.format(dailyLeft)} more blocks, so preparing stops there. Start it again tomorrow for the rest.`;
   }
   return null;
 }

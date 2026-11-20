@@ -7,7 +7,6 @@ request_synthesis, behind listeners (background=True). A user has at most one ru
 """
 
 import asyncio
-import datetime as dt
 import time
 import uuid
 from dataclasses import dataclass
@@ -22,7 +21,6 @@ from sqlmodel import select
 from yapit.contracts import (
     AUDIO_JOB,
     AUDIO_JOB_AWAITED,
-    AUDIO_JOB_DAILY,
     AUDIO_JOB_LOST,
     AUDIO_JOB_WAITERS,
     AUDIO_JOB_WAKE,
@@ -42,8 +40,7 @@ from yapit.gateway.deps import get_model, get_voice
 from yapit.gateway.domain_models import BlockVariant, Document
 from yapit.gateway.exceptions import ResourceNotFoundError
 from yapit.gateway.metrics import log_error
-from yapit.gateway.synthesis import INFLIGHT_TTL_S, CachedResult, ErrorResult, request_synthesis, usage_type_for
-from yapit.gateway.usage import get_available_usage
+from yapit.gateway.synthesis import INFLIGHT_TTL_S, CachedResult, ErrorResult, request_synthesis
 
 SLICE_SIZE = 16
 STATE_TTL_S = 24 * 3600
@@ -57,7 +54,6 @@ class AudioJobStatus(StrEnum):
     done = "done"
     cancelled = "cancelled"
     usage_limit = "usage_limit"
-    daily_limit = "daily_limit"
     failed = "failed"
 
 
@@ -246,7 +242,6 @@ async def top_up(redis: Redis, cache: Cache, settings: Settings, user_id: str) -
             await _finish(redis, user_id, AudioJobStatus.failed, str(e))
             return
 
-        allowance = await daily_allowance(redis, db, settings, user_id, model.slug)
         while await redis.hlen(awaited_key) < SLICE_SIZE:
             retried = await redis.lindex(lost_key, 0)
             position = int(retried) if retried is not None else next_position
@@ -256,9 +251,6 @@ async def top_up(redis: Redis, cache: Cache, settings: Settings, user_id: str) -
             variant_hash = BlockVariant.get_hash(
                 text=text, model_slug=model.slug, voice_slug=voice.slug, parameters=voice.parameters
             )
-            if allowance is not None and allowance <= 0 and not await _is_cached(redis, cache, variant_hash):
-                await _finish(redis, user_id, AudioJobStatus.daily_limit, "Daily limit for audio jobs reached")
-                return
             if retried is not None:
                 await redis.lpop(lost_key)
             else:
@@ -297,9 +289,6 @@ async def top_up(redis: Redis, cache: Cache, settings: Settings, user_id: str) -
                 await redis.hset(awaited_key, variant_hash, f"{position}:{result.job_id}")
                 # A result of another job for the variant may have cleared the waiters during the request
                 await redis.sadd(waiters_of(hash=variant_hash), user_id)
-                if allowance is not None:
-                    await _count_daily(redis, user_id)
-                    allowance -= 1
             if not await redis.sismember(AUDIO_JOBS_RUNNING, user_id):
                 # Cancelled while this block was being queued, after the cancel swept the queue
                 await _withdraw(redis, user_id, spec.model, variant_hash, result.job_id or "")
@@ -376,30 +365,6 @@ async def _feed_job_logged(redis: Redis, cache: Cache, settings: Settings, user_
     except Exception as e:
         logger.bind(user_id=user_id).exception(f"Audio job top-up failed: {e}")
         await log_error(f"Audio job top-up failed: {e}", user_id=user_id)
-
-
-async def daily_allowance(redis: Redis, db, settings: Settings, user_id: str, model_slug: str) -> int | None:
-    """Blocks the job may still queue today; None where the usage check already bounds the job.
-
-    The ceiling guards plans with unlimited usage for the model. Self-hosting (billing off) has none.
-    """
-    if not settings.billing_enabled:
-        return None
-    available, _ = await get_available_usage(user_id, usage_type_for(model_slug), db, billing_enabled=True)
-    if available is not None:
-        return None
-    used = await redis.get(_daily_key(user_id))
-    return settings.audio_job_daily_block_limit - int(used or 0)
-
-
-async def _count_daily(redis: Redis, user_id: str) -> None:
-    key = _daily_key(user_id)
-    await redis.incr(key)
-    await redis.expire(key, 2 * 24 * 3600)
-
-
-def _daily_key(user_id: str) -> str:
-    return AUDIO_JOB_DAILY.format(user_id=user_id, day=dt.datetime.now(dt.UTC).date().isoformat())
 
 
 async def _finish(redis: Redis, user_id: str, status: AudioJobStatus, error: str | None = None) -> bool:
