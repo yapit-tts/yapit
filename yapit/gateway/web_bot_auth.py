@@ -1,7 +1,8 @@
 """Web Bot Auth: signatures that let a site verify a request came from this yapit, and the key directory they name.
 
-Both are RFC 9421 HTTP Message Signatures, as Cloudflare's Web Bot Auth page profiles them. The extraction
-service signs its own requests the same way (docker/defuddle/signature.js).
+Both are RFC 9421 HTTP Message Signatures, as Cloudflare's Web Bot Auth page profiles them. The key stays in the
+gateway: the extraction service, which runs Chromium on pages readers choose, asks `signer_app` for each request's
+headers, on a port no route outside the stack leads to.
 """
 
 import base64
@@ -10,14 +11,14 @@ import json
 import secrets
 import time
 from dataclasses import dataclass
-from urllib.parse import urlsplit
 
 import httpx
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat, load_der_private_key
+from fastapi import APIRouter, FastAPI, Response
+from pydantic import BaseModel, Field
 
-DIRECTORY_PATH = "/.well-known/http-message-signatures-directory"
-DIRECTORY_CONTENT_TYPE = "application/http-message-signatures-directory+json"
+SIGNER_PORT = 8002
 REQUEST_LIFETIME_S = 60
 DIRECTORY_LIFETIME_S = 3600
 
@@ -35,31 +36,21 @@ def load_signing_key(private_key: str, app_url: str) -> SigningKey | None:
     if not private_key:
         return None
     key = load_der_private_key(base64.b64decode(private_key), password=None)
-    if not isinstance(key, Ed25519PrivateKey):
-        raise TypeError("WEB_BOT_AUTH_PRIVATE_KEY is not an Ed25519 key")
-    origin = urlsplit(app_url)
-    # Cloudflare fails a Signature-Agent that is not https.
-    if origin.scheme != "https":
-        raise ValueError("APP_URL must be https to sign requests")
+    assert isinstance(key, Ed25519PrivateKey)
     x = _b64url(key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw))
     thumbprint = hashlib.sha256(json.dumps({"crv": "Ed25519", "kty": "OKP", "x": x}, separators=(",", ":")).encode())
-    return SigningKey(
-        private=key,
-        x=x,
-        keyid=_b64url(thumbprint.digest()),
-        authority=_authority(app_url),
-    )
+    return SigningKey(private=key, x=x, keyid=_b64url(thumbprint.digest()), authority=_authority(app_url))
 
 
-def request_signature_headers(key: SigningKey, url: str, now: float, nonce: str) -> dict[str, str]:
-    """Signature, Signature-Input and Signature-Agent for a request to url."""
+def request_signature_headers(key: SigningKey, authority: str, now: float, nonce: str) -> dict[str, str]:
+    """Signature, Signature-Input and Signature-Agent for a request to authority."""
     created = int(now)
     params = (
         f'("@authority" "signature-agent");created={created};keyid="{key.keyid}";alg="ed25519"'
         f';expires={created + REQUEST_LIFETIME_S};nonce="{nonce}";tag="web-bot-auth"'
     )
     signature_agent = f'"https://{key.authority}"'
-    base = f'"@authority": {_authority(url)}\n"signature-agent": {signature_agent}\n"@signature-params": {params}'
+    base = f'"@authority": {authority}\n"signature-agent": {signature_agent}\n"@signature-params": {params}'
     return {
         "Signature-Agent": signature_agent,
         "Signature-Input": f"sig1={params}",
@@ -85,7 +76,7 @@ def directory_response(
     )
     base = f'"@authority";req: {key.authority}\n"content-digest": {content_digest}\n"@signature-params": {params}'
     return body, {
-        "Content-Type": DIRECTORY_CONTENT_TYPE,
+        "Content-Type": "application/http-message-signatures-directory+json",
         "Content-Digest": content_digest,
         "Signature-Input": f"binding0={params}",
         "Signature": f"binding0=:{_sign(key, base)}:",
@@ -100,24 +91,44 @@ def init_web_bot_auth(private_key: str, app_url: str) -> None:
     _key = load_signing_key(private_key, app_url)
 
 
-def signing_key() -> SigningKey | None:
-    return _key
-
-
 def signature_headers(url: str) -> dict[str, str]:
     """The signature headers for a request to url, or none where no key is configured."""
+    return _headers_for(_authority(url))
+
+
+router = APIRouter()
+
+
+@router.get("/.well-known/http-message-signatures-directory", include_in_schema=False)
+async def key_directory() -> Response:
+    if _key is None:
+        return Response(status_code=404)
+    body, headers = directory_response(_key, time.time())
+    return Response(content=body, headers=headers)
+
+
+class SignatureRequest(BaseModel):
+    # `new URL(url).host` in the extraction service: nothing else may reach the signature base.
+    authority: str = Field(pattern=r"^(?:[a-z0-9._-]+|\[[0-9a-f:.]+\])(?::[0-9]{1,5})?$")
+
+
+signer_app = FastAPI(openapi_url=None)
+
+
+@signer_app.post("/sign")
+async def sign(request: SignatureRequest) -> dict[str, str]:
+    """The headers for one request to the authority, valid for REQUEST_LIFETIME_S; none without a key."""
+    return _headers_for(request.authority)
+
+
+def _headers_for(authority: str) -> dict[str, str]:
     if _key is None:
         return {}
-    return request_signature_headers(_key, url, time.time(), base64.b64encode(secrets.token_bytes(64)).decode())
+    return request_signature_headers(_key, authority, time.time(), base64.b64encode(secrets.token_bytes(64)).decode())
 
 
 def _authority(url: str) -> str:
-    """The URL's host as sent on the wire (IDNA-encoded, IPv6 bracketed), with its port unless the scheme's default."""
-    parsed = httpx.URL(url)
-    host = parsed.raw_host.decode()
-    if ":" in host:
-        host = f"[{host}]"
-    return f"{host}:{parsed.port}" if parsed.port else host
+    return httpx.URL(url).netloc.decode()
 
 
 def _sign(key: SigningKey, base: str) -> str:

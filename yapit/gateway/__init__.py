@@ -1,14 +1,14 @@
 import asyncio
 import datetime as dt
-import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 
 import redis.asyncio as redis
+import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, PlainTextResponse, Response
+from fastapi.responses import JSONResponse, PlainTextResponse
 from loguru import logger
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
@@ -19,6 +19,7 @@ from yapit.contracts import (
     TTS_JOBS,
     YOLO_JOBS,
 )
+from yapit.gateway import web_bot_auth
 from yapit.gateway.api.v1 import routers as v1_routers
 from yapit.gateway.api_tts_dispatcher import run_api_tts_dispatcher
 from yapit.gateway.auth import ANONYMOUS_ID_PREFIX
@@ -51,7 +52,6 @@ from yapit.gateway.result_consumer import run_result_consumer
 from yapit.gateway.storage import ImageStorage
 from yapit.gateway.supervision import supervised
 from yapit.gateway.visibility_scanner import run_visibility_scanner
-from yapit.gateway.web_bot_auth import DIRECTORY_PATH, directory_response, init_web_bot_auth, signing_key
 
 # Scanner constants
 TTS_VISIBILITY_TIMEOUT_S = 20
@@ -86,7 +86,11 @@ async def lifespan(app: FastAPI):
     )
 
     init_defuddle_client(settings.defuddle_service_url)
-    init_web_bot_auth(settings.web_bot_auth_private_key, settings.app_url)
+    web_bot_auth.init_web_bot_auth(settings.web_bot_auth_private_key, settings.app_url)
+    signer = uvicorn.Server(
+        uvicorn.Config(web_bot_auth.signer_app, host="0.0.0.0", port=web_bot_auth.SIGNER_PORT, lifespan="off")
+    )
+    signer_task = asyncio.create_task(signer.serve())
     app.state.mailer = create_mailer(settings)
 
     async def alert_ai_out_of_credit() -> None:
@@ -247,6 +251,9 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    signer.should_exit = True
+    await signer_task
+
     if batch_poller:
         await batch_poller.stop()
 
@@ -391,6 +398,7 @@ def create_app(
 
     for r in v1_routers:
         app.include_router(r)
+    app.include_router(web_bot_auth.router)
 
     @app.get("/health")
     async def health():
@@ -404,14 +412,6 @@ def create_app(
         except FileNotFoundError:
             commit = "unknown"
         return {"commit": commit}
-
-    @app.get(DIRECTORY_PATH, include_in_schema=False)
-    async def key_directory():
-        key = signing_key()
-        if key is None:
-            return Response(status_code=404)
-        body, headers = directory_response(key, time.time())
-        return Response(content=body, headers=headers)
 
     @app.get("/v1/extraction-prompt")
     async def extraction_prompt():

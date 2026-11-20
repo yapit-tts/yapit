@@ -5,7 +5,11 @@ for byte. The key is the RFC 9421 test key (appendix B.1.4).
 """
 
 import base64
+import secrets
+import time
 
+import httpx
+import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat
 
@@ -53,7 +57,7 @@ def test_a_request_signature_matches_cloudflares_signer():
     assert key is not None
     nonce = base64.b64encode(bytes([7] * 64)).decode()
 
-    headers = request_signature_headers(key, "https://example.com/post", now=1795210000, nonce=nonce)
+    headers = request_signature_headers(key, "example.com", now=1795210000, nonce=nonce)
 
     assert headers["Signature-Agent"] == '"https://yapit.md"'
     assert headers["Signature-Input"] == (
@@ -71,7 +75,7 @@ def test_a_port_other_than_the_default_is_part_of_the_signed_authority():
     assert key is not None
     nonce = base64.b64encode(bytes([7] * 64)).decode()
 
-    headers = request_signature_headers(key, "https://example.com:8443/post", now=1795210000, nonce=nonce)
+    headers = request_signature_headers(key, "example.com:8443", now=1795210000, nonce=nonce)
 
     assert headers["Signature"] == (
         "sig1=:QTFzF9wZuNEjhIz7ZicjWyY+XU9LSZKvs2+E38xxddkl/eHVcA+7eoe4g9NEW9qdMJ535OMW9VJjxhKlVGQWAQ==:"
@@ -82,3 +86,41 @@ def test_a_self_hosted_instance_without_a_key_sends_requests_unsigned(monkeypatc
     monkeypatch.setattr(web_bot_auth, "_key", load_signing_key(rfc_9421_private_key(), "https://yapit.md"))
     web_bot_auth.init_web_bot_auth("", "http://localhost")
     assert web_bot_auth.signature_headers("https://example.com/") == {}
+
+
+async def test_the_signer_signs_the_authority_the_extraction_service_names(monkeypatch):
+    monkeypatch.setattr(web_bot_auth, "_key", load_signing_key(rfc_9421_private_key(), "https://yapit.md"))
+    async with signer_client() as client:
+        response = await client.post("/sign", json={"authority": "example.com:8443"})
+    assert response.status_code == 200
+    assert response.json()["Signature-Agent"] == '"https://yapit.md"'
+    assert 'tag="web-bot-auth"' in response.json()["Signature-Input"]
+
+
+@pytest.mark.parametrize(
+    "authority",
+    ['example.com\n"signature-agent": "https://evil.example"', "Example.COM", "example.com/path", "", "a b"],
+)
+async def test_the_signer_refuses_anything_but_a_bare_authority(monkeypatch, authority):
+    monkeypatch.setattr(web_bot_auth, "_key", load_signing_key(rfc_9421_private_key(), "https://yapit.md"))
+    async with signer_client() as client:
+        response = await client.post("/sign", json={"authority": authority})
+    assert response.status_code == 422
+
+
+def signer_client() -> httpx.AsyncClient:
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=web_bot_auth.signer_app), base_url="http://gateway:8002")
+
+
+@pytest.mark.live
+async def test_cloudflare_research_verifies_a_signed_request():
+    # The research server checks for the RFC 9421 test key, which its own directory lists, so it is the
+    # Signature-Agent here; it answers this sentence to a request it verified.
+    research = "https://http-message-signatures-example.research.cloudflare.com/"
+    key = load_signing_key(rfc_9421_private_key(), research)
+    assert key is not None
+    nonce = base64.b64encode(secrets.token_bytes(64)).decode()
+    headers = request_signature_headers(key, key.authority, time.time(), nonce)
+    async with httpx.AsyncClient(timeout=20) as client:
+        page = (await client.get(research, headers=headers)).text
+    assert "successfully authenticated as owning the test public key" in page

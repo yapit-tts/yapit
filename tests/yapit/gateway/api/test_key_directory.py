@@ -47,3 +47,8 @@ async def test_without_a_key_the_directory_is_not_found(client, monkeypatch):
     monkeypatch.setattr(web_bot_auth, "_key", None)
     response = await client.get(DIRECTORY)
     assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_the_signer_is_not_on_the_public_app(client, throwaway_key):
+    assert (await client.post("/sign", json={"authority": "example.com"})).status_code == 404

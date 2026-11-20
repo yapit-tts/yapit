@@ -22,7 +22,6 @@ CMD ["node", "app.js"]
 
 # The service's tests, against the image's own Chromium: `make test-extraction`
 FROM base AS test
-RUN npm ci --include=dev
 COPY --chown=node:node docker/defuddle/test ./test
 CMD ["node", "--test", "--test-concurrency=1", "test/*.test.js"]
 

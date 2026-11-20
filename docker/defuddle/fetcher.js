@@ -1,6 +1,6 @@
 /**
  * How yapit's fetcher reaches a site: through the egress proxy, under one user agent,
- * signed where a key is configured, and only where the site's robots.txt allows it,
+ * signed by the gateway where it holds a key, and only where the site's robots.txt allows it,
  * checked on every redirect hop.
  */
 
@@ -31,18 +31,27 @@ export function assertNotChallenged(cfMitigated) {
 	if (cfMitigated === "challenge") throw new Refusal(CHALLENGED);
 }
 
-/** `sign` maps a request URL to its signature headers (signature.js), or is null to send unsigned. */
-export function createFetcher(proxyUrl, sign) {
+/** `signerUrl` is the gateway's signer, which answers each request's signature headers, none without a key. */
+export function createFetcher(proxyUrl, signerUrl) {
 	const dispatcher = new ProxyAgent(proxyUrl);
 	const robotsCache = new Map();
-	const signatureHeaders = (url) => (sign ? sign(url) : {});
+
+	async function signatureHeaders(url) {
+		const response = await fetch(signerUrl, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ authority: new URL(url).host }),
+		});
+		if (!response.ok) throw new Error(`Signer answered HTTP ${response.status}`);
+		return response.json();
+	}
 
 	/** One request, redirects followed by hand so every hop is checked. Resolves to the final response. */
 	async function send(url, { userAgent = USER_AGENT, accept, signal, maxRedirects = MAX_REDIRECTS, checkRobots = true }) {
 		for (let hop = 0; ; hop++) {
 			if (checkRobots) await assertAllowed(url);
 			const response = await proxyFetch(url, {
-				headers: { "User-Agent": userAgent, Accept: accept, ...signatureHeaders(url) },
+				headers: { "User-Agent": userAgent, Accept: accept, ...(await signatureHeaders(url)) },
 				redirect: "manual",
 				signal,
 				dispatcher,

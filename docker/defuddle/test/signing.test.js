@@ -1,94 +1,52 @@
+// The signature itself is the gateway's, held to Cloudflare's outputs in tests/yapit/gateway/test_web_bot_auth.py.
+// Here: every request the extraction service sends carries the headers the signer gave for that request's authority.
 import { after, test } from "node:test";
 import assert from "node:assert/strict";
-import { createPrivateKey } from "node:crypto";
-import { verify } from "web-bot-auth";
-import { verifierFromJWK } from "web-bot-auth/crypto";
-import { ARTICLE, SHELL, html, redirect, stubWeb, text } from "./stub-web.js";
+import { ARTICLE, SHELL, html, redirect, signedFor, stubWeb, text } from "./stub-web.js";
 
-// The Ed25519 test key of RFC 9421, appendix B.1.4. Its thumbprint is the keyid Cloudflare's
-// research server lists for it at /.well-known/http-message-signatures-directory.
-const RFC_9421_KEY = {
-	kty: "OKP",
-	crv: "Ed25519",
-	d: "n4Ni-HpISpVObnQMW0wOhCKROaIKqKtW_2ZYb2p9KcU",
-	x: "JrQLj5P_89iXES9-vFgrIy29clF9CC_oPPsw3c5D0bs",
-};
-const RFC_9421_KEYID = "poqkLGiymh_W0uP6PZFw-dvez3QJT5SolqXBCW38r0U";
-
-const web = await stubWeb((req, res) => {
-	if (req.url === "/robots.txt") return text(res, "User-agent: *\nAllow: /\n");
-	if (req.url === "/moved") return redirect(res, "http://elsewhere.test/page");
-	// Chromium names image types in Accept; the plain fetch does not.
-	const browser = req.headers.accept?.includes("image/");
-	if (req.url === "/app") return html(res, browser ? ARTICLE : SHELL);
-	if (req.url === "/app-moved") return browser ? redirect(res, "http://elsewhere.test/app") : html(res, SHELL);
-	html(res, ARTICLE);
-});
-const service = await web.start({
-	WEB_BOT_AUTH_PRIVATE_KEY: createPrivateKey({ key: RFC_9421_KEY, format: "jwk" }).export({ format: "der", type: "pkcs8" }).toString("base64"),
-	APP_URL: "https://yapit.example",
-});
+const web = await stubWeb(
+	(req, res) => {
+		if (req.url === "/robots.txt") return text(res, "User-agent: *\nAllow: /\n");
+		if (req.url === "/moved") return redirect(res, "http://elsewhere.test/page");
+		// Chromium names image types in Accept; the plain fetch does not.
+		const browser = req.headers.accept?.includes("image/");
+		if (req.url === "/app") return html(res, browser ? ARTICLE : SHELL);
+		if (req.url === "/app-moved") return browser ? redirect(res, "http://elsewhere.test/app") : html(res, SHELL);
+		html(res, ARTICLE);
+	},
+	{ signs: true },
+);
+const service = await web.start();
 after(() => service.close());
 
 const extract = (url) => service.post("/extract", { url, timeout_ms: 20_000 });
+const fromBrowser = (r) => r.headers.accept.includes("image/");
 
-/** Cloudflare's verifier, given the request as the site received it. */
-async function verifyAsCloudflare(seen) {
-	const verifier = await verifierFromJWK({ kty: "OKP", crv: "Ed25519", x: RFC_9421_KEY.x });
-	const request = new Request(`http://${seen.host}${seen.path}`, {
-		headers: {
-			Signature: seen.headers["signature"],
-			"Signature-Input": seen.headers["signature-input"],
-			"Signature-Agent": seen.headers["signature-agent"],
-		},
-	});
-	return verify(request, {
-		resolver: (candidate) => {
-			assert.equal(candidate.keyid, verifier.keyid);
-			return verifier;
-		},
-	});
+function assertSignedFor(seen, authority) {
+	assert.ok(seen, `the site saw the request to ${authority}`);
+	const expected = signedFor(authority);
+	assert.equal(seen.headers["signature"], expected.Signature);
+	assert.equal(seen.headers["signature-input"], expected["Signature-Input"]);
+	assert.equal(seen.headers["signature-agent"], expected["Signature-Agent"]);
 }
 
-async function assertSignedForItsAuthority(seen) {
-	assert.ok(seen, "the site saw the request");
-	assert.equal(seen.headers["signature-agent"], '"https://yapit.example"');
-	assert.match(seen.headers["signature-input"], /^sig1=\("@authority" "signature-agent"\);/);
-	const verified = await verifyAsCloudflare(seen);
-	assert.equal(verified.keyid, RFC_9421_KEYID);
-	assert.equal(verified.tag, "web-bot-auth");
-	assert.equal(verified.signatureAgent.uri, "https://yapit.example");
-	assert.ok(verified.expires > new Date(), "not expired on arrival");
-}
-
-test("the plain fetch's page request carries a signature Cloudflare's verifier accepts", async () => {
+test("the plain fetch's page request and robots.txt carry the signature for their authority", async () => {
 	assert.equal((await extract("http://signed.test/post")).status, 200);
-	await assertSignedForItsAuthority(web.requests.find((r) => r.host === "signed.test" && r.path === "/post"));
+	assertSignedFor(web.requests.find((r) => r.host === "signed.test" && r.path === "/post"), "signed.test");
+	assertSignedFor(web.requests.find((r) => r.host === "signed.test" && r.path === "/robots.txt"), "signed.test");
 });
 
-test("robots.txt is requested signed too", async () => {
-	assert.equal((await extract("http://robots-signed.test/post")).status, 200);
-	await assertSignedForItsAuthority(web.requests.find((r) => r.host === "robots-signed.test" && r.path === "/robots.txt"));
+test("each redirect hop of the plain fetch is signed for its own authority", async () => {
+	assert.equal((await extract("http://moving.test/moved")).status, 200);
+	assertSignedFor(web.requests.find((r) => r.host === "moving.test" && r.path === "/moved"), "moving.test");
+	assertSignedFor(web.requests.find((r) => r.host === "elsewhere.test" && r.path === "/page"), "elsewhere.test");
 });
 
-test("each redirect hop is signed for its own authority", async () => {
-	assert.equal((await extract("http://signed.test/moved")).status, 200);
-	await assertSignedForItsAuthority(web.requests.find((r) => r.host === "signed.test" && r.path === "/moved"));
-	await assertSignedForItsAuthority(web.requests.find((r) => r.host === "elsewhere.test" && r.path === "/page"));
-});
-
-test("Chromium's document request carries a signature Cloudflare's verifier accepts", async () => {
-	const response = await extract("http://signed.test/app");
-	assert.equal(response.body.extraction_method, "playwright");
-	const browserRequest = web.requests.find((r) => r.path === "/app" && r.headers.accept.includes("image/"));
-	await assertSignedForItsAuthority(browserRequest);
-	assert.equal(browserRequest.headers["user-agent"], "Mozilla/5.0 (compatible; Yapit/1.0; +https://yapit.md/bot)");
-});
-
-test("Chromium signs a redirect to another host for that host", async () => {
+test("Chromium's document requests, across a redirect to another host, are signed for their own authority", async () => {
 	const response = await extract("http://chromium-moves.test/app-moved");
 	assert.equal(response.body.extraction_method, "playwright");
-	const browserHop = (host, path) => web.requests.find((r) => r.host === host && r.path === path && r.headers.accept.includes("image/"));
-	await assertSignedForItsAuthority(browserHop("chromium-moves.test", "/app-moved"));
-	await assertSignedForItsAuthority(browserHop("elsewhere.test", "/app"));
+	const browserRequest = (host, path) => web.requests.find((r) => r.host === host && r.path === path && fromBrowser(r));
+	assertSignedFor(browserRequest("chromium-moves.test", "/app-moved"), "chromium-moves.test");
+	assertSignedFor(browserRequest("elsewhere.test", "/app"), "elsewhere.test");
+	assert.equal(browserRequest("elsewhere.test", "/app").headers["user-agent"], "Mozilla/5.0 (compatible; Yapit/1.0; +https://yapit.md/bot)");
 });

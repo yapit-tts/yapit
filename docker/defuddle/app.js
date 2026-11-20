@@ -13,10 +13,12 @@ import { fileURLToPath } from "node:url";
 import { Defuddle } from "defuddle/node";
 import { chromium } from "playwright";
 import { MAX_REDIRECTS, USER_AGENT, Refusal, assertNotChallenged, createFetcher, readCapped } from "./fetcher.js";
-import { requestSigner } from "./signature.js";
 
 const PROXY_URL = process.env.PROXY_URL;
 if (!PROXY_URL) throw new Error("PROXY_URL is required (e.g. http://smokescreen:4750)");
+
+const SIGNER_URL = process.env.SIGNER_URL;
+if (!SIGNER_URL) throw new Error("SIGNER_URL is required (e.g. http://gateway:8002/sign)");
 
 const PORT = 8001;
 const MAX_CONCURRENT_BROWSER = 50;
@@ -25,8 +27,7 @@ const MAX_PAGE_SIZE = 20 * 1024 * 1024;
 const BOT_UA = USER_AGENT + " bot";
 const BOT_UA_DOMAINS = ["github.com"];
 
-// Empty WEB_BOT_AUTH_PRIVATE_KEY: requests go out unsigned, as on a self-hosted instance.
-const fetcher = createFetcher(PROXY_URL, requestSigner(process.env.WEB_BOT_AUTH_PRIVATE_KEY, process.env.APP_URL));
+const fetcher = createFetcher(PROXY_URL, SIGNER_URL);
 const bundle = readFileSync(new URL("defuddle_bundle.js", import.meta.url), "utf-8");
 
 class CapacityError extends Error {
@@ -137,7 +138,7 @@ export async function renderPage(url, timeoutMs, read) {
 			return route.abort("blockedbyclient");
 		}
 		const response = await route.fetch({
-			headers: { ...request.headers(), ...fetcher.signatureHeaders(request.url()) },
+			headers: { ...request.headers(), ...(await fetcher.signatureHeaders(request.url())) },
 			maxRedirects: 0,
 		});
 		const location = response.headers().location;

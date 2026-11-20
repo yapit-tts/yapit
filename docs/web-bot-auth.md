@@ -10,7 +10,7 @@ What the fetcher does, for whoever reads it from outside, is on the page its use
 | --- | --- |
 | One user agent, `Mozilla/5.0 (compatible; Yapit/1.0; +https://yapit.md/bot)`, for every request | `docker/defuddle/fetcher.js`, `yapit/gateway/document/http.py` |
 | `robots.txt`, product token `Yapit`, checked before every page request and redirect hop | `docker/defuddle/fetcher.js`; the gateway asks the extraction service's `POST /robots` |
-| Request signatures (RFC 9421, Cloudflare's Web Bot Auth profile) | `docker/defuddle/signature.js` for the extraction service, `yapit/gateway/web_bot_auth.py` for the gateway's download |
+| Request signatures (RFC 9421, Cloudflare's Web Bot Auth profile) | `yapit/gateway/web_bot_auth.py`, the one signer; the extraction service asks its `POST /sign` (gateway port 8002) for each request's headers |
 | The key directory, `/.well-known/http-message-signatures-directory` | `yapit/gateway/web_bot_auth.py`, routed by `frontend/nginx.conf` |
 | A `cf-mitigated: challenge` response reported to the reader as the site's bot protection | `docker/defuddle/fetcher.js`, `yapit/gateway/document/http.py` |
 
@@ -24,16 +24,16 @@ An Ed25519 private key, as base64 PKCS#8 DER on one line:
 openssl genpkey -algorithm ed25519 -outform DER | base64 -w0
 ```
 
-It lives in `.env.sops` as `PROD_WEB_BOT_AUTH_PRIVATE_KEY` ([[env-config]]), so prod alone signs; `.env.dev` and `.env.selfhost.example` leave `WEB_BOT_AUTH_PRIVATE_KEY` empty. On the VPS it reaches two containers and no image. The gateway reads it from `.env`. The extraction service gets it through compose interpolation (`docker-compose.prod.yml`), together with `APP_URL`, the https origin its `Signature-Agent` names. The gateway does not start without the variable, empty or not, since Settings has no defaults.
+It lives in `.env.sops` as `PROD_WEB_BOT_AUTH_PRIVATE_KEY` ([[env-config]]), so prod alone signs; `.env.dev` and `.env.selfhost.example` leave `WEB_BOT_AUTH_PRIVATE_KEY` empty. On the VPS it reaches the gateway alone, from `.env`, and no image. The gateway does not start without the variable, empty or not, since Settings has no defaults.
 
 Cloudflare registers the keys it finds in the directory. A new key means submitting again (Cloudflare's docs: a key already registered is rotated with them), so changing it is an operation, not a deploy.
 
-The extraction service runs Chromium without a sandbox on pages a reader chooses ([[security]]); a renderer exploit there could read the key.
+The extraction service, which runs Chromium without a sandbox on pages a reader chooses ([[security]]), never holds the key. It asks the gateway's signer for the headers of each request: an authority in, `Signature`, `Signature-Input` and `Signature-Agent` out, valid 60 seconds and always naming yapit's own directory. The signer listens on gateway port 8002, which nginx does not proxy and no compose file publishes. A renderer exploit there can get signatures for any host it names while it runs, each good for a minute; it cannot take the key, and the signing stops when the container is replaced.
 
 ## Checking it
 
-- `make test-extraction` holds both of the extraction service's paths to Cloudflare's `web-bot-auth` verifier; `tests/yapit/gateway/test_web_bot_auth.py` holds the gateway's signatures byte for byte to Cloudflare's outputs.
-- `make test-extraction-live` sends both paths' requests, signed with the RFC 9421 test key, to Cloudflare Research's server, which says whether it verified them.
+- `tests/yapit/gateway/test_web_bot_auth.py` holds the signer byte for byte to Cloudflare's outputs; `make test-extraction` checks that every request of the extraction service carries the signer's headers for its own authority.
+- `make test-signing-live` sends a request signed with the RFC 9421 test key to Cloudflare Research's server, which says whether it verified it.
 - After a deploy with the key: `cargo install http-signature-directory && http-signature-directory https://yapit.md` validates the live directory the way Cloudflare's tooling does.
 
 ## Applying

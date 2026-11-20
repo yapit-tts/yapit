@@ -79,7 +79,7 @@ test: test-unit test-frontend test-extraction test-integration
 test-local: test-unit test-frontend test-extraction test-integration-local
 
 test-unit:
-	uv run pytest tests --ignore=tests/integration -v -m "not gemini"
+	uv run pytest tests --ignore=tests/integration -v -m "not gemini and not live"
 
 test-frontend:
 	npm test --prefix frontend
@@ -90,10 +90,9 @@ test-extraction:
 	docker build -f docker/defuddle/Dockerfile --target test -t yapit-defuddle-test .
 	docker run --rm --network none yapit-defuddle-test
 
-# Request signing against Cloudflare Research's live verifier; needs the internet, so not part of `make test`.
-test-extraction-live:
-	docker build -f docker/defuddle/Dockerfile --target test -t yapit-defuddle-test .
-	docker run --rm yapit-defuddle-test node test/cloudflare-research.check.js
+# The gateway's request signatures against Cloudflare Research's live verifier; needs the internet, so not part of `make test`.
+test-signing-live:
+	uv run pytest tests -v -m live
 
 test-integration:
 	uv run pytest tests/integration -v

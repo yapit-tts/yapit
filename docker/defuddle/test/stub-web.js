@@ -8,7 +8,21 @@
 import http from "node:http";
 import net from "node:net";
 
-export async function stubWeb(handler) {
+/**
+ * With `signs`, the stand-in for the gateway's signer answers headers that name the authority it was
+ * asked for, so a test can tell which request carried whose signature; without, it answers none, as a
+ * gateway with no key does.
+ */
+export async function stubWeb(handler, { signs = false } = {}) {
+	const signer = http.createServer(async (req, res) => {
+		let body = "";
+		for await (const chunk of req) body += chunk;
+		const { authority } = JSON.parse(body);
+		res.writeHead(200, { "Content-Type": "application/json" });
+		res.end(JSON.stringify(signs ? signedFor(authority) : {}));
+	});
+	await listen(signer);
+
 	const requests = [];
 	const site = http.createServer((req, res) => {
 		requests.push({ host: req.headers.host, path: req.url, headers: req.headers });
@@ -48,7 +62,7 @@ export async function stubWeb(handler) {
 		requestsFor: (path) => requests.filter((r) => r.path === path),
 		proxyUrl: `http://127.0.0.1:${proxy.address().port}`,
 		async start(env = {}) {
-			Object.assign(process.env, { PROXY_URL: this.proxyUrl }, env);
+			Object.assign(process.env, { PROXY_URL: this.proxyUrl, SIGNER_URL: `http://127.0.0.1:${signer.address().port}/sign` }, env);
 			const service = await import("../app.js");
 			await listen(service.server);
 			const base = `http://127.0.0.1:${service.server.address().port}`;
@@ -64,6 +78,7 @@ export async function stubWeb(handler) {
 					site.close();
 					proxy.closeAllConnections();
 					proxy.close();
+					signer.close();
 				},
 			};
 		},
@@ -93,6 +108,14 @@ export const ARTICLE = `<!doctype html><html><head><title>A walk in Vienna</titl
 
 /** An app shell: no text until a script runs, so the cascade reaches Chromium. */
 export const SHELL = `<!doctype html><html><head><title>App</title></head><body><div id="root"></div></body></html>`;
+
+export function signedFor(authority) {
+	return {
+		"Signature-Agent": '"https://yapit.example"',
+		"Signature-Input": `sig1=("@authority" "signature-agent");stub="${authority}"`,
+		Signature: `sig1=:${Buffer.from(authority).toString("base64")}:`,
+	};
+}
 
 function listen(server) {
 	return new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));

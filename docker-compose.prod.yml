@@ -109,9 +109,8 @@ services:
       - browser-net
     environment:
       PROXY_URL: http://smokescreen:4750
-      # Signs every request it sends when set (empty: unsigned); APP_URL serves the matching key directory.
-      WEB_BOT_AUTH_PRIVATE_KEY: ${WEB_BOT_AUTH_PRIVATE_KEY:-}
-      APP_URL: ${APP_URL}
+      # The gateway's signer (yapit/gateway/web_bot_auth.py); it holds the key, this container never does.
+      SIGNER_URL: http://gateway:8002/sign
     expose:
       - "8001"
     healthcheck:
