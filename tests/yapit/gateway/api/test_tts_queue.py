@@ -10,6 +10,7 @@ from yapit.contracts import (
     TTS_BILLING_STREAM,
     TTS_INFLIGHT,
     TTS_JOBS,
+    TTS_SUBSCRIBERS,
     SynthesisJob,
     SynthesisParameters,
     WorkerResult,
@@ -128,10 +129,14 @@ async def test_an_error_result_leaves_the_marker_of_another_job_for_its_variant(
     failed_job, current_job = uuid.uuid4(), uuid.uuid4()
     await redis.set(TTS_INFLIGHT.format(hash="shared"), str(current_job))
     failed = worker_result(failed_job, "shared").model_copy(update={"audio_base64": None, "error": "Synthesis failed"})
+    listener = f"listener:{failed.document_id}:0"
+    await redis.sadd(TTS_SUBSCRIBERS.format(hash="shared"), listener)
 
     await _process_result(redis, failed)
 
     assert await redis.get(TTS_INFLIGHT.format(hash="shared")) == str(current_job).encode()
+    # Still subscribed: the listener is told of the result of the job in flight, not of this error
+    assert await redis.smembers(TTS_SUBSCRIBERS.format(hash="shared")) == {listener.encode()}
 
 
 async def test_two_jobs_for_one_variant_bill_once_with_their_results_past_the_hot_caches_lifetime_apart(app):

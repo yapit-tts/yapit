@@ -30,7 +30,7 @@ from yapit.contracts import (
 )
 from yapit.gateway import audio_job
 from yapit.gateway.api.v1.ws import WSCursorMoved, WSSynthesizeRequest, _handle_cursor_moved, _handle_synthesize
-from yapit.gateway.audio_job import SLICE_SIZE, _reconcile, feed_job, run_audio_job_feeder
+from yapit.gateway.audio_job import SLICE_SIZE, _reconcile, feed_job, publish_job_state, run_audio_job_feeder
 from yapit.gateway.auth import User, authenticate, authenticate_optional
 from yapit.gateway.config import get_settings
 from yapit.gateway.db import create_session
@@ -98,13 +98,15 @@ class Pipeline:
         """The queue's jobs, in the order workers pull them."""
         job_ids = await self.redis.zrange(QUEUE, 0, -1)
         wrappers = [await self.redis.hget(TTS_JOBS, job_id) for job_id in job_ids]
+        assert all(wrappers), "a queued job id has no job"
         return [SynthesisJob.model_validate_json(json.loads(w)["job"]) for w in wrappers if w]
 
     async def pull(self) -> SynthesisJob | None:
         if not await self.redis.zcard(QUEUE):
             return None
         pulled = await pull_job(self.redis, QUEUE_CONFIG, timeout=1)
-        return SynthesisJob.model_validate_json(pulled.raw_job) if pulled else None
+        assert pulled is not None, "a queued job id has no job"
+        return SynthesisJob.model_validate_json(pulled.raw_job)
 
     async def finish(self, job: SynthesisJob, error: str | None = None, silent: bool = False) -> None:
         """The worker's result for a job, then the feeder's step for every job it woke."""
@@ -314,7 +316,7 @@ async def test_a_job_on_an_unlimited_plan_runs_to_its_last_block(client, kokoro,
     await pipeline.run()
     document_id = await create_document(client, 50)
 
-    await start(client, document_id, 0, 49)
+    assert (await start(client, document_id, 0, 49)).status_code == 201
     await pipeline.run()
 
     # Both documents' paragraphs read the same text, so the second job synthesizes only blocks 40 to 49
@@ -635,12 +637,20 @@ async def test_a_document_without_a_job_answers_none(client, kokoro):
     assert (response.status_code, response.json()) == (200, None)
 
 
-async def heard(pubsub) -> list[dict]:
-    """The job states a tab watching the channel was sent, in order."""
+async def heard(app, pubsub) -> list[dict | None]:
+    """The job states a tab watching the channel was sent, in order, up to now.
+
+    Up to now: a marker published after them arrives after them, as a channel delivers in order.
+    """
+    (channel,) = pubsub.channels
+    await app.state.redis_client.publish(channel, json.dumps({"type": "heard_so_far"}))
     messages = []
-    while (message := await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.1)) is not None:
-        messages.append(json.loads(message["data"]))
-    return [m["job"] for m in messages if m["type"] == "audio_job"]
+    while (message := await pubsub.get_message(ignore_subscribe_messages=True, timeout=5)) is not None:
+        data = json.loads(message["data"])
+        if data["type"] == "heard_so_far":
+            return [m["job"] for m in messages if m["type"] == "audio_job"]
+        messages.append(data)
+    raise AssertionError("the channel went quiet before its marker arrived")
 
 
 async def watching(app, document_id):
@@ -657,7 +667,7 @@ async def test_a_tab_on_the_document_hears_each_block_the_job_caches_and_its_end
 
     await pipeline.run()
 
-    states = await heard(pubsub)
+    states = await heard(app, pubsub)
     assert [(s["status"], s["cached_blocks"]) for s in states][-3:] == [("running", 1), ("running", 2), ("done", 3)]
     await pubsub.aclose()
 
@@ -670,7 +680,7 @@ async def test_a_tab_on_the_document_hears_its_job_cancelled(client, kokoro, pip
 
     await client.delete(f"/v1/documents/{document_id}/audio-job")
 
-    assert [s["status"] for s in await heard(pubsub)] == ["cancelled"]
+    assert [s["status"] for s in await heard(app, pubsub)] == ["cancelled"]
     await pubsub.aclose()
 
 
@@ -682,5 +692,28 @@ async def test_a_tab_on_another_document_hears_nothing_of_the_job(client, kokoro
 
     await pipeline.run()
 
-    assert await heard(pubsub) == []
+    assert await heard(app, pubsub) == []
+    await pubsub.aclose()
+
+
+async def test_a_tab_that_watches_the_document_hears_where_its_job_stands(client, kokoro, pipeline, app):
+    document_id = await create_document(client, 40)
+    await start(client, document_id, 0, 39)
+    await pipeline.feed()
+    pubsub = await watching(app, document_id)
+
+    # What the WebSocket's watch message publishes, once it has subscribed the tab
+    await publish_job_state(app.state.redis_client, app.state.audio_cache, DEFAULT_TEST_USER.id, document_id)
+
+    assert [(s["status"], s["total_blocks"]) for s in await heard(app, pubsub)] == [("running", 40)]
+    await pubsub.aclose()
+
+
+async def test_a_tab_that_watches_a_document_without_a_job_hears_none(client, kokoro, app):
+    document_id = await create_document(client, 3)
+    pubsub = await watching(app, document_id)
+
+    await publish_job_state(app.state.redis_client, app.state.audio_cache, DEFAULT_TEST_USER.id, document_id)
+
+    assert await heard(app, pubsub) == [None]
     await pubsub.aclose()
