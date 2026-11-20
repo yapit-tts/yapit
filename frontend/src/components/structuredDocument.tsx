@@ -887,11 +887,13 @@ function ActionButtons({
   hasContent,
   onCopy,
   onDownload,
+  onPrepareAudio,
 }: {
   copied: boolean;
   hasContent: boolean;
   onCopy: () => void;
   onDownload: (preserveAnnotations: boolean) => void;
+  onPrepareAudio?: () => void;
 }) {
   return (
     <div className="flex items-center gap-1 shrink-0">
@@ -925,9 +927,11 @@ function ActionButtons({
         </DropdownMenuContent>
       </DropdownMenu>
       <button
-        disabled
-        className="p-2 rounded opacity-40 cursor-not-allowed"
-        title="Export as audio (coming soon)"
+        onClick={onPrepareAudio}
+        disabled={!onPrepareAudio}
+        className="p-2 rounded hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+        title="Prepare audio"
+        aria-label="Prepare audio"
       >
         <Music className="h-4 w-4 text-muted-foreground" />
       </button>
@@ -950,6 +954,7 @@ interface StructuredDocumentViewProps {
   expandedSections?: Set<string>;
   onSectionExpand?: (sectionId: string) => void;
   canCollapseSection?: (section: Section) => boolean;
+  onPrepareAudio?: () => void;
 }
 
 // Memoized to prevent re-renders from parent's audioProgress updates
@@ -965,6 +970,7 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
   expandedSections,
   onSectionExpand,
   canCollapseSection,
+  onPrepareAudio,
 }: StructuredDocumentViewProps) {
   const contentRef = useRef<HTMLDivElement>(null);
   const titleRef = useRef<HTMLHeadingElement>(null);
@@ -1215,7 +1221,7 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
               {title}
             </p>
             <div className="flex justify-end mt-2 sm:mt-0">
-              <ActionButtons copied={copied} hasContent={!!markdownContent} onCopy={handleCopyMarkdown} onDownload={handleDownloadMarkdown} />
+              <ActionButtons copied={copied} hasContent={!!markdownContent} onCopy={handleCopyMarkdown} onDownload={handleDownloadMarkdown} onPrepareAudio={onPrepareAudio} />
             </div>
           </div>
         ) : (
@@ -1224,7 +1230,7 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
             !hasMaxWidth && "-mx-4 px-4 sm:-mx-[8%] sm:px-[8%] md:-mx-[10%] md:px-[10%]"
           )}>
             <div className="w-full flex justify-end">
-              <ActionButtons copied={copied} hasContent={!!markdownContent} onCopy={handleCopyMarkdown} onDownload={handleDownloadMarkdown} />
+              <ActionButtons copied={copied} hasContent={!!markdownContent} onCopy={handleCopyMarkdown} onDownload={handleDownloadMarkdown} onPrepareAudio={onPrepareAudio} />
             </div>
           </div>
         )}
@@ -1279,7 +1285,7 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
             )}
           </h1>
           <div className="flex justify-end mt-2 sm:mt-0 shrink-0" onClick={(e) => e.stopPropagation()}>
-            <ActionButtons copied={copied} hasContent={!!markdownContent} onCopy={handleCopyMarkdown} onDownload={handleDownloadMarkdown} />
+            <ActionButtons copied={copied} hasContent={!!markdownContent} onCopy={handleCopyMarkdown} onDownload={handleDownloadMarkdown} onPrepareAudio={onPrepareAudio} />
           </div>
         </div>
       ) : (
@@ -1313,7 +1319,7 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
             ) : (
               <div className="flex-1" />
             )}
-            <ActionButtons copied={copied} hasContent={!!markdownContent} onCopy={handleCopyMarkdown} onDownload={handleDownloadMarkdown} />
+            <ActionButtons copied={copied} hasContent={!!markdownContent} onCopy={handleCopyMarkdown} onDownload={handleDownloadMarkdown} onPrepareAudio={onPrepareAudio} />
           </div>
         </div>
       )}
