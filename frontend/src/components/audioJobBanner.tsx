@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { Link } from "react-router";
-import { AlertTriangle, AudioLines, X } from "lucide-react";
+import { AlertTriangle, AudioLines, Square, X } from "lucide-react";
+import { ProgressLine } from "@/components/audioParts";
+import { OPEN_AUDIO_PANEL_EVENT, audioVariant } from "@/lib/audioVariant";
 import { Button } from "@/components/ui/button";
 import type { AudioJob } from "@/lib/audioJob";
 
@@ -22,6 +24,12 @@ export function AudioJobBanner({ job, onCancel }: { job: AudioJob | null; onCanc
 
   if (!job || dismissed || job.status === "cancelled" || job.status === "done") return null;
   if (status !== "running" && !sawRunning) return null;
+
+  const variant = audioVariant();
+  if (variant === "b") return null;
+  if (variant === "a" || variant === "c") {
+    return <VariantBanner job={job} variant={variant} onCancel={onCancel} onDismiss={() => setDismissed(true)} />;
+  }
 
   const progress = `${numberFormat.format(job.cached_blocks)} of ${numberFormat.format(job.total_blocks)} blocks`;
   const isProblem = job.status !== "running";
@@ -61,4 +69,43 @@ function endedReason(status: "usage_limit" | "failed", error: string | null): st
     case "usage_limit": return "Preparing stopped: your plan's characters ran out";
     case "failed": return `Preparing stopped${error ? `: ${error}` : ""}`;
   }
+}
+
+/** Variants A and C: an unboxed line above the controls. A carries its Stop; C opens the panel, which carries it. */
+function VariantBanner({ job, variant, onCancel, onDismiss }: { job: AudioJob; variant: "a" | "c"; onCancel: () => Promise<void>; onDismiss: () => void }) {
+  const count = `${numberFormat.format(job.cached_blocks)} of ${numberFormat.format(job.total_blocks)}`;
+  if (job.status !== "running") {
+    const reason = job.status === "usage_limit" ? "your plan's characters ran out" : job.error ?? "the server stopped it";
+    return (
+      <div role="status" className="flex items-center justify-center gap-2 mb-3 text-sm text-muted-foreground">
+        <AlertTriangle className="h-4 w-4 shrink-0 text-accent-warning" />
+        <span>{variant === "a" ? "Audiobook" : "Audio"} stopped at {count}: {reason}</span>
+        {job.status === "usage_limit" && <Link to="/subscription" className="text-primary hover:underline">See plans</Link>}
+        <button onClick={onDismiss} className="p-2 rounded-md text-muted-foreground hover:text-primary" aria-label="Dismiss"><X className="h-4 w-4" /></button>
+      </div>
+    );
+  }
+  if (variant === "c") {
+    return (
+      <div role="status" className="flex justify-center mb-2">
+        <button
+          onClick={() => window.dispatchEvent(new Event(OPEN_AUDIO_PANEL_EVENT))}
+          className="flex items-center gap-2 px-2 py-1 rounded-md text-sm text-muted-foreground hover:text-primary transition-colors"
+          title="Show which sections are generated"
+        >
+          <AudioLines className="h-4 w-4" />
+          Generating audio <span className="font-mono tabular-nums">{count}</span>
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div role="status" className="flex items-center justify-center gap-3 mb-2 max-w-md mx-auto text-sm text-muted-foreground">
+      <AudioLines className="h-4 w-4 shrink-0" />
+      <span className="shrink-0">Making audiobook</span>
+      <div className="flex-1 min-w-12"><ProgressLine done={job.cached_blocks} total={job.total_blocks} /></div>
+      <span className="font-mono tabular-nums shrink-0">{count}</span>
+      <Button variant="ghost" size="sm" className="h-8" onClick={() => void onCancel()}><Square />Stop</Button>
+    </div>
+  );
 }

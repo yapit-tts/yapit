@@ -1,6 +1,10 @@
 import { StructuredDocumentView } from '@/components/structuredDocument';
 import { PlaybackOverlay } from '@/components/playbackOverlay';
 import { PrepareAudioDialog } from '@/components/prepareAudioDialog';
+import { AudiobookDialog } from '@/components/audiobookDialog';
+import { DownloadAudioPopover } from '@/components/downloadAudioPopover';
+import { GenerateAudioPanel } from '@/components/generateAudioPanel';
+import { OPEN_AUDIO_PANEL_EVENT, audioVariant } from '@/lib/audioVariant';
 import { useOutliner } from '@/hooks/useOutliner';
 import { useAudioExport } from '@/hooks/useAudioExport';
 import { useAudioJob } from '@/hooks/useAudioJob';
@@ -379,7 +383,19 @@ const PlaybackPage = () => {
     engine.seekToBlock(audioBlockIdx);
   }, [engine]);
 
-  const openPrepareAudio = useCallback(() => setShowPrepareAudio(true), []);
+  const [audioAnchor, setAudioAnchor] = useState<HTMLElement | null>(null);
+  const openPrepareAudio = useCallback((anchor: HTMLElement) => {
+    setAudioAnchor(anchor);
+    setShowPrepareAudio(true);
+  }, []);
+  useEffect(() => {
+    const open = () => setShowPrepareAudio(true);
+    window.addEventListener(OPEN_AUDIO_PANEL_EVENT, open);
+    return () => window.removeEventListener(OPEN_AUDIO_PANEL_EVENT, open);
+  }, []);
+  const variant = audioVariant();
+  const job = audioJob.job;
+  const audioProgress = variant === "b" && job?.status === "running" && job.total_blocks > 0 ? job.cached_blocks / job.total_blocks : null;
 
   const canCollapseSection = useCallback((section: Section) => {
     const idx = engine.getSnapshot().currentBlock;
@@ -510,6 +526,7 @@ const PlaybackPage = () => {
           onSectionExpand={shouldShowOutliner ? handleSectionToggle : undefined}
           canCollapseSection={shouldShowOutliner ? canCollapseSection : undefined}
           onPrepareAudio={documentBlocks.length > 0 ? openPrepareAudio : undefined}
+          audioProgress={audioProgress}
         />
         <PlaybackOverlay
           engine={engine}
@@ -540,7 +557,28 @@ const PlaybackPage = () => {
         />
       </div>
 
-      {documentId && (
+      {documentId && variant !== null && (() => {
+        const shared = {
+          open: showPrepareAudio,
+          onOpenChange: setShowPrepareAudio,
+          documentId,
+          sections,
+          documentBlocks,
+          expandedSections,
+          voiceSelection,
+          onVoiceChange: setVoiceSelection,
+          job: audioJob.job,
+          onStart: audioJob.start,
+          onCancel: audioJob.cancel,
+          exportProgress: audioExport.progress,
+          onDownload: audioExport.download,
+        };
+        if (variant === "a") return <AudiobookDialog {...shared} />;
+        if (variant === "b") return <DownloadAudioPopover {...shared} anchor={audioAnchor} />;
+        return <GenerateAudioPanel {...shared} />;
+      })()}
+
+      {documentId && variant === null && (
         <PrepareAudioDialog
           open={showPrepareAudio}
           onOpenChange={setShowPrepareAudio}
