@@ -765,20 +765,21 @@ async def test_a_tab_on_another_document_hears_nothing_of_the_job(client, kokoro
     await pubsub.aclose()
 
 
-async def test_a_tab_that_watches_the_document_hears_where_its_job_stands(client, kokoro, pipeline, app):
+async def test_the_state_published_for_a_tab_watching_the_document_is_where_its_job_stands(
+    client, kokoro, pipeline, app
+):
     document_id = await create_document(client, 40)
     await start(client, document_id, 0, 39)
     await pipeline.feed()
     pubsub = await watching(app, document_id)
 
-    # What the WebSocket's watch message publishes, once it has subscribed the tab
     await publish_job_state(app.state.redis_client, app.state.audio_cache, DEFAULT_TEST_USER.id, document_id)
 
     assert [(s["status"], s["total_blocks"]) for s in await heard(app, pubsub)] == [("running", 40)]
     await pubsub.aclose()
 
 
-async def test_a_tab_that_watches_a_document_without_a_job_hears_none(client, kokoro, app):
+async def test_the_state_published_for_a_tab_watching_a_document_without_a_job_is_none(client, kokoro, app):
     document_id = await create_document(client, 3)
     pubsub = await watching(app, document_id)
 
