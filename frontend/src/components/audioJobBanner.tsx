@@ -26,8 +26,8 @@ export function AudioJobBanner({ job, onCancel }: { job: AudioJob | null; onCanc
   if (status !== "running" && !sawRunning) return null;
 
   const variant = audioVariant();
-  if (variant === "b") return null;
-  if (variant === "a" || variant === "c") {
+  if (variant === "b" && status === "running") return null;
+  if (variant !== null) {
     return <VariantBanner job={job} variant={variant} onCancel={onCancel} onDismiss={() => setDismissed(true)} />;
   }
 
@@ -71,8 +71,8 @@ function endedReason(status: "usage_limit" | "failed", error: string | null): st
   }
 }
 
-/** Variants A and C: an unboxed line above the controls. A carries its Stop; C opens the panel, which carries it. */
-function VariantBanner({ job, variant, onCancel, onDismiss }: { job: AudioJob; variant: "a" | "c"; onCancel: () => Promise<void>; onDismiss: () => void }) {
+/** The variants' line above the controls: why a job stopped short, in all three; while it runs, A's progress with Stop, or C's that opens the panel. */
+function VariantBanner({ job, variant, onCancel, onDismiss }: { job: AudioJob; variant: "a" | "b" | "c"; onCancel: () => Promise<void>; onDismiss: () => void }) {
   const count = `${numberFormat.format(job.cached_blocks)} of ${numberFormat.format(job.total_blocks)}`;
   if (job.status !== "running") {
     const reason = job.status === "usage_limit" ? "your plan's characters ran out" : job.error ?? "the server stopped it";

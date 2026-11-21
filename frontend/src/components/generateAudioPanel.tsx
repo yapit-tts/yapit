@@ -47,7 +47,7 @@ function GenerateAudioForm(props: GenerateAudioPanelProps) {
       </div>
 
       <ul aria-label="Sections" className="flex-1 overflow-y-auto px-3 py-2">
-        {s.rows.map(row => <PanelRow key={row.id} row={row} generating={running !== null} onToggle={() => s.toggle(row.id)} />)}
+        {s.rows.map(row => <PanelRow key={row.id} row={row} onToggle={() => s.toggle(row.id)} />)}
       </ul>
 
       <div className="flex flex-col gap-3 px-5 py-4 border-t">
@@ -91,9 +91,9 @@ function GenerateAudioForm(props: GenerateAudioPanelProps) {
   );
 }
 
-function PanelRow({ row, generating, onToggle }: { row: RowState; generating: boolean; onToggle: () => void }) {
+function PanelRow({ row, onToggle }: { row: RowState; onToggle: () => void }) {
   const made = row.blocksToMake === 0;
-  const inProgress = generating && row.ticked && row.blocksToMake !== null && !made;
+  const inProgress = row.inJob && row.blocksToMake !== null && !made;
   const madeBlocks = row.blocks - (row.blocksToMake ?? row.blocks);
   return (
     <li>

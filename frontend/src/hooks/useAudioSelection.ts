@@ -42,6 +42,8 @@ export interface RowState extends ExportRow {
   blocks: number;
   /** Blocks of the row whose audio is not made yet in the chosen voice; null until the estimate arrives. */
   blocksToMake: number | null;
+  /** Whether this document's running job, in the chosen voice, covers any of the row's blocks. */
+  inJob: boolean;
 }
 
 /** The ticked sections, what making their audio costs, and what stands in its way: the state every audio dialog renders. */
@@ -73,16 +75,26 @@ export function useAudioSelection(props: AudioSelectionProps, onStarted: () => v
 
   // While this document's job runs in the chosen voice, a block it has made since the estimate counts as made.
   const madeByJob = new Set<number>();
+  const coveredByJob = new Set<number>();
   if (jobRunsHere && job.model === model && job.voice === voiceSlug) {
     const pending = new Set(job.pending_blocks);
-    for (const r of job.ranges) for (let idx = r.first_block; idx <= r.last_block; idx++) if (!pending.has(idx)) madeByJob.add(idx);
+    for (const r of job.ranges) {
+      for (let idx = r.first_block; idx <= r.last_block; idx++) {
+        coveredByJob.add(idx);
+        if (!pending.has(idx)) madeByJob.add(idx);
+      }
+    }
   }
   const toMake = (idx: number) => (estimate?.uncached_characters[idx] ?? 0) > 0 && !madeByJob.has(idx);
 
   const rows: RowState[] = baseRows.map(r => {
     let blocksToMake = 0;
-    for (let idx = r.firstBlock; idx <= r.lastBlock; idx++) if (toMake(idx)) blocksToMake++;
-    return { ...r, ticked: ticked.has(r.id), blocks: r.lastBlock - r.firstBlock + 1, blocksToMake: estimate ? blocksToMake : null };
+    let inJob = false;
+    for (let idx = r.firstBlock; idx <= r.lastBlock; idx++) {
+      if (toMake(idx)) blocksToMake++;
+      if (coveredByJob.has(idx)) inJob = true;
+    }
+    return { ...r, ticked: ticked.has(r.id), blocks: r.lastBlock - r.firstBlock + 1, blocksToMake: estimate ? blocksToMake : null, inJob };
   });
   const tickedRows = rows.filter(r => r.ticked);
   const totals: ExportTotals = exportTotals(tickedRows, estimate?.uncached_characters ?? null);
