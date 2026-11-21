@@ -594,7 +594,7 @@ async def test_a_block_the_worker_fails_does_not_stall_the_job(client, kokoro, p
     assert job["error"].startswith("1 of the blocks have no audio")
 
 
-async def test_a_block_with_no_audio_to_synthesize_counts_as_prepared(client, kokoro, pipeline):
+async def test_a_block_with_no_audio_to_synthesize_counts_as_prepared(client, kokoro, pipeline, app):
     document_id = await create_document(client, 30)
     await start(client, document_id, 0, 29)
     await pipeline.feed()
@@ -607,6 +607,7 @@ async def test_a_block_with_no_audio_to_synthesize_counts_as_prepared(client, ko
     job = (await client.get(f"/v1/documents/{document_id}/audio-job")).json()
     assert (job["status"], job["cached_blocks"], job["pending_blocks"]) == ("done", 30, [])
     assert (await estimate(client, document_id))["uncached_characters"] == [0] * 30
+    assert await billed_blocks(app.state.redis_client) == [i for i in range(30) if i != silent.block_idx]
 
 
 async def test_the_feeder_queues_a_new_jobs_first_slice(client, kokoro, app, settings):
