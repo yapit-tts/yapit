@@ -43,6 +43,7 @@ from yapit.gateway.domain_models import (
     UserSubscription,
     Voice,
 )
+from yapit.gateway.exceptions import ResourceNotFoundError
 from yapit.gateway.result_consumer import _process_result
 from yapit.queue import QueueConfig, pull_job
 
@@ -365,7 +366,7 @@ async def test_a_job_over_a_document_its_user_can_no_longer_read_queues_nothing_
     await client.patch(f"/v1/documents/{document_id}", json={"is_public": False})
     await pipeline.run()
 
-    assert len(pipeline.synthesized) == 16
+    assert len(pipeline.synthesized) == SLICE_SIZE
     # Public again only so the second reader can read the job's state
     await client.patch(f"/v1/documents/{document_id}", json={"is_public": True})
     with signed_in_as(app, "second-reader"):
@@ -390,8 +391,13 @@ async def test_cancel_takes_the_jobs_waiting_blocks_off_the_queue(client, kokoro
     assert (job["status"], job["cached_blocks"]) == ("cancelled", 1)
 
 
+async def billed_documents(redis) -> set[uuid.UUID]:
+    entries = await redis.xrange(TTS_BILLING_STREAM)
+    return {uuid.UUID(json.loads(fields[b"data"])["document_id"]) for _, fields in entries}
+
+
 async def test_a_job_cancelled_and_replaced_while_its_block_is_queued_queues_nothing_more_of_it(
-    client, kokoro, pipeline, monkeypatch
+    client, kokoro, pipeline, app, monkeypatch
 ):
     cancelled = await create_document(client, 30)
     document_id = await create_document(client, 20, of="essay")
@@ -408,8 +414,71 @@ async def test_a_job_cancelled_and_replaced_while_its_block_is_queued_queues_not
     await pipeline.run()
 
     assert {job.document_id for job in pipeline.synthesized} == {document_id}
+    assert await billed_documents(app.state.redis_client) == {document_id}
     job = (await client.get(f"/v1/documents/{document_id}/audio-job")).json()
     assert (job["status"], job["cached_blocks"], len(pipeline.synthesized)) == ("done", 20, 20)
+
+
+async def test_a_job_cancelled_and_replaced_while_its_top_up_reads_the_database_leaves_the_next_job_whole(
+    client, kokoro, pipeline, monkeypatch
+):
+    cancelled = await create_document(client, 30)
+    document_id = await create_document(client, 20, of="essay")
+    get_voice = audio_job.get_voice
+
+    async def cancel_and_start_another_meanwhile(*args, **kwargs):
+        monkeypatch.setattr(audio_job, "get_voice", get_voice)
+        await client.delete(f"/v1/documents/{cancelled}/audio-job")
+        await start(client, document_id, 0, 19)
+        return await get_voice(*args, **kwargs)
+
+    await start(client, cancelled, 0, 29)
+    monkeypatch.setattr(audio_job, "get_voice", cancel_and_start_another_meanwhile)
+    await pipeline.run()
+
+    assert {job.document_id for job in pipeline.synthesized} == {document_id}
+    job = (await client.get(f"/v1/documents/{document_id}/audio-job")).json()
+    assert (job["status"], job["cached_blocks"], len(pipeline.synthesized)) == ("done", 20, 20)
+
+
+async def test_a_replaced_jobs_top_up_that_ends_it_leaves_the_next_job_running(client, kokoro, pipeline, monkeypatch):
+    cancelled = await create_document(client, 30)
+    document_id = await create_document(client, 20, of="essay")
+    get_voice = audio_job.get_voice
+
+    async def start_another_and_lose_the_voice(*args, **kwargs):
+        monkeypatch.setattr(audio_job, "get_voice", get_voice)
+        await client.delete(f"/v1/documents/{cancelled}/audio-job")
+        await start(client, document_id, 0, 19)
+        raise ResourceNotFoundError("Voice", "af_heart")
+
+    await start(client, cancelled, 0, 29)
+    monkeypatch.setattr(audio_job, "get_voice", start_another_and_lose_the_voice)
+    await pipeline.run()
+
+    job = (await client.get(f"/v1/documents/{document_id}/audio-job")).json()
+    assert (job["status"], job["cached_blocks"]) == ("done", 20)
+
+
+async def test_a_cancel_just_after_the_top_up_checks_its_job_takes_the_block_off_the_queue(
+    client, kokoro, pipeline, monkeypatch
+):
+    document_id = await create_document(client, 30)
+    is_current = audio_job._is_current
+
+    async def cancel_once_checked(*args):
+        monkeypatch.setattr(audio_job, "_is_current", is_current)
+        current = await is_current(*args)
+        await client.delete(f"/v1/documents/{document_id}/audio-job")
+        return current
+
+    await start(client, document_id, 0, 29)
+    monkeypatch.setattr(audio_job, "_is_current", cancel_once_checked)
+    await pipeline.feed()
+
+    assert await pipeline.queued_jobs() == []
+    job = (await client.get(f"/v1/documents/{document_id}/audio-job")).json()
+    assert (job["status"], job["cached_blocks"]) == ("cancelled", 0)
 
 
 async def test_cancel_leaves_a_block_a_listener_waits_on(client, kokoro, pipeline, app, settings):
@@ -522,7 +591,7 @@ async def test_a_block_the_worker_fails_does_not_stall_the_job(client, kokoro, p
 
     job = (await client.get(f"/v1/documents/{document_id}/audio-job")).json()
     assert (job["status"], job["cached_blocks"], job["pending_blocks"]) == ("failed", 29, [failing.block_idx])
-    assert job["error"].startswith("1 of the blocks could not be synthesized")
+    assert job["error"].startswith("1 of the blocks have no audio")
 
 
 async def test_a_block_with_no_audio_to_synthesize_counts_as_prepared(client, kokoro, pipeline):
