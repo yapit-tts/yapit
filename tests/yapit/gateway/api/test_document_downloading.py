@@ -1,140 +1,160 @@
-from unittest.mock import AsyncMock, Mock, patch
+import base64
+import json
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat
 from fastapi import HTTPException
 
+from yapit.gateway import web_bot_auth
 from yapit.gateway.api.v1.documents import _extract_document_info
+from yapit.gateway.document import defuddle_client
+from yapit.gateway.document import http as http_module
 from yapit.gateway.document.http import download_document
+
+MAX_SIZE = 100 * 1024 * 1024
+
+
+@pytest.fixture
+def web(monkeypatch):
+    """A stub site behind the download's client, and a stub extraction service answering its robots.txt checks.
+
+    Tests set `web.routes[url] = httpx.Response(...)` and `web.refused` to the URLs robots.txt refuses.
+    """
+    web = SimpleNamespace(routes={}, refused=set(), seen=[])
+
+    def site(request: httpx.Request) -> httpx.Response:
+        web.seen.append(request)
+        if str(request.url) not in web.routes:
+            raise httpx.ConnectError("unreachable", request=request)
+        return web.routes[str(request.url)]
+
+    def extraction_service(request: httpx.Request) -> httpx.Response:
+        if json.loads(request.content)["url"] in web.refused:
+            return httpx.Response(422, json={"error": "This site's robots.txt does not allow yapit to fetch this page"})
+        return httpx.Response(200, json={})
+
+    monkeypatch.setattr(http_module, "fetch_client", lambda: httpx.AsyncClient(transport=httpx.MockTransport(site)))
+    monkeypatch.setattr(
+        defuddle_client,
+        "_client",
+        httpx.AsyncClient(base_url="http://defuddle", transport=httpx.MockTransport(extraction_service)),
+    )
+    monkeypatch.setattr(http_module, "log_event", AsyncMock())
+    return web
 
 
 class TestDownloadDocument:
-    """Test download_document function."""
-
     @pytest.mark.asyncio
-    async def test_successful_download(self):
-        """Test successful document download."""
-        content = b"Test PDF content"
-
-        mock_response = AsyncMock()
-        mock_response.status_code = 200
-        mock_response.headers = {"content-type": "application/pdf"}
-        mock_response.aiter_bytes = lambda chunk_size=8192: aiter([content])
-        mock_response.raise_for_status = Mock()
-
-        mock_client = AsyncMock()
-        mock_client.head = AsyncMock(return_value=mock_response)
-        mock_client.get = AsyncMock(return_value=mock_response)
-
-        with patch("httpx.AsyncClient") as mock_client_class:
-            mock_client_class.return_value.__aenter__.return_value = mock_client
-
-            result_content, content_type = await download_document("https://example.com/test.pdf", 100 * 1024 * 1024)
-
-            assert result_content == content
-            assert content_type == "application/pdf"
-            mock_client.head.assert_called_once()
-            mock_client.get.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_download_size_limit_head(self):
-        """Test file size limit enforcement via HEAD request."""
-        mock_head_response = AsyncMock()
-        mock_head_response.status_code = 200
-        mock_head_response.headers = {"content-length": "200000000"}  # 200MB
-
-        mock_client = AsyncMock()
-        mock_client.head = AsyncMock(return_value=mock_head_response)
-
-        with patch("httpx.AsyncClient") as mock_client_class:
-            mock_client_class.return_value.__aenter__.return_value = mock_client
-
-            with pytest.raises(HTTPException, match="File too large"):
-                await download_document("https://example.com/huge.pdf", 100 * 1024 * 1024)
-
-            mock_client.get.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_download_size_limit_streaming(self):
-        """Test file size limit enforcement during streaming."""
-        # Simulate downloading more than the limit
-        chunks = [b"x" * 8192 for _ in range(15000)]  # ~120MB
-
-        mock_response = AsyncMock()
-        mock_response.status_code = 200
-        mock_response.headers = {"content-type": "application/pdf"}
-        mock_response.aiter_bytes = lambda chunk_size=8192: aiter(chunks)
-        mock_response.raise_for_status = Mock()
-
-        mock_head_response = AsyncMock()
-        mock_head_response.status_code = 404  # HEAD fails, fallback to GET
-
-        mock_client = AsyncMock()
-        mock_client.head = AsyncMock(return_value=mock_head_response)
-        mock_client.get = AsyncMock(return_value=mock_response)
-
-        with patch("httpx.AsyncClient") as mock_client_class:
-            mock_client_class.return_value.__aenter__.return_value = mock_client
-
-            with pytest.raises(HTTPException, match="File too large"):
-                await download_document("https://example.com/test.pdf", 100 * 1024 * 1024)
-
-    @pytest.mark.asyncio
-    async def test_download_http_error(self):
-        """Test handling of HTTP errors."""
-        mock_response = AsyncMock()
-        mock_response.status_code = 404
-        mock_response.headers = {"content-type": "application/json"}
-        mock_response.raise_for_status = Mock(
-            side_effect=httpx.HTTPStatusError("Not found", request=Mock(), response=mock_response)
+    async def test_successful_download(self, web):
+        web.routes["https://example.com/test.pdf"] = httpx.Response(
+            200, headers={"content-type": "application/pdf"}, content=b"Test PDF content"
         )
 
-        mock_client = AsyncMock()
-        mock_client.head = AsyncMock(return_value=mock_response)
-        mock_client.get = AsyncMock(return_value=mock_response)
+        content, content_type = await download_document("https://example.com/test.pdf", MAX_SIZE)
 
-        with patch("httpx.AsyncClient") as mock_client_class:
-            mock_client_class.return_value.__aenter__.return_value = mock_client
-
-            with pytest.raises(HTTPException) as exc_info:
-                await download_document("https://example.com/missing.pdf", 100 * 1024 * 1024)
-            assert exc_info.value.status_code == 422
+        assert content == b"Test PDF content"
+        assert content_type == "application/pdf"
 
     @pytest.mark.asyncio
-    async def test_download_network_error(self):
-        """Test handling of network errors."""
-        mock_client = AsyncMock()
-        mock_client.head = AsyncMock(side_effect=httpx.RequestError("Connection failed"))
+    async def test_size_limit_from_content_length(self, web):
+        web.routes["https://example.com/huge.pdf"] = httpx.Response(
+            200, headers={"content-type": "application/pdf", "content-length": "200000000"}, content=b"x"
+        )
 
-        with patch("httpx.AsyncClient") as mock_client_class:
-            mock_client_class.return_value.__aenter__.return_value = mock_client
-
-            with pytest.raises(HTTPException) as exc_info:
-                await download_document("https://example.com/test.pdf", 100 * 1024 * 1024)
-            assert exc_info.value.status_code == 422
+        with pytest.raises(HTTPException, match="File too large"):
+            await download_document("https://example.com/huge.pdf", MAX_SIZE)
 
     @pytest.mark.asyncio
-    async def test_download_no_content_type(self):
-        """Test handling when content-type header is missing."""
-        content = b"Some content"
+    async def test_size_limit_while_streaming(self, web):
+        web.routes["https://example.com/test.pdf"] = httpx.Response(
+            200, headers={"content-type": "application/pdf"}, stream=_chunks(b"x" * 8192, 200)
+        )
 
-        mock_response = AsyncMock()
-        mock_response.status_code = 200
-        mock_response.headers = {}  # No content-type
-        mock_response.aiter_bytes = lambda chunk_size=8192: aiter([content])
-        mock_response.raise_for_status = Mock()
+        with pytest.raises(HTTPException, match="File too large"):
+            await download_document("https://example.com/test.pdf", 1024 * 1024)
 
-        mock_client = AsyncMock()
-        mock_client.head = AsyncMock(return_value=mock_response)
-        mock_client.get = AsyncMock(return_value=mock_response)
+    @pytest.mark.asyncio
+    async def test_http_error(self, web):
+        web.routes["https://example.com/missing.pdf"] = httpx.Response(
+            404, headers={"content-type": "application/json"}
+        )
 
-        with patch("httpx.AsyncClient") as mock_client_class:
-            mock_client_class.return_value.__aenter__.return_value = mock_client
+        with pytest.raises(HTTPException) as exc_info:
+            await download_document("https://example.com/missing.pdf", MAX_SIZE)
+        assert exc_info.value.status_code == 422
 
-            result_content, content_type = await download_document("https://example.com/test", 100 * 1024 * 1024)
+    @pytest.mark.asyncio
+    async def test_network_error(self, web):
+        with pytest.raises(HTTPException) as exc_info:
+            await download_document("https://unreachable.example/test.pdf", MAX_SIZE)
+        assert exc_info.value.status_code == 422
 
-            assert result_content == content
-            assert content_type == "application/octet-stream"
+    @pytest.mark.asyncio
+    async def test_no_content_type(self, web):
+        web.routes["https://example.com/test"] = httpx.Response(200, content=b"Some content")
+
+        content, content_type = await download_document("https://example.com/test", MAX_SIZE)
+
+        assert content == b"Some content"
+        assert content_type == "application/octet-stream"
+
+    @pytest.mark.asyncio
+    async def test_page_robots_refuses_is_never_requested(self, web):
+        web.routes["https://example.com/private"] = httpx.Response(200, content=b"secret")
+        web.refused = {"https://example.com/private"}
+
+        with pytest.raises(HTTPException, match=r"robots\.txt") as exc_info:
+            await download_document("https://example.com/private", MAX_SIZE)
+
+        assert exc_info.value.status_code == 422
+        assert web.seen == []
+
+    @pytest.mark.asyncio
+    async def test_redirect_into_a_refused_page_stops_before_requesting_it(self, web):
+        web.routes["https://example.com/old"] = httpx.Response(302, headers={"location": "/private"})
+        web.routes["https://example.com/private"] = httpx.Response(200, content=b"secret")
+        web.refused = {"https://example.com/private"}
+
+        with pytest.raises(HTTPException, match=r"robots\.txt"):
+            await download_document("https://example.com/old", MAX_SIZE)
+
+        assert [str(r.url) for r in web.seen] == ["https://example.com/old"]
+
+    @pytest.mark.asyncio
+    async def test_a_cloudflare_challenge_is_reported_as_bot_protection(self, web):
+        web.routes["https://protected.example/post"] = httpx.Response(
+            403,
+            headers={"content-type": "text/html", "cf-mitigated": "challenge"},
+            content=b"<title>Just a moment...</title>",
+        )
+
+        with pytest.raises(HTTPException, match="bot protection") as exc_info:
+            await download_document("https://protected.example/post", MAX_SIZE)
+        assert exc_info.value.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_with_a_key_each_hop_is_signed_for_its_own_authority(self, web, monkeypatch):
+        private = Ed25519PrivateKey.generate()
+        der = private.private_bytes(Encoding.DER, PrivateFormat.PKCS8, NoEncryption())
+        monkeypatch.setattr(
+            web_bot_auth, "_key", web_bot_auth.load_signing_key(base64.b64encode(der).decode(), "https://yapit.md")
+        )
+        web.routes["https://short.example/x"] = httpx.Response(301, headers={"location": "https://example.com/doc"})
+        web.routes["https://example.com/doc"] = httpx.Response(200, headers={"content-type": "application/pdf"})
+
+        await download_document("https://short.example/x", MAX_SIZE)
+
+        for request in web.seen:
+            assert request.headers["signature-agent"] == '"https://yapit.md"'
+            params = request.headers["signature-input"].removeprefix("sig1=")
+            base = f'"@authority": {request.url.host}\n"signature-agent": "https://yapit.md"\n"@signature-params": {params}'
+            signature = base64.b64decode(request.headers["signature"].removeprefix("sig1=:").removesuffix(":"))
+            private.public_key().verify(signature, base.encode())
+        assert [r.url.host for r in web.seen] == ["short.example", "example.com"]
 
 
 class TestExtractDocumentInfo:
@@ -204,7 +224,10 @@ class TestExtractDocumentInfo:
             _extract_document_info(content, "application/json")
 
 
-# Helper for async iteration
-async def aiter(items):
-    for item in items:
-        yield item
+class _chunks(httpx.AsyncByteStream):
+    def __init__(self, chunk: bytes, count: int):
+        self.chunk, self.count = chunk, count
+
+    async def __aiter__(self):
+        for _ in range(self.count):
+            yield self.chunk

@@ -8,7 +8,7 @@ Workflow: `.github/workflows/deploy.yml`
 
 On push to `main`:
 1. **Change detection** — `dorny/paths-filter` determines which images need rebuilding
-2. **Tests** (parallel) — lint, unit, integration, frontend. Skipped with `[skip tests]` in commit message or `skip_tests` workflow dispatch input
+2. **Tests** (parallel) — lint, unit, integration, frontend, extraction service (`make test-extraction`, in its own image). Skipped with `[skip tests]` in commit message or `skip_tests` workflow dispatch input
 3. **Build images** — only changed components, pushed to ghcr.io. Build jobs gate on tests passing (or being skipped)
 
 ~10 min total. Workers build as a matrix (kokoro-cpu, kokoro-gpu, yolo-cpu, yolo-gpu) — if one fails, all cancel.

@@ -16,6 +16,7 @@ const CheckoutSuccessPage = lazy(() => import("@/pages/CheckoutSuccessPage"));
 const CheckoutCancelPage = lazy(() => import("@/pages/CheckoutCancelPage"));
 const TermsPage = lazy(() => import("@/pages/TermsPage"));
 const PrivacyPage = lazy(() => import("@/pages/PrivacyPage"));
+const BotPage = lazy(() => import("@/pages/BotPage"));
 const BatchStatusPage = lazy(() => import("@/pages/BatchStatusPage"));
 const SignInPage = lazy(() => import("@/pages/auth/SignInPage"));
 const EmailLinkPage = lazy(() => import("@/pages/auth/EmailLinkPage"));
@@ -134,6 +135,7 @@ const AppRoutes = () => {
 		/>
 		<Route path="/terms" element={<Lazy><TermsPage /></Lazy>} />
 		<Route path="/privacy" element={<Lazy><PrivacyPage /></Lazy>} />
+		<Route path="/bot" element={<Lazy><BotPage /></Lazy>} />
 		<Route path="*" element={<UrlCatchAllPage />} />
 	</Routes>
 	);

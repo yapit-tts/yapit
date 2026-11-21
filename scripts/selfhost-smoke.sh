@@ -7,6 +7,8 @@ set -euo pipefail
 curl -fsS http://localhost:8000/health && echo
 curl -fsS http://localhost/api/health && echo
 curl -fsS -o /dev/null http://localhost/
+# The fetcher's key directory reaches the gateway, which has no key on a self-host: 404, not the SPA's 200.
+[ "$(curl -sS -o /dev/null -w '%{http_code}' http://localhost/.well-known/http-message-signatures-directory)" = 404 ]
 
 # Workers load their models during startup, so zero restarts means imports and
 # model load survived.

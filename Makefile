@@ -74,15 +74,25 @@ dev-user:
 dev-token:
 	@uv run python scripts/create_user.py 2>/dev/null
 
-test: test-unit test-frontend test-integration
+test: test-unit test-frontend test-extraction test-integration
 
-test-local: test-unit test-frontend test-integration-local
+test-local: test-unit test-frontend test-extraction test-integration-local
 
 test-unit:
-	uv run pytest tests --ignore=tests/integration -v -m "not gemini"
+	uv run pytest tests --ignore=tests/integration -v -m "not gemini and not live"
 
 test-frontend:
 	npm test --prefix frontend
+
+# The extraction service's tests run in its own image, against the Chromium it ships, with no network:
+# the web they fetch is a stub inside the test process.
+test-extraction:
+	docker build -f docker/defuddle/Dockerfile --target test -t yapit-defuddle-test .
+	docker run --rm --network none yapit-defuddle-test
+
+# The gateway's request signatures against Cloudflare Research's live verifier; needs the internet, so not part of `make test`.
+test-signing-live:
+	uv run pytest tests -v -m live
 
 test-integration:
 	uv run pytest tests/integration -v

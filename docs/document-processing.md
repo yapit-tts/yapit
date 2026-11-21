@@ -12,7 +12,7 @@ Three ways content enters the system:
 | `POST /v1/documents/website` | URL | See below* |
 | `POST /v1/documents/document` | File upload | See format routing table |
 
-*Website flow branches: arXiv URLs (abs, pdf, alphaxiv, ar5iv) → rewritten to PDF URL in `prepare` so they flow through the document path (surfacing the free vs AI toggle). Other URLs → `extract_website_content` in `website.py`: defuddle service extracts markdown via static fetch + linkedom (Playwright fallback for JS-rendered SPAs). The gateway's `download_document` (used in `prepare`) uses a browser-like UA with Yapit identifier appended — avoids bot-detection blocks on sites like OpenReview while staying identifiable. HTML 404 responses are passed through (not rejected) so JS-rendered SPAs that return 404 server-side can still be extracted by defuddle's Playwright cascade.
+*Website flow branches: arXiv URLs (abs, pdf, alphaxiv, ar5iv) → rewritten to PDF URL in `prepare` so they flow through the document path (surfacing the free vs AI toggle). Other URLs → `extract_website_content` in `website.py`: defuddle service extracts markdown via static fetch + linkedom (Playwright fallback for JS-rendered SPAs). The gateway's `download_document` (used in `prepare`) fetches as yapit's fetcher, with the same user agent, `robots.txt` check and signature as the defuddle service ([[web-bot-auth]]), following redirects one hop at a time. HTML 404 responses are passed through (not rejected) so JS-rendered SPAs that return 404 server-side can still be extracted by defuddle's Playwright cascade.
 
 ### Format Routing
 
@@ -59,14 +59,16 @@ arXiv URLs (arxiv.org, alphaxiv.org, ar5iv) are detected in `documents.py` via `
 
 `yapit/gateway/document/defuddle_client.py`
 
-**`extract_website(url, *, html, timeout_ms) → (markdown, title)`** — HTTP client to the defuddle container (`docker/defuddle/app.js`). Accepts `url` for live fetch or `html` for pre-fetched content. Raises HTTPException on 503 (capacity), lets other errors propagate.
+**`extract_website(url, *, html, timeout_ms) → (markdown, title)`** — HTTP client to the defuddle container (`docker/defuddle/app.js`). Accepts `url` for live fetch or `html` for pre-fetched content. Raises HTTPException on 503 (capacity) and on 422, a refusal whose message goes to the reader as is; lets other errors propagate. `assert_robots_allow(url)` asks the same container's `POST /robots` for the gateway's own download.
 
 **Defuddle service cascade** (`docker/defuddle/app.js`, Node.js container):
 
 When given a URL (normal flow):
+Every request goes through `fetcher.js`: one user agent, `robots.txt` checked before each page request and redirect hop, Web Bot Auth signatures where a key is set ([[web-bot-auth]]). A refusal (`robots.txt`, or a `cf-mitigated: challenge` response) ends the cascade and comes back as a 422 with the reader's message.
+
 1. **Static fetch** (normal UA, 5s timeout) → linkedom → defuddle Node API → return if wordCount > 0
 2. **Static fetch** (bot UA) → linkedom → defuddle Node API → return if wordCount > 0
-3. **Playwright fallback** → Chromium navigates to URL via Smokescreen, `domcontentloaded`, injects defuddle browser bundle, extracts from rendered DOM
+3. **Playwright fallback** → Chromium navigates to URL via Smokescreen, `domcontentloaded`, injects defuddle browser bundle, extracts from rendered DOM. Each navigation request is fetched by the route handler (`route.fetch`, through the context's proxy), so it is checked and signed; Chromium follows a redirect without passing the route again, so a redirect of the page is aborted and navigated to anew
 
 When given raw HTML (uploaded files): runs defuddle Node API directly, no fetch cascade.
 

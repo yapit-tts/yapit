@@ -4,26 +4,30 @@
  * Cascade: static fetch + linkedom → bot UA retry → Playwright browser fallback.
  * Static extraction handles the vast majority of content sites. Playwright is
  * reserved for JS-rendered SPAs where the HTML is an empty shell.
+ * A Refusal (robots.txt, a site's bot protection) ends the cascade: no other path may fetch the page either.
  */
 
 import http from "node:http";
 import { readFileSync } from "node:fs";
-import { ProxyAgent, fetch as proxyFetch } from "undici";
+import { fileURLToPath } from "node:url";
 import { Defuddle } from "defuddle/node";
 import { chromium } from "playwright";
+import { MAX_REDIRECTS, USER_AGENT, Refusal, assertNotChallenged, createFetcher, readCapped } from "./fetcher.js";
 
 const PROXY_URL = process.env.PROXY_URL;
 if (!PROXY_URL) throw new Error("PROXY_URL is required (e.g. http://smokescreen:4750)");
+
+const SIGNER_URL = process.env.SIGNER_URL;
+if (!SIGNER_URL) throw new Error("SIGNER_URL is required (e.g. http://gateway:8002/sign)");
 
 const PORT = 8001;
 const MAX_CONCURRENT_BROWSER = 50;
 const STATIC_FETCH_TIMEOUT_MS = 5_000;
 const MAX_PAGE_SIZE = 20 * 1024 * 1024;
-const DEFAULT_UA = "Mozilla/5.0 (compatible; Yapit/1.0; +https://yapit.md)";
-const BOT_UA = DEFAULT_UA + " bot";
+const BOT_UA = USER_AGENT + " bot";
 const BOT_UA_DOMAINS = ["github.com"];
 
-const proxyAgent = new ProxyAgent(PROXY_URL);
+const fetcher = createFetcher(PROXY_URL, SIGNER_URL);
 const bundle = readFileSync("defuddle_bundle.js", "utf-8");
 
 class CapacityError extends Error {
@@ -38,22 +42,19 @@ let browserSlots = MAX_CONCURRENT_BROWSER;
 
 // --- Static extraction (fetch + linkedom + defuddle) ---
 
-async function fetchPage(url, userAgent, timeoutMs) {
+async function fetchPage(call, url, userAgent, timeoutMs) {
 	const fetchTimeout = Math.min(timeoutMs, STATIC_FETCH_TIMEOUT_MS);
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), fetchTimeout);
 
 	try {
-		const response = await proxyFetch(url, {
-			headers: {
-				"User-Agent": userAgent,
-				Accept: "text/html,application/xhtml+xml",
-			},
-			redirect: "follow",
+		const { response } = await call.send(url, {
+			userAgent,
+			accept: "text/html,application/xhtml+xml",
 			signal: controller.signal,
-			dispatcher: proxyAgent,
 		});
 
+		assertNotChallenged(response.headers.get("cf-mitigated"));
 		if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
 		const contentType = response.headers.get("content-type") || "";
@@ -74,21 +75,8 @@ async function fetchPage(url, userAgent, timeoutMs) {
 	}
 }
 
-// fetch decompresses transparently, so a few KB of gzip can expand to gigabytes:
-// the cap has to apply to decoded bytes as they arrive, not to the finished body.
-async function readCapped(body, maxBytes) {
-	const chunks = [];
-	let size = 0;
-	for await (const chunk of body) {
-		size += chunk.byteLength;
-		if (size > maxBytes) throw new Error("Page too large");
-		chunks.push(chunk);
-	}
-	return Buffer.concat(chunks);
-}
-
-async function extractStatic(url, userAgent, timeoutMs) {
-	const html = await fetchPage(url, userAgent, timeoutMs);
+async function extractStatic(call, url, userAgent, timeoutMs) {
+	const html = await fetchPage(call, url, userAgent, timeoutMs);
 	const result = await Defuddle(html, url, { markdown: true });
 	return {
 		markdown: result.content || "",
@@ -118,17 +106,56 @@ async function getBrowser() {
 	return browserLaunchPromise;
 }
 
-async function extractPlaywright(url, timeoutMs) {
+async function extractPlaywright(call, url, timeoutMs) {
 	const b = await getBrowser();
-	const context = await b.newContext({ proxy: { server: PROXY_URL } });
+	const context = await b.newContext({ proxy: { server: PROXY_URL }, userAgent: USER_AGENT });
 	await context.addInitScript(bundle);
+
+	// Chromium follows a redirect without asking the route again, so a navigation is fetched
+	// here hop by hop: a redirect of the top document is aborted and navigated to anew,
+	// which brings its next hop back through this check.
+	let refusal = null;
+	let redirect = null;
+	await context.route("**", async (route) => {
+		const request = route.request();
+		if (!request.isNavigationRequest()) return route.continue();
+		const isTopDocument = request.frame().parentFrame() === null;
+		try {
+			await call.assertAllowed(request.url());
+		} catch (err) {
+			if (isTopDocument) refusal = err;
+			return route.abort("blockedbyclient");
+		}
+		const response = await route.fetch({
+			headers: { ...request.headers(), ...(await fetcher.signatureHeaders(request.url())) },
+			maxRedirects: 0,
+		});
+		const location = response.headers().location;
+		if (response.status() >= 300 && response.status() < 400 && location) {
+			if (isTopDocument) redirect = new URL(location, request.url()).href;
+			return route.abort("aborted");
+		}
+		return route.fulfill({ response });
+	});
 	const page = await context.newPage();
 
 	try {
-		const resp = await page.goto(url, {
-			waitUntil: "domcontentloaded",
-			timeout: timeoutMs,
-		});
+		let target = url;
+		let resp = null;
+		for (let hop = 0; ; hop++) {
+			refusal = redirect = null;
+			resp = await page
+				.goto(target, { waitUntil: "domcontentloaded", timeout: timeoutMs })
+				.catch((e) => {
+					if (refusal || redirect) return null;
+					throw e;
+				});
+			if (refusal) throw refusal;
+			if (!redirect) break;
+			if (hop === MAX_REDIRECTS) throw new Error("Too many redirects");
+			target = redirect;
+		}
+		if (resp) assertNotChallenged(resp.headers()["cf-mitigated"]);
 		if (resp && resp.status() >= 400) {
 			console.log(`Playwright got HTTP ${resp.status()} for ${url}`);
 			return { markdown: "", title: null };
@@ -153,33 +180,36 @@ function getInitialUA(url) {
 		if (BOT_UA_DOMAINS.some((d) => hostname === d || hostname.endsWith("." + d)))
 			return BOT_UA;
 	} catch {}
-	return DEFAULT_UA;
+	return USER_AGENT;
 }
 
 async function extract(url, timeoutMs) {
 	const t0 = performance.now();
 	const remaining = () => Math.max(0, timeoutMs - (performance.now() - t0));
+	const call = fetcher.forCall();
 
 	const initialUA = getInitialUA(url);
 	try {
-		const result = await extractStatic(url, initialUA, remaining());
+		const result = await extractStatic(call, url, initialUA, remaining());
 		if (result.wordCount > 0) {
 			const method = initialUA === BOT_UA ? "static-bot" : "static";
 			log(method, url, t0, result);
 			return { markdown: result.markdown, title: result.title, extraction_method: method };
 		}
 	} catch (e) {
+		if (e instanceof Refusal) throw e;
 		console.log(`Static failed for ${url}: ${e.message}`);
 	}
 
 	if (initialUA !== BOT_UA && remaining() > 1000) {
 		try {
-			const result = await extractStatic(url, BOT_UA, remaining());
+			const result = await extractStatic(call, url, BOT_UA, remaining());
 			if (result.wordCount > 0) {
 				log("static-bot", url, t0, result);
 				return { markdown: result.markdown, title: result.title, extraction_method: "static-bot" };
 			}
 		} catch (e) {
+			if (e instanceof Refusal) throw e;
 			console.log(`Static-bot failed for ${url}: ${e.message}`);
 		}
 	}
@@ -191,10 +221,11 @@ async function extract(url, timeoutMs) {
 
 	browserSlots--;
 	try {
-		const result = await extractPlaywright(url, remaining());
+		const result = await extractPlaywright(call, url, remaining());
 		log("playwright", url, t0, result);
 		return { ...result, extraction_method: "playwright" };
 	} catch (e) {
+		if (e instanceof Refusal) throw e;
 		console.error(`Playwright failed for ${url}: ${e.message}`);
 		return { markdown: "", title: null, extraction_method: "playwright-error" };
 	} finally {
@@ -209,37 +240,55 @@ function log(method, url, t0, result) {
 
 // --- HTTP server ---
 
+function respond(res, status, body) {
+	res.writeHead(status, { "Content-Type": "application/json" });
+	res.end(JSON.stringify(body));
+}
+
+async function readJson(req, res) {
+	let body = "";
+	for await (const chunk of req) body += chunk;
+	try {
+		return JSON.parse(body);
+	} catch {
+		respond(res, 400, { error: "invalid JSON" });
+		return null;
+	}
+}
+
 async function handleRequest(req, res) {
 	if (req.method === "GET" && req.url === "/health") {
 		try {
 			const b = await getBrowser();
 			if (!b.isConnected()) throw new Error("disconnected");
-			res.writeHead(200, { "Content-Type": "application/json" });
-			res.end('{"status":"ok"}');
+			respond(res, 200, { status: "ok" });
 		} catch (e) {
-			res.writeHead(503, { "Content-Type": "application/json" });
-			res.end(JSON.stringify({ status: "error", detail: e.message }));
+			respond(res, 503, { status: "error", detail: e.message });
+		}
+		return;
+	}
+
+	// For the gateway's own download: answers 200 where robots.txt lets yapit fetch the URL, 422 with the reason where not.
+	if (req.method === "POST" && req.url === "/robots") {
+		const parsed = await readJson(req, res);
+		if (!parsed) return;
+		try {
+			await fetcher.forCall().assertAllowed(parsed.url);
+			respond(res, 200, {});
+		} catch (e) {
+			if (e instanceof Refusal) respond(res, 422, { error: e.message });
+			else respond(res, 400, { error: e.message });
 		}
 		return;
 	}
 
 	if (req.method === "POST" && req.url === "/extract") {
-		let body = "";
-		for await (const chunk of req) body += chunk;
-
-		let parsed;
-		try {
-			parsed = JSON.parse(body);
-		} catch {
-			res.writeHead(400, { "Content-Type": "application/json" });
-			res.end('{"error":"invalid JSON"}');
-			return;
-		}
+		const parsed = await readJson(req, res);
+		if (!parsed) return;
 
 		const { url, html, timeout_ms = 30_000 } = parsed;
 		if (!url && !html) {
-			res.writeHead(400, { "Content-Type": "application/json" });
-			res.end('{"error":"url or html required"}');
+			respond(res, 400, { error: "url or html required" });
 			return;
 		}
 
@@ -254,16 +303,16 @@ async function handleRequest(req, res) {
 			} else {
 				result = await extract(url, timeout_ms);
 			}
-			res.writeHead(200, { "Content-Type": "application/json" });
-			res.end(JSON.stringify(result));
+			respond(res, 200, result);
 		} catch (e) {
 			if (e instanceof CapacityError) {
-				res.writeHead(503, { "Content-Type": "application/json" });
-				res.end('{"error":"Service at capacity, try again shortly"}');
+				respond(res, 503, { error: "Service at capacity, try again shortly" });
+			} else if (e instanceof Refusal) {
+				console.log(`Refused ${url}: ${e.message}`);
+				respond(res, 422, { error: e.message });
 			} else {
 				console.error(`Unhandled error for ${url}: ${e.message}`);
-				res.writeHead(500, { "Content-Type": "application/json" });
-				res.end(JSON.stringify({ error: e.message }));
+				respond(res, 500, { error: e.message });
 			}
 		}
 		return;
@@ -273,9 +322,13 @@ async function handleRequest(req, res) {
 	res.end();
 }
 
-const server = http.createServer(handleRequest);
+export const server = http.createServer(handleRequest);
 
-(async () => {
+export async function closeBrowser() {
+	await browser?.close();
+}
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
 	await getBrowser();
 	server.listen(PORT, () => console.log(`Defuddle service ready on :${PORT}`));
-})();
+}
