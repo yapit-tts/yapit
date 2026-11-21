@@ -92,7 +92,7 @@ class DocumentMetadata(PydanticModel):
 
 
 def readable_by(user_id: str, owner_id: str, is_public: bool) -> bool:
-    """Whether a user may read, play and prepare audio for a document: its owner's, or a public one."""
+    """Whether a user may play a document and prepare its audio: their own, or a public one."""
     return owner_id == user_id or is_public
 
 
