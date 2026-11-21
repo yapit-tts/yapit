@@ -64,7 +64,6 @@ export function useAudioExport(documentId: string | undefined, documentTitle: st
   }, [save, settle]);
 
   const receive = useCallback((message: WSAudioExportMessage) => {
-    if (message.status === "building") return;
     if (awaitedKeys.current[message.format] === message.key) conclude(message);
     else ended.current[message.key] = message;
   }, [conclude]);

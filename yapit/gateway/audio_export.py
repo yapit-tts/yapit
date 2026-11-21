@@ -19,8 +19,8 @@ from loguru import logger
 from pydantic import BaseModel
 from redis.asyncio import Redis
 
-from yapit.contracts import TTS_AUDIO_CACHE, get_pubsub_channel
-from yapit.gateway.audio_job import cached_mask
+from yapit.contracts import TTS_AUDIO_CACHE, TTS_SKIPPED, get_pubsub_channel
+from yapit.gateway.audio_job import prepared_mask
 from yapit.gateway.cache import Cache
 from yapit.gateway.document.types import cpu_executor
 from yapit.gateway.metrics import log_error
@@ -137,7 +137,7 @@ async def request_export(
     if any(b.user_id == user_id for b in _builds.values()):
         raise ExportBusy
     hashes = list(dict.fromkeys(h for c in chapters for h in c.variant_hashes))
-    missing = len(hashes) - sum(await cached_mask(redis, cache, hashes))
+    missing = len(hashes) - sum(await prepared_mask(redis, cache, hashes))
     if missing:
         raise AudioNotCached(f"{missing} of the {len(hashes)} blocks have no audio prepared in this voice")
 
@@ -193,13 +193,14 @@ async def _build(
 
 
 async def _fetch_audio(redis: Redis, cache: Cache, hashes: list[str]) -> list[bytes]:
+    """The blocks' audio in order, leaving out the blocks that have none."""
     hot = await redis.mget([TTS_AUDIO_CACHE.format(hash=h) for h in hashes])
     cold = await cache.batch_retrieve([h for h, audio in zip(hashes, hot) if audio is None])
     audio = [a if a is not None else cold.get(h) for h, a in zip(hashes, hot)]
-    found = [a for a in audio if a is not None]
-    if len(found) < len(hashes):
+    absent = [h for h, a in zip(hashes, audio) if a is None]
+    if absent and await redis.exists(*[TTS_SKIPPED.format(hash=h) for h in absent]) < len(absent):
         raise AudioNotCached("Some of the audio left the cache while the file was built. Prepare the audio again.")
-    return found
+    return [a for a in audio if a is not None]
 
 
 def write_audio_file(

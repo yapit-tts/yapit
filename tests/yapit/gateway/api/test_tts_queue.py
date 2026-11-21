@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import json
 import time
 import uuid
 
@@ -10,9 +11,11 @@ from yapit.contracts import (
     TTS_BILLING_STREAM,
     TTS_INFLIGHT,
     TTS_JOBS,
+    TTS_SUBSCRIBERS,
     SynthesisJob,
     SynthesisParameters,
     WorkerResult,
+    get_pubsub_channel,
     get_queue_name,
 )
 from yapit.gateway.result_consumer import _process_result
@@ -128,10 +131,26 @@ async def test_an_error_result_leaves_the_marker_of_another_job_for_its_variant(
     failed_job, current_job = uuid.uuid4(), uuid.uuid4()
     await redis.set(TTS_INFLIGHT.format(hash="shared"), str(current_job))
     failed = worker_result(failed_job, "shared").model_copy(update={"audio_base64": None, "error": "Synthesis failed"})
+    await redis.sadd(TTS_SUBSCRIBERS.format(hash="shared"), f"listener:{failed.document_id}:0")
+    channel = get_pubsub_channel("listener", failed.document_id)
+    pubsub = redis.pubsub()
+    await pubsub.subscribe(channel)
+    await pubsub.get_message(timeout=1)
 
     await _process_result(redis, failed)
-
     assert await redis.get(TTS_INFLIGHT.format(hash="shared")) == str(current_job).encode()
+    await _process_result(redis, worker_result(current_job, "shared"))
+
+    # Read up to a marker published after both results, as a channel delivers in order
+    await redis.publish(channel, json.dumps({"type": "heard_so_far"}))
+    heard = []
+    while (message := await pubsub.get_message(ignore_subscribe_messages=True, timeout=5)) is not None:
+        data = json.loads(message["data"])
+        if data["type"] == "heard_so_far":
+            break
+        heard.append(data["status"])
+    await pubsub.aclose()
+    assert heard == ["cached"]
 
 
 async def test_two_jobs_for_one_variant_bill_once_with_their_results_past_the_hot_caches_lifetime_apart(app):

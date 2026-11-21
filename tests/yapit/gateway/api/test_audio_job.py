@@ -28,8 +28,9 @@ from yapit.contracts import (
     get_pubsub_channel,
     get_queue_name,
 )
+from yapit.gateway import audio_job
 from yapit.gateway.api.v1.ws import WSCursorMoved, WSSynthesizeRequest, _handle_cursor_moved, _handle_synthesize
-from yapit.gateway.audio_job import SLICE_SIZE, _reconcile, feed_job, run_audio_job_feeder
+from yapit.gateway.audio_job import SLICE_SIZE, _reconcile, feed_job, publish_job_state, run_audio_job_feeder
 from yapit.gateway.auth import User, authenticate, authenticate_optional
 from yapit.gateway.config import get_settings
 from yapit.gateway.db import create_session
@@ -42,6 +43,7 @@ from yapit.gateway.domain_models import (
     UserSubscription,
     Voice,
 )
+from yapit.gateway.exceptions import ResourceNotFoundError
 from yapit.gateway.result_consumer import _process_result
 from yapit.queue import QueueConfig, pull_job
 
@@ -66,8 +68,8 @@ def settings(app):
     return app.dependency_overrides[get_settings]().model_copy(update={"billing_enabled": False})
 
 
-async def create_document(client, blocks: int) -> uuid.UUID:
-    content = "\n\n".join(f"Paragraph {i} of the book is read aloud." for i in range(blocks))
+async def create_document(client, blocks: int, of: str = "book") -> uuid.UUID:
+    content = "\n\n".join(f"Paragraph {i} of the {of} is read aloud." for i in range(blocks))
     response = await client.post("/v1/documents/text", json={"content": content})
     assert response.status_code == 201, response.text
     return uuid.UUID(response.json()["id"])
@@ -97,18 +99,20 @@ class Pipeline:
         """The queue's jobs, in the order workers pull them."""
         job_ids = await self.redis.zrange(QUEUE, 0, -1)
         wrappers = [await self.redis.hget(TTS_JOBS, job_id) for job_id in job_ids]
+        assert all(wrappers), "a queued job id has no job"
         return [SynthesisJob.model_validate_json(json.loads(w)["job"]) for w in wrappers if w]
 
     async def pull(self) -> SynthesisJob | None:
         if not await self.redis.zcard(QUEUE):
             return None
         pulled = await pull_job(self.redis, QUEUE_CONFIG, timeout=1)
-        return SynthesisJob.model_validate_json(pulled.raw_job) if pulled else None
+        assert pulled is not None, "a queued job id has no job"
+        return SynthesisJob.model_validate_json(pulled.raw_job)
 
-    async def finish(self, job: SynthesisJob, error: str | None = None) -> None:
+    async def finish(self, job: SynthesisJob, error: str | None = None, silent: bool = False) -> None:
         """The worker's result for a job, then the feeder's step for every job it woke."""
         self.synthesized.append(job)
-        await _process_result(self.redis, _result_of(job, error))
+        await _process_result(self.redis, _result_of(job, error, silent))
         await self.feed()
 
     async def feed(self) -> None:
@@ -127,7 +131,8 @@ class Pipeline:
             await self.finish(job)
 
 
-def _result_of(job: SynthesisJob, error: str | None) -> WorkerResult:
+def _result_of(job: SynthesisJob, error: str | None, silent: bool) -> WorkerResult:
+    has_audio = error is None and not silent
     return WorkerResult(
         job_id=job.job_id,
         variant_hash=job.variant_hash,
@@ -141,8 +146,8 @@ def _result_of(job: SynthesisJob, error: str | None) -> WorkerResult:
         worker_id="stub",
         processing_time_ms=1,
         queue_wait_ms=1,
-        audio_base64=None if error else base64.b64encode(f"OggS {job.variant_hash}".encode()).decode(),
-        duration_ms=None if error else 1000,
+        audio_base64=base64.b64encode(f"OggS {job.variant_hash}".encode()).decode() if has_audio else None,
+        duration_ms=1000 if has_audio else None,
         error=error,
     )
 
@@ -312,7 +317,7 @@ async def test_a_job_on_an_unlimited_plan_runs_to_its_last_block(client, kokoro,
     await pipeline.run()
     document_id = await create_document(client, 50)
 
-    await start(client, document_id, 0, 49)
+    assert (await start(client, document_id, 0, 49)).status_code == 201
     await pipeline.run()
 
     # Both documents' paragraphs read the same text, so the second job synthesizes only blocks 40 to 49
@@ -351,6 +356,24 @@ async def test_a_job_whose_voice_is_deactivated_queues_nothing_further(client, k
     assert (await client.get(f"/v1/documents/{document_id}/audio-job")).json()["status"] == "failed"
 
 
+async def test_a_job_over_a_document_its_user_can_no_longer_read_queues_nothing_further(client, kokoro, pipeline, app):
+    document_id = await create_document(client, 50)
+    await client.patch(f"/v1/documents/{document_id}", json={"is_public": True})
+    with signed_in_as(app, "second-reader"):
+        await start(client, document_id, 0, 49)
+    await pipeline.feed()
+
+    await client.patch(f"/v1/documents/{document_id}", json={"is_public": False})
+    await pipeline.run()
+
+    assert len(pipeline.synthesized) == SLICE_SIZE
+    # Public again only so the second reader can read the job's state
+    await client.patch(f"/v1/documents/{document_id}", json={"is_public": True})
+    with signed_in_as(app, "second-reader"):
+        job = (await client.get(f"/v1/documents/{document_id}/audio-job")).json()
+    assert (job["status"], job["error"]) == ("failed", "The document is no longer available")
+
+
 async def test_cancel_takes_the_jobs_waiting_blocks_off_the_queue(client, kokoro, pipeline):
     document_id = await create_document(client, 50)
     await start(client, document_id, 0, 49)
@@ -366,6 +389,96 @@ async def test_cancel_takes_the_jobs_waiting_blocks_off_the_queue(client, kokoro
     assert await pipeline.queued_jobs() == []
     job = (await client.get(f"/v1/documents/{document_id}/audio-job")).json()
     assert (job["status"], job["cached_blocks"]) == ("cancelled", 1)
+
+
+async def billed_documents(redis) -> set[uuid.UUID]:
+    entries = await redis.xrange(TTS_BILLING_STREAM)
+    return {uuid.UUID(json.loads(fields[b"data"])["document_id"]) for _, fields in entries}
+
+
+async def test_a_job_cancelled_and_replaced_while_its_block_is_queued_queues_nothing_more_of_it(
+    client, kokoro, pipeline, app, monkeypatch
+):
+    cancelled = await create_document(client, 30)
+    document_id = await create_document(client, 20, of="essay")
+    request_synthesis = audio_job.request_synthesis
+
+    async def cancel_and_start_another_meanwhile(**kwargs):
+        monkeypatch.setattr(audio_job, "request_synthesis", request_synthesis)
+        assert (await client.delete(f"/v1/documents/{cancelled}/audio-job")).status_code == 204
+        assert (await start(client, document_id, 0, 19)).status_code == 201
+        return await request_synthesis(**kwargs)
+
+    await start(client, cancelled, 0, 29)
+    monkeypatch.setattr(audio_job, "request_synthesis", cancel_and_start_another_meanwhile)
+    await pipeline.run()
+
+    assert {job.document_id for job in pipeline.synthesized} == {document_id}
+    assert await billed_documents(app.state.redis_client) == {document_id}
+    job = (await client.get(f"/v1/documents/{document_id}/audio-job")).json()
+    assert (job["status"], job["cached_blocks"], len(pipeline.synthesized)) == ("done", 20, 20)
+
+
+async def test_a_job_cancelled_and_replaced_while_its_top_up_reads_the_database_leaves_the_next_job_whole(
+    client, kokoro, pipeline, monkeypatch
+):
+    cancelled = await create_document(client, 30)
+    document_id = await create_document(client, 20, of="essay")
+    get_voice = audio_job.get_voice
+
+    async def cancel_and_start_another_meanwhile(*args, **kwargs):
+        monkeypatch.setattr(audio_job, "get_voice", get_voice)
+        await client.delete(f"/v1/documents/{cancelled}/audio-job")
+        await start(client, document_id, 0, 19)
+        return await get_voice(*args, **kwargs)
+
+    await start(client, cancelled, 0, 29)
+    monkeypatch.setattr(audio_job, "get_voice", cancel_and_start_another_meanwhile)
+    await pipeline.run()
+
+    assert {job.document_id for job in pipeline.synthesized} == {document_id}
+    job = (await client.get(f"/v1/documents/{document_id}/audio-job")).json()
+    assert (job["status"], job["cached_blocks"], len(pipeline.synthesized)) == ("done", 20, 20)
+
+
+async def test_a_replaced_jobs_top_up_that_ends_it_leaves_the_next_job_running(client, kokoro, pipeline, monkeypatch):
+    cancelled = await create_document(client, 30)
+    document_id = await create_document(client, 20, of="essay")
+    get_voice = audio_job.get_voice
+
+    async def start_another_and_lose_the_voice(*args, **kwargs):
+        monkeypatch.setattr(audio_job, "get_voice", get_voice)
+        await client.delete(f"/v1/documents/{cancelled}/audio-job")
+        await start(client, document_id, 0, 19)
+        raise ResourceNotFoundError("Voice", "af_heart")
+
+    await start(client, cancelled, 0, 29)
+    monkeypatch.setattr(audio_job, "get_voice", start_another_and_lose_the_voice)
+    await pipeline.run()
+
+    job = (await client.get(f"/v1/documents/{document_id}/audio-job")).json()
+    assert (job["status"], job["cached_blocks"]) == ("done", 20)
+
+
+async def test_a_cancel_just_after_the_top_up_checks_its_job_takes_the_block_off_the_queue(
+    client, kokoro, pipeline, monkeypatch
+):
+    document_id = await create_document(client, 30)
+    is_current = audio_job._is_current
+
+    async def cancel_once_checked(*args):
+        monkeypatch.setattr(audio_job, "_is_current", is_current)
+        current = await is_current(*args)
+        await client.delete(f"/v1/documents/{document_id}/audio-job")
+        return current
+
+    await start(client, document_id, 0, 29)
+    monkeypatch.setattr(audio_job, "_is_current", cancel_once_checked)
+    await pipeline.feed()
+
+    assert await pipeline.queued_jobs() == []
+    job = (await client.get(f"/v1/documents/{document_id}/audio-job")).json()
+    assert (job["status"], job["cached_blocks"]) == ("cancelled", 0)
 
 
 async def test_cancel_leaves_a_block_a_listener_waits_on(client, kokoro, pipeline, app, settings):
@@ -477,7 +590,24 @@ async def test_a_block_the_worker_fails_does_not_stall_the_job(client, kokoro, p
     await pipeline.run()
 
     job = (await client.get(f"/v1/documents/{document_id}/audio-job")).json()
-    assert (job["status"], job["cached_blocks"]) == ("done", 29)
+    assert (job["status"], job["cached_blocks"], job["pending_blocks"]) == ("failed", 29, [failing.block_idx])
+    assert job["error"].startswith("1 of the blocks have no audio")
+
+
+async def test_a_block_with_no_audio_to_synthesize_counts_as_prepared(client, kokoro, pipeline, app):
+    document_id = await create_document(client, 30)
+    await start(client, document_id, 0, 29)
+    await pipeline.feed()
+    silent = await pipeline.pull()
+    assert silent is not None
+
+    await pipeline.finish(silent, silent=True)
+    await pipeline.run()
+
+    job = (await client.get(f"/v1/documents/{document_id}/audio-job")).json()
+    assert (job["status"], job["cached_blocks"], job["pending_blocks"]) == ("done", 30, [])
+    assert (await estimate(client, document_id))["uncached_characters"] == [0] * 30
+    assert await billed_blocks(app.state.redis_client) == [i for i in range(30) if i != silent.block_idx]
 
 
 async def test_the_feeder_queues_a_new_jobs_first_slice(client, kokoro, app, settings):
@@ -577,12 +707,20 @@ async def test_a_document_without_a_job_answers_none(client, kokoro):
     assert (response.status_code, response.json()) == (200, None)
 
 
-async def heard(pubsub) -> list[dict]:
-    """The job states a tab watching the channel was sent, in order."""
+async def heard(app, pubsub) -> list[dict | None]:
+    """The job states a tab watching the channel was sent, in order, up to now.
+
+    Up to now: a marker published after them arrives after them, as a channel delivers in order.
+    """
+    (channel,) = pubsub.channels
+    await app.state.redis_client.publish(channel, json.dumps({"type": "heard_so_far"}))
     messages = []
-    while (message := await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.1)) is not None:
-        messages.append(json.loads(message["data"]))
-    return [m["job"] for m in messages if m["type"] == "audio_job"]
+    while (message := await pubsub.get_message(ignore_subscribe_messages=True, timeout=5)) is not None:
+        data = json.loads(message["data"])
+        if data["type"] == "heard_so_far":
+            return [m["job"] for m in messages if m["type"] == "audio_job"]
+        messages.append(data)
+    raise AssertionError("the channel went quiet before its marker arrived")
 
 
 async def watching(app, document_id):
@@ -599,7 +737,7 @@ async def test_a_tab_on_the_document_hears_each_block_the_job_caches_and_its_end
 
     await pipeline.run()
 
-    states = await heard(pubsub)
+    states = await heard(app, pubsub)
     assert [(s["status"], s["cached_blocks"]) for s in states][-3:] == [("running", 1), ("running", 2), ("done", 3)]
     await pubsub.aclose()
 
@@ -612,7 +750,7 @@ async def test_a_tab_on_the_document_hears_its_job_cancelled(client, kokoro, pip
 
     await client.delete(f"/v1/documents/{document_id}/audio-job")
 
-    assert [s["status"] for s in await heard(pubsub)] == ["cancelled"]
+    assert [s["status"] for s in await heard(app, pubsub)] == ["cancelled"]
     await pubsub.aclose()
 
 
@@ -624,5 +762,29 @@ async def test_a_tab_on_another_document_hears_nothing_of_the_job(client, kokoro
 
     await pipeline.run()
 
-    assert await heard(pubsub) == []
+    assert await heard(app, pubsub) == []
+    await pubsub.aclose()
+
+
+async def test_the_state_published_for_a_tab_watching_the_document_is_where_its_job_stands(
+    client, kokoro, pipeline, app
+):
+    document_id = await create_document(client, 40)
+    await start(client, document_id, 0, 39)
+    await pipeline.feed()
+    pubsub = await watching(app, document_id)
+
+    await publish_job_state(app.state.redis_client, app.state.audio_cache, DEFAULT_TEST_USER.id, document_id)
+
+    assert [(s["status"], s["total_blocks"]) for s in await heard(app, pubsub)] == [("running", 40)]
+    await pubsub.aclose()
+
+
+async def test_the_state_published_for_a_tab_watching_a_document_without_a_job_is_none(client, kokoro, app):
+    document_id = await create_document(client, 3)
+    pubsub = await watching(app, document_id)
+
+    await publish_job_state(app.state.redis_client, app.state.audio_cache, DEFAULT_TEST_USER.id, document_id)
+
+    assert await heard(app, pubsub) == [None]
     await pubsub.aclose()

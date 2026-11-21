@@ -31,7 +31,7 @@ from yapit.gateway.cache import Cache
 from yapit.gateway.config import Settings, get_settings
 from yapit.gateway.db import create_session
 from yapit.gateway.deps import get_model, get_voice
-from yapit.gateway.domain_models import Document
+from yapit.gateway.domain_models import Document, readable_by
 from yapit.gateway.exceptions import ResourceNotFoundError
 from yapit.gateway.metrics import log_error, log_event
 from yapit.gateway.synthesis import CachedResult, ErrorResult, request_synthesis
@@ -185,7 +185,7 @@ async def _handle_synthesize(
     async with create_session() as db:
         # Validate document ownership
         doc = (await db.exec(select(Document).where(Document.id == msg.document_id))).first()
-        if not doc or (doc.user_id != user.id and not doc.is_public):
+        if not doc or not readable_by(user.id, doc.user_id, doc.is_public):
             await ws.send_json({"type": "error", "error": "Document not found or access denied"})
             return
 

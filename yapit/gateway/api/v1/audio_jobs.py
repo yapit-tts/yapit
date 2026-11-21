@@ -24,11 +24,11 @@ from yapit.gateway.audio_job import (
     AudioJobStatus,
     BlockRange,
     block_indices,
-    cached_mask,
     cancel_job,
     document_job,
     job_state,
     load_job,
+    prepared_mask,
     publish_job_state,
     start_job,
 )
@@ -43,7 +43,7 @@ from yapit.gateway.deps import (
     get_model,
     get_voice,
 )
-from yapit.gateway.domain_models import BlockVariant, Document
+from yapit.gateway.domain_models import BlockVariant, Document, readable_by
 from yapit.gateway.synthesis import billed_characters, usage_type_for
 from yapit.gateway.usage import (
     get_available_usage,
@@ -155,7 +155,7 @@ async def estimate_audio_job(
         )
         for text in texts
     ]
-    cached = await cached_mask(redis, cache, hashes)
+    cached = await prepared_mask(redis, cache, hashes)
     usage_type = usage_type_for(tts_model.slug)
     available, _ = await get_available_usage(user.id, usage_type, db, billing_enabled=settings.billing_enabled)
     plan = await get_effective_plan(await get_user_subscription(user.id, db), db)
@@ -260,7 +260,7 @@ def _check_ranges(ranges: list[BlockRange], block_count: int) -> None:
 
 async def _readable_document(db: DbSession, document_id: UUID, user_id: str) -> Document:
     doc = await db.get(Document, document_id)
-    if doc is None or (doc.user_id != user_id and not doc.is_public):
+    if doc is None or not readable_by(user_id, doc.user_id, doc.is_public):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
     return doc
 

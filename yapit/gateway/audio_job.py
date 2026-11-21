@@ -4,6 +4,9 @@ A job keeps at most SLICE_SIZE of its variants in the queue, so none waits past 
 marker's lifetime. Each result for a variant a job awaits makes the result consumer push the job's
 user onto AUDIO_JOB_WAKE; the feeder blocks on that list and queues the job's next blocks through
 request_synthesis, behind listeners (background=True). A user has at most one running job.
+
+A job's progress is keyed by its id, so a top-up still running for a job that has since been
+cancelled and replaced writes only to that job's keys.
 """
 
 import asyncio
@@ -22,12 +25,14 @@ from yapit.contracts import (
     AUDIO_JOB,
     AUDIO_JOB_AWAITED,
     AUDIO_JOB_LOST,
+    AUDIO_JOB_NEXT,
     AUDIO_JOB_WAITERS,
     AUDIO_JOB_WAKE,
     AUDIO_JOBS_RUNNING,
     TTS_AUDIO_CACHE,
     TTS_INFLIGHT,
     TTS_JOBS,
+    TTS_SKIPPED,
     TTS_SUBSCRIBERS,
     get_pubsub_channel,
     get_queue_name,
@@ -37,10 +42,10 @@ from yapit.gateway.cache import Cache
 from yapit.gateway.config import Settings
 from yapit.gateway.db import create_session
 from yapit.gateway.deps import get_model, get_voice
-from yapit.gateway.domain_models import BlockVariant, Document
+from yapit.gateway.domain_models import BlockVariant, Document, readable_by
 from yapit.gateway.exceptions import ResourceNotFoundError
 from yapit.gateway.metrics import log_error
-from yapit.gateway.synthesis import INFLIGHT_TTL_S, CachedResult, ErrorResult, request_synthesis
+from yapit.gateway.synthesis import INFLIGHT_TTL_S, CachedResult, ErrorResult, QueuedResult, request_synthesis
 
 SLICE_SIZE = 16
 STATE_TTL_S = 24 * 3600
@@ -75,6 +80,7 @@ class AudioJobSpec(BaseModel):
 
 @dataclass(frozen=True)
 class AudioJob:
+    id: str
     spec: AudioJobSpec
     status: AudioJobStatus
     error: str | None
@@ -111,18 +117,18 @@ def variant_hashes(spec: AudioJobSpec) -> list[str]:
     ]
 
 
-async def cached_mask(redis: Redis, cache: Cache, hashes: list[str]) -> list[bool]:
-    """Whether each variant's audio is cached, in the order of hashes."""
+async def prepared_mask(redis: Redis, cache: Cache, hashes: list[str]) -> list[bool]:
+    """Whether each variant is prepared, in the order of hashes: its audio is cached, or it has none to cache."""
     async with redis.pipeline(transaction=False) as pipe:
         for h in hashes:
-            pipe.exists(TTS_AUDIO_CACHE.format(hash=h))
+            pipe.exists(TTS_AUDIO_CACHE.format(hash=h), TTS_SKIPPED.format(hash=h))
         in_redis = await pipe.execute()
     in_cache = await cache.batch_exists([h for h, hot in zip(hashes, in_redis) if not hot])
     return [bool(hot) or h in in_cache for h, hot in zip(hashes, in_redis)]
 
 
 async def job_state(redis: Redis, cache: Cache, job: AudioJob) -> AudioJobState:
-    cached = await cached_mask(redis, cache, variant_hashes(job.spec))
+    cached = await prepared_mask(redis, cache, variant_hashes(job.spec))
     return AudioJobState(
         document_id=job.spec.document_id,
         model=job.spec.model,
@@ -154,10 +160,10 @@ async def start_job(redis: Redis, user_id: str, spec: AudioJobSpec) -> bool:
         return False
     job_key = AUDIO_JOB.format(user_id=user_id)
     async with redis.pipeline(transaction=True) as pipe:
-        pipe.delete(job_key, AUDIO_JOB_AWAITED.format(user_id=user_id), AUDIO_JOB_LOST.format(user_id=user_id))
+        pipe.delete(job_key)
         pipe.hset(
             job_key,
-            mapping={"spec": spec.model_dump_json(), "status": AudioJobStatus.running.value, "next": 0},
+            mapping={"id": uuid.uuid4().hex, "spec": spec.model_dump_json(), "status": AudioJobStatus.running.value},
         )
         pipe.expire(job_key, STATE_TTL_S)
         pipe.lpush(AUDIO_JOB_WAKE, user_id)
@@ -171,6 +177,7 @@ async def load_job(redis: Redis, user_id: str) -> AudioJob | None:
         return None
     error = fields.get(b"error")
     return AudioJob(
+        id=fields[b"id"].decode(),
         spec=AudioJobSpec.model_validate_json(fields[b"spec"]),
         status=AudioJobStatus(fields[b"status"].decode()),
         error=error.decode() if error else None,
@@ -179,16 +186,14 @@ async def load_job(redis: Redis, user_id: str) -> AudioJob | None:
 
 async def cancel_job(redis: Redis, user_id: str) -> None:
     """Stop the job queueing, and take its queued blocks off the queue where no one else waits on them."""
-    if not await _finish(redis, user_id, AudioJobStatus.cancelled):
-        return
     job = await load_job(redis, user_id)
-    if job is None:
+    if job is None or not await _finish(redis, user_id, job.id, AudioJobStatus.cancelled):
         return
-    awaited = await redis.hgetall(AUDIO_JOB_AWAITED.format(user_id=user_id))
-    for variant_hash, entry in awaited.items():
-        _, job_id = _parse_awaited(entry)
-        await _withdraw(redis, user_id, job.spec.model, variant_hash.decode(), job_id)
-    await redis.delete(AUDIO_JOB_AWAITED.format(user_id=user_id), AUDIO_JOB_LOST.format(user_id=user_id))
+    awaited_key = AUDIO_JOB_AWAITED.format(job_id=job.id)
+    for variant_hash, entry in (await redis.hgetall(awaited_key)).items():
+        _, queued_job_id = _parse_awaited(entry)
+        await _withdraw(redis, _waiter(user_id, job.id), job.spec.model, variant_hash.decode(), queued_job_id)
+    await redis.delete(awaited_key, AUDIO_JOB_LOST.format(job_id=job.id))
 
 
 async def run_audio_job_feeder(redis: Redis, cache: Cache, settings: Settings) -> None:
@@ -212,141 +217,6 @@ async def run_audio_job_feeder(redis: Redis, cache: Cache, settings: Settings) -
             await backoff.sleep()
 
 
-async def top_up(redis: Redis, cache: Cache, settings: Settings, user_id: str) -> None:
-    """Queue the job's next blocks until SLICE_SIZE of its variants are in flight."""
-    if not await redis.sismember(AUDIO_JOBS_RUNNING, user_id):
-        return
-    job = await load_job(redis, user_id)
-    if job is None:
-        await redis.srem(AUDIO_JOBS_RUNNING, user_id)
-        return
-    spec = job.spec
-    job_key = AUDIO_JOB.format(user_id=user_id)
-    awaited_key = AUDIO_JOB_AWAITED.format(user_id=user_id)
-    lost_key = AUDIO_JOB_LOST.format(user_id=user_id)
-    await redis.expire(job_key, STATE_TTL_S)
-    waiters_of = AUDIO_JOB_WAITERS.format
-    next_position = int(await redis.hget(job_key, "next") or 0)
-
-    async with create_session() as db:
-        access = (
-            await db.exec(select(Document.user_id, Document.is_public).where(Document.id == spec.document_id))
-        ).first()
-        if access is None or (access[0] != user_id and not access[1]):
-            await _finish(redis, user_id, AudioJobStatus.failed, "The document is no longer available")
-            return
-        try:
-            model = await get_model(db, spec.model)
-            voice = await get_voice(db, spec.model, spec.voice)
-        except ResourceNotFoundError as e:
-            await _finish(redis, user_id, AudioJobStatus.failed, str(e))
-            return
-
-        while await redis.hlen(awaited_key) < SLICE_SIZE:
-            retried = await redis.lindex(lost_key, 0)
-            position = int(retried) if retried is not None else next_position
-            if position >= len(spec.blocks):
-                break
-            block_idx, text = spec.blocks[position], spec.texts[position]
-            variant_hash = BlockVariant.get_hash(
-                text=text, model_slug=model.slug, voice_slug=voice.slug, parameters=voice.parameters
-            )
-            if retried is not None:
-                await redis.lpop(lost_key)
-            else:
-                next_position += 1
-                await redis.hset(job_key, "next", next_position)
-            if await redis.hexists(awaited_key, variant_hash):
-                continue
-
-            # Registered before the request, so a result that lands during it still wakes this job
-            await redis.hset(awaited_key, variant_hash, f"{position}:")
-            await redis.sadd(waiters_of(hash=variant_hash), user_id)
-            await redis.expire(waiters_of(hash=variant_hash), STATE_TTL_S)
-            result = await request_synthesis(
-                db=db,
-                redis=redis,
-                cache=cache,
-                user_id=user_id,
-                text=text,
-                model=model,
-                voice=voice,
-                billing_enabled=settings.billing_enabled,
-                document_id=spec.document_id,
-                block_idx=block_idx,
-                track_for_websocket=False,
-                background=True,
-            )
-            if isinstance(result, CachedResult | ErrorResult):
-                await redis.hdel(awaited_key, variant_hash)
-                await redis.srem(waiters_of(hash=variant_hash), user_id)
-                if isinstance(result, ErrorResult):
-                    await _finish(redis, user_id, AudioJobStatus.usage_limit, result.error)
-                    return
-                continue
-
-            if result.job_id is not None:
-                await redis.hset(awaited_key, variant_hash, f"{position}:{result.job_id}")
-                # A result of another job for the variant may have cleared the waiters during the request
-                await redis.sadd(waiters_of(hash=variant_hash), user_id)
-            if not await redis.sismember(AUDIO_JOBS_RUNNING, user_id):
-                # Cancelled while this block was being queued, after the cancel swept the queue
-                await _withdraw(redis, user_id, spec.model, variant_hash, result.job_id or "")
-                return
-
-    if next_position >= len(spec.blocks) and await redis.hlen(awaited_key) == 0 and await redis.llen(lost_key) == 0:
-        await _finish(redis, user_id, AudioJobStatus.done)
-
-
-async def _collect_wakes(redis: Redis) -> set[str]:
-    result = await redis.brpop(AUDIO_JOB_WAKE, timeout=RECONCILE_INTERVAL_S)
-    if result is None:
-        return set()
-    users = {result[1].decode()}
-    while len(users) < MAX_WAKE_BATCH:
-        raw = await redis.rpop(AUDIO_JOB_WAKE)
-        if raw is None:
-            break
-        users.add(raw.decode())
-    return users
-
-
-async def _reconcile(redis: Redis, cache: Cache, settings: Settings) -> None:
-    """Settle what no wake reported, then top up every running job.
-
-    An awaited variant that is cached is forgotten. One whose job still waits in the queue gets its
-    in-flight marker renewed, so a slow queue never outlives it. One with neither a queued job nor a
-    marker was lost (with the gateway, or a worker), and goes back to the job to be queued again.
-    """
-    for raw_user in await redis.smembers(AUDIO_JOBS_RUNNING):
-        user_id = raw_user.decode()
-        awaited_key = AUDIO_JOB_AWAITED.format(user_id=user_id)
-        for raw_hash, entry in (await redis.hgetall(awaited_key)).items():
-            variant_hash = raw_hash.decode()
-            position, job_id = _parse_awaited(entry)
-            inflight_key = TTS_INFLIGHT.format(hash=variant_hash)
-            if await _is_cached(redis, cache, variant_hash):
-                await redis.hdel(awaited_key, variant_hash)
-            elif job_id and await redis.hexists(TTS_JOBS, job_id):
-                held = await redis.set(inflight_key, job_id, ex=INFLIGHT_TTL_S, nx=True)
-                if not held and await redis.get(inflight_key) == job_id.encode():
-                    await redis.expire(inflight_key, INFLIGHT_TTL_S)
-            elif not await redis.exists(inflight_key):
-                await redis.hdel(awaited_key, variant_hash)
-                await redis.rpush(AUDIO_JOB_LOST.format(user_id=user_id), position)
-        await _feed_job_logged(redis, cache, settings, user_id)
-
-
-def _parse_awaited(entry: bytes) -> tuple[int, str]:
-    """An awaited entry is "<position in spec.blocks>:<queued job id, empty if it joined another's>"."""
-    position, job_id = entry.decode().split(":", 1)
-    return int(position), job_id
-
-
-async def _is_cached(redis: Redis, cache: Cache, variant_hash: str) -> bool:
-    return bool(await redis.exists(TTS_AUDIO_CACHE.format(hash=variant_hash))) or await cache.exists(variant_hash)
-
-
 async def feed_job(redis: Redis, cache: Cache, settings: Settings, user_id: str) -> None:
     """Top the job up, then tell its tabs where it stands.
 
@@ -367,16 +237,182 @@ async def _feed_job_logged(redis: Redis, cache: Cache, settings: Settings, user_
         await log_error(f"Audio job top-up failed: {e}", user_id=user_id)
 
 
-async def _finish(redis: Redis, user_id: str, status: AudioJobStatus, error: str | None = None) -> bool:
-    """End a running job with this status. False if it had already ended."""
-    if not await redis.srem(AUDIO_JOBS_RUNNING, user_id):
-        return False
-    job_key = AUDIO_JOB.format(user_id=user_id)
-    await redis.hset(job_key, mapping={"status": status.value, "error": error or ""})
-    await redis.expire(job_key, STATE_TTL_S)
-    await redis.expire(AUDIO_JOB_AWAITED.format(user_id=user_id), STATE_TTL_S)
-    logger.bind(user_id=user_id).info(f"Audio job ended: {status.value}")
-    return True
+async def top_up(redis: Redis, cache: Cache, settings: Settings, user_id: str) -> None:
+    """Queue the job's next blocks until SLICE_SIZE of its variants are in flight."""
+    job = await load_job(redis, user_id)
+    if job is None:
+        await redis.srem(AUDIO_JOBS_RUNNING, user_id)
+        return
+    if job.status != AudioJobStatus.running:
+        return
+    spec = job.spec
+    awaited_key = AUDIO_JOB_AWAITED.format(job_id=job.id)
+    lost_key = AUDIO_JOB_LOST.format(job_id=job.id)
+    next_key = AUDIO_JOB_NEXT.format(job_id=job.id)
+    waiter = _waiter(user_id, job.id)
+    await redis.expire(AUDIO_JOB.format(user_id=user_id), STATE_TTL_S)
+
+    async with create_session() as db:
+        access = (
+            await db.exec(select(Document.user_id, Document.is_public).where(Document.id == spec.document_id))
+        ).first()
+        if access is None or not readable_by(user_id, owner_id=access[0], is_public=access[1]):
+            await _finish(redis, user_id, job.id, AudioJobStatus.failed, "The document is no longer available")
+            return
+        try:
+            model = await get_model(db, spec.model)
+            voice = await get_voice(db, spec.model, spec.voice)
+        except ResourceNotFoundError as e:
+            await _finish(redis, user_id, job.id, AudioJobStatus.failed, str(e))
+            return
+
+        exhausted = False
+        while await redis.hlen(awaited_key) < SLICE_SIZE:
+            retried = await redis.lpop(lost_key)
+            position = int(retried) if retried is not None else await redis.incr(next_key) - 1
+            if position >= len(spec.blocks):
+                exhausted = True
+                break
+            block_idx, text = spec.blocks[position], spec.texts[position]
+            variant_hash = BlockVariant.get_hash(
+                text=text, model_slug=model.slug, voice_slug=voice.slug, parameters=voice.parameters
+            )
+            if await redis.hexists(awaited_key, variant_hash):
+                continue
+
+            # Registered before the request, so a result that lands during it still wakes this job
+            await redis.hset(awaited_key, variant_hash, f"{position}:")
+            await redis.sadd(AUDIO_JOB_WAITERS.format(hash=variant_hash), waiter)
+            await redis.expire(AUDIO_JOB_WAITERS.format(hash=variant_hash), STATE_TTL_S)
+            result = await request_synthesis(
+                db=db,
+                redis=redis,
+                cache=cache,
+                user_id=user_id,
+                text=text,
+                model=model,
+                voice=voice,
+                billing_enabled=settings.billing_enabled,
+                document_id=spec.document_id,
+                block_idx=block_idx,
+                track_for_websocket=False,
+                background=True,
+            )
+            queued_job_id = result.job_id if isinstance(result, QueuedResult) else None
+            if queued_job_id is not None:
+                await redis.hset(awaited_key, variant_hash, f"{position}:{queued_job_id}")
+                # A result of another job for the variant may have cleared the waiters during the request
+                await redis.sadd(AUDIO_JOB_WAITERS.format(hash=variant_hash), waiter)
+            # After the write above: a cancel that ends the job later finds the queued job id and withdraws it
+            if not await _is_current(redis, user_id, job.id):
+                await _withdraw(redis, waiter, spec.model, variant_hash, queued_job_id or "")
+                await redis.expire(awaited_key, STATE_TTL_S)
+                return
+            if isinstance(result, CachedResult | ErrorResult):
+                await redis.hdel(awaited_key, variant_hash)
+                await redis.srem(AUDIO_JOB_WAITERS.format(hash=variant_hash), waiter)
+                if isinstance(result, ErrorResult):
+                    await _finish(redis, user_id, job.id, AudioJobStatus.usage_limit, result.error)
+                    return
+
+    if exhausted and await redis.hlen(awaited_key) == 0 and await redis.llen(lost_key) == 0:
+        missing = len(spec.blocks) - sum(await prepared_mask(redis, cache, variant_hashes(spec)))
+        if missing:
+            # Settled but not prepared: its synthesis failed, or the cache let it go before the job ended
+            error = f"{missing} of the blocks have no audio. Prepare the audio again to make them"
+            await _finish(redis, user_id, job.id, AudioJobStatus.failed, error)
+        else:
+            await _finish(redis, user_id, job.id, AudioJobStatus.done)
+
+
+async def _collect_wakes(redis: Redis) -> set[str]:
+    result = await redis.brpop(AUDIO_JOB_WAKE, timeout=RECONCILE_INTERVAL_S)
+    if result is None:
+        return set()
+    more = await redis.rpop(AUDIO_JOB_WAKE, MAX_WAKE_BATCH - 1) or []
+    return {result[1].decode(), *(raw.decode() for raw in more)}
+
+
+async def _reconcile(redis: Redis, cache: Cache, settings: Settings) -> None:
+    """Settle what no wake reported, then top up every running job.
+
+    An awaited variant that is cached is forgotten. One whose job still waits in the queue gets its
+    in-flight marker renewed, so a slow queue never outlives it. One with neither a queued job nor a
+    marker was lost (with the gateway, or a worker), and goes back to the job to be queued again.
+    """
+    for raw_user in await redis.smembers(AUDIO_JOBS_RUNNING):
+        user_id = raw_user.decode()
+        job = await load_job(redis, user_id)
+        if job is None:
+            await _feed_job_logged(redis, cache, settings, user_id)
+            continue
+        awaited_key = AUDIO_JOB_AWAITED.format(job_id=job.id)
+        awaited = {raw_hash.decode(): entry for raw_hash, entry in (await redis.hgetall(awaited_key)).items()}
+        prepared = await prepared_mask(redis, cache, list(awaited))
+        for (variant_hash, entry), is_prepared in zip(awaited.items(), prepared):
+            position, job_id = _parse_awaited(entry)
+            inflight_key = TTS_INFLIGHT.format(hash=variant_hash)
+            if is_prepared:
+                await redis.hdel(awaited_key, variant_hash)
+            elif job_id and await redis.hexists(TTS_JOBS, job_id):
+                held = await redis.set(inflight_key, job_id, ex=INFLIGHT_TTL_S, nx=True)
+                if not held and await redis.get(inflight_key) == job_id.encode():
+                    await redis.expire(inflight_key, INFLIGHT_TTL_S)
+            elif not await redis.exists(inflight_key):
+                await redis.hdel(awaited_key, variant_hash)
+                await redis.rpush(AUDIO_JOB_LOST.format(job_id=job.id), position)
+        await _feed_job_logged(redis, cache, settings, user_id)
+
+
+def _waiter(user_id: str, job_id: str) -> str:
+    """A job's member of AUDIO_JOB_WAITERS."""
+    return f"{user_id}:{job_id}"
+
+
+def _parse_awaited(entry: bytes) -> tuple[int, str]:
+    """An awaited entry is "<position in spec.blocks>:<queued job id, empty if it joined another's>"."""
+    position, job_id = entry.decode().split(":", 1)
+    return int(position), job_id
+
+
+async def _is_current(redis: Redis, user_id: str, job_id: str) -> bool:
+    """Whether the job is still running and still the user's: not ended, nor replaced by their next one."""
+    async with redis.pipeline(transaction=True) as pipe:
+        pipe.sismember(AUDIO_JOBS_RUNNING, user_id)
+        pipe.hget(AUDIO_JOB.format(user_id=user_id), "id")
+        running, current = await pipe.execute()
+    return bool(running) and current == job_id.encode()
+
+
+# Ends the job if it is still the user's running one, and lets its progress expire with it.
+_FINISH = """
+if redis.call('HGET', KEYS[1], 'id') ~= ARGV[1] or redis.call('SREM', KEYS[2], ARGV[2]) == 0 then return 0 end
+redis.call('HSET', KEYS[1], 'status', ARGV[3], 'error', ARGV[4])
+for i = 3, #KEYS do redis.call('EXPIRE', KEYS[i], ARGV[5]) end
+redis.call('EXPIRE', KEYS[1], ARGV[5])
+return 1
+"""
+
+
+async def _finish(redis: Redis, user_id: str, job_id: str, status: AudioJobStatus, error: str | None = None) -> bool:
+    """End the job with this status. False if it had already ended, or is no longer the user's."""
+    ended = await redis.eval(
+        _FINISH,
+        5,
+        AUDIO_JOB.format(user_id=user_id),
+        AUDIO_JOBS_RUNNING,
+        AUDIO_JOB_AWAITED.format(job_id=job_id),
+        AUDIO_JOB_LOST.format(job_id=job_id),
+        AUDIO_JOB_NEXT.format(job_id=job_id),
+        job_id,
+        user_id,
+        status.value,
+        error or "",
+        STATE_TTL_S,
+    )
+    if ended:
+        logger.bind(user_id=user_id).info(f"Audio job ended: {status.value}")
+    return bool(ended)
 
 
 # Takes a queued job block off the queue unless a listener or another audio job waits on its variant,
@@ -392,7 +428,7 @@ return 1
 """
 
 
-async def _withdraw(redis: Redis, user_id: str, model_slug: str, variant_hash: str, job_id: str) -> None:
+async def _withdraw(redis: Redis, waiter: str, model_slug: str, variant_hash: str, job_id: str) -> None:
     await redis.eval(
         _WITHDRAW,
         5,
@@ -402,5 +438,5 @@ async def _withdraw(redis: Redis, user_id: str, model_slug: str, variant_hash: s
         TTS_SUBSCRIBERS.format(hash=variant_hash),
         AUDIO_JOB_WAITERS.format(hash=variant_hash),
         job_id,
-        user_id,
+        waiter,
     )

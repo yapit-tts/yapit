@@ -16,11 +16,13 @@ import av
 import numpy as np
 import pytest
 
-from yapit.contracts import TTS_AUDIO_CACHE, TTS_JOBS, get_pubsub_channel, get_queue_name
+from yapit.contracts import TTS_AUDIO_CACHE, TTS_JOBS, WorkerResult, get_pubsub_channel, get_queue_name
+from yapit.gateway import audio_export
 from yapit.gateway.audio_export import EXPORT_TTL_S, sweep_exports
 from yapit.gateway.cache import CacheConfig
 from yapit.gateway.config import get_settings
 from yapit.gateway.domain_models import BlockVariant, Document, TTSModel, Voice
+from yapit.gateway.result_consumer import _process_result
 
 from .conftest import DEFAULT_TEST_USER
 
@@ -194,6 +196,68 @@ async def test_an_export_with_a_block_not_prepared_is_refused(client, app, book,
 
     assert response.status_code == 409
     assert "1 of the 6 blocks" in response.json()["detail"]
+
+
+async def test_an_export_leaves_out_a_block_with_no_audio(client, app, book, session, kokoro):
+    texts = (await session.get(Document, book)).audio_texts
+    silent = BlockVariant.get_hash(
+        text=texts[2], model_slug="kokoro", voice_slug="af_heart", parameters=kokoro.parameters
+    )
+    await app.state.audio_cache.delete(silent)
+    await _process_result(app.state.redis_client, no_audio(book, 2, silent))
+
+    duration, chapters = probe(await exported(client, app, book, [(0, 2, "One"), (3, 5, "Two")]))
+
+    assert duration == pytest.approx(seconds(0, 1) + seconds(3, 5), abs=0.001)
+    assert [start for _, start, _ in chapters] == pytest.approx([0, seconds(0, 1)], abs=0.001)
+
+
+def no_audio(document_id: uuid.UUID, block_idx: int, variant_hash: str) -> WorkerResult:
+    """The worker's result for a block it found nothing to say in."""
+    return WorkerResult(
+        job_id=uuid.uuid4(),
+        variant_hash=variant_hash,
+        user_id=DEFAULT_TEST_USER.id,
+        document_id=document_id,
+        block_idx=block_idx,
+        model_slug="kokoro",
+        voice_slug="af_heart",
+        text_length=1,
+        usage_multiplier=1.0,
+        worker_id="stub",
+        processing_time_ms=1,
+        queue_wait_ms=1,
+    )
+
+
+async def test_an_export_whose_audio_leaves_the_cache_while_it_is_built_fails_rather_than_skip_it(
+    client, app, book, session, kokoro, monkeypatch
+):
+    texts = (await session.get(Document, book)).audio_texts
+    evicted = BlockVariant.get_hash(
+        text=texts[2], model_slug="kokoro", voice_slug="af_heart", parameters=kokoro.parameters
+    )
+    prepared_mask = audio_export.prepared_mask
+
+    async def evict_once_checked(*args):
+        mask = await prepared_mask(*args)
+        await app.state.audio_cache.delete(evicted)
+        return mask
+
+    monkeypatch.setattr(audio_export, "prepared_mask", evict_once_checked)
+    pubsub = app.state.redis_client.pubsub()
+    await pubsub.subscribe(get_pubsub_channel(DEFAULT_TEST_USER.id, book))
+    await pubsub.get_message(timeout=1)
+
+    state = (await export(client, book, [(0, 5, "Whole book")])).json()
+    while (message := await pubsub.get_message(ignore_subscribe_messages=True, timeout=30)) is not None:
+        if json.loads(message["data"])["type"] == "audio_export":
+            state = json.loads(message["data"])
+            break
+    await pubsub.aclose()
+
+    assert state["status"] == "failed"
+    assert "left the cache" in state["error"]
 
 
 @contextmanager
