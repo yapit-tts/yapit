@@ -22,6 +22,8 @@ from yapit.contracts import (
 from yapit.gateway import web_bot_auth
 from yapit.gateway.api.v1 import routers as v1_routers
 from yapit.gateway.api_tts_dispatcher import run_api_tts_dispatcher
+from yapit.gateway.audio_export import run_export_sweeper
+from yapit.gateway.audio_job import run_audio_job_feeder
 from yapit.gateway.auth import ANONYMOUS_ID_PREFIX
 from yapit.gateway.auth.mailer import create_mailer
 from yapit.gateway.billing_consumer import run_billing_consumer
@@ -152,6 +154,15 @@ async def lifespan(app: FastAPI):
     )
     background_tasks.append(cache_persister_task)
 
+    background_tasks.append(
+        asyncio.create_task(
+            supervised(
+                "audio-job-feeder",
+                run_audio_job_feeder(app.state.redis_client, app.state.audio_cache, settings),
+            )
+        )
+    )
+
     # TTS billing consumer (cold path: Postgres on own connection pool)
     billing_consumer_task = asyncio.create_task(
         supervised("billing-consumer", run_billing_consumer(app.state.redis_client, settings.database_url))
@@ -214,6 +225,10 @@ async def lifespan(app: FastAPI):
         )
         background_tasks.append(task)
         logger.info(f"OpenAI TTS dispatcher started ({settings.openai_tts_model} @ {settings.openai_tts_base_url})")
+
+    background_tasks.append(
+        asyncio.create_task(supervised("audio-export-sweeper", run_export_sweeper(Path(settings.audio_export_dir))))
+    )
 
     all_caches = [app.state.audio_cache, app.state.document_cache, app.state.extraction_cache]
     maintenance_task = asyncio.create_task(supervised("cache-maintenance", _cache_maintenance_task(all_caches)))

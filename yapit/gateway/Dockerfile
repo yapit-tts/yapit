@@ -20,7 +20,7 @@ ARG GIT_COMMIT=unknown
 RUN echo "$GIT_COMMIT" > /app/version.txt
 
 RUN useradd -m -u 1000 appuser \
-    && mkdir -p /data/audio_cache /data/document_cache /data/extraction_cache /data/gateway /data/images \
+    && mkdir -p /data/audio_cache /data/audio_exports /data/document_cache /data/extraction_cache /data/gateway /data/images \
     && chown -R appuser:appuser /app /data
 
 USER appuser

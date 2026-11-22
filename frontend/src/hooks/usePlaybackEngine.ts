@@ -10,6 +10,7 @@ import { isServerSideModel, type VoiceSelection } from "@/lib/voiceSelection";
 import type { Section } from "@/lib/sectionIndex";
 import { createServerSynthesizer, type ServerSynthesizerInstance, type WSBlockStatusMessage, type WSEvictedMessage } from "@/lib/serverSynthesizer";
 import { createBrowserSynthesizer, type BrowserSynthesizerInstance } from "@/lib/browserSynthesizer";
+import type { WSAudioDocumentMessage } from "@/lib/audioJob";
 import { useTTSWebSocket, type WSMessage } from "./useTTSWebSocket";
 
 export type { Block };
@@ -34,8 +35,16 @@ export function usePlaybackEngine(
   voiceSelection: VoiceSelection,
   sections: Section[],
   expandedSections: Set<string>,
+  onAudioMessage: (message: WSAudioDocumentMessage) => void,
+  onConnect: () => void,
 ): UsePlaybackEngineReturn {
   const { api } = useApi();
+  const onAudioMessageRef = useRef(onAudioMessage);
+  onAudioMessageRef.current = onAudioMessage;
+  const onConnectRef = useRef(onConnect);
+  onConnectRef.current = onConnect;
+  const documentIdRef = useRef(documentId);
+  documentIdRef.current = documentId;
 
   const apiRef = useRef(api);
   apiRef.current = api;
@@ -51,6 +60,11 @@ export function usePlaybackEngine(
 
   // WS message handler — forwards to server synthesizer
   const handleWSMessage = useCallback((data: WSMessage) => {
+    if (data.type === "audio_job" || data.type === "audio_export") {
+      const message = data as unknown as WSAudioDocumentMessage;
+      if (message.document_id === documentIdRef.current) onAudioMessageRef.current(message);
+      return;
+    }
     if (!serverSynthRef.current) return;
     if (data.type === "status") {
       serverSynthRef.current.onWSMessage(data as unknown as WSBlockStatusMessage);
@@ -61,8 +75,11 @@ export function usePlaybackEngine(
     }
   }, []);
 
-  // On WS connect/reconnect: retry all pending synthesis requests
+  // On WS connect/reconnect: hear of the document's audio job again (the gateway answers with
+  // where it stands, for what a dropped socket missed), and retry all pending synthesis requests
   const handleWSConnect = useCallback(() => {
+    if (documentIdRef.current) sendWSRef.current({ type: "watch", document_id: documentIdRef.current });
+    onConnectRef.current();
     serverSynthRef.current?.retryAllPending();
   }, []);
 
@@ -123,6 +140,11 @@ export function usePlaybackEngine(
       originalPlayRef.current!();
     };
   }
+
+  // A socket not yet open watches the document once it connects
+  useEffect(() => {
+    if (documentId && checkConnectedRef.current()) sendWSRef.current({ type: "watch", document_id: documentId });
+  }, [documentId]);
 
   // Sync document into engine
   useEffect(() => {

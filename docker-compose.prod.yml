@@ -2,6 +2,7 @@ volumes:
   pgdata:
   redisdata:
   audio_cache:
+  audio_exports:
   document_cache:
   extraction_cache:
   gateway-data:
@@ -164,6 +165,7 @@ services:
       - ./.env.prod
     volumes:
       - audio_cache:/data/audio_cache
+      - audio_exports:/data/audio_exports
       - document_cache:/data/document_cache
       - extraction_cache:/data/extraction_cache
       - gateway-data:/data/gateway

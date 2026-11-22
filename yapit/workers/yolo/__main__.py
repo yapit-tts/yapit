@@ -267,6 +267,7 @@ async def run_worker(redis_url: str, worker_id: str) -> None:
                 pulled.job_id,
                 pulled.raw_job,
                 pulled.retry_count,
+                pulled.score,
                 _queue_config.queue_name,
                 YOLO_DLQ,
             )

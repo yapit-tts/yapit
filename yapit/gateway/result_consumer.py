@@ -15,12 +15,18 @@ from pydantic import BaseModel
 from redis.asyncio import Redis
 
 from yapit.contracts import (
+    AUDIO_JOB_AWAITED,
+    AUDIO_JOB_WAITERS,
+    AUDIO_JOB_WAKE,
     TTS_AUDIO_CACHE,
     TTS_BILLING_STREAM,
+    TTS_FINALIZED,
+    TTS_FINALIZED_TTL_S,
     TTS_INFLIGHT,
     TTS_PENDING,
     TTS_PERSIST,
     TTS_RESULTS,
+    TTS_SKIPPED,
     TTS_SUBSCRIBERS,
     TTS_TIMESTAMPS_CACHE,
     WorkerResult,
@@ -118,26 +124,32 @@ async def _handle_success(redis: Redis, result: WorkerResult) -> None:
         worker_id=result.worker_id,
     )
 
-    inflight_key = TTS_INFLIGHT.format(hash=result.variant_hash)
-    if await redis.delete(inflight_key) == 0:
-        log.info("Variant already finalized, skipping duplicate result")
-        return
-
     finalize_start = time.time()
 
     if not result.audio_base64:
         log.info("Empty audio, marking as skipped")
+        await redis.set(TTS_SKIPPED.format(hash=result.variant_hash), 1)
+        await _release_inflight(redis, result)
         await _notify_subscribers(redis, result, status="skipped")
+        await _wake_audio_jobs(redis, result.variant_hash)
+        return
+
+    # The first result to arrive finalizes the variant: it alone is stored, billed and persisted.
+    if not await redis.eval(
+        _FINALIZE, 1, TTS_FINALIZED.format(hash=result.variant_hash), str(result.job_id), TTS_FINALIZED_TTL_S
+    ):
+        log.info("Variant already finalized, skipping duplicate result")
+        await _release_inflight(redis, result)
         return
 
     audio = base64.b64decode(result.audio_base64)
-
-    audio_key = TTS_AUDIO_CACHE.format(hash=result.variant_hash)
-    await redis.set(audio_key, audio, ex=AUDIO_CACHE_TTL_S)
+    await redis.set(TTS_AUDIO_CACHE.format(hash=result.variant_hash), audio, ex=AUDIO_CACHE_TTL_S)
 
     if result.word_timestamps_json:
         ts_key = TTS_TIMESTAMPS_CACHE.format(hash=result.variant_hash)
         await redis.set(ts_key, result.word_timestamps_json.encode(), ex=AUDIO_CACHE_TTL_S)
+
+    await _release_inflight(redis, result)
 
     await _notify_subscribers(
         redis,
@@ -161,6 +173,7 @@ async def _handle_success(redis: Redis, result: WorkerResult) -> None:
     )
     await redis.xadd(TTS_BILLING_STREAM, {"data": billing_event.model_dump_json()})
     await redis.lpush(TTS_PERSIST, result.variant_hash)
+    await _wake_audio_jobs(redis, result.variant_hash)
 
     finalize_ms = int((time.time() - finalize_start) * 1000)
 
@@ -193,9 +206,12 @@ async def _handle_error(redis: Redis, result: WorkerResult) -> None:
         worker_id=result.worker_id,
     )
 
-    inflight_key = TTS_INFLIGHT.format(hash=result.variant_hash)
-    if await redis.delete(inflight_key) == 0:
+    finalized = await redis.get(TTS_FINALIZED.format(hash=result.variant_hash))
+    if finalized is not None and finalized.decode() != f"open:{result.job_id}":
         log.info("Variant already finalized, skipping duplicate error result")
+        return
+    if await _release_inflight(redis, result):
+        log.info("Another job for this variant is in flight, leaving the error to it")
         return
 
     await log_event(
@@ -214,6 +230,53 @@ async def _handle_error(redis: Redis, result: WorkerResult) -> None:
     )
 
     await _notify_subscribers(redis, result, status="error", error=result.error)
+    await _wake_audio_jobs(redis, result.variant_hash)
+
+
+async def _wake_audio_jobs(redis: Redis, variant_hash: str) -> None:
+    """Tell the audio job feeder that every job awaiting this variant has room for another block."""
+    waiters_key = AUDIO_JOB_WAITERS.format(hash=variant_hash)
+    async with redis.pipeline(transaction=True) as pipe:
+        pipe.smembers(waiters_key)
+        pipe.delete(waiters_key)
+        waiters, _ = await pipe.execute()
+    for waiter in waiters:
+        user_id, job_id = waiter.decode().rsplit(":", 1)
+        await redis.hdel(AUDIO_JOB_AWAITED.format(job_id=job_id), variant_hash)
+        await redis.lpush(AUDIO_JOB_WAKE, user_id)
+
+
+# Claims the variant for this result's job unless another job's result finalized it first.
+_FINALIZE = """
+local finalized = redis.call('GET', KEYS[1])
+if finalized and finalized ~= 'open:' .. ARGV[1] then
+    return 0
+end
+redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
+return 1
+"""
+
+
+# Deletes the in-flight marker only when this result's job holds it: a marker can expire while its
+# job waits, and the next request for the variant then holds a marker of its own. Returns 1 when
+# another job holds it.
+_RELEASE_INFLIGHT = """
+local owner = redis.call('GET', KEYS[1])
+if owner == ARGV[1] then
+    redis.call('DEL', KEYS[1])
+    return 0
+end
+if owner then
+    return 1
+end
+return 0
+"""
+
+
+async def _release_inflight(redis: Redis, result: WorkerResult) -> bool:
+    """Release this result's marker; True if another job for the variant holds the marker instead."""
+    inflight_key = TTS_INFLIGHT.format(hash=result.variant_hash)
+    return bool(await redis.eval(_RELEASE_INFLIGHT, 1, inflight_key, str(result.job_id)))
 
 
 async def _notify_subscribers(

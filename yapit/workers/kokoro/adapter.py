@@ -11,13 +11,13 @@ import torch
 from kokoro import KModel, KPipeline
 from typing_extensions import TypedDict
 
+from yapit.contracts import KOKORO_OPUS_BITRATE
 from yapit.synth import SynthAdapter
 
 DEVICE: str = os.getenv("DEVICE", "")
 
 REPO_ID = "hexgrad/Kokoro-82M"
 KOKORO_SAMPLE_RATE = 24_000
-OPUS_BITRATE = 48_000
 
 # Kokoro's non-English chunker only splits on ASCII sentence enders and silently truncates
 # chunks over 510 phonemes — a single 250-char CJK block far exceeds that. Splitting on CJK
@@ -117,7 +117,7 @@ def _pcm_to_ogg_opus(pcm_bytes: bytes) -> bytes:
     buf = io.BytesIO()
     output = av.open(buf, "w", format="ogg")
     stream = output.add_stream("libopus", rate=KOKORO_SAMPLE_RATE)
-    stream.bit_rate = OPUS_BITRATE
+    stream.bit_rate = KOKORO_OPUS_BITRATE
 
     samples = np.frombuffer(pcm_bytes, dtype=np.int16)
     frame = av.AudioFrame.from_ndarray(samples.reshape(1, -1), format="s16", layout="mono")

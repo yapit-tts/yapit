@@ -11,6 +11,8 @@ import { useOutlinerOptional } from "@/hooks/useOutliner";
 import { OUTLINER_WIDTH } from "@/components/outlinerSidebar";
 import { useCanUseLocalTTS } from "@/hooks/useCanUseLocalTTS";
 import { useProgressBarInteraction } from "@/hooks/useProgressBarInteraction";
+import { AudioJobBanner } from "@/components/audioJobBanner";
+import type { AudioJob } from "@/lib/audioJob";
 import { useDismissableBanner } from "@/hooks/useDismissableBanner";
 
 type BlockState = 'pending' | 'synthesizing' | 'cached';
@@ -264,6 +266,8 @@ interface Props {
   serverTTSRecoverable?: boolean;
   browserTTSError?: string | null;
   browserTTSDevice?: "webgpu" | "wasm" | null;
+  audioJob: AudioJob | null;
+  onOpenAudioPanel: () => void;
 }
 
 function msToTime(duration: number | undefined): string {
@@ -303,6 +307,8 @@ const SoundControl = memo(function SoundControl({
   serverTTSRecoverable,
   browserTTSError,
   browserTTSDevice,
+  audioJob,
+  onOpenAudioPanel,
 }: Props) {
   const { estimated_ms, numberOfBlocks, currentBlock, setCurrentBlock, onBlockHover, audioProgress, blockStates, visualToAbsolute } = progressBarValues;
   const [progressDisplay, setProgressDisplay] = useState("0:00");
@@ -587,6 +593,8 @@ const SoundControl = memo(function SoundControl({
           </button>
         </div>
       )}
+
+      <AudioJobBanner job={audioJob} onOpen={onOpenAudioPanel} />
 
       {/* Playback controls - same layout as progress bar below for alignment */}
       <div className="flex items-center gap-4 mb-3 max-w-2xl mx-auto">

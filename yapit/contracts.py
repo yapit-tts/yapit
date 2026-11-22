@@ -7,9 +7,21 @@ import annotated_types
 from pydantic import BaseModel, ConfigDict, Field
 
 TTS_INFLIGHT: Final[str] = "tts:inflight:{hash}"
+# The job whose result finalized the variant, or "open:<job_id>" for the one job queued since to
+# synthesize it again. Outlives every job for the variant that can still be queued or in flight.
+TTS_FINALIZED: Final[str] = "tts:finalized:{hash}"
+TTS_FINALIZED_TTL_S: Final[int] = 24 * 3600
+# A variant whose synthesis came back with no audio (whitespace, markup): playback skips it, a job counts
+# it as prepared, and an export leaves it out. No TTL: an export needs it for as long as the audio around it
+# stays cached, and it is a few bytes.
+TTS_SKIPPED: Final[str] = "tts:skipped:{hash}"
 TTS_SUBSCRIBERS: Final[str] = "tts:subscribers:{hash}"
 TTS_CURSOR: Final[str] = "tts:cursor:{user_id}:{document_id}"
 TTS_PENDING: Final[str] = "tts:pending:{user_id}:{document_id}"
+
+# The bitrates the cached Ogg Opus is written at: Kokoro's worker, and the gateway's transcode of OpenAI-compatible TTS
+KOKORO_OPUS_BITRATE: Final[int] = 48_000
+OPENAI_TTS_OPUS_BITRATE: Final[int] = 96_000
 
 # Rate limiting
 RATELIMIT_EXTRACTION: Final[str] = "ratelimit:extraction:{user_id}"
@@ -43,6 +55,15 @@ TTS_TIMESTAMPS_CACHE: Final[str] = "tts:timestamps:{hash}"
 TTS_PERSIST: Final[str] = "tts:persist"
 TTS_PROCESSING: Final[str] = "tts:processing:{worker_id}"
 TTS_DLQ: Final[str] = "tts:dlq:{model}"
+
+# Background audio jobs (yapit/gateway/audio_job.py), one per user
+AUDIO_JOB: Final[str] = "tts:audio_job:{user_id}"  # hash: the user's latest job: its id, spec and status
+AUDIO_JOB_AWAITED: Final[str] = "tts:audio_job:{job_id}:awaited"  # hash: variant_hash -> "position:job_id"
+AUDIO_JOB_LOST: Final[str] = "tts:audio_job:{job_id}:lost"  # list: positions to queue again
+AUDIO_JOB_NEXT: Final[str] = "tts:audio_job:{job_id}:next"  # int: how many of the job's blocks were taken
+AUDIO_JOB_WAITERS: Final[str] = "tts:audio_job_waiters:{hash}"  # set: "user_id:job_id" of each job awaiting it
+AUDIO_JOBS_RUNNING: Final[str] = "tts:audio_jobs_running"  # set: user_ids
+AUDIO_JOB_WAKE: Final[str] = "tts:audio_job_wake"  # list: user_ids whose job may queue more
 
 YOLO_QUEUE: Final[str] = "yolo:queue"  # sorted set: job_id -> timestamp
 YOLO_JOBS: Final[str] = "yolo:jobs"  # hash: job_id -> job_json

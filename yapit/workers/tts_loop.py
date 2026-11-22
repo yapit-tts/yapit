@@ -46,7 +46,14 @@ async def run_tts_worker(redis_url: str, model: str, adapter: SynthAdapter, work
             job = SynthesisJob.model_validate_json(pulled.raw_job)
 
             await track_processing(
-                client, processing_key, pulled.job_id, pulled.raw_job, pulled.retry_count, config.queue_name, dlq_key
+                client,
+                processing_key,
+                pulled.job_id,
+                pulled.raw_job,
+                pulled.retry_count,
+                pulled.score,
+                config.queue_name,
+                dlq_key,
             )
 
             try:

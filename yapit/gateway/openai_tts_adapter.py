@@ -7,6 +7,7 @@ import av
 import openai
 from loguru import logger
 
+from yapit.contracts import OPENAI_TTS_OPUS_BITRATE
 from yapit.gateway.backoff import (
     API_BASE_DELAY_S,
     API_MAX_DELAY_S,
@@ -119,7 +120,7 @@ def _transcode_to_ogg_opus(audio_bytes: bytes) -> bytes:
     out = av.open(buf, "w", format="ogg")
     try:
         stream = out.add_stream("libopus", rate=48_000)
-        stream.bit_rate = 96_000
+        stream.bit_rate = OPENAI_TTS_OPUS_BITRATE
 
         for frame in inp.decode(audio=0):
             frame.pts = None

@@ -1,12 +1,16 @@
 import { StructuredDocumentView } from '@/components/structuredDocument';
 import { PlaybackOverlay } from '@/components/playbackOverlay';
+import { GenerateAudioPanel } from '@/components/generateAudioPanel';
 import { useOutliner } from '@/hooks/useOutliner';
+import { useAudioExport } from '@/hooks/useAudioExport';
+import { useAudioJob } from '@/hooks/useAudioJob';
 import { usePlaybackEngine, type Block } from '@/hooks/usePlaybackEngine';
 import { useParams, useLocation, Link, useNavigate } from "react-router";
 import { useRef, useState, useEffect, useCallback } from "react";
 import { useApi } from '@/api';
 import { Loader2, FileQuestion, Download, X, AlertTriangle } from "lucide-react";
 import { AxiosError } from "axios";
+import type { WSAudioDocumentMessage } from '@/lib/audioJob';
 import { buildSectionIndex, findSectionForBlock, type Section } from '@/lib/sectionIndex';
 import { buildSlugMap } from '@/components/structuredDocument';
 import { type VoiceSelection, getVoiceSelection, getPlaybackSpeed, setPlaybackSpeed as savePlaybackSpeed, getVolume, setVolume as saveVolume } from '@/lib/voiceSelection';
@@ -62,6 +66,7 @@ const PlaybackPage = () => {
   const [showFailedPagesBanner, setShowFailedPagesBanner] = useState(true);
   const [showKeybindings, setShowKeybindings] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
+  const [showAudioPanel, setShowAudioPanel] = useState(false);
 
   // Outliner state
   const [sections, setSections] = useState<Section[]>([]);
@@ -83,6 +88,15 @@ const PlaybackPage = () => {
   const sourceUrl = document?.metadata_dict?.url ?? null;
   const markdownContent = document?.original_text ?? null;
 
+  const audioJob = useAudioJob(documentId);
+  const audioExport = useAudioExport(documentId, documentTitle);
+  const { receive: receiveAudioJob } = audioJob;
+  const { receive: receiveAudioExport } = audioExport;
+  const onAudioMessage = useCallback((message: WSAudioDocumentMessage) => {
+    if (message.type === "audio_job") receiveAudioJob(message);
+    else receiveAudioExport(message);
+  }, [receiveAudioJob, receiveAudioExport]);
+
   // --- Playback engine (no snapshot subscription — that lives in PlaybackOverlay) ---
   const { engine, ws, getServerTTSStatus, getBrowserTTSStatus } = usePlaybackEngine(
     documentId,
@@ -90,6 +104,8 @@ const PlaybackPage = () => {
     voiceSelection,
     sections,
     expandedSections,
+    onAudioMessage,
+    audioExport.resume,
   );
 
   // Sync playback speed and volume into engine/audio
@@ -178,6 +194,7 @@ const PlaybackPage = () => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement;
       if (["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName) || el.isContentEditable) return;
+      if (el.closest('[role="dialog"]')) return;
 
       switch (e.key) {
         case " ":
@@ -362,6 +379,8 @@ const PlaybackPage = () => {
     engine.seekToBlock(audioBlockIdx);
   }, [engine]);
 
+  const openAudioPanel = useCallback(() => setShowAudioPanel(true), []);
+
   const canCollapseSection = useCallback((section: Section) => {
     const idx = engine.getSnapshot().currentBlock;
     if (idx < 0) return true;
@@ -490,6 +509,7 @@ const PlaybackPage = () => {
           expandedSections={shouldShowOutliner ? expandedSections : undefined}
           onSectionExpand={shouldShowOutliner ? handleSectionToggle : undefined}
           canCollapseSection={shouldShowOutliner ? canCollapseSection : undefined}
+          onGenerateAudio={documentBlocks.length > 0 ? openAudioPanel : undefined}
         />
         <PlaybackOverlay
           engine={engine}
@@ -515,8 +535,28 @@ const PlaybackPage = () => {
           slugMap={slugMap}
           scrollToBlockRef={scrollToBlockRef}
           handleBackToReadingRef={handleBackToReadingRef}
+          audioJob={audioJob.job}
+          onOpenAudioPanel={openAudioPanel}
         />
       </div>
+
+      {documentId && (
+        <GenerateAudioPanel
+          open={showAudioPanel}
+          onOpenChange={setShowAudioPanel}
+          documentId={documentId}
+          sections={sections}
+          documentBlocks={documentBlocks}
+          expandedSections={expandedSections}
+          voiceSelection={voiceSelection}
+          onVoiceChange={setVoiceSelection}
+          job={audioJob.job}
+          onStart={audioJob.start}
+          onCancel={audioJob.cancel}
+          exportProgress={audioExport.progress}
+          onDownload={audioExport.download}
+        />
+      )}
 
       {showKeybindings && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={() => setShowKeybindings(false)}>

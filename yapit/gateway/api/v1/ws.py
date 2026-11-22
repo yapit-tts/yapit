@@ -12,6 +12,7 @@ from sqlmodel import select
 from starlette.applications import Starlette
 
 from yapit.contracts import (
+    AUDIO_JOB_WAITERS,
     MAX_TTS_BLOCKS_PER_MINUTE,
     RATELIMIT_TTS,
     TTS_INFLIGHT,
@@ -23,13 +24,14 @@ from yapit.contracts import (
     get_pubsub_channel,
     get_queue_name,
 )
+from yapit.gateway.audio_job import publish_job_state
 from yapit.gateway.auth import User, authenticate_ws
 from yapit.gateway.backoff import Backoff
 from yapit.gateway.cache import Cache
 from yapit.gateway.config import Settings, get_settings
 from yapit.gateway.db import create_session
 from yapit.gateway.deps import get_model, get_voice
-from yapit.gateway.domain_models import Document
+from yapit.gateway.domain_models import Document, readable_by
 from yapit.gateway.exceptions import ResourceNotFoundError
 from yapit.gateway.metrics import log_error, log_event
 from yapit.gateway.synthesis import CachedResult, ErrorResult, request_synthesis
@@ -47,6 +49,13 @@ class WSSynthesizeRequest(BaseModel):
     block_indices: list[int] = Field(max_length=32)  # frontend sends batches of 8; cap is a safety bound
     model: str
     voice: str
+
+
+class WSWatchDocument(BaseModel):
+    """Sent when a tab opens a document: it hears of the user's audio job over it from then on."""
+
+    type: Literal["watch"] = "watch"
+    document_id: uuid.UUID
 
 
 class WSCursorMoved(BaseModel):
@@ -116,6 +125,11 @@ async def tts_websocket(
                     msg = WSSynthesizeRequest.model_validate(data)
                     await ensure_doc_subscribed(msg.document_id)
                     await _handle_synthesize(ws, msg, user, redis, cache, settings)
+                elif msg_type == "watch":
+                    msg = WSWatchDocument.model_validate(data)
+                    await ensure_doc_subscribed(msg.document_id)
+                    # Through the channel, so it reaches the tab in order with the feeder's updates
+                    await publish_job_state(redis, cache, user.id, msg.document_id)
                 elif msg_type == "cursor_moved":
                     msg = WSCursorMoved.model_validate(data)
                     await _handle_cursor_moved(ws, msg, user, redis)
@@ -171,7 +185,7 @@ async def _handle_synthesize(
     async with create_session() as db:
         # Validate document ownership
         doc = (await db.exec(select(Document).where(Document.id == msg.document_id))).first()
-        if not doc or (doc.user_id != user.id and not doc.is_public):
+        if not doc or not readable_by(user.id, doc.user_id, doc.is_public):
             await ws.send_json({"type": "error", "error": "Document not found or access denied"})
             return
 
@@ -220,6 +234,7 @@ async def _handle_synthesize(
                     document_id=msg.document_id,
                     block_idx=idx,
                     track_for_websocket=True,
+                    background=False,
                 )
 
                 # Fetch word timestamps for cache hits
@@ -316,8 +331,15 @@ async def _handle_cursor_moved(
         else:
             parsed.append((job_id_str, index_key, None))
 
+    # A queued job whose variant a background audio job awaits stays queued for that job
+    queued = [(jid, ik, job) for jid, ik, job in parsed if job is not None]
+    async with redis.pipeline() as pipe:
+        for _, _, job in queued:
+            pipe.exists(AUDIO_JOB_WAITERS.format(hash=job.variant_hash))
+        awaited = await pipe.execute()
+    has_job = [entry for entry, is_awaited in zip(queued, awaited) if not is_awaited]
+
     # Pipeline 3: remove from queues (1:1 with parsed entries that have jobs)
-    has_job = [(jid, ik, job) for jid, ik, job in parsed if job is not None]
     async with redis.pipeline() as pipe:
         for job_id_str, _, job in has_job:
             pipe.zrem(get_queue_name(job.model_slug), job_id_str)
@@ -325,10 +347,10 @@ async def _handle_cursor_moved(
 
     # Pipeline 4: clean up index + job keys
     async with redis.pipeline() as pipe:
-        for job_id_str, index_key, job in parsed:
+        for _, index_key, _ in parsed:
             pipe.hdel(TTS_JOB_INDEX, index_key)
-            if job is not None:
-                pipe.hdel(TTS_JOBS, job_id_str)
+        for job_id_str, _, _ in has_job:
+            pipe.hdel(TTS_JOBS, job_id_str)
         await pipe.execute()
 
     # Pipeline 5: clean up inflight keys for jobs that were still in the queue

@@ -1,6 +1,7 @@
 """Core synthesis logic, decoupled from transport (WebSocket, REST)."""
 
 import asyncio
+import time
 import uuid
 from dataclasses import dataclass
 from typing import Literal
@@ -12,6 +13,8 @@ from sqlmodel import select
 
 from yapit.contracts import (
     TTS_AUDIO_CACHE,
+    TTS_FINALIZED,
+    TTS_FINALIZED_TTL_S,
     TTS_INFLIGHT,
     TTS_JOB_INDEX,
     TTS_JOBS,
@@ -27,6 +30,11 @@ from yapit.gateway.exceptions import UsageLimitExceededError
 from yapit.gateway.metrics import log_event
 from yapit.gateway.usage import check_usage_limit
 from yapit.queue import QueueConfig, push_job
+
+# A background job's blocks are scored this far in the future, so a worker pulls every listener's
+# block queued in that window ahead of them; under the in-flight marker's 600 s lifetime.
+BACKGROUND_DELAY_S = 120
+INFLIGHT_TTL_S = 600
 
 
 @dataclass
@@ -44,6 +52,7 @@ class CachedResult:
 class QueuedResult:
     status: Literal["queued"] = "queued"
     variant_hash: str = ""
+    job_id: str | None = None  # None when the variant was already in flight under another job
 
     @property
     def audio_url(self) -> str:
@@ -75,11 +84,14 @@ async def request_synthesis(
     document_id: uuid.UUID,
     block_idx: int,
     track_for_websocket: bool,
+    background: bool,
 ) -> SynthesisResult:
     """Request synthesis for a single piece of text.
 
     Args:
         track_for_websocket: If True, adds subscriber/pending tracking for WebSocket notifications and cursor-based eviction. Set False for REST polling.
+        background: If True, the job is queued behind listeners (BACKGROUND_DELAY_S). If False and the
+            variant is already queued as a background job, that job is moved up to now.
     """
     variant_hash = BlockVariant.get_hash(
         text=text,
@@ -104,14 +116,14 @@ async def request_synthesis(
         )
         return CachedResult(variant_hash=variant_hash, duration_ms=variant.duration_ms)
 
-    usage_type = UsageType.server_kokoro if model.slug.startswith("kokoro") else UsageType.premium_voice
-    block_chars = int(len(text) * model.usage_multiplier)
+    usage_type = usage_type_for(model.slug)
+    block_chars = billed_characters(text, model)
     try:
         await check_usage_limit(user_id, usage_type, block_chars, db, billing_enabled=billing_enabled)
     except UsageLimitExceededError as e:
         return ErrorResult(error=str(e))
 
-    variant_hash = await _queue_job(
+    return await _queue_job(
         db=db,
         redis=redis,
         user_id=user_id,
@@ -123,9 +135,16 @@ async def request_synthesis(
         document_id=document_id,
         block_idx=block_idx,
         track_for_websocket=track_for_websocket,
+        background=background,
     )
 
-    return QueuedResult(variant_hash=variant_hash)
+
+def billed_characters(text: str, model: TTSModel) -> int:
+    return int(len(text) * model.usage_multiplier)
+
+
+def usage_type_for(model_slug: str) -> UsageType:
+    return UsageType.server_kokoro if model_slug.startswith("kokoro") else UsageType.premium_voice
 
 
 async def _queue_job(
@@ -140,8 +159,8 @@ async def _queue_job(
     document_id: uuid.UUID,
     block_idx: int,
     track_for_websocket: bool,
-) -> str:
-    """Queue a synthesis job. Returns variant_hash."""
+    background: bool,
+) -> QueuedResult:
     if variant is None:
         stmt = (
             pg_insert(BlockVariant)
@@ -169,10 +188,19 @@ async def _queue_job(
     job_id = uuid.uuid4()
     job_id_str = str(job_id)
 
+    queue_name = get_queue_name(model.slug)
+    now = time.time()
     # TTL is a safety net for orphaned keys; result_consumer DELETE is the normal cleanup path
-    was_set = await redis.set(TTS_INFLIGHT.format(hash=variant_hash), job_id_str, ex=600, nx=True)
+    was_set = await redis.set(TTS_INFLIGHT.format(hash=variant_hash), job_id_str, ex=INFLIGHT_TTL_S, nx=True)
     if not was_set:
-        return variant_hash
+        if not background:
+            owner = await redis.get(TTS_INFLIGHT.format(hash=variant_hash))
+            if owner is not None:
+                # lt: only ever moves a job up; xx: a job already pulled is not put back
+                await redis.zadd(queue_name, {owner.decode(): now}, xx=True, lt=True)
+        return QueuedResult(variant_hash=variant_hash)
+    # The variant was finalized once and is gone from the cache since: this job may finalize it again
+    await redis.set(TTS_FINALIZED.format(hash=variant_hash), f"open:{job_id_str}", ex=TTS_FINALIZED_TTL_S, xx=True)
 
     job = SynthesisJob(
         job_id=job_id,
@@ -191,11 +219,17 @@ async def _queue_job(
         ),
     )
 
-    queue_name = get_queue_name(model.slug)
     index_key = f"{user_id}:{document_id}:{block_idx}" if track_for_websocket else None
 
     tts_config = QueueConfig(queue_name=queue_name, jobs_key=TTS_JOBS, job_index_key=TTS_JOB_INDEX)
-    await push_job(redis, tts_config, job_id_str, job.model_dump_json().encode(), index_key=index_key)
+    await push_job(
+        redis,
+        tts_config,
+        job_id_str,
+        job.model_dump_json().encode(),
+        score=now + BACKGROUND_DELAY_S if background else now,
+        index_key=index_key,
+    )
 
     queue_depth = await redis.zcard(queue_name)
     await log_event(
@@ -211,7 +245,7 @@ async def _queue_job(
         queue_type="tts",
     )
 
-    return variant_hash
+    return QueuedResult(variant_hash=variant_hash, job_id=job_id_str)
 
 
 async def synthesize_and_wait(
@@ -241,6 +275,7 @@ async def synthesize_and_wait(
         document_id=document_id,
         block_idx=block_idx,
         track_for_websocket=False,
+        background=False,
     )
 
     if not isinstance(result, QueuedResult):
