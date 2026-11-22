@@ -78,7 +78,7 @@ function GenerateAudioForm(props: GenerateAudioPanelProps) {
               Generate
             </Button>
           )}
-          <FormatsHint>
+          <FormatsHint generateFirst={!s.allMade}>
             <div className="flex gap-2">
               {EXPORT_FORMATS.map(format => {
                 const building = props.exportProgress[format]?.building === true;
@@ -140,14 +140,18 @@ function Tick({ checked, onChange }: { checked: boolean; onChange: () => void })
   );
 }
 
-/** One tooltip over both Save buttons, saying what each file is good for; it opens on hover and on keyboard focus. */
-function FormatsHint({ children }: { children: React.ReactNode }) {
+/**
+ * One tooltip over both Save buttons, saying what each file is good for, and why they wait while they do; it opens on
+ * hover, over a disabled button too, and on keyboard focus.
+ */
+function FormatsHint({ generateFirst, children }: { generateFirst: boolean; children: React.ReactNode }) {
   return (
     <TooltipPrimitive.Provider delayDuration={500}>
       <TooltipPrimitive.Root>
         <TooltipPrimitive.Trigger asChild>{children}</TooltipPrimitive.Trigger>
         <TooltipPrimitive.Portal>
           <TooltipPrimitive.Content align="end" sideOffset={6} collisionPadding={8} className={`${overlayClass} flex flex-col gap-1.5`}>
+            {generateFirst && <p className="text-muted-foreground">Save once the ticked sections are generated.</p>}
             <p>Both hold the same audio, with a chapter for each section.</p>
             <p><span className="font-medium">M4B</span> is an audiobook: Apple Books and audiobook apps show its chapters and remember where you stopped.</p>
             <p><span className="font-medium">MP3</span> plays in any player on any device, though not every player shows its chapters.</p>
