@@ -267,7 +267,7 @@ interface Props {
   browserTTSError?: string | null;
   browserTTSDevice?: "webgpu" | "wasm" | null;
   audioJob: AudioJob | null;
-  onCancelAudioJob: () => Promise<void>;
+  onOpenAudioPanel: () => void;
 }
 
 function msToTime(duration: number | undefined): string {
@@ -308,7 +308,7 @@ const SoundControl = memo(function SoundControl({
   browserTTSError,
   browserTTSDevice,
   audioJob,
-  onCancelAudioJob,
+  onOpenAudioPanel,
 }: Props) {
   const { estimated_ms, numberOfBlocks, currentBlock, setCurrentBlock, onBlockHover, audioProgress, blockStates, visualToAbsolute } = progressBarValues;
   const [progressDisplay, setProgressDisplay] = useState("0:00");
@@ -594,7 +594,7 @@ const SoundControl = memo(function SoundControl({
         </div>
       )}
 
-      <AudioJobBanner job={audioJob} onCancel={onCancelAudioJob} />
+      <AudioJobBanner job={audioJob} onOpen={onOpenAudioPanel} />
 
       {/* Playback controls - same layout as progress bar below for alignment */}
       <div className="flex items-center gap-4 mb-3 max-w-2xl mx-auto">

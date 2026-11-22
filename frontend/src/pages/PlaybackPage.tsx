@@ -1,6 +1,6 @@
 import { StructuredDocumentView } from '@/components/structuredDocument';
 import { PlaybackOverlay } from '@/components/playbackOverlay';
-import { PrepareAudioDialog } from '@/components/prepareAudioDialog';
+import { GenerateAudioPanel } from '@/components/generateAudioPanel';
 import { useOutliner } from '@/hooks/useOutliner';
 import { useAudioExport } from '@/hooks/useAudioExport';
 import { useAudioJob } from '@/hooks/useAudioJob';
@@ -66,7 +66,7 @@ const PlaybackPage = () => {
   const [showFailedPagesBanner, setShowFailedPagesBanner] = useState(true);
   const [showKeybindings, setShowKeybindings] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
-  const [showPrepareAudio, setShowPrepareAudio] = useState(false);
+  const [showAudioPanel, setShowAudioPanel] = useState(false);
 
   // Outliner state
   const [sections, setSections] = useState<Section[]>([]);
@@ -379,7 +379,7 @@ const PlaybackPage = () => {
     engine.seekToBlock(audioBlockIdx);
   }, [engine]);
 
-  const openPrepareAudio = useCallback(() => setShowPrepareAudio(true), []);
+  const openAudioPanel = useCallback(() => setShowAudioPanel(true), []);
 
   const canCollapseSection = useCallback((section: Section) => {
     const idx = engine.getSnapshot().currentBlock;
@@ -509,7 +509,7 @@ const PlaybackPage = () => {
           expandedSections={shouldShowOutliner ? expandedSections : undefined}
           onSectionExpand={shouldShowOutliner ? handleSectionToggle : undefined}
           canCollapseSection={shouldShowOutliner ? canCollapseSection : undefined}
-          onPrepareAudio={documentBlocks.length > 0 ? openPrepareAudio : undefined}
+          onGenerateAudio={documentBlocks.length > 0 ? openAudioPanel : undefined}
         />
         <PlaybackOverlay
           engine={engine}
@@ -536,14 +536,14 @@ const PlaybackPage = () => {
           scrollToBlockRef={scrollToBlockRef}
           handleBackToReadingRef={handleBackToReadingRef}
           audioJob={audioJob.job}
-          onCancelAudioJob={audioJob.cancel}
+          onOpenAudioPanel={openAudioPanel}
         />
       </div>
 
       {documentId && (
-        <PrepareAudioDialog
-          open={showPrepareAudio}
-          onOpenChange={setShowPrepareAudio}
+        <GenerateAudioPanel
+          open={showAudioPanel}
+          onOpenChange={setShowAudioPanel}
           documentId={documentId}
           sections={sections}
           documentBlocks={documentBlocks}
@@ -552,6 +552,7 @@ const PlaybackPage = () => {
           onVoiceChange={setVoiceSelection}
           job={audioJob.job}
           onStart={audioJob.start}
+          onCancel={audioJob.cancel}
           exportProgress={audioExport.progress}
           onDownload={audioExport.download}
         />

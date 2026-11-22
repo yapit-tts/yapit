@@ -319,7 +319,7 @@ async def top_up(redis: Redis, cache: Cache, settings: Settings, user_id: str) -
         missing = len(spec.blocks) - sum(await prepared_mask(redis, cache, variant_hashes(spec)))
         if missing:
             # Settled but not prepared: its synthesis failed, or the cache let it go before the job ended
-            error = f"{missing} of the blocks have no audio. Prepare the audio again to make them"
+            error = f"{missing} of the blocks have no audio. Generate the audio again to make them"
             await _finish(redis, user_id, job.id, AudioJobStatus.failed, error)
         else:
             await _finish(redis, user_id, job.id, AudioJobStatus.done)

@@ -32,7 +32,7 @@ export function useAudioJob(documentId: string | undefined): UseAudioJobReturn {
     } catch (err) {
       if (err instanceof AxiosError && typeof err.response?.data?.detail === "string") return err.response.data.detail;
       console.error("Failed to start audio job:", err);
-      return "Could not start preparing audio. Please try again.";
+      return "Could not start generating audio. Please try again.";
     }
   }, [api, documentId]);
 

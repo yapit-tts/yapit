@@ -41,7 +41,7 @@ interface PlaybackOverlayProps {
   scrollToBlockRef: React.MutableRefObject<(blockIdx: number, behavior?: ScrollBehavior) => void>;
   handleBackToReadingRef: React.MutableRefObject<() => void>;
   audioJob: AudioJob | null;
-  onCancelAudioJob: () => Promise<void>;
+  onOpenAudioPanel: () => void;
 }
 
 export function PlaybackOverlay({
@@ -69,7 +69,7 @@ export function PlaybackOverlay({
   scrollToBlockRef,
   handleBackToReadingRef,
   audioJob,
-  onCancelAudioJob,
+  onOpenAudioPanel,
 }: PlaybackOverlayProps) {
   const snapshot = useSyncExternalStore(engine.subscribe, engine.getSnapshot);
   const { api } = useApi();
@@ -406,7 +406,7 @@ export function PlaybackOverlay({
         browserTTSError={browserTTS.error}
         browserTTSDevice={browserTTS.device}
         audioJob={audioJob}
-        onCancelAudioJob={onCancelAudioJob}
+        onOpenAudioPanel={onOpenAudioPanel}
       />
       {shouldShowOutliner && (
         <OutlinerSidebar>
