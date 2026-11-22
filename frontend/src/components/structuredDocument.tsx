@@ -1,7 +1,8 @@
 import { Component, memo, useCallback, useEffect, useMemo, useRef, useState, type ErrorInfo, type ReactNode } from "react";
 import katex from "katex";
 import "katex/dist/katex.min.css";
-import { Copy, Download, Check, ChevronRight, FileDown, FileCode2, AudioLines } from "lucide-react";
+import { Copy, Download, Check, ChevronRight, FileDown, FileCode2, FileAudio } from "lucide-react";
+import { Hint } from "@/components/hint";
 import { InlineContentRenderer } from "./inlineContent";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
@@ -926,15 +927,19 @@ function ActionButtons({
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
-      <button
-        onClick={onGenerateAudio}
-        disabled={!onGenerateAudio}
-        className="p-2 rounded hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-        title="Generate audio"
-        aria-label="Generate audio"
-      >
-        <AudioLines className="h-4 w-4 text-muted-foreground" />
-      </button>
+      <Hint align="end" content={<>
+        <span className="font-medium">Generate in background</span>
+        <span className="text-muted-foreground">The server generates audio for the sections you pick, while you read on or close the tab.</span>
+      </>}>
+        <button
+          onClick={onGenerateAudio}
+          disabled={!onGenerateAudio}
+          className="p-2 rounded hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          aria-label="Generate in background"
+        >
+          <FileAudio className="h-4 w-4 text-muted-foreground" />
+        </button>
+      </Hint>
     </div>
   );
 }

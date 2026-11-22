@@ -46,7 +46,7 @@ export interface RowState extends ExportRow {
   inJob: boolean;
 }
 
-/** The ticked sections, what generating their audio costs, and what stands in its way: the state the Generate audio panel renders. */
+/** The ticked sections, what generating their audio costs, and what stands in its way: the state the Generate in background panel renders. */
 export function useAudioSelection(props: AudioSelectionProps) {
   const { documentId, sections, documentBlocks, expandedSections, voiceSelection, onVoiceChange, job, onStart, exportProgress, onDownload } = props;
   const { api } = useApi();

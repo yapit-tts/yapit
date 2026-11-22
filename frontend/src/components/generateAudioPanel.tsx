@@ -39,8 +39,8 @@ function GenerateAudioForm(props: GenerateAudioPanelProps) {
     <>
       <div className="flex flex-col gap-3 px-5 pt-5 pb-3 border-b">
         <div className="flex items-center gap-1 pr-8">
-          <SheetTitle className="text-lg font-semibold text-foreground">Generate audio</SheetTitle>
-          <InfoHint label="What generating audio does">
+          <SheetTitle className="text-lg font-semibold text-foreground">Generate in background</SheetTitle>
+          <InfoHint label="What this does">
             The server generates audio for the ticked sections, so they play right away. You can close this tab in the meantime.
           </InfoHint>
         </div>

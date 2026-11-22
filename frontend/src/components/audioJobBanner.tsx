@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router";
-import { AlertTriangle, AudioLines, X } from "lucide-react";
+import { AlertTriangle, FileAudio, X } from "lucide-react";
 import type { AudioJob } from "@/lib/audioJob";
 
 const numberFormat = new Intl.NumberFormat();
@@ -29,7 +29,7 @@ export function AudioJobBanner({ job, onOpen }: { job: AudioJob | null; onOpen: 
     return (
       <div role="status" className="flex justify-center mb-2">
         <button onClick={onOpen} className="flex items-center gap-2 px-2 py-1 rounded-md text-sm text-muted-foreground hover:text-primary transition-colors">
-          <AudioLines className="h-4 w-4" />
+          <FileAudio className="h-4 w-4" />
           Generating audio <span className="font-mono tabular-nums">{count}</span>
         </button>
       </div>
