@@ -20,11 +20,11 @@ export const KEYBOARD_SHORTCUTS = [
 
 /**
  * Whether a key press is the page's to act on: no Ctrl, Cmd or Alt held, so the browser's own combinations pass, and
- * no text field, editable title or dialog holding focus.
+ * no text field, editable title, dialog or menu holding focus.
  */
 export function isPageShortcut(e: KeyboardEvent): boolean {
   if (e.ctrlKey || e.metaKey || e.altKey) return false;
   const el = e.target as HTMLElement;
   if (["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName) || el.isContentEditable) return false;
-  return !el.closest('[role="dialog"]');
+  return !el.closest('[role="dialog"], [role="menu"]');
 }

@@ -915,26 +915,30 @@ function ActionButtons({
   return (
     <div className="flex items-center gap-1 shrink-0">
       <Hint content={<ActionLine action={copied ? "Copied" : "Copy markdown"} keys="c" />}>
-        <button
-          onClick={onCopy}
-          disabled={!hasContent}
-          className="p-2 rounded hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-          aria-label="Copy markdown"
-        >
-          {copied ? <Check className="h-4 w-4 text-accent-success" /> : <Copy className="h-4 w-4 text-muted-foreground" />}
-        </button>
+        <span>
+          <button
+            onClick={onCopy}
+            disabled={!hasContent}
+            className="p-2 rounded hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            aria-label="Copy markdown"
+          >
+            {copied ? <Check className="h-4 w-4 text-accent-success" /> : <Copy className="h-4 w-4 text-muted-foreground" />}
+          </button>
+        </span>
       </Hint>
       <DropdownMenu open={downloadMenuOpen} onOpenChange={setDownloadMenuOpen}>
         <Hint content={<ActionLine action="Download markdown" keys="d" />}>
-          <DropdownMenuTrigger asChild>
-            <button
-              disabled={!hasContent}
-              className="p-2 rounded hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-              aria-label="Download markdown"
-            >
-              <Download className="h-4 w-4 text-muted-foreground" />
-            </button>
-          </DropdownMenuTrigger>
+          <span>
+            <DropdownMenuTrigger asChild>
+              <button
+                disabled={!hasContent}
+                className="p-2 rounded hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                aria-label="Download markdown"
+              >
+                <Download className="h-4 w-4 text-muted-foreground" />
+              </button>
+            </DropdownMenuTrigger>
+          </span>
         </Hint>
         <DropdownMenuContent align="end">
           <DropdownMenuItem onClick={() => onDownload(false)}>
@@ -951,14 +955,16 @@ function ActionButtons({
         <ActionLine action="Generate in background" keys="g" />
         <span className="text-muted-foreground">The server generates audio for the sections you pick, while you read on or close the tab.</span>
       </>}>
-        <button
-          onClick={onGenerateAudio}
-          disabled={!onGenerateAudio}
-          className="p-2 rounded hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-          aria-label="Generate in background"
-        >
-          <FileAudio className="h-4 w-4 text-muted-foreground" />
-        </button>
+        <span>
+          <button
+            onClick={onGenerateAudio}
+            disabled={!onGenerateAudio}
+            className="p-2 rounded hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            aria-label="Generate in background"
+          >
+            <FileAudio className="h-4 w-4 text-muted-foreground" />
+          </button>
+        </span>
       </Hint>
     </div>
   );

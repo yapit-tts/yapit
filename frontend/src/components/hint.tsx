@@ -12,8 +12,9 @@ interface HintProps {
 }
 
 /**
- * The house tooltip: an overlay under its control after half a second of hover, and at once on keyboard focus. The
- * trigger is the child itself, so a wrapper around a disabled button still opens it. Focus that is not keyboard focus
+ * The house tooltip: an overlay that opens below the element it wraps after half a second of hover, and at once on
+ * keyboard focus. That element is the trigger itself, so a disabled button needs a span around it, which still gets
+ * the pointer. Focus that is not keyboard focus
  * (a dialog focusing its first control after a click) leaves it shut.
  */
 export function Hint({ content, children, align = "center", open, onOpenChange }: HintProps) {
