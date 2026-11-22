@@ -7,64 +7,69 @@ from urllib.parse import urljoin, urlparse
 
 import httpx
 from fastapi import HTTPException, status
-from loguru import logger
 from pydantic import HttpUrl
 
+from yapit.gateway.document.defuddle_client import assert_robots_allow
 from yapit.gateway.metrics import log_event
+from yapit.gateway.web_bot_auth import signature_headers
+
+# docker/defuddle/fetcher.js sends the same one: a site sees one fetcher.
+USER_AGENT = "Mozilla/5.0 (compatible; Yapit/1.0; +https://yapit.md/bot)"
+MAX_REDIRECTS = 10
+
+
+def fetch_client() -> httpx.AsyncClient:
+    return httpx.AsyncClient(proxy="http://smokescreen:4750", timeout=30.0, headers={"User-Agent": USER_AGENT})
 
 
 async def download_document(url: HttpUrl, max_size: int) -> tuple[bytes, str]:
     """Download a document from URL within size limits.
 
-    Args:
-        url: URL to download from
-        max_size: Maximum allowed file size in bytes
+    Redirects are followed one hop at a time, each hop checked against its site's robots.txt first and signed
+    for its own authority where a key is configured.
 
     Returns:
         tuple of (content bytes, content-type header)
 
     Raises:
-        HTTPException: If download fails or file is too large
+        HTTPException: If robots.txt refuses yapit, the download fails, or the file is too large
     """
-    headers = {
-        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Yapit/1.0 (+https://yapit.md)"
-    }
     start = time.monotonic()
-    async with httpx.AsyncClient(
-        proxy="http://smokescreen:4750",
-        follow_redirects=True,
-        timeout=30.0,
-        headers=headers,
-    ) as client:
+    async with fetch_client() as client:
         try:
-            head_response = await client.head(str(url))
-            if head_response.status_code != 200:
-                logger.debug(f"HEAD request failed with {head_response.status_code}, falling back to GET")
-            else:
-                content_length = head_response.headers.get("content-length")
+            response = await _get(client, str(url))
+            try:
+                # Cloudflare answers a request it challenges with this header in place of the page.
+                if response.headers.get("cf-mitigated") == "challenge":
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                        detail="This site's bot protection (Cloudflare) blocked yapit from reading the page",
+                    )
+                content_length = response.headers.get("content-length")
                 if content_length and int(content_length) > max_size:
                     raise HTTPException(
                         status_code=status.HTTP_413_CONTENT_TOO_LARGE,
                         detail=f"File too large: {int(content_length)} bytes exceeds maximum of {max_size} bytes",
                     )
-            response = await client.get(str(url))
-            # Allow 404 on HTML responses — JS-rendered SPAs may return 404
-            # for server-side routes while rendering content client-side.
-            # Defuddle's Playwright cascade will handle the actual rendering.
-            content_type_header = response.headers.get("content-type", "")
-            is_html = "text/html" in content_type_header or "application/xhtml+xml" in content_type_header
-            if not (is_html and response.status_code == 404):
-                response.raise_for_status()
-            content = io.BytesIO()
-            downloaded = 0
-            async for chunk in response.aiter_bytes(chunk_size=8192):
-                downloaded += len(chunk)
-                if downloaded > max_size:
-                    raise HTTPException(
-                        status_code=status.HTTP_413_CONTENT_TOO_LARGE,
-                        detail=f"File too large: downloaded {downloaded} bytes exceeds maximum of {max_size} bytes",
-                    )
-                content.write(chunk)
+                # Allow 404 on HTML responses — JS-rendered SPAs may return 404
+                # for server-side routes while rendering content client-side.
+                # Defuddle's Playwright cascade will handle the actual rendering.
+                content_type_header = response.headers.get("content-type", "")
+                is_html = "text/html" in content_type_header or "application/xhtml+xml" in content_type_header
+                if not (is_html and response.status_code == 404):
+                    response.raise_for_status()
+                content = io.BytesIO()
+                downloaded = 0
+                async for chunk in response.aiter_bytes(chunk_size=8192):
+                    downloaded += len(chunk)
+                    if downloaded > max_size:
+                        raise HTTPException(
+                            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                            detail=f"File too large: downloaded {downloaded} bytes exceeds maximum of {max_size} bytes",
+                        )
+                    content.write(chunk)
+            finally:
+                await response.aclose()
             content_bytes = content.getvalue()
             header_type = response.headers.get("content-type", "application/octet-stream")
             sniffed_type = sniff_content_type(content_bytes)
@@ -91,6 +96,18 @@ async def download_document(url: HttpUrl, max_size: int) -> tuple[bytes, str]:
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="Unable to reach URL - check it's correct and accessible",
             )
+
+
+async def _get(client: httpx.AsyncClient, url: str) -> httpx.Response:
+    """GET url, streamed, following redirects by hand so robots.txt is asked and the request signed for every hop."""
+    for _ in range(MAX_REDIRECTS + 1):
+        await assert_robots_allow(url)
+        response = await client.send(client.build_request("GET", url, headers=signature_headers(url)), stream=True)
+        if response.next_request is None:
+            return response
+        await response.aclose()
+        url = str(response.next_request.url)
+    raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Too many redirects")
 
 
 def sniff_content_type(content: bytes) -> str | None:

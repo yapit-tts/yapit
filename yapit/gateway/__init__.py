@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import redis.asyncio as redis
+import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
@@ -18,6 +19,7 @@ from yapit.contracts import (
     TTS_JOBS,
     YOLO_JOBS,
 )
+from yapit.gateway import web_bot_auth
 from yapit.gateway.api.v1 import routers as v1_routers
 from yapit.gateway.api_tts_dispatcher import run_api_tts_dispatcher
 from yapit.gateway.audio_export import run_export_sweeper
@@ -86,6 +88,11 @@ async def lifespan(app: FastAPI):
     )
 
     init_defuddle_client(settings.defuddle_service_url)
+    web_bot_auth.init_web_bot_auth(settings.web_bot_auth_private_key, settings.app_url)
+    signer = uvicorn.Server(
+        uvicorn.Config(web_bot_auth.signer_app, host="0.0.0.0", port=web_bot_auth.SIGNER_PORT, lifespan="off")
+    )
+    signer_task = asyncio.create_task(signer.serve())
     app.state.mailer = create_mailer(settings)
 
     async def alert_ai_out_of_credit() -> None:
@@ -259,6 +266,9 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    signer.should_exit = True
+    await signer_task
+
     if batch_poller:
         await batch_poller.stop()
 
@@ -403,6 +413,7 @@ def create_app(
 
     for r in v1_routers:
         app.include_router(r)
+    app.include_router(web_bot_auth.router)
 
     @app.get("/health")
     async def health():

@@ -4,11 +4,11 @@
 
 ```mermaid
 flowchart TD
-    CF["Cloudflare (CDN, R2)"] --> Traefik
+    CF["Cloudflare (CDN, R2)"] --> Traefik["Traefik (TLS, mTLS)"]
+    Traefik --> Frontend
 
     subgraph swarm ["Docker Swarm"]
-        Traefik["Traefik (TLS)"] --> Frontend["Frontend · React SPA · Nginx"]
-        Traefik --> GW
+        Frontend["Frontend · Nginx<br/>(React SPA, /api proxy)"] -->|"/api/*"| GW
 
         subgraph GW ["Gateway (FastAPI)"]
             direction LR
@@ -30,6 +30,10 @@ flowchart TD
     GW <-->|extraction| VisionAPI
     GW <-->|billing| Stripe
 ```
+
+**Traefik** runs on the VPS outside the stack, ends TLS and routes `yapit.md` to the frontend, the only service with Traefik labels.
+**Frontend** is nginx (`frontend/nginx.conf`) serving the SPA and proxying `/api/*`, WebSocket included, to the gateway.
+Self-host mounts `frontend/nginx.selfhost.conf` instead; dev skips nginx and Vite's dev server proxies `/api`.
 
 **Gateway** is a FastAPI process handling all HTTP/WebSocket traffic,
 sign-in included, plus background tasks (result consumer, billing consumer, cache persister,
@@ -128,7 +132,7 @@ flowchart TD
     PW --> RESOLVE
 ```
 
-All fetches go through Smokescreen SSRF proxy. Static path handles most content sites.
+All fetches go through Smokescreen SSRF proxy, under one user agent, after a `robots.txt` check, and signed where a key is set ([[web-bot-auth]]); a refusal ends the cascade. Static path handles most content sites.
 Playwright fallback reserved for JS-rendered SPAs where HTML is an empty shell.
 
 ### AI extraction

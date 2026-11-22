@@ -86,6 +86,8 @@ services:
       - browser-net
     environment:
       PROXY_URL: http://smokescreen:4750
+      # The gateway's signer (yapit/gateway/web_bot_auth.py); it holds the key, this container never does.
+      SIGNER_URL: http://gateway:8002/sign
     expose: ["8001"]
     healthcheck:
       # CMD-SHELL, not CMD: podman before 5.8 splits a CMD test's arguments on whitespace

@@ -3,6 +3,8 @@
 The defuddle service extracts markdown from URLs using a cascade:
 static fetch + linkedom → bot UA retry → Playwright browser fallback.
 The gateway calls it over HTTP — the cascade is handled internally.
+It also answers the gateway's robots.txt checks.
+A page it will not fetch comes back as a 422 whose message is for the reader.
 """
 
 import httpx
@@ -22,6 +24,19 @@ async def close_defuddle_client() -> None:
     if _client is not None:
         await _client.aclose()
         _client = None
+
+
+async def assert_robots_allow(url: str) -> None:
+    """Raise a 422 naming robots.txt where the site's robots.txt keeps yapit from fetching url."""
+    assert _client is not None, "Call init_defuddle_client() during app startup"
+    resp = await _client.post("/robots", json={"url": url}, timeout=15)
+    _raise_refusal(resp)
+    resp.raise_for_status()
+
+
+def _raise_refusal(resp: httpx.Response) -> None:
+    if resp.status_code == 422:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=resp.json()["error"])
 
 
 async def extract_website(
@@ -52,6 +67,7 @@ async def extract_website(
         logger.exception(f"Defuddle service unreachable for {label}")
         raise
 
+    _raise_refusal(resp)
     if resp.status_code == 503:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
