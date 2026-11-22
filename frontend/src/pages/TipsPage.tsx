@@ -4,6 +4,7 @@ import { ChevronDown, Copy, Check } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
 import { SHOWCASE_DOCS } from "@/config/showcase";
+import { KEYBOARD_SHORTCUTS } from "@/lib/keyboardShortcuts";
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
 
 const codeClass = "text-sm font-mono px-1.5 py-0.5 rounded" as const;
@@ -166,20 +167,7 @@ const TipsPage = () => {
           Press <kbd className={kbdClass} style={codeStyle}>?</kbd> while reading a document to see all shortcuts.
         </p>
         <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm mb-6">
-          {([
-            ["Space", "Play / pause"],
-            ["j ↓", "Next block"],
-            ["k ↑", "Previous block"],
-            ["l →", "Speed up"],
-            ["h ←", "Speed down"],
-            ["m", "Mute / unmute"],
-            ["+ / =", "Volume up"],
-            ["-", "Volume down"],
-            ["s", "Toggle sidebar"],
-            ["o", "Toggle outliner"],
-            ["r", "Back to reading"],
-            ["⌘K", "Search documents"],
-          ] as const).map(([keys, action]) => (
+          {KEYBOARD_SHORTCUTS.filter(([keys]) => keys !== "?").map(([keys, action]) => (
             <div key={keys} className="contents">
               <kbd className={kbdClass} style={codeStyle}>{keys}</kbd>
               <span className="text-muted-foreground">{action}</span>
