@@ -30,8 +30,10 @@ MIN_SEGMENT = 30 * SAMPLE_RATE
 PRE_ROLL = SAMPLE_RATE
 SEARCH = 2 * SAMPLE_RATE
 LOOKAHEAD = SAMPLE_RATE
-# Frames kept before a segment's search window: an MP3 frame's main data starts up to 511 bytes
-# before it, in the frames before it, which the join copies from there.
+# Frames kept before a segment's search window, for the join to copy the main data the frame it
+# joins at begins with. At 24 kHz and 64 kbps a frame holds about 180 bytes of it, and a frame's
+# main data begins at most 255 bytes back, so two frames would do and four leave room; no test
+# reaches a join that needs more than one.
 RESERVOIR_FRAMES = 4
 # The resampler's output is exact only from 32 samples after its first input and before its last.
 RESAMPLER_MARGIN = 64

@@ -197,7 +197,10 @@ async def test_an_export_encoded_in_segments_plays_its_blocks_through_the_joins(
     assert duration == pytest.approx(blocks[-1][1], abs=0.001)
     assert [(t, start) for t, start, _ in chapters] == [("One", 0), ("Two", pytest.approx(blocks[3][0], abs=0.001))]
     assert pitches(data, blocks) == [1, 2, 3, 4, 5, 6]
-    assert (window_errors(data) - window_errors(in_one)).max() < 6
+    worse = window_errors(data) - window_errors(in_one)
+    if fmt == "m4b":  # MP3's encoders end up writing the same frames: the reservoir test below shows its joins
+        assert worse.any(), "the file is the one-segment build's, so it was never joined"
+    assert worse.max() < 6
 
 
 async def test_an_mp3_join_holds_where_the_two_encoders_bit_reservoirs_differ(client, app, long_book, monkeypatch):
@@ -256,6 +259,15 @@ async def test_an_export_builds_after_the_build_processes_died(client, app, book
 
     assert lost["status"] == "failed"
     assert probe(data)[0] == pytest.approx(seconds(0, 5), abs=0.001)
+
+
+async def test_a_build_runs_below_the_gateways_priority(client, app, book):
+    await exported(client, app, book, [(0, 5, "Whole book")])
+
+    gateway = os.getpriority(os.PRIO_PROCESS, 0)
+    builders = [os.getpriority(os.PRIO_PROCESS, p.pid) for p in audio_export._pool()._processes.values()]
+
+    assert builders and all(niceness > gateway for niceness in builders)
 
 
 async def test_a_second_export_within_a_day_is_the_stored_file(client, app, book):
