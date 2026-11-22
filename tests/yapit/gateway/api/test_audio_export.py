@@ -29,6 +29,8 @@ from .conftest import DEFAULT_TEST_USER
 RATE = 24_000
 # Block lengths in samples, each distinct so a block dropped, doubled or reordered changes the sums
 BLOCK_SAMPLES = [RATE * 2 + 123, RATE + 7, RATE * 3 + 999, RATE // 2 + 1, RATE * 2 + 50, RATE + 333]
+# Long enough for a build on four cores to encode in four segments and join them
+LONG_BLOCK_SAMPLES = [RATE * 19 + 11, RATE * 23 + 503, RATE * 17 + 1, RATE * 21 + 77, RATE * 18 + 900, RATE * 22 + 3]
 
 
 @pytest.fixture
@@ -44,16 +46,26 @@ async def kokoro(session):
 @pytest.fixture
 async def book(client, session, kokoro, app) -> uuid.UUID:
     """A document of six blocks, all in the cache: odd blocks in Redis only, as before the persister ran."""
-    content = "\n\n".join(f"Paragraph {i} of the book is read aloud." for i in range(len(BLOCK_SAMPLES)))
-    response = await client.post("/v1/documents/text", json={"content": content, "title": "A Short Book"})
+    return await _cached_book(client, session, kokoro, app, BLOCK_SAMPLES)
+
+
+@pytest.fixture
+async def long_book(client, session, kokoro, app) -> uuid.UUID:
+    """Noisy tones: on clean ones two MP3 encoders soon write the same frames, which would hide a join gone wrong."""
+    return await _cached_book(client, session, kokoro, app, LONG_BLOCK_SAMPLES, noise=True)
+
+
+async def _cached_book(client, session, kokoro, app, block_samples: list[int], noise: bool = False) -> uuid.UUID:
+    content = "\n\n".join(f"Paragraph {i} of the book is read aloud." for i in range(len(block_samples)))
+    response = await client.post("/v1/documents/text", json={"content": content, "title": "A Book"})
     assert response.status_code == 201, response.text
     document_id = uuid.UUID(response.json()["id"])
     texts = (await session.get(Document, document_id)).audio_texts
-    for idx, (text, samples) in enumerate(zip(texts, BLOCK_SAMPLES)):
+    for idx, (text, samples) in enumerate(zip(texts, block_samples)):
         variant_hash = BlockVariant.get_hash(
             text=text, model_slug="kokoro", voice_slug="af_heart", parameters=kokoro.parameters
         )
-        audio = _ogg_opus(samples, pitch=idx + 1)
+        audio = _ogg_opus(samples, pitch=idx + 1, noise=noise)
         if idx % 2:
             await app.state.redis_client.set(TTS_AUDIO_CACHE.format(hash=variant_hash), audio)
         else:
@@ -61,9 +73,14 @@ async def book(client, session, kokoro, app) -> uuid.UUID:
     return document_id
 
 
-def _ogg_opus(samples: int, pitch: int) -> bytes:
-    """A block as the Kokoro worker writes it: 24 kHz mono int16 PCM as 48 kbps Ogg Opus."""
-    pcm = (np.sin(np.arange(samples) * 0.03 * pitch) * 8000).astype(np.int16)
+def _ogg_opus(samples: int, pitch: int, noise: bool = False) -> bytes:
+    """A block as the Kokoro worker writes it: 24 kHz mono int16 PCM as 48 kbps Ogg Opus; noise is the same for a pitch each time."""
+    pcm = np.sin(np.arange(samples) * 0.03 * pitch) * 8000
+    if noise:
+        rng = np.random.default_rng(pitch)
+        envelope = np.repeat(rng.uniform(0, 6000, samples // 1200 + 1), 1200)[:samples]
+        pcm += rng.normal(0, 1, samples) * envelope
+    pcm = pcm.astype(np.int16)
     buf = io.BytesIO()
     with av.open(buf, "w", format="ogg") as out:
         stream = out.add_stream("libopus", rate=RATE)
@@ -135,7 +152,7 @@ async def test_an_export_is_the_ticked_sections_in_their_order_with_a_chapter_ea
 
 
 def pitches(data: bytes, spans: list[tuple[float, float]]) -> list[int]:
-    """The pitch (as _ogg_opus numbers it) heard in the middle of each span, from the decoded audio's zero crossings."""
+    """The pitch (as _ogg_opus numbers it) heard in the middle of each span: the decoded audio's strongest frequency."""
     with av.open(io.BytesIO(data), "r") as container:
         rate = container.streams.audio[0].rate
         pcm = np.concatenate([frame.to_ndarray()[0] for frame in container.decode(audio=0)])
@@ -143,19 +160,82 @@ def pitches(data: bytes, spans: list[tuple[float, float]]) -> list[int]:
     for start, end in spans:
         middle = int((start + end) / 2 * rate)
         window = pcm[middle - rate // 10 : middle + rate // 10]
-        crossings = np.count_nonzero(np.diff(np.signbit(window)))
-        hz = crossings / 2 / 0.2
+        hz = np.argmax(np.abs(np.fft.rfft(window * np.hanning(len(window))))) * rate / len(window)
         heard.append(round(hz / (0.03 * RATE / (2 * np.pi))))
     return heard
+
+
+def spans(block_samples: list[int]) -> list[tuple[float, float]]:
+    """Each block's (start, end) in seconds, the blocks laid end to end."""
+    ends = np.cumsum(block_samples) / RATE
+    return [(end - samples / RATE, end) for end, samples in zip(ends, block_samples)]
 
 
 @pytest.mark.parametrize("fmt", ["m4b", "mp3"])
 async def test_an_export_plays_a_sections_blocks_in_their_order(client, app, book, fmt):
     data = await exported(client, app, book, [(0, 5, "Whole book")], fmt)
 
-    starts = [seconds(0, idx - 1) if idx else 0.0 for idx in range(len(BLOCK_SAMPLES))]
-    spans = [(start, start + samples / RATE) for start, samples in zip(starts, BLOCK_SAMPLES)]
-    assert pitches(data, spans) == [1, 2, 3, 4, 5, 6]
+    assert pitches(data, spans(BLOCK_SAMPLES)) == [1, 2, 3, 4, 5, 6]
+
+
+@pytest.mark.parametrize("fmt", ["m4b", "mp3"])
+async def test_an_export_encoded_in_segments_plays_its_blocks_through_the_joins(
+    client, app, long_book, fmt, monkeypatch
+):
+    in_one = await built_on(1, client, app, long_book, [(0, 5, "In one")], fmt, monkeypatch)
+
+    data = await built_on(4, client, app, long_book, [(0, 2, "One"), (3, 5, "Two")], fmt, monkeypatch)
+
+    duration, chapters = probe(data)
+    blocks = spans(LONG_BLOCK_SAMPLES)
+    assert duration == pytest.approx(blocks[-1][1], abs=0.001)
+    assert [(t, start) for t, start, _ in chapters] == [("One", 0), ("Two", pytest.approx(blocks[3][0], abs=0.001))]
+    assert pitches(data, blocks) == [1, 2, 3, 4, 5, 6]
+    assert (window_errors(data) - window_errors(in_one)).max() < 6
+
+
+async def test_an_mp3_join_holds_where_the_two_encoders_bit_reservoirs_differ(client, app, long_book, monkeypatch):
+    in_one = await built_on(1, client, app, long_book, [(0, 5, "In one")], "mp3", monkeypatch)
+    # Over the pre-roll the build gives them, LAME's encoders mostly end up writing the same frames
+    monkeypatch.setattr(audio_export.audio_file, "PRE_ROLL", 8 * 576)
+
+    data = await built_on(4, client, app, long_book, [(0, 5, "In four")], "mp3", monkeypatch)
+
+    assert (window_errors(data) - window_errors(in_one)).max() < 6
+
+
+async def built_on(cores: int, client, app, document_id, ranges, fmt: str, monkeypatch) -> bytes:
+    monkeypatch.setattr(audio_export, "WORKERS", cores)
+    return await exported(client, app, document_id, ranges, fmt)
+
+
+def window_errors(data: bytes) -> np.ndarray:
+    """The file's error, per 50 ms window, against the long book's blocks decoded one by one and laid end to end.
+
+    In dB below that audio, after scaling it to the file's level: the stereo blocks reach MP3 3 dB
+    quieter than AAC, since the downmix to the 32-bit integers LAME takes leaves headroom.
+    """
+    blocks = [(_ogg_opus(n, idx + 1, noise=True), n) for idx, n in enumerate(LONG_BLOCK_SAMPLES)]
+    reference = np.concatenate([_decoded(block)[:samples] for block, samples in blocks])
+    pcm = _decoded(data)
+    window = RATE // 20
+    n = min(len(pcm), len(reference)) // window * window
+    pcm, reference = pcm[:n], reference[:n]
+    reference = reference * np.dot(pcm, reference) / np.dot(reference, reference)
+    noise = np.square(pcm - reference).reshape(-1, window).mean(axis=1)
+    signal = np.square(reference[:n]).reshape(-1, window).mean(axis=1)
+    return 10 * np.log10(noise / signal)
+
+
+def _decoded(data: bytes) -> np.ndarray:
+    """Audio as a player plays it: at RATE, the encoder's priming left out."""
+    resampler = av.AudioResampler(format="dbl", layout="mono", rate=RATE)
+    with av.open(io.BytesIO(data), "r") as container:
+        frames = [f for frame in container.decode(audio=0) for f in resampler.resample(frame)] + resampler.resample(
+            None
+        )
+    pcm = np.concatenate([f.to_ndarray()[0] for f in frames])
+    return pcm[-frames[0].pts :] if frames[0].pts and frames[0].pts < 0 else pcm
 
 
 async def test_a_second_export_within_a_day_is_the_stored_file(client, app, book):
