@@ -43,6 +43,8 @@ RESAMPLER_MARGIN = 64
 class Encoding:
     container: str
     codec: str
+    options: tuple[tuple[str, str], ...] = ()
+    """The encoder's options, as FFmpeg names them."""
 
 
 @dataclass(frozen=True)
@@ -205,15 +207,17 @@ def encode_segment(blocks_path: Path, encoding: Encoding, segment: Segment, out:
 
     at = segment.blocks[0].start if segment.blocks else 0
     with blocks_path.open("rb") as source, out.open("wb") as f:
-        for block in segment.blocks:
-            source.seek(block.offset)
-            for frame in _decode_block(source.read(block.size)):
-                for resampled in resampler.resample(frame):
-                    encode(resampled.to_ndarray(), at)
-                    at += resampled.samples
-        for resampled in resampler.resample(None):
-            encode(resampled.to_ndarray(), at)
-            at += resampled.samples
+        for block in [*segment.blocks, None]:
+            if block is None:
+                frames = resampler.resample(None)
+            else:
+                source.seek(block.offset)
+                frames = [r for frame in _decode_block(source.read(block.size)) for r in resampler.resample(frame)]
+            if frames:
+                # One frame per block: the encoder's per-call overhead adds up over 20 ms frames
+                pcm = np.concatenate([r.to_ndarray() for r in frames], axis=1)
+                encode(pcm, at)
+                at += pcm.shape[1]
         keep(encoder.encode(None))
 
     frame = encoder.frame_size
@@ -363,9 +367,9 @@ def _encoder(encoding: Encoding) -> av.AudioCodecContext:
     assert isinstance(encoder, av.AudioCodecContext)
     encoder.sample_rate = SAMPLE_RATE
     encoder.layout = "mono"
-    formats = encoder.codec.audio_formats
-    assert formats
-    encoder.format = formats[0]
+    # Float for both codecs: the downmix of the stereo blocks to integers would leave 3 dB of headroom
+    encoder.format = "fltp"
+    encoder.options = dict(encoding.options)
     encoder.bit_rate = BIT_RATE
     encoder.time_base = Fraction(1, SAMPLE_RATE)
     encoder.open()

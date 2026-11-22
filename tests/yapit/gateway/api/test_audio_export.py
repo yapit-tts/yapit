@@ -171,6 +171,15 @@ def pitches(data: bytes, spans: list[tuple[float, float]]) -> list[int]:
     return heard
 
 
+async def test_an_mp3_plays_at_the_level_of_the_m4b(client, app, book):
+    m4b = _decoded(await exported(client, app, book, [(0, 5, "Whole book")], "m4b"))
+    mp3 = _decoded(await exported(client, app, book, [(0, 5, "Whole book")], "mp3"))
+
+    n = min(len(m4b), len(mp3))
+    level_db = 10 * np.log10(np.mean(np.square(mp3[:n])) / np.mean(np.square(m4b[:n])))
+    assert abs(level_db) < 1  # the blocks are stereo, and a downmix to integers would leave MP3 3 dB quieter
+
+
 def spans(block_samples: list[int]) -> list[tuple[float, float]]:
     """Each block's (start, end) in seconds, the blocks laid end to end."""
     ends = np.cumsum(block_samples) / RATE
@@ -223,8 +232,7 @@ async def built_on(cores: int, client, app, document_id, ranges, fmt: str, monke
 def window_errors(data: bytes) -> np.ndarray:
     """The file's error, per 50 ms window, against the long book's blocks decoded one by one and laid end to end.
 
-    In dB below that audio, after scaling it to the file's level: the stereo blocks reach MP3 3 dB
-    quieter than AAC, since the downmix to the 32-bit integers LAME takes leaves headroom.
+    In dB below that audio, after scaling it to the file's level: the codecs lose a little level.
     """
     blocks = [(_ogg_opus(n, idx + 1, noise=True), n) for idx, n in enumerate(LONG_BLOCK_SAMPLES)]
     reference = np.concatenate([_decoded(block)[:samples] for block, samples in blocks])

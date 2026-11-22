@@ -229,7 +229,7 @@ def compare(path: Path, blocks: dict[str, bytes], chapters: list[Section], joins
     """How far the file's decoded audio is from the blocks', in dB below the blocks' level, per 50 ms window.
 
     The reference is each block decoded on its own and the blocks laid end to end, scaled to the
-    file's level (the stereo blocks reach MP3 3 dB quieter than AAC); the file is decoded and cut to
+    file's level; the file is decoded and cut to
     its edit list's start. Reports the whole file's error, the worst window's, and the worst
     window's among those within 100 ms of a join.
     """
