@@ -1,8 +1,7 @@
 import { Component, memo, useCallback, useEffect, useMemo, useRef, useState, type ErrorInfo, type ReactNode } from "react";
 import katex from "katex";
 import "katex/dist/katex.min.css";
-import { Copy, Download, Music, Check, ChevronRight, FileDown, FileCode2, AudioLines, BookHeadphones } from "lucide-react";
-import { audioVariant } from "@/lib/audioVariant";
+import { Copy, Download, Check, ChevronRight, FileDown, FileCode2, AudioLines } from "lucide-react";
 import { InlineContentRenderer } from "./inlineContent";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
@@ -888,19 +887,14 @@ function ActionButtons({
   hasContent,
   onCopy,
   onDownload,
-  onPrepareAudio,
-  audioProgress,
+  onGenerateAudio,
 }: {
   copied: boolean;
   hasContent: boolean;
   onCopy: () => void;
   onDownload: (preserveAnnotations: boolean) => void;
-  onPrepareAudio?: (anchor: HTMLElement) => void;
-  audioProgress?: number | null;
+  onGenerateAudio?: () => void;
 }) {
-  const variant = audioVariant();
-  const audioLabel = { a: "Audiobook", b: "Download audio", c: "Generate audio" }[variant ?? "a"];
-  const AudioIcon = variant === "a" ? BookHeadphones : variant ? AudioLines : Music;
   return (
     <div className="flex items-center gap-1 shrink-0">
       <button
@@ -933,28 +927,15 @@ function ActionButtons({
         </DropdownMenuContent>
       </DropdownMenu>
       <button
-        onClick={e => onPrepareAudio?.(e.currentTarget)}
-        disabled={!onPrepareAudio}
-        className="relative p-2 rounded hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-        title={variant ? audioLabel : "Prepare audio"}
-        aria-label={variant ? audioLabel : "Prepare audio"}
+        onClick={onGenerateAudio}
+        disabled={!onGenerateAudio}
+        className="p-2 rounded hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+        title="Generate audio"
+        aria-label="Generate audio"
       >
-        <AudioIcon className="h-4 w-4 text-muted-foreground" />
-        {audioProgress != null && <ProgressRing fraction={audioProgress} />}
+        <AudioLines className="h-4 w-4 text-muted-foreground" />
       </button>
     </div>
-  );
-}
-
-/** Variant B: the share of a running job's blocks made, drawn round the header's audio button. */
-function ProgressRing({ fraction }: { fraction: number }) {
-  const r = 15;
-  const c = 2 * Math.PI * r;
-  return (
-    <svg className="absolute inset-0 m-auto h-8 w-8 -rotate-90 pointer-events-none" viewBox="0 0 32 32" aria-hidden>
-      <circle cx="16" cy="16" r={r} fill="none" stroke="var(--border)" strokeWidth="1.5" />
-      <circle cx="16" cy="16" r={r} fill="none" stroke="var(--foreground)" strokeOpacity="0.7" strokeWidth="1.5" strokeDasharray={c} strokeDashoffset={c * (1 - fraction)} />
-    </svg>
   );
 }
 
@@ -973,8 +954,7 @@ interface StructuredDocumentViewProps {
   expandedSections?: Set<string>;
   onSectionExpand?: (sectionId: string) => void;
   canCollapseSection?: (section: Section) => boolean;
-  onPrepareAudio?: (anchor: HTMLElement) => void;
-  audioProgress?: number | null;
+  onGenerateAudio?: () => void;
 }
 
 // Memoized to prevent re-renders from parent's audioProgress updates
@@ -990,8 +970,7 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
   expandedSections,
   onSectionExpand,
   canCollapseSection,
-  onPrepareAudio,
-  audioProgress,
+  onGenerateAudio,
 }: StructuredDocumentViewProps) {
   const contentRef = useRef<HTMLDivElement>(null);
   const titleRef = useRef<HTMLHeadingElement>(null);
@@ -1242,7 +1221,7 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
               {title}
             </p>
             <div className="flex justify-end mt-2 sm:mt-0">
-              <ActionButtons copied={copied} hasContent={!!markdownContent} onCopy={handleCopyMarkdown} onDownload={handleDownloadMarkdown} onPrepareAudio={onPrepareAudio} audioProgress={audioProgress} />
+              <ActionButtons copied={copied} hasContent={!!markdownContent} onCopy={handleCopyMarkdown} onDownload={handleDownloadMarkdown} onGenerateAudio={onGenerateAudio} />
             </div>
           </div>
         ) : (
@@ -1251,7 +1230,7 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
             !hasMaxWidth && "-mx-4 px-4 sm:-mx-[8%] sm:px-[8%] md:-mx-[10%] md:px-[10%]"
           )}>
             <div className="w-full flex justify-end">
-              <ActionButtons copied={copied} hasContent={!!markdownContent} onCopy={handleCopyMarkdown} onDownload={handleDownloadMarkdown} onPrepareAudio={onPrepareAudio} audioProgress={audioProgress} />
+              <ActionButtons copied={copied} hasContent={!!markdownContent} onCopy={handleCopyMarkdown} onDownload={handleDownloadMarkdown} onGenerateAudio={onGenerateAudio} />
             </div>
           </div>
         )}
@@ -1306,7 +1285,7 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
             )}
           </h1>
           <div className="flex justify-end mt-2 sm:mt-0 shrink-0" onClick={(e) => e.stopPropagation()}>
-            <ActionButtons copied={copied} hasContent={!!markdownContent} onCopy={handleCopyMarkdown} onDownload={handleDownloadMarkdown} onPrepareAudio={onPrepareAudio} audioProgress={audioProgress} />
+            <ActionButtons copied={copied} hasContent={!!markdownContent} onCopy={handleCopyMarkdown} onDownload={handleDownloadMarkdown} onGenerateAudio={onGenerateAudio} />
           </div>
         </div>
       ) : (
@@ -1340,7 +1319,7 @@ export const StructuredDocumentView = memo(function StructuredDocumentView({
             ) : (
               <div className="flex-1" />
             )}
-            <ActionButtons copied={copied} hasContent={!!markdownContent} onCopy={handleCopyMarkdown} onDownload={handleDownloadMarkdown} onPrepareAudio={onPrepareAudio} audioProgress={audioProgress} />
+            <ActionButtons copied={copied} hasContent={!!markdownContent} onCopy={handleCopyMarkdown} onDownload={handleDownloadMarkdown} onGenerateAudio={onGenerateAudio} />
           </div>
         </div>
       )}

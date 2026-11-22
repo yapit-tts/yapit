@@ -139,7 +139,7 @@ async def request_export(
     hashes = list(dict.fromkeys(h for c in chapters for h in c.variant_hashes))
     missing = len(hashes) - sum(await prepared_mask(redis, cache, hashes))
     if missing:
-        raise AudioNotCached(f"{missing} of the {len(hashes)} blocks have no audio prepared in this voice")
+        raise AudioNotCached(f"{missing} of the {len(hashes)} blocks have no audio generated in this voice")
 
     task = asyncio.create_task(_build(redis, cache, export_dir, key, fmt, chapters))
     _builds[key] = _Build(user_id=user_id, task=task, waiters={(user_id, document_id)})
@@ -199,7 +199,7 @@ async def _fetch_audio(redis: Redis, cache: Cache, hashes: list[str]) -> list[by
     audio = [a if a is not None else cold.get(h) for h, a in zip(hashes, hot)]
     absent = [h for h, a in zip(hashes, audio) if a is None]
     if absent and await redis.exists(*[TTS_SKIPPED.format(hash=h) for h in absent]) < len(absent):
-        raise AudioNotCached("Some of the audio left the cache while the file was built. Prepare the audio again.")
+        raise AudioNotCached("Some of the audio left the cache while the file was built. Generate the audio again.")
     return [a for a in audio if a is not None]
 
 

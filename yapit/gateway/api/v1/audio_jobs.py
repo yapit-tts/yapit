@@ -223,7 +223,7 @@ async def export_audio(
             chapters,
         )
     except AudioNotCached as e:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Prepare the audio first: {e}")
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Generate the audio first: {e}")
     except ExportBusy:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

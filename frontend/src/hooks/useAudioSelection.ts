@@ -46,8 +46,8 @@ export interface RowState extends ExportRow {
   inJob: boolean;
 }
 
-/** The ticked sections, what making their audio costs, and what stands in its way: the state every audio dialog renders. */
-export function useAudioSelection(props: AudioSelectionProps, onStarted: () => void) {
+/** The ticked sections, what generating their audio costs, and what stands in its way: the state the Generate audio panel renders. */
+export function useAudioSelection(props: AudioSelectionProps) {
   const { documentId, sections, documentBlocks, expandedSections, voiceSelection, onVoiceChange, job, onStart, exportProgress, onDownload } = props;
   const { api } = useApi();
   const [baseRows] = useState(() => exportRows(sections, documentBlocks, expandedSections));
@@ -130,7 +130,6 @@ export function useAudioSelection(props: AudioSelectionProps, onStarted: () => v
     const reason = await onStart(model, voiceSlug, tickedRanges());
     setIsStarting(false);
     if (reason) setRefusal(reason);
-    else onStarted();
   };
 
   const download = (format: ExportFormat) => void onDownload(format, model, voiceSlug, tickedRanges());
