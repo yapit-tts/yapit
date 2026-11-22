@@ -174,7 +174,8 @@ def corpus(speech: Path, selection: str, scratch: Path) -> tuple[dict[str, bytes
     """The selection's blocks by hash, and its sections; encoded once, then read from scratch."""
     cached = scratch / f"{selection}.pickle"
     if cached.exists():
-        return pickle.loads(cached.read_bytes())
+        blocks, sections = pickle.loads(cached.read_bytes())
+        return blocks, [Section(title, hashes) for title, hashes in sections]
     spec = SELECTIONS[selection]
     rng = random.Random(0)
     weights = [rng.uniform(0.1, 1.9) for _ in range(spec["blocks"])]
@@ -191,7 +192,7 @@ def corpus(speech: Path, selection: str, scratch: Path) -> tuple[dict[str, bytes
         Section(title=f"Section {s + 1}", variant_hashes=hashes[first : first + per_section])
         for s, first in enumerate(range(0, len(hashes), per_section))
     ]
-    cached.write_bytes(pickle.dumps((blocks, chapters)))
+    cached.write_bytes(pickle.dumps((blocks, [(c.title, c.variant_hashes) for c in chapters])))
     return blocks, chapters
 
 
