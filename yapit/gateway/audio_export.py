@@ -8,6 +8,7 @@ import os
 import time
 import uuid
 from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -18,7 +19,7 @@ from pydantic import BaseModel
 from redis.asyncio import Redis
 
 from yapit import audio_file
-from yapit.audio_file import Encoding
+from yapit.audio_file import ChapterMark, Encoding
 from yapit.contracts import TTS_AUDIO_CACHE, TTS_SKIPPED, get_pubsub_channel
 from yapit.gateway.audio_job import prepared_mask
 from yapit.gateway.cache import Cache
@@ -26,7 +27,7 @@ from yapit.gateway.metrics import log_error
 
 EXPORT_TTL_S = 24 * 3600
 SWEEP_INTERVAL_S = 3600
-WORKERS = len(os.sched_getaffinity(0))
+WORKERS = len(os.sched_getaffinity(0))  # segments a build is cut into
 BUILD_NICENESS = 10
 FETCH_BATCH = 64
 
@@ -37,9 +38,10 @@ class ExportFormat(StrEnum):
 
 
 ENCODINGS = {
-    ExportFormat.m4b: Encoding(container="ipod", codec="aac", media_type="audio/mp4"),
-    ExportFormat.mp3: Encoding(container="mp3", codec="libmp3lame", media_type="audio/mpeg"),
+    ExportFormat.m4b: Encoding(container="ipod", codec="aac"),
+    ExportFormat.mp3: Encoding(container="mp3", codec="libmp3lame"),
 }
+MEDIA_TYPES = {ExportFormat.m4b: "audio/mp4", ExportFormat.mp3: "audio/mpeg"}
 
 
 @dataclass(frozen=True)
@@ -166,14 +168,14 @@ async def _build(
     try:
         export_dir.mkdir(parents=True, exist_ok=True)
         blocks, marks = await _store_blocks(redis, cache, chapters, blocks_path)
-        await asyncio.to_thread(
-            audio_file.write_audio_file, _pool(), WORKERS, ENCODINGS[fmt], blocks_path, blocks, marks, built
-        )
+        await audio_file.write_audio_file(_pool(), WORKERS, ENCODINGS[fmt], blocks_path, blocks, marks, built)
         os.replace(built, export_path(export_dir, key, fmt))
         logger.info(f"Audio export {key[:12]} ({fmt}) built in {time.monotonic() - started:.1f}s")
     except AudioNotCached as e:
         state = state.model_copy(update={"status": ExportStatus.failed, "error": str(e)})
     except Exception as e:
+        if isinstance(e, BrokenProcessPool):
+            _drop_pool()
         logger.exception(f"Audio export {key[:12]} failed: {e}")
         await log_error(f"Audio export failed: {e}")
         state = state.model_copy(update={"status": ExportStatus.failed, "error": "Building the audio file failed"})
@@ -188,7 +190,7 @@ async def _build(
 
 async def _store_blocks(
     redis: Redis, cache: Cache, chapters: list[Chapter], path: Path
-) -> tuple[list[audio_file.Block], list[dict]]:
+) -> tuple[list[audio_file.Block], list[ChapterMark]]:
     """Fetch the chapters' blocks into one file, in order; returns where each block's audio lies and each chapter's span."""
     blocks, marks = [], []
     stream_at = 0
@@ -201,18 +203,30 @@ async def _store_blocks(
                     blocks.append(audio_file.Block(offset=f.tell(), size=len(audio), start=stream_at, samples=samples))
                     await asyncio.to_thread(f.write, audio)
                     stream_at += samples
-            marks.append({"title": chapter.title, "start": start, "end": stream_at})
+            marks.append(ChapterMark(title=chapter.title, start=start, end=stream_at))
     return blocks, marks
 
 
 def _pool() -> ProcessPoolExecutor:
-    """The processes builds encode in, at low priority so that synthesis and requests come first; started on first use."""
+    """The processes builds encode in, one per core, at low priority so that synthesis and requests come first.
+
+    Started on first use, and again after a process of it died, which leaves a pool refusing all work.
+    """
     global _audio_pool
     if _audio_pool is None:
         context = multiprocessing.get_context("forkserver")
         context.set_forkserver_preload(["yapit.audio_file"])
-        _audio_pool = ProcessPoolExecutor(WORKERS, mp_context=context, initializer=os.nice, initargs=(BUILD_NICENESS,))
+        _audio_pool = ProcessPoolExecutor(
+            len(os.sched_getaffinity(0)), mp_context=context, initializer=os.nice, initargs=(BUILD_NICENESS,)
+        )
     return _audio_pool
+
+
+def _drop_pool() -> None:
+    global _audio_pool
+    if _audio_pool is not None:
+        _audio_pool.shutdown(wait=False, cancel_futures=True)
+        _audio_pool = None
 
 
 async def _fetch_audio(redis: Redis, cache: Cache, hashes: list[str]) -> list[bytes]:

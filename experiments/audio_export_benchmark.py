@@ -13,6 +13,7 @@ Examples:
     uv run experiments/audio_export_benchmark.py --speech speech.mp3 --selection ten-hours --format mp3
 """
 
+import asyncio
 import importlib.util
 import io
 import json
@@ -30,7 +31,7 @@ import numpy as np
 import tyro
 
 from yapit import audio_file
-from yapit.audio_file import Block
+from yapit.audio_file import Block, ChapterMark
 from yapit.contracts import KOKORO_OPUS_BITRATE
 
 # The gateway is imported where it is used: a build process imports this script as its main module,
@@ -102,7 +103,9 @@ def main(args: Args) -> None:
         report(args, result)
 
 
-def _store(blocks: dict[str, bytes], chapters: list[Section], blocks_path: Path) -> tuple[list[Block], list[dict]]:
+def _store(
+    blocks: dict[str, bytes], chapters: list[Section], blocks_path: Path
+) -> tuple[list[Block], list[ChapterMark]]:
     """The blocks in one file, as the gateway stores them as it fetches them."""
     stored, marks, at = [], [], 0
     with blocks_path.open("wb") as f:
@@ -113,7 +116,7 @@ def _store(blocks: dict[str, bytes], chapters: list[Section], blocks_path: Path)
                 stored.append(Block(offset=f.tell(), size=len(blocks[h]), start=at, samples=samples))
                 f.write(blocks[h])
                 at += samples
-            marks.append({"title": chapter.title, "start": start, "end": at})
+            marks.append(ChapterMark(title=chapter.title, start=start, end=at))
     return stored, marks
 
 
@@ -125,14 +128,16 @@ def _after(blocks: dict[str, bytes]):
         blocks_path = path.with_name(f"{path.name}.blocks")
         stored, marks = _store(blocks, chapters, blocks_path)
         try:
-            return audio_file.write_audio_file(
-                audio_export._pool(),
-                audio_export.WORKERS,
-                audio_export.ENCODINGS[audio_export.ExportFormat(fmt)],
-                blocks_path,
-                stored,
-                marks,
-                path,
+            return asyncio.run(
+                audio_file.write_audio_file(
+                    audio_export._pool(),
+                    audio_export.WORKERS,
+                    audio_export.ENCODINGS[audio_export.ExportFormat(fmt)],
+                    blocks_path,
+                    stored,
+                    marks,
+                    path,
+                )
             )
         finally:
             blocks_path.unlink()

@@ -110,6 +110,15 @@ async def export(client, document_id, ranges: list[tuple[int, int, str]], fmt: s
 
 async def exported(client, app, document_id, ranges, fmt: str = "m4b") -> bytes:
     """The file an export yields, once the tab watching the document hears it is built."""
+    state = await built(client, app, document_id, ranges, fmt)
+    assert state["status"] == "ready", state
+    response = await client.get(f"/v1/documents/{document_id}/audio-export/{state['key']}.{fmt}")
+    assert response.status_code == 200, response.text
+    return response.content
+
+
+async def built(client, app, document_id, ranges, fmt: str = "m4b") -> dict:
+    """The export's state once its build has ended, as the tab watching the document hears it."""
     pubsub = app.state.redis_client.pubsub()
     await pubsub.subscribe(get_pubsub_channel(DEFAULT_TEST_USER.id, document_id))
     await pubsub.get_message(timeout=1)
@@ -121,10 +130,7 @@ async def exported(client, app, document_id, ranges, fmt: str = "m4b") -> bytes:
                 state = heard
                 break
     await pubsub.aclose()
-    assert state["status"] == "ready", state
-    response = await client.get(f"/v1/documents/{document_id}/audio-export/{state['key']}.{fmt}")
-    assert response.status_code == 200, response.text
-    return response.content
+    return state
 
 
 def probe(data: bytes) -> tuple[float, list[tuple[str, float, float]]]:
@@ -201,7 +207,9 @@ async def test_an_mp3_join_holds_where_the_two_encoders_bit_reservoirs_differ(cl
 
     data = await built_on(4, client, app, long_book, [(0, 5, "In four")], "mp3", monkeypatch)
 
-    assert (window_errors(data) - window_errors(in_one)).max() < 6
+    worse = window_errors(data) - window_errors(in_one)
+    assert worse.any(), "the encoders wrote the same frames, so no join needed its reservoir rewritten"
+    assert worse.max() < 6
 
 
 async def built_on(cores: int, client, app, document_id, ranges, fmt: str, monkeypatch) -> bytes:
@@ -236,6 +244,18 @@ def _decoded(data: bytes) -> np.ndarray:
         )
     pcm = np.concatenate([f.to_ndarray()[0] for f in frames])
     return pcm[-frames[0].pts :] if frames[0].pts and frames[0].pts < 0 else pcm
+
+
+async def test_an_export_builds_after_the_build_processes_died(client, app, book):
+    await exported(client, app, book, [(0, 5, "Before")])
+    for process in list(audio_export._pool()._processes.values()):
+        process.kill()
+
+    lost = await built(client, app, book, [(0, 5, "While dead")])
+    data = await exported(client, app, book, [(0, 5, "After")])
+
+    assert lost["status"] == "failed"
+    assert probe(data)[0] == pytest.approx(seconds(0, 5), abs=0.001)
 
 
 async def test_a_second_export_within_a_day_is_the_stored_file(client, app, book):

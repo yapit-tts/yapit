@@ -9,8 +9,10 @@ join sits at the quietest frame of that window.
 This module imports nothing of the gateway's, so the processes that run it start light.
 """
 
+import asyncio
 import io
 import itertools
+import math
 from collections.abc import Iterator
 from concurrent.futures import Executor
 from dataclasses import dataclass
@@ -39,7 +41,15 @@ RESAMPLER_MARGIN = 64
 class Encoding:
     container: str
     codec: str
-    media_type: str
+
+
+@dataclass(frozen=True)
+class ChapterMark:
+    """A chapter's title and its span, in samples of the stream."""
+
+    title: str
+    start: int
+    end: int
 
 
 @dataclass(frozen=True)
@@ -59,8 +69,8 @@ class Segment:
     blocks: list[Block]
     encode_from: int
     encode_to: int
-    keep_from: int
-    keep_to: int
+    keep_from: float
+    keep_to: float
     search_from: int | None
     """Start of the window the join with the segment before is placed in; None for the first segment."""
 
@@ -101,27 +111,26 @@ def _last_page(audio: bytes) -> int:
     raise ValueError("No Ogg page ends the block")
 
 
-def write_audio_file(
+async def write_audio_file(
     pool: Executor,
     workers: int,
     encoding: Encoding,
     blocks_path: Path,
     blocks: list[Block],
-    chapters: list[dict],
+    chapters: list[ChapterMark],
     path: Path,
 ) -> list[int]:
-    """Write the blocks stored in blocks_path as one stream into path, encoding its segments in the pool's processes.
+    """Write the blocks stored in blocks_path as one stream into path, cut into `workers` segments encoded in the pool.
 
-    Each chapter is a dict of title, start and end, in samples of the stream. Returns where the
-    segments were joined, in samples.
+    Returns where the segments were joined, in samples.
     """
     segments = plan_segments(blocks, workers, _encoder(encoding).frame_size)
     outs = [path.with_name(f"{path.name}.segment{k}") for k in range(len(segments))]
     futures = []
     try:
         futures = [pool.submit(encode_segment, blocks_path, encoding, s, out) for s, out in zip(segments, outs)]
-        encoded = [future.result() for future in futures]
-        return pool.submit(join_segments, encoding, encoded, chapters, path).result()
+        encoded = await asyncio.gather(*map(asyncio.wrap_future, futures))
+        return await asyncio.wrap_future(pool.submit(join_segments, encoding, encoded, chapters, path))
     finally:
         for future in futures:
             future.cancel()
@@ -149,8 +158,8 @@ def plan_segments(blocks: list[Block], workers: int, frame: int) -> list[Segment
                 ],
                 encode_from=encode_from,
                 encode_to=encode_to,
-                keep_from=-(2**62) if first else starts[k] - RESERVOIR_FRAMES * frame,
-                keep_to=2**62 if last else starts[k + 1] + SEARCH,
+                keep_from=-math.inf if first else starts[k] - RESERVOIR_FRAMES * frame,
+                keep_to=math.inf if last else starts[k + 1] + SEARCH,
                 search_from=None if first else starts[k],
             )
         )
@@ -218,10 +227,12 @@ def encode_segment(blocks_path: Path, encoding: Encoding, segment: Segment, out:
     )
 
 
-def join_segments(encoding: Encoding, segments: list[EncodedSegment], chapters: list[dict], path: Path) -> list[int]:
+def join_segments(
+    encoding: Encoding, segments: list[EncodedSegment], chapters: list[ChapterMark], path: Path
+) -> list[int]:
     """Write the segments' packets as one stream into path, each join at the quietest frame both sides can meet at."""
     joins = [_join(encoding, a, b) for a, b in itertools.pairwise(segments)]
-    cuts = [-(2**62), *(cut for cut, _ in joins), 2**62]
+    cuts = [-math.inf, *(cut for cut, _ in joins), math.inf]
     patches = {k: patch for k, (_, patch) in enumerate(joins)}
 
     out = av.open(str(path), "w", format=encoding.container)
@@ -232,10 +243,10 @@ def join_segments(encoding: Encoding, segments: list[EncodedSegment], chapters: 
         [
             {
                 "id": i + 1,
-                "start": c["start"],
-                "end": c["end"],
+                "start": c.start,
+                "end": c.end,
                 "time_base": Fraction(1, SAMPLE_RATE),
-                "metadata": {"title": c["title"]},
+                "metadata": {"title": c.title},
             }
             for i, c in enumerate(chapters)
         ]
@@ -258,7 +269,7 @@ def join_segments(encoding: Encoding, segments: list[EncodedSegment], chapters: 
             packet.stream = stream
             out.mux(packet)
     out.close()
-    return cuts[1:-1]
+    return [cut for cut, _ in joins]
 
 
 def _join(encoding: Encoding, a: EncodedSegment, b: EncodedSegment) -> tuple[int, dict[int, bytes]]:
@@ -270,7 +281,8 @@ def _join(encoding: Encoding, a: EncodedSegment, b: EncodedSegment) -> tuple[int
     for cut in candidates:
         if (patch := _mp3_reservoir_patch(a_packets, b_packets, cut)) is not None:
             return cut, patch
-    raise RuntimeError("No MP3 frame in the join's window can start from the reservoir the frames before it leave")
+    # No frame fits: b's quietest frame then begins with bytes of a's, and plays up to one frame of noise
+    return candidates[0], {}
 
 
 def _tail(segment: EncodedSegment, candidates: list[int]) -> Iterator[tuple[int, bytes]]:
