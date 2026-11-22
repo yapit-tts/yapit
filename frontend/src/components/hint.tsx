@@ -1,7 +1,7 @@
 import * as TooltipPrimitive from "@radix-ui/react-tooltip";
 
 /** The house overlay: the page's own ground, a hairline, no shadow. */
-export const overlayClass = "z-50 max-w-72 rounded-md border bg-background px-3 py-2 text-sm text-foreground data-[state=delayed-open]:animate-in data-[state=delayed-open]:fade-in-0 data-[state=instant-open]:animate-in data-[state=instant-open]:fade-in-0 data-[state=open]:animate-in data-[state=open]:fade-in-0";
+const overlayClass = "z-50 max-w-72 rounded-md border bg-background px-3 py-2 text-sm text-foreground data-[state=delayed-open]:animate-in data-[state=delayed-open]:fade-in-0 data-[state=instant-open]:animate-in data-[state=instant-open]:fade-in-0 data-[state=open]:animate-in data-[state=open]:fade-in-0";
 
 interface HintProps {
   content: React.ReactNode;
@@ -35,17 +35,12 @@ function skipUnlessKeyboardFocus(e: React.FocusEvent) {
   if (!(e.target as HTMLElement).matches(":focus-visible")) e.preventDefault();
 }
 
-/** A key in a small mono chip, as the shortcuts dialog shows it. */
-export function Key({ children }: { children: React.ReactNode }) {
-  return <kbd className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded">{children}</kbd>;
-}
-
-/** A tooltip's line naming an action, with its key at the right. */
+/** A tooltip's line naming an action, with its key at the right in a mono chip, as the shortcuts dialog shows keys. */
 export function ActionLine({ action, keys }: { action: React.ReactNode; keys: string }) {
   return (
     <span className="flex items-center justify-between gap-4">
       <span className="font-medium">{action}</span>
-      <Key>{keys}</Key>
+      <kbd className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded">{keys}</kbd>
     </span>
   );
 }
