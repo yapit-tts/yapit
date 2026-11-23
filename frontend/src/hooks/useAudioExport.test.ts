@@ -36,6 +36,8 @@ describe("useAudioExport", () => {
     expect(result.current.progress).toEqual({ m4b: { phase: "downloading", fraction: 0 } });
     act(() => downloadProgress({ loaded: 30, total: 120 }));
     expect(result.current.progress).toEqual({ m4b: { phase: "downloading", fraction: 0.25 } });
+    act(() => result.current.resume());
+    expect(api.post).toHaveBeenCalledOnce();
 
     await act(async () => arrive({ data: new Blob() }));
     expect(clicked).toHaveBeenCalledOnce();

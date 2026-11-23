@@ -43,8 +43,10 @@ async def kokoro(session):
 
 
 @pytest.fixture
-async def book(client, session, kokoro, app) -> uuid.UUID:
+async def book(client, session, kokoro, app, monkeypatch) -> uuid.UUID:
     """A document of six blocks, all in the cache: odd blocks in Redis only, as before the persister ran."""
+    # Two blocks decoded ahead of the encoder, so on any host a build of the six has to keep them in order
+    monkeypatch.setattr(audio_export, "CORES", 2)
     content = "\n\n".join(f"Paragraph {i} of the book is read aloud." for i in range(len(BLOCK_SAMPLES)))
     response = await client.post("/v1/documents/text", json={"content": content, "title": "A Short Book"})
     assert response.status_code == 201, response.text
@@ -183,10 +185,12 @@ async def test_a_build_tells_the_tab_how_many_of_its_blocks_are_encoded(client, 
 
 
 async def test_a_build_runs_below_the_gateways_priority(client, app, book):
-    def niceness() -> int:
-        return os.getpriority(os.PRIO_PROCESS, threading.get_native_id())
+    await exported(client, app, book, [(0, 5, "Whole book")])
 
-    assert audio_export._build_threads.submit(niceness).result() > niceness()
+    builders = [thread.native_id for thread in threading.enumerate() if thread.name.startswith("audio-export")]
+
+    gateway = os.getpriority(os.PRIO_PROCESS, 0)
+    assert builders and all(os.getpriority(os.PRIO_PROCESS, tid) > gateway for tid in builders)
 
 
 async def test_a_second_export_within_a_day_is_the_stored_file(client, app, book):

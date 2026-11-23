@@ -322,9 +322,6 @@ def _decode_block(audio: bytes) -> av.AudioFrame:
 
     FFmpeg's decoder leaves the encoder's end padding on a stream with a single audio page (a block
     under a second, such as a heading), which would put up to 13 ms of silence after it.
-
-    One frame, because the encoder is called once for each, and called every 20 ms of audio, as the
-    decoder cuts it, those calls take a third as long as the AAC encoding itself.
     """
     with av.open(io.BytesIO(audio), "r") as block:
         stream = block.streams.audio[0]

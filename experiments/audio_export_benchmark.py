@@ -59,7 +59,7 @@ class Args:
     encoder_options: dict[str, str] | None = None
     """The encoder's options, as FFmpeg names them, instead of the ones the current build sets."""
     stages: bool = False
-    """Time each stage of one build, run alone on one thread, instead of the whole build."""
+    """Time each stage of one build by the current module, run alone on one thread, instead of the whole build."""
     compare: bool = True
     """Decode each built file and compare it with the blocks' own audio."""
     scratch: Path = Path(tempfile.gettempdir()) / "audio-export-benchmark"
@@ -83,8 +83,7 @@ def main(args: Args) -> None:
     print(f"{args.selection}: {len(blocks)} blocks, {len(sections)} sections, {audio_s:.1f} s of audio")
 
     if args.stages:
-        stages = time_stages_before if args.before else time_stages
-        report(args, {**side, "stages": stages(module, fmt, sections, blocks)})
+        report(args, {**side, "stages": time_stages(module, fmt, sections, blocks)})
         return
     path = args.scratch / f"build.{fmt}"
     for _ in range(args.runs):
@@ -250,49 +249,6 @@ def time_stages(module, fmt: str, sections: list[tuple[str, list[str]]], blocks:
             written += frame.samples
             out.mux(stream.encode(frame))
         out.mux(stream.encode(None))
-        out.close()
-        stages["encode and mux"] = time.perf_counter() - started
-
-        marks = [{"title": title, "start": 0, "end": 1} for title, _ in sections]
-        started = time.perf_counter()
-        module._remux_with_chapters(encoded, Path(tmp) / f"chaptered.{fmt}", encoding, marks)
-        stages["remux with chapters"] = time.perf_counter() - started
-
-    return {k: round(v, 3) for k, v in stages.items()}
-
-
-def time_stages_before(
-    module, fmt: str, sections: list[tuple[str, list[str]]], blocks: dict[str, bytes]
-) -> dict[str, float]:
-    """Seconds per stage of one build by a module as on main, each stage run alone over the output of the one before."""
-    encoding = module.ENCODINGS[module.ExportFormat(fmt)]
-    audio = [blocks[h] for _, hashes in sections for h in hashes]
-    stages: dict[str, float] = {}
-
-    started = time.perf_counter()
-    decoded = [frame for block in audio for frame in module._decode_block(block)]
-    stages["decode"] = time.perf_counter() - started
-
-    resampler = av.AudioResampler(format="fltp" if fmt == "m4b" else "s32p", layout="mono", rate=RATE)
-    started = time.perf_counter()
-    resampled = [f for frame in decoded for f in resampler.resample(frame)] + resampler.resample(None)
-    stages["resample"] = time.perf_counter() - started
-
-    with tempfile.TemporaryDirectory() as tmp:
-        encoded = Path(tmp) / f"encoded.{fmt}"
-        out = av.open(str(encoded), "w", format=encoding.container)
-        stream = out.add_stream(encoding.codec, rate=RATE, layout="mono")
-        assert isinstance(stream, av.AudioStream)
-        stream.bit_rate = module.BIT_RATE
-        written = 0
-        started = time.perf_counter()
-        for frame in resampled:
-            frame.pts = written
-            written += frame.samples
-            for packet in stream.encode(frame):
-                out.mux(packet)
-        for packet in stream.encode(None):
-            out.mux(packet)
         out.close()
         stages["encode and mux"] = time.perf_counter() - started
 
