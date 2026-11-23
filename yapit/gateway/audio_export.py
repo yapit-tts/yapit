@@ -52,8 +52,10 @@ class Encoding:
 
 
 ENCODINGS = {
-    ExportFormat.m4b: Encoding(container="ipod", codec="aac", media_type="audio/mp4", options={}),
-    ExportFormat.mp3: Encoding(container="mp3", codec="libmp3lame", media_type="audio/mpeg", options={}),
+    ExportFormat.m4b: Encoding(container="ipod", codec="aac", media_type="audio/mp4", options={"aac_coder": "fast"}),
+    ExportFormat.mp3: Encoding(
+        container="mp3", codec="libmp3lame", media_type="audio/mpeg", options={"compression_level": "7"}
+    ),
 }
 
 
