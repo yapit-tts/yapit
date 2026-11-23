@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from yapit.contracts import KOKORO_OPUS_BITRATE, OPENAI_TTS_OPUS_BITRATE
 from yapit.gateway.audio_export import (
-    MEDIA_TYPES,
+    ENCODINGS,
     AudioExportState,
     AudioNotCached,
     Chapter,
@@ -245,7 +245,7 @@ async def get_audio_export(
     path = stored_export(Path(settings.audio_export_dir), key, fmt)
     if path is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No such audio file, or it has expired")
-    return FileResponse(path, media_type=MEDIA_TYPES[fmt], filename=f"{doc.title or 'Document'}.{fmt}")
+    return FileResponse(path, media_type=ENCODINGS[fmt].media_type, filename=f"{doc.title or 'Document'}.{fmt}")
 
 
 def _check_ranges(ranges: list[BlockRange], block_count: int) -> None:

@@ -138,9 +138,7 @@ A job synthesizes a chosen set of a document's blocks with no tab open, so playb
 - **Cancel** stops the job queueing and takes its queued blocks off the queue unless a listener or another job waits on them. Blocks a worker already took are finished, cached and billed.
 - **Cache cap:** the POST refuses a selection whose estimated audio is larger than `AUDIO_CACHE_CONFIG__MAX_SIZE_MB`, since the cache would evict its first blocks before its last are made.
 
-**Export** (`gateway/audio_export.py`): `POST /v1/documents/{id}/audio-export` takes a model, a voice, block ranges with titles and a format (`m4b`, AAC with a chapter per range; `mp3`, with ID3 chapters) and joins the ranges' cached blocks into one file, leaving out a block the worker returned no audio for. It is refused (409) while any other block has no audio in that voice, and while another file of the user's is being built. The file is built once into `AUDIO_EXPORT_DIR` under a name hashed from its content, and kept 24 hours: the answer is `ready` when the file is stored, or `building`, and the tabs on the document hear `audio_export` when the build ends. `GET .../audio-export/{key}.{format}` serves it. Each block is decoded and cut to the length it was encoded from (FFmpeg leaves the encoder's padding on a block of one Ogg page), so the blocks follow each other with no gap.
-
-The build (`yapit/audio_file.py`) runs in a pool of processes, one per core, at low priority so that synthesis and requests come first. The gateway fetches the blocks into one scratch file. The stream is cut into a segment per core, each encoded by its own encoder, which starts a little before its segment and runs on past the next one's start. The segments are joined at the quietest frame near each cut. Where MP3 segments join, the frames before the join are rewritten so that the next frame finds the bit-reservoir bytes it expects. The harness that times a build is `experiments/audio_export_benchmark.py`, and its measurements are in `experiments/audio_export_benchmark_results.jsonl`.
+**Export** (`gateway/audio_export.py`): `POST /v1/documents/{id}/audio-export` takes a model, a voice, block ranges with titles and a format (`m4b`, AAC with a chapter per range; `mp3`, with ID3 chapters) and joins the ranges' cached blocks into one file, leaving out a block the worker returned no audio for. It is refused (409) while any other block has no audio in that voice, and while another file of the user's is being built. The file is built once into `AUDIO_EXPORT_DIR` under a name hashed from its content, and kept 24 hours: the answer is `ready` when the file is stored, or `building`, and the tabs on the document hear `audio_export` when the build ends. `GET .../audio-export/{key}.{format}` serves it. Each block is decoded and cut to the length it was encoded from (FFmpeg leaves the encoder's padding on a block of one Ogg page), so the joins carry no gap. A build is one encoder, the event loop handing it block after block; the blocks are decoded ahead of it on the same few low-priority threads (`_build_threads`), so a build takes as long as its encoder does. `experiments/audio_export_benchmark.py` times a build and checks its file, and its measurements are in `experiments/audio_export_benchmark_results.jsonl`.
 
 ### 8. Cache & Storage
 
@@ -191,8 +189,7 @@ Built-in model: kokoro. Model/voice definitions in `yapit/gateway/seed.py`.
 | `gateway/visibility_scanner.py` | Re-queues stuck jobs |
 | `gateway/audio_job.py` | Background audio jobs: state, feeder, cancel |
 | `gateway/api/v1/audio_jobs.py` | Audio job and export endpoints |
-| `gateway/audio_export.py` | Export: the build's lifecycle, its storage and expiry |
-| `audio_file.py` | Export: blocks to one AAC or MP3 file, encoded in segments across processes and joined |
+| `gateway/audio_export.py` | Export: the join into one file, its storage and expiry |
 | `workers/tts_loop.py` | Pull-based worker main loop (worker image) |
 | `gateway/api_tts_dispatcher.py` | Parallel dispatcher for API models (gateway image) |
 | `queue.py` | Shared queue utilities (push, pull, requeue) |

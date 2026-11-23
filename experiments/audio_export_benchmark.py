@@ -2,19 +2,21 @@
 
 The blocks are what the Kokoro worker caches: 24 kHz mono speech as 48 kbps Ogg Opus, cut from any
 recording PyAV reads at lengths drawn from a fixed seed, and kept in --scratch so every run builds
-from the same bytes. A build runs as the gateway runs it, from the blocks stored in one file, in
-the gateway's pool of build processes; --before times the join a copy of an older
-`yapit/gateway/audio_export.py` makes instead. Every built file is checked: duration equal to the
+from the same bytes. A build is `write_audio_file` of `yapit/gateway/audio_export.py`, or of the
+copy of an older one that --before names. Every built file is checked: duration equal to the
 blocks' sum, one chapter per section, and the decoded audio compared with the blocks' own.
 
 Examples:
     uv run experiments/audio_export_benchmark.py --speech speech.mp3 --runs 5
     uv run experiments/audio_export_benchmark.py --speech speech.mp3 --before old_audio_export.py --runs 5
     uv run experiments/audio_export_benchmark.py --speech speech.mp3 --selection ten-hours --format mp3
+    uv run experiments/audio_export_benchmark.py --speech speech.mp3 --encoder-options aac_coder=twoloop
 """
 
 import asyncio
+import dataclasses
 import importlib.util
+import inspect
 import io
 import json
 import os
@@ -30,25 +32,16 @@ import av
 import numpy as np
 import tyro
 
-from yapit import audio_file
-from yapit.audio_file import Block, ChapterMark
 from yapit.contracts import KOKORO_OPUS_BITRATE
+from yapit.gateway import audio_export
 
-# The gateway is imported where it is used: a build process imports this script as its main module,
-# and importing the gateway there would take seconds each.
-RATE = audio_file.SAMPLE_RATE
+RATE = audio_export.SAMPLE_RATE
 SELECTIONS = {
     # The build max timed on production: 5 min 10 s in 23 blocks, one section.
     "five-minutes": {"seconds": 310, "blocks": 23, "sections": 1},
     # A long audiobook: blocks of about the five-minute selection's mean length, 30 sections.
     "ten-hours": {"seconds": 36_000, "blocks": 2_700, "sections": 30},
 }
-
-
-@dataclass(frozen=True)
-class Section:
-    title: str
-    variant_hashes: list[str]
 
 
 @dataclass
@@ -63,10 +56,12 @@ class Args:
     """Builds to time, one after another."""
     before: Path | None = None
     """A copy of an older audio_export.py whose write_audio_file to time instead of the current build."""
+    encoder_options: dict[str, str] | None = None
+    """The encoder's options, as FFmpeg names them, instead of the ones the current build sets."""
     stages: bool = False
-    """Time each stage of one build instead of the whole build; the current build's after one build that starts its processes."""
+    """Time each stage of one build, run alone on one thread, instead of the whole build."""
     compare: bool = True
-    """Decode each built file and compare it with the blocks' own audio, around every join and over the whole file."""
+    """Decode each built file and compare it with the blocks' own audio."""
     scratch: Path = Path(tempfile.gettempdir()) / "audio-export-benchmark"
     """Where the blocks and the built files are kept."""
     out: Path | None = None
@@ -75,83 +70,46 @@ class Args:
 
 def main(args: Args) -> None:
     args.scratch.mkdir(parents=True, exist_ok=True)
-    blocks, chapters = corpus(args.speech, args.selection, args.scratch)
-    audio_s = sum(audio_file.block_samples(b) for b in blocks.values()) / RATE
+    blocks, sections = corpus(args.speech, args.selection, args.scratch)
+    audio_s = sum(_samples(b) for b in blocks.values()) / RATE
     fmt = args.format
-    side = "before" if args.before else "after"
-    print(f"{args.selection}: {len(blocks)} blocks, {len(chapters)} sections, {audio_s:.1f} s of audio")
+    module = _load(args.before) if args.before else audio_export
+    if args.encoder_options is not None:
+        encoding = module.ENCODINGS[module.ExportFormat(fmt)]
+        module.ENCODINGS[module.ExportFormat(fmt)] = dataclasses.replace(encoding, options=args.encoder_options)
+    side = {"side": "before" if args.before else "after"}
+    if not args.before:
+        side["encoder_options"] = audio_export.ENCODINGS[audio_export.ExportFormat(fmt)].options
+    print(f"{args.selection}: {len(blocks)} blocks, {len(sections)} sections, {audio_s:.1f} s of audio")
 
     if args.stages:
-        stages = (
-            time_stages(_load(args.before), fmt, chapters, blocks)
-            if args.before
-            else time_stages_after(fmt, chapters, blocks, args.scratch)
-        )
-        report(args, {"side": side, "stages": stages})
+        stages = time_stages_before if args.before else time_stages
+        report(args, {**side, "stages": stages(module, fmt, sections, blocks)})
         return
-    build = _before(_load(args.before), blocks) if args.before else _after(blocks)
     path = args.scratch / f"build.{fmt}"
     for _ in range(args.runs):
         started = time.perf_counter()
-        joins = build(path, fmt, chapters)
+        build(module, path, fmt, sections, blocks)
         wall = time.perf_counter() - started
         duration, titles = probe(path)
-        result = {"side": side, "wall_s": round(wall, 3), "audio_s": round(audio_s, 3), "file_s": round(duration, 4)}
-        result["ok"] = abs(duration - audio_s) < 0.001 and titles == [c.title for c in chapters]
+        result = {**side, "wall_s": round(wall, 3), "audio_s": round(audio_s, 3), "file_s": round(duration, 4)}
+        result["ok"] = abs(duration - audio_s) < 0.001 and titles == [title for title, _ in sections]
         if args.compare:
-            result |= compare(path, blocks, chapters, joins)
+            result |= compare(path, blocks, sections)
         report(args, result)
 
 
-def _store(
-    blocks: dict[str, bytes], chapters: list[Section], blocks_path: Path
-) -> tuple[list[Block], list[ChapterMark]]:
-    """The blocks in one file, as the gateway stores them as it fetches them."""
-    stored, marks, at = [], [], 0
-    with blocks_path.open("wb") as f:
-        for chapter in chapters:
-            start = at
-            for h in chapter.variant_hashes:
-                samples = audio_file.block_samples(blocks[h])
-                stored.append(Block(offset=f.tell(), size=len(blocks[h]), start=at, samples=samples))
-                f.write(blocks[h])
-                at += samples
-            marks.append(ChapterMark(title=chapter.title, start=start, end=at))
-    return stored, marks
+def build(module, path: Path, fmt: str, sections: list[tuple[str, list[str]]], blocks: dict[str, bytes]) -> None:
+    """One build by the module, from the point its blocks' audio is fetched."""
+    chapters = [module.Chapter(title=title, variant_hashes=hashes) for title, hashes in sections]
+    if not inspect.iscoroutinefunction(module.write_audio_file):
+        module.write_audio_file(path, module.ExportFormat(fmt), chapters, lambda hs: [blocks[h] for h in hs])
+        return
 
+    async def fetch(hashes: list[str]) -> list[bytes]:
+        return [blocks[h] for h in hashes]
 
-def _after(blocks: dict[str, bytes]):
-    """The build as the gateway runs it, from the point its blocks are fetched; returns where it joined segments."""
-    from yapit.gateway import audio_export
-
-    def build(path: Path, fmt: str, chapters: list[Section]) -> list[int]:
-        blocks_path = path.with_name(f"{path.name}.blocks")
-        stored, marks = _store(blocks, chapters, blocks_path)
-        try:
-            return asyncio.run(
-                audio_file.write_audio_file(
-                    audio_export._pool(),
-                    audio_export.WORKERS,
-                    audio_export.ENCODINGS[audio_export.ExportFormat(fmt)],
-                    blocks_path,
-                    stored,
-                    marks,
-                    path,
-                )
-            )
-        finally:
-            blocks_path.unlink()
-
-    return build
-
-
-def _before(module, blocks: dict[str, bytes]):
-    def build(path: Path, fmt: str, chapters: list[Section]) -> list[int]:
-        old_chapters = [module.Chapter(title=c.title, variant_hashes=c.variant_hashes) for c in chapters]
-        module.write_audio_file(path, module.ExportFormat(fmt), old_chapters, lambda hs: [blocks[h] for h in hs])
-        return []
-
-    return build
+    asyncio.run(module.write_audio_file(path, module.ExportFormat(fmt), chapters, fetch))
 
 
 def _load(path: Path):
@@ -162,6 +120,12 @@ def _load(path: Path):
     return module
 
 
+def _samples(block: bytes) -> int:
+    """Samples at RATE in the PCM the block was encoded from."""
+    head = block.find(b"OpusHead")
+    return audio_export._encoded_samples(block, block[head : head + 19]) // 2
+
+
 def report(args: Args, result: dict) -> None:
     line = {"selection": args.selection, "format": args.format, "cores": len(os.sched_getaffinity(0)), **result}
     print(json.dumps(line))
@@ -170,12 +134,11 @@ def report(args: Args, result: dict) -> None:
             f.write(json.dumps(line) + "\n")
 
 
-def corpus(speech: Path, selection: str, scratch: Path) -> tuple[dict[str, bytes], list[Section]]:
-    """The selection's blocks by hash, and its sections; encoded once, then read from scratch."""
+def corpus(speech: Path, selection: str, scratch: Path) -> tuple[dict[str, bytes], list[tuple[str, list[str]]]]:
+    """The selection's blocks by hash, and its sections as (title, hashes); encoded once, then read from scratch."""
     cached = scratch / f"{selection}.pickle"
     if cached.exists():
-        blocks, sections = pickle.loads(cached.read_bytes())
-        return blocks, [Section(title, hashes) for title, hashes in sections]
+        return pickle.loads(cached.read_bytes())
     spec = SELECTIONS[selection]
     rng = random.Random(0)
     weights = [rng.uniform(0.1, 1.9) for _ in range(spec["blocks"])]
@@ -188,12 +151,12 @@ def corpus(speech: Path, selection: str, scratch: Path) -> tuple[dict[str, bytes
         hashes.append(f"block-{i}")
         blocks[hashes[-1]] = _ogg_opus((piece * 32767).astype(np.int16))
     per_section = -(-len(hashes) // spec["sections"])
-    chapters = [
-        Section(title=f"Section {s + 1}", variant_hashes=hashes[first : first + per_section])
+    sections = [
+        (f"Section {s + 1}", hashes[first : first + per_section])
         for s, first in enumerate(range(0, len(hashes), per_section))
     ]
-    cached.write_bytes(pickle.dumps((blocks, [(c.title, c.variant_hashes) for c in chapters])))
-    return blocks, chapters
+    cached.write_bytes(pickle.dumps((blocks, sections)))
+    return blocks, sections
 
 
 def _decode(source: Path | bytes, start: int = 0) -> np.ndarray:
@@ -225,37 +188,29 @@ def probe(path: Path) -> tuple[float, list[str]]:
         return container.duration / av.time_base, [c["metadata"]["title"] for c in container.chapters()]
 
 
-def compare(path: Path, blocks: dict[str, bytes], chapters: list[Section], joins: list[int]) -> dict:
-    """How far the file's decoded audio is from the blocks', in dB below the blocks' level, per 50 ms window.
+def compare(path: Path, blocks: dict[str, bytes], sections: list[tuple[str, list[str]]]) -> dict:
+    """How far the file's decoded audio is from the blocks', in dB below the blocks' level.
 
-    The reference is each block decoded on its own and the blocks laid end to end, scaled to the
-    file's level; the file is decoded and cut to
-    its edit list's start. Reports the whole file's error, the worst window's, and the worst
-    window's among those within 100 ms of a join.
+    The reference is each block decoded on its own and the blocks laid end to end; the file is
+    decoded, cut to its edit list's start and scaled to the reference's level. Reports the file's
+    level against the reference's, the whole file's error, and the worst 50 ms window's.
     """
-    reference = np.concatenate(
-        [_decode(blocks[h])[: audio_file.block_samples(blocks[h])] for c in chapters for h in c.variant_hashes]
-    )
+    reference = np.concatenate([_decode(blocks[h])[: _samples(blocks[h])] for _, hashes in sections for h in hashes])
     decoded = _decoded_file(path)
     n = min(len(reference), len(decoded))
     decoded, reference = decoded[:n].astype(np.float64), reference[:n].astype(np.float64)
-    reference *= np.dot(decoded, reference) / np.dot(reference, reference)
-    error = decoded - reference
+    level = np.dot(decoded, reference) / np.dot(reference, reference)
+    error = decoded / level - reference
     window = RATE // 20
     usable = n // window * window
     signal = np.square(reference[:usable]).reshape(-1, window).mean(axis=1)
     noise = np.square(error[:usable]).reshape(-1, window).mean(axis=1)
     loud = signal > 1e-4  # leave out silence, where any error is a large ratio of nothing
     db = 10 * np.log10(np.maximum(noise[loud], 1e-12) / signal[loud])
-    near = np.zeros(len(signal), dtype=bool)
-    for j in joins:
-        near[max(0, (j - RATE // 10) // window) : (j + RATE // 10) // window + 1] = True
-    near_loud = near[loud]
     return {
+        "level_db": round(float(20 * np.log10(level)), 2),
         "error_db": round(float(10 * np.log10(np.sum(np.square(error)) / np.sum(np.square(reference[:n])))), 1),
         "worst_window_db": round(float(db.max()), 1),
-        "worst_join_window_db": round(float(db[near_loud].max()), 1) if near_loud.any() else None,
-        "joins": len(joins),
     }
 
 
@@ -268,10 +223,47 @@ def _decoded_file(path: Path) -> np.ndarray:
     return pcm[-first:] if first < 0 else pcm
 
 
-def time_stages(module, fmt: str, chapters: list[Section], blocks: dict[str, bytes]) -> dict[str, float]:
-    """Seconds per stage of one build by the older module, each stage run alone over the output of the one before."""
+def time_stages(module, fmt: str, sections: list[tuple[str, list[str]]], blocks: dict[str, bytes]) -> dict[str, float]:
+    """Seconds per stage of one build, each stage run alone on one thread over the output of the one before."""
     encoding = module.ENCODINGS[module.ExportFormat(fmt)]
-    audio = [blocks[h] for c in chapters for h in c.variant_hashes]
+    audio = [blocks[h] for _, hashes in sections for h in hashes]
+    stages: dict[str, float] = {}
+
+    started = time.perf_counter()
+    decoded = [module._decode_block(block) for block in audio]
+    stages["decode, downmix and resample"] = time.perf_counter() - started
+
+    with tempfile.TemporaryDirectory() as tmp:
+        encoded = Path(tmp) / f"encoded.{fmt}"
+        out = av.open(str(encoded), "w", format=encoding.container)
+        stream = out.add_stream(encoding.codec, rate=RATE, layout="mono", options=encoding.options)
+        assert isinstance(stream, av.AudioStream)
+        stream.bit_rate = module.BIT_RATE
+        stream.format = "fltp"
+        written = 0
+        started = time.perf_counter()
+        for frame in decoded:
+            frame.pts = written
+            written += frame.samples
+            out.mux(stream.encode(frame))
+        out.mux(stream.encode(None))
+        out.close()
+        stages["encode and mux"] = time.perf_counter() - started
+
+        marks = [{"title": title, "start": 0, "end": 1} for title, _ in sections]
+        started = time.perf_counter()
+        module._remux_with_chapters(encoded, Path(tmp) / f"chaptered.{fmt}", encoding, marks)
+        stages["remux with chapters"] = time.perf_counter() - started
+
+    return {k: round(v, 3) for k, v in stages.items()}
+
+
+def time_stages_before(
+    module, fmt: str, sections: list[tuple[str, list[str]]], blocks: dict[str, bytes]
+) -> dict[str, float]:
+    """Seconds per stage of one build by a module as on main, each stage run alone over the output of the one before."""
+    encoding = module.ENCODINGS[module.ExportFormat(fmt)]
+    audio = [blocks[h] for _, hashes in sections for h in hashes]
     stages: dict[str, float] = {}
 
     started = time.perf_counter()
@@ -301,40 +293,11 @@ def time_stages(module, fmt: str, chapters: list[Section], blocks: dict[str, byt
         out.close()
         stages["encode and mux"] = time.perf_counter() - started
 
-        marks = [{"title": c.title, "start": 0, "end": 1} for c in chapters]
+        marks = [{"title": title, "start": 0, "end": 1} for title, _ in sections]
         started = time.perf_counter()
         module._remux_with_chapters(encoded, Path(tmp) / f"chaptered.{fmt}", encoding, marks)
         stages["remux with chapters"] = time.perf_counter() - started
 
-    return {k: round(v, 3) for k, v in stages.items()}
-
-
-def time_stages_after(fmt: str, chapters: list[Section], blocks: dict[str, bytes], scratch: Path) -> dict[str, float]:
-    """Seconds per stage of the current build, as write_audio_file runs them, in processes a first build started."""
-    from yapit.gateway import audio_export
-
-    pool, encoding = audio_export._pool(), audio_export.ENCODINGS[audio_export.ExportFormat(fmt)]
-    list(pool.map(abs, range(audio_export.WORKERS)))
-    stages: dict[str, float] = {}
-    blocks_path, path = scratch / "stages.blocks", scratch / f"stages.{fmt}"
-
-    started = time.perf_counter()
-    stored, marks = _store(blocks, chapters, blocks_path)
-    stages["store blocks"] = time.perf_counter() - started
-
-    segments = audio_file.plan_segments(stored, audio_export.WORKERS, audio_file._encoder(encoding).frame_size)
-    outs = [scratch / f"stages.segment{k}" for k in range(len(segments))]
-    started = time.perf_counter()
-    futures = [pool.submit(audio_file.encode_segment, blocks_path, encoding, s, o) for s, o in zip(segments, outs)]
-    encoded = [f.result() for f in futures]
-    stages[f"encode {len(segments)} segments"] = time.perf_counter() - started
-
-    started = time.perf_counter()
-    pool.submit(audio_file.join_segments, encoding, encoded, marks, path).result()
-    stages["join"] = time.perf_counter() - started
-
-    for p in [blocks_path, path, *outs]:
-        p.unlink()
     return {k: round(v, 3) for k, v in stages.items()}
 
 

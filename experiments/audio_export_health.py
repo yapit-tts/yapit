@@ -1,9 +1,10 @@
-"""Time health requests to the gateway while it builds the benchmark's ten-hour selection, and while it builds nothing.
+"""Time saving the benchmark's ten-hour selection through the gateway, and health requests while it is built.
 
 Runs the gateway as the API tests do, in this process, with the blocks in Redis, and drives it
-through the HTTP API: the export request, then health requests one after another until the build
-has ended. Prints each phase's latencies, and appends them to the file OUT names, if set. SPEECH
-and SCRATCH are the benchmark's --speech and --scratch.
+through the HTTP API: the export request, health requests one after another until the build has
+ended, then the request for the file. Prints the time from the export request to the file's last
+byte and each phase's health latencies, and appends them to the file OUT names, if set. SPEECH and
+SCRATCH are the benchmark's --speech and --scratch.
 
     uv run pytest experiments/audio_export_health.py -p tests.yapit.gateway.api.conftest -s
 """
@@ -64,7 +65,7 @@ async def test_health_while_a_ten_hour_selection_is_built(client, app, session, 
     session.add_all([model, voice])
     await session.commit()
 
-    hashes = [h for s in sections for h in s.variant_hashes]
+    hashes = [h for _, section in sections for h in section]
     content = "\n\n".join(f"Paragraph {i} of the book is read aloud." for i in range(len(hashes)))
     response = await client.post("/v1/documents/text", json={"content": content, "title": "A Long Book"})
     document_id = uuid.UUID(response.json()["id"])
@@ -83,9 +84,9 @@ async def test_health_while_a_ten_hour_selection_is_built(client, app, session, 
     await pubsub.subscribe(get_pubsub_channel(DEFAULT_TEST_USER.id, document_id))
     await pubsub.get_message(timeout=1)
     ranges, first = [], 0
-    for s in sections:
-        ranges.append({"first_block": first, "last_block": first + len(s.variant_hashes) - 1, "title": s.title})
-        first += len(s.variant_hashes)
+    for title, section in sections:
+        ranges.append({"first_block": first, "last_block": first + len(section) - 1, "title": title})
+        first += len(section)
     started = time.perf_counter()
     state = (
         await client.post(
@@ -98,18 +99,30 @@ async def test_health_while_a_ten_hour_selection_is_built(client, app, session, 
     async def built() -> dict:
         while True:
             message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=3600)
-            if message and json.loads(message["data"])["key"] == state["key"]:
-                return json.loads(message["data"])
+            heard = json.loads(message["data"]) if message else {}
+            if heard.get("key") == state["key"] and heard["status"] != "building":
+                return heard
 
     done = asyncio.ensure_future(built())
     building = await _health_latencies(client, until=done)
     ended = done.result()
     build_s = time.perf_counter() - started
     await pubsub.aclose()
-
     assert ended["status"] == "ready", ended
-    result = {"format": fmt, "build_s": round(build_s, 1), "idle": _summary(idle), "building": _summary(building)}
+    file = await client.get(f"/v1/documents/{document_id}/audio-export/{state['key']}.{fmt}")
+    save_s = time.perf_counter() - started
+    assert file.status_code == 200
+
+    result = {
+        "format": fmt,
+        "cores": len(os.sched_getaffinity(0)),
+        "build_s": round(build_s, 1),
+        "save_to_file_s": round(save_s, 1),
+        "file_mb": round(len(file.content) / 1e6, 1),
+        "idle": _summary(idle),
+        "building": _summary(building),
+    }
     print(json.dumps(result))
     if out := os.environ.get("OUT"):
         with open(out, "a") as f:
-            f.write(json.dumps({"measurement": "health while building ten hours", **result}) + "\n")
+            f.write(json.dumps({"measurement": "saving ten hours, and health meanwhile", **result}) + "\n")
