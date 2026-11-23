@@ -4,7 +4,9 @@ Runs the gateway as the API tests do, in this process, with the blocks in Redis,
 through the HTTP API: the export request, health requests one after another until the build has
 ended, then the request for the file. Prints the time from the export request to the file's last
 byte and each phase's health latencies, and appends them to the file OUT names, if set. SPEECH and
-SCRATCH are the benchmark's --speech and --scratch.
+SCRATCH are the benchmark's --speech and --scratch. SECTIONS saves only the first so many of the
+selection's 30 sections, and BUSY runs that many busy loops at normal priority on the same cores
+throughout, as synthesis loads production's.
 
     uv run pytest experiments/audio_export_health.py -p tests.yapit.gateway.api.conftest -s
 """
@@ -14,6 +16,8 @@ import importlib.util
 import json
 import os
 import statistics
+import subprocess
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -56,10 +60,20 @@ def _summary(latencies: list[float]) -> dict:
     }
 
 
+@pytest.fixture
+def busy_loops():
+    command = [sys.executable, "-c", "while True: pass"]
+    loops = [subprocess.Popen(command) for _ in range(int(os.environ.get("BUSY", "0")))]
+    yield len(loops)
+    for loop in loops:
+        loop.kill()
+
+
 @pytest.mark.parametrize("fmt", ["m4b", "mp3"])
-async def test_health_while_a_ten_hour_selection_is_built(client, app, session, fmt):
+async def test_health_while_a_ten_hour_selection_is_built(client, app, session, fmt, busy_loops):
     bench = _benchmark()
     blocks, sections = bench.corpus(Path(os.environ["SPEECH"]), "ten-hours", Path(os.environ["SCRATCH"]))
+    sections = sections[: int(os.environ.get("SECTIONS", len(sections)))]
     model = TTSModel(slug="kokoro", name="Kokoro")
     voice = Voice(slug="af_heart", name="Heart", lang="en-us", model=model)
     session.add_all([model, voice])
@@ -115,7 +129,9 @@ async def test_health_while_a_ten_hour_selection_is_built(client, app, session, 
 
     result = {
         "format": fmt,
+        "audio_s": round(sum(bench._samples(blocks[h]) for h in hashes) / bench.RATE),
         "cores": len(os.sched_getaffinity(0)),
+        "busy_loops": busy_loops,
         "build_s": round(build_s, 1),
         "save_to_file_s": round(save_s, 1),
         "file_mb": round(len(file.content) / 1e6, 1),
@@ -125,4 +141,4 @@ async def test_health_while_a_ten_hour_selection_is_built(client, app, session, 
     print(json.dumps(result))
     if out := os.environ.get("OUT"):
         with open(out, "a") as f:
-            f.write(json.dumps({"measurement": "saving ten hours, and health meanwhile", **result}) + "\n")
+            f.write(json.dumps({"measurement": "saving a selection, and health meanwhile", **result}) + "\n")
