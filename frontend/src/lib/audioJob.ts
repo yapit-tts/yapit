@@ -37,14 +37,15 @@ export interface AudioExportState {
   key: string;
   format: ExportFormat;
   status: "building" | "ready" | "failed";
+  /** While building: the fraction of the file that is built. */
+  progress: number | null;
   error: string | null;
 }
 
-/** Sent only once a build ends. */
-export interface WSAudioExportMessage extends Omit<AudioExportState, "status"> {
+/** Sent each time a build gets a percent further, and once it ends. */
+export interface WSAudioExportMessage extends AudioExportState {
   type: "audio_export";
   document_id: string;
-  status: "ready" | "failed";
 }
 
 export type WSAudioDocumentMessage = WSAudioJobMessage | WSAudioExportMessage;

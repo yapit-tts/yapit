@@ -60,14 +60,22 @@ function GenerateAudioForm(props: GenerateAudioPanelProps) {
       </ul>
 
       <div className="flex flex-col gap-3 px-5 py-4 border-t">
-        {running ? (
+        {running && (
           <div className="flex items-center gap-3" aria-live="polite">
             <span className="text-sm text-muted-foreground">Generating</span>
             <div className="flex-1"><ProgressLine done={running.cached_blocks} total={running.total_blocks} /></div>
             <span className="text-sm font-mono tabular-nums text-muted-foreground">{numberFormat.format(running.cached_blocks)} of {numberFormat.format(running.total_blocks)}</span>
             <Button variant="ghost" size="sm" onClick={() => void props.onCancel()}><Square />Stop</Button>
           </div>
-        ) : (
+        )}
+        {s.saving.map(({ format, phase, fraction }) => (
+          <div key={format} className="flex items-center gap-3">
+            <span className="text-sm text-muted-foreground" aria-live="polite">{phase === "building" ? "Building" : "Downloading"} {format.toUpperCase()}</span>
+            <div className="flex-1"><ProgressLine done={Math.round(fraction * 100)} total={100} /></div>
+            <span className="text-sm font-mono tabular-nums text-muted-foreground">{Math.round(fraction * 100)}%</span>
+          </div>
+        ))}
+        {!running && s.saving.length === 0 && (
           <span className="text-sm text-muted-foreground" aria-live="polite"><SelectionMeta s={s} /></span>
         )}
         <SelectionNotes s={s} />
@@ -80,22 +88,18 @@ function GenerateAudioForm(props: GenerateAudioPanelProps) {
           )}
           <FormatsHint generateFirst={!s.allMade}>
             <div className="flex gap-2">
-              {EXPORT_FORMATS.map(format => {
-                const building = props.exportProgress[format]?.building === true;
-                const name = format.toUpperCase();
-                return (
-                  <Button
-                    key={format}
-                    variant={s.allMade ? "default" : "outline"}
-                    className="shadow-none"
-                    onClick={() => s.download(format)}
-                    disabled={!s.allMade || building}
-                  >
-                    {building ? <Loader2 className="animate-spin" /> : <Download />}
-                    {building ? `Building ${name}` : `Save ${name}`}
-                  </Button>
-                );
-              })}
+              {EXPORT_FORMATS.map(format => (
+                <Button
+                  key={format}
+                  variant={s.allMade ? "default" : "outline"}
+                  className="shadow-none"
+                  onClick={() => s.download(format)}
+                  disabled={!s.allMade || s.saving.some(file => file.format === format)}
+                >
+                  <Download />
+                  Save {format.toUpperCase()}
+                </Button>
+              ))}
             </div>
           </FormatsHint>
         </div>
