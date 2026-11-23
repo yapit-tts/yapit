@@ -1,26 +1,23 @@
 import * as TooltipPrimitive from "@radix-ui/react-tooltip";
 
 /** The house overlay: the page's own ground, a hairline, no shadow. */
-const overlayClass = "z-50 max-w-72 rounded-md border bg-background px-3 py-2 text-sm text-foreground data-[state=delayed-open]:animate-in data-[state=delayed-open]:fade-in-0 data-[state=instant-open]:animate-in data-[state=instant-open]:fade-in-0 data-[state=open]:animate-in data-[state=open]:fade-in-0";
+export const overlayClass = "z-50 max-w-72 rounded-md border bg-background px-3 py-2 text-sm text-foreground data-[state=delayed-open]:animate-in data-[state=delayed-open]:fade-in-0 data-[state=instant-open]:animate-in data-[state=instant-open]:fade-in-0 data-[state=open]:animate-in data-[state=open]:fade-in-0";
 
 interface HintProps {
   content: React.ReactNode;
   children: React.ReactNode;
   align?: "start" | "center" | "end";
-  open?: boolean;
-  onOpenChange?: (open: boolean) => void;
 }
 
 /**
  * The house tooltip: an overlay that opens below the element it wraps after half a second of hover, and at once on
  * keyboard focus. That element is the trigger itself, so a disabled button needs a span around it, which still gets
- * the pointer. Focus that is not keyboard focus
- * (a dialog focusing its first control after a click) leaves it shut.
+ * the pointer. Focus that is not keyboard focus (a dialog focusing its first control after a click) leaves it shut.
  */
-export function Hint({ content, children, align = "center", open, onOpenChange }: HintProps) {
+export function Hint({ content, children, align = "center" }: HintProps) {
   return (
     <TooltipPrimitive.Provider delayDuration={500}>
-      <TooltipPrimitive.Root open={open} onOpenChange={onOpenChange}>
+      <TooltipPrimitive.Root>
         <TooltipPrimitive.Trigger asChild onFocus={skipUnlessKeyboardFocus}>{children}</TooltipPrimitive.Trigger>
         <TooltipPrimitive.Portal>
           <TooltipPrimitive.Content align={align} sideOffset={6} collisionPadding={8} className={`${overlayClass} flex flex-col gap-1.5`}>

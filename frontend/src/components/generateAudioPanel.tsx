@@ -1,7 +1,8 @@
 import { useRef, useState } from "react";
+import * as PopoverPrimitive from "@radix-ui/react-popover";
 import { Link } from "react-router";
 import { AudioLines, Check, Download, FileAudio, Info, ListChecks, ListX, Loader2, Square } from "lucide-react";
-import { Hint } from "@/components/hint";
+import { Hint, overlayClass } from "@/components/hint";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
 import { VoicePicker } from "@/components/voicePicker";
@@ -38,12 +39,9 @@ function GenerateAudioForm(props: GenerateAudioPanelProps) {
   return (
     <>
       <div className="flex flex-col gap-3 px-5 pt-5 pb-3 border-b">
-        <div className="flex items-center gap-1 pr-8">
+        <TitleWithInfo label="What this does" note="The server generates audio for the ticked sections, so they play right away. You can close this tab in the meantime.">
           <SheetTitle className="text-lg font-semibold text-foreground">Generate in background</SheetTitle>
-          <InfoHint label="What this does">
-            The server generates audio for the ticked sections, so they play right away. You can close this tab in the meantime.
-          </InfoHint>
-        </div>
+        </TitleWithInfo>
         <SheetDescription className="sr-only">Pick the sections and the voice, generate their audio, then save it as one file.</SheetDescription>
         <div className="flex items-center justify-between gap-2">
           <VoicePicker value={props.voiceSelection} onChange={props.onVoiceChange} />
@@ -221,25 +219,48 @@ function SelectionMeta({ s }: { s: AudioSelection }) {
 }
 
 /**
- * An (i) whose short note opens like any tooltip, and also on a click or a tap, which toggles it. The tooltip closes
- * itself on every press of its trigger, so the click handler stops that and toggles from the state before the press;
- * a click from Enter or Space (detail 0) has no press before it.
+ * The title with an (i) after it whose note opens below the whole title row, from its left edge, so it stays inside
+ * the panel and clear of Tick all. It opens on hover after half a second and on keyboard focus, and shuts when either
+ * ends; a click or tap toggles it and keeps it open until the next click, tap, Escape or focus elsewhere. A Radix
+ * popover rather than a tooltip, since only a popover takes an anchor apart from its trigger.
  */
-function InfoHint({ label, children }: { label: string; children: React.ReactNode }) {
+function TitleWithInfo({ label, note, children }: { label: string; note: string; children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
-  const openBeforePress = useRef(false);
+  const pinned = useRef(false);
+  const hoverDelay = useRef<number | undefined>(undefined);
+  const show = (next: boolean) => { window.clearTimeout(hoverDelay.current); setOpen(next); };
+  const pin = (next: boolean) => { pinned.current = next; show(next); };
+  const unlessPinned = () => { if (!pinned.current) show(false); };
   return (
-    <Hint content={children} align="start" open={open} onOpenChange={setOpen}>
-      <button
-        type="button"
-        aria-label={label}
-        className="p-1 rounded text-muted-foreground hover:text-primary transition-colors"
-        onPointerDown={() => { openBeforePress.current = open; }}
-        onClick={e => { e.preventDefault(); setOpen(!(e.detail === 0 ? open : openBeforePress.current)); }}
-      >
-        <Info className="h-4 w-4" />
-      </button>
-    </Hint>
+    <PopoverPrimitive.Root open={open} onOpenChange={pin}>
+      <PopoverPrimitive.Anchor asChild>
+        <div className="flex items-center gap-1 pr-8">
+          {children}
+          <PopoverPrimitive.Trigger
+            aria-label={label}
+            className="p-1 rounded text-muted-foreground hover:text-primary transition-colors"
+            onPointerEnter={e => { if (e.pointerType === "mouse" && !open) hoverDelay.current = window.setTimeout(() => setOpen(true), 500); }}
+            onPointerLeave={e => { if (e.pointerType === "mouse") unlessPinned(); }}
+            onFocus={e => { if (e.currentTarget.matches(":focus-visible")) show(true); }}
+            onBlur={unlessPinned}
+          >
+            <Info className="h-4 w-4" />
+          </PopoverPrimitive.Trigger>
+        </div>
+      </PopoverPrimitive.Anchor>
+      <PopoverPrimitive.Portal>
+        <PopoverPrimitive.Content
+          side="bottom"
+          align="start"
+          sideOffset={6}
+          className={overlayClass}
+          onOpenAutoFocus={e => e.preventDefault()}
+          onCloseAutoFocus={e => e.preventDefault()}
+        >
+          {note}
+        </PopoverPrimitive.Content>
+      </PopoverPrimitive.Portal>
+    </PopoverPrimitive.Root>
   );
 }
 
