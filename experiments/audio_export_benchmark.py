@@ -109,7 +109,10 @@ def build(module, path: Path, fmt: str, sections: list[tuple[str, list[str]]], b
     async def fetch(hashes: list[str]) -> list[bytes]:
         return [blocks[h] for h in hashes]
 
-    asyncio.run(module.write_audio_file(path, module.ExportFormat(fmt), chapters, fetch))
+    async def no_progress(_: float) -> None:
+        pass
+
+    asyncio.run(module.write_audio_file(path, module.ExportFormat(fmt), chapters, fetch, no_progress))
 
 
 def _load(path: Path):

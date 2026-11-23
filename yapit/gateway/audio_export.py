@@ -75,11 +75,13 @@ class AudioExportState(BaseModel):
     key: str
     format: ExportFormat
     status: ExportStatus
+    progress: float | None = None
+    """While building: the fraction of the selection's blocks that are encoded."""
     error: str | None = None
 
 
 class WSAudioExport(AudioExportState):
-    """An export's build ended; sent to the tabs of every user who asked for it while it was built."""
+    """An export's build got a percent further, or ended; sent to the tabs of every user who asked for it while it was built."""
 
     type: Literal["audio_export"] = "audio_export"
     document_id: uuid.UUID
@@ -98,6 +100,7 @@ class _Build:
     user_id: str
     task: asyncio.Task
     waiters: set[tuple[str, uuid.UUID]]
+    progress: float = 0
 
 
 _builds: dict[str, _Build] = {}
@@ -147,7 +150,7 @@ async def request_export(
         return AudioExportState(key=key, format=fmt, status=ExportStatus.ready)
     if build := _builds.get(key):
         build.waiters.add((user_id, document_id))
-        return AudioExportState(key=key, format=fmt, status=ExportStatus.building)
+        return AudioExportState(key=key, format=fmt, status=ExportStatus.building, progress=build.progress)
 
     if any(b.user_id == user_id for b in _builds.values()):
         raise ExportBusy
@@ -158,7 +161,7 @@ async def request_export(
 
     task = asyncio.create_task(_build(redis, cache, export_dir, key, fmt, chapters))
     _builds[key] = _Build(user_id=user_id, task=task, waiters={(user_id, document_id)})
-    return AudioExportState(key=key, format=fmt, status=ExportStatus.building)
+    return AudioExportState(key=key, format=fmt, status=ExportStatus.building, progress=0)
 
 
 async def run_export_sweeper(export_dir: Path) -> None:
@@ -183,10 +186,27 @@ async def _build(
 ) -> None:
     state = AudioExportState(key=key, format=fmt, status=ExportStatus.ready)
     started = time.monotonic()
+    build = _builds[key]
+
+    async def tell_waiters(state: AudioExportState) -> None:
+        for user_id, document_id in list(build.waiters):
+            message = WSAudioExport(document_id=document_id, **state.model_dump())
+            await redis.publish(get_pubsub_channel(user_id, document_id), message.model_dump_json())
+
+    async def on_progress(progress: float) -> None:
+        a_percent_further = int(progress * 100) > int(build.progress * 100)
+        build.progress = progress
+        if a_percent_further:
+            await tell_waiters(state.model_copy(update={"status": ExportStatus.building, "progress": progress}))
+
     try:
         export_dir.mkdir(parents=True, exist_ok=True)
         await write_audio_file(
-            export_path(export_dir, key, fmt), fmt, chapters, lambda hashes: _fetch_audio(redis, cache, hashes)
+            export_path(export_dir, key, fmt),
+            fmt,
+            chapters,
+            lambda hashes: _fetch_audio(redis, cache, hashes),
+            on_progress,
         )
         logger.info(f"Audio export {key[:12]} ({fmt}) built in {time.monotonic() - started:.1f}s")
     except AudioNotCached as e:
@@ -196,10 +216,8 @@ async def _build(
         await log_error(f"Audio export failed: {e}")
         state = state.model_copy(update={"status": ExportStatus.failed, "error": "Building the audio file failed"})
     finally:
-        build = _builds.pop(key)
-    for user_id, document_id in build.waiters:
-        message = WSAudioExport(document_id=document_id, **state.model_dump())
-        await redis.publish(get_pubsub_channel(user_id, document_id), message.model_dump_json())
+        del _builds[key]
+    await tell_waiters(state)
 
 
 async def _fetch_audio(redis: Redis, cache: Cache, hashes: list[str]) -> list[bytes]:
@@ -214,9 +232,15 @@ async def _fetch_audio(redis: Redis, cache: Cache, hashes: list[str]) -> list[by
 
 
 async def write_audio_file(
-    path: Path, fmt: ExportFormat, chapters: list[Chapter], fetch: Callable[[list[str]], Awaitable[list[bytes]]]
+    path: Path,
+    fmt: ExportFormat,
+    chapters: list[Chapter],
+    fetch: Callable[[list[str]], Awaitable[list[bytes]]],
+    on_progress: Callable[[float], Awaitable[None]],
 ) -> None:
     """Decode the chapters' Ogg Opus blocks in order and encode them as one stream, then add the chapters.
+
+    on_progress hears the fraction of the blocks that are encoded, after each.
 
     MP3 keeps its chapters in the ID3 tag at the head of the file, written before the first frame,
     and a chapter's start is known only once the blocks before it are decoded. So the stream is
@@ -225,7 +249,7 @@ async def write_audio_file(
     scratch = f".{path.name}.{uuid.uuid4().hex}"
     encoded, chaptered = path.parent / f"{scratch}.encoded", path.parent / f"{scratch}.chaptered"
     try:
-        marks = await _encode(encoded, ENCODINGS[fmt], chapters, fetch)
+        marks = await _encode(encoded, ENCODINGS[fmt], chapters, fetch, on_progress)
         await _on_build_thread(_remux_with_chapters, encoded, chaptered, ENCODINGS[fmt], marks)
         os.replace(chaptered, path)
     finally:
@@ -238,7 +262,11 @@ def _on_build_thread[T](fn: Callable[..., T], *args) -> asyncio.Future[T]:
 
 
 async def _encode(
-    path: Path, encoding: Encoding, chapters: list[Chapter], fetch: Callable[[list[str]], Awaitable[list[bytes]]]
+    path: Path,
+    encoding: Encoding,
+    chapters: list[Chapter],
+    fetch: Callable[[list[str]], Awaitable[list[bytes]]],
+    on_progress: Callable[[float], Awaitable[None]],
 ) -> list[dict]:
     """Encode the chapters into path; returns each chapter's span in seconds of the stream."""
     out = av.open(str(path), "w", format=encoding.container)
@@ -258,9 +286,13 @@ async def _encode(
         out.close()
 
     lengths = [0] * len(chapters)
+    blocks = sum(len(c.variant_hashes) for c in chapters)
+    encoded = 0
     async for chapter, block in _decoded_blocks(chapters, fetch):
         await _on_build_thread(encode, block, sum(lengths))
         lengths[chapter] += block.samples
+        encoded += 1
+        await on_progress(encoded / blocks)
     await _on_build_thread(finish)
     marks, start = [], 0
     for chapter, length in zip(chapters, lengths):
