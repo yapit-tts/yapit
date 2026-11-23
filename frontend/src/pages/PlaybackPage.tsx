@@ -15,6 +15,7 @@ import { buildSectionIndex, findSectionForBlock, type Section } from '@/lib/sect
 import { buildSlugMap } from '@/components/structuredDocument';
 import { type VoiceSelection, getVoiceSelection, getPlaybackSpeed, setPlaybackSpeed as savePlaybackSpeed, getVolume, setVolume as saveVolume } from '@/lib/voiceSelection';
 import { useSettings } from '@/hooks/useSettings';
+import { KEYBOARD_SHORTCUTS, isPageShortcut } from '@/lib/keyboardShortcuts';
 import { useUserPreferences } from '@/hooks/useUserPreferences';
 
 const OUTLINER_STATE_KEY_PREFIX = "yapit_outliner_state_";
@@ -192,9 +193,7 @@ const PlaybackPage = () => {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      const el = e.target as HTMLElement;
-      if (["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName) || el.isContentEditable) return;
-      if (el.closest('[role="dialog"]')) return;
+      if (!isPageShortcut(e)) return;
 
       switch (e.key) {
         case " ":
@@ -566,21 +565,7 @@ const PlaybackPage = () => {
               <button onClick={() => setShowKeybindings(false)} className="p-1 text-muted-foreground hover:text-foreground"><X className="h-4 w-4" /></button>
             </div>
             <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
-              {([
-                ["Space", "Play / pause"],
-                ["j ↓", "Next block"],
-                ["k ↑", "Previous block"],
-                ["l →", "Speed up"],
-                ["h ←", "Speed down"],
-                ["m", "Mute / unmute"],
-                ["+ / =", "Volume up"],
-                ["-", "Volume down"],
-                ["s", "Toggle sidebar"],
-                ["o", "Toggle outliner"],
-                ["r", "Back to reading"],
-                ["?", "This dialog"],
-                ["⌘K", "Search documents"],
-              ] as const).map(([keys, action]) => (
+              {KEYBOARD_SHORTCUTS.map(([keys, action]) => (
                 <div key={keys} className="contents">
                   <kbd className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded text-center">{keys}</kbd>
                   <span className="text-muted-foreground">{action}</span>

@@ -1,7 +1,9 @@
 import { Component, memo, useCallback, useEffect, useMemo, useRef, useState, type ErrorInfo, type ReactNode } from "react";
 import katex from "katex";
 import "katex/dist/katex.min.css";
-import { Copy, Download, Check, ChevronRight, FileDown, FileCode2, AudioLines } from "lucide-react";
+import { Copy, Download, Check, ChevronRight, FileDown, FileCode2, FileAudio } from "lucide-react";
+import { ActionLine, Hint } from "@/components/hint";
+import { isPageShortcut } from "@/lib/keyboardShortcuts";
 import { InlineContentRenderer } from "./inlineContent";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
@@ -882,6 +884,7 @@ function BlockView({ block, onBlockClick, slugMap, isCollapsed, canCollapse, onT
 
 // === Action buttons ===
 
+/** The document header's copy, download and Generate in background buttons, each with its key. */
 function ActionButtons({
   copied,
   hasContent,
@@ -895,26 +898,48 @@ function ActionButtons({
   onDownload: (preserveAnnotations: boolean) => void;
   onGenerateAudio?: () => void;
 }) {
+  const [downloadMenuOpen, setDownloadMenuOpen] = useState(false);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.repeat || !isPageShortcut(e)) return;
+      const action = { c: hasContent && onCopy, d: hasContent && (() => setDownloadMenuOpen(true)), g: onGenerateAudio }[e.key];
+      if (!action) return;
+      e.preventDefault();
+      action();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [hasContent, onCopy, onGenerateAudio]);
+
   return (
     <div className="flex items-center gap-1 shrink-0">
-      <button
-        onClick={onCopy}
-        disabled={!hasContent}
-        className="p-2 rounded hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-        title={copied ? "Copied!" : "Copy markdown"}
-      >
-        {copied ? <Check className="h-4 w-4 text-accent-success" /> : <Copy className="h-4 w-4 text-muted-foreground" />}
-      </button>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
+      <Hint content={<ActionLine action={copied ? "Copied" : "Copy markdown"} keys="c" />}>
+        <span>
           <button
+            onClick={onCopy}
             disabled={!hasContent}
             className="p-2 rounded hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-            title="Download markdown"
+            aria-label="Copy markdown"
           >
-            <Download className="h-4 w-4 text-muted-foreground" />
+            {copied ? <Check className="h-4 w-4 text-accent-success" /> : <Copy className="h-4 w-4 text-muted-foreground" />}
           </button>
-        </DropdownMenuTrigger>
+        </span>
+      </Hint>
+      <DropdownMenu open={downloadMenuOpen} onOpenChange={setDownloadMenuOpen}>
+        <Hint content={<ActionLine action="Download markdown" keys="d" />}>
+          <span>
+            <DropdownMenuTrigger asChild>
+              <button
+                disabled={!hasContent}
+                className="p-2 rounded hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                aria-label="Download markdown"
+              >
+                <Download className="h-4 w-4 text-muted-foreground" />
+              </button>
+            </DropdownMenuTrigger>
+          </span>
+        </Hint>
         <DropdownMenuContent align="end">
           <DropdownMenuItem onClick={() => onDownload(false)}>
             <FileDown className="h-4 w-4" />
@@ -926,15 +951,21 @@ function ActionButtons({
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
-      <button
-        onClick={onGenerateAudio}
-        disabled={!onGenerateAudio}
-        className="p-2 rounded hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-        title="Generate audio"
-        aria-label="Generate audio"
-      >
-        <AudioLines className="h-4 w-4 text-muted-foreground" />
-      </button>
+      <Hint align="end" content={<>
+        <ActionLine action="Generate in background" keys="g" />
+        <span className="text-muted-foreground">The server generates audio for the sections you pick, while you read on or close the tab.</span>
+      </>}>
+        <span>
+          <button
+            onClick={onGenerateAudio}
+            disabled={!onGenerateAudio}
+            className="p-2 rounded hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            aria-label="Generate in background"
+          >
+            <FileAudio className="h-4 w-4 text-muted-foreground" />
+          </button>
+        </span>
+      </Hint>
     </div>
   );
 }

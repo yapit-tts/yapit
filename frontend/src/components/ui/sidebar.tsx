@@ -5,6 +5,7 @@ import { PanelLeftIcon } from "lucide-react"
 
 import { useIsMobile } from "@/hooks/use-mobile"
 import { cn } from "@/lib/utils"
+import { isPageShortcut } from "@/lib/keyboardShortcuts"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Separator } from "@/components/ui/separator"
@@ -112,8 +113,7 @@ function SidebarProvider({
         event.preventDefault()
         toggleSidebar()
       }
-      const el = event.target as HTMLElement;
-      if (event.key === "s" && !["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName) && !el.isContentEditable && !event.metaKey && !event.ctrlKey) {
+      if (event.key === "s" && isPageShortcut(event)) {
         event.preventDefault()
         toggleSidebar()
       }
