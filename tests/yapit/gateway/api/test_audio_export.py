@@ -477,7 +477,7 @@ async def test_the_default_bound_saves_a_ten_hour_selection_in_each_format_one_a
         await write_book(tmp_path / f"book.{fmt}", fmt, [(0, 5, "Whole book")], rooms.append)
         ten_hours = 36_000 / seconds(0, 5)
         key = f"ten-hours-{fmt}"
-        store.reserve(key, round(max(rooms) * ten_hours))
+        store.reserve(key, round(max(rooms) * ten_hours), DEFAULT_TEST_USER.id)
         with open(store.path(key, fmt), "wb") as file:
             file.truncate(round((tmp_path / f"book.{fmt}").stat().st_size * ten_hours))
         store.shelve(key, store.path(key, fmt))
@@ -577,10 +577,15 @@ async def test_a_download_that_stops_reading_lets_its_file_go_at_its_deadline_an
     await asyncio.wait_for(download.task, timeout=10)
     status, headers, body = download.received()
 
-    cut_off = [e["data"] for e in metrics_events() if e["event_type"] == "audio_export_download_cut_off"]
+    events = metrics_events()
+    cut_off = [e["data"] for e in events if e["event_type"] == "audio_export_download_cut_off"]
+    deleted_early = [e for e in events if e["event_type"] == "audio_export_deleted_early"]
     assert crowding["status"] == "ready"
     assert status == 200 and len(body) < int(headers[b"content-length"])
     assert [d["bytes"] for d in cut_off] == [int(headers[b"content-length"])]
+    assert [(e["user_id"], e["data"]["bytes"]) for e in deleted_early] == [
+        (DEFAULT_TEST_USER.id, int(headers[b"content-length"]))
+    ]
 
 
 @asynccontextmanager

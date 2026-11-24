@@ -163,28 +163,30 @@ class ExportStore:
         file = self._files.get(path.name)
         return path if file and time.time() - file.built < EXPORT_TTL_S else None
 
-    def reserve(self, key: str, total: int) -> None:
-        """Let the build's files take total bytes, deleting the oldest files to make room.
+    def reserve(self, key: str, total: int, user_id: str) -> None:
+        """Let the build user_id started take total bytes for its files, deleting the oldest files to make room.
 
         Raises NoRoom, deleting nothing, where deleting every file no download holds would not make it.
         """
         if total > self.max_bytes:
-            self._refused(key, total, "larger_than_bound")
+            self._refused(key, total, user_id, "larger_than_bound")
             raise NoRoom(
                 f"This file is too large for the {self.max_bytes // 2**20:,} MB the server keeps "
                 "for audio files. Pick fewer sections."
             )
-        if not self._make_room(total - self._rooms.get(key, 0)):
-            self._refused(key, total, "no_room")
+        if not self._make_room(total - self._rooms.get(key, 0), user_id):
+            self._refused(key, total, user_id, "no_room")
             raise NoRoom("The server has no room for another audio file right now. Save again in a few minutes.")
         self._rooms[key] = total
 
-    def shelve(self, key: str, path: Path) -> None:
-        """Count the file a build wrote in place of the room the build held."""
+    def shelve(self, key: str, path: Path) -> int:
+        """Count the file a build wrote in place of the room the build held; returns its bytes."""
         self._forget(path.name)
-        self._add(path.name, _File(path.stat().st_size, time.time()))
+        size = path.stat().st_size
+        self._add(path.name, _File(size, time.time()))
         self._rooms.pop(key, None)
         self._make_room(0)
+        return size
 
     def release(self, key: str) -> None:
         self._rooms.pop(key, None)
@@ -226,8 +228,11 @@ class ExportStore:
                 self._delete(name)
         self._make_room(0)
 
-    def _make_room(self, size: int) -> bool:
-        """Delete the oldest files no download holds until size more bytes fit; False, deleting none, if they cannot."""
+    def _make_room(self, size: int, user_id: str | None = None) -> bool:
+        """Delete the oldest files no download holds until size more bytes fit; False, deleting none, if they cannot.
+
+        user_id is whose build the room is for, where it is one's.
+        """
         excess = self.taken + size - self.max_bytes
         if excess <= 0:
             return True
@@ -238,14 +243,15 @@ class ExportStore:
             name = next(name for name in self._files if not self._held[name])
             file = self._files[name]
             excess -= file.size
-            self._delete(name)
-            if (age_s := time.time() - file.built) < EXPORT_TTL_S:
-                record_event("audio_export_deleted_early", data={"bytes": file.size, "age_s": round(age_s)})
+            if self._delete(name) and time.time() - file.built < EXPORT_TTL_S:
+                record_event("audio_export_deleted_early", user_id=user_id, data={"bytes": file.size})
         return True
 
-    def _refused(self, key: str, total: int, reason: str) -> None:
+    def _refused(self, key: str, total: int, user_id: str, reason: str) -> None:
         record_event(
-            "audio_export_refused", data={"reason": reason, "bytes": total, "while_building": key in self._rooms}
+            "audio_export_refused",
+            user_id=user_id,
+            data={"reason": reason, "bytes": total, "while_building": key in self._rooms},
         )
 
     def _add(self, name: str, file: _File) -> None:
@@ -256,9 +262,14 @@ class ExportStore:
         if file := self._files.pop(name, None):
             self._stored_bytes -= file.size
 
-    def _delete(self, name: str) -> None:
-        (self.dir / name).unlink(missing_ok=True)
+    def _delete(self, name: str) -> bool:
+        """Whether the file was there to delete: another gateway sharing the directory may have deleted it."""
         self._forget(name)
+        try:
+            (self.dir / name).unlink()
+        except FileNotFoundError:
+            return False
+        return True
 
 
 def _oldest_first(files: dict[str, _File]) -> dict[str, _File]:
@@ -351,10 +362,9 @@ async def _build(
             chapters,
             lambda hashes: _fetch_audio(redis, cache, hashes),
             on_progress,
-            lambda total: store.reserve(key, total),
+            lambda total: store.reserve(key, total, build.user_id),
         )
-        size = path.stat().st_size
-        store.shelve(key, path)
+        size = store.shelve(key, path)
         logger.info(f"Audio export {key[:12]} ({fmt}) built in {time.monotonic() - started:.1f}s")
         await log_event(
             "audio_export_built",
