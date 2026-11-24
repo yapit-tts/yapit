@@ -1,8 +1,8 @@
-from pathlib import Path
+from collections.abc import Callable
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi import Path as PathParam
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, ValidationError
@@ -15,8 +15,8 @@ from yapit.gateway.audio_export import (
     Chapter,
     ExportBusy,
     ExportFormat,
+    ExportStore,
     request_export,
-    stored_export,
 )
 from yapit.gateway.audio_job import (
     AudioJobSpec,
@@ -51,6 +51,13 @@ from yapit.gateway.usage import (
     get_limit_for_usage_type,
     get_user_subscription,
 )
+
+
+def _export_store(request: Request) -> ExportStore:
+    return request.app.state.export_store
+
+
+ExportStoreDep = Annotated[ExportStore, Depends(_export_store)]
 
 router = APIRouter(prefix="/v1/documents", tags=["Audio jobs"], dependencies=[Depends(authenticate)])
 
@@ -190,7 +197,7 @@ async def export_audio(
     db: DbSession,
     redis: RedisClient,
     cache: AudioCache,
-    settings: SettingsDep,
+    store: ExportStoreDep,
 ) -> AudioExportState:
     """Join the ranges' prepared audio into one file, a chapter per range.
 
@@ -216,7 +223,7 @@ async def export_audio(
         return await request_export(
             redis,
             cache,
-            Path(settings.audio_export_dir),
+            store,
             user.id,
             document_id,
             request.format,
@@ -238,14 +245,30 @@ async def get_audio_export(
     fmt: ExportFormat,
     user: AuthenticatedUser,
     db: DbSession,
-    settings: SettingsDep,
+    store: ExportStoreDep,
 ) -> FileResponse:
-    """An exported file, by the key and format its export answered with."""
+    """An exported file, by the key and format its export answered with; kept while it downloads."""
     doc = await _readable_document(db, document_id, user.id)
-    path = stored_export(Path(settings.audio_export_dir), key, fmt)
+    path = store.stored(key, fmt)
     if path is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No such audio file, or it has expired")
-    return FileResponse(path, media_type=ENCODINGS[fmt].media_type, filename=f"{doc.title or 'Document'}.{fmt}")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="The server no longer has this audio file. Save it again."
+        )
+    return _HeldFileResponse(
+        path, store.hold(path), media_type=ENCODINGS[fmt].media_type, filename=f"{doc.title or 'Document'}.{fmt}"
+    )
+
+
+class _HeldFileResponse(FileResponse):
+    def __init__(self, path, release: Callable[[], None], **kwargs) -> None:
+        super().__init__(path, **kwargs)
+        self.release = release
+
+    async def __call__(self, scope, receive, send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            self.release()
 
 
 def _check_ranges(ranges: list[BlockRange], block_count: int) -> None:

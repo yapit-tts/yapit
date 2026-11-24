@@ -4,14 +4,16 @@ The expected durations are the PCM lengths each block was encoded from, so the f
 its chapters are checked against what went in, not against the join's own arithmetic.
 """
 
+import asyncio
 import io
 import json
 import os
 import threading
 import time
 import uuid
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 
 import av
 import numpy as np
@@ -19,7 +21,7 @@ import pytest
 
 from yapit.contracts import TTS_AUDIO_CACHE, TTS_JOBS, WorkerResult, get_pubsub_channel, get_queue_name
 from yapit.gateway import audio_export
-from yapit.gateway.audio_export import EXPORT_TTL_S, sweep_exports
+from yapit.gateway.audio_export import EXPORT_TTL_S, Chapter, ExportFormat, ExportStore, write_audio_file
 from yapit.gateway.cache import CacheConfig
 from yapit.gateway.config import get_settings
 from yapit.gateway.domain_models import BlockVariant, Document, TTSModel, Voice
@@ -27,6 +29,7 @@ from yapit.gateway.result_consumer import _process_result
 from yapit.workers.kokoro.ogg_opus import pcm_to_ogg_opus
 
 from .conftest import DEFAULT_TEST_USER
+from .test_audio_job import signed_in_as
 
 RATE = 24_000
 AMPLITUDE = 8000
@@ -111,20 +114,50 @@ async def exported(client, app, document_id, ranges, fmt: str = "m4b") -> bytes:
     return response.content
 
 
-async def export_heard(client, app, document_id, ranges, fmt: str = "m4b") -> list[dict]:
-    """The export's answer, then what the tab watching the document hears of it, up to the end of its build."""
+async def export_heard(
+    client, app, document_id, ranges, fmt: str = "m4b", disk: list[tuple[int, int]] | None = None
+) -> list[dict]:
+    """The export's answer, then what the tab watching the document hears of it, up to the end of its build.
+
+    disk gets the bytes in the export directory, and those the store counts, each time the tab hears of the build.
+    """
     pubsub = app.state.redis_client.pubsub()
     await pubsub.subscribe(get_pubsub_channel(DEFAULT_TEST_USER.id, document_id))
     await pubsub.get_message(timeout=1)
     states = [(await export(client, document_id, ranges, fmt)).json()]
-    while states[-1]["status"] == "building":
+    while states[-1].get("status") == "building":
         message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=30)
         assert message is not None, "the build never ended"
+        if disk is not None:
+            disk.append(sampled(app))
         heard = json.loads(message["data"])
         if heard["type"] == "audio_export" and heard["key"] == states[0]["key"]:
             states.append(heard)
     await pubsub.aclose()
     return states
+
+
+def export_dir(app) -> Path:
+    return Path(app.dependency_overrides[get_settings]().audio_export_dir)
+
+
+def bytes_on_disk(app) -> int:
+    return sum(p.stat().st_size for p in export_dir(app).iterdir())
+
+
+def sampled(app) -> tuple[int, int]:
+    return bytes_on_disk(app), app.state.export_store.taken
+
+
+def within(disk: list[tuple[int, int]], max_bytes: int) -> bool:
+    """Whether the directory held no more than max_bytes, and no more than the store counted, at every sample."""
+    return all(on_disk <= counted <= max_bytes for on_disk, counted in disk)
+
+
+def keep_at_most(app, max_bytes: int) -> ExportStore:
+    """The gateway's saved audio files from now on kept within max_bytes."""
+    app.state.export_store = ExportStore.open(export_dir(app), max_bytes)
+    return app.state.export_store
 
 
 def probe(data: bytes) -> tuple[float, list[tuple[str, float, float]]]:
@@ -215,20 +248,18 @@ async def test_a_second_export_within_a_day_is_the_stored_file(client, app, book
     assert again.content == first
 
 
-async def test_an_export_older_than_a_day_is_gone_and_a_fresh_one_stays(client, app, book):
-    await exported(client, app, book, [(0, 5, "Whole book")], "m4b")
-    await exported(client, app, book, [(0, 5, "Whole book")], "mp3")
-    old_key = (await export(client, book, [(0, 5, "Whole book")], "m4b")).json()["key"]
-    fresh_key = (await export(client, book, [(0, 5, "Whole book")], "mp3")).json()["key"]
-    export_dir = Path(app.dependency_overrides[get_settings]().audio_export_dir)
+async def test_an_export_older_than_a_day_is_gone_and_a_fresh_one_stays(client, app, book, monkeypatch):
     a_day_ago = time.time() - EXPORT_TTL_S - 1
-    os.utime(export_dir / f"{old_key}.m4b", (a_day_ago, a_day_ago))
+    monkeypatch.setattr(audio_export, "time", SimpleNamespace(time=lambda: a_day_ago, monotonic=time.monotonic))
+    old_key = (await export_heard(client, app, book, [(0, 5, "Whole book")], "m4b"))[-1]["key"]
+    monkeypatch.setattr(audio_export, "time", time)
+    fresh_key = (await export_heard(client, app, book, [(0, 5, "Whole book")], "mp3"))[-1]["key"]
 
     old = await client.get(f"/v1/documents/{book}/audio-export/{old_key}.m4b")
-    sweep_exports(export_dir)
+    app.state.export_store.sweep()
 
     assert old.status_code == 404
-    assert [p.name for p in export_dir.iterdir()] == [f"{fresh_key}.mp3"]
+    assert [p.name for p in export_dir(app).iterdir()] == [f"{fresh_key}.mp3"]
     assert (await client.get(f"/v1/documents/{book}/audio-export/{fresh_key}.mp3")).status_code == 200
 
 
@@ -336,3 +367,184 @@ async def test_a_job_whose_audio_would_not_fit_the_audio_cache_is_refused_before
     assert "70 MB audio cache" in refused.json()["detail"]
     assert queued == (0, 0)
     assert accepted.status_code == 201
+
+
+# The whole book is some 78 KB as a file. Its build holds up to some 156 KB of room: twice what the
+# encoder was measured to write, then the encoded stream and the copy that carries the chapters.
+
+
+@pytest.mark.parametrize("fmt", list(ExportFormat))
+@pytest.mark.parametrize(
+    "selection",
+    [[(0, 5, "Whole book")], [(3, 3, "Ü" * 500)] * 100, [(3, 3, "")] * 100],  # chapters outweigh their audio
+    ids=["book", "long-titles", "short-titles"],
+)
+async def test_a_build_writes_no_more_than_the_room_it_holds(tmp_path, fmt, selection, monkeypatch):
+    blocks = [_ogg_opus(samples, pitch=idx + 1) for idx, samples in enumerate(BLOCK_SAMPLES)]
+    chapters = [Chapter(title=t, variant_hashes=[str(i) for i in range(f, last + 1)]) for f, last, t in selection]
+    granted, overdrawn = [0], []
+
+    async def fetch(hashes: list[str]) -> list[bytes]:
+        return [blocks[int(h)] for h in hashes]
+
+    async def no_progress(_: float) -> None:
+        pass
+
+    def check() -> None:
+        on_disk = sum(p.stat().st_size for p in tmp_path.iterdir())
+        if on_disk > granted[0]:
+            overdrawn.append((on_disk, granted[0]))
+
+    def reserve(total: int) -> None:
+        check()
+        granted[0] = total
+
+    remux = audio_export._remux_with_chapters
+
+    def remux_then_check(*args) -> None:  # both copies of the stream are on disk here
+        remux(*args)
+        check()
+
+    monkeypatch.setattr(audio_export, "_remux_with_chapters", remux_then_check)
+    await write_audio_file(tmp_path / f"file.{fmt}", fmt, chapters, fetch, no_progress, reserve)
+
+    assert overdrawn == []
+    assert (tmp_path / f"file.{fmt}").stat().st_size <= granted[0]
+
+
+async def test_however_many_files_are_asked_for_they_take_no_more_than_the_bound_and_the_oldest_go_first(
+    client, app, book
+):
+    store = keep_at_most(app, 400_000)
+    disk: list[tuple[int, int]] = []
+
+    takes = [await export_heard(client, app, book, [(0, 5, f"Take {i}")], disk=disk) for i in range(8)]
+
+    keys = [states[-1]["key"] for states in takes]
+    kept = sorted(p.stem for p in export_dir(app).iterdir())
+    first = await client.get(f"/v1/documents/{book}/audio-export/{keys[0]}.m4b")
+    assert [states[-1]["status"] for states in takes] == ["ready"] * 8
+    assert within(disk, 400_000)
+    assert 0 < len(kept) < 8 and kept == sorted(keys[-len(kept) :])
+    assert first.status_code == 404 and "Save it again" in first.json()["detail"]
+    assert store.taken == bytes_on_disk(app)
+
+
+async def test_a_file_larger_than_the_bound_fails_saying_so_and_leaves_nothing_behind(client, app, book):
+    store = keep_at_most(app, 150_000)
+    disk: list[tuple[int, int]] = []
+
+    state = (await export_heard(client, app, book, [(0, 5, "Whole book")], disk=disk))[-1]
+
+    assert state["status"] == "failed"
+    assert "too large for the 0 MB" in state["error"] and "Pick fewer sections" in state["error"]
+    assert within(disk, 150_000)
+    assert list(export_dir(app).iterdir()) == []
+    assert store.taken == 0
+
+
+async def test_a_file_being_downloaded_is_not_deleted_and_downloads_whole(client, app, book):
+    keep_at_most(app, 200_000)  # room for the held file or a build, not both
+    held = (await export_heard(client, app, book, [(0, 5, "Held")]))[-1]["key"]
+
+    async with paused_download(app, f"/v1/documents/{book}/audio-export/{held}.m4b") as download:
+        crowded = (await export_heard(client, app, book, [(0, 5, "Crowding it out")]))[-1]
+    status, headers, body = await download
+    after = (await export_heard(client, app, book, [(0, 5, "Crowding it out")]))[-1]
+    gone = await client.get(f"/v1/documents/{book}/audio-export/{held}.m4b")
+
+    assert crowded["status"] == "failed" and "Save again" in crowded["error"]
+    assert status == 200 and int(headers[b"content-length"]) == len(body)
+    assert probe(body)[0] == pytest.approx(seconds(0, 5), abs=0.001)
+    assert after["status"] == "ready"
+    assert gone.status_code == 404
+
+
+@asynccontextmanager
+async def paused_download(app, path: str):
+    """A GET of path through the ASGI app that stops after its first chunk until the block exits.
+
+    Yields the download's task, which gives (status, headers, body) once it has run to the end.
+    """
+    first_chunk, go_on = asyncio.Event(), asyncio.Event()
+    started: dict = {}
+    body = bytearray()
+
+    async def receive():
+        if not started:
+            started["receive"] = True
+            return {"type": "http.request", "body": b"", "more_body": False}
+        await asyncio.Event().wait()
+
+    async def send(message):
+        if message["type"] == "http.response.start":
+            started.update(status=message["status"], headers=dict(message["headers"]))
+        elif message["type"] == "http.response.body":
+            body.extend(message.get("body", b""))
+            if message.get("more_body") and not first_chunk.is_set():
+                first_chunk.set()
+                await go_on.wait()
+
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "GET",
+        "scheme": "http",
+        "path": path,
+        "raw_path": path.encode(),
+        "query_string": b"",
+        "root_path": "",
+        "headers": [(b"host", b"test")],
+        "client": ("127.0.0.1", 1),
+        "server": ("test", 80),
+    }
+
+    async def run():
+        await app(scope, receive, send)
+        return started["status"], started["headers"], bytes(body)
+
+    task = asyncio.create_task(run())
+    await asyncio.wait_for(first_chunk.wait(), timeout=10)
+    try:
+        yield task
+    finally:
+        go_on.set()
+
+
+async def test_two_builds_at_once_at_the_bound_stay_within_it(client, app, book, session, monkeypatch):
+    store = keep_at_most(app, 250_000)  # room for one build and the other's file, not for both builds
+    doc = await session.get(Document, book)
+    doc.is_public = True
+    await session.commit()
+    both_started = asyncio.Event()
+    fetch_audio = audio_export._fetch_audio
+
+    async def once_both_started(*args):
+        await both_started.wait()
+        return await fetch_audio(*args)
+
+    monkeypatch.setattr(audio_export, "_fetch_audio", once_both_started)
+    pubsub = app.state.redis_client.pubsub()
+    for user in ["reader-a", "reader-b"]:
+        await pubsub.subscribe(get_pubsub_channel(user, book))
+        await pubsub.get_message(timeout=1)
+    keys = []
+    for user in ["reader-a", "reader-b"]:
+        with signed_in_as(app, user):
+            keys.append((await export(client, book, [(0, 5, user)])).json()["key"])
+    both_started.set()
+
+    ends, disk = {}, []
+    while len(ends) < 2:
+        message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=30)
+        assert message is not None, "a build never ended"
+        disk.append(sampled(app))
+        heard = json.loads(message["data"])
+        if heard["status"] != "building":
+            ends[heard["key"]] = heard
+    await pubsub.aclose()
+
+    assert within(disk, 250_000)
+    assert all(e["status"] == "ready" or "Save again" in e["error"] for e in ends.values())
+    assert store.taken == bytes_on_disk(app)
