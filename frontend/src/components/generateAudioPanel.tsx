@@ -19,18 +19,26 @@ interface GenerateAudioPanelProps extends AudioSelectionProps {
   onOpenChange: (open: boolean) => void;
 }
 
-/** A panel at the right edge, where the outline opens: the sections to generate, each with its own progress, and the actions at its foot. */
+/**
+ * A panel at the right edge, where the outline opens: the sections to generate, each with its own progress, and the
+ * actions at its foot. It opens with the voice picker focused, so the title's (i) keeps its note shut until asked.
+ */
 export function GenerateAudioPanel(props: GenerateAudioPanelProps) {
+  const voiceRow = useRef<HTMLDivElement>(null);
+  const focusVoicePicker = (e: Event) => {
+    e.preventDefault();
+    voiceRow.current?.querySelector("button")?.focus();
+  };
   return (
     <Sheet open={props.open} onOpenChange={props.onOpenChange}>
-      <SheetContent side="right" className="w-full sm:max-w-md gap-0 shadow-none">
-        {props.open && <GenerateAudioForm {...props} />}
+      <SheetContent side="right" className="w-full sm:max-w-md gap-0 shadow-none" onOpenAutoFocus={focusVoicePicker}>
+        {props.open && <GenerateAudioForm {...props} voiceRow={voiceRow} />}
       </SheetContent>
     </Sheet>
   );
 }
 
-function GenerateAudioForm(props: GenerateAudioPanelProps) {
+function GenerateAudioForm({ voiceRow, ...props }: GenerateAudioPanelProps & { voiceRow: React.RefObject<HTMLDivElement | null> }) {
   const s = useAudioSelection(props);
   const running = s.jobRunsHere && props.job ? props.job : null;
   const allTicked = s.rows.every(r => r.ticked);
@@ -43,7 +51,7 @@ function GenerateAudioForm(props: GenerateAudioPanelProps) {
           <SheetTitle className="text-lg font-semibold text-foreground">Generate in background</SheetTitle>
         </TitleWithInfo>
         <SheetDescription className="sr-only">Pick the sections and the voice, generate their audio, then save it as one file.</SheetDescription>
-        <div className="flex items-center justify-between gap-2">
+        <div ref={voiceRow} className="flex items-center justify-between gap-2">
           <VoicePicker value={props.voiceSelection} onChange={props.onVoiceChange} />
           <Hint content={tickAllLabel} align="end">
             <Button variant="ghost" size="icon" className="text-muted-foreground" aria-label={tickAllLabel} onClick={() => s.setAll(!allTicked)}>
