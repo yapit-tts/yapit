@@ -312,11 +312,14 @@ async def log_event(event_type: str, **kwargs: Any) -> None:
         event_type: Event type (e.g., 'synthesis_complete', 'request_complete')
         **kwargs: Event fields matching the schema columns, plus optional 'data' dict
     """
+    record_event(event_type, **kwargs)
+
+
+def record_event(event_type: str, **kwargs: Any) -> None:
+    """log_event, for code that runs on the event loop without awaiting."""
     if _write_queue is None:
         return
-
-    event = {"event_type": event_type, **kwargs}
-    await _write_queue.put(event)
+    _write_queue.put_nowait({"event_type": event_type, **kwargs})
 
 
 async def log_error(message: str, **context: Any) -> None:

@@ -26,7 +26,7 @@ from redis.asyncio import Redis
 from yapit.contracts import TTS_AUDIO_CACHE, TTS_SKIPPED, get_pubsub_channel
 from yapit.gateway.audio_job import prepared_mask
 from yapit.gateway.cache import Cache
-from yapit.gateway.metrics import log_error
+from yapit.gateway.metrics import log_error, log_event, record_event
 
 EXPORT_TTL_S = 24 * 3600
 SWEEP_INTERVAL_S = 3600
@@ -163,26 +163,30 @@ class ExportStore:
         file = self._files.get(path.name)
         return path if file and time.time() - file.built < EXPORT_TTL_S else None
 
-    def reserve(self, key: str, total: int) -> None:
-        """Let the build's files take total bytes, deleting the oldest files to make room.
+    def reserve(self, key: str, total: int, user_id: str) -> None:
+        """Let the build user_id started take total bytes for its files, deleting the oldest files to make room.
 
         Raises NoRoom, deleting nothing, where deleting every file no download holds would not make it.
         """
         if total > self.max_bytes:
+            self._refused(key, total, user_id, "larger_than_bound")
             raise NoRoom(
                 f"This file is too large for the {self.max_bytes // 2**20:,} MB the server keeps "
                 "for audio files. Pick fewer sections."
             )
-        if not self._make_room(total - self._rooms.get(key, 0)):
+        if not self._make_room(total - self._rooms.get(key, 0), user_id):
+            self._refused(key, total, user_id, "no_room")
             raise NoRoom("The server has no room for another audio file right now. Save again in a few minutes.")
         self._rooms[key] = total
 
-    def shelve(self, key: str, path: Path) -> None:
-        """Count the file a build wrote in place of the room the build held."""
+    def shelve(self, key: str, path: Path) -> int:
+        """Count the file a build wrote in place of the room the build held; returns its bytes."""
         self._forget(path.name)
-        self._add(path.name, _File(path.stat().st_size, time.time()))
+        size = path.stat().st_size
+        self._add(path.name, _File(size, time.time()))
         self._rooms.pop(key, None)
         self._make_room(0)
+        return size
 
     def release(self, key: str) -> None:
         self._rooms.pop(key, None)
@@ -224,8 +228,11 @@ class ExportStore:
                 self._delete(name)
         self._make_room(0)
 
-    def _make_room(self, size: int) -> bool:
-        """Delete the oldest files no download holds until size more bytes fit; False, deleting none, if they cannot."""
+    def _make_room(self, size: int, user_id: str | None = None) -> bool:
+        """Delete the oldest files no download holds until size more bytes fit; False, deleting none, if they cannot.
+
+        user_id is whose build the room is for, where it is one's.
+        """
         excess = self.taken + size - self.max_bytes
         if excess <= 0:
             return True
@@ -234,9 +241,18 @@ class ExportStore:
             return False
         while excess > 0:
             name = next(name for name in self._files if not self._held[name])
-            excess -= self._files[name].size
-            self._delete(name)
+            file = self._files[name]
+            excess -= file.size
+            if self._delete(name) and time.time() - file.built < EXPORT_TTL_S:
+                record_event("audio_export_deleted_early", user_id=user_id, data={"bytes": file.size})
         return True
+
+    def _refused(self, key: str, total: int, user_id: str, reason: str) -> None:
+        record_event(
+            "audio_export_refused",
+            user_id=user_id,
+            data={"reason": reason, "bytes": total, "while_building": key in self._rooms},
+        )
 
     def _add(self, name: str, file: _File) -> None:
         self._files[name] = file
@@ -246,9 +262,14 @@ class ExportStore:
         if file := self._files.pop(name, None):
             self._stored_bytes -= file.size
 
-    def _delete(self, name: str) -> None:
-        (self.dir / name).unlink(missing_ok=True)
+    def _delete(self, name: str) -> bool:
+        """Whether the file was there to delete: another gateway sharing the directory may have deleted it."""
         self._forget(name)
+        try:
+            (self.dir / name).unlink()
+        except FileNotFoundError:
+            return False
+        return True
 
 
 def _oldest_first(files: dict[str, _File]) -> dict[str, _File]:
@@ -335,16 +356,21 @@ async def _build(
 
     path = store.path(key, fmt)
     try:
-        await write_audio_file(
+        seconds = await write_audio_file(
             path,
             fmt,
             chapters,
             lambda hashes: _fetch_audio(redis, cache, hashes),
             on_progress,
-            lambda total: store.reserve(key, total),
+            lambda total: store.reserve(key, total, build.user_id),
         )
-        store.shelve(key, path)
+        size = store.shelve(key, path)
         logger.info(f"Audio export {key[:12]} ({fmt}) built in {time.monotonic() - started:.1f}s")
+        await log_event(
+            "audio_export_built",
+            user_id=build.user_id,
+            data={"format": fmt, "seconds": round(seconds, 3), "bytes": size},
+        )
     except (AudioNotCached, NoRoom) as e:
         state = state.model_copy(update={"status": ExportStatus.failed, "error": str(e)})
     except Exception as e:
@@ -375,8 +401,10 @@ async def write_audio_file(
     fetch: Callable[[list[str]], Awaitable[list[bytes]]],
     on_progress: Callable[[float], Awaitable[None]],
     reserve: Callable[[int], None],
-) -> None:
+) -> float:
     """Decode the chapters' Ogg Opus blocks in order and encode them as one stream, then add the chapters.
+
+    Returns the stream's seconds.
 
     on_progress hears the fraction of the blocks that are encoded, after each. reserve hears the bytes
     the build's files may take in all before they take more, and raises to stop the build.
@@ -393,6 +421,7 @@ async def write_audio_file(
         reserve(2 * encoded.stat().st_size + titles)
         await _on_build_thread(_remux_with_chapters, encoded, chaptered, ENCODINGS[fmt], marks)
         os.replace(chaptered, path)
+        return float(sum(m["end"] - m["start"] for m in marks))
     finally:
         encoded.unlink(missing_ok=True)
         chaptered.unlink(missing_ok=True)

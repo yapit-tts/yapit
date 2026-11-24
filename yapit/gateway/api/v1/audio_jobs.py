@@ -48,6 +48,7 @@ from yapit.gateway.deps import (
     get_voice,
 )
 from yapit.gateway.domain_models import BlockVariant, Document, readable_by
+from yapit.gateway.metrics import log_event
 from yapit.gateway.synthesis import billed_characters, usage_type_for
 from yapit.gateway.usage import (
     get_available_usage,
@@ -280,6 +281,7 @@ class _HeldFileResponse(FileResponse):
     def __init__(self, path: Path, release: Callable[[], None], stat_result: os.stat_result, **kwargs) -> None:
         super().__init__(path, stat_result=stat_result, **kwargs)
         self.release = release
+        self.size = stat_result.st_size
         self.deadline_s = DOWNLOAD_GRACE_S + stat_result.st_size / DOWNLOAD_MIN_BYTES_PER_S
 
     async def __call__(self, scope, receive, send) -> None:
@@ -287,7 +289,7 @@ class _HeldFileResponse(FileResponse):
             async with asyncio.timeout(self.deadline_s):
                 await super().__call__(scope, receive, send)
         except TimeoutError:
-            pass
+            await log_event("audio_export_download_cut_off", data={"bytes": self.size})
         finally:
             self.release()
 

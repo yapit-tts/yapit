@@ -46,6 +46,13 @@ Why this exists: Swarm deploys race the gateway (`update_config: start-first`) a
 - `extraction_cache_hit` — One per requested page found in the AI extraction cache (`page_idx`); logged once per request, by the handler's lookup
 - `cache_hit` — Variant already synthesized (audio cache)
 
+### Saved audio files
+The files a user saves from a document's audio (`yapit/gateway/audio_export.py`), kept 24 hours within `AUDIO_EXPORT_MAX_SIZE_MB`.
+- `audio_export_built` — A file finished building (`user_id` who started it, `data.format`, `data.seconds`, `data.bytes`)
+- `audio_export_deleted_early` — The size bound deleted a file before its 24 hours were over (`data.bytes`; `user_id` whose build needed the room, none when the room was for a file another gateway wrote). Files whose day is over are deleted without an event.
+- `audio_export_refused` — A build could not hold the room for its file and failed (`user_id` who started it, `data.reason`: `larger_than_bound`, the file alone is over the bound, or `no_room`, the files being downloaded and the other builds leave none; `data.bytes` the room asked for; `data.while_building` false when refused before its first block, true when it failed partway)
+- `audio_export_download_cut_off` — A download of a file was ended at its deadline, which lets its file go for deletion; the client gets it short of its length (`data.bytes`, the file's)
+
 ### URL Fetching
 - `url_fetch` — HTTP download (duration_ms, content_type, size_bytes, errors)
 - `markxiv_error` — arXiv extraction failures
@@ -135,7 +142,7 @@ make report           # full analysis
 make report-post-deploy  # with deploy context
 ```
 
-**Note:** The visibility timeout values in the report prompt are a copy of the constants in `yapit/gateway/__init__.py` — when changing them, update `scripts/report.sh` in the same commit.
+**Note:** The visibility timeout values in the report prompt are a copy of the constants in `yapit/gateway/__init__.py` — when changing them, update `scripts/report.sh` in the same commit. So are the saved audio files' bound (`AUDIO_EXPORT_MAX_SIZE_MB` in `.env.prod`) and download deadline (`DOWNLOAD_GRACE_S`, `DOWNLOAD_MIN_BYTES_PER_S` in `yapit/gateway/api/v1/audio_jobs.py`), against which the report judges their churn.
 
 ## Gotchas
 

@@ -239,6 +239,16 @@ async def test_a_build_tells_the_tab_how_many_of_its_blocks_are_encoded(client, 
     assert [s["progress"] for s in states[:-1]] == pytest.approx([0, 1 / 6, 2 / 6, 3 / 6, 4 / 6, 5 / 6, 1])
 
 
+@pytest.mark.parametrize("fmt", ["m4b", "mp3"])
+async def test_a_built_file_is_recorded_with_its_seconds_bytes_and_format(client, app, book, fmt, metrics_events):
+    data = await exported(client, app, book, [(0, 2, "One"), (4, 5, "Two")], fmt)
+
+    built = [e for e in metrics_events() if e["event_type"] == "audio_export_built"]
+    assert len(built) == 1 and built[0]["user_id"] == DEFAULT_TEST_USER.id
+    assert built[0]["data"]["format"] == fmt and built[0]["data"]["bytes"] == len(data)
+    assert built[0]["data"]["seconds"] == pytest.approx(seconds(0, 2) + seconds(4, 5), abs=0.001)
+
+
 async def test_a_build_runs_below_the_gateways_priority(client, app, book):
     await exported(client, app, book, [(0, 5, "Whole book")])
 
@@ -467,7 +477,7 @@ async def test_the_default_bound_saves_a_ten_hour_selection_in_each_format_one_a
         await write_book(tmp_path / f"book.{fmt}", fmt, [(0, 5, "Whole book")], rooms.append)
         ten_hours = 36_000 / seconds(0, 5)
         key = f"ten-hours-{fmt}"
-        store.reserve(key, round(max(rooms) * ten_hours))
+        store.reserve(key, round(max(rooms) * ten_hours), DEFAULT_TEST_USER.id)
         with open(store.path(key, fmt), "wb") as file:
             file.truncate(round((tmp_path / f"book.{fmt}").stat().st_size * ten_hours))
         store.shelve(key, store.path(key, fmt))
@@ -511,7 +521,9 @@ async def test_however_many_files_are_asked_for_they_take_no_more_than_the_bound
     assert store.taken == bytes_on_disk(app)
 
 
-async def test_a_file_larger_than_the_bound_fails_saying_so_and_leaves_nothing_behind(client, app, book):
+async def test_a_file_larger_than_the_bound_fails_saying_so_and_leaves_nothing_behind(
+    client, app, book, metrics_events
+):
     store = keep_at_most(app, 150_000)
     disk: list[tuple[int, int]] = []
 
@@ -522,9 +534,10 @@ async def test_a_file_larger_than_the_bound_fails_saying_so_and_leaves_nothing_b
     assert within(disk, 150_000)
     assert list(export_dir(app).iterdir()) == []
     assert store.taken == 0
+    assert "audio_export_built" not in [e["event_type"] for e in metrics_events()]
 
 
-async def test_a_file_being_downloaded_is_not_deleted_and_downloads_whole(client, app, book):
+async def test_a_file_being_downloaded_is_not_deleted_and_downloads_whole(client, app, book, metrics_events):
     keep_at_most(app, 200_000)  # room for the held file or a build, not both
     held = (await export_heard(client, app, book, [(0, 5, "Held")]))[-1]["key"]
 
@@ -537,12 +550,15 @@ async def test_a_file_being_downloaded_is_not_deleted_and_downloads_whole(client
 
     assert crowded["status"] == "failed" and "Save again" in crowded["error"]
     assert status == 200 and int(headers[b"content-length"]) == len(body)
+    assert not [e for e in metrics_events() if e["event_type"] == "audio_export_download_cut_off"]
     assert probe(body)[0] == pytest.approx(seconds(0, 5), abs=0.001)
     assert after["status"] == "ready"
     assert gone.status_code == 404
 
 
-async def test_a_download_that_stops_reading_lets_its_file_go_at_its_deadline(client, app, book, monkeypatch):
+async def test_a_download_that_stops_reading_lets_its_file_go_at_its_deadline_and_is_recorded(
+    client, app, book, monkeypatch, metrics_events
+):
     store = keep_at_most(app, 200_000)  # room for the held file or a build, not both
     monkeypatch.setattr(audio_jobs, "DOWNLOAD_GRACE_S", 0.1)
     monkeypatch.setattr(audio_jobs, "DOWNLOAD_MIN_BYTES_PER_S", 10**9)
@@ -561,8 +577,15 @@ async def test_a_download_that_stops_reading_lets_its_file_go_at_its_deadline(cl
     await asyncio.wait_for(download.task, timeout=10)
     status, headers, body = download.received()
 
+    events = metrics_events()
+    cut_off = [e["data"] for e in events if e["event_type"] == "audio_export_download_cut_off"]
+    deleted_early = [e for e in events if e["event_type"] == "audio_export_deleted_early"]
     assert crowding["status"] == "ready"
     assert status == 200 and len(body) < int(headers[b"content-length"])
+    assert [d["bytes"] for d in cut_off] == [int(headers[b"content-length"])]
+    assert [(e["user_id"], e["data"]["bytes"]) for e in deleted_early] == [
+        (DEFAULT_TEST_USER.id, int(headers[b"content-length"]))
+    ]
 
 
 @asynccontextmanager
