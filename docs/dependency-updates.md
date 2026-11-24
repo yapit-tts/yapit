@@ -27,6 +27,16 @@ Verify all four extraction paths against the running container, not just one: st
 
 Each worker image (`yapit/workers/{kokoro,yolo}/{cpu,gpu}/`) is its own uv project with a committed `uv.lock`, and its Dockerfile runs `uv sync --locked`, so a build installs exactly what was locked and a stale lock fails the build. To change a worker's dependencies, edit its `pyproject.toml` and run `uv lock` in that directory. `required-environments` lists the platforms the image is built for, so `uv lock` passes over any release without a wheel for each of them.
 
+## PyAV and the LAME in it
+
+The gateway encodes MP3 with the LAME that PyAV's binary wheel carries, built with the wheel's FFmpeg by [pyav-ffmpeg](https://github.com/PyAV-Org/pyav-ffmpeg) (`scripts/pkg.py` names each library and its version). That LAME bounds how long an MP3 file takes to build, and the wheels differ: on one core, five minutes of speech at the gateway's settings encode in 2.0 s with av 17.0.0 (LAME 3.100) and in 0.7 s with av 18.1.1 (bwlame 4.1.0, LAME 4.0 with the fixes of LAME 4.1's development backported). av 19.0.2 went back to LAME 3.101. So `pyproject.toml` holds av to 18.1.x, and a PyAV update, or a LAME update, is a PyAV release whose wheel carries a LAME at least as new. This prints the LAME a release's wheel carries:
+
+```
+uv run --no-project --with av==<version> python -c "import av, pathlib, re; print({m.decode() for f in (pathlib.Path(av.__file__).parent.parent / 'av.libs').iterdir() for m in re.findall(rb'LAME\d+\.\d+', f.read_bytes())})"
+```
+
+Then time an MP3 build before and after the update with `experiments/audio_export_benchmark.py --format mp3`; its checks also say whether the file kept its duration, chapters and level.
+
 ## Adding New Dependencies
 
 When adding new packages, verify license compatibility with AGPL-3.0. See [[licensing]] for verification commands and compatible licenses.
