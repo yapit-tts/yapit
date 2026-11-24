@@ -29,4 +29,7 @@ Each worker image (`yapit/workers/{kokoro,yolo}/{cpu,gpu}/`) is its own uv proje
 
 ## Adding New Dependencies
 
+The dev environment installs every dependency group, so code can import a package its image never gets. `tests/yapit/test_image_imports.py` fails on that, for the gateway and each worker image, against the lock its Dockerfile installs from; a dependency of the gateway goes in `[project] dependencies`, not a dependency group.
+
+
 When adding new packages, verify license compatibility with AGPL-3.0. See [[licensing]] for verification commands and compatible licenses.
