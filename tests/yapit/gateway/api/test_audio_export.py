@@ -8,6 +8,7 @@ import asyncio
 import io
 import json
 import os
+import re
 import threading
 import time
 import uuid
@@ -32,6 +33,7 @@ from yapit.workers.kokoro.ogg_opus import pcm_to_ogg_opus
 from .conftest import DEFAULT_TEST_USER
 from .test_audio_job import signed_in_as
 
+REPO = Path(__file__).parents[4]
 RATE = 24_000
 AMPLITUDE = 8000
 # Block lengths in samples, each distinct so a block dropped, doubled or reordered changes the sums
@@ -381,18 +383,7 @@ async def test_a_job_whose_audio_would_not_fit_the_audio_cache_is_refused_before
     ids=["book", "long-titles", "short-titles"],
 )
 async def test_a_build_writes_no_more_than_the_room_it_holds(tmp_path, fmt, selection, monkeypatch):
-    blocks = [
-        _ogg_opus(samples, pitch=idx + 2, layout="stereo" if idx < 3 else "mono")
-        for idx, samples in enumerate(BLOCK_SAMPLES)
-    ]
-    chapters = [Chapter(title=t, variant_hashes=[str(i) for i in range(f, last + 1)]) for f, last, t in selection]
     granted, overdrawn = [0], []
-
-    async def fetch(hashes: list[str]) -> list[bytes]:
-        return [blocks[int(h)] for h in hashes]
-
-    async def no_progress(_: float) -> None:
-        pass
 
     def check() -> None:
         on_disk = sum(p.stat().st_size for p in tmp_path.iterdir())
@@ -410,10 +401,48 @@ async def test_a_build_writes_no_more_than_the_room_it_holds(tmp_path, fmt, sele
         check()
 
     monkeypatch.setattr(audio_export, "_remux_with_chapters", remux_then_check)
-    await write_audio_file(tmp_path / f"file.{fmt}", fmt, chapters, fetch, no_progress, reserve)
+    await write_book(tmp_path / f"file.{fmt}", fmt, selection, reserve)
 
     assert overdrawn == []
     assert (tmp_path / f"file.{fmt}").stat().st_size <= granted[0]
+
+
+@pytest.mark.parametrize("env_file", [".env.prod", ".env.selfhost.example"])
+async def test_the_default_bound_saves_a_ten_hour_selection_in_each_format_one_after_the_other(tmp_path, env_file):
+    max_mb = re.search(r"^AUDIO_EXPORT_MAX_SIZE_MB=(\d+)", (REPO / env_file).read_text(), re.MULTILINE)
+    assert max_mb, f"{env_file} sets no AUDIO_EXPORT_MAX_SIZE_MB"
+    store = ExportStore.open(tmp_path / "exports", int(max_mb[1]) * 2**20)
+
+    for fmt in ExportFormat:
+        # The book's build, its room and its file scaled to ten hours: both grow with the audio
+        rooms: list[int] = []
+        await write_book(tmp_path / f"book.{fmt}", fmt, [(0, 5, "Whole book")], rooms.append)
+        ten_hours = 36_000 / seconds(0, 5)
+        key = f"ten-hours-{fmt}"
+        store.reserve(key, round(max(rooms) * ten_hours))
+        with open(store.path(key, fmt), "wb") as file:
+            file.truncate(round((tmp_path / f"book.{fmt}").stat().st_size * ten_hours))
+        store.shelve(key, store.path(key, fmt))
+        store.release(key)
+
+    assert all(store.stored(f"ten-hours-{fmt}", fmt) for fmt in ExportFormat)
+
+
+async def write_book(path: Path, fmt: ExportFormat, selection: list[tuple[int, int, str]], reserve) -> None:
+    """Build the selection of the book's blocks into path, with no gateway around it."""
+    blocks = [
+        _ogg_opus(samples, pitch=idx + 2, layout="stereo" if idx < 3 else "mono")
+        for idx, samples in enumerate(BLOCK_SAMPLES)
+    ]
+    chapters = [Chapter(title=t, variant_hashes=[str(i) for i in range(f, last + 1)]) for f, last, t in selection]
+
+    async def fetch(hashes: list[str]) -> list[bytes]:
+        return [blocks[int(h)] for h in hashes]
+
+    async def no_progress(_: float) -> None:
+        pass
+
+    await write_audio_file(path, fmt, chapters, fetch, no_progress, reserve)
 
 
 async def test_however_many_files_are_asked_for_they_take_no_more_than_the_bound_and_the_oldest_go_first(
