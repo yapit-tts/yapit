@@ -32,9 +32,10 @@ import { useUserPreferences } from "@/hooks/useUserPreferences";
 interface VoicePickerProps {
   value: VoiceSelection;
   onChange: (selection: VoiceSelection) => void;
+  align?: "start" | "end";
 }
 
-export function VoicePicker({ value, onChange }: VoicePickerProps) {
+export function VoicePicker({ value, onChange, align = "start" }: VoicePickerProps) {
   const [open, setOpen] = useState(false);
   const isMobile = useIsMobile();
   const [expandedKokoroLangs, setExpandedKokoroLangs] = useState<Set<KokoroLanguageCode>>(new Set(["a"]));
@@ -407,7 +408,7 @@ export function VoicePicker({ value, onChange }: VoicePickerProps) {
       <PopoverTrigger asChild>
         {triggerButton}
       </PopoverTrigger>
-      <PopoverContent className="w-96 p-0" align="start">
+      <PopoverContent className="w-96 p-0" align={align}>
         {voicePickerContent}
       </PopoverContent>
     </Popover>

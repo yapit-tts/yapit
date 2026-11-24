@@ -16,27 +16,39 @@ beforeAll(() => {
 
 describe("GenerateAudioPanel", () => {
   it("opens on the voice picker rather than the title's (i), whose note opens on keyboard focus", async () => {
-    render(
-      <MemoryRouter>
-        <GenerateAudioPanel
-          open
-          onOpenChange={() => {}}
-          documentId="doc"
-          sections={[]}
-          documentBlocks={[{ est_duration_ms: 1000 }]}
-          expandedSections={new Set()}
-          voiceSelection={{ model: KOKORO_SLUG, voiceSlug: "af_heart" }}
-          onVoiceChange={() => {}}
-          job={null}
-          onStart={async () => null}
-          onCancel={async () => {}}
-          exportProgress={{}}
-          onDownload={async () => {}}
-        />
-      </MemoryRouter>,
-    );
+    renderPanel();
 
     await screen.findByText("Generate in background");
     expect(document.activeElement).toHaveTextContent("Heart");
   });
+
+  it("puts Tick all before the voice picker in Tab order, as it sits left of it", async () => {
+    renderPanel();
+
+    const tickAll = await screen.findByRole("button", { name: /tick all sections/i });
+    const voicePicker = screen.getByRole("button", { name: /Heart/ });
+    expect(tickAll.compareDocumentPosition(voicePicker) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
 });
+
+function renderPanel() {
+  render(
+    <MemoryRouter>
+      <GenerateAudioPanel
+        open
+        onOpenChange={() => {}}
+        documentId="doc"
+        sections={[]}
+        documentBlocks={[{ est_duration_ms: 1000 }]}
+        expandedSections={new Set()}
+        voiceSelection={{ model: KOKORO_SLUG, voiceSlug: "af_heart" }}
+        onVoiceChange={() => {}}
+        job={null}
+        onStart={async () => null}
+        onCancel={async () => {}}
+        exportProgress={{}}
+        onDownload={async () => {}}
+      />
+    </MemoryRouter>,
+  );
+}
