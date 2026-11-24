@@ -16,14 +16,18 @@ import pytest
 REPO = Path(__file__).resolve().parents[2]
 PROVIDERS_HERE = packages_distributions()
 
-# image: (the source it runs, the uv project its Dockerfile installs, the flags it installs it with)
+# Dockerfile: (the source its image runs, the uv project it installs, the flags it installs it with)
 IMAGES = {
-    "gateway": ("yapit/gateway", ".", ["--no-dev"]),
-    "kokoro-cpu": ("yapit/workers/kokoro", "yapit/workers/kokoro/cpu", []),
-    "kokoro-gpu": ("yapit/workers/kokoro", "yapit/workers/kokoro/gpu", []),
-    "yolo-cpu": ("yapit/workers/yolo", "yapit/workers/yolo/cpu", []),
-    "yolo-gpu": ("yapit/workers/yolo", "yapit/workers/yolo/gpu", []),
+    "yapit/gateway/Dockerfile": ("yapit/gateway", ".", ["--no-dev"]),
+    "yapit/workers/kokoro/Dockerfile.cpu": ("yapit/workers/kokoro", "yapit/workers/kokoro/cpu", []),
+    "yapit/workers/kokoro/Dockerfile.gpu": ("yapit/workers/kokoro", "yapit/workers/kokoro/gpu", []),
+    "yapit/workers/yolo/Dockerfile.cpu": ("yapit/workers/yolo", "yapit/workers/yolo/cpu", []),
+    "yapit/workers/yolo/Dockerfile.gpu": ("yapit/workers/yolo", "yapit/workers/yolo/gpu", []),
 }
+
+
+def test_every_image_built_from_the_python_is_checked():
+    assert {str(p.relative_to(REPO)) for p in (REPO / "yapit").rglob("Dockerfile*")} == set(IMAGES)
 
 
 @pytest.mark.parametrize("image", IMAGES)
@@ -35,7 +39,7 @@ def test_image_installs_every_package_its_code_imports(image):
         for path, name in third_party_imports(source_closure(REPO / source))
         if not providers(name) & installed
     ]
-    assert not missing, f"the {image} image does not install:\n" + "\n".join(missing)
+    assert not missing, f"the image {image} builds does not install:\n" + "\n".join(missing)
 
 
 def installed_in_image(project: str, flags: list[str]) -> set[str]:
