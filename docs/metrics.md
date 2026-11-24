@@ -34,7 +34,7 @@ Why this exists: Swarm deploys race the gateway (`update_config: start-first`) a
 - `detection_complete` / `detection_error` — Worker results (worker_id, processing_time)
 
 ### Document Extraction
-- `document_extraction_complete` — Emitted for every document extraction (all paths). `processor_slug` identifies the method: `pymupdf`, `epub`, `passthrough`, `defuddle:static`, `defuddle:static-bot`, `defuddle:playwright`, `gemini`. Has `duration_ms` (top-level column), `data.chars`, `data.images`, `data.pages`.
+- `document_extraction_complete` — Emitted for every document extraction (all paths). `processor_slug` identifies the method: `pymupdf`, `epub`, `passthrough`, `defuddle:static`, `defuddle:static-bot`, `defuddle:playwright`, `defuddle:playwright-styled`, `gemini`. Has `duration_ms` (top-level column), `data.chars`, `data.images`, `data.pages`.
 - `document_extraction_error` — Extraction failed. `processor_slug`, `data.error`, `data.content_type`.
 - `extraction_estimate` — Pre-check token estimate before processing (estimated_tokens, num_pages, tolerance)
 - `page_extraction_complete` — Per-page Gemini extraction (all token counts + `cached_content_token_count` for prompt cache utilization)

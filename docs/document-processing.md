@@ -66,17 +66,17 @@ arXiv URLs (arxiv.org, alphaxiv.org, ar5iv) are detected in `documents.py` via `
 When given a URL (normal flow):
 Every request goes through `fetcher.js`: one user agent, `robots.txt` checked before each page request and redirect hop, Web Bot Auth signatures where a key is set ([[web-bot-auth]]). A refusal (`robots.txt`, or a `cf-mitigated: challenge` response) ends the cascade and comes back as a 422 with the reader's message.
 
-1. **Static fetch** (normal UA, 5s timeout) → linkedom → defuddle Node API → return if wordCount > 0
+1. **Static fetch** (normal UA, 5s timeout) → linkedom → defuddle Node API → return if wordCount > 0, unless the markdown holds an inline `<svg>`: then the page is extracted again in Playwright, styled (below), and that result is returned if it keeps 90% of the static words (`playwright-styled`); otherwise, or if Chromium fails or is at capacity, the static result
 2. **Static fetch** (bot UA) → linkedom → defuddle Node API → return if wordCount > 0
-3. **Playwright fallback** → Chromium navigates to URL via Smokescreen, `domcontentloaded`, injects defuddle browser bundle, extracts from rendered DOM. Each navigation request is fetched by the route handler (`route.fetch`, through the context's proxy), so it is checked and signed; Chromium follows a redirect without passing the route again, so a redirect of the page is aborted and navigated to anew
+3. **Playwright fallback** → Chromium navigates to URL via Smokescreen with reduced motion, waits for `load` (5s cap), styles the page's figures (`svg-styles.js`: each canvas becomes a PNG of what it shows, each inline SVG gets its computed styles written inline, since defuddle drops classes and never sees the stylesheet), injects defuddle browser bundle, extracts from rendered DOM. Each navigation request is fetched by the route handler (`route.fetch`, through the context's proxy), so it is checked and signed; Chromium follows a redirect without passing the route again, so a redirect of the page is aborted and navigated to anew
 
 When given raw HTML (uploaded files): runs defuddle Node API directly, no fetch cascade.
 
-- Static path handles most content sites; Playwright reserved for JS-rendered SPAs
+- Static path handles most content sites; Playwright for JS-rendered SPAs and for pages with inline SVG figures
 - All fetches go through Smokescreen SSRF proxy
 - Shared time budget: total never exceeds caller's `timeout_ms` (default 30s). Static timeout is 5s per attempt, leaving Playwright ~20s
 - Playwright: single Chromium instance, new context+page per request, 50 concurrent cap
-- `extraction_method` logged in metrics (`static`, `static-bot`, `playwright`, `html-direct`)
+- `extraction_method` logged in metrics (`static`, `static-bot`, `playwright`, `playwright-styled`, `html-direct`)
 - `resolve_relative_urls` converts `<img>` tags to `![alt](url)` syntax
 - **Gotcha:** `undici` (used by defuddle) through Smokescreen CONNECT tunnel can get different HTTP responses than curl/browsers (e.g. 200 vs 404 from SPAs). The CONNECT tunnel changes how some servers route requests
 
