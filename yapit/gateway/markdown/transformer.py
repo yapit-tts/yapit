@@ -9,6 +9,8 @@ Core concepts:
 All audio content respects max_block_chars splitting.
 """
 
+import base64
+import html
 import re
 from collections.abc import Sequence
 from typing import Literal, cast
@@ -137,6 +139,47 @@ _PLACEHOLDER_ALT = re.compile(r"(?:pic|image|img)\s*\d*", re.IGNORECASE)
 def informative_alt(alt: str) -> str:
     """The alt text, or "" when it is a placeholder that says nothing about the image."""
     return "" if _PLACEHOLDER_ALT.fullmatch(alt.strip()) else alt
+
+
+_INLINE_SVG = re.compile(r"\s*(<svg\b[^>]*>.*</svg>)\s*", re.DOTALL | re.IGNORECASE)
+_SVG_OPEN_TAG = re.compile(r"<svg\b[^>]*>", re.IGNORECASE)
+_ATTR = re.compile(r"""([\w:.-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')""")
+_SVG_TITLE = re.compile(r"<title\b[^>]*>(.*?)</title>", re.DOTALL | re.IGNORECASE)
+
+
+def inline_svg(source: str) -> str | None:
+    """The SVG when the source is nothing but one SVG element, else None."""
+    match = _INLINE_SVG.fullmatch(source)
+    return match.group(1) if match else None
+
+
+def svg_image(svg: str) -> tuple[str, str]:
+    """A data URI an <img> renders the SVG from, and the SVG's text alternative.
+
+    A data URI is a standalone SVG document: it renders only with the SVG namespace declared,
+    and an SVG with no width or height has no size of its own, so both come from the viewBox.
+    """
+    open_tag = _SVG_OPEN_TAG.match(svg)
+    assert open_tag
+    attrs = {m[1].lower(): html.unescape(m[2] or m[3]) for m in _ATTR.finditer(open_tag.group(0))}
+
+    added = []
+    if "xmlns" not in attrs:
+        added.append('xmlns="http://www.w3.org/2000/svg"')
+    if "xlink:" in svg and "xmlns:xlink" not in attrs:
+        added.append('xmlns:xlink="http://www.w3.org/1999/xlink"')
+    view_box = attrs.get("viewbox", "").replace(",", " ").split()
+    sized = all(re.fullmatch(r"[\d.]+(px)?", attrs.get(dim, "")) for dim in ("width", "height"))
+    if not sized and len(view_box) == 4:
+        tag = re.sub(r"""\s(?:width|height)\s*=\s*(?:"[^"]*"|'[^']*')""", "", open_tag.group(0))
+        svg = tag + svg[open_tag.end() :]
+        added += [f'width="{view_box[2]}"', f'height="{view_box[3]}"']
+    if added:
+        svg = f"<svg {' '.join(added)}" + svg[4:]
+
+    title = _SVG_TITLE.search(svg)
+    alt = attrs.get("aria-label") or (html.unescape(re.sub(r"<[^>]+>", "", title.group(1))).strip() if title else "")
+    return "data:image/svg+xml;base64," + base64.b64encode(svg.encode()).decode(), alt
 
 
 def _is_tag(node: SyntaxTreeNode, tag: str) -> bool:
@@ -1084,6 +1127,10 @@ class DocumentTransformer:
         if self._is_standalone_image(children):
             return [self._create_image_block(children)]
 
+        svg = inline_svg(inline.content) if inline else None
+        if svg:
+            return [self._create_svg_image_block(svg)]
+
         processor = InlineProcessor()
         tts_text = processor.process(children)
         ast = transform_inline_to_ast(children)
@@ -1170,6 +1217,14 @@ class DocumentTransformer:
             row_group=row_group,
             audio_chunks=audio_chunks,
         )
+
+    def _create_svg_image_block(self, svg: str) -> ImageBlock:
+        src, alt = svg_image(svg)
+        audio_chunks: list[AudioChunk] = []
+        if alt.strip():
+            audio_chunks = split_with_spans(alt, [TextContent(content=alt)], self.splitter, self._audio_idx_counter)
+            self._audio_idx_counter += len(audio_chunks)
+        return ImageBlock(id=self._next_block_id(), src=src, alt=alt, audio_chunks=audio_chunks)
 
     def _parse_image_metadata(self, src: str) -> tuple[float | None, str | None]:
         """Parse width_pct and row_group from URL query params."""
@@ -1564,7 +1619,7 @@ class DocumentTransformer:
         return [ThematicBreak(id=self._next_block_id())]
 
     def _transform_html_block(self, node: SyntaxTreeNode) -> Sequence[ContentBlock]:
-        """Handle html_block nodes — multi-line yap tags that markdown-it
+        """Handle html_block nodes — multi-line yap tags, and SVGs, that markdown-it
         classifies as block-level HTML instead of inline.
         """
         content = (node.content or "").strip()
@@ -1585,6 +1640,10 @@ class DocumentTransformer:
 
         if re.match(r"<yap-speak>(.*?)</yap-speak>", content, re.DOTALL):
             return []
+
+        svg = inline_svg(content)
+        if svg:
+            return [self._create_svg_image_block(svg)]
 
         return []
 
