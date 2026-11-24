@@ -322,6 +322,9 @@ def _decode_block(audio: bytes) -> av.AudioFrame:
 
     FFmpeg's decoder leaves the encoder's end padding on a stream with a single audio page (a block
     under a second, such as a heading), which would put up to 13 ms of silence after it.
+
+    A stereo block holds the same speech in both channels, and plays at the level of one; mixing the
+    two down would put it 3 dB above a mono block.
     """
     with av.open(io.BytesIO(audio), "r") as block:
         stream = block.streams.audio[0]
@@ -330,6 +333,7 @@ def _decode_block(audio: bytes) -> av.AudioFrame:
         graph.link_nodes(
             graph.add_abuffer(template=stream),
             graph.add("atrim", f"end_sample={samples}"),
+            graph.add("pan", "mono|c0=c0"),
             graph.add("aformat", f"sample_fmts=fltp:sample_rates={SAMPLE_RATE}:channel_layouts=mono"),
             graph.add("abuffersink"),
         ).configure()
