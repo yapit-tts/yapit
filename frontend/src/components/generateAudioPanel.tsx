@@ -24,21 +24,21 @@ interface GenerateAudioPanelProps extends AudioSelectionProps {
  * actions at its foot. It opens with the voice picker focused, so the title's (i) keeps its note shut until asked.
  */
 export function GenerateAudioPanel(props: GenerateAudioPanelProps) {
-  const voiceRow = useRef<HTMLDivElement>(null);
+  const voicePicker = useRef<HTMLDivElement>(null);
   const focusVoicePicker = (e: Event) => {
     e.preventDefault();
-    voiceRow.current?.querySelector("button")?.focus();
+    voicePicker.current?.querySelector("button")?.focus();
   };
   return (
     <Sheet open={props.open} onOpenChange={props.onOpenChange}>
       <SheetContent side="right" className="w-full sm:max-w-md gap-0 shadow-none" onOpenAutoFocus={focusVoicePicker}>
-        {props.open && <GenerateAudioForm {...props} voiceRow={voiceRow} />}
+        {props.open && <GenerateAudioForm {...props} voicePicker={voicePicker} />}
       </SheetContent>
     </Sheet>
   );
 }
 
-function GenerateAudioForm({ voiceRow, ...props }: GenerateAudioPanelProps & { voiceRow: React.RefObject<HTMLDivElement | null> }) {
+function GenerateAudioForm({ voicePicker, ...props }: GenerateAudioPanelProps & { voicePicker: React.RefObject<HTMLDivElement | null> }) {
   const s = useAudioSelection(props);
   const running = s.jobRunsHere && props.job ? props.job : null;
   const allTicked = s.rows.every(r => r.ticked);
@@ -51,13 +51,15 @@ function GenerateAudioForm({ voiceRow, ...props }: GenerateAudioPanelProps & { v
           <SheetTitle className="text-lg font-semibold text-foreground">Generate in background</SheetTitle>
         </TitleWithInfo>
         <SheetDescription className="sr-only">Pick the sections and the voice, generate their audio, then save it as one file.</SheetDescription>
-        <div ref={voiceRow} className="flex items-center justify-between gap-2">
-          <VoicePicker value={props.voiceSelection} onChange={props.onVoiceChange} />
-          <Hint content={tickAllLabel} align="end">
-            <Button variant="ghost" size="icon" className="text-muted-foreground" aria-label={tickAllLabel} onClick={() => s.setAll(!allTicked)}>
+        <div className="flex items-center justify-between gap-2">
+          <Hint content={tickAllLabel} align="start">
+            <Button variant="ghost" size="icon" className="-ml-2.5 text-muted-foreground" aria-label={tickAllLabel} onClick={() => s.setAll(!allTicked)}>
               {allTicked ? <ListX /> : <ListChecks />}
             </Button>
           </Hint>
+          <div ref={voicePicker}>
+            <VoicePicker value={props.voiceSelection} onChange={props.onVoiceChange} align="end" />
+          </div>
         </div>
       </div>
 
@@ -237,7 +239,7 @@ function SelectionMeta({ s }: { s: AudioSelection }) {
 
 /**
  * The title with an (i) after it whose note opens below the whole title row, from its left edge, so it stays inside
- * the panel and clear of Tick all. It opens on hover after half a second and on keyboard focus, and shuts when either
+ * the panel. It opens on hover after half a second and on keyboard focus, and shuts when either
  * ends; a click or tap toggles it and keeps it open until the next click, tap, Escape or focus elsewhere. A Radix
  * popover rather than a tooltip, since only a popover takes an anchor apart from its trigger.
  */
