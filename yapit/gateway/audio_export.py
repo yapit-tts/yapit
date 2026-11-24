@@ -26,7 +26,7 @@ from redis.asyncio import Redis
 from yapit.contracts import TTS_AUDIO_CACHE, TTS_SKIPPED, get_pubsub_channel
 from yapit.gateway.audio_job import prepared_mask
 from yapit.gateway.cache import Cache
-from yapit.gateway.metrics import log_error
+from yapit.gateway.metrics import log_error, log_event, record_event
 
 EXPORT_TTL_S = 24 * 3600
 SWEEP_INTERVAL_S = 3600
@@ -335,7 +335,7 @@ async def _build(
 
     path = store.path(key, fmt)
     try:
-        await write_audio_file(
+        seconds = await write_audio_file(
             path,
             fmt,
             chapters,
@@ -343,8 +343,16 @@ async def _build(
             on_progress,
             lambda total: store.reserve(key, total),
         )
+        size = path.stat().st_size
         store.shelve(key, path)
-        logger.info(f"Audio export {key[:12]} ({fmt}) built in {time.monotonic() - started:.1f}s")
+        took_s = time.monotonic() - started
+        logger.info(f"Audio export {key[:12]} ({fmt}) built in {took_s:.1f}s")
+        await log_event(
+            "audio_export_built",
+            duration_ms=round(took_s * 1000),
+            user_id=build.user_id,
+            data={"format": fmt, "seconds": round(seconds, 3), "bytes": size},
+        )
     except (AudioNotCached, NoRoom) as e:
         state = state.model_copy(update={"status": ExportStatus.failed, "error": str(e)})
     except Exception as e:
@@ -375,8 +383,10 @@ async def write_audio_file(
     fetch: Callable[[list[str]], Awaitable[list[bytes]]],
     on_progress: Callable[[float], Awaitable[None]],
     reserve: Callable[[int], None],
-) -> None:
+) -> float:
     """Decode the chapters' Ogg Opus blocks in order and encode them as one stream, then add the chapters.
+
+    Returns the stream's seconds.
 
     on_progress hears the fraction of the blocks that are encoded, after each. reserve hears the bytes
     the build's files may take in all before they take more, and raises to stop the build.
@@ -393,6 +403,7 @@ async def write_audio_file(
         reserve(2 * encoded.stat().st_size + titles)
         await _on_build_thread(_remux_with_chapters, encoded, chaptered, ENCODINGS[fmt], marks)
         os.replace(chaptered, path)
+        return float(sum(m["end"] - m["start"] for m in marks))
     finally:
         encoded.unlink(missing_ok=True)
         chaptered.unlink(missing_ok=True)

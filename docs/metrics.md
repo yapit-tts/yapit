@@ -46,6 +46,10 @@ Why this exists: Swarm deploys race the gateway (`update_config: start-first`) a
 - `extraction_cache_hit` — One per requested page found in the AI extraction cache (`page_idx`); logged once per request, by the handler's lookup
 - `cache_hit` — Variant already synthesized (audio cache)
 
+### Saved audio files
+The files a user saves from a document's audio (`yapit/gateway/audio_export.py`), kept 24 hours within `AUDIO_EXPORT_MAX_SIZE_MB`.
+- `audio_export_built` — A file finished building (`duration_ms` its build, `user_id` who started it, `data.format`, `data.seconds`, `data.bytes`)
+
 ### URL Fetching
 - `url_fetch` — HTTP download (duration_ms, content_type, size_bytes, errors)
 - `markxiv_error` — arXiv extraction failures

@@ -239,6 +239,16 @@ async def test_a_build_tells_the_tab_how_many_of_its_blocks_are_encoded(client, 
     assert [s["progress"] for s in states[:-1]] == pytest.approx([0, 1 / 6, 2 / 6, 3 / 6, 4 / 6, 5 / 6, 1])
 
 
+@pytest.mark.parametrize("fmt", ["m4b", "mp3"])
+async def test_a_built_file_is_recorded_with_its_seconds_bytes_and_format(client, app, book, fmt, metrics_events):
+    data = await exported(client, app, book, [(0, 2, "One"), (4, 5, "Two")], fmt)
+
+    built = [e for e in metrics_events() if e["event_type"] == "audio_export_built"]
+    assert len(built) == 1 and built[0]["user_id"] == DEFAULT_TEST_USER.id
+    assert built[0]["data"]["format"] == fmt and built[0]["data"]["bytes"] == len(data)
+    assert built[0]["data"]["seconds"] == pytest.approx(seconds(0, 2) + seconds(4, 5), abs=0.001)
+
+
 async def test_a_build_runs_below_the_gateways_priority(client, app, book):
     await exported(client, app, book, [(0, 5, "Whole book")])
 
