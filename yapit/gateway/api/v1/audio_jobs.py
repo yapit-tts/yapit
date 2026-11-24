@@ -289,9 +289,7 @@ class _HeldFileResponse(FileResponse):
             async with asyncio.timeout(self.deadline_s):
                 await super().__call__(scope, receive, send)
         except TimeoutError:
-            await log_event(
-                "audio_export_download_cut_off", data={"bytes": self.size, "deadline_s": round(self.deadline_s)}
-            )
+            await log_event("audio_export_download_cut_off", data={"bytes": self.size})
         finally:
             self.release()
 

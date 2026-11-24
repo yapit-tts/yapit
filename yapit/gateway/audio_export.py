@@ -245,8 +245,7 @@ class ExportStore:
 
     def _refused(self, key: str, total: int, reason: str) -> None:
         record_event(
-            "audio_export_refused",
-            data={"reason": reason, "bytes": total, "while_building": key in self._rooms, "taken": self.taken},
+            "audio_export_refused", data={"reason": reason, "bytes": total, "while_building": key in self._rooms}
         )
 
     def _add(self, name: str, file: _File) -> None:
@@ -356,11 +355,9 @@ async def _build(
         )
         size = path.stat().st_size
         store.shelve(key, path)
-        took_s = time.monotonic() - started
-        logger.info(f"Audio export {key[:12]} ({fmt}) built in {took_s:.1f}s")
+        logger.info(f"Audio export {key[:12]} ({fmt}) built in {time.monotonic() - started:.1f}s")
         await log_event(
             "audio_export_built",
-            duration_ms=round(took_s * 1000),
             user_id=build.user_id,
             data={"format": fmt, "seconds": round(seconds, 3), "bytes": size},
         )
