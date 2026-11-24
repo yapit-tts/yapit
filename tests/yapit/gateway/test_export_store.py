@@ -4,10 +4,12 @@ import os
 import random
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
-from yapit.gateway.audio_export import ExportFormat, ExportStore, NoRoom
+from yapit.gateway import audio_export
+from yapit.gateway.audio_export import EXPORT_TTL_S, ExportFormat, ExportStore, NoRoom
 
 MAX_BYTES = 100_000
 
@@ -17,17 +19,24 @@ def on_disk(directory: Path) -> dict[str, int]:
 
 
 @pytest.mark.parametrize("seed", range(30))
-def test_builds_downloads_and_sweeps_in_any_order_keep_the_files_within_the_bound_oldest_going_first(tmp_path, seed):
+def test_builds_downloads_and_sweeps_in_any_order_keep_the_files_within_the_bound_oldest_going_first(
+    tmp_path, seed, monkeypatch
+):
     rng = random.Random(seed)
+    days_later = [0]
+    clock = SimpleNamespace(time=lambda: time.time() + days_later[0] * (EXPORT_TTL_S + 1), monotonic=time.monotonic)
+    monkeypatch.setattr(audio_export, "time", clock)
     store = ExportStore.open(tmp_path, MAX_BYTES)
     rooms: dict[str, int] = {}
-    shelved: list[str] = []
+    built: dict[str, float] = {}
     holds: list[tuple[str, object]] = []
 
     for step in range(400):
         before = on_disk(tmp_path)
         held = {name for name, _ in holds}
-        op = rng.choice(["reserve", "reserve", "reserve", "finish", "hold", "let go", "sweep"])
+        op = rng.choice(
+            ["reserve", "reserve", "reserve", "finish", "hold", "let go", "sweep", "a day", "other gateway"]
+        )
         if op == "reserve":
             stored_keys = [name.split(".")[0] for name in before if not name.startswith(".")]
             key = rng.choice([*rooms, *stored_keys, f"k{step}"])  # a running build, a rebuild, or a new one
@@ -50,7 +59,7 @@ def test_builds_downloads_and_sweeps_in_any_order_keep_the_files_within_the_boun
             store.shelve(key, path)
             store.release(key)
             del rooms[key]
-            shelved.append(path.name)
+            built[path.name] = clock.time()
         elif op == "hold":
             stored = [name for name in before if not name.startswith(".")]
             if stored:
@@ -61,6 +70,15 @@ def test_builds_downloads_and_sweeps_in_any_order_keep_the_files_within_the_boun
             release()
         elif op == "sweep":
             store.sweep()
+        elif op == "a day":
+            days_later[0] += 1
+            store.sweep()
+        elif op == "other gateway":  # it built a file this store finds when someone asks for it
+            path = tmp_path / f"o{step}.mp3"
+            path.write_bytes(b"\0" * rng.randint(1, 30_000))
+            built[path.name] = clock.time() - rng.uniform(0, 3600)
+            os.utime(path, (built[path.name], built[path.name]))
+            store.stored(f"o{step}", ExportFormat.mp3)
 
         after = on_disk(tmp_path)
         assert sum(after.values()) <= store.taken <= MAX_BYTES
@@ -69,8 +87,7 @@ def test_builds_downloads_and_sweeps_in_any_order_keep_the_files_within_the_boun
         deleted = [n for n in before if n not in after and not n.startswith(".")]
         kept = [n for n in after if not n.startswith(".") and n not in held]
         if deleted and kept:
-            order = {name: i for i, name in enumerate(shelved)}  # the last shelving of each name
-            assert max(order[n] for n in deleted) < min(order[n] for n in kept), "a newer file went first"
+            assert max(built[n] for n in deleted) < min(built[n] for n in kept), "a newer file went first"
 
 
 def test_a_restart_counts_what_the_directory_holds_and_deletes_scratch_no_build_writes(tmp_path):

@@ -116,8 +116,6 @@ class ExportStore:
 
     A build holds room for its files before it writes them, and the oldest files no download holds are
     deleted to make it. Every method runs on the event loop with no await, so none interleaves another.
-    The hourly sweep counts what the directory holds as it stands: files and scratch another gateway
-    wrote, as while two run during a deploy, and those deleted behind this one's back.
     """
 
     dir: Path
@@ -148,7 +146,10 @@ class ExportStore:
         return self.dir / f"{key}.{fmt}"
 
     def stored(self, key: str, fmt: ExportFormat) -> Path | None:
-        """The built file, unless it is older than EXPORT_TTL_S (the sweep deletes it soon after)."""
+        """The built file, unless it is older than EXPORT_TTL_S (the sweep deletes it soon after).
+
+        A file found here that this store did not write is counted, which can delete the oldest files.
+        """
         path = self.path(key, fmt)
         try:
             stat = path.stat()
@@ -157,6 +158,7 @@ class ExportStore:
             return None
         if path.name not in self._files:
             self._add(path.name, _File(stat.st_size, stat.st_mtime))
+            self._files = _oldest_first(self._files)
             self._make_room(0)
         file = self._files.get(path.name)
         return path if file and time.time() - file.built < EXPORT_TTL_S else None
@@ -214,7 +216,7 @@ class ExportStore:
                     foreign += stat.st_size
             except FileNotFoundError:
                 pass
-        self._files = dict(sorted(found.items(), key=lambda item: item[1].built))
+        self._files = _oldest_first(found)
         self._stored_bytes = sum(f.size for f in self._files.values())
         self._foreign_bytes = foreign
         for name, file in list(self._files.items()):
@@ -247,6 +249,10 @@ class ExportStore:
     def _delete(self, name: str) -> None:
         (self.dir / name).unlink(missing_ok=True)
         self._forget(name)
+
+
+def _oldest_first(files: dict[str, _File]) -> dict[str, _File]:
+    return dict(sorted(files.items(), key=lambda item: item[1].built))
 
 
 @dataclass

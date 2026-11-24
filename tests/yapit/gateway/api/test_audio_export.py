@@ -21,6 +21,7 @@ import pytest
 
 from yapit.contracts import TTS_AUDIO_CACHE, TTS_JOBS, WorkerResult, get_pubsub_channel, get_queue_name
 from yapit.gateway import audio_export
+from yapit.gateway.api.v1 import audio_jobs
 from yapit.gateway.audio_export import EXPORT_TTL_S, Chapter, ExportFormat, ExportStore, write_audio_file
 from yapit.gateway.cache import CacheConfig
 from yapit.gateway.config import get_settings
@@ -449,7 +450,8 @@ async def test_a_file_being_downloaded_is_not_deleted_and_downloads_whole(client
 
     async with paused_download(app, f"/v1/documents/{book}/audio-export/{held}.m4b") as download:
         crowded = (await export_heard(client, app, book, [(0, 5, "Crowding it out")]))[-1]
-    status, headers, body = await download
+    await download.task
+    status, headers, body = download.received()
     after = (await export_heard(client, app, book, [(0, 5, "Crowding it out")]))[-1]
     gone = await client.get(f"/v1/documents/{book}/audio-export/{held}.m4b")
 
@@ -460,11 +462,34 @@ async def test_a_file_being_downloaded_is_not_deleted_and_downloads_whole(client
     assert gone.status_code == 404
 
 
+async def test_a_download_that_stops_reading_lets_its_file_go_at_its_deadline(client, app, book, monkeypatch):
+    store = keep_at_most(app, 200_000)  # room for the held file or a build, not both
+    monkeypatch.setattr(audio_jobs, "DOWNLOAD_GRACE_S", 0.1)
+    monkeypatch.setattr(audio_jobs, "DOWNLOAD_MIN_BYTES_PER_S", 10**9)
+    let_go, hold = asyncio.Event(), store.hold
+
+    def hold_until_let_go(path):
+        release = hold(path)
+        return lambda: (release(), let_go.set())
+
+    monkeypatch.setattr(store, "hold", hold_until_let_go)
+    held = (await export_heard(client, app, book, [(0, 5, "Held")]))[-1]["key"]
+
+    async with paused_download(app, f"/v1/documents/{book}/audio-export/{held}.m4b") as download:
+        await asyncio.wait_for(let_go.wait(), timeout=10)
+        crowding = (await export_heard(client, app, book, [(0, 5, "Crowding it out")]))[-1]
+    await asyncio.wait_for(download.task, timeout=10)
+    status, headers, body = download.received()
+
+    assert crowding["status"] == "ready"
+    assert status == 200 and len(body) < int(headers[b"content-length"])
+
+
 @asynccontextmanager
 async def paused_download(app, path: str):
     """A GET of path through the ASGI app that stops after its first chunk until the block exits.
 
-    Yields the download's task, which gives (status, headers, body) once it has run to the end.
+    Yields the download's task, and `received`, which gives the status, headers and body sent so far.
     """
     first_chunk, go_on = asyncio.Event(), asyncio.Event()
     started: dict = {}
@@ -502,12 +527,14 @@ async def paused_download(app, path: str):
 
     async def run():
         await app(scope, receive, send)
+
+    def received() -> tuple[int, dict, bytes]:
         return started["status"], started["headers"], bytes(body)
 
-    task = asyncio.create_task(run())
+    download = SimpleNamespace(task=asyncio.create_task(run()), received=received)
     await asyncio.wait_for(first_chunk.wait(), timeout=10)
     try:
-        yield task
+        yield download
     finally:
         go_on.set()
 
@@ -545,6 +572,8 @@ async def test_two_builds_at_once_at_the_bound_stay_within_it(client, app, book,
             ends[heard["key"]] = heard
     await pubsub.aclose()
 
+    ready = [key for key in keys if ends[key]["status"] == "ready"]
     assert within(disk, 250_000)
-    assert all(e["status"] == "ready" or "Save again" in e["error"] for e in ends.values())
+    assert ready and all("Save again" in ends[key]["error"] for key in keys if key not in ready)
+    assert (await client.get(f"/v1/documents/{book}/audio-export/{ready[0]}.m4b")).status_code == 200
     assert store.taken == bytes_on_disk(app)

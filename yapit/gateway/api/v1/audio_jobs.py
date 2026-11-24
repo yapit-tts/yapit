@@ -1,4 +1,7 @@
+import asyncio
+import os
 from collections.abc import Callable
+from pathlib import Path
 from typing import Annotated
 from uuid import UUID
 
@@ -51,6 +54,10 @@ from yapit.gateway.usage import (
     get_limit_for_usage_type,
     get_user_subscription,
 )
+
+# A download holds its file from deletion, so a client that stops reading must not hold it for good
+DOWNLOAD_MIN_BYTES_PER_S = 64 * 1024
+DOWNLOAD_GRACE_S = 60
 
 
 def _export_store(request: Request) -> ExportStore:
@@ -247,7 +254,7 @@ async def get_audio_export(
     db: DbSession,
     store: ExportStoreDep,
 ) -> FileResponse:
-    """An exported file, by the key and format its export answered with; kept while it downloads."""
+    """An exported file, by the key and format its export answered with; kept while it downloads, up to a deadline."""
     doc = await _readable_document(db, document_id, user.id)
     path = store.stored(key, fmt)
     if path is None:
@@ -255,18 +262,31 @@ async def get_audio_export(
             status_code=status.HTTP_404_NOT_FOUND, detail="The server no longer has this audio file. Save it again."
         )
     return _HeldFileResponse(
-        path, store.hold(path), media_type=ENCODINGS[fmt].media_type, filename=f"{doc.title or 'Document'}.{fmt}"
+        path,
+        store.hold(path),
+        stat_result=path.stat(),
+        media_type=ENCODINGS[fmt].media_type,
+        filename=f"{doc.title or 'Document'}.{fmt}",
     )
 
 
 class _HeldFileResponse(FileResponse):
-    def __init__(self, path, release: Callable[[], None], **kwargs) -> None:
-        super().__init__(path, **kwargs)
+    """A download that lets its file go once it ends, or once DOWNLOAD_GRACE_S and DOWNLOAD_MIN_BYTES_PER_S pass.
+
+    A download cut off at the deadline ends short of its Content-Length, which the client reads as a failure.
+    """
+
+    def __init__(self, path: Path, release: Callable[[], None], stat_result: os.stat_result, **kwargs) -> None:
+        super().__init__(path, stat_result=stat_result, **kwargs)
         self.release = release
+        self.deadline_s = DOWNLOAD_GRACE_S + stat_result.st_size / DOWNLOAD_MIN_BYTES_PER_S
 
     async def __call__(self, scope, receive, send) -> None:
         try:
-            await super().__call__(scope, receive, send)
+            async with asyncio.timeout(self.deadline_s):
+                await super().__call__(scope, receive, send)
+        except TimeoutError:
+            pass
         finally:
             self.release()
 
