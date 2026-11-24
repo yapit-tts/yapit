@@ -106,7 +106,11 @@ export function useAudioSelection(props: AudioSelectionProps) {
   const allMade = onServer && estimate !== null && totals.blocks > 0 && totals.blocksToSynthesize === 0;
   const exportErrors = EXPORT_FORMATS.flatMap(format => {
     const progress = exportProgress[format];
-    return progress && !progress.building ? [{ format, error: progress.error }] : [];
+    return progress?.phase === "failed" ? [{ format, error: progress.error }] : [];
+  });
+  const saving = EXPORT_FORMATS.flatMap(format => {
+    const progress = exportProgress[format];
+    return progress && progress.phase !== "failed" ? [{ format, ...progress }] : [];
   });
 
   const toggle = (id: string) => setTicked(prev => {
@@ -136,7 +140,7 @@ export function useAudioSelection(props: AudioSelectionProps) {
 
   return {
     rows, toggle, setAll, totals, estimate, estimateFailed, onServer, jobRunsHere, isStarting,
-    blocker, shortfall, refusal, canStart, allMade, exportErrors, useServerKokoro, start, download,
+    blocker, shortfall, refusal, canStart, allMade, exportErrors, saving, useServerKokoro, start, download,
   };
 }
 

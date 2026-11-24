@@ -7,6 +7,7 @@ its chapters are checked against what went in, not against the join's own arithm
 import io
 import json
 import os
+import threading
 import time
 import uuid
 from contextlib import contextmanager
@@ -42,8 +43,10 @@ async def kokoro(session):
 
 
 @pytest.fixture
-async def book(client, session, kokoro, app) -> uuid.UUID:
+async def book(client, session, kokoro, app, monkeypatch) -> uuid.UUID:
     """A document of six blocks, all in the cache: odd blocks in Redis only, as before the persister ran."""
+    # Two blocks decoded ahead of the encoder, so on any host a build of the six has to keep them in order
+    monkeypatch.setattr(audio_export, "CORES", 2)
     content = "\n\n".join(f"Paragraph {i} of the book is read aloud." for i in range(len(BLOCK_SAMPLES)))
     response = await client.post("/v1/documents/text", json={"content": content, "title": "A Short Book"})
     assert response.status_code == 201, response.text
@@ -93,21 +96,27 @@ async def export(client, document_id, ranges: list[tuple[int, int, str]], fmt: s
 
 async def exported(client, app, document_id, ranges, fmt: str = "m4b") -> bytes:
     """The file an export yields, once the tab watching the document hears it is built."""
-    pubsub = app.state.redis_client.pubsub()
-    await pubsub.subscribe(get_pubsub_channel(DEFAULT_TEST_USER.id, document_id))
-    await pubsub.get_message(timeout=1)
-    state = (await export(client, document_id, ranges, fmt)).json()
-    if state["status"] == "building":
-        while (message := await pubsub.get_message(ignore_subscribe_messages=True, timeout=30)) is not None:
-            heard = json.loads(message["data"])
-            if heard["type"] == "audio_export" and heard["key"] == state["key"]:
-                state = heard
-                break
-    await pubsub.aclose()
+    state = (await export_heard(client, app, document_id, ranges, fmt))[-1]
     assert state["status"] == "ready", state
     response = await client.get(f"/v1/documents/{document_id}/audio-export/{state['key']}.{fmt}")
     assert response.status_code == 200, response.text
     return response.content
+
+
+async def export_heard(client, app, document_id, ranges, fmt: str = "m4b") -> list[dict]:
+    """The export's answer, then what the tab watching the document hears of it, up to the end of its build."""
+    pubsub = app.state.redis_client.pubsub()
+    await pubsub.subscribe(get_pubsub_channel(DEFAULT_TEST_USER.id, document_id))
+    await pubsub.get_message(timeout=1)
+    states = [(await export(client, document_id, ranges, fmt)).json()]
+    while states[-1]["status"] == "building":
+        message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=30)
+        assert message is not None, "the build never ended"
+        heard = json.loads(message["data"])
+        if heard["type"] == "audio_export" and heard["key"] == states[0]["key"]:
+            states.append(heard)
+    await pubsub.aclose()
+    return states
 
 
 def probe(data: bytes) -> tuple[float, list[tuple[str, float, float]]]:
@@ -156,6 +165,32 @@ async def test_an_export_plays_a_sections_blocks_in_their_order(client, app, boo
     starts = [seconds(0, idx - 1) if idx else 0.0 for idx in range(len(BLOCK_SAMPLES))]
     spans = [(start, start + samples / RATE) for start, samples in zip(starts, BLOCK_SAMPLES)]
     assert pitches(data, spans) == [1, 2, 3, 4, 5, 6]
+
+
+@pytest.mark.parametrize("fmt", ["m4b", "mp3"])
+async def test_an_export_plays_at_the_level_of_its_blocks(client, app, book, fmt):
+    data = await exported(client, app, book, [(0, 5, "Whole book")], fmt)
+
+    with av.open(io.BytesIO(data), "r") as container:
+        pcm = np.concatenate([frame.to_ndarray()[0] for frame in container.decode(audio=0)])
+    sine_rms = 8000 / 32768 / np.sqrt(2)
+    assert 20 * np.log10(np.sqrt(np.mean(np.square(pcm))) / sine_rms) == pytest.approx(0, abs=1)
+
+
+async def test_a_build_tells_the_tab_how_many_of_its_blocks_are_encoded(client, app, book):
+    states = await export_heard(client, app, book, [(0, 2, "One"), (3, 5, "Two")])
+
+    assert [s["status"] for s in states] == ["building"] * 7 + ["ready"]
+    assert [s["progress"] for s in states[:-1]] == pytest.approx([0, 1 / 6, 2 / 6, 3 / 6, 4 / 6, 5 / 6, 1])
+
+
+async def test_a_build_runs_below_the_gateways_priority(client, app, book):
+    await exported(client, app, book, [(0, 5, "Whole book")])
+
+    builders = [thread.native_id for thread in threading.enumerate() if thread.name.startswith("audio-export")]
+
+    gateway = os.getpriority(os.PRIO_PROCESS, 0)
+    assert builders and all(os.getpriority(os.PRIO_PROCESS, tid) > gateway for tid in builders)
 
 
 async def test_a_second_export_within_a_day_is_the_stored_file(client, app, book):
@@ -245,16 +280,8 @@ async def test_an_export_whose_audio_leaves_the_cache_while_it_is_built_fails_ra
         return mask
 
     monkeypatch.setattr(audio_export, "prepared_mask", evict_once_checked)
-    pubsub = app.state.redis_client.pubsub()
-    await pubsub.subscribe(get_pubsub_channel(DEFAULT_TEST_USER.id, book))
-    await pubsub.get_message(timeout=1)
 
-    state = (await export(client, book, [(0, 5, "Whole book")])).json()
-    while (message := await pubsub.get_message(ignore_subscribe_messages=True, timeout=30)) is not None:
-        if json.loads(message["data"])["type"] == "audio_export":
-            state = json.loads(message["data"])
-            break
-    await pubsub.aclose()
+    state = (await export_heard(client, app, book, [(0, 5, "Whole book")]))[-1]
 
     assert state["status"] == "failed"
     assert "left the cache" in state["error"]

@@ -5,9 +5,12 @@ import hashlib
 import io
 import json
 import os
+import threading
 import time
 import uuid
-from collections.abc import Callable, Iterator
+from collections import deque
+from collections.abc import AsyncIterator, Awaitable, Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from enum import StrEnum
 from fractions import Fraction
@@ -15,6 +18,7 @@ from pathlib import Path
 from typing import Literal
 
 import av
+import av.filter
 from loguru import logger
 from pydantic import BaseModel
 from redis.asyncio import Redis
@@ -22,7 +26,6 @@ from redis.asyncio import Redis
 from yapit.contracts import TTS_AUDIO_CACHE, TTS_SKIPPED, get_pubsub_channel
 from yapit.gateway.audio_job import prepared_mask
 from yapit.gateway.cache import Cache
-from yapit.gateway.document.types import cpu_executor
 from yapit.gateway.metrics import log_error
 
 EXPORT_TTL_S = 24 * 3600
@@ -30,6 +33,8 @@ SWEEP_INTERVAL_S = 3600
 SAMPLE_RATE = 24_000
 BIT_RATE = 64_000
 FETCH_BATCH = 64
+CORES = len(os.sched_getaffinity(0))
+BUILD_NICENESS = 10
 
 
 class ExportFormat(StrEnum):
@@ -42,11 +47,15 @@ class Encoding:
     container: str
     codec: str
     media_type: str
+    options: dict[str, str]
+    """The encoder's options, as FFmpeg names them."""
 
 
 ENCODINGS = {
-    ExportFormat.m4b: Encoding(container="ipod", codec="aac", media_type="audio/mp4"),
-    ExportFormat.mp3: Encoding(container="mp3", codec="libmp3lame", media_type="audio/mpeg"),
+    ExportFormat.m4b: Encoding(container="ipod", codec="aac", media_type="audio/mp4", options={"aac_coder": "fast"}),
+    ExportFormat.mp3: Encoding(
+        container="mp3", codec="libmp3lame", media_type="audio/mpeg", options={"compression_level": "7"}
+    ),
 }
 
 
@@ -66,11 +75,13 @@ class AudioExportState(BaseModel):
     key: str
     format: ExportFormat
     status: ExportStatus
+    progress: float | None = None
+    """While building: the fraction of the selection's blocks that are encoded."""
     error: str | None = None
 
 
 class WSAudioExport(AudioExportState):
-    """An export's build ended; sent to the tabs of every user who asked for it while it was built."""
+    """An export's build got a percent further, or ended; sent to the tabs of every user who asked for it while it was built."""
 
     type: Literal["audio_export"] = "audio_export"
     document_id: uuid.UUID
@@ -81,7 +92,7 @@ class AudioNotCached(Exception):
 
 
 class ExportBusy(Exception):
-    """The user already has a build running; each holds a CPU thread for minutes."""
+    """The user already has a build running; each keeps an encoder and the threads decoding for it busy."""
 
 
 @dataclass
@@ -89,9 +100,16 @@ class _Build:
     user_id: str
     task: asyncio.Task
     waiters: set[tuple[str, uuid.UUID]]
+    progress: float = 0
 
 
 _builds: dict[str, _Build] = {}
+# Below the gateway's own priority and the workers', so that requests and synthesis come first
+_build_threads = ThreadPoolExecutor(
+    CORES,
+    thread_name_prefix="audio-export",
+    initializer=lambda: os.setpriority(os.PRIO_PROCESS, threading.get_native_id(), BUILD_NICENESS),
+)
 
 
 def export_key(fmt: ExportFormat, chapters: list[Chapter]) -> str:
@@ -132,7 +150,7 @@ async def request_export(
         return AudioExportState(key=key, format=fmt, status=ExportStatus.ready)
     if build := _builds.get(key):
         build.waiters.add((user_id, document_id))
-        return AudioExportState(key=key, format=fmt, status=ExportStatus.building)
+        return AudioExportState(key=key, format=fmt, status=ExportStatus.building, progress=build.progress)
 
     if any(b.user_id == user_id for b in _builds.values()):
         raise ExportBusy
@@ -143,7 +161,7 @@ async def request_export(
 
     task = asyncio.create_task(_build(redis, cache, export_dir, key, fmt, chapters))
     _builds[key] = _Build(user_id=user_id, task=task, waiters={(user_id, document_id)})
-    return AudioExportState(key=key, format=fmt, status=ExportStatus.building)
+    return AudioExportState(key=key, format=fmt, status=ExportStatus.building, progress=0)
 
 
 async def run_export_sweeper(export_dir: Path) -> None:
@@ -166,17 +184,29 @@ def sweep_exports(export_dir: Path) -> None:
 async def _build(
     redis: Redis, cache: Cache, export_dir: Path, key: str, fmt: ExportFormat, chapters: list[Chapter]
 ) -> None:
-    loop = asyncio.get_running_loop()
-
-    def fetch(hashes: list[str]) -> list[bytes]:
-        return asyncio.run_coroutine_threadsafe(_fetch_audio(redis, cache, hashes), loop).result()
-
     state = AudioExportState(key=key, format=fmt, status=ExportStatus.ready)
     started = time.monotonic()
+    build = _builds[key]
+
+    async def tell_waiters(state: AudioExportState) -> None:
+        for user_id, document_id in list(build.waiters):
+            message = WSAudioExport(document_id=document_id, **state.model_dump())
+            await redis.publish(get_pubsub_channel(user_id, document_id), message.model_dump_json())
+
+    async def on_progress(progress: float) -> None:
+        a_percent_further = int(progress * 100) > int(build.progress * 100)
+        build.progress = progress
+        if a_percent_further:
+            await tell_waiters(state.model_copy(update={"status": ExportStatus.building, "progress": progress}))
+
     try:
         export_dir.mkdir(parents=True, exist_ok=True)
-        await loop.run_in_executor(
-            cpu_executor, write_audio_file, export_path(export_dir, key, fmt), fmt, chapters, fetch
+        await write_audio_file(
+            export_path(export_dir, key, fmt),
+            fmt,
+            chapters,
+            lambda hashes: _fetch_audio(redis, cache, hashes),
+            on_progress,
         )
         logger.info(f"Audio export {key[:12]} ({fmt}) built in {time.monotonic() - started:.1f}s")
     except AudioNotCached as e:
@@ -186,10 +216,8 @@ async def _build(
         await log_error(f"Audio export failed: {e}")
         state = state.model_copy(update={"status": ExportStatus.failed, "error": "Building the audio file failed"})
     finally:
-        build = _builds.pop(key)
-    for user_id, document_id in build.waiters:
-        message = WSAudioExport(document_id=document_id, **state.model_dump())
-        await redis.publish(get_pubsub_channel(user_id, document_id), message.model_dump_json())
+        del _builds[key]
+    await tell_waiters(state)
 
 
 async def _fetch_audio(redis: Redis, cache: Cache, hashes: list[str]) -> list[bytes]:
@@ -203,10 +231,16 @@ async def _fetch_audio(redis: Redis, cache: Cache, hashes: list[str]) -> list[by
     return [a for a in audio if a is not None]
 
 
-def write_audio_file(
-    path: Path, fmt: ExportFormat, chapters: list[Chapter], fetch: Callable[[list[str]], list[bytes]]
+async def write_audio_file(
+    path: Path,
+    fmt: ExportFormat,
+    chapters: list[Chapter],
+    fetch: Callable[[list[str]], Awaitable[list[bytes]]],
+    on_progress: Callable[[float], Awaitable[None]],
 ) -> None:
     """Decode the chapters' Ogg Opus blocks in order and encode them as one stream, then add the chapters.
+
+    on_progress hears the fraction of the blocks that are encoded, after each.
 
     MP3 keeps its chapters in the ID3 tag at the head of the file, written before the first frame,
     and a chapter's start is known only once the blocks before it are decoded. So the stream is
@@ -215,68 +249,104 @@ def write_audio_file(
     scratch = f".{path.name}.{uuid.uuid4().hex}"
     encoded, chaptered = path.parent / f"{scratch}.encoded", path.parent / f"{scratch}.chaptered"
     try:
-        marks = _encode(encoded, ENCODINGS[fmt], chapters, fetch)
-        _remux_with_chapters(encoded, chaptered, ENCODINGS[fmt], marks)
+        marks = await _encode(encoded, ENCODINGS[fmt], chapters, fetch, on_progress)
+        await _on_build_thread(_remux_with_chapters, encoded, chaptered, ENCODINGS[fmt], marks)
         os.replace(chaptered, path)
     finally:
         encoded.unlink(missing_ok=True)
         chaptered.unlink(missing_ok=True)
 
 
-def _encode(
-    path: Path, encoding: Encoding, chapters: list[Chapter], fetch: Callable[[list[str]], list[bytes]]
+def _on_build_thread[T](fn: Callable[..., T], *args) -> asyncio.Future[T]:
+    return asyncio.get_running_loop().run_in_executor(_build_threads, fn, *args)
+
+
+async def _encode(
+    path: Path,
+    encoding: Encoding,
+    chapters: list[Chapter],
+    fetch: Callable[[list[str]], Awaitable[list[bytes]]],
+    on_progress: Callable[[float], Awaitable[None]],
 ) -> list[dict]:
-    """Encode the chapters into path; returns each chapter's span in seconds of the blocks' decoded audio."""
+    """Encode the chapters into path; returns each chapter's span in seconds of the stream."""
     out = av.open(str(path), "w", format=encoding.container)
-    stream = out.add_stream(encoding.codec, rate=SAMPLE_RATE, layout="mono")
+    stream = out.add_stream(encoding.codec, rate=SAMPLE_RATE, layout="mono", options=encoding.options)
     assert isinstance(stream, av.AudioStream)
     stream.bit_rate = BIT_RATE
-    resampler = av.AudioResampler(format=stream.format, layout="mono", rate=SAMPLE_RATE)
-    written = 0  # output samples; frames carry them as pts, which lets the muxer trim the encoder's priming
-    elapsed = Fraction(0)
-    marks = []
+    stream.format = "fltp"  # LAME's default is integers, and FFmpeg's downmix to those halves the level
+    time_base = Fraction(1, SAMPLE_RATE)
 
-    def encode(frames: list[av.AudioFrame]) -> None:
-        nonlocal written
-        for frame in frames:
-            frame.pts = written
-            frame.time_base = Fraction(1, SAMPLE_RATE)
-            written += frame.samples
-            for packet in stream.encode(frame):
-                out.mux(packet)
+    def encode(block: av.AudioFrame, at: int) -> None:
+        block.pts = at  # lets the muxer trim the encoder's priming
+        block.time_base = time_base
+        out.mux(stream.encode(block))
 
-    for chapter in chapters:
-        start = elapsed
-        for first in range(0, len(chapter.variant_hashes), FETCH_BATCH):
-            for audio in fetch(chapter.variant_hashes[first : first + FETCH_BATCH]):
-                for frame in _decode_block(audio):
-                    elapsed += Fraction(frame.samples, frame.sample_rate)
-                    encode(resampler.resample(frame))
-        marks.append({"title": chapter.title, "start": start, "end": elapsed})
-    encode(resampler.resample(None))
-    for packet in stream.encode(None):
-        out.mux(packet)
-    out.close()
+    def finish() -> None:
+        out.mux(stream.encode(None))
+        out.close()
+
+    lengths = [0] * len(chapters)
+    blocks = sum(len(c.variant_hashes) for c in chapters)
+    encoded = 0
+    async for chapter, block in _decoded_blocks(chapters, fetch):
+        await _on_build_thread(encode, block, sum(lengths))
+        lengths[chapter] += block.samples
+        encoded += 1
+        await on_progress(encoded / blocks)
+    await _on_build_thread(finish)
+    marks, start = [], 0
+    for chapter, length in zip(chapters, lengths):
+        marks.append({"title": chapter.title, "start": start * time_base, "end": (start + length) * time_base})
+        start += length
     return marks
 
 
-def _decode_block(audio: bytes) -> Iterator[av.AudioFrame]:
-    """A block's frames, cut to the length it was encoded from.
+async def _decoded_blocks(
+    chapters: list[Chapter], fetch: Callable[[list[str]], Awaitable[list[bytes]]]
+) -> AsyncIterator[tuple[int, av.AudioFrame]]:
+    """Each block's audio in order, with its chapter's index; up to CORES blocks are decoded ahead of the one yielded."""
+    ahead: deque[tuple[int, asyncio.Future[av.AudioFrame]]] = deque()
+    for idx, chapter in enumerate(chapters):
+        for first in range(0, len(chapter.variant_hashes), FETCH_BATCH):
+            for audio in await fetch(chapter.variant_hashes[first : first + FETCH_BATCH]):
+                ahead.append((idx, _on_build_thread(_decode_block, audio)))
+                if len(ahead) > CORES:
+                    of, block = ahead.popleft()
+                    yield of, await block
+    for of, block in ahead:
+        yield of, await block
+
+
+def _decode_block(audio: bytes) -> av.AudioFrame:
+    """A block's audio as one mono frame at SAMPLE_RATE, cut to the length it was encoded from.
 
     FFmpeg's decoder leaves the encoder's end padding on a stream with a single audio page (a block
     under a second, such as a heading), which would put up to 13 ms of silence after it.
     """
     with av.open(io.BytesIO(audio), "r") as block:
         stream = block.streams.audio[0]
-        remaining = _encoded_samples(audio, bytes(stream.codec_context.extradata or b""))
-        for frame in block.decode(stream):
-            if remaining <= 0:
-                break
+        samples = _encoded_samples(audio, bytes(stream.codec_context.extradata or b""))
+        graph = av.filter.Graph()
+        graph.link_nodes(
+            graph.add_abuffer(template=stream),
+            graph.add("atrim", f"end_sample={samples}"),
+            graph.add("aformat", f"sample_fmts=fltp:sample_rates={SAMPLE_RATE}:channel_layouts=mono"),
+            graph.add("abuffersink"),
+        ).configure()
+        for frame in [*block.decode(stream), None]:
+            graph.push(frame)
+    fifo = av.AudioFifo()
+    try:
+        while True:
+            frame = graph.pull()
+            assert isinstance(frame, av.AudioFrame)
             frame.pts = None
-            if frame.samples > remaining:
-                frame = _head(frame, remaining)
-            remaining -= frame.samples
-            yield frame
+            fifo.write(frame)
+    except av.EOFError:
+        pass
+    whole = fifo.read()
+    assert whole is not None, "a cached block holds audio"
+    return whole
 
 
 def _encoded_samples(audio: bytes, opus_head: bytes) -> int:
@@ -301,14 +371,6 @@ def _last_page(audio: bytes) -> int:
         if at + 27 + len(segments) + sum(segments) == len(audio):
             return at
     raise ValueError("No Ogg page ends the block")
-
-
-def _head(frame: av.AudioFrame, samples: int) -> av.AudioFrame:
-    fifo = av.AudioFifo()
-    fifo.write(frame)
-    head = fifo.read(samples)
-    assert head is not None
-    return head
 
 
 def _remux_with_chapters(src_path: Path, dst_path: Path, encoding: Encoding, marks: list[dict]) -> None:
