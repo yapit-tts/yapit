@@ -24,10 +24,12 @@ from yapit.gateway.cache import CacheConfig
 from yapit.gateway.config import get_settings
 from yapit.gateway.domain_models import BlockVariant, Document, TTSModel, Voice
 from yapit.gateway.result_consumer import _process_result
+from yapit.workers.kokoro.ogg_opus import pcm_to_ogg_opus
 
 from .conftest import DEFAULT_TEST_USER
 
 RATE = 24_000
+AMPLITUDE = 8000
 # Block lengths in samples, each distinct so a block dropped, doubled or reordered changes the sums
 BLOCK_SAMPLES = [RATE * 2 + 123, RATE + 7, RATE * 3 + 999, RATE // 2 + 1, RATE * 2 + 50, RATE + 333]
 
@@ -44,7 +46,10 @@ async def kokoro(session):
 
 @pytest.fixture
 async def book(client, session, kokoro, app, monkeypatch) -> uuid.UUID:
-    """A document of six blocks, all in the cache: odd blocks in Redis only, as before the persister ran."""
+    """A document of six blocks, all in the cache: odd blocks in Redis only, as before the persister ran.
+
+    The first three are stereo, as the Kokoro worker wrote blocks before it wrote mono.
+    """
     # Two blocks decoded ahead of the encoder, so on any host a build of the six has to keep them in order
     monkeypatch.setattr(audio_export, "CORES", 2)
     content = "\n\n".join(f"Paragraph {i} of the book is read aloud." for i in range(len(BLOCK_SAMPLES)))
@@ -56,7 +61,8 @@ async def book(client, session, kokoro, app, monkeypatch) -> uuid.UUID:
         variant_hash = BlockVariant.get_hash(
             text=text, model_slug="kokoro", voice_slug="af_heart", parameters=kokoro.parameters
         )
-        audio = _ogg_opus(samples, pitch=idx + 1)
+        # Pitch 1 (115 Hz) loses a fifth of its level through Opus, so the blocks start at pitch 2
+        audio = _ogg_opus(samples, pitch=idx + 2, layout="stereo" if idx < 3 else "mono")
         if idx % 2:
             await app.state.redis_client.set(TTS_AUDIO_CACHE.format(hash=variant_hash), audio)
         else:
@@ -64,12 +70,14 @@ async def book(client, session, kokoro, app, monkeypatch) -> uuid.UUID:
     return document_id
 
 
-def _ogg_opus(samples: int, pitch: int) -> bytes:
-    """A block as the Kokoro worker writes it: 24 kHz mono int16 PCM as 48 kbps Ogg Opus."""
-    pcm = (np.sin(np.arange(samples) * 0.03 * pitch) * 8000).astype(np.int16)
+def _ogg_opus(samples: int, pitch: int, layout: str) -> bytes:
+    """A block as the Kokoro worker writes it, or as it wrote it before: mono PCM upmixed into 48 kbps stereo Opus."""
+    pcm = (np.sin(np.arange(samples) * 0.03 * pitch) * AMPLITUDE).astype(np.int16)
+    if layout == "mono":
+        return pcm_to_ogg_opus(pcm.tobytes())
     buf = io.BytesIO()
     with av.open(buf, "w", format="ogg") as out:
-        stream = out.add_stream("libopus", rate=RATE)
+        stream = out.add_stream("libopus", rate=RATE, layout="stereo")
         stream.bit_rate = 48_000
         frame = av.AudioFrame.from_ndarray(pcm.reshape(1, -1), format="s16", layout="mono")
         frame.sample_rate = RATE
@@ -164,17 +172,21 @@ async def test_an_export_plays_a_sections_blocks_in_their_order(client, app, boo
 
     starts = [seconds(0, idx - 1) if idx else 0.0 for idx in range(len(BLOCK_SAMPLES))]
     spans = [(start, start + samples / RATE) for start, samples in zip(starts, BLOCK_SAMPLES)]
-    assert pitches(data, spans) == [1, 2, 3, 4, 5, 6]
+    assert pitches(data, spans) == [2, 3, 4, 5, 6, 7]
 
 
 @pytest.mark.parametrize("fmt", ["m4b", "mp3"])
-async def test_an_export_plays_at_the_level_of_its_blocks(client, app, book, fmt):
+async def test_an_export_plays_each_block_at_the_level_it_plays_at_on_its_own(client, app, book, fmt):
     data = await exported(client, app, book, [(0, 5, "Whole book")], fmt)
 
     with av.open(io.BytesIO(data), "r") as container:
+        rate = container.streams.audio[0].rate
         pcm = np.concatenate([frame.to_ndarray()[0] for frame in container.decode(audio=0)])
-    sine_rms = 8000 / 32768 / np.sqrt(2)
-    assert 20 * np.log10(np.sqrt(np.mean(np.square(pcm))) / sine_rms) == pytest.approx(0, abs=1)
+    starts = [seconds(0, idx - 1) if idx else 0.0 for idx in range(len(BLOCK_SAMPLES))]
+    middles = [int((start + samples / RATE / 2) * rate) for start, samples in zip(starts, BLOCK_SAMPLES)]
+    levels = [np.sqrt(2 * np.mean(np.square(pcm[m - rate // 10 : m + rate // 10]))) * 32768 for m in middles]
+    # A stereo block's channels each carry 1/sqrt(2) of its PCM, and mono blocks are written to match
+    assert levels == pytest.approx([AMPLITUDE / np.sqrt(2)] * 6, rel=0.1)
 
 
 async def test_a_build_tells_the_tab_how_many_of_its_blocks_are_encoded(client, app, book):
@@ -303,7 +315,7 @@ def audio_cache_of(app, max_size_mb: int):
 async def test_a_job_whose_audio_would_not_fit_the_audio_cache_is_refused_before_any_block_is_queued(
     client, app, kokoro, session
 ):
-    # 270,000 characters at the estimate's 14 a second: 5.4 hours, some 110 MiB of 48 kbps Opus
+    # 270,000 characters at the estimate's 14 a second: 5.4 hours, some 74 MiB of 32 kbps Opus
     content = "\n\n".join("A sentence of about fifty characters, read aloud here." * 5 for _ in range(1000))
     document_id = uuid.UUID((await client.post("/v1/documents/text", json={"content": content})).json()["id"])
     blocks = len((await session.get(Document, document_id)).audio_texts)
@@ -314,13 +326,13 @@ async def test_a_job_whose_audio_would_not_fit_the_audio_cache_is_refused_before
         "ranges": [{"first_block": 0, "last_block": blocks - 1, "title": "All"}],
     }
 
-    with audio_cache_of(app, max_size_mb=100):
+    with audio_cache_of(app, max_size_mb=70):
         refused = await client.post(f"/v1/documents/{document_id}/audio-job", json=whole)
     queued = await app.state.redis_client.zcard(get_queue_name("kokoro")), await app.state.redis_client.hlen(TTS_JOBS)
-    with audio_cache_of(app, max_size_mb=150):
+    with audio_cache_of(app, max_size_mb=80):
         accepted = await client.post(f"/v1/documents/{document_id}/audio-job", json=whole)
 
     assert refused.status_code == 422
-    assert "100 MB audio cache" in refused.json()["detail"]
+    assert "70 MB audio cache" in refused.json()["detail"]
     assert queued == (0, 0)
     assert accepted.status_code == 201

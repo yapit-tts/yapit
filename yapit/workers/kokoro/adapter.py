@@ -1,23 +1,20 @@
 import asyncio
-import io
 import json
 import os
 from pathlib import Path
 from typing import Unpack
 
-import av
 import numpy as np
 import torch
 from kokoro import KModel, KPipeline
 from typing_extensions import TypedDict
 
-from yapit.contracts import KOKORO_OPUS_BITRATE
 from yapit.synth import SynthAdapter
+from yapit.workers.kokoro.ogg_opus import KOKORO_SAMPLE_RATE, pcm_to_ogg_opus
 
 DEVICE: str = os.getenv("DEVICE", "")
 
 REPO_ID = "hexgrad/Kokoro-82M"
-KOKORO_SAMPLE_RATE = 24_000
 
 # Kokoro's non-English chunker only splits on ASCII sentence enders and silently truncates
 # chunks over 510 phonemes — a single 250-char CJK block far exceeds that. Splitting on CJK
@@ -96,7 +93,7 @@ class KokoroAdapter(SynthAdapter[VoiceConfig]):
         self._last_duration_ms = int(len(pcm) / (KOKORO_SAMPLE_RATE * 2) * 1000)
         self._last_word_timestamps = all_timestamps if all_timestamps else None
 
-        return _pcm_to_ogg_opus(pcm)
+        return pcm_to_ogg_opus(pcm)
 
     def calculate_duration_ms(self, audio_bytes: bytes) -> int:
         return self._last_duration_ms
@@ -108,25 +105,3 @@ class KokoroAdapter(SynthAdapter[VoiceConfig]):
 def _lang_code(voice_slug: str) -> str:
     """Kokoro voice slugs start with their language code: ef_dora -> 'e' (Spanish)."""
     return voice_slug[0]
-
-
-def _pcm_to_ogg_opus(pcm_bytes: bytes) -> bytes:
-    """Encode raw 24kHz mono int16 PCM to OGG_OPUS."""
-    if not pcm_bytes:
-        return b""
-    buf = io.BytesIO()
-    output = av.open(buf, "w", format="ogg")
-    stream = output.add_stream("libopus", rate=KOKORO_SAMPLE_RATE)
-    stream.bit_rate = KOKORO_OPUS_BITRATE
-
-    samples = np.frombuffer(pcm_bytes, dtype=np.int16)
-    frame = av.AudioFrame.from_ndarray(samples.reshape(1, -1), format="s16", layout="mono")
-    frame.sample_rate = KOKORO_SAMPLE_RATE
-
-    for packet in stream.encode(frame):
-        output.mux(packet)
-    for packet in stream.encode(None):
-        output.mux(packet)
-    output.close()
-
-    return buf.getvalue()

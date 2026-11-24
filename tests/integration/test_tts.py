@@ -89,7 +89,7 @@ async def test_degenerate_text_skipped_not_crashed(subscribed_ws_client, subscri
 
     Before the Opus encoding change (1d69419), empty PCM from Kokoro flowed
     through as audio_base64="" and the result consumer marked it "skipped".
-    After Opus, _pcm_to_ogg_opus crashed on the 0-sample frame with MemoryError,
+    After Opus, the Opus encoder crashed on the 0-sample frame with MemoryError,
     turning a skip into a synthesis error with retries.
     """
     text = "<"
