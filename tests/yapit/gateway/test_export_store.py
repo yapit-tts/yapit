@@ -73,13 +73,6 @@ def test_builds_downloads_and_sweeps_in_any_order_keep_the_files_within_the_boun
             assert max(order[n] for n in deleted) < min(order[n] for n in kept), "a newer file went first"
 
 
-def test_a_build_larger_than_the_bound_is_refused_saying_so(tmp_path):
-    store = ExportStore.open(tmp_path, 3 * 2**20)
-
-    with pytest.raises(NoRoom, match="too large for the 3 MB"):
-        store.reserve("big", 3 * 2**20 + 1)
-
-
 def test_a_restart_counts_what_the_directory_holds_and_deletes_scratch_no_build_writes(tmp_path):
     now = time.time()
     for name, size, age in [

@@ -125,7 +125,7 @@ async def export_heard(
     await pubsub.subscribe(get_pubsub_channel(DEFAULT_TEST_USER.id, document_id))
     await pubsub.get_message(timeout=1)
     states = [(await export(client, document_id, ranges, fmt)).json()]
-    while states[-1].get("status") == "building":
+    while states[-1]["status"] == "building":
         message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=30)
         assert message is not None, "the build never ended"
         if disk is not None:
@@ -369,8 +369,8 @@ async def test_a_job_whose_audio_would_not_fit_the_audio_cache_is_refused_before
     assert accepted.status_code == 201
 
 
-# The whole book is some 78 KB as a file. Its build holds up to some 156 KB of room: twice what the
-# encoder was measured to write, then the encoded stream and the copy that carries the chapters.
+# The whole book is some 78 KB as a file. Its build holds up to some 156 KB of room: twice the bit
+# rate while it encodes, then both copies of the stream while the chapters are added.
 
 
 @pytest.mark.parametrize("fmt", list(ExportFormat))
