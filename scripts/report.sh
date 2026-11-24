@@ -198,7 +198,7 @@ Event types:
 - `detection_queued`, `detection_complete`, `detection_error`
 - `job_requeued` (a visibility timeout fired), `job_dlq`
 - `heartbeat`: written by the metrics writer whenever its interval passes with no other write. Leave it out of activity counts.
-- `document_extraction_complete` (`processor_slug`: pymupdf, epub, passthrough, defuddle:static, defuddle:static-bot, defuddle:playwright, gemini; `duration_ms`; `data.chars`, `data.images`, `data.pages`) and `document_extraction_error` (`processor_slug`, `data.error`, `data.content_type`)
+- `document_extraction_complete` (`processor_slug`: pymupdf, epub, passthrough, defuddle:static, defuddle:static-bot, defuddle:playwright, defuddle:playwright-styled, gemini; `duration_ms`; `data.chars`, `data.images`, `data.pages`) and `document_extraction_error` (`processor_slug`, `data.error`, `data.content_type`)
 - `extraction_estimate`; `page_extraction_complete` and `page_extraction_error`, one per Gemini page call, with token counts
 - `api_rate_limit`: every 429 from an external API, before the retry (`data.api_name`, `retry_count`)
 - `error` and `warning`: failures and near-failures the gateway caught itself (`data.message`). An `error` can mean work was silently dropped, such as audio that was synthesized but never cached.

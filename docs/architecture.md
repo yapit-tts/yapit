@@ -124,7 +124,10 @@ this to the user, then calls the create endpoint with the cache key.
 flowchart TD
     URL["URL"] --> S1["Static fetch (normal UA)<br/>linkedom + defuddle"]
     S1 --> C1{"wordCount > 0?"}
-    C1 -->|Yes| RESOLVE["Resolve relative URLs"]
+    C1 -->|Yes| SVG{"inline SVG?"}
+    SVG -->|No| RESOLVE["Resolve relative URLs"]
+    SVG -->|Yes| PWS["Playwright, figures styled<br/>(static result if it loses text or fails)"]
+    PWS --> RESOLVE
     C1 -->|No| S2["Static fetch (bot UA)<br/>linkedom + defuddle"]
     S2 --> C2{"wordCount > 0?"}
     C2 -->|Yes| RESOLVE
@@ -133,7 +136,7 @@ flowchart TD
 ```
 
 All fetches go through Smokescreen SSRF proxy, under one user agent, after a `robots.txt` check, and signed where a key is set ([[web-bot-auth]]); a refusal ends the cascade. Static path handles most content sites.
-Playwright fallback reserved for JS-rendered SPAs where HTML is an empty shell.
+Playwright fallback for JS-rendered SPAs where HTML is an empty shell, and for pages with inline SVG figures, whose look only a browser that loads the stylesheet sees.
 
 ### AI extraction
 

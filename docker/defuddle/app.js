@@ -3,7 +3,8 @@
  *
  * Cascade: static fetch + linkedom → bot UA retry → Playwright browser fallback.
  * Static extraction handles the vast majority of content sites. Playwright is
- * reserved for JS-rendered SPAs where the HTML is an empty shell.
+ * reserved for JS-rendered SPAs where the HTML is an empty shell, and for pages whose
+ * static extraction holds an inline SVG: only a browser sees the stylesheet that styles it.
  * A Refusal (robots.txt, a site's bot protection) ends the cascade: no other path may fetch the page either.
  */
 
@@ -12,6 +13,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Defuddle } from "defuddle/node";
 import { chromium } from "playwright";
+import { inlineSvgStyles, snapshotCanvases } from "./svg-styles.js";
 import { MAX_REDIRECTS, USER_AGENT, Refusal, assertNotChallenged, createFetcher, readCapped } from "./fetcher.js";
 
 const PROXY_URL = process.env.PROXY_URL;
@@ -26,6 +28,9 @@ const STATIC_FETCH_TIMEOUT_MS = 5_000;
 const MAX_PAGE_SIZE = 20 * 1024 * 1024;
 const BOT_UA = USER_AGENT + " bot";
 const BOT_UA_DOMAINS = ["github.com"];
+const LOAD_WAIT_MS = 5_000;
+// The share of the static extraction's words the styled one has to keep to replace it.
+const STYLED_MIN_WORD_SHARE = 0.9;
 
 const fetcher = createFetcher(PROXY_URL, SIGNER_URL);
 const bundle = readFileSync("defuddle_bundle.js", "utf-8");
@@ -85,6 +90,10 @@ async function extractStatic(call, url, userAgent, timeoutMs) {
 	};
 }
 
+function hasInlineSvg(markdown) {
+	return /<svg[\s>]/i.test(markdown);
+}
+
 // --- Playwright extraction (browser rendering + defuddle bundle) ---
 
 async function getBrowser() {
@@ -108,7 +117,8 @@ async function getBrowser() {
 
 async function extractPlaywright(call, url, timeoutMs) {
 	const b = await getBrowser();
-	const context = await b.newContext({ proxy: { server: PROXY_URL }, userAgent: USER_AGENT });
+	// Reduced motion: pages that honour it draw their figures in their final state.
+	const context = await b.newContext({ proxy: { server: PROXY_URL }, userAgent: USER_AGENT, reducedMotion: "reduce" });
 	await context.addInitScript(bundle);
 
 	// Chromium follows a redirect without asking the route again, so a navigation is fetched
@@ -158,13 +168,16 @@ async function extractPlaywright(call, url, timeoutMs) {
 		if (resp) assertNotChallenged(resp.headers()["cf-mitigated"]);
 		if (resp && resp.status() >= 400) {
 			console.log(`Playwright got HTTP ${resp.status()} for ${url}`);
-			return { markdown: "", title: null };
+			return { markdown: "", title: null, wordCount: 0 };
 		}
 
+		await page.waitForLoadState("load", { timeout: Math.min(LOAD_WAIT_MS, timeoutMs) }).catch(() => {});
+		await page.evaluate(snapshotCanvases);
+		await page.evaluate(inlineSvgStyles);
 		return await page.evaluate(async (u) => {
 			const d = new Defuddle(document, { url: u, markdown: true });
 			const r = await d.parseAsync();
-			return { markdown: r.content || "", title: r.title || null };
+			return { markdown: r.content || "", title: r.title || null, wordCount: r.wordCount || 0 };
 		}, url);
 	} finally {
 		await page.close();
@@ -193,6 +206,13 @@ async function extract(url, timeoutMs) {
 		const result = await extractStatic(call, url, initialUA, remaining());
 		if (result.wordCount > 0) {
 			const method = initialUA === BOT_UA ? "static-bot" : "static";
+			if (hasInlineSvg(result.markdown)) {
+				const styled = await extractStyled(call, url, result, remaining());
+				if (styled) {
+					log("playwright-styled", url, t0, styled);
+					return { markdown: styled.markdown, title: styled.title, extraction_method: "playwright-styled" };
+				}
+			}
 			log(method, url, t0, result);
 			return { markdown: result.markdown, title: result.title, extraction_method: method };
 		}
@@ -228,6 +248,22 @@ async function extract(url, timeoutMs) {
 		if (e instanceof Refusal) throw e;
 		console.error(`Playwright failed for ${url}: ${e.message}`);
 		return { markdown: "", title: null, extraction_method: "playwright-error" };
+	} finally {
+		browserSlots++;
+	}
+}
+
+/** The page as a browser draws it, where that keeps the static extraction's text; else null. */
+async function extractStyled(call, url, staticResult, timeoutMs) {
+	if (browserSlots <= 0 || timeoutMs < 1000) return null;
+	browserSlots--;
+	try {
+		const result = await extractPlaywright(call, url, timeoutMs);
+		return result.wordCount >= staticResult.wordCount * STYLED_MIN_WORD_SHARE ? result : null;
+	} catch (e) {
+		if (e instanceof Refusal) throw e;
+		console.log(`Styled extraction failed for ${url}: ${e.message}`);
+		return null;
 	} finally {
 		browserSlots++;
 	}
