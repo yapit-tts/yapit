@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+* Added **Generate in background**: the audio-file button in a document's header (or `g`) opens a panel where you tick sections and a server voice, and the server generates their audio whether or not a tab stays open. Playback of those sections then starts without waiting, at any speed. A listener's block is always taken before a job's, each user runs one job at a time, and the playback bar shows the job's progress. It needs a voice that runs on the server; audio made in the browser is not kept.  #102
+* Added saving a document's audio as one **M4B or MP3** file with a chapter per ticked section, from the same panel, once those sections are generated. The panel shows the build's and the download's progress: a five-minute document builds in about a second, a ten-hour book in about two minutes. Saving needs an account; a single-user selfhost without auth saves as before. Files are kept for a day and together take at most `AUDIO_EXPORT_MAX_SIZE_MB` (5 GB by default), the oldest deleted first.
+* Kokoro's audio is now stored as mono at 32 kbps where it was two identical channels at 48 kbps, about a third smaller. In a blind test it was not told apart from the old audio. Audio already cached stays as it is and keeps playing.
+* Added keys for the document header: `c` copies the markdown, `d` opens the download menu, `g` opens Generate in background. Keys on the reading page now leave combinations with Ctrl, Cmd or Alt to the browser; before, Ctrl+K opened search and also skipped back a block.
+* Added sign-in with a passkey (a security key, or one kept by your device or password manager), beside the emailed link. Passkeys are added, renamed and removed on the account page. They are off where browsers refuse them: a selfhost without auth, or over plain http away from localhost.
+* Yapit's page fetcher now identifies itself as `Yapit/1.0`, obeys `robots.txt`, and signs its requests (Web Bot Auth) where the instance has a signing key, so sites behind Cloudflare can let it through once Cloudflare has verified it. A page that `robots.txt` disallows is refused with a message that says so, and a bot-protection challenge is reported as one where it read "forbidden". `/bot` describes the fetcher.
+* A chart or diagram written into a web page as inline SVG now shows as an image and is read by its label, where it was dropped or read out as text.
+* When the AI Transform provider is out of credit, uploads say "AI Transform is unavailable right now" where they showed a generic failure, and the gateway emails `OPS_ALERT_EMAIL`, at most once an hour.
+* `make self-host` now adds settings that an upgrade introduced to `.env.selfhost` with the example's values, where it stopped and listed them.
+* Fixed selfhosts on podman never becoming healthy: the defuddle and gateway healthchecks now pass on podman 4.9 to 6.1 with docker-compose and podman-compose.  #100
+* Security: the frontend image moved to nginx 1.31.9, which fixes the flaws published on 2026-11-18 (CVE-2026-123007 among them); none was reachable in yapit's configuration.
+* Worker images now build from committed lockfiles, so a broken release on PyPI can no longer break an image build.
+
 ## v1.0.1 — 2026-11-10
 
 * Fixed upgrading a selfhost from before v1.0.0: its database still held the Stack Auth schema every selfhost was set up with, auth or no auth, and the v1.0.0 migration crashed on it, so the gateway never became healthy. #99
