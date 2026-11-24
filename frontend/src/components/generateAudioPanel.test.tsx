@@ -22,7 +22,7 @@ describe("GenerateAudioPanel", () => {
     expect(document.activeElement).toHaveTextContent("Heart");
   });
 
-  it("puts Tick all before the voice picker in Tab order, as it sits left of it", async () => {
+  it("reaches Tick all before the voice picker on Tab", async () => {
     renderPanel();
 
     const tickAll = await screen.findByRole("button", { name: /tick all sections/i });
