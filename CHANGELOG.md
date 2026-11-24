@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.1.0 — 2026-11-24
 
 * Added **Generate in background**: the audio-file button in a document's header (or `g`) opens a panel where you tick sections and a server voice, and the server generates their audio whether or not a tab stays open. Playback of those sections then starts without waiting, at any speed. A listener's block is always taken before a job's, each user runs one job at a time, and the playback bar shows the job's progress. It needs a voice that runs on the server; audio made in the browser is not kept.  #102
 * Added saving a document's audio as one **M4B or MP3** file with a chapter per ticked section, from the same panel, once those sections are generated. The panel shows the build's and the download's progress: a five-minute document builds in about a second, a ten-hour book in about two minutes. Saving needs an account; a single-user selfhost without auth saves as before. Files are kept for a day and together take at most `AUDIO_EXPORT_MAX_SIZE_MB` (5 GB by default), the oldest deleted first.
