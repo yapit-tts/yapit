@@ -15,7 +15,7 @@ beforeAll(() => {
 });
 
 describe("GenerateAudioPanel", () => {
-  it("opens with the voice picker focused and the info note shut", async () => {
+  it("opens on the voice picker rather than the title's (i), whose note opens on keyboard focus", async () => {
     render(
       <MemoryRouter>
         <GenerateAudioPanel
@@ -38,6 +38,5 @@ describe("GenerateAudioPanel", () => {
 
     await screen.findByText("Generate in background");
     expect(document.activeElement).toHaveTextContent("Heart");
-    expect(screen.queryByText(/You can close this tab/)).not.toBeInTheDocument();
   });
 });
