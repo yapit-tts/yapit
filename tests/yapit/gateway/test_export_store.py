@@ -120,3 +120,54 @@ def test_a_file_another_gateway_built_or_deleted_is_counted_as_it_stands(tmp_pat
 
     assert found == tmp_path / "f.mp3" and taken_with_it == 40_000
     assert gone is None and store.taken == 0
+
+
+def built(store: ExportStore, key: str, size: int) -> Path:
+    """A file a build of size bytes left in the store."""
+    store.reserve(key, size)
+    path = store.path(key, ExportFormat.m4b)
+    path.write_bytes(b"\0" * size)
+    store.shelve(key, path)
+    return path
+
+
+def test_a_file_the_bound_deletes_before_its_day_is_over_is_recorded_and_one_whose_day_is_over_is_not(
+    tmp_path, monkeypatch, metrics_events
+):
+    days_later = [0]
+    clock = SimpleNamespace(time=lambda: time.time() + days_later[0] * (EXPORT_TTL_S + 1), monotonic=time.monotonic)
+    monkeypatch.setattr(audio_export, "time", clock)
+    store = ExportStore.open(tmp_path, MAX_BYTES)
+
+    built(store, "a", 60_000)
+    built(store, "b", 30_000)
+    built(store, "c", 50_000)  # pushes a out
+    early = metrics_events()
+    days_later[0] = 1
+    built(store, "d", 80_000)  # pushes out b and c, their day over but not yet swept
+    built(store, "e", 10_000)
+    store.sweep()  # d's day is not over
+    days_later[0] = 2
+    store.sweep()  # deletes d and e
+
+    assert [(e["event_type"], e["data"]["bytes"]) for e in early] == [("audio_export_deleted_early", 60_000)]
+    assert early[0]["data"]["age_s"] < 60
+    assert metrics_events() == []
+
+
+def test_a_build_refused_for_lack_of_room_is_recorded_with_why(tmp_path, metrics_events):
+    store = ExportStore.open(tmp_path, MAX_BYTES)
+    release = store.hold(built(store, "held", 60_000))
+    store.reserve("growing", 30_000)
+
+    for key, total in [("huge", MAX_BYTES + 1), ("new", 50_000), ("growing", 50_000)]:
+        with pytest.raises(NoRoom):
+            store.reserve(key, total)
+    release()
+
+    refused = [(e["event_type"], e["data"]["reason"], e["data"]["bytes"], e["data"]["while_building"]) for e in metrics_events()]
+    assert refused == [
+        ("audio_export_refused", "larger_than_bound", MAX_BYTES + 1, False),
+        ("audio_export_refused", "no_room", 50_000, False),
+        ("audio_export_refused", "no_room", 50_000, True),
+    ]

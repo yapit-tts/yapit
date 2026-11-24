@@ -169,11 +169,13 @@ class ExportStore:
         Raises NoRoom, deleting nothing, where deleting every file no download holds would not make it.
         """
         if total > self.max_bytes:
+            self._refused(key, total, "larger_than_bound")
             raise NoRoom(
                 f"This file is too large for the {self.max_bytes // 2**20:,} MB the server keeps "
                 "for audio files. Pick fewer sections."
             )
         if not self._make_room(total - self._rooms.get(key, 0)):
+            self._refused(key, total, "no_room")
             raise NoRoom("The server has no room for another audio file right now. Save again in a few minutes.")
         self._rooms[key] = total
 
@@ -234,9 +236,18 @@ class ExportStore:
             return False
         while excess > 0:
             name = next(name for name in self._files if not self._held[name])
-            excess -= self._files[name].size
+            file = self._files[name]
+            excess -= file.size
             self._delete(name)
+            if (age_s := time.time() - file.built) < EXPORT_TTL_S:
+                record_event("audio_export_deleted_early", data={"bytes": file.size, "age_s": round(age_s)})
         return True
+
+    def _refused(self, key: str, total: int, reason: str) -> None:
+        record_event(
+            "audio_export_refused",
+            data={"reason": reason, "bytes": total, "while_building": key in self._rooms, "taken": self.taken},
+        )
 
     def _add(self, name: str, file: _File) -> None:
         self._files[name] = file

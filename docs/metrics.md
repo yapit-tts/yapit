@@ -49,6 +49,8 @@ Why this exists: Swarm deploys race the gateway (`update_config: start-first`) a
 ### Saved audio files
 The files a user saves from a document's audio (`yapit/gateway/audio_export.py`), kept 24 hours within `AUDIO_EXPORT_MAX_SIZE_MB`.
 - `audio_export_built` — A file finished building (`duration_ms` its build, `user_id` who started it, `data.format`, `data.seconds`, `data.bytes`)
+- `audio_export_deleted_early` — The size bound deleted a file before its 24 hours were over, to make room for a build (`data.bytes`, `data.age_s`). Files whose day is over are deleted without an event.
+- `audio_export_refused` — A build could not hold the room for its file and failed (`data.reason`: `larger_than_bound`, the file alone is over the bound, or `no_room`, the files being downloaded and the other builds leave none; `data.bytes` the room asked for; `data.while_building` false when refused before its first block, true when it failed partway; `data.taken` the bytes counted against the bound at the time)
 
 ### URL Fetching
 - `url_fetch` — HTTP download (duration_ms, content_type, size_bytes, errors)
