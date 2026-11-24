@@ -83,25 +83,17 @@ def third_party_imports(files: set[Path]):
 
 def imported_modules(path: Path) -> set[str]:
     """Each module an import statement in the file names, `from a import b` naming both a and a.b."""
-    module = module_name(path)
-    package = module if path.name == "__init__.py" else module.rpartition(".")[0]
     names = set()
     for node in ast.walk(ast.parse(path.read_text(), str(path))):
         if isinstance(node, ast.Import):
             names |= {alias.name for alias in node.names}
         elif isinstance(node, ast.ImportFrom):
-            base = node.module or ""
-            if node.level:
-                anchor = package.rsplit(".", node.level - 1)[0] if node.level > 1 else package
-                base = f"{anchor}.{base}" if base else anchor
-            names.add(base)
-            names |= {f"{base}.{alias.name}" for alias in node.names}
+            assert node.module and not node.level, (
+                f"{path}:{node.lineno}: a relative import, which this check cannot follow"
+            )
+            names.add(node.module)
+            names |= {f"{node.module}.{alias.name}" for alias in node.names}
     return names
-
-
-def module_name(path: Path) -> str:
-    parts = path.relative_to(REPO).with_suffix("").parts
-    return ".".join(parts[:-1] if parts[-1] == "__init__" else parts)
 
 
 def module_files(name: str) -> list[Path]:
