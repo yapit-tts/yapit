@@ -521,7 +521,9 @@ async def test_however_many_files_are_asked_for_they_take_no_more_than_the_bound
     assert store.taken == bytes_on_disk(app)
 
 
-async def test_a_file_larger_than_the_bound_fails_saying_so_and_leaves_nothing_behind(client, app, book):
+async def test_a_file_larger_than_the_bound_fails_saying_so_and_leaves_nothing_behind(
+    client, app, book, metrics_events
+):
     store = keep_at_most(app, 150_000)
     disk: list[tuple[int, int]] = []
 
@@ -532,6 +534,7 @@ async def test_a_file_larger_than_the_bound_fails_saying_so_and_leaves_nothing_b
     assert within(disk, 150_000)
     assert list(export_dir(app).iterdir()) == []
     assert store.taken == 0
+    assert "audio_export_built" not in [e["event_type"] for e in metrics_events()]
 
 
 async def test_a_file_being_downloaded_is_not_deleted_and_downloads_whole(client, app, book, metrics_events):
