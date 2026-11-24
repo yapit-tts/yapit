@@ -665,7 +665,11 @@ function ImageBlockView({ block, inRow }: BlockProps & { block: ImageBlock; inRo
           alt={block.alt}
           title={block.title}
           referrerPolicy="no-referrer"
-          className="max-w-full max-h-96 h-auto object-contain rounded"
+          className={cn(
+            "max-w-full max-h-96 h-auto object-contain rounded",
+            // An SVG drawn in currentColor is black inside an <img>, whatever the theme.
+            block.src.startsWith("data:image/svg+xml") && "bg-white p-2",
+          )}
           onError={() => setBroken(true)}
         />
       )}
