@@ -142,7 +142,7 @@ make report           # full analysis
 make report-post-deploy  # with deploy context
 ```
 
-**Note:** The visibility timeout values in the report prompt are a copy of the constants in `yapit/gateway/__init__.py` — when changing them, update `scripts/report.sh` in the same commit.
+**Note:** The visibility timeout values in the report prompt are a copy of the constants in `yapit/gateway/__init__.py` — when changing them, update `scripts/report.sh` in the same commit. So are the saved audio files' bound (`AUDIO_EXPORT_MAX_SIZE_MB` in `.env.prod`) and download deadline (`DOWNLOAD_GRACE_S`, `DOWNLOAD_MIN_BYTES_PER_S` in `yapit/gateway/api/v1/audio_jobs.py`), against which the report judges their churn.
 
 ## Gotchas
 
