@@ -381,7 +381,10 @@ async def test_a_job_whose_audio_would_not_fit_the_audio_cache_is_refused_before
     ids=["book", "long-titles", "short-titles"],
 )
 async def test_a_build_writes_no_more_than_the_room_it_holds(tmp_path, fmt, selection, monkeypatch):
-    blocks = [_ogg_opus(samples, pitch=idx + 1) for idx, samples in enumerate(BLOCK_SAMPLES)]
+    blocks = [
+        _ogg_opus(samples, pitch=idx + 2, layout="stereo" if idx < 3 else "mono")
+        for idx, samples in enumerate(BLOCK_SAMPLES)
+    ]
     chapters = [Chapter(title=t, variant_hashes=[str(i) for i in range(f, last + 1)]) for f, last, t in selection]
     granted, overdrawn = [0], []
 
