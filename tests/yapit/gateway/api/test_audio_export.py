@@ -534,7 +534,7 @@ async def test_a_file_larger_than_the_bound_fails_saying_so_and_leaves_nothing_b
     assert store.taken == 0
 
 
-async def test_a_file_being_downloaded_is_not_deleted_and_downloads_whole(client, app, book):
+async def test_a_file_being_downloaded_is_not_deleted_and_downloads_whole(client, app, book, metrics_events):
     keep_at_most(app, 200_000)  # room for the held file or a build, not both
     held = (await export_heard(client, app, book, [(0, 5, "Held")]))[-1]["key"]
 
@@ -547,12 +547,15 @@ async def test_a_file_being_downloaded_is_not_deleted_and_downloads_whole(client
 
     assert crowded["status"] == "failed" and "Save again" in crowded["error"]
     assert status == 200 and int(headers[b"content-length"]) == len(body)
+    assert not [e for e in metrics_events() if e["event_type"] == "audio_export_download_cut_off"]
     assert probe(body)[0] == pytest.approx(seconds(0, 5), abs=0.001)
     assert after["status"] == "ready"
     assert gone.status_code == 404
 
 
-async def test_a_download_that_stops_reading_lets_its_file_go_at_its_deadline(client, app, book, monkeypatch):
+async def test_a_download_that_stops_reading_lets_its_file_go_at_its_deadline_and_is_recorded(
+    client, app, book, monkeypatch, metrics_events
+):
     store = keep_at_most(app, 200_000)  # room for the held file or a build, not both
     monkeypatch.setattr(audio_jobs, "DOWNLOAD_GRACE_S", 0.1)
     monkeypatch.setattr(audio_jobs, "DOWNLOAD_MIN_BYTES_PER_S", 10**9)
@@ -571,8 +574,10 @@ async def test_a_download_that_stops_reading_lets_its_file_go_at_its_deadline(cl
     await asyncio.wait_for(download.task, timeout=10)
     status, headers, body = download.received()
 
+    cut_off = [e["data"] for e in metrics_events() if e["event_type"] == "audio_export_download_cut_off"]
     assert crowding["status"] == "ready"
     assert status == 200 and len(body) < int(headers[b"content-length"])
+    assert [d["bytes"] for d in cut_off] == [int(headers[b"content-length"])]
 
 
 @asynccontextmanager
