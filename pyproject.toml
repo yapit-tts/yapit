@@ -37,7 +37,7 @@ dependencies = [
   "aiosqlite~=0.22.1",
   "aioboto3>=15.5.0",
   "openai>=2.0.0",
-  "av>=14.0.0",
+  "av~=18.1.1",
   "webauthn~=3.0.1",
   "cryptography~=50.0.2",
 ]
