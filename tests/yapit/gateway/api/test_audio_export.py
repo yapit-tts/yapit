@@ -24,6 +24,7 @@ from yapit.contracts import TTS_AUDIO_CACHE, TTS_JOBS, WorkerResult, get_pubsub_
 from yapit.gateway import audio_export
 from yapit.gateway.api.v1 import audio_jobs
 from yapit.gateway.audio_export import EXPORT_TTL_S, Chapter, ExportFormat, ExportStore, write_audio_file
+from yapit.gateway.auth import User, authenticate, authenticate_optional
 from yapit.gateway.cache import CacheConfig
 from yapit.gateway.config import get_settings
 from yapit.gateway.domain_models import BlockVariant, Document, TTSModel, Voice
@@ -118,14 +119,20 @@ async def exported(client, app, document_id, ranges, fmt: str = "m4b") -> bytes:
 
 
 async def export_heard(
-    client, app, document_id, ranges, fmt: str = "m4b", disk: list[tuple[int, int]] | None = None
+    client,
+    app,
+    document_id,
+    ranges,
+    fmt: str = "m4b",
+    disk: list[tuple[int, int]] | None = None,
+    user_id: str = DEFAULT_TEST_USER.id,
 ) -> list[dict]:
     """The export's answer, then what the tab watching the document hears of it, up to the end of its build.
 
     disk gets the bytes in the export directory, and those the store counts, each time the tab hears of the build.
     """
     pubsub = app.state.redis_client.pubsub()
-    await pubsub.subscribe(get_pubsub_channel(DEFAULT_TEST_USER.id, document_id))
+    await pubsub.subscribe(get_pubsub_channel(user_id, document_id))
     await pubsub.get_message(timeout=1)
     states = [(await export(client, document_id, ranges, fmt)).json()]
     while states[-1]["status"] == "building":
@@ -264,6 +271,47 @@ async def test_an_export_older_than_a_day_is_gone_and_a_fresh_one_stays(client, 
     assert old.status_code == 404
     assert [p.name for p in export_dir(app).iterdir()] == [f"{fresh_key}.mp3"]
     assert (await client.get(f"/v1/documents/{book}/audio-export/{fresh_key}.mp3")).status_code == 200
+
+
+async def test_a_guest_can_neither_save_nor_download_an_audio_file(client, app, book, session):
+    await make_public(session, book)
+    saved = (await export_heard(client, app, book, [(0, 5, "Whole book")]))[-1]
+
+    with as_guest(app):
+        save = await export(client, book, [(0, 5, "Whole book")])
+        download = await client.get(f"/v1/documents/{book}/audio-export/{saved['key']}.m4b")
+
+    assert save.status_code == 403 and "needs an account" in save.json()["detail"]
+    assert download.status_code == 403
+
+
+async def test_a_free_account_saves_and_downloads_a_public_documents_audio(client, app, book, session):
+    await make_public(session, book)
+
+    with signed_in_as(app, "free-reader"):  # no subscription
+        state = (await export_heard(client, app, book, [(0, 5, "Whole book")], user_id="free-reader"))[-1]
+        download = await client.get(f"/v1/documents/{book}/audio-export/{state['key']}.m4b")
+
+    assert state["status"] == "ready"
+    assert download.status_code == 200 and probe(download.content)[0] == pytest.approx(seconds(0, 5), abs=0.001)
+
+
+async def make_public(session, document_id: uuid.UUID) -> None:
+    doc = await session.get(Document, document_id)
+    doc.is_public = True
+    await session.commit()
+
+
+@contextmanager
+def as_guest(app):
+    guest = User(id="anon-a-guest", is_anonymous=True)
+    app.dependency_overrides[authenticate] = lambda: guest
+    app.dependency_overrides[authenticate_optional] = lambda: guest
+    try:
+        yield
+    finally:
+        app.dependency_overrides[authenticate] = lambda: DEFAULT_TEST_USER
+        app.dependency_overrides[authenticate_optional] = lambda: DEFAULT_TEST_USER
 
 
 async def test_an_export_with_a_block_not_prepared_is_refused(client, app, book, session, kokoro):
@@ -573,9 +621,7 @@ async def paused_download(app, path: str):
 
 async def test_two_builds_at_once_at_the_bound_stay_within_it(client, app, book, session, monkeypatch):
     store = keep_at_most(app, 250_000)  # room for one build and the other's file, not for both builds
-    doc = await session.get(Document, book)
-    doc.is_public = True
-    await session.commit()
+    await make_public(session, book)
     both_started = asyncio.Event()
     fetch_audio = audio_export._fetch_audio
 

@@ -41,6 +41,7 @@ from yapit.gateway.deps import (
     AudioCache,
     AuthenticatedUser,
     DbSession,
+    NonGuestUser,
     RedisClient,
     SettingsDep,
     get_model,
@@ -200,7 +201,7 @@ async def cancel_audio_job(
 async def export_audio(
     document_id: UUID,
     request: AudioExportRequest,
-    user: AuthenticatedUser,
+    user: NonGuestUser,
     db: DbSession,
     redis: RedisClient,
     cache: AudioCache,
@@ -250,7 +251,7 @@ async def get_audio_export(
     document_id: UUID,
     key: Annotated[str, PathParam(pattern=r"^[0-9a-f]{64}$")],
     fmt: ExportFormat,
-    user: AuthenticatedUser,
+    user: NonGuestUser,
     db: DbSession,
     store: ExportStoreDep,
 ) -> FileResponse:

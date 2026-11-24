@@ -189,6 +189,15 @@ async def authenticate_account(
     return user
 
 
+async def authenticate_non_guest(user: Annotated[User, Depends(authenticate)]) -> User:
+    """The caller, who must not be a guest: signed in to an account, or the selfhost user without auth."""
+    if user.is_anonymous:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Saving audio files needs an account. Sign in first."
+        )
+    return user
+
+
 async def authenticate_ws(
     websocket: WebSocket,
     settings: Annotated[Settings, Depends(get_settings)],

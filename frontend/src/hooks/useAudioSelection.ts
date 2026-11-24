@@ -49,12 +49,13 @@ export interface RowState extends ExportRow {
 /** The ticked sections, what generating their audio costs, and what stands in its way: the state the Generate in background panel renders. */
 export function useAudioSelection(props: AudioSelectionProps) {
   const { documentId, sections, documentBlocks, expandedSections, voiceSelection, onVoiceChange, job, onStart, exportProgress, onDownload } = props;
-  const { api } = useApi();
+  const { api, isAnonymous } = useApi();
   const [baseRows] = useState(() => exportRows(sections, documentBlocks, expandedSections));
   const [ticked, setTicked] = useState<Set<string>>(() => new Set(baseRows.filter(r => r.initiallyTicked).map(r => r.id)));
   const [fetched, setFetched] = useState<{ key: string; estimate: AudioJobEstimate | null } | null>(null);
   const [isStarting, setIsStarting] = useState(false);
   const [refusal, setRefusal] = useState<string | null>(null);
+  const [signInToSave, setSignInToSave] = useState(false);
 
   const onServer = isServerSideModel(voiceSelection.model);
   const { model, voiceSlug } = voiceSelection;
@@ -136,11 +137,15 @@ export function useAudioSelection(props: AudioSelectionProps) {
     if (reason) setRefusal(reason);
   };
 
-  const download = (format: ExportFormat) => void onDownload(format, model, voiceSlug, tickedRanges());
+  // Saving a file needs an account, so a guest's press asks nothing of the server
+  const download = (format: ExportFormat) => {
+    if (isAnonymous) setSignInToSave(true);
+    else void onDownload(format, model, voiceSlug, tickedRanges());
+  };
 
   return {
     rows, toggle, setAll, totals, estimate, estimateFailed, onServer, jobRunsHere, isStarting,
-    blocker, shortfall, refusal, canStart, allMade, exportErrors, saving, useServerKokoro, start, download,
+    blocker, shortfall, refusal, canStart, allMade, exportErrors, saving, signInToSave, useServerKokoro, start, download,
   };
 }
 
