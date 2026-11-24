@@ -22,7 +22,7 @@ from yapit.contracts import (
 from yapit.gateway import web_bot_auth
 from yapit.gateway.api.v1 import routers as v1_routers
 from yapit.gateway.api_tts_dispatcher import run_api_tts_dispatcher
-from yapit.gateway.audio_export import run_export_sweeper
+from yapit.gateway.audio_export import ExportStore, run_export_sweeper
 from yapit.gateway.audio_job import run_audio_job_feeder
 from yapit.gateway.auth import ANONYMOUS_ID_PREFIX
 from yapit.gateway.auth.mailer import create_mailer
@@ -78,6 +78,9 @@ async def lifespan(app: FastAPI):
 
     app.state.redis_client = await redis.from_url(settings.redis_url, decode_responses=False)
     app.state.audio_cache = create_cache(settings.audio_cache_type, settings.audio_cache_config)
+    app.state.export_store = ExportStore.open(
+        Path(settings.audio_export_dir), settings.audio_export_max_size_mb * 1024 * 1024
+    )
     app.state.document_cache = create_cache(settings.document_cache_type, settings.document_cache_config)
     app.state.extraction_cache = create_cache(settings.extraction_cache_type, settings.extraction_cache_config)
     app.state.image_storage = create_image_storage(settings)
@@ -227,7 +230,7 @@ async def lifespan(app: FastAPI):
         logger.info(f"OpenAI TTS dispatcher started ({settings.openai_tts_model} @ {settings.openai_tts_base_url})")
 
     background_tasks.append(
-        asyncio.create_task(supervised("audio-export-sweeper", run_export_sweeper(Path(settings.audio_export_dir))))
+        asyncio.create_task(supervised("audio-export-sweeper", run_export_sweeper(app.state.export_store)))
     )
 
     all_caches = [app.state.audio_cache, app.state.document_cache, app.state.extraction_cache]

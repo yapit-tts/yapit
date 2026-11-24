@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { act, renderHook } from "@testing-library/react";
+import { AxiosError, type AxiosResponse } from "axios";
 import { useAudioExport } from "./useAudioExport";
 import type { WSAudioExportMessage } from "@/lib/audioJob";
 
@@ -42,5 +43,17 @@ describe("useAudioExport", () => {
     await act(async () => arrive({ data: new Blob() }));
     expect(clicked).toHaveBeenCalledOnce();
     expect(result.current.progress).toEqual({});
+  });
+
+  it("says to save again when the server no longer has the file it built", async () => {
+    api.post.mockResolvedValue({ data: { key: "gone", format: "m4b", status: "ready", progress: null, error: null } });
+    api.get.mockRejectedValue(new AxiosError("Not Found", "ERR_BAD_REQUEST", undefined, undefined,
+      { status: 404, data: new Blob() } as AxiosResponse));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const { result } = renderHook(() => useAudioExport("doc", "A Book"));
+
+    await act(() => result.current.download("m4b", "kokoro", "af_heart", [{ first_block: 0, last_block: 5, title: "All" }]));
+
+    expect(result.current.progress).toEqual({ m4b: { phase: "failed", error: expect.stringContaining("Save it again") } });
   });
 });

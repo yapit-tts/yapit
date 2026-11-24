@@ -4,6 +4,7 @@ import re
 import shutil
 from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timedelta
+from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
@@ -17,7 +18,8 @@ from sqlmodel import SQLModel, text
 from testcontainers.postgres import PostgresContainer
 from testcontainers.redis import RedisContainer
 
-from yapit.gateway import create_app
+from yapit.gateway import audio_export, create_app
+from yapit.gateway.audio_export import ExportStore
 from yapit.gateway.auth import User, authenticate, authenticate_optional
 from yapit.gateway.auth.mailer import Email
 from yapit.gateway.cache import CacheConfig
@@ -115,6 +117,7 @@ async def _shared_app(_create_schema, _test_settings) -> FastAPI:
         init_db(settings)
         app.state.redis_client = await aioredis.from_url(settings.redis_url, decode_responses=False)
         app.state.audio_cache = create_cache(settings.audio_cache_type, settings.audio_cache_config)
+        app.state.export_store = open_export_store(settings)
         app.state.document_cache = create_cache(settings.document_cache_type, settings.document_cache_config)
         app.state.extraction_cache = create_cache(settings.extraction_cache_type, settings.extraction_cache_config)
         app.state.image_storage = create_image_storage(settings)
@@ -154,11 +157,19 @@ async def _clean_tables(_shared_app, _test_settings):
             await conn.execute(stmt)
     await _shared_app.state.redis_client.flushdb()
     _shared_app.state.mailer = RecordingMailer()
+    for build in list(audio_export._builds.values()):
+        build.task.cancel()
+        await asyncio.gather(build.task, return_exceptions=True)
     shutil.rmtree(_test_settings.audio_export_dir, ignore_errors=True)
+    _shared_app.state.export_store = open_export_store(_test_settings)
     for cache in [_shared_app.state.audio_cache, _shared_app.state.document_cache, _shared_app.state.extraction_cache]:
         writer = await cache._get_writer()
         await writer.execute("DELETE FROM cache")
         await writer.commit()
+
+
+def open_export_store(settings: Settings) -> ExportStore:
+    return ExportStore.open(Path(settings.audio_export_dir), settings.audio_export_max_size_mb * 1024 * 1024)
 
 
 @pytest.fixture

@@ -201,6 +201,11 @@ function SelectionNotes({ s }: { s: AudioSelection }) {
       )}
       {refusal && <Note>{refusal}</Note>}
       {exportErrors.map(({ format, error }) => <Note key={format}>{error}</Note>)}
+      {s.signInToSave && (
+        <Note>
+          Saving the audio as a file needs an account. <Link className={linkClass} to="/auth/sign-in">Sign in or sign up</Link>
+        </Note>
+      )}
     </>
   );
 }

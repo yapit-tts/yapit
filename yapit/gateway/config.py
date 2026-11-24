@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     audio_cache_type: Caches
     audio_cache_config: CacheConfig
     audio_export_dir: str  # exported audio files, kept a day
+    audio_export_max_size_mb: int  # the most the exported files and the builds writing them take
 
     auth_enabled: bool
     app_url: str  # the public origin: sign-in links, the Origin check, the session cookie's Secure flag

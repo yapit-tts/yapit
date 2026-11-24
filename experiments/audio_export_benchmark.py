@@ -111,7 +111,9 @@ def build(module, path: Path, fmt: str, sections: list[tuple[str, list[str]]], b
     async def no_progress(_: float) -> None:
         pass
 
-    asyncio.run(module.write_audio_file(path, module.ExportFormat(fmt), chapters, fetch, no_progress))
+    # Builds since the export store hold room for their files; this one has room for any
+    unbounded = [lambda _: None] if "reserve" in inspect.signature(module.write_audio_file).parameters else []
+    asyncio.run(module.write_audio_file(path, module.ExportFormat(fmt), chapters, fetch, no_progress, *unbounded))
 
 
 def _load(path: Path):

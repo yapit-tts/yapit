@@ -8,10 +8,10 @@ import os
 import threading
 import time
 import uuid
-from collections import deque
+from collections import Counter, deque
 from collections.abc import AsyncIterator, Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from fractions import Fraction
 from pathlib import Path
@@ -32,6 +32,11 @@ EXPORT_TTL_S = 24 * 3600
 SWEEP_INTERVAL_S = 3600
 SAMPLE_RATE = 24_000
 BIT_RATE = 64_000
+# Twice the bit rate: both encoders were measured writing at most 15% more than it, container included
+ROOM_PER_SAMPLE = 2 * BIT_RATE / 8 / SAMPLE_RATE
+# Per chapter, beside twice its title's bytes: the containers were measured adding under 1 KB for
+# the first chapter and some 100 bytes for each after
+ROOM_PER_CHAPTER = 2048
 FETCH_BATCH = 64
 CORES = len(os.sched_getaffinity(0))
 BUILD_NICENESS = 10
@@ -95,6 +100,161 @@ class ExportBusy(Exception):
     """The user already has a build running; each keeps an encoder and the threads decoding for it busy."""
 
 
+class NoRoom(Exception):
+    """The saved audio files leave no room for a build's file; the message says what the user can do."""
+
+
+@dataclass
+class _File:
+    size: int
+    built: float
+
+
+@dataclass
+class ExportStore:
+    """The files in the export directory, kept within max_bytes with the room the running builds hold.
+
+    A build holds room for its files before it writes them, and the oldest files no download holds are
+    deleted to make it. Every method runs on the event loop with no await, so none interleaves another.
+    """
+
+    dir: Path
+    max_bytes: int
+    _files: dict[str, _File] = field(default_factory=dict, init=False)
+    """By name, oldest first."""
+    _stored_bytes: int = field(default=0, init=False)
+    _rooms: dict[str, int] = field(default_factory=dict, init=False)
+    """By build key: the bytes its files may take."""
+    _foreign_bytes: int = field(default=0, init=False)
+    """Scratch of builds this gateway does not run, as last swept."""
+    _held: Counter[str] = field(default_factory=Counter, init=False)
+    """By name: the downloads serving it."""
+
+    @classmethod
+    def open(cls, dir: Path, max_bytes: int) -> "ExportStore":
+        dir.mkdir(parents=True, exist_ok=True)
+        store = cls(dir, max_bytes)
+        store.sweep()
+        return store
+
+    @property
+    def taken(self) -> int:
+        """The bytes counted against max_bytes: the files, the running builds' room, and others' scratch."""
+        return self._stored_bytes + sum(self._rooms.values()) + self._foreign_bytes
+
+    def path(self, key: str, fmt: ExportFormat) -> Path:
+        return self.dir / f"{key}.{fmt}"
+
+    def stored(self, key: str, fmt: ExportFormat) -> Path | None:
+        """The built file, unless it is older than EXPORT_TTL_S (the sweep deletes it soon after).
+
+        A file found here that this store did not write is counted, which can delete the oldest files.
+        """
+        path = self.path(key, fmt)
+        try:
+            stat = path.stat()
+        except FileNotFoundError:
+            self._forget(path.name)
+            return None
+        if path.name not in self._files:
+            self._add(path.name, _File(stat.st_size, stat.st_mtime))
+            self._files = _oldest_first(self._files)
+            self._make_room(0)
+        file = self._files.get(path.name)
+        return path if file and time.time() - file.built < EXPORT_TTL_S else None
+
+    def reserve(self, key: str, total: int) -> None:
+        """Let the build's files take total bytes, deleting the oldest files to make room.
+
+        Raises NoRoom, deleting nothing, where deleting every file no download holds would not make it.
+        """
+        if total > self.max_bytes:
+            raise NoRoom(
+                f"This file is too large for the {self.max_bytes // 2**20:,} MB the server keeps "
+                "for audio files. Pick fewer sections."
+            )
+        if not self._make_room(total - self._rooms.get(key, 0)):
+            raise NoRoom("The server has no room for another audio file right now. Save again in a few minutes.")
+        self._rooms[key] = total
+
+    def shelve(self, key: str, path: Path) -> None:
+        """Count the file a build wrote in place of the room the build held."""
+        self._forget(path.name)
+        self._add(path.name, _File(path.stat().st_size, time.time()))
+        self._rooms.pop(key, None)
+        self._make_room(0)
+
+    def release(self, key: str) -> None:
+        self._rooms.pop(key, None)
+
+    def hold(self, path: Path) -> Callable[[], None]:
+        """Keep the file from deletion while a download serves it; the callable returned lets it go."""
+        self._held[path.name] += 1
+
+        def release() -> None:
+            self._held[path.name] -= 1
+            if not self._held[path.name]:
+                del self._held[path.name]
+
+        return release
+
+    def sweep(self) -> None:
+        """Count what the directory holds, and delete expired files and scratch nothing wrote for an hour."""
+        now = time.time()
+        found: dict[str, _File] = {}
+        foreign = 0
+        for entry in os.scandir(self.dir):
+            try:
+                stat = entry.stat()
+                if not entry.name.startswith("."):
+                    found[entry.name] = self._files.get(entry.name) or _File(stat.st_size, stat.st_mtime)
+                elif any(entry.name.startswith(f".{key}.") for key in self._rooms):
+                    pass
+                elif now - stat.st_mtime > SWEEP_INTERVAL_S:
+                    os.unlink(entry.path)
+                else:
+                    foreign += stat.st_size
+            except FileNotFoundError:
+                pass
+        self._files = _oldest_first(found)
+        self._stored_bytes = sum(f.size for f in self._files.values())
+        self._foreign_bytes = foreign
+        for name, file in list(self._files.items()):
+            if now - file.built >= EXPORT_TTL_S and not self._held[name]:
+                self._delete(name)
+        self._make_room(0)
+
+    def _make_room(self, size: int) -> bool:
+        """Delete the oldest files no download holds until size more bytes fit; False, deleting none, if they cannot."""
+        excess = self.taken + size - self.max_bytes
+        if excess <= 0:
+            return True
+        held = sum(self._files[name].size for name in self._held if name in self._files)
+        if self._stored_bytes - held < excess:
+            return False
+        while excess > 0:
+            name = next(name for name in self._files if not self._held[name])
+            excess -= self._files[name].size
+            self._delete(name)
+        return True
+
+    def _add(self, name: str, file: _File) -> None:
+        self._files[name] = file
+        self._stored_bytes += file.size
+
+    def _forget(self, name: str) -> None:
+        if file := self._files.pop(name, None):
+            self._stored_bytes -= file.size
+
+    def _delete(self, name: str) -> None:
+        (self.dir / name).unlink(missing_ok=True)
+        self._forget(name)
+
+
+def _oldest_first(files: dict[str, _File]) -> dict[str, _File]:
+    return dict(sorted(files.items(), key=lambda item: item[1].built))
+
+
 @dataclass
 class _Build:
     user_id: str
@@ -117,25 +277,10 @@ def export_key(fmt: ExportFormat, chapters: list[Chapter]) -> str:
     return hashlib.sha256(content.encode()).hexdigest()
 
 
-def export_path(export_dir: Path, key: str, fmt: ExportFormat) -> Path:
-    return export_dir / f"{key}.{fmt}"
-
-
-def stored_export(export_dir: Path, key: str, fmt: ExportFormat) -> Path | None:
-    """The built file, unless it is older than EXPORT_TTL_S (the sweeper deletes it soon after)."""
-    path = export_path(export_dir, key, fmt)
-    try:
-        if time.time() - path.stat().st_mtime < EXPORT_TTL_S:
-            return path
-    except FileNotFoundError:
-        pass
-    return None
-
-
 async def request_export(
     redis: Redis,
     cache: Cache,
-    export_dir: Path,
+    store: ExportStore,
     user_id: str,
     document_id: uuid.UUID,
     fmt: ExportFormat,
@@ -146,7 +291,7 @@ async def request_export(
     Raises AudioNotCached if a block's audio is missing, and ExportBusy if the user's own build of another file runs.
     """
     key = export_key(fmt, chapters)
-    if stored_export(export_dir, key, fmt):
+    if store.stored(key, fmt):
         return AudioExportState(key=key, format=fmt, status=ExportStatus.ready)
     if build := _builds.get(key):
         build.waiters.add((user_id, document_id))
@@ -159,30 +304,19 @@ async def request_export(
     if missing:
         raise AudioNotCached(f"{missing} of the {len(hashes)} blocks have no audio generated in this voice")
 
-    task = asyncio.create_task(_build(redis, cache, export_dir, key, fmt, chapters))
+    task = asyncio.create_task(_build(redis, cache, store, key, fmt, chapters))
     _builds[key] = _Build(user_id=user_id, task=task, waiters={(user_id, document_id)})
     return AudioExportState(key=key, format=fmt, status=ExportStatus.building, progress=0)
 
 
-async def run_export_sweeper(export_dir: Path) -> None:
+async def run_export_sweeper(store: ExportStore) -> None:
     while True:
-        sweep_exports(export_dir)
         await asyncio.sleep(SWEEP_INTERVAL_S)
-
-
-def sweep_exports(export_dir: Path) -> None:
-    """Delete exported files, and scratch files a crashed build left, once they are older than EXPORT_TTL_S."""
-    cutoff = time.time() - EXPORT_TTL_S
-    for path in export_dir.iterdir() if export_dir.exists() else []:
-        try:
-            if path.stat().st_mtime < cutoff:
-                path.unlink()
-        except FileNotFoundError:
-            pass
+        store.sweep()
 
 
 async def _build(
-    redis: Redis, cache: Cache, export_dir: Path, key: str, fmt: ExportFormat, chapters: list[Chapter]
+    redis: Redis, cache: Cache, store: ExportStore, key: str, fmt: ExportFormat, chapters: list[Chapter]
 ) -> None:
     state = AudioExportState(key=key, format=fmt, status=ExportStatus.ready)
     started = time.monotonic()
@@ -199,23 +333,26 @@ async def _build(
         if a_percent_further:
             await tell_waiters(state.model_copy(update={"status": ExportStatus.building, "progress": progress}))
 
+    path = store.path(key, fmt)
     try:
-        export_dir.mkdir(parents=True, exist_ok=True)
         await write_audio_file(
-            export_path(export_dir, key, fmt),
+            path,
             fmt,
             chapters,
             lambda hashes: _fetch_audio(redis, cache, hashes),
             on_progress,
+            lambda total: store.reserve(key, total),
         )
+        store.shelve(key, path)
         logger.info(f"Audio export {key[:12]} ({fmt}) built in {time.monotonic() - started:.1f}s")
-    except AudioNotCached as e:
+    except (AudioNotCached, NoRoom) as e:
         state = state.model_copy(update={"status": ExportStatus.failed, "error": str(e)})
     except Exception as e:
         logger.exception(f"Audio export {key[:12]} failed: {e}")
         await log_error(f"Audio export failed: {e}")
         state = state.model_copy(update={"status": ExportStatus.failed, "error": "Building the audio file failed"})
     finally:
+        store.release(key)
         del _builds[key]
     await tell_waiters(state)
 
@@ -237,10 +374,12 @@ async def write_audio_file(
     chapters: list[Chapter],
     fetch: Callable[[list[str]], Awaitable[list[bytes]]],
     on_progress: Callable[[float], Awaitable[None]],
+    reserve: Callable[[int], None],
 ) -> None:
     """Decode the chapters' Ogg Opus blocks in order and encode them as one stream, then add the chapters.
 
-    on_progress hears the fraction of the blocks that are encoded, after each.
+    on_progress hears the fraction of the blocks that are encoded, after each. reserve hears the bytes
+    the build's files may take in all before they take more, and raises to stop the build.
 
     MP3 keeps its chapters in the ID3 tag at the head of the file, written before the first frame,
     and a chapter's start is known only once the blocks before it are decoded. So the stream is
@@ -249,7 +388,9 @@ async def write_audio_file(
     scratch = f".{path.name}.{uuid.uuid4().hex}"
     encoded, chaptered = path.parent / f"{scratch}.encoded", path.parent / f"{scratch}.chaptered"
     try:
-        marks = await _encode(encoded, ENCODINGS[fmt], chapters, fetch, on_progress)
+        marks = await _encode(encoded, ENCODINGS[fmt], chapters, fetch, on_progress, reserve)
+        titles = sum(2 * len(c.title.encode()) + ROOM_PER_CHAPTER for c in chapters)
+        reserve(2 * encoded.stat().st_size + titles)
         await _on_build_thread(_remux_with_chapters, encoded, chaptered, ENCODINGS[fmt], marks)
         os.replace(chaptered, path)
     finally:
@@ -267,6 +408,7 @@ async def _encode(
     chapters: list[Chapter],
     fetch: Callable[[list[str]], Awaitable[list[bytes]]],
     on_progress: Callable[[float], Awaitable[None]],
+    reserve: Callable[[int], None],
 ) -> list[dict]:
     """Encode the chapters into path; returns each chapter's span in seconds of the stream."""
     out = av.open(str(path), "w", format=encoding.container)
@@ -289,6 +431,7 @@ async def _encode(
     blocks = sum(len(c.variant_hashes) for c in chapters)
     encoded = 0
     async for chapter, block in _decoded_blocks(chapters, fetch):
+        reserve(round((sum(lengths) + block.samples) * ROOM_PER_SAMPLE))
         await _on_build_thread(encode, block, sum(lengths))
         lengths[chapter] += block.samples
         encoded += 1

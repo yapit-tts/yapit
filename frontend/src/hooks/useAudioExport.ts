@@ -63,7 +63,8 @@ export function useAudioExport(documentId: string | undefined, documentTitle: st
       settle(state.format, null);
     } catch (err) {
       console.error("Failed to download audio file:", err);
-      settle(state.format, "Could not download the file. Please try again.");
+      const gone = err instanceof AxiosError && err.response?.status === 404;
+      settle(state.format, gone ? "The server no longer has this file. Save it again." : "Could not download the file. Please try again.");
     }
   }, [api, documentId, documentTitle, settle, setProgress]);
 
